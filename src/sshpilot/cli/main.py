@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 import time
 from typing import Callable, Sequence
@@ -50,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.set_defaults(handler=name)
 
     connections = commands.add_parser("connections")
+    connections.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     connection_commands = connections.add_subparsers(dest="connections_command", required=True)
     listed = connection_commands.add_parser("list")
     listed.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
@@ -62,6 +64,10 @@ def build_parser() -> argparse.ArgumentParser:
     sessions = commands.add_parser("sessions")
     sessions.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     sessions.set_defaults(handler="sessions_list")
+    session_commands = sessions.add_subparsers(dest="sessions_command", required=False)
+    session_list = session_commands.add_parser("list")
+    session_list.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    session_list.set_defaults(handler="sessions_list")
 
     execute = commands.add_parser("exec")
     execute.add_argument("connection")
@@ -70,6 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     execute.set_defaults(handler="exec")
 
     operations = commands.add_parser("operations")
+    operations.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     operation_commands = operations.add_subparsers(dest="operations_command", required=True)
     for name, handler in (("get", "operations_get"), ("cancel", "operations_cancel")):
         operation = operation_commands.add_parser(name)
@@ -228,7 +235,8 @@ def _execute(client, args, *, json_output, stdout, stderr, input_fn, getpass_fn,
     if not command or not " ".join(command).strip():
         raise CliUsageError("exec requires a command after --")
     connection_id = _resolve_connection(client, args.connection)
-    request = BroadcastCommandRequest((connection_id,), " ".join(command))
+    remote_command = command[0] if len(command) == 1 else shlex.join(command)
+    request = BroadcastCommandRequest((connection_id,), remote_command)
     started = client.start_broadcast_command(request)
     operation_id = started.operation.operation_id
     handled = set()

@@ -13,11 +13,15 @@ from sshpilot.api.models.broadcast import (
 from sshpilot.api.models.common import ConnectionId, utc_now
 from sshpilot.api.models.connections import ConnectionHealth, ConnectionSummary
 from sshpilot.api.models.interactions import (
+    ConfirmationPrompt,
+    HostKeyPrompt,
+    HostKeyStatus,
     InteractionClaim,
     InteractionState,
     InteractionType,
     InteractionSummary,
     PassphrasePrompt,
+    PresencePrompt,
 )
 from sshpilot.api.models.operations import (
     OperationId,
@@ -145,12 +149,33 @@ def test_connection_list_and_alias_resolution():
 
     out, err = StringIO(), StringIO()
     assert run(
+        ["connections", "--json", "list"],
+        client_factory=lambda **_: client,
+        stdout=out,
+        stderr=err,
+    ) == 0
+    assert '"nickname": "demo"' in out.getvalue()
+
+    out, err = StringIO(), StringIO()
+    assert run(
         ["connections", "show", "demo.example", "--json"],
         client_factory=lambda **_: client,
         stdout=out,
         stderr=err,
     ) == 0
     assert '"hostname": "demo.example"' in out.getvalue()
+
+
+def test_sessions_list_command_shape_is_supported():
+    client = FakeClient()
+    out, err = StringIO(), StringIO()
+    assert run(
+        ["sessions", "list", "--json"],
+        client_factory=lambda **_: client,
+        stdout=out,
+        stderr=err,
+    ) == 0
+    assert out.getvalue().strip() == "[]"
 
 
 def test_ambiguous_connection_is_usage_error():
@@ -202,6 +227,25 @@ def test_exec_uses_broadcast_api_and_keeps_json_valid():
     assert client.requests[0].command == "uname -a"
     assert out.getvalue().lstrip().startswith("{")
     assert "hello" in out.getvalue()
+
+
+def test_exec_preserves_one_command_token_and_quotes_multiple_tokens():
+    client = FakeClient()
+    run(
+        ["exec", "demo", "--", "printf '%s' 'a b'"],
+        client_factory=lambda **_: client,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+    assert client.requests[-1].command == "printf '%s' 'a b'"
+
+    run(
+        ["exec", "demo", "--", "printf", "%s", "a b"],
+        client_factory=lambda **_: client,
+        stdout=StringIO(),
+        stderr=StringIO(),
+    )
+    assert client.requests[-1].command == "printf %s 'a b'"
 
 
 def test_exec_failure_and_daemon_unavailable_exit_codes():
@@ -266,6 +310,133 @@ def test_protected_interaction_uses_bytearray_secret_frame_and_clears_it():
         getpass_fn=lambda _prompt: "CLI_SECRET_SENTINEL",
     )
     assert client.sent == b"CLI_SECRET_SENTINEL"
+
+
+def _interaction_summary(prompt, interaction_type):
+    now = datetime.now(timezone.utc)
+    return InteractionSummary(
+        "interaction-1",
+        "operation-1",
+        "demo",
+        interaction_type,
+        InteractionState.PENDING,
+        now,
+        now + timedelta(seconds=30),
+        1,
+        prompt,
+    )
+
+
+def test_presence_prompt_is_passive_and_not_claimed():
+    summary = _interaction_summary(
+        PresencePrompt("Touch your security key"),
+        InteractionType.SECURITY_KEY_PRESENCE,
+    )
+    calls = []
+
+    class PassiveClient:
+        def list_interactions(self):
+            return [summary]
+
+        def claim_interaction(self, _interaction_id):
+            raise AssertionError("presence prompts must not be claimed")
+
+        def respond_to_interaction(self, _request):
+            raise AssertionError("presence prompts must not be answered")
+
+        def send_interaction_secret(self, *_args):
+            raise AssertionError("presence prompts must not send secret frames")
+
+    handled = handle_interactions(
+        PassiveClient(),
+        "operation-1",
+        write=calls.append,
+        input_fn=lambda _prompt: (_ for _ in ()).throw(
+            AssertionError("presence prompts must not read input")
+        ),
+    )
+    assert calls == ["Touch your security key\n"]
+    assert handled == {"interaction-1"}
+
+
+class _PromptClient(FakeClient):
+    def __init__(self, summary, answer):
+        super().__init__()
+        self.summary = summary
+        self.answer = answer
+        self.interaction_reads = 0
+        self.claims = []
+        self.responses = []
+        self.sent = []
+
+    def list_interactions(self):
+        self.interaction_reads += 1
+        return [self.summary] if self.interaction_reads == 1 else []
+
+    def claim_interaction(self, interaction_id):
+        self.claims.append(interaction_id)
+        return InteractionClaim(
+            interaction_id,
+            "cli",
+            "00" * 16,
+            self.summary.expires_at,
+        )
+
+    def respond_to_interaction(self, request):
+        self.responses.append(request)
+
+    def send_interaction_secret(self, interaction_id, nonce, secret):
+        self.sent.append((interaction_id, nonce, bytes(secret)))
+
+
+def test_host_key_prompt_keeps_json_stdout_clean():
+    client = _PromptClient(
+        _interaction_summary(
+            HostKeyPrompt(
+                "demo.example",
+                22,
+                "ssh-ed25519",
+                "SHA256:cli-test",
+                HostKeyStatus.UNKNOWN,
+            ),
+            InteractionType.HOST_KEY_CONFIRMATION,
+        ),
+        "y",
+    )
+    out, err = StringIO(), StringIO()
+    inputs = []
+    assert run(
+        ["exec", "--json", "demo", "--", "true"],
+        client_factory=lambda **_: client,
+        stdout=out,
+        stderr=err,
+        input_fn=lambda prompt: (inputs.append(prompt) or client.answer),
+    ) == 0
+    assert out.getvalue().lstrip().startswith("{")
+    assert "Accept host key" in err.getvalue()
+    assert inputs == [""]
+
+
+def test_confirmation_prompt_keeps_json_stdout_clean():
+    client = _PromptClient(
+        _interaction_summary(
+            ConfirmationPrompt("Continue with the operation?"),
+            InteractionType.CONFIRMATION,
+        ),
+        "y",
+    )
+    out, err = StringIO(), StringIO()
+    inputs = []
+    assert run(
+        ["exec", "--json", "demo", "--", "true"],
+        client_factory=lambda **_: client,
+        stdout=out,
+        stderr=err,
+        input_fn=lambda prompt: (inputs.append(prompt) or client.answer),
+    ) == 0
+    assert out.getvalue().lstrip().startswith("{")
+    assert "Continue with the operation?" in err.getvalue()
+    assert inputs == [""]
 
 
 def test_public_dataclass_json_conversion_never_uses_repr():

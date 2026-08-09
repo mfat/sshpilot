@@ -55,12 +55,20 @@ def handle_interactions(
 
 def _handle_one(client, summary: InteractionSummary, *, write, input_fn, getpass_fn) -> None:
     prompt = summary.prompt
+    if isinstance(prompt, PresencePrompt):
+        # Security-key presence is passive: ssh/ssh-keygen waits for the user
+        # to touch the key.  The broker deliberately rejects submit frames for
+        # this interaction type, so leave it pending and only display it once.
+        write(f"{prompt.text}\n")
+        return
+
     claim = client.claim_interaction(summary.id)
     if isinstance(prompt, HostKeyPrompt):
-        answer = input_fn(
+        write(
             f"Accept host key {prompt.hostname}:{prompt.port} "
             f"({prompt.fingerprint})? [y/N] "
         )
+        answer = input_fn("")
         decision = (
             HostKeyDecision.ACCEPT if answer.strip().lower() in {"y", "yes"}
             else HostKeyDecision.REJECT
@@ -71,25 +79,6 @@ def _handle_one(client, summary: InteractionSummary, *, write, input_fn, getpass
         return
 
     if isinstance(prompt, ConfirmationPrompt):
-        answer = input_fn(f"{prompt.text} [y/N] ")
-        decision = (
-            SecretDecision.SUBMIT
-            if answer.strip().lower() in {"y", "yes"}
-            else SecretDecision.CANCEL
-        )
-        client.respond_to_interaction(
-            InteractionDecisionRequest(summary.id, secret_decision=decision)
-        )
-        if decision is SecretDecision.SUBMIT:
-            secret = bytearray(b"yes")
-            try:
-                client.send_interaction_secret(summary.id, claim.nonce, secret)
-            finally:
-                secret[:] = b"\0" * len(secret)
-                secret.clear()
-        return
-
-    if isinstance(prompt, PresencePrompt):
         write(f"{prompt.text} [y/N] ")
         answer = input_fn("")
         decision = (
