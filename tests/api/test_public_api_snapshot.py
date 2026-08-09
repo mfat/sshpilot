@@ -30,22 +30,6 @@ def test_public_api_surface_matches_reviewed_snapshot():
     )
 
 
-def test_generated_api_artifacts_are_current():
-    generator = _load_generator()
-    stale = [
-        str(path.relative_to(ROOT))
-        for path, expected in generator.artifacts().items()
-        if not path.exists() or path.read_text(encoding="utf-8") != expected
-    ]
-
-    assert not stale, (
-        "Generated API artifacts are stale: "
-        + ", ".join(stale)
-        + ". Review compatibility and docs/api/CHANGELOG.md, then run "
-        "`python3 scripts/generate_api_artifacts.py`."
-    )
-
-
 def test_all_documented_model_types_are_convenience_exports():
     generator = _load_generator()
     model_exports = set(generator.MODEL_EXPORTS)

@@ -75,6 +75,7 @@ EXTRA_ENUMS = (Capability, EventType, ErrorCode)
 UNION_ORIGINS = (Union,)
 if hasattr(types, "UnionType"):
     UNION_ORIGINS += (types.UnionType,)
+MISSING_ANNOTATION = object()
 
 IMPLEMENTED_MODELS = {
     "Capabilities",
@@ -418,9 +419,10 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
         method = getattr(SshPilotClient, name)
         signature = inspect.signature(method)
         # Read annotations without evaluating or rendering them through
-        # inspect.Signature.  Their source spelling is stable across supported
-        # interpreters; _type_name normalizes evaluated annotations as well.
-        annotations = inspect.get_annotations(method, eval_str=False)
+        # inspect.Signature. Their source spelling is stable across supported
+        # interpreters, including Python 3.9 where inspect.get_annotations is
+        # unavailable; _type_name normalizes evaluated annotations as well.
+        annotations = getattr(method, "__annotations__", {})
         result[name] = {
             "parameters": [
                 {
@@ -428,8 +430,14 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
                     "kind": parameter.kind.name.lower(),
                     "type": (
                         "untyped"
-                        if parameter.name not in annotations
-                        else _type_name(annotations[parameter.name])
+                        if (
+                            annotation := annotations.get(
+                                parameter.name,
+                                MISSING_ANNOTATION,
+                            )
+                        )
+                        is MISSING_ANNOTATION
+                        else _type_name(annotation)
                     ),
                 }
                 for parameter in signature.parameters.values()
@@ -437,8 +445,14 @@ def client_signatures() -> Dict[str, Dict[str, Any]]:
             ],
             "return": (
                 "untyped"
-                if "return" not in annotations
-                else _type_name(annotations["return"])
+                if (
+                    return_annotation := annotations.get(
+                        "return",
+                        MISSING_ANNOTATION,
+                    )
+                )
+                is MISSING_ANNOTATION
+                else _type_name(return_annotation)
             ),
         }
     return result
