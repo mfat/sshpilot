@@ -1454,7 +1454,7 @@
           "type": "Optional[int]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "AssignConnectionToGroupRequest": {
       "fields": [
@@ -1707,7 +1707,7 @@
           "type": "ForwardId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ClaimTerminalInputRequest": {
       "fields": [
@@ -1726,7 +1726,7 @@
           "type": "AttachmentId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ClientInfo": {
       "fields": [
@@ -2268,7 +2268,7 @@
           "type": "int"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ConnectionMetadataSummary": {
       "fields": [
@@ -2327,7 +2327,7 @@
           "type": "tuple[str, ...]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ConnectionStoreSnapshot": {
       "fields": [
@@ -2367,7 +2367,7 @@
           "type": "Tuple[ConnectionMetadataSummary, ...]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ConnectionSummary": {
       "fields": [
@@ -2499,7 +2499,7 @@
           "type": "GroupId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "CoreEvent": {
       "fields": [
@@ -2633,7 +2633,7 @@
           "type": "Mapping[str, Any]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "CreateGroupRequest": {
       "fields": [
@@ -3037,7 +3037,7 @@
           "type": "ConnectionId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "DeleteConnectionResult": {
       "fields": [
@@ -3056,7 +3056,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "DeleteGroupRequest": {
       "fields": [
@@ -3456,7 +3456,7 @@
           "type": "KeyStoreScope"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "GenerateKeyResult": {
       "fields": [
@@ -3468,7 +3468,7 @@
           "type": "KeySummary"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "GetPluginSecretRequest": {
       "fields": [
@@ -3779,7 +3779,7 @@
           "type": "datetime"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "InteractionDecisionRequest": {
       "fields": [
@@ -3812,7 +3812,7 @@
           "type": "RememberPolicy"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "InteractionRejection": {
       "fields": [
@@ -4028,7 +4028,7 @@
           "type": "ClientId | None"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "InteractionTimeout": {
       "fields": [
@@ -4059,7 +4059,7 @@
           "type": "Tuple[KeySummary, ...]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "KeySummary": {
       "fields": [
@@ -4262,7 +4262,7 @@
           "type": "KeyStoreScope"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "LookupKeyPassphraseRequest": {
       "fields": [
@@ -4328,7 +4328,7 @@
           "type": "ConnectionPlacementMode"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "OpenForwardRequest": {
       "fields": [
@@ -4495,7 +4495,7 @@
           "type": "Optional[Dict]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "PassphrasePrompt": {
       "fields": [
@@ -4622,7 +4622,7 @@
           "type": "Optional[int]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "PluginArgument": {
       "fields": [
@@ -4799,7 +4799,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ReadPublicKeyRequest": {
       "fields": [
@@ -4818,7 +4818,7 @@
           "type": "KeyStoreScope"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ReleaseTerminalInputRequest": {
       "fields": [
@@ -4837,7 +4837,7 @@
           "type": "AttachmentId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "RemoteFileEntry": {
       "fields": [
@@ -4924,7 +4924,7 @@
           "type": "GroupId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "RemoveKnownHostEntriesRequest": {
       "fields": [
@@ -4981,7 +4981,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ReorderConnectionRequest": {
       "fields": [
@@ -5014,7 +5014,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ReplayBounds": {
       "fields": [
@@ -5073,7 +5073,7 @@
           "type": "int"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ReplayResult": {
       "fields": [
@@ -5127,7 +5127,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "RequestEnvelope": {
       "fields": [
@@ -5193,7 +5193,7 @@
           "type": "TerminalDimensions"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "RestartDaemonRequest": {
       "fields": [
@@ -5231,7 +5231,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "ServiceFailure": {
       "fields": [
@@ -5389,7 +5389,7 @@
           "type": "DaemonLogLevel"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SetGroupColorRequest": {
       "fields": [
@@ -5408,7 +5408,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpChmodRequest": {
       "fields": [
@@ -5474,7 +5474,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpCreateFileRequest": {
       "fields": [
@@ -5531,7 +5531,7 @@
           "type": "str"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpDirectorySizeResult": {
       "fields": [
@@ -5656,7 +5656,7 @@
           "type": "SftpFileAccess"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpReadFileResult": {
       "fields": [
@@ -5710,7 +5710,7 @@
           "type": "Optional[int]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpRenameRequest": {
       "fields": [
@@ -5797,7 +5797,7 @@
           "type": "SftpFileAccess"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpReplaceFileResult": {
       "fields": [
@@ -5837,7 +5837,7 @@
           "type": "Optional[str]"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SftpServiceSummary": {
       "fields": [
@@ -5999,7 +5999,7 @@
           "type": "int | None"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "SshConfigText": {
       "fields": [
@@ -6032,7 +6032,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "StartScpTransferRequest": {
       "fields": [
@@ -6315,7 +6315,7 @@
           "type": "bytes"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "TerminalOutput": {
       "fields": [
@@ -6559,7 +6559,7 @@
           "type": "int | None"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "VerifyKeyPassphraseRequest": {
       "fields": [
@@ -6578,7 +6578,7 @@
           "type": "SessionId"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     },
     "VerifyKeyPassphraseResult": {
       "fields": [
@@ -6590,7 +6590,7 @@
           "type": "bool"
         }
       ],
-      "status": "Schema only"
+      "status": "Implemented"
     }
   },
   "protocol_version": "1.0"

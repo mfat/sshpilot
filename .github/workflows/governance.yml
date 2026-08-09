@@ -1,0 +1,67 @@
+name: Governance
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+jobs:
+  architecture:
+    name: architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install architecture test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-deps -e .
+          pip install pytest pytest-xdist
+
+      - name: Run architecture boundaries
+        run: |
+          python -m pytest -q \
+            tests/architecture \
+            tests/core/test_dependency_boundary.py
+
+  api-contract:
+    name: api-contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install API contract dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-deps -e .
+          pip install \
+            paramiko \
+            cryptography \
+            keyring \
+            psutil \
+            pytest \
+            pytest-xdist \
+            jsonschema
+
+      - name: Check generated API artifacts
+        run: python scripts/generate_api_artifacts.py --check
+
+      - name: Run API contract tests
+        run: python -m pytest -q tests/api

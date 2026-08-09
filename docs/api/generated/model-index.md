@@ -10,11 +10,11 @@ stored connection data.
 <!-- api-model: AddTagToConnectionsRequest -->
 ## `AddTagToConnectionsRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Add one tag to multiple connections in one atomic mutation.
 
-**Related methods:** None
+**Related methods:** `add_tag_to_connections`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -301,11 +301,11 @@ Synthetic representation:
 <!-- api-model: ClaimForwardRequest -->
 ## `ClaimForwardRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ClaimForwardRequest` record.
 
-**Related methods:** None
+**Related methods:** `claim_forward`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -323,11 +323,11 @@ Synthetic representation:
 <!-- api-model: ClaimTerminalInputRequest -->
 ## `ClaimTerminalInputRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ClaimTerminalInputRequest` record.
 
-**Related methods:** None
+**Related methods:** `claim_terminal_input`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -491,7 +491,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Full v1 connection response without secret values or sensitive paths.
 
-**Related methods:** `get_connection`, `create_connection`, `update_connection`
+**Related methods:** `create_connection`, `get_connection`, `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -573,14 +573,14 @@ Synthetic representation:
 <!-- api-model: ConnectionEditorDetails -->
 ## `ConnectionEditorDetails`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Full editor state for local authenticated clients.
 
 Contains filesystem paths and complete configuration.  Not safe for
 untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 
-**Related methods:** None
+**Related methods:** `get_connection_editor`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -700,11 +700,11 @@ Synthetic representation:
 <!-- api-model: ConnectionMutationResult -->
 ## `ConnectionMutationResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** The authoritative result of a successful connection save.
 
-**Related methods:** None
+**Related methods:** `create_connection`, `duplicate_connection`, `split_connection`, `update_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -730,11 +730,11 @@ Synthetic representation:
 <!-- api-model: ConnectionStoreSnapshot -->
 ## `ConnectionStoreSnapshot`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** The complete daemon-owned connection store, revisioned by generation.
 
-**Related methods:** None
+**Related methods:** `get_connection_store_snapshot`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -848,11 +848,11 @@ Synthetic representation:
 <!-- api-model: CopyConnectionToGroupRequest -->
 ## `CopyConnectionToGroupRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Copy a connection into a group, preserving existing memberships.
 
-**Related methods:** None
+**Related methods:** `copy_connection_to_group`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -932,7 +932,7 @@ Synthetic representation:
 <!-- api-model: CreateConnectionRequest -->
 ## `CreateConnectionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `CreateConnectionRequest` record.
 
@@ -1150,7 +1150,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `DaemonStopResult` record.
 
-**Related methods:** `stop_daemon`, `restart_daemon`
+**Related methods:** `restart_daemon`, `stop_daemon`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1184,7 +1184,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Delete all stored login passwords for a connection.
 
-**Related methods:** None
+**Related methods:** `delete_connection_password`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1208,7 +1208,7 @@ Synthetic representation:
 <!-- api-model: DeleteConnectionRequest -->
 ## `DeleteConnectionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `DeleteConnectionRequest` record.
 
@@ -1230,7 +1230,7 @@ Synthetic representation:
 <!-- api-model: DeleteConnectionResult -->
 ## `DeleteConnectionResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `DeleteConnectionResult` record.
 
@@ -1280,7 +1280,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Request to delete an SSH key passphrase.
 
-**Related methods:** None
+**Related methods:** `delete_key_passphrase`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1441,7 +1441,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ForwardSummary` record.
 
-**Related methods:** `list_forwards`, `get_forward`, `open_forward`
+**Related methods:** `claim_forward`, `get_forward`, `list_forwards`, `open_forward`
 **Related events:** `forward.created`, `forward.starting`, `forward.active`, `forward.closed`, `forward.failed`
 
 | Field | Type | Required | Default | Sensitive |
@@ -1527,11 +1527,11 @@ Synthetic representation:
 <!-- api-model: GenerateKeyRequest -->
 ## `GenerateKeyRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Request a daemon-owned ``ssh-keygen`` invocation.
 
-**Related methods:** None
+**Related methods:** `generate_key`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1561,11 +1561,11 @@ Synthetic representation:
 <!-- api-model: GenerateKeyResult -->
 ## `GenerateKeyResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Result of a daemon key generation.
 
-**Related methods:** None
+**Related methods:** `generate_key`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1813,11 +1813,11 @@ Synthetic representation:
 <!-- api-model: InteractionClaim -->
 ## `InteractionClaim`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `InteractionClaim` record.
 
-**Related methods:** None
+**Related methods:** `claim_interaction`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1841,11 +1841,11 @@ Synthetic representation:
 <!-- api-model: InteractionDecisionRequest -->
 ## `InteractionDecisionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `InteractionDecisionRequest` record.
 
-**Related methods:** None
+**Related methods:** `respond_to_interaction`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -1965,11 +1965,11 @@ Synthetic representation:
 <!-- api-model: InteractionSummary -->
 ## `InteractionSummary`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `InteractionSummary` record.
 
-**Related methods:** None
+**Related methods:** `get_interaction`, `list_interactions`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2035,11 +2035,11 @@ Synthetic representation:
 <!-- api-model: KeyList -->
 ## `KeyList`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Ordered key metadata from the daemon (duplicate ids rejected).
 
-**Related methods:** None
+**Related methods:** `list_keys`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2223,11 +2223,11 @@ Synthetic representation:
 <!-- api-model: ListKeysRequest -->
 ## `ListKeysRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** List keys from one semantic key-store scope.
 
-**Related methods:** None
+**Related methods:** `list_keys`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2267,11 +2267,11 @@ Synthetic representation:
 <!-- api-model: MoveConnectionsRequest -->
 ## `MoveConnectionsRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Place one or more connections with explicit membership semantics.
 
-**Related methods:** None
+**Related methods:** `move_connections`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2379,11 +2379,11 @@ Synthetic representation:
 <!-- api-model: OperationSummary -->
 ## `OperationSummary`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-safe snapshot of one daemon operation.
 
-**Related methods:** None
+**Related methods:** `cancel_operation`, `deploy_key`, `get_operation`, `remove_authorized_key`, `sftp_copy`, `sftp_directory_size`, `sftp_remove`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2487,11 +2487,11 @@ Synthetic representation:
 <!-- api-model: PlaceGroupRequest -->
 ## `PlaceGroupRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Place a group at a parent/index in the sibling order.
 
-**Related methods:** None
+**Related methods:** `place_group`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2653,11 +2653,11 @@ Synthetic representation:
 <!-- api-model: PublicKeyResult -->
 ## `PublicKeyResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Public-key text for one key (never private-key material).
 
-**Related methods:** None
+**Related methods:** `read_public_key`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2677,11 +2677,11 @@ Synthetic representation:
 <!-- api-model: ReadPublicKeyRequest -->
 ## `ReadPublicKeyRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Read public-key text for one opaque key id.
 
-**Related methods:** None
+**Related methods:** `read_public_key`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2701,11 +2701,11 @@ Synthetic representation:
 <!-- api-model: ReleaseTerminalInputRequest -->
 ## `ReleaseTerminalInputRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ReleaseTerminalInputRequest` record.
 
-**Related methods:** None
+**Related methods:** `release_terminal_input`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2729,7 +2729,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `RemoteFileEntry` record.
 
-**Related methods:** `sftp_list_directory`, `sftp_stat`, `sftp_lstat`
+**Related methods:** `sftp_list_directory`, `sftp_lstat`, `sftp_stat`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2763,11 +2763,11 @@ Synthetic representation:
 <!-- api-model: RemoveConnectionFromGroupRequest -->
 ## `RemoveConnectionFromGroupRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Remove one membership of a connection from a group.
 
-**Related methods:** None
+**Related methods:** `remove_connection_from_group`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2835,11 +2835,11 @@ Synthetic representation:
 <!-- api-model: RenameTagRequest -->
 ## `RenameTagRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Rename a tag across all connections (case-insensitive, deduplicated).
 
-**Related methods:** None
+**Related methods:** `rename_tag`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2859,11 +2859,11 @@ Synthetic representation:
 <!-- api-model: ReorderConnectionRequest -->
 ## `ReorderConnectionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Reorder a connection above/below a target within a group or the root.
 
-**Related methods:** None
+**Related methods:** `reorder_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -2913,7 +2913,7 @@ Synthetic representation:
 <!-- api-model: ReplayRequest -->
 ## `ReplayRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ReplayRequest` record.
 
@@ -2941,7 +2941,7 @@ Synthetic representation:
 <!-- api-model: ReplayResult -->
 ## `ReplayResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ReplayResult` record.
 
@@ -3009,7 +3009,7 @@ Synthetic representation:
 <!-- api-model: ResizeTerminalRequest -->
 ## `ResizeTerminalRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `ResizeTerminalRequest` record.
 
@@ -3062,7 +3062,7 @@ Synthetic representation:
 <!-- api-model: SaveSshConfigTextRequest -->
 ## `SaveSshConfigTextRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Optimistic raw-text replacement of the daemon-selected SSH config.
 
@@ -3070,7 +3070,7 @@ Synthetic representation:
 the daemon rejects the save when any participating config file changed
 since the editor loaded it.
 
-**Related methods:** None
+**Related methods:** `save_ssh_config_text`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3190,7 +3190,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SessionSummary` record.
 
-**Related methods:** `list_sessions`, `get_session`, `open_session`, `attach_session`
+**Related methods:** `attach_session`, `get_session`, `list_sessions`, `open_session`
 **Related events:** `session.created`, `session.state_changed`, `session.closed`
 
 | Field | Type | Required | Default | Sensitive |
@@ -3226,11 +3226,11 @@ Synthetic representation:
 <!-- api-model: SetDaemonLogLevelRequest -->
 ## `SetDaemonLogLevelRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Typed control request for the daemon's managed logging handlers.
 
-**Related methods:** None
+**Related methods:** `set_daemon_log_level`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3248,11 +3248,11 @@ Synthetic representation:
 <!-- api-model: SetGroupColorRequest -->
 ## `SetGroupColorRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Set a group's display color.
 
-**Related methods:** None
+**Related methods:** `set_group_color`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3298,11 +3298,11 @@ Synthetic representation:
 <!-- api-model: SftpCopyRequest -->
 ## `SftpCopyRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Copy or move a remote SFTP path within one service.
 
-**Related methods:** None
+**Related methods:** `sftp_copy`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3380,11 +3380,11 @@ Synthetic representation:
 <!-- api-model: SftpDirectorySizeRequest -->
 ## `SftpDirectorySizeRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Summarise a remote directory tree within one SFTP service.
 
-**Related methods:** None
+**Related methods:** `sftp_directory_size`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3464,7 +3464,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpPathRequest` record.
 
-**Related methods:** `sftp_stat`, `sftp_lstat`, `sftp_realpath`, `sftp_readlink`, `sftp_mkdir`, `sftp_rmdir`, `sftp_remove`
+**Related methods:** `sftp_lstat`, `sftp_mkdir`, `sftp_readlink`, `sftp_realpath`, `sftp_remove`, `sftp_rmdir`, `sftp_stat`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3486,11 +3486,11 @@ Synthetic representation:
 <!-- api-model: SftpReadFileRequest -->
 ## `SftpReadFileRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpReadFileRequest` record.
 
-**Related methods:** None
+**Related methods:** `sftp_read_file`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3514,11 +3514,11 @@ Synthetic representation:
 <!-- api-model: SftpReadFileResult -->
 ## `SftpReadFileResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpReadFileResult` record.
 
-**Related methods:** None
+**Related methods:** `sftp_read_file`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3576,11 +3576,11 @@ Synthetic representation:
 <!-- api-model: SftpReplaceFileRequest -->
 ## `SftpReplaceFileRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpReplaceFileRequest` record.
 
-**Related methods:** None
+**Related methods:** `sftp_replace_file`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3610,11 +3610,11 @@ Synthetic representation:
 <!-- api-model: SftpReplaceFileResult -->
 ## `SftpReplaceFileResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpReplaceFileResult` record.
 
-**Related methods:** None
+**Related methods:** `sftp_replace_file`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3644,7 +3644,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `SftpServiceSummary` record.
 
-**Related methods:** `list_sftp_services`, `get_sftp_service`, `open_sftp`, `attach_sftp`
+**Related methods:** `attach_sftp`, `get_sftp_service`, `list_sftp_services`, `open_sftp`
 **Related events:** `sftp.created`, `sftp.state_changed`, `sftp.closed`, `sftp.failed`
 
 | Field | Type | Required | Default | Sensitive |
@@ -3704,7 +3704,7 @@ Synthetic representation:
 <!-- api-model: SplitConnectionRequest -->
 ## `SplitConnectionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Split a connection out of a multi-host SSH config block.
 
@@ -3715,7 +3715,7 @@ for stale-editor detection: ``None`` means no generation supplied
 (the check is skipped); zero is a legitimate generation and is
 enforced like any other value.
 
-**Related methods:** None
+**Related methods:** `split_connection`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3749,7 +3749,7 @@ Synthetic representation:
 <!-- api-model: SshConfigText -->
 ## `SshConfigText`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** The daemon-selected active SSH config text plus editor metadata.
 
@@ -3758,7 +3758,7 @@ never accepts a filesystem path from the client. ``display_name`` is the
 daemon-computed display label (home-collapsed); ``writable`` reflects
 whether the daemon's hardened atomic write path can replace the file.
 
-**Related methods:** None
+**Related methods:** `get_ssh_config_text`, `save_ssh_config_text`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3878,7 +3878,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Store or update a login password for a connection.
 
-**Related methods:** None
+**Related methods:** `store_connection_password`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -3908,7 +3908,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Store a key passphrase supplied through a protected interaction.
 
-**Related methods:** None
+**Related methods:** `store_key_passphrase`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -4004,7 +4004,7 @@ Synthetic representation:
 <!-- api-model: TerminalInput -->
 ## `TerminalInput`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `TerminalInput` record.
 
@@ -4066,7 +4066,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Frontend-neutral `TransferSummary` record.
 
-**Related methods:** `list_transfers`, `get_transfer`, `start_transfer`, `start_scp_transfer`
+**Related methods:** `get_transfer`, `list_transfers`, `start_scp_transfer`, `start_transfer`
 **Related events:** `transfer.created`, `transfer.started`, `transfer.progress`, `transfer.item_completed`, `transfer.completed`, `transfer.cancelled`, `transfer.failed`
 
 | Field | Type | Required | Default | Sensitive |
@@ -4140,7 +4140,7 @@ Synthetic representation:
 <!-- api-model: UpdateConnectionRequest -->
 ## `UpdateConnectionRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Patch a connection's configuration.
 
@@ -4185,11 +4185,11 @@ Synthetic representation:
 <!-- api-model: VerifyKeyPassphraseRequest -->
 ## `VerifyKeyPassphraseRequest`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Request daemon-owned verification using a protected interaction secret.
 
-**Related methods:** None
+**Related methods:** `verify_key_passphrase`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -4209,11 +4209,11 @@ Synthetic representation:
 <!-- api-model: VerifyKeyPassphraseResult -->
 ## `VerifyKeyPassphraseResult`
 
-**Status:** Schema only
+**Status:** Implemented
 **Introduced:** Protocol v1
 **Purpose:** Whether the protected passphrase unlocked the selected private key.
 
-**Related methods:** None
+**Related methods:** `verify_key_passphrase`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

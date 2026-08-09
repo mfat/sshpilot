@@ -11,12 +11,24 @@ import json
 import sys
 import types
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Tuple, TypeVar, Union
+from typing import (
+    Any,
+    Dict,
+    List,
+    Mapping,
+    Tuple,
+    TypeVar,
+    Union,
+    get_args,
+    get_type_hints,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
+VERSION_BASELINE_DIR = ROOT / "tests/api/snapshots/versions"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -138,6 +150,8 @@ IMPLEMENTED_MODELS = {
     "StoreConnectionPasswordRequest",
     "StoreKeyPassphraseRequest",
     "StorePluginSecretRequest",
+    "VerifyKeyPassphraseRequest",
+    "VerifyKeyPassphraseResult",
     "KnownHostEntrySummary",
     "KnownHostsSnapshot",
     "RemoveKnownHostEntriesRequest",
@@ -159,7 +173,6 @@ SENSITIVE_FIELDS = {
     "SftpReplaceFileRequest": {"content"},
     "SaveSshConfigTextRequest": {"text"},
     "StoreConnectionPasswordRequest": {"password"},
-    "StoreKeyPassphraseRequest": {"passphrase"},
     "StorePluginSecretRequest": {"value"},
     "SshConfigText": {"text"},
     "SuccessResponseEnvelope": {"result"},
@@ -240,6 +253,9 @@ RELATED_METHODS = {
     "KnownHostsSnapshot": ("list_known_hosts",),
     "RemoveKnownHostEntriesRequest": ("remove_known_host_entries",),
     "KnownHostsMutationResult": ("remove_known_host_entries",),
+    "StoreKeyPassphraseRequest": ("store_key_passphrase",),
+    "VerifyKeyPassphraseRequest": ("verify_key_passphrase",),
+    "VerifyKeyPassphraseResult": ("verify_key_passphrase",),
 }
 
 RELATED_EVENTS = {
@@ -374,6 +390,81 @@ def client_methods() -> List[str]:
         name
         for name, value in vars(SshPilotClient).items()
         if not name.startswith("_") and inspect.isfunction(value)
+    )
+
+
+def _public_model_map() -> Dict[str, type]:
+    return {model.__name__: model for model in public_models()}
+
+
+def _public_type_map() -> Dict[str, type]:
+    """Return documented dataclasses plus public enums used in relationships."""
+
+    found = _public_model_map()
+    found.update({enum_type.__name__: enum_type for enum_type in public_enums()})
+    return found
+
+
+def _models_in_annotation(annotation: Any, model_map: Mapping[str, type]) -> set[type]:
+    found: set[type] = set()
+    if inspect.isclass(annotation) and any(
+        annotation is model for model in model_map.values()
+    ):
+        found.add(annotation)
+    for nested in get_args(annotation):
+        found.update(_models_in_annotation(nested, model_map))
+    return found
+
+
+def _method_annotations(method: Any) -> Mapping[str, Any]:
+    """Resolve a client method's type hints without hiding model drift."""
+
+    globalns = dict(getattr(method, "__globals__", {}))
+    globalns["CoreEvent"] = CoreEvent
+    try:
+        return get_type_hints(method, globalns=globalns)
+    except (NameError, TypeError):
+        # A callback annotation may refer to a private event implementation
+        # that is intentionally not a public model.  Its ordinary request and
+        # result annotations remain available in the raw mapping.
+        return getattr(method, "__annotations__", {})
+
+
+def implemented_client_methods() -> frozenset[str]:
+    """Return methods implemented by either the core or daemon client path."""
+
+    return frozenset(
+        set(IMPLEMENTED_CLIENT_METHOD_CAPABILITIES)
+        | set(DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES)
+    )
+
+
+@lru_cache(maxsize=1)
+def derived_related_methods() -> Dict[str, tuple[str, ...]]:
+    """Derive direct request/result model relationships from client methods."""
+
+    models = _public_type_map()
+    related: Dict[str, set[str]] = {}
+    for method_name in implemented_client_methods():
+        method = getattr(SshPilotClient, method_name, None)
+        if method is None:
+            continue
+        for annotation in _method_annotations(method).values():
+            for model in _models_in_annotation(annotation, models):
+                related.setdefault(model.__name__, set()).add(method_name)
+    return {
+        name: tuple(sorted(methods)) for name, methods in related.items()
+    }
+
+
+def related_methods_for(model_name: str) -> tuple[str, ...]:
+    """Merge reviewed manual relationships with annotation-derived ones."""
+
+    return tuple(
+        sorted(
+            set(RELATED_METHODS.get(model_name, ()))
+            | set(derived_related_methods().get(model_name, ()))
+        )
     )
 
 
@@ -580,11 +671,127 @@ def _example_for_model(model: type, stack: Tuple[type, ...] = ()) -> Dict[str, A
 
 
 def _model_status(name: str) -> str:
-    if name in IMPLEMENTED_MODELS:
+    if name in _implemented_model_names():
         return "Implemented"
     if name in PARTIAL_MODELS:
         return "Partially implemented"
     return "Schema only"
+
+
+def _implemented_model_names() -> frozenset[str]:
+    """Derive implemented request/result models and retain explicit extras."""
+
+    derived = set(derived_related_methods())
+    return frozenset(set(IMPLEMENTED_MODELS) | derived)
+
+
+def validate_generator_metadata(
+    *,
+    sensitive_fields: Mapping[str, set[str]] | None = None,
+    related_methods: Mapping[str, tuple[str, ...]] | None = None,
+    related_events: Mapping[str, tuple[str, ...]] | None = None,
+    implemented_models: set[str] | None = None,
+) -> None:
+    """Validate generator metadata against the live public API.
+
+    The optional mappings make the validator directly testable with synthetic
+    stale metadata. Normal generation always uses the module's reviewed
+    metadata tables and annotation-derived implementation information.
+    """
+
+    models = _public_type_map()
+    sensitive = SENSITIVE_FIELDS if sensitive_fields is None else sensitive_fields
+    methods = RELATED_METHODS if related_methods is None else related_methods
+    events = RELATED_EVENTS if related_events is None else related_events
+    failures: list[str] = []
+
+    for model_name, fields in sensitive.items():
+        model = models.get(model_name)
+        if model is None:
+            failures.append(f"SENSITIVE_FIELDS references unknown model {model_name}")
+            continue
+        if not dataclasses.is_dataclass(model):
+            failures.append(
+                f"SENSITIVE_FIELDS target {model_name} is not a dataclass model"
+            )
+            continue
+        model_fields = {field.name: field for field in dataclasses.fields(model)}
+        for field_name in fields:
+            field = model_fields.get(field_name)
+            if field is None:
+                failures.append(
+                    f"SENSITIVE_FIELDS references unknown field {model_name}.{field_name}"
+                )
+            elif field.repr is not False:
+                failures.append(
+                    f"sensitive field {model_name}.{field_name} must use repr=False"
+                )
+
+    known_methods = set(client_methods())
+    for model_name, method_names in methods.items():
+        if model_name not in models:
+            failures.append(f"RELATED_METHODS references unknown model {model_name}")
+        for method_name in method_names:
+            if method_name not in known_methods:
+                failures.append(
+                    f"RELATED_METHODS references unknown client method {method_name}"
+                )
+
+    known_events = {item.value for item in EventType}
+    for model_name, event_names in events.items():
+        if model_name not in models:
+            failures.append(f"RELATED_EVENTS references unknown model {model_name}")
+        for event_name in event_names:
+            if event_name not in known_events:
+                failures.append(
+                    f"RELATED_EVENTS references unknown event {event_name}"
+                )
+
+    for status_name, status_models in (
+        ("IMPLEMENTED_MODELS", IMPLEMENTED_MODELS),
+        ("PARTIAL_MODELS", PARTIAL_MODELS),
+    ):
+        for model_name in status_models:
+            if model_name not in models:
+                failures.append(
+                    f"{status_name} references unknown model {model_name}"
+                )
+    status_overlap = set(IMPLEMENTED_MODELS) & set(PARTIAL_MODELS)
+    if status_overlap:
+        failures.append(
+            "a model cannot be both implemented and partial: "
+            + ", ".join(sorted(status_overlap))
+        )
+
+    derived = derived_related_methods()
+    expected_implemented = set(derived)
+    declared_implemented = (
+        _implemented_model_names()
+        if implemented_models is None
+        else set(implemented_models)
+    )
+    missing = expected_implemented - declared_implemented
+    if missing:
+        failures.append(
+            "implemented client request/result models are missing from metadata: "
+            + ", ".join(sorted(missing))
+        )
+    partial_conflicts = expected_implemented & set(PARTIAL_MODELS)
+    if partial_conflicts:
+        failures.append(
+            "implemented client models cannot be marked partially implemented: "
+            + ", ".join(sorted(partial_conflicts))
+        )
+
+    for model_name, method_names in derived.items():
+        effective = set(methods.get(model_name, ())) | set(derived.get(model_name, ()))
+        if not set(method_names) <= effective:
+            failures.append(
+                f"implemented model {model_name} is missing a derived method relationship"
+            )
+
+    if failures:
+        raise ValueError("Invalid API generator metadata:\n" + "\n".join(failures))
 
 
 def build_surface() -> Dict[str, Any]:
@@ -699,7 +906,7 @@ def build_model_index() -> str:
                 "",
             ]
         )
-        methods = RELATED_METHODS.get(name, ())
+        methods = related_methods_for(name)
         events = RELATED_EVENTS.get(name, ())
         lines.append(
             "**Related methods:** "
@@ -743,11 +950,66 @@ def _json_text(value: Mapping[str, Any]) -> str:
 
 
 def artifacts() -> Mapping[Path, str]:
+    validate_generator_metadata()
     return {
         ROOT / "docs/api/generated/model-index.md": build_model_index(),
         ROOT / "docs/api/generated/schema.json": _json_text(build_schema()),
         ROOT / "tests/api/snapshots/public_api.json": _json_text(build_surface()),
     }
+
+
+def version_baseline_path(
+    version: str = API_IMPLEMENTATION_VERSION,
+    *,
+    baseline_dir: Path = VERSION_BASELINE_DIR,
+) -> Path:
+    return baseline_dir / f"{version}.json"
+
+
+def validate_version_baseline(
+    surface: Mapping[str, Any],
+    *,
+    version: str = API_IMPLEMENTATION_VERSION,
+    baseline_dir: Path = VERSION_BASELINE_DIR,
+) -> None:
+    """Require the current public surface to match its reviewed version file."""
+
+    path = version_baseline_path(version, baseline_dir=baseline_dir)
+    if not path.exists():
+        raise ValueError(
+            f"No accepted public API baseline exists for implementation version {version}. "
+            "Review compatibility, bump the implementation version, update the API "
+            "changelog, regenerate artifacts, then explicitly accept the new version "
+            "baseline with --accept-version-baseline."
+        )
+    try:
+        baseline = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Could not read API version baseline {path}: {error}") from error
+    if baseline != dict(surface):
+        raise ValueError(
+            f"Public API surface changed while API_IMPLEMENTATION_VERSION remains {version}. "
+            "Review compatibility, bump the implementation version, update the API "
+            "changelog, regenerate artifacts, then explicitly accept the new version "
+            "baseline."
+        )
+
+
+def write_version_baseline(
+    surface: Mapping[str, Any],
+    *,
+    version: str = API_IMPLEMENTATION_VERSION,
+    baseline_dir: Path = VERSION_BASELINE_DIR,
+) -> Path:
+    path = version_baseline_path(version, baseline_dir=baseline_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json_text(surface), encoding="utf-8")
+    try:
+        display_path = path.relative_to(ROOT)
+    except ValueError:
+        display_path = path
+    print(f"Accepted public API baseline {display_path}")
+    return path
 
 
 def check_artifacts(expected: Mapping[Path, str]) -> int:
@@ -778,17 +1040,33 @@ def write_artifacts(expected: Mapping[Path, str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--check",
         action="store_true",
-        help="Fail if committed API artifacts differ from the current code.",
+        help="Fail if committed API artifacts or the version baseline differ.",
+    )
+    mode.add_argument(
+        "--accept-version-baseline",
+        action="store_true",
+        help="Explicitly accept the reviewed public surface for the current API version.",
     )
     args = parser.parse_args()
-    expected = artifacts()
-    if args.check:
-        return check_artifacts(expected)
-    write_artifacts(expected)
-    return 0
+    try:
+        expected = artifacts()
+        surface = build_surface()
+        if args.accept_version_baseline:
+            write_version_baseline(surface)
+            write_artifacts(expected)
+            return 0
+        validate_version_baseline(surface)
+        if args.check:
+            return check_artifacts(expected)
+        write_artifacts(expected)
+        return 0
+    except (OSError, ValueError) as error:
+        print(error, file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

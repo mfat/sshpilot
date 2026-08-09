@@ -2,6 +2,8 @@ import importlib.util
 import re
 from pathlib import Path
 
+import pytest
+
 from sshpilot.api import Capability, ErrorCode, EventType, PROTOCOL_VERSION
 from sshpilot.api.client import SshPilotClient
 from sshpilot.daemon.dispatch import DAEMON_METHOD_CAPABILITIES
@@ -302,6 +304,88 @@ def test_every_documented_sensitive_field_is_excluded_from_repr():
                     f"{model_name}.{field_schema['name']} is documented as sensitive "
                     "but is included in repr"
                 )
+
+
+def test_generator_metadata_validation_rejects_stale_entries():
+    generator = _load_generator()
+
+    sensitive = dict(generator.SENSITIVE_FIELDS)
+    sensitive["NoSuchModel"] = {"value"}
+    with pytest.raises(ValueError, match="unknown model"):
+        generator.validate_generator_metadata(sensitive_fields=sensitive)
+
+    sensitive = dict(generator.SENSITIVE_FIELDS)
+    sensitive["VerifyKeyPassphraseRequest"] = {"deleted_field"}
+    with pytest.raises(ValueError, match="unknown field"):
+        generator.validate_generator_metadata(sensitive_fields=sensitive)
+
+    relationships = dict(generator.RELATED_METHODS)
+    relationships["VerifyKeyPassphraseRequest"] = ("no_such_method",)
+    with pytest.raises(ValueError, match="unknown client method"):
+        generator.validate_generator_metadata(related_methods=relationships)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["VerifyKeyPassphraseRequest", "VerifyKeyPassphraseResult"],
+)
+def test_generator_metadata_rejects_implemented_model_marked_schema_only(model_name):
+    generator = _load_generator()
+    declared = set(generator._implemented_model_names())
+    declared.remove(model_name)
+
+    with pytest.raises(ValueError, match="missing from metadata"):
+        generator.validate_generator_metadata(implemented_models=declared)
+
+
+def test_api_version_baseline_acceptance_and_ratchet(tmp_path):
+    generator = _load_generator()
+    surface = generator.build_surface()
+
+    with pytest.raises(ValueError, match="No accepted public API baseline"):
+        generator.validate_version_baseline(
+            surface,
+            version="0.25",
+            baseline_dir=tmp_path,
+        )
+
+    generator.write_version_baseline(
+        surface,
+        version="0.25",
+        baseline_dir=tmp_path,
+    )
+    generator.validate_version_baseline(
+        surface,
+        version="0.25",
+        baseline_dir=tmp_path,
+    )
+
+    changed = dict(surface)
+    changed["client_methods"] = list(surface["client_methods"]) + ["new_public_method"]
+    with pytest.raises(ValueError, match="surface changed"):
+        generator.validate_version_baseline(
+            changed,
+            version="0.25",
+            baseline_dir=tmp_path,
+        )
+
+    with pytest.raises(ValueError, match="No accepted public API baseline"):
+        generator.validate_version_baseline(
+            surface,
+            version="0.26",
+            baseline_dir=tmp_path,
+        )
+
+    generator.write_version_baseline(
+        surface,
+        version="0.26",
+        baseline_dir=tmp_path,
+    )
+    generator.validate_version_baseline(
+        surface,
+        version="0.26",
+        baseline_dir=tmp_path,
+    )
 
 
 def test_api_relative_markdown_links_resolve():
