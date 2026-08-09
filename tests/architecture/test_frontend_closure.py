@@ -57,6 +57,7 @@ FRONTEND_LOCAL_SUBPROCESS = frozenset(
 KNOWN_PLUGIN_GAPS = (
     ("plugins/api.py", "run_command"),
     ("plugins/api.py", "run_command_stream"),
+    ("plugins/api.py", "acquire_multiplex"),
     ("plugins/api.py", "release_multiplex"),
 )
 
@@ -72,6 +73,7 @@ PLUGIN_API_BACKEND_IDENTITIES = frozenset(
         "run_command",
         "run_command_stream",
         "_spawn_stream",
+        "acquire_multiplex",
         "release_multiplex",
         "copy_key_to_host",
         "get_effective_ssh_config",
@@ -80,6 +82,73 @@ PLUGIN_API_BACKEND_IDENTITIES = frozenset(
 )
 PLUGIN_API_LOCAL_FUNCTIONS = frozenset(
     {"run_local_command", "run_local_command_stream"}
+)
+
+# Stable inventory of the supported PluginContext/facade surface.  This is
+# intentionally an identity list, not a generic static analyzer: adding a
+# public operational route requires an explicit ownership decision here and
+# in the Phase 7 matrix.  Private implementation helpers are checked by the
+# process/legacy-edge scan above instead.
+PLUGIN_FACADE_SURFACE = {
+    # PluginContext
+    "PluginContext.for_spawn": "API/daemon owned",
+    "PluginContext.register_protocol": "API/daemon owned",
+    "PluginContext.add_connection": "API/daemon owned",
+    "PluginContext.update_connection": "API/daemon owned",
+    "PluginContext.list_connections": "API/daemon owned",
+    "PluginContext.open_connection": "API/daemon owned",
+    "PluginContext.open_command_terminal": "API/daemon owned",
+    "PluginContext.open_local_command_terminal": "legitimate frontend/platform-local",
+    "PluginContext.create_group": "API/daemon owned",
+    "PluginContext.add_connection_to_group": "API/daemon owned",
+    "PluginContext.add_connection_group": "API/daemon owned",
+    "PluginContext.generate_key": "API/daemon owned",
+    "PluginContext.list_keys": "API/daemon owned",
+    "PluginContext.delete_key": "migration required",
+    "PluginContext.run_command": "migration required",
+    "PluginContext.run_local_command": "legitimate frontend/platform-local",
+    "PluginContext.run_command_stream": "migration required",
+    "PluginContext.run_local_command_stream": "legitimate frontend/platform-local",
+    "PluginContext.acquire_multiplex": "migration required",
+    "PluginContext.release_multiplex": "migration required",
+    "PluginContext.ensure_local_forward": "API/daemon owned",
+    "PluginContext.get_effective_ssh_config": "dead/unreachable code",
+    "PluginContext.copy_key_to_host": "dead/unreachable code",
+    "PluginContext.list_sessions": "migration required",
+    "PluginContext.read_terminal": "migration required",
+    "PluginContext.send_terminal": "migration required",
+    "PluginContext.data_dir": "legitimate frontend/platform-local",
+    "PluginContext.run_on_ui_thread": "legitimate frontend/platform-local",
+    "PluginContext.get_secret": "API/daemon owned",
+    "PluginContext.set_secret": "API/daemon owned",
+    "PluginContext.delete_secret": "API/daemon owned",
+    # Facades
+    "_EventsFacade.subscribe": "legitimate frontend/platform-local",
+    "_EventsFacade.unsubscribe": "legitimate frontend/platform-local",
+    "_UiFacade.register_page": "legitimate frontend/platform-local",
+    "_UiFacade.open_page": "legitimate frontend/platform-local",
+    "_UiFacade.notify": "legitimate frontend/platform-local",
+    "_UiFacade.register_connection_action": "legitimate frontend/platform-local",
+    "_UiFacade.open_web_tab": "legitimate frontend/platform-local",
+    "_SecretStore.get": "API/daemon owned",
+    "_SecretStore.set": "API/daemon owned",
+    "_SecretStore.delete": "API/daemon owned",
+    "_IdentityView.list": "migration required",
+    "_IdentityView.is_agent_available": "migration required",
+    "_SettingStore.get": "migration required",
+    "_SettingStore.set": "migration required",
+    "_FilesFacade.path": "legitimate frontend/platform-local",
+    "_FilesFacade.exists": "legitimate frontend/platform-local",
+    "_FilesFacade.read_text": "legitimate frontend/platform-local",
+    "_FilesFacade.read_bytes": "legitimate frontend/platform-local",
+    "_FilesFacade.write_text": "legitimate frontend/platform-local",
+    "_FilesFacade.write_bytes": "legitimate frontend/platform-local",
+    "_HttpFacade.get": "legitimate frontend/platform-local",
+    "_HttpFacade.post": "legitimate frontend/platform-local",
+}
+
+PLUGIN_FACADE_CLASSES = frozenset(
+    {identity.split(".", 1)[0] for identity in PLUGIN_FACADE_SURFACE}
 )
 
 
@@ -107,6 +176,19 @@ def _function_names(tree: ast.AST):
     }
 
 
+def _plugin_facade_surface(tree: ast.Module) -> set[str]:
+    """Return public methods on the supported plugin context/facades."""
+    found: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name not in PLUGIN_FACADE_CLASSES:
+            continue
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if not child.name.startswith("_"):
+                    found.add(f"{node.name}.{child.name}")
+    return found
+
+
 def _plugin_backend_functions(tree: ast.Module) -> set[str]:
     """Return plugin SDK functions containing direct backend/process edges."""
     found: set[str] = set()
@@ -124,6 +206,12 @@ def _plugin_backend_functions(tree: ast.Module) -> set[str]:
                 if module.endswith(("ssh_connection_builder", "ssh_config_utils")):
                     has_legacy_ssh_edge = True
                 if module.endswith("ssh_multiplex") or module == "sshpilot.ssh_multiplex":
+                    has_legacy_ssh_edge = True
+                # ``from .. import ssh_multiplex`` has no ImportFrom.module;
+                # the imported name is the relevant ownership edge.
+                if child.module is None and any(
+                    alias.name == "ssh_multiplex" for alias in child.names
+                ):
                     has_legacy_ssh_edge = True
             elif isinstance(child, ast.Call):
                 if (
@@ -143,6 +231,16 @@ def test_phase7_audit_documents_deferred_plugin_identities():
     assert "plugins/api.py" in text
     for function in PLUGIN_API_BACKEND_IDENTITIES:
         assert function in text
+
+
+def test_plugin_facade_surface_has_an_explicit_classification():
+    path = SOURCE / "plugins/api.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    assert _plugin_facade_surface(tree) == set(PLUGIN_FACADE_SURFACE)
+    text = AUDIT.read_text(encoding="utf-8")
+    for identity, status in PLUGIN_FACADE_SURFACE.items():
+        assert f"`{identity}`" in text, identity
+        assert status in {"API/daemon owned", "legitimate frontend/platform-local", "migration required", "dead/unreachable code"}
 
 
 def test_active_frontend_has_no_direct_backend_process_or_secret_ownership():
@@ -186,6 +284,17 @@ def test_active_frontend_has_no_direct_backend_process_or_secret_ownership():
     assert not violations, "new frontend backend ownership detected:\n" + "\n".join(violations)
 
 
+def test_relative_multiplex_import_is_an_unclassified_backend_edge():
+    tree = ast.parse(
+        "def new_unclassified():\n"
+        "    from .. import ssh_multiplex\n"
+        "    return ssh_multiplex.acquire('example')\n"
+    )
+    observed = _plugin_backend_functions(tree)
+    assert observed == {"new_unclassified"}
+    assert observed - PLUGIN_API_BACKEND_IDENTITIES
+
+
 def test_plugin_gap_identities_are_still_exactly_deferred():
     path = SOURCE / "plugins/api.py"
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -194,7 +303,5 @@ def test_plugin_gap_identities_are_still_exactly_deferred():
         assert module == "plugins/api.py"
         assert function in names
     observed = _plugin_backend_functions(tree)
-    assert observed == PLUGIN_API_BACKEND_IDENTITIES | PLUGIN_API_LOCAL_FUNCTIONS - {
-        "run_local_command_stream"
-    }
+    assert observed == PLUGIN_API_BACKEND_IDENTITIES | {"run_local_command"}
     assert not PLUGIN_API_BACKEND_IDENTITIES & PLUGIN_API_LOCAL_FUNCTIONS
