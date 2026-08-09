@@ -1886,16 +1886,21 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         self.secret_backend_row = Adw.ComboRow()
         self.secret_backend_row.set_title(_("Secret storage backend"))
-        # The daemon owns the backend registry: only names reach the UI.
+        # The daemon owns the backend registry: only names reach the UI. Never
+        # fetch it synchronously here — the first registry probe spawns keyring
+        # backends and `bw login --check` (seconds), which would freeze the page
+        # build. Use the controller's staged snapshot when one exists; the
+        # availability probe that runs when the page is shown refines the list.
         registered = []
         self._secret_registry = None
         controller = self._resolve_secrets_controller()
         if controller is not None:
             try:
-                self._secret_registry = controller.load_registry()
-                registered = [b.name for b in self._secret_registry.backends]
+                self._secret_registry = controller.registry()
+                if self._secret_registry is not None:
+                    registered = [b.name for b in self._secret_registry.backends]
             except Exception:
-                logger.debug("Secret backend registry load failed", exc_info=True)
+                logger.debug("Staged secret backend registry read failed", exc_info=True)
                 registered = []
         current_backend = self._secrets_current_backend(controller) or 'auto'
         if current_backend.strip().lower() == 'vaultwarden':
@@ -1912,6 +1917,10 @@ class PreferencesWindow(Adw.NavigationPage):
         # Offer EVERY registered backend (not just the available ones). Unavailable
         # ones are labelled so the choice is honest.
         preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
+        if not registered:
+            # No staged registry yet: the daemon's registered set is static, so
+            # show every known backend now and let the async probe refine.
+            registered = list(preferred_order)
         ordered_names = [n for n in preferred_order if n in registered]
         ordered_names += [n for n in registered if n not in preferred_order]
         self._secret_backend_ids = ['auto'] + ordered_names
@@ -2713,6 +2722,7 @@ class PreferencesWindow(Adw.NavigationPage):
             return
 
         def worker():
+            registry = None
             available = None
             try:
                 registry = controller.load_registry()
@@ -2722,11 +2732,42 @@ class PreferencesWindow(Adw.NavigationPage):
             except Exception:
                 available = None
             if available is not None:
+                names = [b.name for b in registry.backends]
                 GLib.idle_add(
-                    lambda: (self._set_secret_backend_model(available), False)[1]
+                    lambda: (self._apply_registry_probe(names, available), False)[1]
                 )
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_registry_probe(self, names, available):
+        """Apply an async registry probe: reconcile the combo's backend list with
+        the daemon's registry (the page may have been built from the fallback
+        name set), then refresh the "(unavailable)" labels."""
+        ordered = getattr(self, '_secret_backend_ordered', [])
+        if set(names) != set(ordered):
+            # The build used fallback names and the registry disagrees — rebuild
+            # the id/order lists, keeping the current selection by name.
+            current = self._current_secret_backend_name()
+            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
+            ordered = [n for n in preferred_order if n in names]
+            ordered += [n for n in names if n not in preferred_order]
+            ids = ['auto'] + ordered
+            if current not in ids:
+                ids.append(current)
+                ordered = ordered + [current]
+            self._secret_backend_ids = ids
+            self._secret_backend_ordered = ordered
+            self._set_secret_backend_model(available)
+            self._secret_backend_selection_sync = True
+            try:
+                self.secret_backend_row.set_selected(ids.index(current))
+            except Exception:
+                pass
+            finally:
+                self._secret_backend_selection_sync = False
+        else:
+            self._set_secret_backend_model(available)
+        return False
 
     def _probe_bitwarden_async(self):
         """Probe Bitwarden readiness on a worker thread, then update the status row.
