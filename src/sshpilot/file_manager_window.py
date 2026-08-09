@@ -2494,6 +2494,20 @@ class FileManagerWindow(Adw.Window):
         if errors:
             self._left_pane.show_toast(errors[0])
 
+    @staticmethod
+    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
+        """True when *destination_path* is the source or lives inside it."""
+        source_norm = posixpath.normpath(source_path)
+        dest_norm = posixpath.normpath(destination_path)
+        if source_norm in {"", ".", "/"}:
+            return False
+        if dest_norm == source_norm:
+            return True
+        source_prefix = source_norm.rstrip("/")
+        if not source_prefix:
+            return False
+        return dest_norm.startswith(f"{source_prefix}/")
+
     def _perform_remote_clipboard_operation(
         self,
         entries: List[FileEntry],
