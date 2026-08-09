@@ -2444,81 +2444,31 @@ class TerminalWidget(Gtk.Box):
             pass
         self.backend.configure({"encoding": encoding, "scrollback_lines": 10000})
         self.backend.apply_theme()
-        self._hovered_hyperlink_uri = None
-        # Hover state has two independent sources that must not clear each
-        # other: OSC 8 links arrive via VTE's hyperlink-hover-uri-changed
-        # signal, plain-text URLs via the motion handler's regex-only probe.
-        self._hovered_osc8_uri = None
-        self._hovered_plaintext_uri = None
-        # This also installs backend-neutral selection/content callbacks. The
-        # backend treats hyperlink-specific pieces as optional capabilities.
+        # VTE owns hover highlighting and cursor changes for both its
+        # registered regex and OSC 8 hyperlinks.  Python only looks a URI up
+        # for an explicit click or context-menu action.
         self.backend.setup_link_handling(
             self._on_vte_motion,
             self._on_vte_pointer_enter,
             self._on_selection_changed,
-            self._on_vte_hyperlink_hover,
         )
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
 
     def _on_vte_pointer_enter(self, controller, x, y):
-        """Called when the pointer enters the VTE widget area.
-
-        Cursor shape is managed explicitly in _on_vte_motion via set_cursor(),
-        so VTE does not need keyboard focus for hover detection.  VTE's own
-        EventControllerMotion fires for the widget under the pointer regardless
-        of focus — just like GNOME Terminal, which underlines URLs even without
-        focus.
-
-        Previously this called grab_focus() to restore VTE's native cursor-
-        shape mechanism, but that triggered a focus-in event which cleared
-        VTE's internal m_match_hilite hover state, breaking URL underlines
-        after paste.  Now that cursor shape is driven from Python (set_cursor),
-        the grab_focus is not needed here.
-        """
+        """Compatibility no-op; VTE owns pointer-enter link handling."""
 
     def _vte_uri_at(self, x: float, y: float) -> Optional[str]:
         """Return the URI at widget coordinates through the backend.
 
         Full one-shot lookup (OSC 8 + plain-text regex) — used by the
-        Ctrl+click gesture only. Hover tracking must not use this on every
-        motion event; see _on_vte_motion.
+        Ctrl+click and context-menu gestures only.
         """
         if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
             return None
         if not self.backend.supports_feature("hyperlinks"):
             return None
         return self.backend.hyperlink_at(x, y)
-
-    def _update_hover_state(self) -> None:
-        """Merge the two hover sources into the effective hovered URI.
-
-        OSC 8 hover comes from VTE's native signal, plain-text URLs from the
-        motion handler's regex-only probe; tracking them separately keeps one
-        source from clearing the other when the pointer sits on an OSC 8 link
-        that does not match the plain-text regex (or vice versa).
-        """
-        self._hovered_hyperlink_uri = (
-            getattr(self, '_hovered_osc8_uri', None)
-            or getattr(self, '_hovered_plaintext_uri', None)
-        )
-        try:
-            self.backend.set_pointer_over_link(bool(self._hovered_hyperlink_uri))
-        except Exception:
-            pass
-
-    def _on_vte_hyperlink_hover(self, uri):
-        """Handle VTE's native hyperlink hover notification (OSC 8, since 0.50).
-
-        VTE emits this when the hovered hyperlink changes; it carries the URI
-        only, not widget coordinates, so we do not need a raw position probe on
-        every pointer move. ``uri`` is owned by VTE and only valid during the
-        callback, so the string is copied into our own state immediately.
-        """
-        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
-            return
-        self._hovered_osc8_uri = uri or None
-        self._update_hover_state()
 
     @staticmethod
     def _click_has_link_modifier(state) -> bool:
@@ -2533,50 +2483,11 @@ class TerminalWidget(Gtk.Box):
         return bool(state & Gdk.ModifierType.CONTROL_MASK)
 
     def _on_vte_motion(self, controller, x, y):
-        """Detect plain-text URLs under the mouse cursor (regex fallback).
-
-        This is the high-frequency path: it runs on every pointer move, so it
-        deliberately performs the plain-text regex probe only and NEVER calls
-        check_hyperlink_at() — that native probe dereferences VTE screen state
-        and is what segfaulted in #1104 from this very handler. OSC 8 hover is
-        tracked by VTE's native hyperlink-hover-uri-changed signal instead
-        (_on_vte_hyperlink_hover); the Ctrl+click gesture still performs a full
-        one-shot lookup at click time.
-        """
-        # Never touch the VTE screen state while the terminal is being torn
-        # down: the motion controller may still deliver events while VTE's
-        # internal ring is freed, and even check_match_at() dereferences that
-        # state. This handler is a no-op during teardown.
-        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
-            return
-        try:
-            uri = None
-            if self.backend.supports_feature("hyperlinks"):
-                uri = self.backend.plain_text_link_at(x, y)
-            event = controller.get_current_event()
-
-            # Only update when we have a definitive answer; never clear via a
-            # missing event (the cursor may still be on the same link). Cursor
-            # shape is driven from the merged hover state so an active OSC 8
-            # hover is not clobbered by a regex miss on the same cell.
-            if uri or event:
-                self._hovered_plaintext_uri = uri or None
-                # VTE's internal hover state (underline + cursor shape) is only
-                # updated when VTE processes its own GDK events.  After a paste
-                # the mouse may not have moved, so VTE never runs that path and
-                # the visual feedback is missing even though match_check()
-                # works fine.  Manually driving the widget cursor here gives us
-                # an independent fallback that doesn't depend on VTE's internal
-                # bookkeeping.  (set_pointer_over_link also restores the I-beam
-                # explicitly: set_cursor(None) would inherit the parent's
-                # default arrow.)
-                self._update_hover_state()
-        except Exception as e:
-            logger.debug(f"URL hover error: {e}")
+        """Compatibility no-op: never query VTE screen coordinates on motion."""
 
     def _on_open_link_activated(self, action, param):
         """Open the hyperlink that was under the cursor when the context menu was triggered."""
-        uri = getattr(self, '_context_menu_hyperlink_uri', None) or getattr(self, '_hovered_hyperlink_uri', None)
+        uri = getattr(self, '_context_menu_hyperlink_uri', None)
         if uri:
             try:
                 Gio.AppInfo.launch_default_for_uri(uri, None)
@@ -2586,7 +2497,7 @@ class TerminalWidget(Gtk.Box):
 
     def _on_copy_link_activated(self, action, param):
         """Copy the hyperlink to the clipboard."""
-        uri = getattr(self, '_context_menu_hyperlink_uri', None) or getattr(self, '_hovered_hyperlink_uri', None)
+        uri = getattr(self, '_context_menu_hyperlink_uri', None)
         if uri:
             try:
                 display = Gdk.Display.get_default()
@@ -3279,6 +3190,24 @@ class TerminalWidget(Gtk.Box):
                 self._menu_popover.set_parent(parent_widget)
             self._menu_parent_widget = parent_widget
 
+            def _prepare_context_menu(x, y):
+                """Snapshot the URI at the actual invocation coordinates."""
+                uri = self._vte_uri_at(x, y)
+                self._context_menu_hyperlink_uri = uri
+                has_link = bool(uri)
+                in_menu = getattr(self, '_link_section_in_menu', False)
+                if has_link and not in_menu:
+                    self._menu_model.insert_section(0, None, self._link_menu)
+                    self._link_section_in_menu = True
+                elif not has_link and in_menu:
+                    self._menu_model.remove(0)
+                    self._link_section_in_menu = False
+
+            self._native_vte_context_menu = False
+            if self.backend.supports_feature("native_context_menu"):
+                self._native_vte_context_menu = self.backend.setup_native_context_menu(
+                    self._menu_popover, _prepare_context_menu)
+
             self._menu_needs_manual_dismiss = not self.backend.supports_feature("hyperlinks")
             if self._menu_needs_manual_dismiss:
                 self._menu_popover.set_autohide(False)
@@ -3325,6 +3254,11 @@ class TerminalWidget(Gtk.Box):
                             pass
                         self.paste_text()
                         return
+                    # VTE 0.76+ owns recognition, placement and popup lifecycle.
+                    # This gesture exists on that path solely to preserve the
+                    # paste-on-right-click preference above.
+                    if getattr(self, '_native_vte_context_menu', False):
+                        return
                     # Stop event propagation to prevent other context menus
                     gest.set_state(Gtk.EventSequenceState.CLAIMED)
                     # Focus terminal first for reliable copy/paste
@@ -3337,16 +3271,7 @@ class TerminalWidget(Gtk.Box):
                     # under the cursor.  Insert/remove from the live model so
                     # the items are completely absent (not just greyed out).
                     try:
-                        uri = getattr(self, '_hovered_hyperlink_uri', None)
-                        self._context_menu_hyperlink_uri = uri
-                        has_link = bool(uri)
-                        in_menu = getattr(self, '_link_section_in_menu', False)
-                        if has_link and not in_menu:
-                            self._menu_model.insert_section(0, None, self._link_menu)
-                            self._link_section_in_menu = True
-                        elif not has_link and in_menu:
-                            self._menu_model.remove(0)
-                            self._link_section_in_menu = False
+                        _prepare_context_menu(x, y)
                     except Exception:
                         pass
                     # Position popover near the click. The gesture is on the backend
@@ -3847,22 +3772,6 @@ class TerminalWidget(Gtk.Box):
             except (ProcessLookupError, OSError):
                 pass
 
-        # Fall back to getting from PTY or VTE helpers
-        try:
-            # Prefer PID recorded at spawn complete
-            if getattr(self, 'process_pid', None):
-                return self.process_pid
-            pty = None
-            if self.backend:
-                pty = self.backend.get_pty()
-            if pty and hasattr(pty, 'get_pid'):
-                pid = pty.get_pid()
-                if pid:
-                    self.process_pid = pid
-                    return pid
-        except Exception as e:
-            logger.error(f"Error getting terminal PID: {e}")
-
         return None
 
     def _on_destroy(self, widget):
@@ -4355,7 +4264,9 @@ class TerminalWidget(Gtk.Box):
                 # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
                 # The remote shell emits OSC escape sequences to set the window title
                 # Common formats: "user@host: /path/to/dir", "/path/to/dir", "user@host:/path/to/dir"
-                remote_dir = self._parse_directory_from_title(title)
+                remote_dir = None
+                if not getattr(self, '_native_cwd_available', False):
+                    remote_dir = self._parse_directory_from_title(title)
                 if remote_dir:
                     self._current_remote_directory = remote_dir
                     logger.debug(f"Parsed remote directory from window title (deprecated API): {remote_dir}")
@@ -4549,11 +4460,25 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
+        cwd_uri = event.get("cwd_uri")
+        if cwd_uri:
+            try:
+                from urllib.parse import unquote, urlparse
+                parsed = urlparse(cwd_uri)
+                if parsed.scheme == "file" and parsed.path:
+                    self._current_remote_directory = unquote(parsed.path)
+                    self._native_cwd_available = True
+            except Exception:
+                logger.debug("Could not parse VTE current-directory URI", exc_info=True)
+
         title = event.get("title")
         if title:
-            remote_dir = self._parse_directory_from_title(title)
-            if remote_dir:
-                self._current_remote_directory = remote_dir
+            # OSC 7 is authoritative; title parsing remains a fallback for
+            # shells which do not report a current-directory URI.
+            if not getattr(self, '_native_cwd_available', False):
+                remote_dir = self._parse_directory_from_title(title)
+                if remote_dir:
+                    self._current_remote_directory = remote_dir
             self.emit("title-changed", title)
         if not self._is_local_terminal():
             return
