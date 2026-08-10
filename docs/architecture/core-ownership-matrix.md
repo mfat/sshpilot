@@ -55,11 +55,11 @@ it. Classification below reflects authoritative I/O, not import cleanliness.
 | `effective_config_check.py` | yes | `DAEMON_STATE_REQUIRED` | Launches local `ssh`/`ssh -G` subprocesses — daemon-owned. |
 | `authorized_keys_service.py` | yes | `DAEMON_STATE_REQUIRED` | Authorized-keys file mutation and `ssh-copy-id` — daemon-owned. |
 | `key_utils.py` | yes | `MIXED_NEEDS_SPLIT` | Pure private-key sniffing local; key discovery over SSH dir daemon-owned. |
-| `ssh_multiplex.py` | yes | `DAEMON_STATE_REQUIRED` | ControlMaster socket policy + `invalidate_master` touches SSH state. |
+| `ssh_multiplex.py` | yes | `DAEMON_STATE_REQUIRED` | ControlMaster socket policy and daemon-owned master expiry. |
 | `ssh_key_fingerprint.py` | yes | `DAEMON_STATE_REQUIRED` | Runs `ssh-keygen -lf` / `ssh-add -L` — daemon-owned. |
-| `scp_utils.py` | yes | `DAEMON_STATE_REQUIRED` | SCP/SFTP process construction — daemon-owned. |
-| `sftp_utils.py` | yes | `DAEMON_STATE_REQUIRED` | SFTP mount helpers run `sshfs` — daemon-owned. |
-| `agent_client.py` | yes | `DAEMON_STATE_REQUIRED` | `ssh-add`/`ssh-agent` control — daemon-owned. |
+| `scp_utils.py` | no | `PURE_FRONTEND_SAFE` | Pure SCP operand normalization and error classification; native execution is daemon-owned elsewhere. |
+| `sftp_utils.py` | yes | `PURE_FRONTEND_SAFE` | External GVFS/file-manager and `sshfs` presentation only; no frontend SSH verification. |
+| `agent_client.py` | yes | `PURE_FRONTEND_SAFE` | Local/PyXterm agent shell process only. |
 
 ## Explicitly allowed pure-core frontend dependencies
 

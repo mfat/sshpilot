@@ -6,9 +6,9 @@ module into focused submodules.  Phase 4a moved the low-coupling helpers
 cancellation exception).  Phase 4b moved the standalone dialogs and
 pane-level UI controls (``SFTPProgressDialog``, ``PathEntry``,
 ``PaneControls``, ``PaneToolbar``, ``PropertiesDialog``).  Phase 4c
-extracted ``FilePane`` (4c-ii) and the OpenSSH SFTP backend (4c-i).
-``FileManagerWindow`` remains in ``sshpilot.file_manager_window`` and will
-move in 4c-iii.
+extracted ``FilePane`` (4c-ii).  The in-app backend is now the daemon-owned
+``DaemonSftpManager``; ``FileManagerWindow`` remains in
+``sshpilot.file_manager_window``.
 """
 
 import logging

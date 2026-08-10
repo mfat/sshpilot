@@ -308,8 +308,7 @@ class TerminalManager:
                 window,
                 _(
                     "The daemon-backed SSH session could not be started.\n"
-                    "Enable “Use legacy local SSH terminals” in Preferences "
-                    "only if you intentionally need that mode."
+                    "Check the daemon status and try again."
                 ),
             )
             return

@@ -1,6 +1,6 @@
 """
 Terminal Widget for sshPilot
-Integrated VTE terminal with SSH connection handling using system SSH client
+Integrated VTE terminal for daemon-backed sessions and local shell presentation
 """
 
 from .api.connection_identity import connection_id_for
@@ -11,8 +11,6 @@ import time
 import re
 import gi
 from gettext import gettext as _
-import asyncio
-import threading
 import weakref
 import subprocess
 import shutil
@@ -26,8 +24,6 @@ from .terminal_backends import (
     PyXtermTerminalBackend,
     PyXtermBridgeBackend,
 )
-from .plugins.api import PluginContext, ProtocolError
-from .plugins.registry import protocol_registry
 
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
@@ -75,7 +71,7 @@ vte-terminal {
 
 
 class TerminalWidget(Gtk.Box):
-    """A terminal widget that uses VTE for display and system SSH client for connections"""
+    """A terminal widget for daemon sessions, local shells, and presentation."""
     __gtype_name__ = 'TerminalWidget'
 
     # Signals
@@ -879,99 +875,13 @@ class TerminalWidget(Gtk.Box):
                     )
                 return
 
-            # Remote SSH terminals must always be re-opened by TerminalManager
-            # through the daemon.  Refuse to fall back to the GTK-owned spawn
-            # path if a caller constructed a terminal without its manager hook.
-            if (
-                getattr(getattr(self, 'connection', None), 'protocol', 'ssh') == 'ssh'
-                and getattr(getattr(self, 'connection', None), 'hostname', None)
-                != 'localhost'
-            ):
-                raise RuntimeError('Daemon reconnect handler is unavailable')
-
-            # Rebuild the SSH command with the latest preferences before reconnecting
-            def _prepare_and_connect():
-                prepared = False
-                try:
-                    prepared = self._refresh_connection_command()
-                except Exception as exc:
-                    logger.error(f"Failed to refresh SSH command before reconnect: {exc}")
-                    prepared = False
-
-                if not prepared:
-                    self._set_connecting_overlay_visible(False)
-                    self._record_error_detail(_('Reconnect failed to start'))
-                    self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
-                    return False
-
-                if not self._connect_ssh():
-                    # Show banner again if failed to start reconnect
-                    self._set_connecting_overlay_visible(False)
-                    self._record_error_detail(_('Reconnect failed to start'))
-                    self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
-                return False
-
-            GLib.idle_add(_prepare_and_connect)
+            self._set_connecting_overlay_visible(False)
+            self._record_error_detail(_('Daemon reconnect handler is unavailable'))
+            self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
         except Exception:
             self._set_connecting_overlay_visible(False)
             self._record_error_detail(_('Reconnect failed'))
             self._set_disconnected_banner_visible(True, _('Reconnect failed'))
-
-    def _refresh_connection_command(self) -> bool:
-        """Refresh the prepared SSH command using current preferences."""
-
-        connection = getattr(self, 'connection', None)
-        if not connection:
-            logger.error('Reconnect requested without an active connection')
-            return False
-
-        if getattr(connection, 'protocol', 'ssh') != 'ssh':
-            # Plugin protocols rebuild their command statelessly in
-            # build_spawn(); there is no prepared SSH command to refresh.
-            return True
-
-        try:
-            if hasattr(connection, 'ssh_cmd'):
-                connection.ssh_cmd = []
-            # Drop the cached builder result so reconnect re-derives the command,
-            # environment, and auth (a stale askpass/agent decision must not leak).
-            if hasattr(connection, 'ssh_connection_cmd'):
-                connection.ssh_connection_cmd = None
-        except Exception as exc:
-            logger.debug(f"Unable to reset cached ssh_cmd before reconnect: {exc}")
-
-        # Native-only connection (connect() delegates to native_connect()).
-        connect_coro = None
-        try:
-            if hasattr(connection, 'native_connect'):
-                connect_coro = connection.native_connect()
-            elif hasattr(connection, 'connect'):
-                connect_coro = connection.connect()
-        except Exception as exc:
-            logger.error(f"Failed to build connection coroutine for reconnect: {exc}")
-            connect_coro = None
-
-        if connect_coro is None:
-            logger.error('Unable to refresh SSH command; missing connect coroutine')
-            return False
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        try:
-            if loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
-                future.result()
-            else:
-                loop.run_until_complete(connect_coro)
-        except Exception as exc:
-            logger.error(f"Failed to refresh SSH command for reconnect: {exc}")
-            return False
-
-        return bool(getattr(connection, 'ssh_cmd', None))
 
     def _set_connecting_overlay_visible(self, visible: bool):
         try:
@@ -1612,308 +1522,6 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Failed to handle daemon session exit: {e}")
 
-    def _connect_ssh(self):
-        """Connect to SSH host"""
-        if not self.connection:
-            logger.error("No connection configured")
-            return False
-
-        # Skip SSH spawning if daemon mode is already started
-        if self._daemon_mode:
-            logger.debug("Skipping SSH spawn for daemon-backed terminal")
-            return True
-
-        # Ensure terminal backend is properly initialized
-        if not hasattr(self, 'backend') or self.backend is None:
-            logger.error("Terminal backend not initialized")
-            return False
-
-        try:
-            # Connect in a separate thread to avoid blocking UI
-            thread = threading.Thread(target=self._connect_ssh_thread)
-            thread.daemon = True
-            thread.start()
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to start SSH connection: {e}")
-            GLib.idle_add(self._on_connection_failed, str(e))
-            return False
-
-    def _connect_ssh_thread(self):
-        """SSH connection thread: directly spawn SSH and rely on its output for errors."""
-        try:
-            pre_cmd = ''
-            try:
-                pre_cmd = (getattr(self.connection, 'pre_command', '') or '').strip()
-                if not pre_cmd and hasattr(self.connection, 'data'):
-                    pre_cmd = (self.connection.data.get('pre_command') or '').strip()
-            except Exception:
-                pre_cmd = ''
-            if pre_cmd:
-                logger.info(f"Running pre-connection command: {pre_cmd}")
-                try:
-                    result = subprocess.run(
-                        pre_cmd,
-                        shell=True,
-                        timeout=30,
-                    )
-                    if result.returncode != 0:
-                        logger.warning(f"Pre-connection command exited with code {result.returncode}: {pre_cmd}")
-                except subprocess.TimeoutExpired:
-                    logger.warning(f"Pre-connection command timed out: {pre_cmd}")
-                except Exception as pre_exc:
-                    logger.warning(f"Pre-connection command failed: {pre_exc}")
-
-            # Preload this host's key(s) into ssh-agent before spawning ssh so a
-            # passphrased key locked in gnome-keyring gets unlocked and can sign
-            # (the agent is never disabled). Done here, on the connect worker
-            # thread, so the GLib main loop stays free and OUR askpass dialog can
-            # render for a not-stored passphrase. Best-effort; never blocks spawn.
-            # SSH-only: plugin protocols have no agent/keys.
-            if getattr(self.connection, 'protocol', 'ssh') == 'ssh':
-                try:
-                    preload = getattr(self.connection, '_preload_keys_into_agent', None)
-                    if callable(preload):
-                        preload(self.config)
-                except Exception as preload_exc:
-                    logger.debug(f"Key preload skipped/failed: {preload_exc}")
-
-            GLib.idle_add(self._setup_ssh_terminal)
-        except Exception as e:
-            logger.error(f"SSH connection failed: {e}")
-            GLib.idle_add(self._on_connection_failed, str(e))
-
-    def _setup_ssh_terminal(self):
-        """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
-        # Shutdown race guard: the connect worker schedules this via idle_add, so
-        # it can run after cleanup_all() marked this terminal quitting (or the
-        # window began closing). Spawning SSH now leaks a process past shutdown.
-        root = self.get_root() if hasattr(self, 'get_root') else None
-        if getattr(self, '_is_quitting', False) or getattr(root, '_is_quitting', False):
-            logger.debug("Terminal/window quitting, skipping SSH spawn")
-            return
-        try:
-            # The spawn command comes from the connection's protocol backend
-            # (sshpilot.plugins). For SSH ("plugin zero") this is a pure
-            # indirection over the same prepared build_ssh_connection() result
-            # that Connection.native_connect()/connect() produced, so argv/env
-            # are identical to consuming connection.ssh_connection_cmd directly.
-            # The terminal handles only the runtime mechanics that cannot live
-            # in a pure command builder: askpass log forwarding (passphrase +
-            # login password from resolve_native_auth), terminal env tweaks,
-            # and the PTY/spawn.
-            # NOTE: self.backend is the *terminal* backend (VTE vs fallback);
-            # protocol backends are a different axis.
-            proto = getattr(self.connection, 'protocol', 'ssh')
-            protocol_backend = protocol_registry().get_or_none(proto)
-            working_dir = None
-            # Fail closed: a non-SSH connection whose backend isn't registered
-            # (plugin disabled / failed to load / API mismatch) must not silently
-            # fall back to an ssh invocation.
-            if (protocol_backend is None and proto != 'ssh'
-                    and getattr(self.connection, 'ssh_connection_cmd', None) is None):
-                GLib.idle_add(
-                    self._on_connection_failed,
-                    _("No backend for protocol '{}'. The plugin may be disabled, "
-                      "failed to load, or targets a different API version.").format(proto))
-                return
-            if protocol_backend is not None:
-                # Scope the spawn context to the plugin that registered the
-                # protocol so a backend's ctx.settings/secrets resolve to its
-                # own namespace. host=None: build_spawn must not use ui/events.
-                pid = protocol_registry().plugin_id_for(proto) or 'core'
-                plugin_ctx = PluginContext.for_spawn(
-                    plugin_id=pid,
-                    app_config=self.config,
-                    connection_manager=self.connection_manager,
-                    protocol_registry=protocol_registry(),
-                )
-                try:
-                    spec = protocol_backend.build_spawn(self.connection, plugin_ctx)
-                except ProtocolError as e:
-                    GLib.idle_add(self._on_connection_failed, str(e))
-                    return
-                ssh_cmd = list(spec.argv)
-                env = dict(spec.env)
-                working_dir = spec.working_directory
-                use_askpass = bool(spec.extras.get('use_askpass'))
-                use_sshpass = bool(spec.extras.get('use_sshpass'))
-                password_value = spec.extras.get('password')
-            elif (ssh_conn_cmd := getattr(self.connection, 'ssh_connection_cmd', None)) is not None:
-                # No backend registered (plugin system unavailable): consume the
-                # prepared command directly, exactly as before the plugin seam.
-                ssh_cmd = list(ssh_conn_cmd.command)
-                env = dict(ssh_conn_cmd.env)
-                use_askpass = bool(getattr(ssh_conn_cmd, 'use_askpass', False))
-                use_sshpass = bool(getattr(ssh_conn_cmd, 'use_sshpass', False))
-                password_value = ssh_conn_cmd.password
-            else:
-                # Fallback: a bare prepared command list from an older path, or a
-                # minimal ssh invocation as a last resort.
-                prepared = getattr(self.connection, 'ssh_cmd', None)
-                if isinstance(prepared, (list, tuple)) and prepared:
-                    ssh_cmd = list(prepared)
-                else:
-                    ssh_cmd = ['ssh']
-                env = os.environ.copy()
-                use_askpass = False
-                use_sshpass = False
-                password_value = None
-
-            # Route identity/agent env injection through the selected identity provider
-            # (default: system ssh-agent), so all injection goes through one seam and
-            # honors the configured default. Idempotent over the inherited environment.
-            from .identity import get_identity_manager
-            env = get_identity_manager().apply_selected_to_env(env)
-
-            # Remember whether a stored password was supplied this attempt, so an
-            # auth failure can say "saved password rejected" rather than a generic
-            # "authentication failed". Delivery is via askpass (not sshpass/PTY).
-            self._used_stored_password = bool(password_value)
-
-            logger.debug(f"SSH command from builder: {' '.join(ssh_cmd)}")
-
-            # Auth secrets (login password + key passphrase) are delivered by
-            # SSH_ASKPASS from resolve_native_auth — REQUIRE=prefer so MFA/OTP
-            # prompts declined by the helper appear on this terminal's TTY.
-            # Do not wrap with sshpass or arm PTY password autofill here.
-            if use_sshpass:
-                logger.debug(
-                    "Ignoring use_sshpass on terminal spawn; askpass owns password delivery"
-                )
-
-            # Forward askpass helper log lines into our logger while connecting so
-            # passphrase/password-prompt activity is visible. Only new lines are
-            # forwarded (the log file persists for the whole session).
-            if use_askpass:
-                self._enable_askpass_log_forwarding(include_existing=False)
-
-            # Terminal-specific environment tweaks.
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
-            env['SHELL'] = env.get('SHELL', '/bin/bash')
-            env['SSHPILOT_FLATPAK'] = '1'
-            # Add /app/bin to PATH for Flatpak compatibility
-            if os.path.exists('/app/bin'):
-                current_path = env.get('PATH', '')
-                if '/app/bin' not in current_path:
-                    env['PATH'] = f"/app/bin:{current_path}"
-
-            # Convert environment dict to list format expected by VTE
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-
-            # Log the command being executed for debugging
-            logger.debug(f"Spawning SSH command: {ssh_cmd}")
-            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
-
-            # Convert env_list to dict for backend
-            env_dict = {}
-            if env_list:
-                for env_item in env_list:
-                    if '=' in env_item:
-                        key, value = env_item.split('=', 1)
-                        env_dict[key] = value
-
-            try:
-                self.backend.spawn_async(
-                    argv=ssh_cmd,
-                    env=env_dict if env_dict else None,
-                    cwd=working_dir or os.path.expanduser('~') or '/',
-                    flags=0,
-                    child_setup=None,
-                    callback=self._on_spawn_complete,
-                    user_data=()
-                )
-            except GLib.Error as e:
-                logger.error(f"VTE spawn failed with GLib error: {e}")
-                # Check if it's a "No such file or directory" error for sshpass
-                if "sshpass" in str(e) and "No such file or directory" in str(e):
-                    logger.error("sshpass binary not found, falling back to askpass")
-                    # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list, working_dir)
-                else:
-                    self._on_connection_failed(str(e))
-                return
-            except Exception as e:
-                logger.error(f"VTE spawn failed with exception: {e}")
-                self._on_connection_failed(str(e))
-                return
-
-            # Defer marking as connected until spawn completes
-            try:
-                self.apply_theme()
-            except Exception:
-                pass
-
-            # Apply theme after connection is established
-            self.apply_theme()
-
-            # Focus the terminal
-            if self.backend:
-                self.backend.grab_focus()
-
-            # Add fallback timer to hide spinner if spawn completion doesn't fire
-            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-
-            logger.info(f"SSH terminal connected to {self.connection}")
-
-        except Exception as e:
-            logger.error(f"Failed to setup SSH terminal: {e}")
-            self._on_connection_failed(str(e))
-
-    def _fallback_to_askpass(self, ssh_cmd, env_list, working_dir=None):
-        """Fallback when sshpass fails - allow interactive prompting"""
-        try:
-            logger.info("Falling back to interactive password prompt")
-
-            # Remove sshpass from the command
-            if ssh_cmd and ssh_cmd[0] == 'sshpass':
-                ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
-
-            # Strip any askpass variables from the environment list, then force never
-            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS=') and not e.startswith('SSH_ASKPASS_REQUIRE=')]
-            env_list.append('SSH_ASKPASS_REQUIRE=never')
-
-            logger.debug(f"Fallback SSH command: {ssh_cmd}")
-
-            # Convert env_list to dict for backend
-            env_dict = {}
-            if env_list:
-                for env_item in env_list:
-                    if '=' in env_item:
-                        key, value = env_item.split('=', 1)
-                        env_dict[key] = value
-
-            # Try spawning again without askpass
-            self.backend.spawn_async(
-                argv=ssh_cmd,
-                env=env_dict if env_dict else None,
-                cwd=working_dir or os.path.expanduser('~') or '/',
-                flags=0,
-                child_setup=None,
-                callback=self._on_spawn_complete,
-                user_data=()
-            )
-        except Exception as e:
-            logger.error(f"Fallback to interactive prompt failed: {e}")
-            self._on_connection_failed(str(e))
-
-    def _enable_askpass_log_forwarding(self, include_existing: bool = False) -> None:
-        """Start forwarding askpass log lines into the application logger."""
-
-        try:
-            from .askpass_utils import ensure_askpass_log_forwarder, forward_askpass_log_to_logger
-        except Exception as exc:
-            logger.debug(f"Unable to import askpass log forwarder: {exc}")
-            return
-
-        ensure_askpass_log_forwarder()
-        forward_askpass_log_to_logger(logger, include_existing=include_existing)
-
     def _on_spawn_complete(self, terminal_or_widget, pid_or_error=None, error=None, user_data=None):
         """Called when terminal spawn is complete
 
@@ -1997,8 +1605,8 @@ class TerminalWidget(Gtk.Box):
                 self.backend.grab_focus()
             self.apply_theme()
 
-            # The ssh process spawned — but that only means the subprocess
-            # started, NOT that it authenticated or reached the host. Enter
+            # The child process spawned — that only means the session process
+            # started, not that it authenticated or reached a remote host. Enter
             # CONNECTING and promote to CONNECTED only on real login evidence
             # (remote termprops via _on_termprops_changed) or, failing that, if
             # the process is still alive after a short grace period. A fast
@@ -2213,9 +1821,8 @@ class TerminalWidget(Gtk.Box):
         """Queue a one-shot fill for ssh's password prompt (``classify_prompt``).
 
         Call before spawn (or before ``_install_pty_autofill``). Residual prompts
-        such as 2FA stay in the terminal for the user. Safe to call from SCP /
-        ssh-copy-id paths that spawn on a TerminalWidget without going through
-        ``_setup_ssh_terminal``.
+        such as 2FA stay in the terminal for the user. This is presentation
+        support for one-shot command UIs; it does not own remote transport.
         """
         from .askpass_utils import classify_prompt
 
@@ -3002,10 +2609,7 @@ class TerminalWidget(Gtk.Box):
             return False
 
     def _setup_local_shell_direct(self):
-        """
-        Set up local shell using direct spawn (legacy approach).
-        This is the fallback when agent is not available.
-        """
+        """Set up a local shell when the optional local agent is unavailable."""
         # Route env injection through the selected identity provider (one seam for all
         # SSH_AUTH_SOCK injection); idempotent over the inherited environment.
         from .identity import get_identity_manager
@@ -3811,32 +3415,8 @@ class TerminalWidget(Gtk.Box):
         if callable(reconnect_handler):
             return reconnect_handler(self)
 
-        if (
-            getattr(getattr(self, 'connection', None), 'protocol', 'ssh') == 'ssh'
-            and getattr(getattr(self, 'connection', None), 'hostname', None)
-            != 'localhost'
-        ):
-            logger.error('Daemon reconnect handler is unavailable')
-            return False
-
-        was_connected = self.is_connected
-
-        # Disconnect if currently connected
-        if was_connected:
-            self.disconnect()
-
-        # Reconnect after a short delay to allow disconnection to complete
-        def _reconnect():
-            if self._connect_ssh():
-                logger.info("Terminal reconnected with updated settings")
-                # Ensure theme is applied after reconnection
-                self.apply_theme()
-                return True
-            else:
-                logger.error("Failed to reconnect terminal with updated settings")
-                return False
-
-        GLib.timeout_add(500, _reconnect)  # 500ms delay before reconnecting
+        logger.error('Daemon reconnect handler is unavailable')
+        return False
 
     def _on_connection_updated_signal(self, sender, connection):
         """Signal handler for connection-updated signal"""
@@ -4069,17 +3649,6 @@ class TerminalWidget(Gtk.Box):
                     logger.error(f"Error closing PTY: {e}")
                 finally:
                     self.pty = None
-
-            # Clean up sshpass temporary directory if it exists
-            if hasattr(self, '_sshpass_tmpdir') and self._sshpass_tmpdir:
-                try:
-                    import shutil
-                    shutil.rmtree(self._sshpass_tmpdir, ignore_errors=True)
-                    logger.debug(f"Cleaned up sshpass tmpdir: {self._sshpass_tmpdir}")
-                except Exception as e:
-                    logger.debug(f"Error cleaning up sshpass tmpdir: {e}")
-                finally:
-                    self._sshpass_tmpdir = None
 
             # Clean up from process manager (only if not quitting)
             if not getattr(self, '_is_quitting', False):

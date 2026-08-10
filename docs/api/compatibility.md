@@ -22,12 +22,12 @@ identifiers remain in the schema and are never advertised.
 
 ## Phase 9 / 9.1: Default Behavior Change
 
-Phase 9 introduces a default behavior change while maintaining compatibility.
-Phase 9.1 hardens routing so readiness never silently selects legacy SSH:
+Phase 9 introduced daemon-backed internal SSH routing. Phase 9.1 hardened
+routing so readiness never silently selects a frontend SSH process:
 
 - **Default change**: `terminal.daemon_backed_ssh` now defaults to `True` (Stage C rollout)
-- **Explicit override**: Users can set `terminal.legacy_local_ssh_fallback = True`
-  to force GTK-owned local SSH (`Use legacy local SSH terminals`)
+- **Internal route**: SSH terminals use the daemon; external terminals remain a
+  separate presentation choice
 - **Route vs readiness**: `resolve_ssh_terminal_route` is pure policy;
   `resolve_daemon_terminal_readiness` never changes the selected route
 - **No silent fallback**: Missing daemon, bridge, protocol, binary transport, or

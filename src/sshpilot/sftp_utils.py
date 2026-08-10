@@ -6,7 +6,6 @@ import os
 import logging
 import shutil
 import subprocess
-import threading
 from gettext import gettext as _
 from typing import Optional, Tuple, Callable, Any
 
@@ -340,46 +339,25 @@ def open_remote_in_file_manager(
             logger.debug("External file manager: No password found, but password auth not enabled, proceeding with key-based auth")
             # No password needed, proceed with key-based authentication
 
-    # Skip verification for localhost or if we have password
-    if host in ("localhost", "127.0.0.1") or has_password:
-        if has_password:
-            logger.info("Password available, skipping SSH verification")
-        else:
-            logger.info("Localhost detected, skipping SSH verification")
-        progress_dialog.update_progress(0.3, "Mounting...")
-        if is_flatpak():
-            _open_sftp_flatpak_compatible(
-                uri, user, host, port, error_callback, progress_dialog
-            )
-        else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password, parent_window=parent_window)
-        return True, None
-
-    progress_dialog.update_progress(0.05, "Verifying SSH connection...")
-
-    def _on_verify_complete(success: bool):
-        if progress_dialog.is_cancelled:
-            return
-        if not success:
-            error_msg = "SSH connection failed - check credentials and network connectivity"
-            logger.error(f"SSH verification failed for {user}@{host}")
-            progress_dialog.update_progress(0.0, "SSH connection failed")
-            progress_dialog.show_error(error_msg)
-            GLib.timeout_add(1500, lambda: GLib.idle_add(progress_dialog.close))
-            if error_callback:
-                error_callback(error_msg)
-            return
-
-        logger.info(f"SSH connection verified for {user}@{host}")
-        progress_dialog.update_progress(0.3, "SSH verified, mounting...")
-        if is_flatpak():
-            _open_sftp_flatpak_compatible(
-                uri, user, host, port, error_callback, progress_dialog
-            )
-        else:
-            _mount_and_open_sftp(uri, user, host, error_callback, progress_dialog, connection, connection_manager, provided_password=dialog_password, parent_window=parent_window)
-
-    _verify_ssh_connection_async(user, host, port, _on_verify_complete)
+    # GVFS owns the actual SFTP connection and authentication.  Do not probe
+    # the host with a second frontend SSH process before handing it off.
+    progress_dialog.update_progress(0.3, "Mounting...")
+    if is_flatpak():
+        _open_sftp_flatpak_compatible(
+            uri, user, host, port, error_callback, progress_dialog
+        )
+    else:
+        _mount_and_open_sftp(
+            uri,
+            user,
+            host,
+            error_callback,
+            progress_dialog,
+            connection,
+            connection_manager,
+            provided_password=dialog_password,
+            parent_window=parent_window,
+        )
 
     return True, None
 
@@ -671,47 +649,6 @@ def _mount_and_open_sftp(
         if error_callback:
             error_callback(error_msg)
         return False, error_msg
-
-
-def _verify_ssh_connection(user: str, host: str, port: Optional[int]) -> bool:
-    """Verify SSH connection without full mount"""
-    # Local connections are considered valid without verification
-    if host in ("localhost", "127.0.0.1"):
-        return True
-
-    ssh_cmd = [
-        "ssh",
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-    ]
-
-    # Only disable interactive prompts if no askpass is available
-    if not os.environ.get("SSH_ASKPASS"):
-        ssh_cmd.extend(["-o", "BatchMode=yes"])
-
-    if port:
-        ssh_cmd.extend(["-p", str(port)])
-    ssh_cmd.extend([f"{user}@{host}", "echo", "READY"])
-
-    try:
-        result = subprocess.run(
-            ssh_cmd, capture_output=True, text=True, timeout=15
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, Exception):
-        return False
-
-
-def _verify_ssh_connection_async(
-    user: str, host: str, port: Optional[int], callback: Callable[[bool], None]
-) -> None:
-    """Verify SSH connection on a background thread and invoke callback with the result"""
-
-    def worker():
-        success = _verify_ssh_connection(user, host, port)
-        GLib.idle_add(callback, success)
-
-    threading.Thread(target=worker, daemon=True).start()
 
 
 def _open_sftp_flatpak_compatible(
@@ -1548,4 +1485,3 @@ class SftpConnectionDialog(Adw.Window):
                     break
             except Exception:
                 continue
-

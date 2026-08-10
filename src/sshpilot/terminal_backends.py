@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import logging
 import os
+import time
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 import gi
@@ -16,6 +17,52 @@ from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_col
 
 
 logger = logging.getLogger(__name__)
+
+
+def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> Optional[str]:
+    """Fetch remote shell history through the existing daemon command route.
+
+    This is composition glue for the generic autocomplete provider.  The
+    provider itself knows nothing about SSH, clients, or process launching.
+    Failures deliberately return no history; there is no frontend transport
+    fallback.
+    """
+    client = getattr(root, "client", None)
+    if client is None:
+        return None
+    try:
+        from .api.models.broadcast import (
+            BroadcastCommandRequest,
+            BroadcastExecutionPolicy,
+        )
+
+        daemon_connection = next(
+            item
+            for item in client.list_connections()
+            if getattr(item, "nickname", None)
+            == getattr(connection, "nickname", None)
+        )
+        request = BroadcastCommandRequest(
+            (daemon_connection.id,),
+            "cat .bash_history .zsh_history 2>/dev/null | tail -c 262144",
+            BroadcastExecutionPolicy(
+                concurrency_limit=1,
+                timeout_seconds=timeout,
+            ),
+        )
+        summary = client.start_broadcast_command(request)
+        deadline = time.monotonic() + timeout
+        terminal_states = {"succeeded", "failed", "cancelled"}
+        while summary.operation.state.value not in terminal_states:
+            if time.monotonic() >= deadline:
+                client.cancel_broadcast_command(summary.operation.id)
+                return None
+            time.sleep(0.05)
+            summary = client.get_broadcast_command(summary.operation.id)
+        target = summary.targets[0]
+        return target.stdout if target.exit_code == 0 else None
+    except Exception:  # noqa: BLE001 — best-effort background suggestion
+        return None
 
 # CSS absolute units: 1pt = 1/72in, 1px = 1/96in → 1pt = 96/72 px.
 # Pango/VTE and the Preferences font preview use points; xterm.js fontSize is CSS px.
@@ -2090,7 +2137,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if self._autocompleter is None:
             from .autocomplete import (
                 Autocompleter, CommandBlockProvider, RemoteHistoryProvider,
-                SessionProvider, ShellHistoryProvider, fetch_remote_history,
+                SessionProvider, ShellHistoryProvider,
             )
             root = store = None
             try:
@@ -2107,7 +2154,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 is_ssh = conn is not None and not self.owner._is_local_terminal()
             except Exception:  # noqa: BLE001
                 is_ssh = False
-            # Remote history is opt-in: it opens a second SSH connection to the host.
+            # Remote history is opt-in and uses the existing daemon command operation.
             remote_on = False
             try:
                 remote_on = bool(self.owner.config.get_setting(
@@ -2118,10 +2165,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 key = str(getattr(conn, "nickname", "") or getattr(conn, "hostname", "")
                           or getattr(conn, "host", ""))
                 if key:
-                    cm = getattr(root, "connection_manager", None)
-                    config = getattr(self.owner, "config", None)
                     providers.insert(1, RemoteHistoryProvider(
-                        key, lambda: fetch_remote_history(conn, cm, config)))
+                        key,
+                        lambda: _fetch_remote_history_via_daemon(root, conn),
+                    ))
             self._autocompleter = Autocompleter(providers, session=session)
         return self._autocompleter
 
@@ -2177,8 +2224,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         # it. Output produced before the page is ready is buffered and flushed on
         # the "ready" message, so the prompt appears the instant the terminal paints.
         self._do_spawn()
-        # Warm the autocomplete providers (remote history is an SSH round-trip)
-        # so suggestions exist by the first keystroke, not one line later.
+        # Warm the autocomplete providers (remote history is a daemon command
+        # operation) so suggestions exist by the first keystroke, not one line later.
         try:
             config = getattr(self.owner, "config", None)
             if config is not None and config.get_setting("terminal.autocomplete", True):

@@ -1,9 +1,8 @@
 """Daemon-backed SFTP file-manager backend.
 
-``DaemonSftpManager`` matches the public contract of ``OpenSSHSFTPManager``
-(same GObject signals, constructor kwargs, and methods) so
-``FileManagerWindow`` works with either backend interchangeably. Unlike
-``OpenSSHSFTPManager`` it never spawns a local ``ssh -s sftp`` subprocess --
+``DaemonSftpManager`` matches the file-manager presentation contract (same
+GObject signals, constructor kwargs, and methods) so ``FileManagerWindow``
+can remain presentation-focused. It never spawns a local ``ssh -s sftp`` subprocess --
 every remote filesystem operation and file transfer is delegated to the
 sshPilot daemon over the existing Protocol v1 connection via
 :class:`~sshpilot.sftp_service_controller.DaemonSftpServiceController` and

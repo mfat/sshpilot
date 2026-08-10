@@ -97,7 +97,6 @@ class TestDaemonActivationOwnership:
             terminal.backend = None
             terminal.vte = None
             terminal.apply_theme = Mock()
-            terminal._connect_ssh = Mock(return_value=True)
             mock_terminal_widget.return_value = terminal
 
             manager.connect_to_host(connection)
@@ -106,7 +105,6 @@ class TestDaemonActivationOwnership:
             assert terminal._reconnect_handler == manager.reconnect_terminal
             connection.native_connect.assert_not_called()
             connection.connect.assert_not_called()
-            terminal._connect_ssh.assert_not_called()
             unlock.assert_called()
 
     def test_reconnect_reopens_through_daemon_without_local_ssh(self):
@@ -145,7 +143,6 @@ class TestDaemonActivationOwnership:
         )
         connection.native_connect.assert_not_called()
         connection.connect.assert_not_called()
-        terminal._connect_ssh.assert_not_called()
 
     def test_controlled_reconnect_uses_daemon_reopen(self):
         window = self._window(ready=True)
@@ -159,7 +156,6 @@ class TestDaemonActivationOwnership:
 
         reopen.assert_called_once_with(terminal)
         connection.native_connect.assert_not_called()
-        terminal._connect_ssh.assert_not_called()
 
     def test_unavailable_daemon_no_local_spawn_no_blank_tab(self):
         window = self._window(ready=False)
@@ -241,7 +237,6 @@ class TestDaemonActivationOwnership:
             terminal.backend = None
             terminal.vte = None
             terminal.apply_theme = Mock()
-            terminal._connect_ssh = Mock(return_value=True)
             mock_terminal_widget.return_value = terminal
 
             manager.connect_to_host(connection)
@@ -250,7 +245,6 @@ class TestDaemonActivationOwnership:
             show_error.assert_not_called()
             unlock.assert_called()
             connection.native_connect.assert_not_called()
-            terminal._connect_ssh.assert_not_called()
 
     def test_external_route_no_internal_tab(self):
         window = self._window(

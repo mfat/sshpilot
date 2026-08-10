@@ -158,7 +158,6 @@ def test_scp_controller_has_no_subprocess_or_vte_ownership():
         "spawn_async",
         "bash",
         "subprocess",
-        "list_remote_files",
         "resolve_native_auth",
         "_build_scp_argv",
     ):

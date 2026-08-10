@@ -239,7 +239,6 @@ failures never change the selected route and never launch local internal SSH.
 ```python
 class SshTerminalRoute(str, Enum):
     DAEMON = "daemon"
-    LEGACY_LOCAL = "legacy_local"
     EXTERNAL = "external"
 ```
 
@@ -251,9 +250,7 @@ handshake status, or daemon startup progress.
 
 1. Local shell tab / non-SSH protocol / missing connection → not an SSH route
 2. External-terminal preference active and not policy-hidden → `EXTERNAL`
-3. Explicit `terminal.legacy_local_ssh_fallback` → `LEGACY_LOCAL`
-4. `terminal.daemon_backed_ssh` enabled (Stage C default) → `DAEMON`
-5. Daemon-backed setting disabled → `LEGACY_LOCAL`
+3. Internal SSH → `DAEMON`
 
 ### Readiness (separate)
 
@@ -276,7 +273,6 @@ Reasons include `client_unavailable`, `bridge_unavailable`,
 | --- | --- | --- |
 | `DAEMON` | ready | daemon-backed SSH |
 | `DAEMON` | unavailable / incompatible | clear error; **no** local SSH |
-| `LEGACY_LOCAL` | (irrelevant) | GTK-owned local SSH |
 | `EXTERNAL` | (irrelevant) | external process |
 
 `should_use_daemon_ssh_terminal()` now means “route is `DAEMON`” only. It no
@@ -287,8 +283,7 @@ longer returns false when the daemon is merely unavailable.
 ```text
 1. Resolve route
 2. EXTERNAL → optional vault unlock → external launch
-3. LEGACY_LOCAL → vault unlock → native_connect + VTE spawn
-4. DAEMON → readiness (+ bounded on-demand start) → optional vault unlock
+3. DAEMON → readiness (+ bounded on-demand start) → optional vault unlock
    → daemon session open (never native_connect / _connect_ssh)
 ```
 
@@ -297,23 +292,11 @@ longer returns false when the daemon is merely unavailable.
 - **Daemon route**: resolve route and readiness first. GTK may unlock a
   session-backed vault afterward so the daemon broker can read stored
   credentials; SSH passwords/passphrases are not retrieved into GTK.
-- **Legacy local**: existing GTK askpass / vault unlock path.
 - **External**: existing external askpass/secret policy unchanged.
 
 Locked Bitwarden/KDBX backends remain a distinct unlock concern. Unlock is
 backend unlock, not SSH authentication. Unsupported autofill falls through to
 typed daemon interactions — never to silent local SSH.
-
-## Legacy Local SSH: Explicit Only
-
-Legacy local SSH is **explicit user choice only**:
-
-- **Default behavior**: `terminal.daemon_backed_ssh = True` (Stage C rollout)
-- **Explicit legacy**: `terminal.legacy_local_ssh_fallback = True` selects
-  GTK-owned local SSH (`Use legacy local SSH terminals` in Preferences)
-- **Never silent**: Daemon unavailability/incompatibility never switches route
-- **Clear error**: Readiness failures show an actionable dialog with optional
-  Preferences action
 
 ### Decision Logic
 
@@ -323,11 +306,7 @@ def resolve_ssh_terminal_route(config, connection, *, is_local=False):
         return None
     if use_external and not should_hide_external_terminal_options():
         return SshTerminalRoute.EXTERNAL
-    if config.get_setting("terminal.legacy_local_ssh_fallback", False):
-        return SshTerminalRoute.LEGACY_LOCAL
-    if config.get_setting("terminal.daemon_backed_ssh", True):
-        return SshTerminalRoute.DAEMON
-    return SshTerminalRoute.LEGACY_LOCAL
+    return SshTerminalRoute.DAEMON
 ```
 
 ## Terminal Type Ownership
@@ -362,8 +341,7 @@ Phase 9 / 9.1 implement Stage C rollout policy:
 - **Default enabled**: `terminal.daemon_backed_ssh = True` by default
 - **Readiness gated**: Launch blocked with a clear error when capabilities or
   transport are missing — never auto-switched to local SSH
-- **User choice preserved**: Explicit legacy local SSH setting remains
-- **Smooth upgrade**: Existing users get daemon SSH automatically when ready
+- **Smooth upgrade**: Existing users get daemon SSH automatically
 
 ## Daemon Lifecycle
 

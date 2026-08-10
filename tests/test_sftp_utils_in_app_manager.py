@@ -314,12 +314,6 @@ def test_open_remote_uses_gvfs_flow_when_available(monkeypatch):
         return True, None
 
     monkeypatch.setattr(sftp_utils, "_mount_and_open_sftp", fake_mount)
-    monkeypatch.setattr(
-        sftp_utils,
-        "_verify_ssh_connection_async",
-        lambda user, host, port, callback: callback(True),
-    )
-
     success, message = sftp_utils.open_remote_in_file_manager(
         "bob", "remote", port=2222, path="/home", parent_window=None
     )

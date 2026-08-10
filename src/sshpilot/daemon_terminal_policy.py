@@ -4,12 +4,12 @@ VTE and PyXtermJS both render sessions owned by the daemon.
 
 Local terminals remain GTK-owned. External terminals remain
 external-process-owned. Rollout Stage C defaults daemon-backed SSH on, with
-legacy local SSH only behind an explicit setting.
+no internal local-SSH alternative.
 
 Route selection (``resolve_ssh_terminal_route``) is pure product/user policy.
 It never inspects daemon readiness. Readiness
 (``resolve_daemon_terminal_readiness``) never changes the selected route and
-never initiates a legacy local SSH launch.
+never initiates a frontend SSH launch.
 """
 
 from __future__ import annotations
@@ -76,11 +76,11 @@ TAB_CLOSE_POLICY_SETTING = "terminal.daemon_tab_close_policy"
 APP_CLOSE_POLICY_SETTING = "terminal.daemon_app_close_policy"
 RESTORE_SESSIONS_SETTING = "terminal.daemon_restore_sessions"
 AUTO_ATTACH_SETTING = "terminal.daemon_auto_attach"
-# Explicit user choice to use GTK-owned local SSH — never an automatic fallback.
+# Retained as a compatibility setting name; internal SSH routing is daemon-only.
 PREFERRED_EMULATOR_SETTING = "terminal.daemon_emulator"
 SESSION_RESTORE_STATE_SETTING = "terminal.daemon_session_restore_state"
 
-# Stage C: default on for supported installs; legacy local SSH stays explicit.
+# Stage C: default on for supported installs.
 
 _TERMINAL_TRANSPORT_CAPS = frozenset(
     {
@@ -213,7 +213,7 @@ def resolve_daemon_terminal_readiness(
 ) -> DaemonTerminalReadiness:
     """Inspect whether a daemon-backed SSH launch can proceed.
 
-    Never initiates a legacy local SSH launch and never changes routing policy.
+    Never initiates a frontend SSH launch and never changes routing policy.
     """
 
     if startup_failure is not None:

@@ -116,41 +116,6 @@ class ShellHistoryProvider:
         return _match(self._entries, prefix, limit, "history")
 
 
-def fetch_remote_history(connection, connection_manager=None, config=None,
-                         timeout: float = 15) -> Optional[str]:
-    """Read the remote host's ~/.bash_history + ~/.zsh_history over the app's
-    single SSH path (``build_ssh_connection`` + headless askpass, same shape
-    as the plugin API's ``run_command``). **Blocking** — call from a worker
-    thread. Returns the raw file text, or None on any failure.
-    """
-    import subprocess
-    from .ssh_connection_builder import (
-        ConnectionContext,
-        apply_headless_askpass_env,
-        build_ssh_connection,
-    )
-    try:
-        ctx = ConnectionContext(
-            connection=connection, connection_manager=connection_manager,
-            config=config, command_type='ssh', native_mode=True,
-            remote_command="cat .bash_history .zsh_history 2>/dev/null | tail -c 262144",
-        )
-        prepared = build_ssh_connection(ctx)
-        argv = list(prepared.command)
-        env = apply_headless_askpass_env(
-            prepared.env, connection,
-            session_password=getattr(prepared, "password", None),
-        )
-        # Passive fetch: autofill stored secrets, but never surprise the user
-        # with a password/OTP dialog from a background thread.
-        env["SSHPILOT_ASKPASS_AUTOFILL_ONLY"] = "1"
-        result = subprocess.run(argv, env=env, capture_output=True, text=True,
-                                errors="replace", timeout=timeout, check=False)
-        return result.stdout if result.returncode == 0 else None
-    except Exception:  # noqa: BLE001 — best-effort background fetch
-        return None
-
-
 class RemoteHistoryProvider:
     """The remote host's own shell history, fetched once in the background.
 

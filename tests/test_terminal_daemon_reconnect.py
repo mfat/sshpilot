@@ -15,8 +15,6 @@ def _remote_terminal():
     terminal._set_disconnected_banner_visible = Mock()
     terminal._set_connecting_overlay_visible = Mock()
     terminal._record_error_detail = Mock()
-    terminal._refresh_connection_command = Mock(return_value=True)
-    terminal._connect_ssh = Mock(return_value=True)
     return terminal
 
 
@@ -27,8 +25,6 @@ def test_banner_reconnect_delegates_to_daemon_owner():
     terminal._on_reconnect_clicked()
 
     terminal._reconnect_handler.assert_called_once_with(terminal)
-    terminal._refresh_connection_command.assert_not_called()
-    terminal._connect_ssh.assert_not_called()
 
 
 def test_public_reconnect_delegates_to_daemon_owner():
@@ -38,8 +34,6 @@ def test_public_reconnect_delegates_to_daemon_owner():
     assert terminal.reconnect() is True
 
     terminal._reconnect_handler.assert_called_once_with(terminal)
-    terminal._refresh_connection_command.assert_not_called()
-    terminal._connect_ssh.assert_not_called()
 
 
 def test_remote_reconnect_without_daemon_owner_refuses_local_spawn():
@@ -48,8 +42,6 @@ def test_remote_reconnect_without_daemon_owner_refuses_local_spawn():
 
     terminal._on_reconnect_clicked()
 
-    terminal._refresh_connection_command.assert_not_called()
-    terminal._connect_ssh.assert_not_called()
     terminal._set_disconnected_banner_visible.assert_called_with(
-        True, "Reconnect failed"
+        True, "Reconnect failed to start"
     )

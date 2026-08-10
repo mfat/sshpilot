@@ -1,6 +1,6 @@
 """Shared, backend-agnostic primitives for the file manager.
 
-Used by the OpenSSH SFTP backend (``openssh_backend``) and the window/pane UI.
+Used by the daemon-backed file-manager adapter and the window/pane UI.
 Importing this module pulls in no SSH library — it is just dataclasses and the
 GLib main-thread dispatcher.
 """

@@ -2,12 +2,10 @@
 
 This implements just the SFTP protocol layer (RFC draft-ietf-secsh-filexfer-02,
 the version OpenSSH speaks as v3). It is transport-agnostic: callers feed/drain
-bytes (typically the stdin/stdout pipes of an ``ssh host -s sftp`` subprocess).
+bytes owned by the daemon SFTP runtime.
 
 Everything here is pure and unit-testable: packet build/parse and attribute
-encode/decode. The live client (subprocess + threads) lives in
-``sshpilot.sftp.client`` (re-exported for the file manager via
-``sshpilot.file_manager.openssh_backend``).
+encode/decode.
 """
 
 from __future__ import annotations

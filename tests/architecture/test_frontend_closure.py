@@ -28,19 +28,15 @@ COMPATIBILITY_MODULES = frozenset(
     {
         "agent_client.py",
         "askpass_utils.py",
-        "autocomplete.py",
         "backup_manager.py",
         "bitwarden_setup.py",
         "credential_manager.py",
         "credential_model.py",
-        "file_manager/openssh_backend.py",
         "providers/system_agent.py",
-        "scp_utils.py",
         "secret_storage.py",
         "sftp_utils.py",
         "ssh_config_utils.py",
         "ssh_multiplex.py",
-        "terminal.py",
     }
 )
 
@@ -53,6 +49,7 @@ FRONTEND_LOCAL_SUBPROCESS = frozenset(
         "startup_info.py",
         "wol.py",
         "sshpilot_agent.py",
+        "terminal.py",
     }
 )
 

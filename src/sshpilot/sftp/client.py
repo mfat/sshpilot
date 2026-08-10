@@ -1,9 +1,7 @@
 """GTK-free synchronous SFTP v3 client over a pair of byte streams.
 
-Extracted from ``sshpilot.file_manager.openssh_backend`` so the daemon (and any
-other non-GTK process) can drive an ``ssh … -s sftp`` subprocess without
-pulling in GObject/GTK. The file-manager backend re-exports these names for
-backward compatibility.
+The daemon SFTP runtime drives an ``ssh … -s sftp`` subprocess without pulling
+in GObject/GTK.
 """
 
 from __future__ import annotations

@@ -91,10 +91,9 @@ VTE char-size-changed signal
 
 ### Legacy Fallback Path
 
-`TerminalManager._open_removed_local_ssh()` (line 233) launches OpenSSH directly
-via `Vte.Terminal.spawn_async()` with askpass environment. This path is retained
-**ONLY** behind the explicit setting `terminal.legacy_local_ssh_fallback=True`.
-It is never an automatic fallback from the daemon path.
+The former `TerminalManager._open_removed_local_ssh()` path has been removed.
+Internal SSH activation and reconnect require the daemon owner; daemon failure
+does not launch a frontend SSH process.
 
 ### External Terminals
 

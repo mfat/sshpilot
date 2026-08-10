@@ -46,8 +46,8 @@ no current product path.
 | Legacy local-forward compatibility | obsolete fallback removed from `PluginContext.ensure_local_forward` | None | None | forward daemon tests | dead/unreachable code | The frontend ControlMaster/`ssh -N` fallback was deleted; the plugin route requires the daemon forward service. |
 | Obsolete direct SSH plugin helpers | removed `copy_key_to_host` / `get_effective_ssh_config` methods | daemon key/config APIs | None | API and key/config daemon tests | dead/unreachable code | The direct `ssh-copy-id` and `ssh -G` compatibility implementations were deleted. |
 | Obsolete effective-config helper | removed `get_effective_ssh_config` method | daemon SSH config API | None | API config tests | dead/unreachable code | The direct `ssh -G` compatibility implementation was deleted. |
-| Legacy `OpenSSHSFTPManager` | `file_manager/openssh_backend.py` | None | None in the current in-app route | daemon SFTP routing tests prove the active route | dead/unreachable code | No graph inbound path from the current file-manager route; retain only until compatibility removal is separately verified. |
-| Legacy direct SSH terminal helpers | `TerminalWidget._connect_ssh*`, `_setup_ssh_terminal` | None | None in the current daemon activation route | `tests/test_daemon_terminal_activation_ownership.py` | dead/unreachable code | The normal route is daemon-only; these compatibility helpers are not a valid fallback. |
+| Legacy `OpenSSHSFTPManager` | `file_manager/openssh_backend.py` | None | None in the current in-app route | daemon SFTP routing tests prove the active route | removed in this pass | The obsolete frontend backend and its exclusive tests are gone; `DaemonSftpManager` is the sole in-app route. |
+| Legacy direct SSH terminal helpers | `TerminalWidget._connect_ssh*`, `_setup_ssh_terminal` | None | None in the current daemon activation route | `tests/test_daemon_terminal_activation_ownership.py` | removed in this pass | Reconnect and activation now require the daemon owner; no internal SSH fallback remains. |
 
 ## Supported PluginContext and facade inventory
 
@@ -162,13 +162,12 @@ following are the individually audited identities at this base.
 | M6 import/export | `backup_manager.py → import_export.MergeStrategy`, `plan_import`, `atomic_write_json`, `migrate_payload` | Backup execution is daemon-routed. These are compatibility helpers used by the daemon transfer path, not GTK ownership; keep as M6 debt. |
 | M7 SSH process model | `ssh_connection_builder.py → ProcessSpec`, `AuthMethod`, `HostKeyMode`, `LaunchMode`, `SSHLaunchRequest`, `build_ssh_process_spec` | Native OpenSSH launch compatibility is consumed by daemon providers and external-terminal presentation. No new GTK backend owner was found; keep as M7 debt. |
 
-### `BACKEND_OPS` debt (18 identities)
+### `BACKEND_OPS` debt (10 identities)
 
 | Tag | Identities | Audit decision |
 |---|---|---|
-| M5 | `secret_storage.py: subprocess`, `secret_storage.py: SecretManager`, `bitwarden_setup.py: subprocess` | The first two are shared daemon/askpass compatibility; Bitwarden installation is a narrow platform installer. No active GTK vault owner remains. |
-| M7 | `agent_client.py: subprocess`; `askpass_utils.py: subprocess, ssh_binary`; `autocomplete.py: subprocess`; `file_manager/openssh_backend.py: subprocess`; `providers/system_agent.py: subprocess, ssh_binary`; `scp_utils.py: subprocess`; `sftp_utils.py: subprocess`; `ssh_config_utils.py: subprocess, ssh_binary`; `ssh_multiplex.py: subprocess, ssh_binary`; `terminal.py: subprocess` | These are respectively local helper, daemon askpass/identity compatibility, dead legacy routes, external OS presentation, or shared native-process compatibility. ControlMaster teardown was removed from GTK and moved behind `SshOverridesService`; the remaining helper identity is compatibility debt. |
-| M8 | `plugins/api.py: subprocess` | Only the intentionally local `run_local_command` and `_spawn_local_stream` identities retain process ownership. Remote command/stream execution uses the daemon broadcast service; mux compatibility methods are inert and obsolete direct SSH helpers were removed. |
+| M5 | `secret_storage.py: subprocess`, `secret_storage.py: SecretManager` | Shared secret-storage compatibility remains consumed by daemon/askpass paths. Bitwarden installation is classified as frontend/platform-local. |
+| M7 | `askpass_utils.py: subprocess, ssh_binary`; `providers/system_agent.py: subprocess, ssh_binary`; `ssh_config_utils.py: subprocess, ssh_binary`; `ssh_multiplex.py: subprocess, ssh_binary` | These are daemon/shared native OpenSSH, askpass, effective-config, and ControlMaster compatibility. They remain because the daemon launch path still consumes them. |
 
 ### `DAEMON_DEBT` (16 identities)
 

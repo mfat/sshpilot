@@ -35,24 +35,21 @@ APPROVED_PENDING = frozenset(
 
 APPROVED_BACKEND_OPS = frozenset(
     {
-        (("agent_client.py", "subprocess"), "M7"),
+        (("agent_client.py", "subprocess"), "frontend"),
         (("askpass_utils.py", "ssh_binary"), "M7"),
         (("askpass_utils.py", "subprocess"), "M7"),
-        (("autocomplete.py", "subprocess"), "M7"),
-        (("bitwarden_setup.py", "subprocess"), "M5"),
-        (("file_manager/openssh_backend.py", "subprocess"), "M7"),
-        (("plugins/api.py", "subprocess"), "M8"),
+        (("bitwarden_setup.py", "subprocess"), "frontend"),
+        (("plugins/api.py", "subprocess"), "frontend"),
         (("providers/system_agent.py", "ssh_binary"), "M7"),
         (("providers/system_agent.py", "subprocess"), "M7"),
-        (("scp_utils.py", "subprocess"), "M7"),
         (("secret_storage.py", "SecretManager"), "M5"),
         (("secret_storage.py", "subprocess"), "M5"),
-        (("sftp_utils.py", "subprocess"), "M7"),
+        (("sftp_utils.py", "subprocess"), "frontend"),
         (("ssh_config_utils.py", "ssh_binary"), "M7"),
         (("ssh_config_utils.py", "subprocess"), "M7"),
         (("ssh_multiplex.py", "ssh_binary"), "M7"),
         (("ssh_multiplex.py", "subprocess"), "M7"),
-        (("terminal.py", "subprocess"), "M7"),
+        (("terminal.py", "subprocess"), "frontend"),
     }
 )
 

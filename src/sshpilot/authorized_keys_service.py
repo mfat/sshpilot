@@ -1,8 +1,7 @@
 """Async service for loading and saving a remote ``~/.ssh/authorized_keys`` file.
 
-Uses the OpenSSH SFTP file-manager backend (:class:`OpenSSHSFTPManager`) and
-returns futures so callers can dispatch back to the GTK main thread via the
-existing pattern.
+Uses the daemon-owned SFTP service and returns futures so callers can dispatch
+back to the GTK main thread via the existing pattern.
 """
 
 from __future__ import annotations

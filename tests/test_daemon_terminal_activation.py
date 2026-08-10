@@ -160,11 +160,9 @@ class TestDaemonTerminalActivation:
             terminal.backend = None
             terminal.vte = None
             terminal.apply_theme = Mock()
-            terminal._connect_ssh = Mock(return_value=True)
             mock_terminal_widget.return_value = terminal
             manager.connect_to_host(connection)
             terminal.start_daemon_session.assert_called_once()
-            terminal._connect_ssh.assert_not_called()
 
     def test_daemon_failure_does_not_spawn_local_ssh(self):
         window = self._window()
@@ -188,12 +186,10 @@ class TestDaemonTerminalActivation:
             terminal.backend = None
             terminal.vte = None
             terminal.apply_theme = Mock()
-            terminal._connect_ssh = Mock()
             mock_terminal_widget.return_value = terminal
             manager.connect_to_host(connection)
             show_error.assert_called_once()
             connection.native_connect.assert_not_called()
-            terminal._connect_ssh.assert_not_called()
             assert mock_glib.idle_add.call_count == 0
 
     def test_unavailable_client_does_not_silently_use_legacy(self):
