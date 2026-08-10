@@ -288,7 +288,7 @@ def test_success_refreshes_rows_after_rebuild_by_key():
     assert row.refreshes == 1
 
 
-def test_error_caches_miss_and_drops_pending():
+def test_error_drops_pending_without_caching_miss():
     from sshpilot.window import MainWindow
 
     alpha = _connection("alpha")
@@ -299,5 +299,63 @@ def test_error_caches_miss_and_drops_pending():
     _operation, _on_success, on_error = bridge.submits[0]
     on_error(RuntimeError("boom"))
 
-    assert window._forwarding_rules_cache["alpha"] == (2, ())
+    assert "alpha" not in window._forwarding_rules_cache
     assert "alpha" not in window._forwarding_rules_pending
+
+
+def test_stale_success_is_discarded_and_current_generation_refetched():
+    from sshpilot.window import MainWindow
+
+    alpha = _connection("alpha")
+    row = _Row()
+    bridge = _Bridge()
+    editor = _editor("alpha", local_rule)
+    window = _window(
+        bridge=bridge,
+        client=_Client(editor=editor),
+        generation=1,
+        rows={alpha: [row]},
+    )
+
+    MainWindow._refresh_sidebar_forwarding_rules(window, [alpha])
+    stale_operation, stale_success, _stale_error = bridge.submits[0]
+    assert stale_operation() == editor
+
+    window.connection_manager.generation = 2
+    stale_success(stale_operation())
+
+    assert "alpha" not in window._forwarding_rules_cache
+    assert not hasattr(alpha, "forwarding_rules")
+    assert row.refreshes == 0
+    assert "alpha" in window._forwarding_rules_pending
+    assert len(bridge.submits) == 2
+
+    current_operation, current_success, _current_error = bridge.submits[1]
+    current_success(current_operation())
+
+    assert window._forwarding_rules_cache["alpha"][0] == 2
+    assert alpha.forwarding_rules == (LOCAL_RULE_DICT,)
+    assert row.refreshes == 1
+    assert "alpha" not in window._forwarding_rules_pending
+
+
+def test_later_refresh_retries_after_failure():
+    from sshpilot.window import MainWindow
+
+    alpha = _connection("alpha")
+    bridge = _Bridge()
+    window = _window(
+        bridge=bridge,
+        client=_Client(editor=_editor("alpha")),
+        generation=2,
+    )
+
+    MainWindow._refresh_sidebar_forwarding_rules(window, [alpha])
+    _operation, _on_success, on_error = bridge.submits[0]
+    on_error(RuntimeError("boom"))
+    assert "alpha" not in window._forwarding_rules_cache
+
+    MainWindow._refresh_sidebar_forwarding_rules(window, [alpha])
+
+    assert len(bridge.submits) == 2
+    assert "alpha" in window._forwarding_rules_pending

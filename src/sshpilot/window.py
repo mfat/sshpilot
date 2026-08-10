@@ -2178,6 +2178,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     ) -> None:
         def on_success(details):
             pending.discard(key)
+            current_generation = self._sidebar_store_generation()
+            if current_generation != generation:
+                logger.debug(
+                    "Discarding stale forwarding rules for %s (generation %s -> %s)",
+                    key,
+                    generation,
+                    current_generation,
+                )
+                self._refresh_sidebar_forwarding_rules([connection])
+                return
             try:
                 from .api.models.connections import (
                     ForwardingRule,
@@ -2198,7 +2208,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         def on_error(error):
             pending.discard(key)
-            cache.setdefault(key, (generation, ()))
 
         try:
             bridge.submit(
