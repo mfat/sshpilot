@@ -18,7 +18,11 @@ from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 AUDIT = Path(__file__).resolve().parents[2] / "docs" / "architecture" / "frontend-closure-audit.md"
-INTERNAL = {"api", "core", "daemon", "locale", "platform", "vendor"}
+# ``mcp`` hosts the dev/runtime MCP servers: headless tool layers that are
+# neither GTK frontends nor SSH/daemon services. They are excluded from the
+# GTK frontend scans and guarded by their own boundary test
+# (tests/architecture/test_mcp_boundary.py).
+INTERNAL = {"api", "core", "daemon", "locale", "mcp", "platform", "vendor"}
 
 # These are compatibility implementations already covered by the Phase 5
 # identity registries.  ``plugins/api.py`` is intentionally absent: it has

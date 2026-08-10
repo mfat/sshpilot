@@ -51,7 +51,10 @@ pytestmark = pytest.mark.xdist_group("core-boundary")
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "sshpilot"
 
 # Top-level packages excluded from the "frontend" scan (internal layers).
-_INTERNAL = {"core", "daemon", "api", "platform", "vendor", "locale"}
+# Top-level packages excluded from the "frontend" scan (internal layers).
+# ``mcp`` hosts the dev/runtime MCP servers: headless, non-GUI tool layers
+# guarded by their own boundary test (tests/architecture/test_mcp_boundary.py).
+_INTERNAL = {"core", "daemon", "api", "mcp", "platform", "vendor", "locale"}
 
 KNOWN_TAGS = frozenset({"frontend"} | {"M%d" % i for i in range(1, 9)})
 
