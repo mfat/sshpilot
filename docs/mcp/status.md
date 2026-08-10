@@ -44,15 +44,15 @@ entries are rewritten, not accumulated.
 
 1. Architecture intelligence — frontend-neutrality checks, public API review,
    interaction-scope tracing, commit/regression review helpers.
-3. Controlled local execution — selected pytest, API artifact validation,
+2. Controlled local execution — selected pytest, API artifact validation,
    lint; never arbitrary shell.
-4. Runtime MCP prototype — `DaemonClient` only, capability discovery, READ
+3. Runtime MCP prototype — `DaemonClient` only, capability discovery, READ
    tools first.
-5. Runtime OPERATE support — explicit opt-in, sessions, SFTP, operation and
+4. Runtime OPERATE support — explicit opt-in, sessions, SFTP, operation and
    interaction observation.
-6. Runtime MUTATE support — explicit opt-in, strong policy boundary, human
+5. Runtime MUTATE support — explicit opt-in, strong policy boundary, human
    confirmation where appropriate.
-7. Integration/dogfooding — real bug reproduction, OpenSSH fixtures,
+6. Integration/dogfooding — real bug reproduction, OpenSSH fixtures,
    FIDO/sk-dummy scenarios.
 
 ## Important issues for the next agent
