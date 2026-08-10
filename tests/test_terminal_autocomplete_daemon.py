@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from sshpilot.terminal_backends import _fetch_remote_history_via_daemon
+from sshpilot.api.models.interactions import ExecutionInteractionMode
 
 
 def test_remote_history_uses_single_target_broadcast_command():
@@ -33,6 +34,10 @@ def test_remote_history_uses_single_target_broadcast_command():
     assert client.request.connection_ids == ("conn-1",)
     assert ".bash_history" in client.request.command
     assert client.request.policy.concurrency_limit == 1
+    assert (
+        client.request.policy.interaction_mode
+        is ExecutionInteractionMode.AUTOFILL_ONLY
+    )
 
 
 def test_remote_history_returns_none_without_daemon():

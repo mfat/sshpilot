@@ -35,6 +35,7 @@ def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> O
             BroadcastCommandRequest,
             BroadcastExecutionPolicy,
         )
+        from .api.models.interactions import ExecutionInteractionMode
 
         daemon_connection = next(
             item
@@ -48,6 +49,7 @@ def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> O
             BroadcastExecutionPolicy(
                 concurrency_limit=1,
                 timeout_seconds=timeout,
+                interaction_mode=ExecutionInteractionMode.AUTOFILL_ONLY,
             ),
         )
         summary = client.start_broadcast_command(request)

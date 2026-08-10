@@ -35,6 +35,7 @@ from sshpilot.api.models import (
     ConfirmationPrompt,
     ClientId,
     ConnectionId,
+    ExecutionInteractionMode,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -144,6 +145,7 @@ class _AskpassContext:
     user_known_hosts_paths: tuple[Path, ...]
     allow_stored_secrets: bool = True
     confirm_passphrase: bool = False
+    interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
     confirmation_secret: Optional[bytearray] = None
     closed: bool = False
 
@@ -349,6 +351,7 @@ class InteractionBroker:
         port: int = 22,
         allow_stored_secrets: bool = True,
         confirm_passphrase: bool = False,
+        interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE,
     ) -> tuple[tuple[str, ...], dict[str, str]]:
         """Broker askpass environment for a non-session OpenSSH launch.
 
@@ -368,6 +371,8 @@ class InteractionBroker:
                 ErrorCode.SESSION_STARTUP_FAILED,
                 "The operation launch command is invalid",
             )
+        if not isinstance(interaction_mode, ExecutionInteractionMode):
+            raise TypeError("interaction_mode must be an ExecutionInteractionMode")
         env = dict(environment)
         if not hostname:
             # Headless operation callers (ssh-copy-id, ssh-add, remote
@@ -400,6 +405,7 @@ class InteractionBroker:
             user_known_hosts_paths=(),
             allow_stored_secrets=allow_stored_secrets,
             confirm_passphrase=confirm_passphrase,
+            interaction_mode=interaction_mode,
         )
         with self._condition:
             self._require_open_locked()
@@ -652,6 +658,8 @@ class InteractionBroker:
             connection_id = context.connection_id
             hostname = context.hostname
             port = context.port
+            if context.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY:
+                return None
         prompt = self._parse_host_key_askpass_prompt(
             raw_prompt,
             hostname=hostname,
@@ -1427,6 +1435,7 @@ class InteractionBroker:
                 and context.confirm_passphrase
                 and context.confirmation_secret is not None
                 and self._is_passphrase_confirmation_prompt(raw_prompt)
+                and context.interaction_mode is ExecutionInteractionMode.INTERACTIVE
             ):
                 secret = bytearray(context.confirmation_secret)
                 context.confirmation_secret[:] = b"\0" * len(
@@ -1458,6 +1467,7 @@ class InteractionBroker:
             username = context.username
             port = context.port
             confirmation_required = context.confirm_passphrase
+            interaction_mode = context.interaction_mode
         stored: Optional[str] = None
         if try_stored:
             try:
@@ -1533,6 +1543,11 @@ class InteractionBroker:
                         f"ASKPASS: Returning stored passphrase for {key_path or '<none>'}"
                     )
                 return bytearray(encoded)
+        if interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY:
+            append_askpass_log(
+                f"ASKPASS: no stored {prompt_type}; passive operation declined interaction"
+            )
+            return None
         if interaction_type is InteractionType.PASSWORD:
             public_prompt: InteractionPrompt = PasswordPrompt(
                 username=username or "unknown",
@@ -1668,6 +1683,8 @@ class InteractionBroker:
         with self._condition:
             context = self._askpass_contexts.get(token)
             if context is None or context.closed or self._closed:
+                return None
+            if context.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY:
                 return None
             key = (
                 "presence"

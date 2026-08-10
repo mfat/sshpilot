@@ -201,6 +201,7 @@ from .broadcast import (
     HostCommandResult,
     HostCommandState,
 )
+from .interactions import ExecutionInteractionMode
 from .sessions import (
     AttachSessionRequest,
     AttachSessionResult,
@@ -330,6 +331,7 @@ __all__ = [
     "DeletePluginSecretRequest",
     "DeployKeyRequest",
     "DetachSessionRequest",
+    "ExecutionInteractionMode",
     "FileEntryKind",
     "ForwardId",
     "ForwardKind",

@@ -5,6 +5,10 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.29`; `PROTOCOL_VERSION` stays
+  `1.0`. Added an additive broadcast execution interaction mode so passive
+  remote-history autocomplete can use stored authentication without
+  publishing user prompts; ordinary broadcast commands remain interactive.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.28`; `PROTOCOL_VERSION` stays
   `1.0`. Completed the Phase 7 plugin ownership migration: remote plugin
   commands, streamed output, namespaced settings, and session reads/writes

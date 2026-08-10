@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.28",
+  "api_implementation_version": "0.29",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1294,6 +1294,10 @@
       "broadcast.output",
       "daemon.state_changed",
       "error.occurred"
+    ],
+    "ExecutionInteractionMode": [
+      "interactive",
+      "autofill_only"
     ],
     "FileEntryKind": [
       "file",

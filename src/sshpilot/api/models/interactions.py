@@ -25,6 +25,13 @@ class InteractionType(str, Enum):
     CONFIRMATION = "confirmation"
 
 
+class ExecutionInteractionMode(str, Enum):
+    """Controls whether an OpenSSH operation may publish user prompts."""
+
+    INTERACTIVE = "interactive"
+    AUTOFILL_ONLY = "autofill_only"
+
+
 class InteractionState(str, Enum):
     PENDING = "pending"
     CLAIMED = "claimed"

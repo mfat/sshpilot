@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Optional, Tuple
 
 from .common import ConnectionId, require_identifier
+from .interactions import ExecutionInteractionMode
 from .operations import OperationId, OperationSummary, ServiceFailure
 
 MAX_BROADCAST_TARGETS = 256
@@ -37,10 +38,13 @@ class BroadcastExecutionPolicy:
     capture_stdout: bool = True
     capture_stderr: bool = True
     output_limit_bytes: int = DEFAULT_BROADCAST_OUTPUT_BYTES
+    interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
 
     def __post_init__(self) -> None:
         if not isinstance(self.failure_policy, BroadcastFailurePolicy):
             raise TypeError("failure_policy must be a BroadcastFailurePolicy")
+        if not isinstance(self.interaction_mode, ExecutionInteractionMode):
+            raise TypeError("interaction_mode must be an ExecutionInteractionMode")
         if (
             type(self.concurrency_limit) is not int
             or not 1 <= self.concurrency_limit <= MAX_BROADCAST_CONCURRENCY

@@ -14,6 +14,7 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models import (
     ClientId,
     ConnectionId,
+    ExecutionInteractionMode,
     HostKeyDecision,
     HostKeyPrompt,
     HostKeyStatus,
@@ -623,6 +624,141 @@ def test_stored_passphrase_retried_after_first_lookup_miss(monkeypatch) -> None:
         assert "passphrase:/home/u/.ssh/id_ed25519" in context.stored_attempted
         second[:] = b"\0" * len(second)
         second.clear()
+    finally:
+        instance.close()
+
+
+def _prepare_autofill_operation(instance: InteractionBroker) -> str:
+    _argv, environment = instance.prepare_operation_launch(
+        ("ssh", "example.test", "cat .bash_history"),
+        {},
+        scope_id=SessionId("autocomplete-operation"),
+        connection_id=CONNECTION_ID,
+        hostname="example.test",
+        username="alice",
+        interaction_mode=ExecutionInteractionMode.AUTOFILL_ONLY,
+    )
+    return environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+
+
+@pytest.mark.parametrize(
+    ("prompt", "lookup_kwargs", "expected", "expected_lookup"),
+    [
+        (
+            "alice@example.test's password:",
+            {"password_lookup": lambda _connection_id: "stored-password"},
+            b"stored-password",
+            CONNECTION_ID,
+        ),
+        (
+            "Enter passphrase for key '/home/u/.ssh/id_ed25519': ",
+            {"passphrase_lookup": lambda _key_path: "stored-passphrase"},
+            b"stored-passphrase",
+            "/home/u/.ssh/id_ed25519",
+        ),
+    ],
+)
+def test_autofill_only_uses_stored_secret_without_publishing_interaction(
+    prompt, lookup_kwargs, expected, expected_lookup
+) -> None:
+    lookups = []
+    if "password_lookup" in lookup_kwargs:
+        lookup_kwargs = {
+            "password_lookup": lambda connection_id: (
+                lookups.append(connection_id) or "stored-password"
+            )
+        }
+    else:
+        lookup_kwargs = {
+            "passphrase_lookup": lambda key_path: (
+                lookups.append(key_path) or "stored-passphrase"
+            )
+        }
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        **lookup_kwargs,
+    )
+    try:
+        secret = instance._resolve_askpass_secret(
+            _prepare_autofill_operation(instance), prompt
+        )
+        assert secret == bytearray(expected)
+        assert lookups == [expected_lookup]
+        assert instance.list(CLIENT_A) == []
+        secret[:] = b"\0" * len(secret)
+        secret.clear()
+    finally:
+        instance.close()
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "alice@example.test's password:",
+        "Enter passphrase for key '/home/u/.ssh/id_ed25519': ",
+    ],
+)
+def test_autofill_only_missing_secret_returns_without_publishing(prompt) -> None:
+    instance = InteractionBroker(secret_timeout=1, host_key_timeout=1)
+    try:
+        token = _prepare_autofill_operation(instance)
+        instance.wait_for_result = lambda *_args, **_kwargs: pytest.fail(
+            "autofill-only must not wait for an interaction"
+        )
+        assert instance._resolve_askpass_secret(token, prompt) is None
+        assert instance.list(CLIENT_A) == []
+    finally:
+        instance.close()
+
+
+@pytest.mark.parametrize(
+    ("prompt", "hint"),
+    [
+        ("Enter verification code:", ""),
+        ("Custom PAM response:", ""),
+        ("Touch your security key", "none"),
+        (
+            "The authenticity of host 'example.test' can't be established.\n"
+            "ED25519 key fingerprint is SHA256:abc\n"
+            "Are you sure you want to continue connecting (yes/no)?",
+            "",
+        ),
+    ],
+)
+def test_autofill_only_declines_all_nonstored_interactions(prompt, hint) -> None:
+    instance = InteractionBroker(secret_timeout=1, host_key_timeout=1)
+    try:
+        token = _prepare_autofill_operation(instance)
+        instance.wait_for_result = lambda *_args, **_kwargs: pytest.fail(
+            "autofill-only must not wait for an interaction"
+        )
+        assert instance._resolve_askpass_secret(token, prompt, hint=hint) is None
+        assert instance.list(CLIENT_A) == []
+    finally:
+        instance.close()
+
+
+def test_interactive_operation_still_publishes_missing_secret_prompt() -> None:
+    instance = InteractionBroker(secret_timeout=1, host_key_timeout=1)
+    try:
+        _argv, environment = instance.prepare_operation_launch(
+            ("ssh", "example.test", "true"),
+            {},
+            scope_id=SessionId("interactive-operation"),
+            connection_id=CONNECTION_ID,
+            hostname="example.test",
+            username="alice",
+        )
+        instance.wait_for_result = lambda *_args, **_kwargs: None
+        assert (
+            instance._resolve_askpass_secret(
+                environment["SSHPILOT_DAEMON_ASKPASS_TOKEN"],
+                "alice@example.test's password:",
+            )
+            is None
+        )
+        assert instance.list(CLIENT_A)[0].type is InteractionType.PASSWORD
     finally:
         instance.close()
 

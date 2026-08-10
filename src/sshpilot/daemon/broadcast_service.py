@@ -330,6 +330,7 @@ class BroadcastCommandService:
                 scope_id=operation_id,
                 connection_id=connection_id,
                 hostname=str(connection_id),
+                interaction_mode=request.policy.interaction_mode,
             )
             owned_process = [None]
 

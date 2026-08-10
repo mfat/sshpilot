@@ -10,6 +10,7 @@ from sshpilot.api.models.broadcast import (
     BroadcastExecutionPolicy,
     HostCommandState,
 )
+from sshpilot.api.models.interactions import ExecutionInteractionMode
 from sshpilot.api.models.common import ClientId, ConnectionId
 from sshpilot.api.models.operations import (
     OperationId,
@@ -34,12 +35,21 @@ class LaunchProvider:
 class Broker:
     def __init__(self):
         self.calls = []
+        self.interaction_modes = []
         self.cancelled = []
 
     def prepare_operation_launch(
-        self, argv, environment, *, scope_id, connection_id, hostname=""
+        self,
+        argv,
+        environment,
+        *,
+        scope_id,
+        connection_id,
+        hostname="",
+        interaction_mode=ExecutionInteractionMode.INTERACTIVE,
     ):
         assert hostname == str(connection_id)
+        self.interaction_modes.append(interaction_mode)
         self.calls.append((scope_id, connection_id, tuple(argv), dict(environment)))
         return tuple(argv), {**environment, "BROKER": str(connection_id)}
 
@@ -118,7 +128,33 @@ def test_broker_wraps_every_target_and_results_remain_in_request_order():
     assert all(item.state is HostCommandState.SUCCEEDED for item in result.targets)
     assert {call[1] for call in broker.calls} == {"slow", "fast"}
     assert all(call[0] == started.operation.operation_id for call in broker.calls)
+    assert broker.interaction_modes == [
+        ExecutionInteractionMode.INTERACTIVE,
+        ExecutionInteractionMode.INTERACTIVE,
+    ]
     assert broker.cancelled == [started.operation.operation_id]
+    runtime.shutdown()
+
+
+def test_autofill_only_broadcast_policy_reaches_interaction_broker():
+    runtime = OperationRuntime()
+    broker = Broker()
+    service = BroadcastCommandService(
+        runtime, LaunchProvider(), interaction_broker=broker, runner=Runner()
+    )
+    owner = ClientId("client-owner")
+    started = service.start(
+        BroadcastCommandRequest(
+            (ConnectionId("demo"),),
+            "true",
+            BroadcastExecutionPolicy(
+                interaction_mode=ExecutionInteractionMode.AUTOFILL_ONLY
+            ),
+        ),
+        owner_client_id=owner,
+    )
+    wait_terminal(service, started, owner)
+    assert broker.interaction_modes == [ExecutionInteractionMode.AUTOFILL_ONLY]
     runtime.shutdown()
 
 

@@ -5783,6 +5783,7 @@ def broadcast_command_request_to_wire(request: Any) -> Dict[str, Any]:
             "capture_stdout": policy.capture_stdout,
             "capture_stderr": policy.capture_stderr,
             "output_limit_bytes": policy.output_limit_bytes,
+            "interaction_mode": policy.interaction_mode.value,
         },
     }
 
@@ -5793,6 +5794,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
         BroadcastExecutionPolicy,
         BroadcastFailurePolicy,
     )
+    from ..models.interactions import ExecutionInteractionMode
 
     data = _strict_fields(
         value,
@@ -5813,6 +5815,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
             "capture_stdout",
             "capture_stderr",
             "output_limit_bytes",
+            "interaction_mode",
         },
         context="broadcast execution policy",
     )
@@ -5820,6 +5823,10 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
         failure_policy = BroadcastFailurePolicy(policy_data["failure_policy"])
     except (TypeError, ValueError):
         raise ValueError("broadcast policy contains an unknown failure policy") from None
+    try:
+        interaction_mode = ExecutionInteractionMode(policy_data["interaction_mode"])
+    except (TypeError, ValueError):
+        raise ValueError("broadcast policy contains an unknown interaction mode") from None
     timeout = policy_data["timeout_seconds"]
     if timeout is not None and (type(timeout) not in (int, float) or isinstance(timeout, bool)):
         raise ValueError("broadcast timeout must be a number or null")
@@ -5837,6 +5844,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
             output_limit_bytes=_integer(
                 policy_data["output_limit_bytes"], "broadcast output limit"
             ),
+            interaction_mode=interaction_mode,
         ),
     )
 
