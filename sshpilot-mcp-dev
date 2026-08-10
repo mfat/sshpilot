@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""sshPilot dev MCP server launcher.
+
+Runs the contributor-safe repository-intelligence MCP server over stdio. It is
+read-only, repo-confined, and never touches SSH, the daemon, credentials, or
+the network. Opt into the optional dependency first:
+
+    pip install 'sshpilot[mcp]'
+"""
+
+import os
+import sys
+
+# Source-tree runs: prefer the checkout beside this script over an older install.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_src_path = os.path.join(_script_dir, "src")
+if os.path.isdir(_src_path):
+    sys.path.insert(0, _src_path)
+
+try:
+    from sshpilot.mcp.dev.server import main
+except ImportError as error:
+    print(f"Error: {error}", file=sys.stderr)
+    print(
+        "sshpilot-mcp-dev requires the 'mcp' SDK; install the optional extra: "
+        "pip install 'sshpilot[mcp]'",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+if __name__ == "__main__":
+    sys.exit(main())
