@@ -174,7 +174,11 @@ class DaemonSessionRestoreManager:
                 bridge,
                 SessionId(metadata.session_id),
                 connection_id=ConnectionId(metadata.connection_id),
-                from_sequence=max(0, int(metadata.last_sequence or 0)),
+                # This is a fresh widget, so the previous widget's sequence
+                # cannot be used as its replay cursor. Request the daemon's
+                # retained scrollback from the beginning; the daemon clamps
+                # the request to the oldest retained sequence.
+                from_sequence=0,
             )
             if not attached:
                 self.remove_session_metadata(metadata.session_id)
