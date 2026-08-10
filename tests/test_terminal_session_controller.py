@@ -179,6 +179,78 @@ def test_attach_with_replay(controller):
     assert not controller.input_owner
 
 
+def _attach_result(session_id, attachment_id, *, available_start, live_sequence):
+    attachment_info = AttachmentInfo(
+        id=attachment_id,
+        session_id=session_id,
+        client_id="test-client",
+        input_owner=True,
+    )
+    attach_result = Mock()
+    attach_result.attachment = attachment_info
+    attach_result.available_start = available_start
+    attach_result.live_sequence = live_sequence
+    return attach_result
+
+
+def test_reattach_idle_session_already_caught_up_goes_active(controller):
+    """Reattach to a retained but idle session must not wait for replay frames
+    that never arrive.
+
+    Scenario: the tab quit while fully caught up (from_sequence == live) and
+    the shell produced no output since. The daemon replay slice is empty, so
+    no terminal frames will follow attach — REPLAYING would be terminal and
+    the widget would show "Connecting" forever.
+    """
+    session_id = SessionId("test-session")
+    controller._tab_state.session_id = session_id
+    controller._tab_state.state = TerminalSessionState.DETACHED
+
+    controller.attach(from_sequence=100)
+    controller._on_session_attached(
+        _attach_result(
+            session_id,
+            AttachmentId("test-attachment"),
+            available_start=0,  # history is retained…
+            live_sequence=100,  # …but the tab was already caught up
+        )
+    )
+
+    assert controller.state == TerminalSessionState.ACTIVE
+
+
+def test_replay_caught_up_at_live_boundary_activates_without_live_frame(controller):
+    """Replay frames reaching the attach-time live sequence must end REPLAYING
+    even when every frame is replay-flagged (idle session after reattach)."""
+    session_id = SessionId("test-session")
+    controller._tab_state.session_id = session_id
+    controller._tab_state.state = TerminalSessionState.DETACHED
+
+    controller.attach(from_sequence=0)
+    controller._on_session_attached(
+        _attach_result(
+            session_id,
+            AttachmentId("test-attachment"),
+            available_start=0,
+            live_sequence=100,
+        )
+    )
+    assert controller.state == TerminalSessionState.REPLAYING
+
+    controller._handle_output(
+        TerminalOutput(session_id=session_id, sequence=0, data=b"x" * 60, replay=True)
+    )
+    # Not yet caught up to the live boundary (60 < 100).
+    assert controller.state == TerminalSessionState.REPLAYING
+
+    controller._handle_output(
+        TerminalOutput(session_id=session_id, sequence=60, data=b"y" * 40, replay=True)
+    )
+    # Replay reached the attach-time live sequence: stream is caught up even
+    # though no live (non-replay) frame has arrived.
+    assert controller.state == TerminalSessionState.ACTIVE
+
+
 def test_output_handling(controller):
     """Test terminal output handling."""
     controller._tab_state.state = TerminalSessionState.REPLAYING

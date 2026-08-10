@@ -180,6 +180,8 @@ class DaemonTerminalSessionController:
         self._opening_session_id: Optional[SessionId] = None
         self._event_subscription = None
         self._restoring_existing = False
+        self._attach_from_sequence = 0
+        self._replay_catchup_target: Optional[int] = None
 
     @property
     def tab_state(self) -> DaemonTerminalTabState:
@@ -248,6 +250,7 @@ class DaemonTerminalSessionController:
 
         self._restoring_existing = restoring_existing
         self._tab_state.state = TerminalSessionState.ATTACHING
+        self._attach_from_sequence = max(0, int(from_sequence or 0))
 
         # Set up terminal output stream first
         if want_output and not self._stream:
@@ -537,10 +540,16 @@ class DaemonTerminalSessionController:
         self._tab_state.input_owner = result.attachment.input_owner
         self._tab_state.expected_sequence = result.live_sequence
 
-        # Check if we have replay data
-        if result.available_start < result.live_sequence:
+        # The daemon replays [min(from_sequence, live), live). REPLAYING is
+        # only valid while replay frames are actually in flight — reattaching
+        # to an idle session whose replay slice is empty delivers no frames at
+        # all, so waiting for output here would stick the tab on "Connecting".
+        replay_from = min(self._attach_from_sequence, result.live_sequence)
+        if replay_from < result.live_sequence:
+            self._replay_catchup_target = result.live_sequence
             self._tab_state.state = TerminalSessionState.REPLAYING
         else:
+            self._replay_catchup_target = None
             self._tab_state.state = TerminalSessionState.ACTIVE
         self._notify_state_changed()
 
@@ -561,11 +570,17 @@ class DaemonTerminalSessionController:
 
         self._tab_state.expected_sequence = output.next_sequence
 
-        # Transition from replaying to active when we reach live data
-        if (self._tab_state.state == TerminalSessionState.REPLAYING
-            and not output.replay):
-            self._tab_state.state = TerminalSessionState.ACTIVE
-            self._notify_state_changed()
+        # Transition from replaying to active when we reach live data, or when
+        # replay frames have caught up to the attach-time live sequence (an
+        # idle session produces no live frame to end REPLAYING otherwise).
+        if self._tab_state.state == TerminalSessionState.REPLAYING:
+            target = self._replay_catchup_target
+            if not output.replay or (
+                target is not None and output.next_sequence >= target
+            ):
+                self._replay_catchup_target = None
+                self._tab_state.state = TerminalSessionState.ACTIVE
+                self._notify_state_changed()
 
         if self._on_output:
             self._on_output(output.data)
