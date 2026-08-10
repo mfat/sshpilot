@@ -2051,6 +2051,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not hasattr(self, 'connection_list'):
             return
 
+        try:
+            connections = self.connection_manager.get_connections()
+        except Exception:
+            connections = []
+        self._attach_sidebar_forwarding_rules(connections)
+        self._refresh_sidebar_forwarding_rules(connections)
+
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
@@ -2091,6 +2098,139 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # not while detached into the popup, which shows full rows).
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
+
+    def _sidebar_forwarding_rules_enabled(self) -> bool:
+        try:
+            return bool(self.config.get_setting('ui.sidebar_show_port_forwarding', True))
+        except Exception:
+            return True
+
+    def _sidebar_store_generation(self) -> int:
+        try:
+            return int(getattr(self.connection_manager, 'generation', 0) or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _sidebar_connection_key(connection) -> Optional[str]:
+        value = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+        return str(value or '').strip() or None
+
+    @staticmethod
+    def _sidebar_connection_uses_ssh(connection) -> bool:
+        return str(getattr(connection, 'protocol', 'ssh') or 'ssh').lower() == 'ssh'
+
+    def _attach_sidebar_forwarding_rules(self, connections) -> None:
+        cache = getattr(self, '_forwarding_rules_cache', None)
+        if not cache:
+            return
+        generation = self._sidebar_store_generation()
+        for connection in connections:
+            if not self._sidebar_connection_uses_ssh(connection):
+                continue
+            key = self._sidebar_connection_key(connection)
+            if key is None:
+                continue
+            entry = cache.get(key)
+            if entry is None or entry[0] != generation:
+                continue
+            try:
+                object.__setattr__(connection, 'forwarding_rules', entry[1])
+            except Exception:
+                pass
+
+    def _refresh_sidebar_forwarding_rules(self, connections) -> None:
+        if not self._sidebar_forwarding_rules_enabled():
+            return
+        if getattr(self, '_is_quitting', False):
+            return
+        bridge = getattr(self, 'client_bridge', None)
+        client = getattr(self, 'client', None)
+        if bridge is None or client is None:
+            return
+        cache = getattr(self, '_forwarding_rules_cache', None)
+        if cache is None:
+            cache = {}
+            self._forwarding_rules_cache = cache
+        pending = getattr(self, '_forwarding_rules_pending', None)
+        if pending is None:
+            pending = set()
+            self._forwarding_rules_pending = pending
+        generation = self._sidebar_store_generation()
+        for connection in connections:
+            if not self._sidebar_connection_uses_ssh(connection):
+                continue
+            key = self._sidebar_connection_key(connection)
+            if key is None:
+                continue
+            entry = cache.get(key)
+            if entry is not None and entry[0] == generation:
+                continue
+            if key in pending:
+                continue
+            pending.add(key)
+            self._submit_sidebar_forwarding_fetch(
+                client, bridge, connection, key, generation, cache, pending
+            )
+
+    def _submit_sidebar_forwarding_fetch(
+        self, client, bridge, connection, key, generation, cache, pending
+    ) -> None:
+        def on_success(details):
+            pending.discard(key)
+            try:
+                from .api.models.connections import (
+                    ForwardingRule,
+                    forwarding_rule_to_dict,
+                )
+                raw = getattr(details, 'forwarding_rules', None) or ()
+                rules = tuple(
+                    forwarding_rule_to_dict(rule)
+                    for rule in raw
+                    if isinstance(rule, (ForwardingRule, dict))
+                )
+                cache[key] = (generation, rules)
+                self._apply_sidebar_forwarding_rules(connection, rules)
+            except Exception:
+                logger.debug(
+                    "Failed to cache forwarding rules for %s", key, exc_info=True
+                )
+
+        def on_error(error):
+            pending.discard(key)
+            cache.setdefault(key, (generation, ()))
+
+        try:
+            bridge.submit(
+                lambda: client.get_connection_editor(connection_id_for(connection)),
+                on_success=on_success,
+                on_error=on_error,
+            )
+        except Exception:
+            pending.discard(key)
+            logger.debug(
+                "Failed to submit forwarding-rule fetch for %s", key, exc_info=True
+            )
+
+    def _apply_sidebar_forwarding_rules(self, connection, rules) -> None:
+        try:
+            object.__setattr__(connection, 'forwarding_rules', rules)
+        except Exception:
+            pass
+        try:
+            target = self._sidebar_connection_key(connection)
+            for conn, rows in list(getattr(self, 'connection_rows', {}).items()):
+                if self._sidebar_connection_key(conn) != target:
+                    continue
+                try:
+                    object.__setattr__(conn, 'forwarding_rules', rules)
+                except Exception:
+                    pass
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, '_update_forwarding_indicators'):
+                        row._update_forwarding_indicators()
+        except Exception:
+            logger.debug("Failed to refresh sidebar forwarding rows", exc_info=True)
 
     def update_sidebar_max_width(self, max_width: int):
         """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
@@ -3319,6 +3459,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
             except Exception:
                 object.__setattr__(conn, 'tags', [])
+        self._attach_sidebar_forwarding_rules(connections)
+        self._refresh_sidebar_forwarding_rules(connections)
         connections_dict = {conn.nickname: conn for conn in connections}
         connections_dict.update(
             {
