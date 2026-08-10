@@ -51,12 +51,25 @@ class Runner:
     def __init__(self, delays=None, exits=None):
         self.delays = delays or {}
         self.exits = exits or {}
+        self.inputs = []
         self.active = 0
         self.maximum = 0
         self.lock = threading.Lock()
 
-    def run(self, argv, environment, policy, *, cancel_event, on_process, on_output):
+    def run(
+        self,
+        argv,
+        environment,
+        policy,
+        *,
+        cancel_event,
+        on_process,
+        on_output,
+        input_data=None,
+    ):
         connection_id = argv[1]
+        if input_data is not None:
+            self.inputs.append(bytes(input_data))
         with self.lock:
             self.active += 1
             self.maximum = max(self.maximum, self.active)
@@ -128,6 +141,45 @@ def test_concurrency_is_bounded_and_nonzero_exit_fails_parent():
     runtime.shutdown()
 
 
+def test_daemon_broadcast_passes_protected_command_input_to_runner():
+    runtime = OperationRuntime()
+    runner = Runner()
+    service = BroadcastCommandService(
+        runtime, LaunchProvider(), interaction_broker=Broker(), runner=runner
+    )
+    owner = ClientId("client-owner")
+    request = BroadcastCommandRequest((ConnectionId("demo"),), "sudo true")
+    started = service.start(
+        request,
+        owner_client_id=owner,
+        input_data=bytearray(b"password\n"),
+    )
+    result = wait_terminal(service, started, owner)
+    assert result.operation.state is OperationState.SUCCEEDED
+    assert runner.inputs == [b"password\n"]
+    runtime.shutdown()
+
+
+def test_daemon_broadcast_publishes_incremental_output():
+    runtime = OperationRuntime()
+    output = []
+    service = BroadcastCommandService(
+        runtime,
+        LaunchProvider(),
+        interaction_broker=Broker(),
+        runner=Runner(),
+        output_publisher=lambda *event: output.append(event),
+    )
+    owner = ClientId("client-owner")
+    started = service.start(
+        BroadcastCommandRequest((ConnectionId("demo"),), "docker logs -f"),
+        owner_client_id=owner,
+    )
+    wait_terminal(service, started, owner)
+    assert output == [(started.operation.operation_id, ConnectionId("demo"), "stdout", "out:demo")]
+    runtime.shutdown()
+
+
 def test_terminal_result_retention_is_bounded():
     runtime = OperationRuntime(terminal_retention=1)
     service = BroadcastCommandService(
@@ -170,7 +222,7 @@ def test_real_server_capabilities_survive_refresh_and_client_can_start(tmp_path)
         capabilities = client.get_capabilities()
         assert Capability.BROADCAST_READ in capabilities.supported
         assert Capability.BROADCAST_WRITE in capabilities.supported
-        assert Capability.BROADCAST_EVENTS not in capabilities.supported
+        assert Capability.BROADCAST_EVENTS in capabilities.supported
         started = client.start_broadcast_command(
             BroadcastCommandRequest((ConnectionId("demo"),), "true")
         )

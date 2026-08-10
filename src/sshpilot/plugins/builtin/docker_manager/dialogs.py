@@ -433,8 +433,6 @@ class DockerConsoleSettingsDialog(_DialogBase):
     """Plugin settings for the Docker Console page."""
 
     def __init__(self, parent: Optional[Gtk.Window], *,
-                 reuse_ssh: bool,
-                 on_reuse_ssh_changed: Callable[[bool], None],
                  refresh_interval: int = 10,
                  on_refresh_interval_changed: Optional[Callable[[int], None]] = None,
                  log_tail: int = 200,
@@ -447,20 +445,6 @@ class DockerConsoleSettingsDialog(_DialogBase):
         close.set_tooltip_text(_("Close"))
         close.connect("clicked", lambda _b: self.close())
         self._header.pack_end(close)
-
-        self._reuse_row = Adw.SwitchRow()
-        self._reuse_row.set_title(_("Reuse SSH connection"))
-        self._reuse_row.set_subtitle(
-            _("One open connection per host — faster status checks")
-        )
-        self._reuse_row.set_active(reuse_ssh)
-        self._reuse_row.connect(
-            "notify::active",
-            lambda row, _pspec: on_reuse_ssh_changed(row.get_active()),
-        )
-
-        group = Adw.PreferencesGroup(title=_("Connection"))
-        group.add(self._reuse_row)
 
         self._interval_row = Adw.SpinRow.new_with_range(2, 60, 1)
         self._interval_row.set_title(_("Auto-refresh interval"))
@@ -500,7 +484,6 @@ class DockerConsoleSettingsDialog(_DialogBase):
         scroller = Gtk.ScrolledWindow(vexpand=True)
         body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18,
                        margin_top=16, margin_bottom=16, margin_start=16, margin_end=16)
-        body.append(group)
         body.append(polling)
         body.append(logs)
         scroller.set_child(body)

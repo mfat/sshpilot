@@ -5,6 +5,7 @@ non-negative `sequence`, UTC `timestamp`, and optional request/connection/sessio
 IDs.
 
 <!-- api-event-semantics: serial-fifo-v1 -->
+<!-- api-event: broadcast.output -->
 
 `InProcessClient` uses one publisher-global FIFO ordering point. Sequence
 allocation and queue insertion are atomic, and exactly one publishing thread

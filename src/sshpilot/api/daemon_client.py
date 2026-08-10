@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import secrets
 import socket
 import threading
 import time
@@ -328,6 +329,9 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
     "get_plugin_secret": Capability.CONNECTIONS_SECRETS_REVEAL,
     "replay_terminal": Capability.TERMINAL_REPLAY,
+    "get_plugin_setting": Capability.PLUGIN_SETTINGS_READ,
+    "set_plugin_setting": Capability.PLUGIN_SETTINGS_WRITE,
+    "subscribe_broadcast_output": Capability.BROADCAST_EVENTS,
     "list_sftp_services": Capability.SFTP_READ,
     "get_sftp_service": Capability.SFTP_READ,
     "open_sftp": Capability.SFTP_WRITE,
@@ -2457,7 +2461,7 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid operation")
 
-    def start_broadcast_command(self, request):
+    def start_broadcast_command(self, request, *, input=None):
         from sshpilot.api.models.broadcast import BroadcastCommandRequest
         from sshpilot.api.transport.codec import (
             broadcast_command_request_to_wire,
@@ -2467,10 +2471,15 @@ class DaemonClient:
         self._require_capability(Capability.BROADCAST_WRITE)
         if type(request) is not BroadcastCommandRequest:
             raise TypeError("a BroadcastCommandRequest is required")
+        payload = broadcast_command_request_to_wire(request)
+        payload["input_requested"] = input is not None
         result = self._request(
             "broadcast.start",
-            broadcast_command_request_to_wire(request),
+            payload,
             mutation_description="broadcast command start",
+            secret_input=(
+                bytearray(input.encode("utf-8")) if input is not None else None
+            ),
         )
         return broadcast_command_summary_from_wire(result)
 
@@ -2499,6 +2508,80 @@ class DaemonClient:
                 mutation_description="broadcast command cancellation",
             )
         )
+
+    def get_plugin_setting(self, plugin_id: str, key: str, default=None):
+        self._require_capability(Capability.PLUGIN_SETTINGS_READ)
+        return self._request(
+            "plugins.settings.get",
+            {"plugin_id": plugin_id, "key": key, "default": default},
+        )
+
+    def set_plugin_setting(self, plugin_id: str, key: str, value) -> None:
+        self._require_capability(Capability.PLUGIN_SETTINGS_WRITE)
+        self._require_write_compatibility("set plugin setting")
+        result = self._request(
+            "plugins.settings.set",
+            {"plugin_id": plugin_id, "key": key, "value": value},
+            mutation_description="plugin setting update",
+        )
+        if result is not None:
+            self._fail_protocol("The daemon returned an invalid plugin setting result")
+
+    def subscribe_broadcast_output(self, operation_id, on_output, on_done=None):
+        self._require_capability(Capability.BROADCAST_EVENTS)
+        if not callable(on_output):
+            raise TypeError("broadcast output callback must be callable")
+        finished = threading.Event()
+        finish_lock = threading.Lock()
+
+        def complete(exit_code):
+            with finish_lock:
+                if finished.is_set():
+                    return
+                finished.set()
+            if on_done is not None:
+                on_done(exit_code)
+
+        def receive(event):
+            if finished.is_set():
+                return
+            if event.type is EventType.BROADCAST_OUTPUT:
+                payload = event.payload
+                if str(payload.operation_id) == str(operation_id):
+                    on_output(payload.stream, payload.text)
+                return
+            if event.type is EventType.OPERATION_STATE_CHANGED:
+                summary = event.payload
+                if str(summary.id) != str(operation_id) or summary.state.value not in {
+                    "succeeded", "failed", "cancelled"
+                }:
+                    return
+                try:
+                    result = self.get_broadcast_command(operation_id)
+                    code = (
+                        result.targets[0].exit_code
+                        if result.targets and result.targets[0].exit_code is not None
+                        else (-1 if summary.state.value != "succeeded" else 0)
+                    )
+                except Exception:
+                    code = -1
+                complete(code)
+
+        subscription = self.subscribe_events(receive)
+        # The command can finish before the caller installs its callback. Do
+        # one authoritative snapshot check so completion remains observable.
+        try:
+            current = self.get_broadcast_command(operation_id)
+            if current.operation.state.value in {"succeeded", "failed", "cancelled"}:
+                code = (
+                    current.targets[0].exit_code
+                    if current.targets and current.targets[0].exit_code is not None
+                    else (-1 if current.operation.state.value != "succeeded" else 0)
+                )
+                complete(code)
+        except Exception:
+            pass
+        return subscription
 
     def cancel_operation(self, operation_id):
         from sshpilot.api.models.operations import OperationId
@@ -2659,6 +2742,7 @@ class DaemonClient:
         *,
         protocol_version: Optional[str] = None,
         secret_response: bool = False,
+        secret_input: Optional[bytearray] = None,
         mutation_connection_id: Optional[ConnectionId] = None,
         mutation_session_id: Optional[SessionId] = None,
         session_mutation: bool = False,
@@ -2717,6 +2801,19 @@ class DaemonClient:
                         or mutation_description is not None
                     )
                     transport.sendall(frame)
+                    if secret_input is not None:
+                        transport.sendall(
+                            encode_binary_frame(
+                                encode_secret_payload(
+                                    SecretFrame(
+                                        kind=SecretFrameKind.COMMAND_INPUT,
+                                        interaction_id=InteractionId(str(request_id)),
+                                        nonce=secrets.token_bytes(16),
+                                        secret=secret_input,
+                                    )
+                                )
+                            )
+                        )
                     sent = True
                     pending.sent = True
             except (FramingError, TypeError, ValueError):
@@ -2736,6 +2833,10 @@ class DaemonClient:
                         request_id=request_id,
                     )
                 )
+            finally:
+                if secret_input is not None:
+                    secret_input[:] = b"\0" * len(secret_input)
+                    secret_input.clear()
 
             if not pending.completed.wait(effective_timeout):
                 with self._state_lock:

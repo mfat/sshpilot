@@ -21,6 +21,7 @@ _HEADER = struct.Struct(">4sBBH32s16s")
 class SecretFrameKind(IntEnum):
     RESPONSE = 1
     REVEAL_RESPONSE = 2
+    COMMAND_INPUT = 3
 
 
 @dataclass
@@ -34,6 +35,7 @@ class SecretFrame:
         if self.kind not in (
             SecretFrameKind.RESPONSE,
             SecretFrameKind.REVEAL_RESPONSE,
+            SecretFrameKind.COMMAND_INPUT,
         ):
             raise ValueError("secret frame kind is unsupported")
         require_identifier(self.interaction_id, "interaction id")

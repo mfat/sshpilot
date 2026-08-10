@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.27",
+  "api_implementation_version": "0.28",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -203,6 +203,10 @@
     },
     "get_plugin_secret": {
       "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "get_plugin_setting": {
+      "capability": "plugins.settings.read",
       "status": "daemon-only"
     },
     "get_secret_backends": {
@@ -429,6 +433,10 @@
       "capability": "daemon.control",
       "status": "daemon-only"
     },
+    "set_plugin_setting": {
+      "capability": "plugins.settings.write",
+      "status": "daemon-only"
+    },
     "sftp_chmod": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
@@ -520,6 +528,10 @@
     "store_key_passphrase": {
       "capability": "connections.secrets.write",
       "status": "implemented"
+    },
+    "subscribe_broadcast_output": {
+      "capability": "broadcast.events",
+      "status": "daemon-only"
     },
     "subscribe_events": {
       "capability": "connections.events",
@@ -796,6 +808,12 @@
     },
     "operations.get": {
       "capability": "operations.read"
+    },
+    "plugins.settings.get": {
+      "capability": "plugins.settings.read"
+    },
+    "plugins.settings.set": {
+      "capability": "plugins.settings.write"
     },
     "secrets.backends.get": {
       "capability": "secrets.read"
@@ -1103,6 +1121,8 @@
       "ssh_overrides.read",
       "ssh_overrides.write",
       "plugins",
+      "plugins.settings.read",
+      "plugins.settings.write",
       "secrets",
       "secrets.read",
       "secrets.write",
@@ -1271,6 +1291,7 @@
       "forward.failed",
       "operation.created",
       "operation.state_changed",
+      "broadcast.output",
       "daemon.state_changed",
       "error.occurred"
     ],

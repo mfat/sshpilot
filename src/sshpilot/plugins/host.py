@@ -329,10 +329,12 @@ class PluginHost:
         self._cm_handlers: List[int] = []
         # id(terminal) -> SessionInfo; also the reconnect-dedupe set.
         self._terminal_sessions: Dict[int, SessionInfo] = {}
-        # session_id (str) -> weakref to the live terminal widget, for
-        # ctx.read_terminal / ctx.send_terminal. Weak so a closed tab's widget
-        # can be collected even if a plugin held the id.
+        # session_id (str) -> weakref to the live terminal widget for
+        # presentation/event compatibility. Plugin session operations use the
+        # daemon client below, not this bookkeeping.
         self._terminal_widgets: Dict[str, Any] = {}
+        # Attachment handles are daemon resources, not a session registry.
+        self._plugin_attachments: Dict[str, Any] = {}
 
     # --- binding ------------------------------------------------------
     def bind_window(self, window) -> None:
@@ -602,40 +604,107 @@ class PluginHost:
 
     # --- terminals / sessions -----------------------------------------
     def list_sessions(self) -> List[SessionInfo]:
-        """Snapshot of currently open terminal sessions."""
-        return list(self._terminal_sessions.values())
+        """Project the daemon's authoritative session snapshot."""
+        client = self.daemon_client()
+        if client is None:
+            return []
+        connections = {item.id: item for item in client.list_connections()}
+        result = []
+        for session in client.list_sessions():
+            connection = connections.get(session.connection_id)
+            if connection is None:
+                continue
+            result.append(
+                SessionInfo(
+                    ConnectionInfo(
+                        nickname=connection.nickname,
+                        host=connection.hostname or connection.host,
+                        username=connection.username,
+                        protocol=connection.protocol,
+                        port=connection.port,
+                    ),
+                    str(session.id),
+                )
+            )
+        return result
 
-    def _terminal_for(self, session_id: str):
-        ref = self._terminal_widgets.get(str(session_id))
-        return ref() if ref is not None else None
+    def _attachment_for(self, session_id: str, *, request_input: bool):
+        client = self.daemon_client()
+        if client is None:
+            return None
+        cached = self._plugin_attachments.get(str(session_id))
+        if cached is not None:
+            if not request_input or cached.attachment.input_owner:
+                return cached
+            # A read-only attachment cannot be upgraded in place. Ask the
+            # daemon for an input-owner attachment through its normal rules.
+            self._plugin_attachments.pop(str(session_id), None)
+        from sshpilot.api.models.sessions import AttachSessionRequest
+
+        attached = client.attach_session(
+            AttachSessionRequest(
+                session_id=str(session_id),
+                request_input=request_input,
+                want_terminal_output=False,
+            )
+        )
+        self._plugin_attachments[str(session_id)] = attached
+        return attached
 
     def read_terminal(self, session_id: str,
                       max_chars: Optional[int] = None) -> Optional[str]:
-        """Read a session terminal's text via the backend's get_content (which
-        already handles the VTE feed/get_text_format gotcha)."""
-        term = self._terminal_for(session_id)
-        if term is None:
+        """Read daemon terminal replay as a bounded text projection."""
+        client = self.daemon_client()
+        attached = self._attachment_for(session_id, request_input=False)
+        if client is None or attached is None:
             return None
-        backend = getattr(term, "backend", None)
+        from sshpilot.api.models.terminal import ReplayRequest
+        import threading
+
+        chunks = []
+        done = threading.Event()
+
+        def receive(output):
+            if output.replay:
+                chunks.append(output.data)
+            if output.eof:
+                done.set()
+
         try:
-            if backend is not None and hasattr(backend, "get_content"):
-                return backend.get_content(max_chars)
+            subscription = client.subscribe_terminal(session_id, receive)
+            try:
+                client.replay_terminal(
+                    ReplayRequest(
+                        session_id=str(session_id),
+                        attachment_id=attached.attachment.id,
+                        max_bytes=16 * 1024 * 1024,
+                    )
+                )
+                done.wait(2.0)
+            finally:
+                subscription.close()
+            text = b"".join(chunks).decode("utf-8", "replace")
+            return text[-max_chars:] if max_chars is not None else text
         except Exception:
             logger.exception("read_terminal failed")
         return None
 
     def send_terminal(self, session_id: str, text: str) -> bool:
-        """Feed input to a session terminal (on the UI thread)."""
-        term = self._terminal_for(session_id)
-        if term is None or text is None:
+        """Send input through the daemon terminal ownership mechanism."""
+        client = self.daemon_client()
+        attached = self._attachment_for(session_id, request_input=True)
+        if client is None or attached is None or text is None:
             return False
-        data = text.encode("utf-8")
-
-        def _feed():
-            term.feed_child_data(data)
-
         try:
-            self.run_on_ui_thread(_feed)
+            from sshpilot.api.models.terminal import TerminalInput
+
+            client.send_terminal_input(
+                TerminalInput(
+                    session_id=str(session_id),
+                    attachment_id=attached.attachment.id,
+                    data=text.encode("utf-8"),
+                )
+            )
             return True
         except Exception:
             logger.exception("send_terminal failed")

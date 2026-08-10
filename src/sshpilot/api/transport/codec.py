@@ -506,6 +506,7 @@ _OPERATION_EVENT_TYPES = frozenset(
         EventType.OPERATION_STATE_CHANGED,
     }
 )
+_BROADCAST_EVENT_TYPES = frozenset({EventType.BROADCAST_OUTPUT})
 _FORWARDED_EVENT_TYPES = (
     _CONNECTION_EVENT_TYPES
     | _SESSION_EVENT_TYPES
@@ -515,6 +516,7 @@ _FORWARDED_EVENT_TYPES = (
     | _FORWARD_EVENT_TYPES
     | _DAEMON_EVENT_TYPES
     | _OPERATION_EVENT_TYPES
+    | _BROADCAST_EVENT_TYPES
 )
 
 
@@ -572,6 +574,17 @@ def public_event_to_envelope(
         if type(event.payload) is not OperationSummary:
             raise TypeError("operation event payload must be OperationSummary")
         payload = operation_summary_to_wire(event.payload)
+    elif event.type in _BROADCAST_EVENT_TYPES:
+        from ..models.broadcast import BroadcastCommandOutput
+
+        if type(event.payload) is not BroadcastCommandOutput:
+            raise TypeError("broadcast output event payload is invalid")
+        payload = {
+            "operation_id": event.payload.operation_id,
+            "connection_id": event.payload.connection_id,
+            "stream": event.payload.stream,
+            "text": event.payload.text,
+        }
     else:
         if type(event.payload) is not SessionSummary:
             raise TypeError("session event payload must be SessionSummary")
@@ -676,6 +689,26 @@ def public_event_from_envelope(envelope: EventEnvelope) -> CoreEvent:
             payload=operation_summary,
             sequence=envelope.sequence,
             connection_id=operation_summary.connection_id,
+        )
+    if event_type in _BROADCAST_EVENT_TYPES:
+        from ..models.broadcast import BroadcastCommandOutput
+
+        data = _strict_fields(
+            dict(envelope.payload),
+            required={"operation_id", "connection_id", "stream", "text"},
+            context="broadcast output event",
+        )
+        payload = BroadcastCommandOutput(
+            operation_id=data["operation_id"],
+            connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
+            stream=data["stream"],
+            text=data["text"],
+        )
+        return CoreEvent(
+            type=event_type,
+            payload=payload,
+            sequence=envelope.sequence,
+            connection_id=payload.connection_id,
         )
     summary = session_summary_from_wire(dict(envelope.payload))
     return CoreEvent(
@@ -5762,8 +5795,13 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
     )
 
     data = _strict_fields(
-        value, required={"connection_ids", "command", "policy"}, context="broadcast command request"
+        value,
+        required={"connection_ids", "command", "policy"},
+        optional={"input_requested"},
+        context="broadcast command request",
     )
+    if "input_requested" in data and type(data["input_requested"]) is not bool:
+        raise ValueError("broadcast input_requested must be a boolean")
     if type(data["connection_ids"]) is not list:
         raise ValueError("broadcast connection_ids must be an array")
     policy_data = _strict_fields(

@@ -195,6 +195,7 @@ from .operations import (
 from .broadcast import (
     BroadcastCommandRequest,
     BroadcastCommandSummary,
+    BroadcastCommandOutput,
     BroadcastExecutionPolicy,
     BroadcastFailurePolicy,
     HostCommandResult,
@@ -278,6 +279,7 @@ __all__ = [
     "AuthorizedKeyLineKind",
     "AuthorizedKeyList",
     "BitwardenStatus",
+    "BroadcastCommandOutput",
     "BroadcastCommandRequest",
     "BroadcastCommandSummary",
     "BroadcastExecutionPolicy",

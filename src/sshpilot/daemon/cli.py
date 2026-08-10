@@ -261,6 +261,7 @@ def _production_core_services():
 
     from .bootstrap_settings import DaemonBootstrapSettings
     from .config_reload import AuthoritativeConfigurationBackend
+    from .plugin_settings import PluginSettingsService
     from .connection_launch_provider import DaemonConnectionLaunchProvider
     from .connection_secret_provider import DaemonConnectionSecretProvider
     from .key_service import DaemonKeyService
@@ -367,6 +368,7 @@ def _production_core_services():
         secrets=secrets_service,
         identity=identity_service,
         operations=operation_runtime,
+        plugin_settings=PluginSettingsService(get_config_dir() / "config.json"),
     )
 
 

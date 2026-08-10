@@ -1,6 +1,6 @@
 # Frontend closure audit
 
-Status: **not closed** at base `29f1c9a29d8656f3c7fdeff241beeecd2136879`.
+Status: **closed** at the Phase 7 completion commit.
 
 This is the Phase 7 inventory of production GTK entry points.  The matrix
 records the ownership boundary, rather than treating the current location of
@@ -39,13 +39,13 @@ no current product path.
 | Browser URLs, clipboard, notifications, window/layout state | actions, dialogs, window, notification helpers | None | Desktop/OS/UI | `tests/test_window_*`, focused action tests | legitimate frontend-only | No SSH Pilot backend state or remote operation is owned here. |
 | Native file/folder chooser presentation | connection, transfer, backup, preferences dialogs | None | GTK/desktop chooser | focused GTK/headless dialog tests | legitimate frontend-only | Selection is UI input; the resulting operation still goes through the API. |
 | External system terminal | `WindowActions`, `MainWindow.open_in_system_terminal` | None | OS terminal application | `tests/test_terminal_*`, external-terminal action tests | legitimate frontend-only | This explicitly hands presentation to the OS; in-app SSH sessions remain daemon-owned. |
-| Plugin remote command execution (captured) | `PluginContext.run_command`, Docker plugin actions | No typed `SshPilotClient` method | No daemon owner; `PluginContext` builds/owns the process | plugin compatibility tests only; no headless client proof | migration required | Active Docker/plugin actions reach `plugins/api.py` and its OpenSSH subprocess adapter. This is blocker P7-PLUGIN-COMMAND. |
-| Plugin remote command streams/log follow | `DockerConsolePage`, `LogsTabMixin` via `run_command_stream` | No typed streaming command method | No daemon owner; `_spawn_stream` owns the process | plugin stream tests are not daemon/headless proof | migration required | This is blocker P7-PLUGIN-STREAM and cannot be classified as terminal presentation because the plugin owns captured remote command execution. |
-| Plugin multiplex lifecycle | `DockerConsolePage._acquire_multiplex`, `_release_multiplex` | No typed multiplex lifecycle method | No daemon owner; `PluginContext.acquire_multiplex`/`release_multiplex` own the helper calls | `tests/test_ssh_multiplex.py` covers the local helper only | migration required | Both `acquire_multiplex()` and `release_multiplex()` are active Docker paths and are blocker P7-PLUGIN-MUX. |
+| Plugin remote command execution (captured) | `PluginContext.run_command`, Docker plugin actions | `start_broadcast_command`/`get_broadcast_command` | `BroadcastCommandService` and `NativeSshCommandRunner` | daemon broadcast/API tests and plugin command tests | API/daemon owned | Single-target plugin commands reuse the daemon broadcast/native SSH path; protected stdin uses binary secret transport. |
+| Plugin remote command streams/log follow | `DockerConsolePage`, `LogsTabMixin` via `run_command_stream` | broadcast output events plus cancellation | `BroadcastCommandService` output publisher and native runner | daemon broadcast/API tests and Docker stream tests | API/daemon owned | Plugin callbacks receive daemon output events and stop cancels the daemon operation. |
+| Plugin multiplex lifecycle | deprecated plugin compatibility methods | no lifecycle API | daemon transport reuse is an implementation concern | Docker behavior tests | dead/unreachable code | Docker no longer acquires or releases frontend ControlMasters; retained methods are no-ops. |
 | Plugin local forward active route | `DockerManager` service links via `PluginContext.ensure_local_forward` | `open_forward`, `get_forward` / `forwards.*` | daemon forward runtime | `tests/daemon/test_forward_*`, `tests/integration/test_forward_phase10.py` | API/daemon owned | The active route requires `DaemonClient`; the policy rejects legacy local processes. |
-| Plugin legacy local-forward branch | legacy branch inside `PluginContext.ensure_local_forward` | None | None | `tests/test_extended_service_policy.py` | dead/unreachable code | `allow_legacy_local_forward()` is hardcoded false and daemon routing is preferred; the ControlMaster/`ssh -N` branch has no current production route. |
-| Plugin key deployment compatibility method | `PluginContext.copy_key_to_host` | `deploy_key` exists, but this method does not use it | None in current production graph | no current production caller; daemon deploy tests cover the replacement API | dead/unreachable code | Retained public plugin compatibility surface; direct `ssh-copy-id` must not be reactivated. |
-| Plugin effective-config compatibility method | `PluginContext.get_effective_ssh_config` | No typed plugin-facing method | None in current production graph | no current production caller; SSH config service tests cover authoritative config paths | dead/unreachable code | It delegates to the legacy local `ssh -G` helper and is not an active GTK operation. |
+| Legacy local-forward compatibility | obsolete fallback removed from `PluginContext.ensure_local_forward` | None | None | forward daemon tests | dead/unreachable code | The frontend ControlMaster/`ssh -N` fallback was deleted; the plugin route requires the daemon forward service. |
+| Obsolete direct SSH plugin helpers | removed `copy_key_to_host` / `get_effective_ssh_config` methods | daemon key/config APIs | None | API and key/config daemon tests | dead/unreachable code | The direct `ssh-copy-id` and `ssh -G` compatibility implementations were deleted. |
+| Obsolete effective-config helper | removed `get_effective_ssh_config` method | daemon SSH config API | None | API config tests | dead/unreachable code | The direct `ssh -G` compatibility implementation was deleted. |
 | Legacy `OpenSSHSFTPManager` | `file_manager/openssh_backend.py` | None | None in the current in-app route | daemon SFTP routing tests prove the active route | dead/unreachable code | No graph inbound path from the current file-manager route; retain only until compatibility removal is separately verified. |
 | Legacy direct SSH terminal helpers | `TerminalWidget._connect_ssh*`, `_setup_ssh_terminal` | None | None in the current daemon activation route | `tests/test_daemon_terminal_activation_ownership.py` | dead/unreachable code | The normal route is daemon-only; these compatibility helpers are not a valid fallback. |
 
@@ -53,7 +53,7 @@ no current product path.
 
 The following is the complete public PluginContext/facade inventory in
 `src/sshpilot/plugins/api.py`.  The count in the closing report is the number
-of classified public identities (53), not a subprocess-hit count.  A grouped
+of classified public identities (51), not a subprocess-hit count.  A grouped
 row still lists every exact identity so that a new or rerouted capability must
 update both this audit and `tests/architecture/test_frontend_closure.py`.
 
@@ -65,21 +65,19 @@ update both this audit and `tests/architecture/test_frontend_closure.py`.
 | Local terminal presentation | plugin local-command actions | `PluginContext.open_local_command_terminal` | Local GTK terminal presentation | `tests/test_plugin_host.py` | legitimate frontend/platform-local | This is an OS-local shell tab, not a remote or SSH Pilot backend operation. |
 | Group creation and assignment | plugin sidebar/group actions | `PluginContext.create_group`, `PluginContext.add_connection_to_group`, `PluginContext.add_connection_group` | daemon-backed `GroupMutationController`/`GroupManager` path | `tests/test_group_mutation_controller.py`, `tests/test_tag_groups.py` | API/daemon owned | The current window attaches the client-backed controller; plugin calls do not bypass it. |
 | Plugin secrets | plugin credential actions and protocol spawn context | `PluginContext.get_secret`, `PluginContext.set_secret`, `PluginContext.delete_secret`, `_SecretStore.get`, `_SecretStore.set`, `_SecretStore.delete` | `DaemonConnectionServices` and protected secret service through `SshPilotClient` | `tests/daemon/test_secret_dispatch.py`, `tests/test_plugin_connection_services.py` | API/daemon owned | Existing daemon routing is recorded as correct and is not being migrated again. |
-| Plugin settings, presentation state | built-in plugin settings panels | `_SettingStore.get`, `_SettingStore.set` | None for presentation-only keys | `tests/test_plugin_context.py`, built-in plugin tests | legitimate frontend/platform-local | Keys such as `last_host`, `refresh_interval`, `log_tail`, `max_log_lines`, and `show_all_containers` are presentation/local plugin state. The same facade is also used for operational settings below, so the identities remain classified as migration-required overall. |
-| Plugin settings, operational state | Docker, EasyEnv, and Mock VPS plugin actions | `_SettingStore.get`, `_SettingStore.set` | No typed daemon settings owner for plugin operational state | built-in plugin tests only; no headless daemon proof | migration required | Active examples include Docker `runtime:<nickname>`, `runtime_mode:<nickname>`, `sudo:<nickname>`, and `controlmaster`, EasyEnv `account_uuid`/`base_url`, and Mock VPS `region`. The exact ownership blocker is `_SettingStore.set` (with `_SettingStore.get` required to read the same state); it is not frontend-only merely because it is namespaced under `plugins.*`. |
+| Plugin settings | built-in plugin settings panels and plugin actions | `plugins.settings.get/set` | daemon `PluginSettingsService` and transactional settings store | daemon settings/API tests and built-in plugin tests | API/daemon owned | The daemon enforces `plugin_id` namespacing and JSON-safe values. |
+| Plugin settings, operational state | Docker, EasyEnv, and Mock VPS plugin actions | `_SettingStore.get`, `_SettingStore.set` → `plugins.settings.get/set` | daemon `PluginSettingsService` and transactional settings store | daemon settings/API tests and built-in plugin tests | API/daemon owned | The daemon enforces `plugin_id` namespacing and JSON-safe values for all plugin operational state. |
 | Identity listing and agent availability | plugin identity-aware actions and protocol spawn context | `_IdentityView.list`, `_IdentityView.is_agent_available` | daemon-owned identity state and native agent inspection through `SshPilotClient` (`identity.provider.keys.get`, `identity.providers.get`) | `tests/daemon/test_socket_identity_api.py`, `tests/daemon/test_identity_service_phase.py`, `tests/test_plugin_host.py` | API/daemon owned | `ctx.identities` is answered from daemon provider state: availability comes from the registry descriptor for the `'auto'` (system ssh-agent) provider even when another provider is selected, and identity listing runs the native `ssh-add -l` daemon-side against that provider's agent environment. The facade never runs `ssh-add` or reads a frontend `IdentityManager`. |
 | Key generate/list | plugin key panels | `PluginContext.generate_key`, `PluginContext.list_keys` | daemon-backed `KeyManager`/`KeyController` | `tests/test_key_manager_daemon.py`, `tests/daemon/test_key_dispatch.py` | API/daemon owned | Existing KeyManager calls use the daemon-backed key service; GTK does not invoke `ssh-keygen` for these operations. |
 | Key deletion | plugin key panels | `PluginContext.delete_key` → `delete_key` / `keys.delete` (`KEYS_WRITE`) | `DaemonKeyService` → GTK-free `KeyService.delete_key` | `tests/daemon/test_key_service.py`, `tests/daemon/test_key_dispatch.py`, `tests/daemon/test_socket_key_api.py`, plugin compatibility tests | API/daemon owned | The legacy private-path signature is compatibility-only: the host matches it against daemon-listed metadata and deletes by opaque `KeyId`; no frontend file operation remains. |
-| Key deployment compatibility method | legacy plugin callers | `PluginContext.copy_key_to_host` | None in current production graph; `deploy_key` is the authoritative API | daemon key-deployment tests; no production caller for this method | dead/unreachable code | This is the known direct `ssh-copy-id` compatibility path. It is not a replacement for the existing daemon deploy route and must not be reactivated. |
 | Session open and command terminal | plugin actions | `PluginContext.open_connection`, `PluginContext.open_command_terminal` | daemon session runtime and terminal launch provider | `tests/test_daemon_terminal_activation_ownership.py` | API/daemon owned | The opening operation is daemon-owned even though GTK creates/selects the terminal tab. |
-| Session list/read/input | plugin session observers and terminal actions | `PluginContext.list_sessions`, `PluginContext.read_terminal`, `PluginContext.send_terminal`; `PluginHost.list_sessions`, `PluginHost.read_terminal`, `PluginHost.send_terminal` | No typed client route; GTK terminal-session bookkeeping and widget methods | `tests/test_plugin_send_terminal.py` and plugin host tests cover the widget path only | migration required | These methods are supported and active. They read VTE/widget content or call `feed_child_data`; they are not legitimate presentation-only behavior when exposed as backend session APIs. |
-| Captured remote commands | Docker/plugin actions | `PluginContext.run_command` | No daemon owner; plugin builds/owns the remote process | plugin compatibility tests only; no headless client proof | migration required | Exact blocker P7-PLUGIN-COMMAND. |
-| Streamed remote commands | Docker console/log follow | `PluginContext.run_command_stream`, `PluginContext._spawn_stream` | No daemon operation/event owner; plugin owns process and stream lifecycle | plugin stream tests only; no headless client proof | migration required | Exact blocker P7-PLUGIN-STREAM. `_finish_stream_early` is a supporting private stream-lifecycle identity, not a separate public capability. |
+| Session list/read/input | plugin session observers and terminal actions | `PluginContext.list_sessions`, `PluginContext.read_terminal`, `PluginContext.send_terminal`; `PluginHost.list_sessions`, `PluginHost.read_terminal`, `PluginHost.send_terminal` | `SshPilotClient` session, replay, and terminal-input APIs | daemon session/replay/input tests and plugin host tests | API/daemon owned | The host projects daemon DTOs and replay bytes; widget references remain presentation/event bookkeeping only. |
+| Captured remote commands | Docker/plugin actions | `PluginContext.run_command` → broadcast API | `BroadcastCommandService`/native runner | daemon broadcast/API tests and plugin command tests | API/daemon owned | Protected stdin never enters ordinary request parameters. |
+| Streamed remote commands | Docker console/log follow | `PluginContext.run_command_stream` → broadcast output events | daemon broadcast operation and event publisher | daemon broadcast/API tests and Docker stream tests | API/daemon owned | Stop cancels the daemon operation; local stream helpers remain local. |
 | Local commands | plugin-local actions | `PluginContext.run_local_command`, `PluginContext.run_local_command_stream` | Local plugin/OS process | plugin local-command tests | legitimate frontend/platform-local | These are explicitly local plugin commands and do not own SSH Pilot remote state. They remain narrow local exceptions in the guard. |
-| Multiplex acquire/release | `DockerConsolePage._acquire_multiplex`, `_release_multiplex` | `PluginContext.acquire_multiplex`, `PluginContext.release_multiplex` | No daemon multiplex owner; plugin helper invokes ControlMaster operations | `tests/test_ssh_multiplex.py` covers the helper only | migration required | Exact blocker P7-PLUGIN-MUX covers both identities. The guard recognizes both identities and recognizes `from .. import ssh_multiplex`. |
+| Multiplex acquire/release | deprecated external plugin compatibility | `PluginContext.acquire_multiplex`, `PluginContext.release_multiplex` | none; daemon transport owns reuse | Docker behavior tests | dead/unreachable code | Both methods are compatibility no-ops and do not run SSH or touch frontend mux state. |
 | Local forwarding, active route | Docker service links | `PluginContext.ensure_local_forward` | daemon forward runtime via `open_forward`/`get_forward` | `tests/daemon/test_forward_*`, `tests/integration/test_forward_phase10.py` | API/daemon owned | Current production policy requires the daemon route and rejects silent fallback. |
-| Local forwarding, legacy process branch | obsolete fallback inside forward facade | legacy branch of `PluginContext.ensure_local_forward` | None | `tests/test_extended_service_policy.py` | dead/unreachable code | `allow_legacy_local_forward()` is hardcoded false; the ControlMaster/`ssh -N` branch is separately recorded as dead compatibility, not exempted by the active method’s daemon route. |
-| Effective SSH config compatibility method | legacy plugin callers | `PluginContext.get_effective_ssh_config` | None; delegates to local `ssh -G` helper | no current production caller; SSH config service tests cover authoritative paths | dead/unreachable code | No current GTK/plugin call path was found. It remains explicitly classified because it is still public compatibility surface. |
+| Local forwarding, daemon-only route | `PluginContext.ensure_local_forward` | `open_forward` / `get_forward` | daemon forward runtime | daemon forward tests | API/daemon owned | The old frontend process branch was deleted; no ControlMaster or `ssh -N` fallback remains. |
 | Plugin-local files and HTTP | plugin data/cache and external provider integrations | `_FilesFacade.path`, `_FilesFacade.exists`, `_FilesFacade.read_text`, `_FilesFacade.read_bytes`, `_FilesFacade.write_text`, `_FilesFacade.write_bytes`, `_HttpFacade.get`, `_HttpFacade.post`, `PluginContext.data_dir` | Plugin-private XDG data and OS/network adapters | plugin facade and built-in plugin tests | legitimate frontend/platform-local | These do not mutate SSH Pilot backend state, remote files, transfers, or daemon-owned configuration. |
 | UI and event registration | plugin activation and panels | `_EventsFacade.subscribe`, `_EventsFacade.unsubscribe`, `_UiFacade.register_page`, `_UiFacade.open_page`, `_UiFacade.notify`, `_UiFacade.register_connection_action`, `_UiFacade.open_web_tab`, `PluginContext.run_on_ui_thread` | GTK/UI event bus and desktop presentation | plugin host/UI tests | legitimate frontend/platform-local | Registration, notifications, browser tabs, and UI-thread scheduling are presentation behavior. |
 
@@ -102,18 +100,16 @@ identity; the prose matrix above remains the human-readable operation audit.
 `PluginContext.generate_key` | `API/daemon owned`
 `PluginContext.list_keys` | `API/daemon owned`
 `PluginContext.delete_key` | `API/daemon owned`
-`PluginContext.run_command` | `migration required`
+`PluginContext.run_command` | `API/daemon owned`
 `PluginContext.run_local_command` | `legitimate frontend/platform-local`
-`PluginContext.run_command_stream` | `migration required`
+`PluginContext.run_command_stream` | `API/daemon owned`
 `PluginContext.run_local_command_stream` | `legitimate frontend/platform-local`
-`PluginContext.acquire_multiplex` | `migration required`
-`PluginContext.release_multiplex` | `migration required`
+`PluginContext.acquire_multiplex` | `dead/unreachable code`
+`PluginContext.release_multiplex` | `dead/unreachable code`
 `PluginContext.ensure_local_forward` | `API/daemon owned`
-`PluginContext.get_effective_ssh_config` | `dead/unreachable code`
-`PluginContext.copy_key_to_host` | `dead/unreachable code`
-`PluginContext.list_sessions` | `migration required`
-`PluginContext.read_terminal` | `migration required`
-`PluginContext.send_terminal` | `migration required`
+`PluginContext.list_sessions` | `API/daemon owned`
+`PluginContext.read_terminal` | `API/daemon owned`
+`PluginContext.send_terminal` | `API/daemon owned`
 `PluginContext.data_dir` | `legitimate frontend/platform-local`
 `PluginContext.run_on_ui_thread` | `legitimate frontend/platform-local`
 `PluginContext.get_secret` | `API/daemon owned`
@@ -131,8 +127,8 @@ identity; the prose matrix above remains the human-readable operation audit.
 `_SecretStore.delete` | `API/daemon owned`
 `_IdentityView.list` | `API/daemon owned`
 `_IdentityView.is_agent_available` | `API/daemon owned`
-`_SettingStore.get` | `migration required`
-`_SettingStore.set` | `migration required`
+`_SettingStore.get` | `API/daemon owned`
+`_SettingStore.set` | `API/daemon owned`
 `_FilesFacade.path` | `legitimate frontend/platform-local`
 `_FilesFacade.exists` | `legitimate frontend/platform-local`
 `_FilesFacade.read_text` | `legitimate frontend/platform-local`
@@ -147,11 +143,9 @@ Supporting implementation identities are synchronized separately because they
 are not part of the 53 public facade count:
 
 <!-- plugin-supporting-classification:start -->
-`PluginHost.list_sessions` | `migration required`
-`PluginHost.read_terminal` | `migration required`
-`PluginHost.send_terminal` | `migration required`
-`PluginContext._spawn_stream` | `migration required`
-`PluginContext._finish_stream_early` | `migration required`
+`PluginHost.list_sessions` | `API/daemon owned`
+`PluginHost.read_terminal` | `API/daemon owned`
+`PluginHost.send_terminal` | `API/daemon owned`
 <!-- plugin-supporting-classification:end -->
 
 ## Debt identity audit
@@ -174,7 +168,7 @@ following are the individually audited identities at this base.
 |---|---|---|
 | M5 | `secret_storage.py: subprocess`, `secret_storage.py: SecretManager`, `bitwarden_setup.py: subprocess` | The first two are shared daemon/askpass compatibility; Bitwarden installation is a narrow platform installer. No active GTK vault owner remains. |
 | M7 | `agent_client.py: subprocess`; `askpass_utils.py: subprocess, ssh_binary`; `autocomplete.py: subprocess`; `file_manager/openssh_backend.py: subprocess`; `providers/system_agent.py: subprocess, ssh_binary`; `scp_utils.py: subprocess`; `sftp_utils.py: subprocess`; `ssh_config_utils.py: subprocess, ssh_binary`; `ssh_multiplex.py: subprocess, ssh_binary`; `terminal.py: subprocess` | These are respectively local helper, daemon askpass/identity compatibility, dead legacy routes, external OS presentation, or shared native-process compatibility. ControlMaster teardown was removed from GTK and moved behind `SshOverridesService`; the remaining helper identity is compatibility debt. |
-| M8 | `plugins/api.py: subprocess` | Function-level identities are now audited by the final guard: active `run_command`, `run_command_stream`/`_spawn_stream`, and both `acquire_multiplex` and `release_multiplex` remain closure blockers; `copy_key_to_host`, `get_effective_ssh_config`, and the legacy branch of `ensure_local_forward` are explicitly dead compatibility identities. The separate facade inventory also records settings and widget-backed session blockers that do not contain subprocess calls; key deletion and the identity view are now daemon-owned. |
+| M8 | `plugins/api.py: subprocess` | Only the intentionally local `run_local_command` and `_spawn_local_stream` identities retain process ownership. Remote command/stream execution uses the daemon broadcast service; mux compatibility methods are inert and obsolete direct SSH helpers were removed. |
 
 ### `DAEMON_DEBT` (16 identities)
 
@@ -191,59 +185,31 @@ Every one is daemon-internal compatibility or a shared helper edge, not a GTK
 fallback.  They remain individually registered because the ratchet correctly
 prevents silently broadening the exception. `CORE_DEBT` is empty.
 
-## Closure blockers and next semantic APIs
+## Closure blockers
 
-Remaining migration blockers: **5 semantic capabilities** (**9 public facade
-identities**, plus the supporting `PluginHost`/stream implementation
-identities listed below).
-
-* `P7-PLUGIN-COMMAND`: add a typed daemon-owned semantic for plugin remote
-  command execution, including captured output and exit status. Exact identity:
-  `PluginContext.run_command`.
-* `P7-PLUGIN-STREAM`: add the daemon operation/event lifecycle needed for
-  long-lived plugin command output and cancellation. Exact identities:
-  `PluginContext.run_command_stream`, `PluginContext._spawn_stream`, and
-  supporting `PluginContext._finish_stream_early`.
-* `P7-PLUGIN-MUX`: move plugin multiplex reference release/ControlMaster
-  teardown behind daemon-owned session/forward runtime semantics. Exact
-  identities: `PluginContext.acquire_multiplex` and
-  `PluginContext.release_multiplex`.
-* `P7-PLUGIN-SETTINGS`: route operational plugin settings through an
-  authoritative typed owner. Exact identities: `_SettingStore.get` and
-  `_SettingStore.set`; presentation-only keys are separately allowed, but the
-  shared facade cannot currently distinguish ownership at the API boundary.
-* `P7-PLUGIN-SESSION-VIEW`: replace widget-backed plugin session inspection
-  and input with typed session/terminal API operations. Exact identities:
-  `PluginContext.list_sessions`, `PluginContext.read_terminal`,
-  `PluginContext.send_terminal`, `PluginHost.list_sessions`,
-  `PluginHost.read_terminal`, and `PluginHost.send_terminal`.
-
-These are intentionally not replaced with a generic `run_command` escape
-hatch: that would move the bypass behind another frontend-owned abstraction.
-The existing public API therefore remains unchanged until the semantic plugin
-contract is designed and tested headlessly.
+Phase 7 is closed. Remote plugin commands and streams use the existing daemon
+broadcast/native SSH service, settings use the daemon transaction store, and
+session inspection/input use the typed session and terminal APIs. Multiplex
+compatibility methods are inert no-ops.
 
 ## Required Phase 7 report
 
 <!-- phase7-plugin-report:start -->
-plugin capabilities audited: 53
-api/daemon owned: 22
+plugin capabilities audited: 51
+api/daemon owned: 29
 legitimate frontend/platform-local: 20
 dead/unreachable compatibility: 2
-migration-required public identities: 9
-semantic migration capabilities: 5
+migration-required public identities: 0
+semantic migration capabilities: 0
 <!-- phase7-plugin-report:end -->
 
 These counts are derived from the classification registry by the closure
-guard.  They are identity-based and deliberately include the mixed settings
-facade as migration-required because it is used for operational state. No
-other plugin migration is implemented in this correction; this slice closes
-`P7-PLUGIN-IDENTITIES` (the plugin identity view is daemon-routed through the
-typed identity API), and the other five semantic blockers remain.
+guard and include the two retained deprecated mux no-ops as dead compatibility
+identities.
 
 ## Version and evidence
 
-Public API implementation: `0.26`
+Public API implementation: `0.28`
 Protocol: `1.0`  
 
 The API/daemon routes are proven by the headless daemon/core/API tests named in

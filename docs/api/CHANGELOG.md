@@ -5,6 +5,12 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.28`; `PROTOCOL_VERSION` stays
+  `1.0`. Completed the Phase 7 plugin ownership migration: remote plugin
+  commands, streamed output, namespaced settings, and session reads/writes
+  now use daemon-owned API services. Plugin multiplexing remains a deprecated
+  compatibility no-op, and protected command input uses the existing binary
+  secret-frame boundary.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.27`; `PROTOCOL_VERSION` stays
   `1.0`. Added the daemon-owned, provider-scoped agent-key read
   `identity.provider.keys.get` (client method `list_provider_agent_keys` with

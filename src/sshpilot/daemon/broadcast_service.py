@@ -38,18 +38,34 @@ _TERMINATION_GRACE = 1.0
 class NativeSshCommandRunner:
     """Own a native child and drain both output pipes with bounded retention."""
 
-    def run(self, argv, environment, policy, *, cancel_event, on_process=None, on_output=None):
+    def run(
+        self,
+        argv,
+        environment,
+        policy,
+        *,
+        cancel_event,
+        on_process=None,
+        on_output=None,
+        input_data=None,
+    ):
         process = subprocess.Popen(
             tuple(argv),
             env=dict(environment),
             shell=False,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
             stdout=subprocess.PIPE if policy.capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.PIPE if policy.capture_stderr else subprocess.DEVNULL,
             bufsize=0,
         )
         if on_process:
             on_process(process)
+        if input_data is not None and process.stdin is not None:
+            try:
+                process.stdin.write(bytes(input_data))
+                process.stdin.close()
+            except (BrokenPipeError, OSError):
+                pass
         selector = selectors.DefaultSelector()
         retained = {"stdout": bytearray(), "stderr": bytearray()}
         truncated = False
@@ -145,7 +161,11 @@ class BroadcastCommandService:
         self._terminal_retention = terminal_retention
 
     def start(
-        self, request: BroadcastCommandRequest, *, owner_client_id: ClientId
+        self,
+        request: BroadcastCommandRequest,
+        *,
+        owner_client_id: ClientId,
+        input_data=None,
     ) -> BroadcastCommandSummary:
         if type(request) is not BroadcastCommandRequest:
             raise SshPilotError(
@@ -158,7 +178,7 @@ class BroadcastCommandService:
 
         def body(handle: OperationHandle) -> str:
             operation_id_box.append(handle.operation_id)
-            return self._execute(handle, request)
+            return self._execute(handle, request, input_data)
 
         summary = self._operations.start_operation(
             OperationKind.BROADCAST_COMMAND,
@@ -209,7 +229,7 @@ class BroadcastCommandService:
                     )
         return BroadcastCommandSummary(operation, current.targets)
 
-    def _execute(self, handle: OperationHandle, request: BroadcastCommandRequest) -> str:
+    def _execute(self, handle: OperationHandle, request: BroadcastCommandRequest, input_data=None) -> str:
         operation_id = handle.operation_id
         with self._lock:
             self._entered.add(operation_id)
@@ -243,6 +263,7 @@ class BroadcastCommandService:
                                 connection_id,
                                 request,
                                 cancel,
+                                input_data,
                             )
                         ] = index
                     if not futures:
@@ -288,6 +309,9 @@ class BroadcastCommandService:
         finally:
             self._interaction_broker.cancel_session(operation_id)
             self._remember_terminal(operation_id)
+            if isinstance(input_data, bytearray):
+                input_data[:] = b"\0" * len(input_data)
+                input_data.clear()
         handle.set_result({"targets": [self._result_wire(item) for item in results]})
         if any(item.state is HostCommandState.FAILED for item in results):
             raise SshPilotError(
@@ -295,7 +319,7 @@ class BroadcastCommandService:
             )
         return "Broadcast command completed"
 
-    def _run_target(self, operation_id, connection_id, request, cancel):
+    def _run_target(self, operation_id, connection_id, request, cancel, input_data=None):
         try:
             argv, environment = self._launch_provider.prepare_remote_command_launch(
                 connection_id, request.command, interaction_policy="broker"
@@ -323,13 +347,15 @@ class BroadcastCommandService:
                 if self._output_publisher:
                     self._output_publisher(operation_id, connection_id, stream, text)
 
+            runner_kwargs = {
+                "cancel_event": cancel,
+                "on_process": process_changed,
+                "on_output": output,
+            }
+            if input_data is not None:
+                runner_kwargs["input_data"] = input_data
             code, stdout, stderr, truncated, timed_out = self._runner.run(
-                argv,
-                environment,
-                request.policy,
-                cancel_event=cancel,
-                on_process=process_changed,
-                on_output=output,
+                argv, environment, request.policy, **runner_kwargs
             )
             if timed_out:
                 return HostCommandResult(

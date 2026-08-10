@@ -1,6 +1,7 @@
 # Client methods
 
-API 0.26 adds daemon-owned opaque-identity SSH key deletion. API 0.25
+API 0.28 adds daemon-owned plugin settings and streamed broadcast output. API
+0.26 adds daemon-owned opaque-identity SSH key deletion. API 0.25
 removed plaintext passphrases from `GenerateKeyRequest` and added
 `verify_key_passphrase` / `keys.verify_passphrase`. Both encrypted generation
 and verification collect protected input through interaction secret frames;
@@ -17,15 +18,21 @@ request contains saved targets, command, and execution policy—not argv,
 environment, or local-shell settings.
 
 <!-- api-method: start_broadcast_command -->
+<!-- api-method: subscribe_broadcast_output -->
+<!-- api-method: get_plugin_setting -->
+<!-- api-method: set_plugin_setting -->
 <!-- api-method: get_broadcast_command -->
 <!-- api-method: cancel_broadcast_command -->
 <!-- api-method: set_daemon_log_level -->
 <!-- api-method: broadcast_terminal_input -->
 <!-- api-method-contract: start_broadcast_command status=schema-only capability=broadcast.write -->
+<!-- api-method-contract: subscribe_broadcast_output status=daemon-only capability=broadcast.events -->
 <!-- api-method-contract: get_broadcast_command status=schema-only capability=broadcast.read -->
 <!-- api-method-contract: cancel_broadcast_command status=schema-only capability=broadcast.write -->
 <!-- api-method-contract: broadcast_terminal_input status=daemon-only capability=terminal.input -->
 <!-- api-daemon-method: broadcast.start capability=broadcast.write -->
+<!-- api-daemon-method: plugins.settings.get capability=plugins.settings.read -->
+<!-- api-daemon-method: plugins.settings.set capability=plugins.settings.write -->
 <!-- api-daemon-method: broadcast.get capability=broadcast.read -->
 <!-- api-daemon-method: broadcast.cancel capability=broadcast.write -->
 <!-- api-daemon-method: terminal.broadcast_input capability=terminal.input -->
@@ -73,6 +80,9 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 | `claim_terminal_input` | Daemon only | `terminal.input` |
 | `release_terminal_input` | Daemon only | `terminal.input` |
 | `subscribe_terminal` | Daemon only | `terminal.output` |
+| `subscribe_broadcast_output` | Daemon only | `broadcast.events` |
+| `get_plugin_setting` | Daemon only | `plugins.settings.read` |
+| `set_plugin_setting` | Daemon only | `plugins.settings.write` |
 | `list_interactions` | Daemon only | `interactions.read` |
 | `get_interaction` | Daemon only | `interactions.read` |
 | `claim_interaction` | Daemon only | `interactions.respond` |
@@ -142,6 +152,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_connection status=implemented capability=connections.read -->
 <!-- api-method-contract: get_connection_editor status=implemented capability=connections.config.read -->
 <!-- api-method-contract: get_plugin_secret status=daemon-only capability=connections.secrets.reveal -->
+<!-- api-method-contract: get_plugin_setting status=daemon-only capability=plugins.settings.read -->
 <!-- api-method-contract: get_ssh_config_text status=implemented capability=connections.config.read -->
 <!-- api-method-contract: save_ssh_config_text status=implemented capability=connections.config.write -->
 <!-- api-method-contract: get_forward status=daemon-only capability=forwards.read -->
@@ -168,6 +179,7 @@ Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: respond_to_interaction status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_interaction_secret status=daemon-only capability=interactions.respond -->
 <!-- api-method-contract: send_terminal_input status=daemon-only capability=terminal.input -->
+<!-- api-method-contract: set_plugin_setting status=daemon-only capability=plugins.settings.write -->
 <!-- api-method-contract: sftp_chmod status=daemon-only capability=sftp.mutate -->
 <!-- api-method-contract: sftp_list_directory status=daemon-only capability=sftp.read -->
 <!-- api-method-contract: sftp_lstat status=daemon-only capability=sftp.metadata -->

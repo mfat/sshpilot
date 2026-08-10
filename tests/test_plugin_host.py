@@ -388,6 +388,153 @@ def test_open_connection_resolution():
     assert window.toast_overlay.toasts  # notified
 
 
+def test_plugin_session_view_projects_daemon_snapshot_replay_and_input():
+    from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId, SessionId
+    from sshpilot.api.models.connections import ConnectionSummary
+    from sshpilot.api.models.sessions import (
+        AttachSessionResult,
+        AttachmentInfo,
+        SessionState,
+        SessionSummary,
+    )
+    from sshpilot.api.models.terminal import TerminalInput, TerminalOutput
+
+    connection = ConnectionSummary(
+        id=ConnectionId("box1"),
+        nickname="box1",
+        host="example.test",
+        hostname="example.test",
+        username="user",
+        port=22,
+    )
+    session = SessionSummary(
+        id=SessionId("session-1"),
+        connection_id=ConnectionId("box1"),
+        state=SessionState.RUNNING,
+    )
+
+    class Client:
+        def __init__(self):
+            self.attached = []
+            self.inputs = []
+            self._receiver = None
+
+        def list_connections(self):
+            return [connection]
+
+        def list_sessions(self):
+            return [session]
+
+        def attach_session(self, request):
+            self.attached.append(request)
+            return AttachSessionResult(
+                session=session,
+                attachment=AttachmentInfo(
+                    id=AttachmentId("attachment-1"),
+                    session_id=session.id,
+                    client_id=ClientId("client-1"),
+                    input_owner=request.request_input,
+                ),
+            )
+
+        def subscribe_terminal(self, session_id, receiver):
+            self._receiver = receiver
+            return types.SimpleNamespace(close=lambda: None)
+
+        def replay_terminal(self, request):
+            self._receiver(
+                TerminalOutput(
+                    session_id=request.session_id,
+                    sequence=0,
+                    data=b"hello\n",
+                    replay=True,
+                    eof=True,
+                )
+            )
+
+        def send_terminal_input(self, value):
+            assert isinstance(value, TerminalInput)
+            self.inputs.append(value)
+
+    client = Client()
+    host = PluginHost(connection_manager=FakeCM())
+    host.bind_window(types.SimpleNamespace(client=client))
+
+    sessions = host.list_sessions()
+    assert [item.session_id for item in sessions] == ["session-1"]
+    assert host.read_terminal("session-1", max_chars=5) == "ello\n"
+    assert host.send_terminal("session-1", "exit\n") is True
+    assert client.inputs[0].data == b"exit\n"
+    assert [item.request_input for item in client.attached] == [False, True]
+
+
+def test_plugin_remote_command_and_stream_use_daemon_client():
+    from sshpilot.api.models.connections import ConnectionSummary
+
+    connection = ConnectionSummary(
+        id="box1",
+        nickname="box1",
+        host="example.test",
+        hostname="example.test",
+        username="user",
+        port=22,
+    )
+
+    class Client:
+        def __init__(self):
+            self.inputs = []
+            self.cancelled = []
+            self.closed = False
+
+        def list_connections(self):
+            return [connection]
+
+        def start_broadcast_command(self, request, *, input=None):
+            self.inputs.append((request, input))
+            return types.SimpleNamespace(
+                operation=types.SimpleNamespace(
+                    id="operation-1",
+                    state=types.SimpleNamespace(value="running"),
+                )
+            )
+
+        def get_broadcast_command(self, _operation_id):
+            return types.SimpleNamespace(
+                operation=types.SimpleNamespace(state=types.SimpleNamespace(value="succeeded")),
+                targets=[types.SimpleNamespace(exit_code=0, stdout="ok", stderr="")],
+            )
+
+        def subscribe_broadcast_output(self, _operation_id, on_output, _on_done):
+            on_output("stdout", "followed")
+            return types.SimpleNamespace(close=lambda: setattr(self, "closed", True))
+
+        def cancel_broadcast_command(self, operation_id):
+            self.cancelled.append(operation_id)
+
+    client = Client()
+    host = PluginHost(connection_manager=FakeCM())
+    host.bind_window(types.SimpleNamespace(client=client))
+    ctx = PluginContext(
+        plugin_id="docker",
+        app_config=FakeConfig(),
+        connection_manager=FakeCM(),
+        protocol_registry=registry_mod.ProtocolRegistry(),
+        host=host,
+    )
+
+    result = ctx.run_command("box1", "sudo true", input="password\n")
+    assert (result.exit_code, result.stdout) == (0, "ok")
+    assert client.inputs[0][1] == "password\n"
+
+    lines = []
+    handle = ctx.run_command_stream("box1", "docker logs -f", on_line=lines.append)
+    assert lines == ["followed"]
+    assert handle.running is True
+    handle.stop()
+    assert client.cancelled == ["operation-1"]
+    assert client.closed is True
+
+
 def test_generate_key_returns_path():
     host, _, _ = _host_with_window()
     assert host.generate_key("k1") == "/keys/k1"
@@ -449,6 +596,13 @@ def test_context_facades_are_scoped_by_plugin_id():
     cm = FakeCM()
     cfg = FakeConfig()
     host = PluginHost(connection_manager=cm)
+    settings = {}
+    host._window = types.SimpleNamespace(
+        client=types.SimpleNamespace(
+            get_plugin_setting=lambda _p, key, default=None: settings.get(key, default),
+            set_plugin_setting=lambda _p, key, value: settings.__setitem__(key, value),
+        )
+    )
     ctx = PluginContext(plugin_id="acme", app_config=cfg, connection_manager=cm,
                         protocol_registry=registry_mod.ProtocolRegistry(), host=host)
     assert ctx.plugin_id == "acme"
@@ -459,7 +613,7 @@ def test_context_facades_are_scoped_by_plugin_id():
     assert ctx.secrets.delete("token") is True
 
     ctx.settings.set("region", "fra1")
-    assert cfg.settings == {"plugins.acme.region": "fra1"}
+    assert settings == {"region": "fra1"}
     assert ctx.settings.get("region") == "fra1"
     assert ctx.settings.get("missing", "d") == "d"
 
@@ -617,7 +771,7 @@ def test_identities_list_routes_through_daemon_provider_agent_keys():
     assert [identity.fingerprint for identity in identities] == ["SHA256:abc", "SHA256:def"]
     assert identities[0].provider_name == "system-agent"
     assert identities[0].display_name == "user@host"
-    assert identities[1].display_name == "SHA256:def"  # falls back to fingerprint
+    assert identities[1].display_name == "rsa"  # falls back to key type
 
 
 def test_identities_facade_never_uses_frontend_identity_manager(monkeypatch):

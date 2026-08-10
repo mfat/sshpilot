@@ -56,34 +56,14 @@ FRONTEND_LOCAL_SUBPROCESS = frozenset(
     }
 )
 
-KNOWN_PLUGIN_GAPS = (
-    ("plugins/api.py", "run_command"),
-    ("plugins/api.py", "run_command_stream"),
-    ("plugins/api.py", "acquire_multiplex"),
-    ("plugins/api.py", "release_multiplex"),
-)
+KNOWN_PLUGIN_GAPS = ()
 
 # Every backend-owning function in the plugin SDK is classified explicitly.
-# The three active entries are semantic closure blockers. The dead entries are
-# retained public compatibility methods with no current production caller;
-# they must not silently become active again. ``ensure_local_forward`` is
-# daemon-owned on its active route, but its legacy subprocess branch is kept as
-# a separate, explicitly dead identity until the public plugin surface is
-# retired or migrated.
-PLUGIN_API_BACKEND_IDENTITIES = frozenset(
-    {
-        "run_command",
-        "run_command_stream",
-        "_spawn_stream",
-        "acquire_multiplex",
-        "release_multiplex",
-        "copy_key_to_host",
-        "get_effective_ssh_config",
-        "ensure_local_forward",
-    }
-)
+# Remote operations are routed through the daemon; only the intentionally local
+# command stream implementation remains process-owning.
+PLUGIN_API_BACKEND_IDENTITIES = frozenset()
 PLUGIN_API_LOCAL_FUNCTIONS = frozenset(
-    {"run_local_command", "run_local_command_stream"}
+    {"run_local_command", "run_local_command_stream", "_spawn_local_stream"}
 )
 
 # Stable inventory of the supported PluginContext/facade surface.  This is
@@ -107,18 +87,16 @@ PLUGIN_FACADE_SURFACE = {
     "PluginContext.generate_key": "API/daemon owned",
     "PluginContext.list_keys": "API/daemon owned",
     "PluginContext.delete_key": "API/daemon owned",
-    "PluginContext.run_command": "migration required",
+    "PluginContext.run_command": "API/daemon owned",
     "PluginContext.run_local_command": "legitimate frontend/platform-local",
-    "PluginContext.run_command_stream": "migration required",
+    "PluginContext.run_command_stream": "API/daemon owned",
     "PluginContext.run_local_command_stream": "legitimate frontend/platform-local",
-    "PluginContext.acquire_multiplex": "migration required",
-    "PluginContext.release_multiplex": "migration required",
+    "PluginContext.acquire_multiplex": "dead/unreachable code",
+    "PluginContext.release_multiplex": "dead/unreachable code",
     "PluginContext.ensure_local_forward": "API/daemon owned",
-    "PluginContext.get_effective_ssh_config": "dead/unreachable code",
-    "PluginContext.copy_key_to_host": "dead/unreachable code",
-    "PluginContext.list_sessions": "migration required",
-    "PluginContext.read_terminal": "migration required",
-    "PluginContext.send_terminal": "migration required",
+    "PluginContext.list_sessions": "API/daemon owned",
+    "PluginContext.read_terminal": "API/daemon owned",
+    "PluginContext.send_terminal": "API/daemon owned",
     "PluginContext.data_dir": "legitimate frontend/platform-local",
     "PluginContext.run_on_ui_thread": "legitimate frontend/platform-local",
     "PluginContext.get_secret": "API/daemon owned",
@@ -137,8 +115,8 @@ PLUGIN_FACADE_SURFACE = {
     "_SecretStore.delete": "API/daemon owned",
     "_IdentityView.list": "API/daemon owned",
     "_IdentityView.is_agent_available": "API/daemon owned",
-    "_SettingStore.get": "migration required",
-    "_SettingStore.set": "migration required",
+    "_SettingStore.get": "API/daemon owned",
+    "_SettingStore.set": "API/daemon owned",
     "_FilesFacade.path": "legitimate frontend/platform-local",
     "_FilesFacade.exists": "legitimate frontend/platform-local",
     "_FilesFacade.read_text": "legitimate frontend/platform-local",
@@ -157,27 +135,12 @@ PLUGIN_FACADE_CLASSES = frozenset(
 # facade identities.  They are still closure blockers and must remain visible
 # to the guard until the corresponding facade capability is migrated.
 PLUGIN_SUPPORTING_IMPLEMENTATIONS = {
-    "PluginHost.list_sessions": "migration required",
-    "PluginHost.read_terminal": "migration required",
-    "PluginHost.send_terminal": "migration required",
-    "PluginContext._spawn_stream": "migration required",
-    "PluginContext._finish_stream_early": "migration required",
+    "PluginHost.list_sessions": "API/daemon owned",
+    "PluginHost.read_terminal": "API/daemon owned",
+    "PluginHost.send_terminal": "API/daemon owned",
 }
 
-SEMANTIC_BLOCKER_GROUPS = {
-    "P7-PLUGIN-COMMAND": {"PluginContext.run_command"},
-    "P7-PLUGIN-STREAM": {"PluginContext.run_command_stream"},
-    "P7-PLUGIN-MUX": {
-        "PluginContext.acquire_multiplex",
-        "PluginContext.release_multiplex",
-    },
-    "P7-PLUGIN-SETTINGS": {"_SettingStore.get", "_SettingStore.set"},
-    "P7-PLUGIN-SESSION-VIEW": {
-        "PluginContext.list_sessions",
-        "PluginContext.read_terminal",
-        "PluginContext.send_terminal",
-    },
-}
+SEMANTIC_BLOCKER_GROUPS = {}
 
 AUDIT_FACADE_CLASSIFICATION_START = "<!-- plugin-facade-classification:start -->"
 AUDIT_FACADE_CLASSIFICATION_END = "<!-- plugin-facade-classification:end -->"
@@ -411,9 +374,8 @@ def test_plugin_supporting_implementations_keep_explicit_ownership_edges():
         for identity, node in implementation_nodes.items()
         if identity.startswith("PluginHost.")
     }
-    # These exact GTK/widget ownership edges are the reason the host methods
-    # remain blockers.  A new adjacent method with one of these edges also
-    # fails the identity check instead of becoming invisible.
+    # Host session methods are API projections; widget references remain only
+    # for presentation/event compatibility.
     host_edges = {
         identity
         for identity, node in host_nodes.items()
@@ -424,10 +386,7 @@ def test_plugin_supporting_implementations_keep_explicit_ownership_edges():
             or "unlink" in _attribute_names(node)
         )
     }
-    assert host_edges == {
-        "PluginHost.read_terminal",
-        "PluginHost.send_terminal",
-    }
+    assert host_edges == set()
     key_filesystem_edges = {
         identity
         for identity, node in host_nodes.items()
@@ -443,11 +402,7 @@ def test_plugin_supporting_implementations_keep_explicit_ownership_edges():
         "PluginHost.__init__",
         "PluginHost.dispatch_session_opened",
         "PluginHost.dispatch_session_closed",
-        "PluginHost.list_sessions",
     }
-    assert "stop" in _attribute_names(
-        implementation_nodes["PluginContext._finish_stream_early"]
-    )
 
     api_nodes = {
         identity: node
@@ -460,8 +415,7 @@ def test_plugin_supporting_implementations_keep_explicit_ownership_edges():
         if "Popen" in _attribute_names(node)
     }
     assert stream_process_edges == {
-        "PluginContext._spawn_stream",
-        "PluginContext.ensure_local_forward",
+        "PluginContext._spawn_local_stream",
     }
 
 
@@ -530,7 +484,9 @@ def test_plugin_gap_identities_are_still_exactly_deferred():
         assert module == "plugins/api.py"
         assert function in names
     observed = _plugin_backend_functions(tree)
-    assert observed == PLUGIN_API_BACKEND_IDENTITIES | {"run_local_command"}
+    assert observed == (
+        PLUGIN_API_BACKEND_IDENTITIES | {"run_local_command"} | {"_spawn_local_stream"}
+    )
     assert not PLUGIN_API_BACKEND_IDENTITIES & PLUGIN_API_LOCAL_FUNCTIONS
 
 

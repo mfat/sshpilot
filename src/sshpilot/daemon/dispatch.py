@@ -155,6 +155,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "broadcast.start": Capability.BROADCAST_WRITE,
     "broadcast.get": Capability.BROADCAST_READ,
     "broadcast.cancel": Capability.BROADCAST_WRITE,
+    "plugins.settings.get": Capability.PLUGIN_SETTINGS_READ,
+    "plugins.settings.set": Capability.PLUGIN_SETTINGS_WRITE,
     "connections.get": Capability.CONNECTIONS_READ,
     "connections.list": Capability.CONNECTIONS_READ,
     "connections.snapshot": Capability.CONNECTIONS_READ,
@@ -466,6 +468,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "identity.agent.key.remove",
         "identity.deploy_key",
         "authorized_keys.list",
+        "broadcast.start",
         "authorized_keys.remove",
         "secrets.configuration.get",
         "secrets.configuration.update",
@@ -577,6 +580,8 @@ class RequestDispatcher:
         identity_service: Any = None,
         operation_runtime: Any = None,
         broadcast_service: Any = None,
+        plugin_settings: Any = None,
+        command_input_waiter: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._connections = connection_service
         self._session_runtime = session_runtime or SessionRuntime(connection_service)
@@ -592,6 +597,8 @@ class RequestDispatcher:
         self._identity_service = identity_service
         self._operation_runtime = operation_runtime
         self._broadcast_service = broadcast_service
+        self._plugin_settings = plugin_settings
+        self._command_input_waiter = command_input_waiter
         self._diagnostics_provider = diagnostics_provider
         self.server_instance_id = (
             lifecycle_controller.server_instance_id
@@ -732,6 +739,8 @@ class RequestDispatcher:
             "broadcast.start": self._handle_start_broadcast,
             "broadcast.get": self._handle_get_broadcast,
             "broadcast.cancel": self._handle_cancel_broadcast,
+            "plugins.settings.get": self._handle_get_plugin_setting,
+            "plugins.settings.set": self._handle_set_plugin_setting,
             "ssh_overrides.get": self._handle_get_ssh_overrides,
             "ssh_overrides.update": self._handle_update_ssh_overrides,
             "ssh_overrides.reset": self._handle_reset_ssh_overrides,
@@ -912,6 +921,7 @@ class RequestDispatcher:
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
                 broadcast=self._broadcast_service is not None,
+                plugin_settings=self._plugin_settings is not None,
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -2689,8 +2699,26 @@ class RequestDispatcher:
         )
 
         typed = broadcast_command_request_from_wire(request.params)
+        owner = self._required_client_id(state)
+        if request.params.get("input_requested", False):
+            if self._command_input_waiter is None:
+                raise SshPilotError(
+                    ErrorCode.UNSUPPORTED_CAPABILITY,
+                    "Protected command input is unavailable",
+                )
+            return DeferredResult(
+                operation=lambda: broadcast_command_summary_to_wire(
+                    self._required_broadcast_service().start(
+                        typed,
+                        owner_client_id=owner,
+                        input_data=self._command_input_waiter(request.request_id),
+                    )
+                ),
+                command_key="plugin-command-input",
+                on_rejected=lambda: None,
+            )
         summary = self._required_broadcast_service().start(
-            typed, owner_client_id=self._required_client_id(state)
+            typed, owner_client_id=owner
         )
         return broadcast_command_summary_to_wire(summary)
 
@@ -2717,6 +2745,36 @@ class RequestDispatcher:
             client_id=self._required_client_id(state),
         )
         return broadcast_command_summary_to_wire(summary)
+
+    @staticmethod
+    def _plugin_setting_params(params, *, include_value: bool):
+        required = {"plugin_id", "key", "value"} if include_value else {
+            "plugin_id", "key", "default"
+        }
+        if set(params) != required:
+            raise ValueError("plugin setting parameters are invalid")
+        return params["plugin_id"], params["key"], params.get("value", params.get("default"))
+
+    def _required_plugin_settings(self):
+        if self._plugin_settings is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Plugin settings are unavailable",
+            )
+        return self._plugin_settings
+
+    def _handle_get_plugin_setting(self, request, _state):
+        plugin_id, key, default = self._plugin_setting_params(
+            request.params, include_value=False
+        )
+        return self._required_plugin_settings().get(plugin_id, key, default)
+
+    def _handle_set_plugin_setting(self, request, _state):
+        plugin_id, key, value = self._plugin_setting_params(
+            request.params, include_value=True
+        )
+        self._required_plugin_settings().set(plugin_id, key, value)
+        return None
 
     def _handle_cancel_operation(
         self,
@@ -2792,6 +2850,7 @@ class RequestDispatcher:
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
                 broadcast=self._broadcast_service is not None,
+                plugin_settings=self._plugin_settings is not None,
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -2828,6 +2887,7 @@ class RequestDispatcher:
         identity: bool = False,
         operations: bool = False,
         broadcast: bool = False,
+        plugin_settings: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -2966,7 +3026,15 @@ class RequestDispatcher:
             )
         if broadcast:
             daemon_capabilities |= frozenset(
-                {Capability.BROADCAST_READ, Capability.BROADCAST_WRITE}
+                {
+                    Capability.BROADCAST_READ,
+                    Capability.BROADCAST_WRITE,
+                    Capability.BROADCAST_EVENTS,
+                }
+            )
+        if plugin_settings:
+            daemon_capabilities |= frozenset(
+                {Capability.PLUGIN_SETTINGS_READ, Capability.PLUGIN_SETTINGS_WRITE}
             )
         return daemon_capabilities
 

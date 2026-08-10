@@ -25,7 +25,7 @@ from sshpilot.core.errors import CoreError
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.core.ssh_overrides_service import SshOverridesService
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.api.events import CoreEvent, EventType, Subscription
+from sshpilot.api.events import CoreEvent, EventType, EventPublisher, Subscription
 from sshpilot.api.models.common import (
     ForwardId,
     InteractionId,
@@ -155,6 +155,7 @@ _FORWARDED_EVENT_TYPES = frozenset(
         EventType.FORWARD_CLOSED,
         EventType.FORWARD_FAILED,
         EventType.DAEMON_STATE_CHANGED,
+        EventType.BROADCAST_OUTPUT,
     }
 )
 _INTERACTION_CANCELLING_EVENT_TYPES = frozenset(
@@ -191,6 +192,7 @@ class CoreServices:
     identity: Any = None
     operations: Any = None
     scp_backend: Any = None
+    plugin_settings: Any = None
 
 
 @dataclass
@@ -341,6 +343,10 @@ class DaemonServer:
         self._transfer_subscription: Optional[Subscription] = None
         self._forward_subscription: Optional[Subscription] = None
         self._operation_subscription: Optional[Subscription] = None
+        self._broadcast_publisher = EventPublisher()
+        self._broadcast_subscription: Optional[Subscription] = None
+        self._command_input_condition = threading.Condition()
+        self._command_inputs: Dict[str, bytearray] = {}
         self._terminal_queue: queue.Queue[TerminalOutput] = queue.Queue(maxsize=1024)
         self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
@@ -566,8 +572,10 @@ class DaemonServer:
                 self._identity_service = core.identity
                 self._operation_runtime = core.operations
                 scp_backend = core.scp_backend
+                plugin_settings = core.plugin_settings
             else:
                 self._connection_service = core
+                plugin_settings = None
             enable_workers = getattr(
                 self._connection_service,
                 "enable_serialized_command_threads",
@@ -717,6 +725,7 @@ class DaemonServer:
                     self._operation_runtime,
                     launch_provider,
                     interaction_broker=self._interaction_broker,
+                    output_publisher=self._publish_broadcast_output,
                 )
             self._dispatcher = RequestDispatcher(
                 self._connection_service,
@@ -732,6 +741,8 @@ class DaemonServer:
                 identity_service=self._identity_service,
                 operation_runtime=self._operation_runtime,
                 broadcast_service=self._broadcast_service,
+                plugin_settings=plugin_settings,
+                command_input_waiter=self._wait_command_input,
                 lifecycle_controller=self._lifecycle,
                 diagnostics_provider=self.build_diagnostics,
             )
@@ -774,6 +785,9 @@ class DaemonServer:
             self._on_core_event
         )
         self._operation_subscription = self._operation_runtime.subscribe_events(
+            self._on_core_event
+        )
+        self._broadcast_subscription = self._broadcast_publisher.subscribe(
             self._on_core_event
         )
         # Defer `_accepting_core_events` until after `mark_ready()` so the
@@ -983,6 +997,22 @@ class DaemonServer:
         frame: SecretFrame,
     ) -> None:
         try:
+            if frame.kind is SecretFrameKind.COMMAND_INPUT:
+                protocol = state.protocol
+                if (
+                    not protocol.handshake_completed
+                    or protocol.client_info is None
+                    or "binary-secret-v1" not in protocol.client_info.supported_frame_types
+                ):
+                    raise SshPilotError(
+                        ErrorCode.UNSUPPORTED_CAPABILITY,
+                        "Binary secret transport was not negotiated",
+                    )
+                with self._command_input_condition:
+                    self._command_inputs[str(frame.interaction_id)] = bytearray(frame.secret)
+                    self._command_input_condition.notify_all()
+                frame.clear()
+                return
             if frame.kind is not SecretFrameKind.RESPONSE:
                 raise SshPilotError(
                     ErrorCode.PROTOCOL_ERROR,
@@ -1017,6 +1047,16 @@ class DaemonServer:
                 ErrorCode.INTERNAL_ERROR,
                 "The daemon rejected the secret response",
             )
+
+    def _wait_command_input(self, request_id, timeout: float = 30.0):
+        deadline = time.monotonic() + timeout
+        with self._command_input_condition:
+            while str(request_id) not in self._command_inputs and not self._stopping.is_set():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._command_input_condition.wait(remaining)
+            return self._command_inputs.pop(str(request_id), None)
 
     def _handle_terminal_frame(
         self,
@@ -2097,6 +2137,15 @@ class DaemonServer:
                 self._completion_queue.get_nowait()
             except queue.Empty:
                 break
+
+    def _publish_broadcast_output(self, operation_id, connection_id, stream, text):
+        from sshpilot.api.models.broadcast import BroadcastCommandOutput
+
+        self._broadcast_publisher.publish(
+            EventType.BROADCAST_OUTPUT,
+            BroadcastCommandOutput(operation_id, connection_id, stream, text),
+            connection_id=connection_id,
+        )
 
     def _on_core_event(self, event: CoreEvent) -> None:
         """Encode once and enqueue without performing socket I/O."""

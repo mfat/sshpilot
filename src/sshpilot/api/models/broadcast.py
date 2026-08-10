@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Optional, Tuple
 
 from .common import ConnectionId, require_identifier
-from .operations import OperationSummary, ServiceFailure
+from .operations import OperationId, OperationSummary, ServiceFailure
 
 MAX_BROADCAST_TARGETS = 256
 MAX_BROADCAST_COMMAND_BYTES = 65_536
@@ -122,3 +122,19 @@ class BroadcastCommandSummary:
             type(item) is not HostCommandResult for item in self.targets
         ):
             raise TypeError("targets must be a tuple of HostCommandResult")
+
+
+@dataclass(frozen=True)
+class BroadcastCommandOutput:
+    operation_id: OperationId
+    connection_id: ConnectionId
+    stream: str
+    text: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        require_identifier(self.operation_id, "operation id")
+        require_identifier(self.connection_id, "connection id")
+        if self.stream not in {"stdout", "stderr"}:
+            raise ValueError("broadcast output stream is invalid")
+        if type(self.text) is not str:
+            raise TypeError("broadcast output must be text")
