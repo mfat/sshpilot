@@ -5769,22 +5769,25 @@ def operation_id_request_to_wire(operation_id: Any) -> Dict[str, Any]:
 
 def broadcast_command_request_to_wire(request: Any) -> Dict[str, Any]:
     from ..models.broadcast import BroadcastCommandRequest
+    from ..models.interactions import ExecutionInteractionMode
 
     if type(request) is not BroadcastCommandRequest:
         raise TypeError("BroadcastCommandRequest is required")
     policy = request.policy
+    policy_wire = {
+        "failure_policy": policy.failure_policy.value,
+        "concurrency_limit": policy.concurrency_limit,
+        "timeout_seconds": policy.timeout_seconds,
+        "capture_stdout": policy.capture_stdout,
+        "capture_stderr": policy.capture_stderr,
+        "output_limit_bytes": policy.output_limit_bytes,
+    }
+    if policy.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY:
+        policy_wire["interaction_mode"] = ExecutionInteractionMode.AUTOFILL_ONLY.value
     return {
         "connection_ids": list(request.connection_ids),
         "command": request.command,
-        "policy": {
-            "failure_policy": policy.failure_policy.value,
-            "concurrency_limit": policy.concurrency_limit,
-            "timeout_seconds": policy.timeout_seconds,
-            "capture_stdout": policy.capture_stdout,
-            "capture_stderr": policy.capture_stderr,
-            "output_limit_bytes": policy.output_limit_bytes,
-            "interaction_mode": policy.interaction_mode.value,
-        },
+        "policy": policy_wire,
     }
 
 
@@ -5815,8 +5818,8 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
             "capture_stdout",
             "capture_stderr",
             "output_limit_bytes",
-            "interaction_mode",
         },
+        optional={"interaction_mode"},
         context="broadcast execution policy",
     )
     try:
@@ -5824,7 +5827,11 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
     except (TypeError, ValueError):
         raise ValueError("broadcast policy contains an unknown failure policy") from None
     try:
-        interaction_mode = ExecutionInteractionMode(policy_data["interaction_mode"])
+        interaction_mode = ExecutionInteractionMode(
+            policy_data.get(
+                "interaction_mode", ExecutionInteractionMode.INTERACTIVE.value
+            )
+        )
     except (TypeError, ValueError):
         raise ValueError("broadcast policy contains an unknown interaction mode") from None
     timeout = policy_data["timeout_seconds"]
