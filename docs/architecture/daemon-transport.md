@@ -1,14 +1,10 @@
 # Local daemon transport
 
-> **Historical migration record.** This document describes an earlier phase and
-> names components/settings as they existed then. It is not the current runtime
-> contract; production GTK now requires the daemon and has no local SSH fallback.
-
-
-The current experimental path provides Linux per-user connection CRUD/events
-plus daemon-lifetime session lifecycle control/events. Production composition
-remains in-process by default, and normal GTK terminals remain on their legacy
-in-process path.
+The local daemon transport is the production frontend-neutral route for
+daemon-owned backend state and remote operations. It provides typed connection,
+session, terminal, interaction, SFTP, transfer, forwarding, secret, identity,
+and plugin-facing APIs according to negotiated capabilities. Frontends do not
+silently fall back to local SSH/SFTP or other backend implementations.
 
 Linux is the supported platform for this phase. Unix-socket primitives may be
 present elsewhere, but macOS lifecycle integration and Windows named pipes are
@@ -19,17 +15,16 @@ DaemonClient
     -> one persistent AF_UNIX socket
     -> sshpilot.daemon selector loop
     -> explicit RequestDispatcher
-       -> InProcessClient -> existing ConnectionManager
-       -> SessionRuntime -> owned session records/process-runner boundary
+       -> daemon services/runtime
+       -> owned session, process, transfer, and interaction resources
 ```
 
 ## Ownership and threading
 
-`DaemonServer` constructs its injected core client on the same thread that runs
-the selector and dispatches requests. This preserves `InProcessClient` and
-GObject manager owner-thread rules. One selector loop handles multiple client
-sockets without a thread per client, a thread per request, `asyncio.run()`, or a
-per-call event loop.
+The daemon composition root constructs its services and runtime owners before
+serving requests. One selector loop handles multiple client sockets without a
+thread per client, a thread per request, `asyncio.run()`, or a per-call event
+loop.
 
 The selector thread owns envelope validation, immediate bounded dispatch,
 deferred-request reservation, completion draining, and all socket/selector
@@ -67,23 +62,21 @@ selected client and bridge; closing one window only invalidates callbacks.
 Daemon session restore also lists sessions through the bridge so a blocked
 control RPC cannot stall GTK behind welcome `connections.list`.
 
-## Experimental GTK selection
+## Client selection and startup
 
-Production Stage C enables daemon-backed SSH via
-`terminal.daemon_backed_ssh` (default `True`) when
-`SSHPILOT_CLIENT_MODE` is unset. Development overrides:
+The production application uses the daemon client for backend operations.
+`SSHPILOT_CLIENT_MODE` is a process-local compatibility/diagnostic override;
+an explicit in-process client is limited to its advertised compatibility/test
+surface and does not provide a frontend remote-operation backend.
 
 ```bash
 SSHPILOT_CLIENT_MODE=daemon python3 run.py
 SSHPILOT_CLIENT_MODE=in_process python3 run.py   # explicit; wins over Stage C
 ```
 
-The parser ignores surrounding whitespace and case. Missing or blank values
-mean `in_process` before Stage C promotion; invalid values retain in-process
-mode and produce the same safe compatibility warning as a failed daemon
-selection. An explicit `SSHPILOT_CLIENT_MODE=in_process` is never auto-promoted
-to daemon mode (GUI tests rely on this). The environment value is not persisted
-as an application preference.
+The environment value is not persisted as an application preference. A daemon
+selection or handshake failure is reported as a structured recovery state; it
+does not silently select a frontend-owned SSH/SFTP backend.
 
 ### Stale daemon diagnosis
 
@@ -107,9 +100,9 @@ the environment nor construct `DaemonClient`. The current application has one
 main window and one application-scoped client; future multi-window composition
 must continue sharing that client rather than opening one socket per widget.
 
-## On-demand startup and fallback
+## On-demand startup and recovery
 
-When daemon mode is requested, selection runs off the GTK thread:
+Daemon selection runs off the GTK thread:
 
 1. validate the owned mode-0700 parent and any existing mode-0600 socket;
 2. attempt a real Protocol v1 handshake with a short bounded probe;
@@ -119,13 +112,11 @@ When daemon mode is requested, selection runs off the GTK thread:
 4. if and only if the endpoint is unavailable, launch
    `sys.executable -m sshpilot.daemon --socket <resolved endpoint>`;
 5. poll with a monotonic three-second deadline and repeated real handshakes;
-6. use the daemon client, or fall back once to the existing in-process client.
+6. use the negotiated daemon client or surface a structured recovery error.
 
-There is no restart loop. Protocol incompatibility, malformed framing,
-transport closure during handshake, missing capability, and unsafe filesystem
-state do not trigger a daemon launch or retry. They still fall back for this
-experimental application run so the established local core remains usable.
-Logs record only a stable local failure category. The UI shows:
+There is no restart loop or backend fallback. Protocol incompatibility,
+malformed framing, transport closure during handshake, missing capability, and
+unsafe filesystem state produce a stable local failure category. The UI shows:
 
 ```text
 The local SSH Pilot service could not be used. SSH Pilot is running in
@@ -142,22 +133,21 @@ command works before installation.
 
 ## Core construction
 
-`python -m sshpilot.daemon` lazily constructs `Config`, `ConnectionManager`,
-`GroupManager`, and one `InProcessClient`. Transport and envelope modules do not
-import those managers or PyGObject. Tests inject a headless manager through the
-same server factory and use a real Unix socket.
+`python -m sshpilot.daemon` constructs the daemon application services and
+runtime owners. Transport and envelope modules do not import GTK or PyGObject.
+Headless tests may inject test services through the same server factory and use
+a real Unix socket.
 
-Daemon handlers never read persistence directly. Connection ordering, DTO
-mapping, stable identifiers, mutations, safe errors, and secret exclusion
-continue to come from `InProcessClient`, which delegates writes to the existing
-`ConnectionManager`.
+Daemon handlers delegate persistence, DTO mapping, stable identifiers,
+mutations, safe errors, and secret exclusion to daemon-owned application
+services. No frontend client or compatibility manager is the authoritative
+production route.
 
 The server binds and secures its socket before constructing the authoritative
 core manager. Core construction migrates persisted connection identities while
 holding the per-config migration lock, and readiness is not reported until that
-migration succeeds. Experimental daemon-mode GTK disables migration in its
-local compatibility manager until selection completes, so only the selected
-authoritative process migrates. See
+migration succeeds. Only the daemon-owned process performs this authoritative
+migration. See
 [stable connection identity](connection-identity.md).
 
 ## Socket security
@@ -263,9 +253,9 @@ bounded terminate/wait/kill and responds when that worker step finishes. A full
 64-command executor returns retryable `server_busy` without blocking the
 selector and without leaving a misleading `starting` summary. Immediate reads,
 handshake, attachment bookkeeping, and capability discovery remain on the
-selector because they are bounded. Connection persistence mutations also remain
-synchronous in API 0.9; the selector is therefore hardened against session
-runner blocking, not claimed to be free of every possible filesystem delay.
+selector because they are bounded. Connection persistence mutations remain
+synchronous; the selector is therefore hardened against session runner
+blocking, not claimed to be free of every possible filesystem delay.
 
 The production runner owns a real Unix PTY and canonical OpenSSH child.
 Control-only clients retain safe non-interactive failure. A
@@ -279,32 +269,31 @@ and [interaction broker](interaction-broker.md).
 Handshake, capability discovery, connection list/get/create/update/delete, and
 `connection.created`/`connection.updated`/`connection.deleted` cross the
 daemon. Session control, lifecycle events, negotiated terminal data, and typed
-interaction metadata also cross it. The daemon advertises connection/session
-capabilities, four narrow terminal capabilities for binary-terminal peers, and
-six narrow interaction capabilities for binary-secret peers.
+interaction metadata also cross it. The daemon advertises the current
+connection, session, terminal, interaction, SFTP, transfer, forwarding,
+secret, identity, and plugin capabilities negotiated by the client. The exact
+public surface is maintained in the API references, not duplicated here.
 
-The write contract intentionally contains only nickname, hostname, username,
-port, and SSH protocol creation. Existing advanced SSH settings are preserved
-internally during basic updates, but advanced/group/tag/Wake-on-LAN edits and
-secret changes are rejected by experimental GTK daemon mode rather than
-discarded. GTK waits for the mutation response and subsequent coalesced
-snapshot refresh; it never removes or changes rows optimistically.
+Typed write contracts preserve fields they do not own and reject unsupported
+requests explicitly; they never silently discard advanced, group, tag, or
+secret-bearing data. GTK waits for mutation responses and subsequent coalesced
+snapshot refreshes; it never removes or changes rows optimistically.
 
 Write requests are not automatically retried. If the transport closes after a
 request may have reached the daemon, `mutation_ambiguous` requires a fresh
 snapshot before explicit user action. There is no exactly-once/idempotency-key
-contract yet. Unrestricted prompts, SFTP, forwarding, plugins, and remote
-transport remain out of scope.
+contract. SFTP, forwarding, plugin, secret, and interaction operations use
+their negotiated daemon capabilities; remote multi-user transport remains out
+of scope.
 
-## Packaging and lifecycle backlog
+## Remaining transport and lifecycle scope
 
 - define launchd lifecycle integration for macOS;
 - add Windows named-pipe transport and ownership checks;
 - remove deprecated transitional-ID lookup in Protocol v2;
 - wire GTK preferences for daemon status/restart controls;
-- migrate the normal GTK terminal path only after extended interaction testing;
-- keep daemon mode experimental until extended GTK lifecycle testing is
-  complete; production-default selection is a separate decision.
+- extend platform-specific lifecycle integration where supported;
+- preserve the single daemon ownership route as new transports are added.
 
 ## External configuration synchronization
 

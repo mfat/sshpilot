@@ -68,7 +68,8 @@ For real-GTK daemon responsiveness coverage:
 SSHPILOT_GUI_TESTS=1 DISPLAY=:1 pytest -q -m gui tests/test_gui_smoke.py
 ```
 
-Daemon mode is a process-local development selection, not configuration state:
+The client-mode environment variable is a process-local selection override, not
+configuration state:
 
 ```bash
 SSHPILOT_CLIENT_MODE=daemon python3 run.py

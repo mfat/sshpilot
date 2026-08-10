@@ -1,6 +1,6 @@
 # Daemon-owned external configuration reload
 
-Experimental daemon mode has one authoritative persistence owner: `sshpilotd`.
+The daemon has one authoritative persistence owner: `sshpilotd`.
 GTK keeps `ConnectionManager.identity_migration_enabled` disabled and never
 repairs connection identities while a `DaemonClient` is selected.
 

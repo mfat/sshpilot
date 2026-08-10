@@ -1,22 +1,8 @@
 # Client methods
 
-API 0.29 adds the current daemon-owned API surface, including plugin settings
-and streamed broadcast output. API
-0.26 adds daemon-owned opaque-identity SSH key deletion. API 0.25
-removed plaintext passphrases from `GenerateKeyRequest` and added
-`verify_key_passphrase` / `keys.verify_passphrase`. Both encrypted generation
-and verification collect protected input through interaction secret frames;
-ordinary request JSON contains only non-secret metadata.
-
-API 0.24 adds the daemon-control method set_daemon_log_level. It accepts
-warning, info, or debug and updates only the daemon process handlers. The
-protocol remains v1.0.
-
-API 0.23 adds `terminal.broadcast_input` (`terminal.input`) alongside the
-existing `broadcast.start` (`broadcast.write`), `broadcast.get`
-(`broadcast.read`), and `broadcast.cancel` (`broadcast.write`). The typed
-request contains saved targets, command, and execution policy—not argv,
-environment, or local-shell settings.
+Current API implementation version: `0.29`.
+Protocol v1 remains `1.0`.
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 <!-- api-method: start_broadcast_command -->
 <!-- api-method: subscribe_broadcast_output -->
@@ -39,7 +25,7 @@ environment, or local-shell settings.
 <!-- api-daemon-method: terminal.broadcast_input capability=terminal.input -->
 
 `SshPilotClient` is synchronous. Both clients implement connection CRUD.
-Phase 6 session lifecycle methods are daemon-only; `InProcessClient` returns
+Session lifecycle methods are daemon-only; `InProcessClient` returns
 `unsupported_capability` for the corresponding `sessions.*` capability.
 
 ## Runtime summary

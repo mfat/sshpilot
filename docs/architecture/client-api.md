@@ -1,370 +1,104 @@
-# SshPilotClient API boundary
+# Current client/API architecture
 
-
-`SshPilotClient` is the stable frontend-neutral seam for sshPilot. Frontends
-use typed client methods and events; daemon-backed operations are owned by the
-daemon transport and dispatcher. The in-process client remains a supported
-transport for the capabilities it advertises, while it never becomes a
-frontend-owned implementation of daemon operations.
-
-## Package layout
+`SshPilotClient` is the stable frontend-neutral seam. Production frontends use
+typed requests, results, events, capabilities, and structured errors; they do
+not own daemon state, SSH processes, PTYs, SFTP services, transfers, forwards,
+secrets, or persistent configuration.
 
 ```text
-sshpilot/api/
-  version.py
-  capabilities.py
-  errors.py
-  events.py
-  client.py
-  client_factory.py
-  in_process_client.py
-  daemon_client.py
-  transport/
-  models/
-    common.py
-    connections.py
-    sessions.py
-    terminal.py
-    interactions.py
-    transfers.py
-    operations.py
+GTK / CLI / future frontends
+        ↓
+SshPilotClient
+        ↓
+DaemonClient / daemon transport
+        ↓
+daemon services/runtime
 ```
 
-All model, contract, and envelope files are implementation-neutral.
-`in_process_client.py` accepts existing managers by dependency injection and
-does not import GTK, GObject, VTE or a transport. `daemon_client.py` depends on
-Unix sockets but not frontend or manager types.
+## Client roles
 
-## Why the boundary exists
+`DaemonClient` is the production transport for daemon-owned operations. It
+uses the local authenticated daemon transport, negotiates Protocol v1 and
+capabilities, sends typed requests, receives typed responses/events, and
+streams terminal and protected-secret data through their dedicated binary
+frames.
 
-Frontend code should not need to know how connections are stored, which secret
-backend is selected, how native SSH arguments are built, which process owns a
-PTY, or how a future daemon is reached. Core code should not know how a dialog,
-tab, toast or terminal renderer is presented.
+`InProcessClient` is the in-process compatibility/test transport. It supports
+the connection capabilities it advertises and translates the existing
+in-process domain events for contract consumers. It is not a second production
+implementation of daemon-owned remote operations and is not the production GTK
+backend route for terminal, SFTP, transfer, forwarding, interaction, plugin,
+or secret operations.
 
-The boundary is exercised by connection reads and basic mutations:
+The client implementations share the same frontend-neutral models and error
+semantics. Unsupported capabilities produce `unsupported_capability`; clients
+never silently select a frontend-owned backend.
+
+## Ownership boundary
+
+The daemon owns authoritative persistence, connection and group state, native
+OpenSSH process launch, PTYs and sessions, terminal streams, interactions,
+SFTP, transfers, forwarding, secret brokering, identity/key operations, and
+plugin operational state. Frontends own presentation, navigation, selection,
+dialogs, rendering, local layout, file/portal selection, browser launch, and
+other explicitly frontend-local/platform operations.
+
+DTOs are deliberate public values, not persistence objects, manager instances,
+GObjects, subprocesses, PTYs, provider handles, or callbacks. Ordinary API
+payloads contain no passwords, passphrases, private keys, provider tokens,
+secret-bearing environments, or raw terminal handles. Protected interaction
+responses carry secret input only through the one-use secret path.
+
+## Runtime behavior
+
+`SshPilotClient` commands are synchronous at the Python API boundary. The GTK
+bridge runs blocking daemon calls away from the UI thread and marshals typed
+results/events back to the main context. `DaemonClient` owns one persistent
+socket reader, correlates responses by request ID, enforces bounded timeouts,
+and delivers events through a bounded serial handoff. Daemon services own
+long-running operation lifecycle, cancellation, resource attachment, replay,
+and shutdown semantics.
+
+Remote terminal activation follows the daemon route:
 
 ```text
-WelcomePage._populate_recent_box
-    -> client.list_connections()
-    -> secret-free ConnectionSummary DTOs
-
-Connection editor/delete actions in daemon mode
-    -> GtkClientBridge
-    -> client.create/update/delete_connection()
-    -> existing ConnectionManager through the daemon
+frontend → DaemonClient.sessions.open
+         → daemon session/PTY/OpenSSH runtime
+         → typed session events and binary terminal stream
+         → frontend renderer
 ```
 
-When a Recent row is clicked, GTK temporarily resolves the nickname to the
-legacy `Connection` object and enters the unchanged terminal path. That direct
-manager action is explicit migration debt; terminal execution was intentionally
-not moved.
+Session records and terminal resources may outlive a frontend attachment.
+Attach/detach, input ownership, replay, resize, interaction claims, and
+resource closure are daemon operations. A daemon failure is surfaced as a
+structured unavailable/recovery state; it does not start an internal GTK SSH,
+SFTP, or other backend fallback.
 
-## Calling convention
+## Versioning and extension rules
 
-The initial contract is synchronous commands plus event subscription. This
-matches the current GTK/GLib runtime, where blocking work already uses worker
-threads and UI results return through GLib.
-
-`InProcessClient` command methods must run on the thread that constructed the
-client. In GTK that is the main thread. Cross-thread command attempts return a
-structured `invalid_request`. Event registration is thread-safe, while event
-delivery runs through the first active publisher thread's serial FIFO
-dispatcher. Concurrent publisher threads wait for their accepted event; GTK
-subscribers must still marshal when the dispatcher is not the main thread.
-
-Do not:
-
-- create an asyncio loop per method;
-- call `asyncio.run()` from GTK callbacks;
-- block GTK waiting for futures;
-- make the Python calling convention mimic a not-yet-designed wire transport.
-
-`DaemonClient` uses one persistent blocking socket, one concurrency gate, one
-send lock, one persistent reader thread, and a finite timeout. Callers register
-pending request IDs and never read the socket. A separate bounded serial event
-handoff prevents slow subscribers from blocking response correlation. On
-timeout the client logs payload-free diagnostics (ids, method, elapsed time,
-queue depths, thread liveness) and closes the transport. It creates no event
-loop or thread per call. In daemon mode, the application-scoped GTK bridge uses
-one bounded worker and returns snapshots and mutation results through
-`GLib.idle_add`. Request tokens suppress stale results after refresh/window
-destruction. GLib remains outside `DaemonClient`, and `InProcessClient` stays
-on its construction/main thread. Session restore listing also runs on the
-bridge worker so it cannot stall GTK behind welcome connection reads.
-
-Inside the daemon, `sessions.open` and `sessions.close` are deferred through a
-four-worker, 64-command keyed executor. `sessions.open` acknowledges the
-accepted `starting` session immediately when the executor admits the startup
-command; PTY/OpenSSH work and authentication interactions proceed in the
-background and never hold the five-second control RPC deadline. The selector
-reserves deferred close responses and drains a bounded completion queue;
-workers never write sockets. Commands for one session serialize, while slow
-work for one session does not delay handshake, reads, attachments, or commands
-for other sessions. Connection mutations remain synchronous persistence
-operations in API 0.9.
-
-## Versioning and compatibility
-
-- `PROTOCOL_VERSION` versions public semantics and DTO compatibility.
-- `API_IMPLEMENTATION_VERSION` versions this Python implementation.
-- `ClientInfo`, `CoreInfo`, and `CompatibilityResult` describe both endpoints.
-- Additive optional fields can remain within a compatible protocol version.
-- Removing fields, changing meanings, or changing byte/order/error semantics
-  requires an explicit compatibility decision and normally a protocol version
-  change.
-
-## Capabilities
-
-Capability identifiers are stable strings. A capability is advertised only
-when its operations are reachable through the client and pass reusable contract
-tests.
-
-Both current client implementations advertise:
+Current versions are:
 
 ```text
-connections.read
-connections.events
-connections.write
+API implementation: 0.29
+Protocol:           1.0
 ```
 
-The daemon additionally advertises:
+Protocol v1 compatibility is additive unless a deliberate contract decision
+requires a version change. New public operations must define typed DTOs,
+capabilities, errors, events, threading/cancellation behavior, and contract
+tests before being advertised. Internal objects are never serialized by
+inspection.
 
-```text
-sessions.read
-sessions.write
-sessions.events
-terminal.output
-terminal.input
-terminal.resize
-terminal.replay
-interactions.read
-interactions.respond
-interactions.events
-interactions.host_key
-interactions.password
-interactions.passphrase
-```
+For concrete current API details, see:
 
-`InProcessClient` deliberately returns `unsupported_capability` for session,
-terminal, and interaction control because current production GTK terminal
-ownership has not moved. Daemon terminal capabilities require
-`binary-terminal-v1`; responder/secret capabilities require
-`binary-secret-v2`. Neither provider advertises SFTP, forwarding, plugins, or
-broad secret access.
+- [API overview](../api/README.md)
+- [Methods](../api/methods.md)
+- [Capabilities](../api/capabilities.md)
+- [Compatibility and versioning](../api/compatibility.md)
 
-The write DTO intentionally contains only basic connection metadata. Daemon
-GTK mode rejects secret, key/certificate, advanced SSH, group/tag, and
-Wake-on-LAN edits rather than silently losing them. It waits for success before
-refreshing and never retries an ambiguous mutation automatically.
+For transport and ownership enforcement, see:
 
-Unsupported methods raise:
-
-```text
-code: unsupported_capability
-details.capability: <stable capability string>
-```
-
-## Connection DTOs and IDs
-
-`ConnectionSummary` is the list shape. `ConnectionDetails` adds deliberate safe
-configuration metadata. Neither is an internal `Connection`, a persistence
-dictionary, a manager, or a GObject.
-
-Ordinary responses never contain:
-
-- passwords or key passphrases;
-- private key contents;
-- secret backend tokens;
-- source config paths;
-- environment variables;
-- subprocess, PTY, provider, GTK or VTE objects.
-
-Every persisted connection has an identifier equal to its SSH Host alias.
-Protocol v1 emits this alias in all connection DTOs, mutation results, and
-events. Rename is deletion of the old alias plus creation of a new alias;
-host/user/port/protocol updates preserve the alias.
-
-`ConnectionHealth` is separate from `SessionState`. The current
-terminal-derived `ConnectionState` is not converted into reachability;
-`InProcessClient` reports connection health as `unknown`.
-
-## Session DTOs and IDs
-
-Daemon sessions use strict opaque `session-<n>` IDs unique for one daemon
-process. `SessionSummary` exposes lifecycle state, creation time, safe
-exit/failure metadata, empty terminal capabilities, and logical attachment
-count. It never exposes a process/PID, command, environment, PTY, secret, or
-internal record. Client identity for attach/detach comes from the completed
-handshake, not request-controlled metadata. See
-[daemon session runtime](session-runtime.md).
-
-## Errors
-
-`SshPilotError` carries:
-
-- stable `ErrorCode`;
-- human-readable message;
-- safe details;
-- retryable flag;
-- optional request, connection and session IDs.
-
-Frontends must switch on error codes, not parse exception strings. Raw
-tracebacks and internal exceptions stay in developer logs. Error details must
-not include passwords, tokens, key material, full environments, sensitive
-arguments or secret paths. Runtime validation permits only finite
-JSON-compatible scalar/list/dictionary values with string keys and rejects
-secret-bearing key names, exceptions, arbitrary objects, environments and
-process command lines. Error `repr` excludes details and correlation IDs.
-
-When adding an error code:
-
-1. add a stable lowercase identifier;
-2. document its retry and correlation semantics;
-3. translate known manager failures at the adapter;
-4. add contract tests for its public envelope and redaction.
-
-## Events and subscriptions
-
-`CoreEvent` includes type, UTC timestamp, process-local sequence, typed payload,
-and optional request/connection/session correlation.
-
-Current runtime events:
-
-- `connection.created`
-- `connection.updated`
-- `connection.deleted`
-- `session.created` (daemon)
-- `session.state_changed` (daemon)
-- `session.exited` (daemon)
-- `session.closed` (daemon)
-- `interaction.created` (daemon)
-- `interaction.state_changed` (daemon)
-
-Schema-only event types still include session output and the legacy broad
-interaction request.
-`error.occurred` is a local safe `DaemonClient` continuity notification.
-
-Subscribers receive accepted in-process events in publisher-global sequence
-order and subscriber-registration order. The first active publisher drains the
-FIFO; concurrent publishers wait and re-entrant events queue without recursive
-delivery. Subscriber failure is isolated. `Subscription.unsubscribe()` and
-`close()` are idempotent. The client disconnects manager signal handlers during
-shutdown.
-
-The daemon forwards the three connection, four session, and two interaction
-lifecycle events. It
-assigns one daemon-global sequence starting at zero, uses explicit typed
-codecs, and keeps bounded per-peer queues. An overflowed peer is disconnected
-instead of continuing with a silent gap. `DaemonClient` checks sequence
-continuity and publishes decoded events through the same subscription API on
-its event dispatcher thread.
-
-GTK owns one application-scoped daemon subscription. It marshals event types to
-the main context and coalesces bursts into one asynchronous
-`list_connections()` refresh, with at most one follow-up if events arrive while
-a refresh is active. Transport/continuity failure replaces live cached state
-with the existing safe unavailable view; no automatic reconnect loop runs.
-
-Terminal output and secret responses never use this control-plane publisher.
-They use separately negotiated binary frame types and bounded ownership paths.
-
-## Terminal and interaction rules
-
-- Terminal input, output and replay data are `bytes`.
-- Do not decode arbitrary PTY output as UTF-8.
-- Rows/columns must be positive and bounded.
-- Public models never expose PTY descriptors or subprocess objects.
-- Interaction decisions contain no secret values. A claimed responder sends a
-  secret only through one-use `binary-secret-v2`.
-- Secret answers must never enter event histories, error details or logs.
-- Answered/cancelled/expired/failed interactions are final.
-
-## Adding a client method
-
-1. Decide whether the operation is core-owned.
-2. Add a deliberate typed request and response; do not expose an internal
-   record or generic dictionary.
-3. Define capability and structured-error behaviour.
-4. Specify thread ownership, cancellation and shutdown.
-5. Implement the smallest adapter over existing business logic.
-6. Add reusable contract tests.
-7. Advertise the capability only after the implementation passes those tests.
-8. Migrate one frontend caller without rewriting adjacent subsystems.
-
-## Terminal activation and ownership
-
-Production daemon-backed SSH terminals use VTE emulation:
-
-- **Production path**: GTK → DaemonClient.sessions.open → PTY → attach → VTE feed
-- **Multi-attachment**: Multiple GTK tabs can attach to same daemon session
-- **Input ownership**: Exclusive input ownership with claim/release API
-- **Session persistence**: Sessions survive GTK restart with detach/reattach
-- **VTE emulation**: Unified VTE-based production emulator for daemon SSH
-- **Internal SSH**: Daemon-only; readiness failure never starts a frontend SSH
-  process
-- **Route model**: `SshTerminalRoute` (`daemon` / `external`)
-  resolved before readiness or secret unlock
-
-See the [historical GTK terminal migration record](../history/frontend-neutral-migration/gtk-terminal-migration.md)
-and [session reattachment](session-reattachment.md).
-
-## Adding an event
-
-1. Add a stable event identifier and typed payload.
-2. Define ordering scope and correlation IDs.
-3. Define emitting thread and GTK bridge.
-4. Define subscriber cleanup, failure isolation and shutdown.
-5. Define durability/loss/slow-consumer behaviour.
-6. Test ordering, cleanup, payload type and failure isolation.
-
-GObject signals may feed an adapter, but they are not the cross-frontend
-contract.
-
-The in-process publisher provides one global serial FIFO. The first active
-publisher drains accepted events; concurrent publishers wait for delivery.
-Re-entrant publication queues behind the current event, so callbacks do not
-recursively grow the stack. Subscriber snapshots make unsubscription during
-delivery deterministic, and close rejects new events while accepted events
-finish.
-
-## Frontend and core access rules
-
-Frontend code must not directly access persistence or secret backends. Any
-compatibility exception is explicit, narrow, and covered by the architecture
-registries; it does not create a second backend owner.
-
-Core/API modules must not import or return GTK, GObject, Adwaita, VTE, WebKit,
-frontend controllers, frontend callbacks, raw PTY descriptors or subprocess
-objects.
-
-## Transports
-
-The same models and contract are intended for:
-
-- the current in-process adapter;
-- the implemented local Unix-domain socket;
-- Windows named pipes;
-- a local WebSocket only if a later frontend requires it.
-
-The local daemon implements versioned length-prefixed JSON envelopes, protocol
-negotiation, strict local-user socket permissions, stale-socket recovery,
-binary terminal frames, request cancellation, bounded event queues, prompt
-routing, and reusable connection contracts. Windows named pipes, WebSocket,
-and other non-Linux transports remain transport options rather than current
-runtime contracts.
-
-See [core-boundary.md](core-boundary.md) for the dependency rules and the
-[frontend closure audit](frontend-closure-audit.md) for final ownership
-evidence. The implemented transport is described in
-[daemon-transport.md](daemon-transport.md).
-
-The concrete, maintained contract is indexed in
-[`docs/api/README.md`](../api/README.md). Use the architecture documents for
-rationale and the API reference for exact methods, models, capabilities,
-events, errors, state semantics, and compatibility rules.
-
-In experimental daemon mode, connection events also cover committed external
-configuration reloads. GTK treats them like CRUD events: it coalesces an
-asynchronous `connections.list` refresh, preserves selection by stable ID, and
-never parses or migrates the local SSH configuration itself.
+- [Daemon transport](daemon-transport.md)
+- [Core boundary](core-boundary.md)
+- [Frontend closure audit](frontend-closure-audit.md)
+- [Session runtime](session-runtime.md)

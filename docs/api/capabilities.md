@@ -172,9 +172,10 @@ snapshot-only daemons cannot be mistaken for live providers.
 Implemented and contract-tested across both clients for nickname, hostname,
 username, port, and SSH protocol creation. Passwords, passphrases, key paths,
 advanced SSH settings, group edits, tags, and Wake-on-LAN metadata are outside
-the write DTO and are never silently discarded. Experimental GTK daemon mode
-requires this capability together with `connections.read` and
-`connections.events`; otherwise it falls back fully to in-process mode.
+the write DTO and are never silently discarded. The daemon-backed frontend
+route requires this capability together with `connections.read` and
+`connections.events`; clients without it receive an unsupported-capability
+result and do not fall back to a frontend backend.
 
 <!-- api-capability: sessions.read -->
 ## `sessions.read`

@@ -103,8 +103,8 @@ semantic migration capabilities: 0
 frontend operational SSH fallback: none
 ```
 
-Remaining M4/M5/M6/M7-style compatibility or dependency debt is not an
-adapter and is not evidence that frontend-neutral closure is incomplete.
+Remaining M4/M5/M6/M7-style compatibility or dependency debt is not a
+frontend migration blocker and does not reopen the completed migration.
 
 ## Secret architecture
 

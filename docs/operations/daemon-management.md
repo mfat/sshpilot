@@ -74,8 +74,8 @@ restart was requested.
 
 | Variable | Effect |
 | --- | --- |
-| `SSHPILOT_CLIENT_MODE=daemon` | Force experimental daemon client selection |
-| `SSHPILOT_CLIENT_MODE=in_process` | Force in-process client (wins over Stage C) |
+| `SSHPILOT_CLIENT_MODE=daemon` | Force daemon client selection for diagnostics/tests |
+| `SSHPILOT_CLIENT_MODE=in_process` | Force the compatibility in-process client for tests |
 | `XDG_RUNTIME_DIR` | Base directory for `sshpilot/sshpilotd.sock` |
 
 See [daemon-diagnostics.md](daemon-diagnostics.md) and

@@ -229,8 +229,8 @@ serialization per session, and a bounded completion queue. Workers call no
 socket or selector API. They enqueue immutable success/error completions and
 wake the selector; the selector validates peer token and request reservation,
 then queues the response. A full command plane returns retryable
-`server_busy` immediately. Connection mutations remain synchronous in API 0.9
-and may still perform bounded persistence work on the selector.
+`server_busy` immediately. Connection mutations remain synchronous and may
+still perform bounded persistence work on the selector.
 
 ## Cancellation and timeouts
 
