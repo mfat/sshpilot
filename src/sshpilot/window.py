@@ -2208,6 +2208,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         def on_error(error):
             pending.discard(key)
+            if self._sidebar_store_generation() != generation:
+                self._refresh_sidebar_forwarding_rules([connection])
 
         try:
             bridge.submit(

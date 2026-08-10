@@ -359,3 +359,51 @@ def test_later_refresh_retries_after_failure():
 
     assert len(bridge.submits) == 2
     assert "alpha" in window._forwarding_rules_pending
+
+
+def test_stale_error_triggers_current_generation_refetch():
+    from sshpilot.window import MainWindow
+
+    alpha = _connection("alpha")
+    bridge = _Bridge()
+    window = _window(
+        bridge=bridge,
+        client=_Client(editor=_editor("alpha")),
+        generation=1,
+    )
+
+    MainWindow._refresh_sidebar_forwarding_rules(window, [alpha])
+    _operation, _on_success, on_error = bridge.submits[0]
+
+    window.connection_manager.generation = 2
+    on_error(RuntimeError("boom"))
+
+    assert "alpha" not in window._forwarding_rules_cache
+    assert "alpha" in window._forwarding_rules_pending
+    assert len(bridge.submits) == 2
+
+    current_operation, current_success, _current_error = bridge.submits[1]
+    current_success(current_operation())
+
+    assert window._forwarding_rules_cache["alpha"][0] == 2
+    assert "alpha" not in window._forwarding_rules_pending
+
+
+def test_same_generation_error_does_not_auto_retry():
+    from sshpilot.window import MainWindow
+
+    alpha = _connection("alpha")
+    bridge = _Bridge()
+    window = _window(
+        bridge=bridge,
+        client=_Client(editor=_editor("alpha")),
+        generation=2,
+    )
+
+    MainWindow._refresh_sidebar_forwarding_rules(window, [alpha])
+    _operation, _on_success, on_error = bridge.submits[0]
+    on_error(RuntimeError("boom"))
+
+    assert len(bridge.submits) == 1
+    assert "alpha" not in window._forwarding_rules_pending
+    assert "alpha" not in window._forwarding_rules_cache
