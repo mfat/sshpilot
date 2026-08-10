@@ -928,15 +928,36 @@ class PluginContext:
                 input=input,
             )
             operation_id = summary.operation.id
+            line_buffers = {"stdout": "", "stderr": ""}
+
+            def _emit_line(line: str) -> None:
+                # Broadcast output is chunked, not line-oriented. Keep the
+                # plugin contract compatible with the former stream facade.
+                self.run_on_ui_thread(on_line, line.rstrip("\r"))
+
+            def _on_output(stream: str, text: str) -> None:
+                buffer = line_buffers.get(stream, "") + text
+                parts = buffer.split("\n")
+                line_buffers[stream] = parts.pop()
+                for line in parts:
+                    _emit_line(line)
+
+            def _flush_output() -> None:
+                for stream in ("stdout", "stderr"):
+                    partial = line_buffers[stream]
+                    if partial:
+                        _emit_line(partial)
+                    line_buffers[stream] = ""
 
             def _on_done(code):
+                _flush_output()
                 handle._finish_remote()
                 if on_done is not None:
                     self.run_on_ui_thread(on_done, code)
 
             subscription = client.subscribe_broadcast_output(
                 operation_id,
-                lambda _stream, text: self.run_on_ui_thread(on_line, text),
+                _on_output,
                 _on_done,
             )
             handle._attach_remote(

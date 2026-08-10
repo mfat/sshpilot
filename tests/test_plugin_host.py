@@ -357,7 +357,10 @@ def test_session_dispatch_and_reconnect_dedupe():
     host.events.subscribe(Events.SESSION_OPENED, lambda i: opened.append(i), plugin_id="p")
     host.events.subscribe(Events.SESSION_CLOSED, lambda i: closed.append(i), plugin_id="p")
 
-    term = types.SimpleNamespace(connection=FakeConn("box1"))
+    term = types.SimpleNamespace(
+        connection=FakeConn("box1"),
+        _daemon_tab_state=types.SimpleNamespace(session_id="daemon-session-1"),
+    )
     host.dispatch_session_opened(term)
     host.dispatch_session_opened(term)  # reconnect of same terminal → no re-emit
     assert len(opened) == 1
@@ -366,6 +369,71 @@ def test_session_dispatch_and_reconnect_dedupe():
     host.dispatch_session_closed(term)
     assert len(closed) == 1
     assert closed[0].session_id == sid  # stable id across the pair
+
+
+def test_session_opened_id_routes_directly_to_daemon_session_api():
+    from sshpilot.api.models.common import AttachmentId, ClientId, ConnectionId, SessionId
+    from sshpilot.api.models.sessions import (
+        AttachSessionResult,
+        AttachmentInfo,
+        SessionState,
+        SessionSummary,
+    )
+    from sshpilot.api.models.terminal import TerminalInput, TerminalOutput
+
+    session = SessionSummary(
+        id=SessionId("daemon-session-1"), connection_id=ConnectionId("box1"),
+        state=SessionState.RUNNING,
+    )
+
+    class Client:
+        def __init__(self):
+            self.inputs = []
+            self._receiver = None
+
+        def attach_session(self, request):
+            return AttachSessionResult(
+                session=session,
+                attachment=AttachmentInfo(
+                    id=AttachmentId("attachment-1"),
+                    session_id=session.id,
+                    client_id=ClientId("client-1"),
+                    input_owner=request.request_input,
+                ),
+            )
+
+        def subscribe_terminal(self, session_id, receiver):
+            assert session_id == session.id
+            self._receiver = receiver
+            return types.SimpleNamespace(close=lambda: None)
+
+        def replay_terminal(self, request):
+            assert request.session_id == session.id
+            self._receiver(TerminalOutput(
+                session_id=request.session_id, sequence=0, data=b"prompt\n",
+                replay=True, eof=True,
+            ))
+
+        def send_terminal_input(self, value):
+            assert isinstance(value, TerminalInput)
+            self.inputs.append(value)
+
+    client = Client()
+    host = PluginHost(connection_manager=FakeCM())
+    host.bind_window(types.SimpleNamespace(client=client))
+    opened = []
+    host.events.subscribe(Events.SESSION_OPENED, opened.append, plugin_id="p")
+    terminal = types.SimpleNamespace(
+        connection=FakeConn("box1"),
+        _daemon_tab_state=types.SimpleNamespace(session_id=session.id),
+    )
+
+    host.dispatch_session_opened(terminal)
+    session_id = opened[0].session_id
+    assert session_id == session.id
+    assert host.read_terminal(session_id) == "prompt\n"
+    assert host.send_terminal(session_id, "exit\n") is True
+    assert client.inputs[0].session_id == session.id
 
 
 def test_app_lifecycle_events():
@@ -505,7 +573,7 @@ def test_plugin_remote_command_and_stream_use_daemon_client():
             )
 
         def subscribe_broadcast_output(self, _operation_id, on_output, _on_done):
-            on_output("stdout", "followed")
+            on_output("stdout", "followed\n")
             return types.SimpleNamespace(close=lambda: setattr(self, "closed", True))
 
         def cancel_broadcast_command(self, operation_id):
@@ -533,6 +601,55 @@ def test_plugin_remote_command_and_stream_use_daemon_client():
     handle.stop()
     assert client.cancelled == ["operation-1"]
     assert client.closed is True
+
+
+def test_plugin_command_stream_reassembles_broadcast_chunks():
+    from sshpilot.api.models.connections import ConnectionSummary
+
+    connection = ConnectionSummary(
+        id="box1", nickname="box1", host="example.test",
+        hostname="example.test", username="user", port=22,
+    )
+
+    class Client:
+        def list_connections(self):
+            return [connection]
+
+        def start_broadcast_command(self, _request, *, input=None):
+            assert input is None
+            return types.SimpleNamespace(
+                operation=types.SimpleNamespace(id="operation-1"),
+            )
+
+        def subscribe_broadcast_output(self, _operation_id, on_output, on_done):
+            self.on_output = on_output
+            self.on_done = on_done
+            return types.SimpleNamespace(close=lambda: None)
+
+        def cancel_broadcast_command(self, _operation_id):
+            pass
+
+    client = Client()
+    host = PluginHost(connection_manager=FakeCM())
+    host.bind_window(types.SimpleNamespace(client=client))
+    ctx = PluginContext(
+        plugin_id="docker", app_config=FakeConfig(),
+        connection_manager=FakeCM(), protocol_registry=registry_mod.ProtocolRegistry(),
+        host=host,
+    )
+    lines = []
+    done = []
+    ctx.run_command_stream("box1", "docker logs -f", on_line=lines.append,
+                           on_done=done.append)
+
+    client.on_output("stdout", "first\nsecond\n")
+    client.on_output("stdout", "split")
+    client.on_output("stdout", " line\n")
+    client.on_output("stderr", "final unterminated")
+    client.on_done(0)
+
+    assert lines == ["first", "second", "split line", "final unterminated"]
+    assert done == [0]
 
 
 def test_generate_key_returns_path():

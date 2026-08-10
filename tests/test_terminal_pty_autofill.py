@@ -1,7 +1,6 @@
 """TerminalWidget PTY auto-fill: one-shot typing when a known prompt appears."""
 import logging
 import types
-import weakref
 from unittest.mock import Mock
 
 import pytest
@@ -233,14 +232,14 @@ def test_command_blocks_specific_terminal_routes_daemon_input_through_widget():
     panel.store.record_use.assert_called_once_with("command-id")
 
 
-def test_plugin_send_terminal_routes_daemon_input_through_widget():
+def test_plugin_send_terminal_does_not_use_widget_as_backend():
     terminal = _daemon_terminal()
     host = PluginHost(connection_manager=None)
-    host._terminal_widgets["session-id"] = weakref.ref(terminal)
+    host._terminal_widgets["session-id"] = lambda: terminal
 
-    assert host.send_terminal("session-id", "pwd\n") is True
+    assert host.send_terminal("session-id", "pwd\n") is False
 
-    terminal._daemon_controller.send_input.assert_called_once_with(b"pwd\n")
+    terminal._daemon_controller.send_input.assert_not_called()
     terminal.backend.feed_child_data.assert_not_called()
 
 

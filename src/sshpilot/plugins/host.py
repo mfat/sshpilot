@@ -384,31 +384,51 @@ class PluginHost:
         self.events.emit(Events.CONNECTION_DELETED, ConnectionInfo.from_connection(conn))
 
     # --- session event dispatch (called from terminal_manager) --------
+    @staticmethod
+    def _daemon_session_id(terminal) -> Optional[str]:
+        """Return the daemon session identity carried by a terminal tab."""
+        tab_state = getattr(terminal, "daemon_tab_state", None)
+        if tab_state is None:
+            tab_state = getattr(terminal, "_daemon_tab_state", None)
+        if tab_state is None:
+            controller = getattr(terminal, "_daemon_controller", None)
+            tab_state = getattr(controller, "tab_state", None)
+        session_id = getattr(tab_state, "session_id", None)
+        return str(session_id) if session_id is not None else None
+
     def dispatch_session_opened(self, terminal) -> None:
         key = id(terminal)
         if key in self._terminal_sessions:
             return  # reconnect of an already-tracked terminal; not a new session
+        session_id = self._daemon_session_id(terminal)
+        if session_id is None:
+            logger.debug("Ignoring session_opened without a daemon session id")
+            return
         info = SessionInfo(
             ConnectionInfo.from_connection(getattr(terminal, "connection", None)),
-            str(key),
+            session_id,
         )
         self._terminal_sessions[key] = info
         import weakref
         try:
-            self._terminal_widgets[str(key)] = weakref.ref(terminal)
+            self._terminal_widgets[session_id] = weakref.ref(terminal)
         except TypeError:
-            self._terminal_widgets[str(key)] = lambda t=terminal: t
+            self._terminal_widgets[session_id] = lambda t=terminal: t
         self.events.emit(Events.SESSION_OPENED, info)
 
     def dispatch_session_closed(self, terminal) -> None:
         key = id(terminal)
-        self._terminal_widgets.pop(str(key), None)
         info = self._terminal_sessions.pop(key, None)
         if info is None:
+            session_id = self._daemon_session_id(terminal)
+            if session_id is None:
+                logger.debug("Ignoring session_closed without a daemon session id")
+                return
             info = SessionInfo(
                 ConnectionInfo.from_connection(getattr(terminal, "connection", None)),
-                str(key),
+                session_id,
             )
+        self._terminal_widgets.pop(info.session_id, None)
         self.events.emit(Events.SESSION_CLOSED, info)
 
     # --- app lifecycle (called from main.py) --------------------------
