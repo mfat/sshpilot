@@ -33,16 +33,17 @@ runtime matrix.
 - **Transport-owned:** framing, serialization, local endpoint security,
   request/response correlation, backpressure, reconnect, and handshake.
 
-The current code has not completed that ownership split. Read
-[the boundary audit](../architecture/core-boundary-audit.md) and
-[daemon ownership](../architecture/daemon-ownership.md) for migration details.
+The ownership split is complete. See the
+[current architecture](../architecture.md), [core boundary](../architecture/core-boundary.md),
+and [frontend closure audit](../architecture/frontend-closure-audit.md) for
+current ownership and final evidence.
 
 ## Protocol identity
 
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.10` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.29` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects

@@ -1,7 +1,7 @@
-# SSH-key daemon ownership (M1 — Complete)
+# SSH keys
 
-M1 moved SSH-key discovery, generation, public-key reads, and passphrase
-verification into the daemon.
+The daemon owns SSH-key discovery, generation, public-key reads, passphrase
+verification, and deletion through the typed API.
 GTK no longer instantiates `core.keys.KeyService`, never scans key
 directories, never runs `ssh-keygen`, and never directly reads the `.pub`
 file of a daemon-discovered key.
@@ -56,13 +56,15 @@ file of a daemon-discovered key.
 - The authorized-keys local import lists keys through the daemon and reads the
   selected public key via `read_public_key()`; no direct `.pub` read for
   daemon-discovered inventory.
-- Path metadata on `KeySummary` (`private_path` / `public_path`) is temporary
-  compatibility data for the M7 `ssh-copy-id` subprocess adapter. GTK does not
-  derive or scan these paths. User-browsed arbitrary public-key files remain
-  explicit frontend input and may keep their existing read path.
+- Path metadata on `KeySummary` (`private_path` / `public_path`) is compatibility
+  metadata returned by the daemon for operations that need to identify a key.
+  GTK does not derive or scan daemon key paths. User-browsed arbitrary
+  public-key files remain explicit frontend input and may keep their existing
+  read path.
 
-## No deletion API
+## Deletion
 
-No delete RPC or capability was added because no current GTK key-deletion
-workflow exists. `plugins.host.delete_key` returns `False` until deletion is
-daemon-owned in a later migration.
+`keys.delete` is daemon-owned and uses the opaque key identity established by
+the daemon key inventory. Plugin compatibility calls match legacy private-path
+arguments against daemon-listed metadata and then delete by opaque `KeyId`; no
+frontend file operation is involved.

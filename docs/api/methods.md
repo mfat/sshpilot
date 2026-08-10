@@ -1,6 +1,7 @@
 # Client methods
 
-API 0.28 adds daemon-owned plugin settings and streamed broadcast output. API
+API 0.29 adds the current daemon-owned API surface, including plugin settings
+and streamed broadcast output. API
 0.26 adds daemon-owned opaque-identity SSH key deletion. API 0.25
 removed plaintext passphrases from `GenerateKeyRequest` and added
 `verify_key_passphrase` / `keys.verify_passphrase`. Both encrypted generation

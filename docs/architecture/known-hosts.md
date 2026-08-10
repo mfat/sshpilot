@@ -1,8 +1,8 @@
 # Known hosts
 
-**Migration status: M2 complete.** The known-hosts file is daemon-owned; the
-frontend has no filesystem fallback. (M1 keys and M3–M8 remain tracked in
-`core-ownership-migration.md`.)
+The known-hosts file is daemon-owned; the frontend has no filesystem fallback.
+The final ownership classification is recorded in the
+[frontend closure audit](frontend-closure-audit.md).
 
 `sshpilot.core.known_hosts` owns:
 

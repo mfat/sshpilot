@@ -1,5 +1,12 @@
 # Frontend-neutral migration status
 
+> **Historical completion record.** The frontend-neutral migration and final
+> frontend closure are complete. This document preserves the reviewed
+> migration status and intermediate evidence; it is not an active roadmap.
+> Current architecture is documented in
+> [`docs/architecture.md`](../../architecture.md), and final ownership evidence
+> is in [`docs/architecture/frontend-closure-audit.md`](../../architecture/frontend-closure-audit.md).
+
 This is the operational status of the reviewed ownership migration. A capability
 is complete only when its daemon owner, typed API contract, frontend boundary,
 and compatibility behavior are documented and tested.

@@ -1,27 +1,28 @@
 # Architecture reference
 
-sshPilot is a native OpenSSH client with a GTK frontend and a
-frontend-neutral core, API, and daemon architecture. GTK is a client of the
-system, not the owner of backend state or I/O.
+sshPilot is a native OpenSSH client with GTK, CLI, and future frontends over a
+frontend-neutral API and daemon architecture. The frontend-neutral migration
+and final frontend closure are complete: GTK is a client of the system, not
+the owner of backend state or remote I/O.
 
 For development workflow, see [running-from-source.md](running-from-source.md)
 and [../CONTRIBUTING.md](../CONTRIBUTING.md). For the concrete public contract,
 see the [frontend-neutral API reference](api/README.md).
 
-## Main boundary
+## Current architecture boundary
 
 Production frontend-neutral operations follow this boundary:
 
 ```text
-GTK / CLI / future clients
+GTK / CLI / future frontends
         ↓
-typed SshPilotClient API
+typed SshPilotClient
         ↓
-daemon dispatcher and services
+daemon transport / dispatcher
         ↓
-GTK-free core/application services
+GTK-free application/core services
         ↓
-native OpenSSH and existing backend adapters
+native OpenSSH + existing adapters
 ```
 
 The daemon is the authoritative owner of backend state, persistence,
@@ -34,7 +35,7 @@ selection, dialogs, interaction presentation, and frontend-local transient
 state. A controller may cache DTOs and stage a local edit, but it does not own
 the file, process, secret, or service represented by that DTO.
 
-## Current ownership
+## Ownership boundaries
 
 | Responsibility | Authoritative owner | Frontend boundary |
 | --- | --- | --- |
@@ -53,7 +54,7 @@ routes. They are not the authoritative production owners when the daemon route
 is selected. Production GTK controllers use `SshPilotClient` and do not
 instantiate backend services or perform backend I/O.
 
-## Completed frontend-neutral milestones
+## Current subsystem ownership
 
 The following milestones have completed their reviewed ownership migration:
 
@@ -89,11 +90,21 @@ The following milestones have completed their reviewed ownership migration:
   success and one `file_revision_conflict` without blocking unrelated targets.
   GTK only stages and presents edits.
 
-Native SCP transfer ownership is complete through the daemon/API route; GTK
-retains chooser, portal, browser, progress, and cancellation presentation only.
-General SFTP transfer ownership, browser fallback without SFTP, broadcast/remote
-commands, architecture governance, and final frontend closure remain planned
-phases. See [frontend-neutral-migration.md](frontend-neutral-migration.md).
+Native SCP and SFTP services, browser fallback policy, broadcast/remote
+commands, plugin settings/command/session APIs, architecture governance, and
+frontend operational SSH cleanup are complete through the daemon/API route.
+GTK retains chooser, portal, browser, progress, cancellation, and other
+explicitly frontend-local/platform operations only. The closure audit records
+the final inventory and approved compatibility/dependency debt:
+
+```text
+migration-required identities: 0
+semantic migration capabilities: 0
+frontend operational SSH fallback: none
+```
+
+Remaining M4/M5/M6/M7-style compatibility or dependency debt is not an
+adapter and is not evidence that frontend-neutral closure is incomplete.
 
 ## Secret architecture
 
@@ -221,7 +232,7 @@ behavior, and contain no private implementation objects or secret values.
 Cancellation is real when a producer registers a supervised process or
 cancellation hook; otherwise the producer must report cancellation truthfully
 rather than claiming an interrupted mutation. Identity operation producers use
-this runtime but remain under separate phase review.
+this same runtime and their typed service contracts.
 
 ## Sessions, transfers, and interactions
 
@@ -247,8 +258,8 @@ as an excuse to add a second production implementation.
 
 ## Related architecture references
 
-- [Daemon ownership](architecture/daemon-ownership.md)
-- [Daemon-only production rules](architecture/daemon-only.md)
 - [Core boundary](architecture/core-boundary.md)
-- [Frontend-neutral migration status](frontend-neutral-migration.md)
+- [Frontend closure audit](architecture/frontend-closure-audit.md)
+- [Dependency direction](architecture/dependency-direction.md)
+- [Headless core development](development/headless-core.md)
 - [API maintenance](api/maintenance.md)

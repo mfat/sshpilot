@@ -27,7 +27,7 @@ saved-connection authority for the daemon route; daemon-fed DTO stores are the
 production frontend boundary.
 
 The concrete current client contract is maintained in the
-[API reference](../api/README.md). This document describes intended ownership;
+[API reference](../../api/README.md). This document describes intended ownership;
 it does not advertise runtime capabilities.
 
 ## Architectural direction
@@ -66,7 +66,7 @@ In daemon mode, `sshpilotd` is also the single writer and reload owner for SSH
 configuration, included fragments, JSON-backed connections, and connection
 metadata. External edits are
 detected and transactionally reloaded by the daemon as described in
-[configuration reload](configuration-reload.md).
+[configuration reload](../../architecture/configuration-reload.md).
 
 ## Frontend ownership
 
@@ -111,7 +111,7 @@ not the canonical domain contract.
 
 Terminal input and output remain `bytes` in Python. PTY/process-group ownership,
 binary framing, replay, and slow-peer isolation are defined in
-[terminal streaming](terminal-streaming.md).
+[terminal streaming](../../architecture/terminal-streaming.md).
 - Invalid UTF-8 is preserved.
 - Public models carry sequence metadata, never PTY descriptors.
 - Future transports may use binary frames; Base64 JSON is not required.

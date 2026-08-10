@@ -19,6 +19,26 @@ platform documentation that versions with the code:
 | [CREDENTIAL_MANAGER.md](CREDENTIAL_MANAGER.md) | The credential export/backup layer and its secret backends. |
 | [plugins/](plugins/) | Writing, packaging and publishing plugins, plus copyable templates. |
 
+## Developer documentation paths
+
+### Current architecture
+
+Start with [architecture.md](architecture.md), then follow its links to the
+specific subsystem reference under [architecture/](architecture/). The
+frontend-neutral migration and final frontend closure are complete; the active
+architecture describes current ownership and boundaries.
+
+### Current public API
+
+Use [api/README.md](api/README.md) for the maintained Protocol 1.0/API 0.29
+contract, with generated models and schemas linked from that overview.
+
+### Historical migration records
+
+Phase audits, completion matrices, and superseded implementation inventories
+are preserved and explicitly labeled in
+[history/frontend-neutral-migration/](history/frontend-neutral-migration/).
+
 ## Askpass debug log
 
 The askpass helper and the daemon interaction broker write debug information

@@ -1,8 +1,8 @@
 # API implementation audit
 
 > **Superseded for Phase 10–13.2 runtime status.** Prefer
-> [capabilities.md](capabilities.md), [methods.md](methods.md), and the
-> [Phase 13.2 topic guides](README.md#phase-132-topic-guides). This inventory
+> [capabilities.md](../../api/capabilities.md), [methods.md](../../api/methods.md), and the
+> [current API topic guides](../../api/README.md). This inventory
 > still documents early Protocol v1 scaffolding and should not be read as the
 > current SFTP/forward/interaction/terminal capability matrix.
 
@@ -114,7 +114,7 @@ lifecycle events share the daemon-global sequence and bounded peer queues.
 ## Models
 
 All field lists, defaults, types, and synthetic examples are documented in the
-[generated model index](generated/model-index.md).
+[generated model index](../../api/generated/model-index.md).
 
 | Public element | Location | Runtime | Capability/domain | Contract-tested | Documented | Notes |
 | --- | --- | ---: | --- | ---: | ---: | --- |

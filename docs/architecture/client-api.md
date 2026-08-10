@@ -1,15 +1,11 @@
-# SshPilotClient API
-
-> **Historical migration record.** This document describes an earlier phase and
-> names components/settings as they existed then. It is not the current runtime
-> contract; production GTK now requires the daemon and has no local SSH fallback.
+# SshPilotClient API boundary
 
 
-`SshPilotClient` is the stable frontend/core seam for sshPilot. GTK uses
-`InProcessClient` by default and can explicitly opt into `DaemonClient` for
-connection-read development through `SSHPILOT_CLIENT_MODE=daemon`.
-The experimental daemon slice covers connection CRUD/events, session control,
-PTY terminal streaming, and typed authentication/trust interactions.
+`SshPilotClient` is the stable frontend-neutral seam for sshPilot. Frontends
+use typed client methods and events; daemon-backed operations are owned by the
+daemon transport and dispatcher. The in-process client remains a supported
+transport for the capabilities it advertises, while it never becomes a
+frontend-owned implementation of daemon operations.
 
 ## Package layout
 
@@ -296,9 +292,9 @@ They use separately negotiated binary frame types and bounded ownership paths.
 7. Advertise the capability only after the implementation passes those tests.
 8. Migrate one frontend caller without rewriting adjacent subsystems.
 
-## Phase 9: GTK Terminal Migration
+## Terminal activation and ownership
 
-Phase 9 introduces production daemon-backed SSH terminals with VTE emulation:
+Production daemon-backed SSH terminals use VTE emulation:
 
 - **Production path**: GTK → DaemonClient.sessions.open → PTY → attach → VTE feed
 - **Multi-attachment**: Multiple GTK tabs can attach to same daemon session
@@ -310,7 +306,8 @@ Phase 9 introduces production daemon-backed SSH terminals with VTE emulation:
 - **Route model**: `SshTerminalRoute` (`daemon` / `external`)
   resolved before readiness or secret unlock
 
-See [GTK Terminal Migration](gtk-terminal-migration.md) and [Session Reattachment](session-reattachment.md).
+See the [historical GTK terminal migration record](../history/frontend-neutral-migration/gtk-terminal-migration.md)
+and [session reattachment](session-reattachment.md).
 
 ## Adding an event
 
@@ -333,9 +330,9 @@ finish.
 
 ## Frontend and core access rules
 
-Frontend code must not directly access persistence or secret backends. During
-incremental migration, every remaining direct call should be treated as
-explicit debt and moved one vertical slice at a time.
+Frontend code must not directly access persistence or secret backends. Any
+compatibility exception is explicit, narrow, and covered by the architecture
+registries; it does not create a second backend owner.
 
 Core/API modules must not import or return GTK, GObject, Adwaita, VTE, WebKit,
 frontend controllers, frontend callbacks, raw PTY descriptors or subprocess
@@ -351,14 +348,16 @@ The same models and contract are intended for:
 - a local WebSocket only if a later frontend requires it.
 
 The local daemon implements versioned length-prefixed JSON envelopes, protocol
-negotiation, strict local-user socket permissions, stale-socket recovery, and
-reusable connection contracts. Future phases still need binary terminal frames,
-request cancellation, bounded event queues, reconnect/resume semantics, prompt
-routing, and non-Linux transports.
+negotiation, strict local-user socket permissions, stale-socket recovery,
+binary terminal frames, request cancellation, bounded event queues, prompt
+routing, and reusable connection contracts. Windows named pipes, WebSocket,
+and other non-Linux transports remain transport options rather than current
+runtime contracts.
 
-See `core-boundary-audit.md` for the current concurrency/state evidence and
-`daemon-ownership.md` for ownership decisions. The implemented transport is
-described in [daemon-transport.md](daemon-transport.md).
+See [core-boundary.md](core-boundary.md) for the dependency rules and the
+[frontend closure audit](frontend-closure-audit.md) for final ownership
+evidence. The implemented transport is described in
+[daemon-transport.md](daemon-transport.md).
 
 The concrete, maintained contract is indexed in
 [`docs/api/README.md`](../api/README.md). Use the architecture documents for

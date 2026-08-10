@@ -1,4 +1,4 @@
-# Daemon-Owned SFTP Services (Phase 10)
+# Daemon-owned SFTP services
 
 SFTP browsing and mutations are daemon-owned resources, independent of
 terminal PTY sessions.
@@ -58,15 +58,16 @@ Panel teardown calls `sftp.detach`; explicit Disconnect calls `sftp.close`.
 Up to 50 closed service summaries are retained in memory. Daemon restart
 clears all.
 
-## Legacy gating
+## Routing
 
 Production file-manager routing (`sshpilot.extended_service_policy`) selects
 daemon ownership when a `DaemonClient` advertises SFTP capabilities. There is
-**no silent fallback** to `OpenSSHSFTPManager`. Explicit
-`file_manager.removed_local_sftp` (or in-process client mode) is required for
-GTK-owned `ssh -s sftp`. Ordinary SCP UI requires `file_manager.legacy_scp`.
+no frontend operational SSH/SFTP fallback. A client without the required
+daemon capability receives the typed unsupported-capability result; it does
+not start a second SFTP backend. Ordinary SCP UI uses the daemon transfer
+route.
 
-## Phase 10.1 validation (exercised)
+## Validation evidence
 
 Real OpenSSH Alpine fixture + ephemeral daemon:
 

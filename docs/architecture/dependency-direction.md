@@ -35,7 +35,6 @@ It is outside the core/api/daemon boundary and is loaded lazily by
 fallback: `auto` fallthrough is explicit, ordered, and tested via
 `core.secrets.resolve_lookup_order`.
 
-Phase 13.1 acceptance: unfiltered `pytest`, combined-auth repetitions, temporary
-OpenSSH fixture, and the 40-step GUI smoke are documented under `docs/testing/`.
-
-Phase 13.2 acceptance uses the layered production smoke (`Daemon/API` + `GTK controller`) documented in `docs/testing/phase13-production-smoke.md`.
+The architecture and dependency-boundary suites are the current enforcement
+for this policy. Historical phase audits and smoke reports are preserved under
+[`docs/history/frontend-neutral-migration/`](../history/frontend-neutral-migration/).

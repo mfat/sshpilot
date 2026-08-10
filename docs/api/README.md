@@ -7,7 +7,7 @@ these documents describe the concrete contract.
 
 ## Reference
 
-## Phase 13.2 topic guides
+These topic guides describe the current Protocol 1.0/API 0.29 contract:
 
 - [Daemon lifecycle](daemon-lifecycle.md)
 - [Sessions](sessions.md)
@@ -36,8 +36,6 @@ these documents describe the concrete contract.
 - [Compatibility](compatibility.md) — Protocol v1 compatibility and versioning
 - [Maintenance](maintenance.md) — required workflow for public API changes
 - [API changelog](CHANGELOG.md) — public contract history
-- [Implementation audit](implementation-audit.md) — code/documentation/test
-  inventory and known gaps
 - [Generated structural schema](generated/schema.json) — deterministic,
   machine-readable catalog; it is not OpenAPI or an HTTP contract
 
@@ -48,13 +46,17 @@ these documents describe the concrete contract.
 binary PTY terminal streaming, typed authentication/trust interactions, SFTP,
 transfers, and port forwarding over a secure per-user Unix socket.
 
-See the [Phase 13.2 topic guides](#phase-132-topic-guides) and
-[capabilities.md](capabilities.md) for the current advertised surface.
-Plugins, remote multi-host transport, and a broad frontend secret CRUD API
-remain out of scope for Protocol v1.
+See the topic guides above and [capabilities.md](capabilities.md) for the
+current advertised surface. Plugin settings, command, session-facing, and
+secret APIs are included where listed by the current capabilities and methods
+references; unsupported capabilities remain explicit and never trigger a
+frontend fallback.
+
+The public API implementation version is `0.29`; the wire protocol remains
+`1.0`.
 
 The API package is GTK-free. Compatibility shims over existing managers are
 documented in [core-compatibility-shims.md](../architecture/core-compatibility-shims.md).
 
 See [the daemon transport architecture](../architecture/daemon-transport.md)
-for concurrency, socket security, lifecycle, and deferred platform work.
+for concurrency, socket security, and lifecycle details.

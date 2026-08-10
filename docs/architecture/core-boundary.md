@@ -37,16 +37,18 @@ src/sshpilot/core/
 | `sshpilot.ssh_connection_builder` | Runtime askpass/env adapter over `core.ssh` |
 | `sshpilot.askpass_utils` | Process askpass helper; classifies via `core.interaction` |
 
-See also: `core-ownership-matrix.md`, `core-ownership-migration.md`,
-`phase13-completion-matrix.md`, `docs/testing/phase13-production-smoke.md`,
-`docs/testing/temporary-openssh-fixture.md`.
+See the [frontend closure audit](frontend-closure-audit.md) for the final
+ownership evidence. For headless development, see
+[`docs/development/headless-core.md`](../development/headless-core.md), and for
+the current API contract see [`docs/api/`](../api/).
 
 ## Rules
 
 1. Core never displays dialogs or loads GI directly. It is the bottom layer: it
    must not import `sshpilot.daemon` or `sshpilot.gtk`. Core's own coupling to
-   frontend helpers (`config`, `ssh_connection_builder`, `plugins`) is
-   registered debt (`CORE_DEBT`) and must be removed.
+   compatibility helpers (`config`, `ssh_connection_builder`, `plugins`) is
+   registered debt (`CORE_DEBT`) and is bounded by the dependency ratchet; it
+   must not grow or become a frontend ownership path.
 2. GTK collects input, calls core/API, renders state, maps `CoreError` to Adw UI.
 3. **GTK must not instantiate stateful core services or use core modules to
    perform authoritative I/O.** A module being GTK-free does not mean GTK
@@ -58,9 +60,9 @@ See also: `core-ownership-matrix.md`, `core-ownership-migration.md`,
    daemon-owned.
 4. Frontend reaches into `sshpilot.core` only through the explicit allowlist
    in `tests/architecture/test_core_boundary.py` (pure validation /
-   classification / naming / formatting) or through registered pending
-   migrations; it never imports `sshpilot.daemon` except the enumerated
-   bootstrap/diagnostic utilities.
+   classification / naming / formatting) or through reviewed architecture
+   exception registries; it never imports `sshpilot.daemon` except the
+   enumerated bootstrap/diagnostic utilities.
 5. Frontend must not perform backend *operations* (SSH/SCP/SFTP subprocesses,
    secret/key/config mutation, stateful service instantiation) outside the
    per-module `BACKEND_OPS` registry. Launching browsers or external GUI
@@ -91,12 +93,9 @@ Two AST test modules enforce rules 1, 3, 4, 5 and the package direction:
     rejecting **GObject adapters** such as `Config`, `ConnectionManager`,
     `GroupManager` and `platform_utils`.
 
-The registries are the migration backlog for `core-ownership-migration.md`;
-each migration M1–M8 removes its rows as it lands, and registering a new
-backend call, operation or dependency edge in frontend/daemon code fails the
-suite. M1, M2, and M3 connection-store ownership are
-**complete**; M4–M8 remain deferred. The daemon *runtime* is **not yet
-GI-free** where explicitly registered compatibility debt remains (see
-`core-ownership-migration.md`).
-
-Phase 13.2 runtime ownership (sessions/SFTP/transfers/forwards/interactions) remains in `sshpilot.daemon` consuming core models; see `docs/api/` topic guides.
+The registries are exact, reviewed architecture exceptions: a new backend
+call, operation, or dependency edge in frontend/daemon code fails the suite.
+Approved compatibility/dependency debt may remain registered when it does not
+represent frontend ownership. The [frontend closure audit](frontend-closure-audit.md)
+records the final classification; it establishes zero frontend migration
+blockers without requiring approved debt registries to be numerically zero.
