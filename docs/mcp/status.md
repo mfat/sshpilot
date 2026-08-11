@@ -79,8 +79,15 @@ entries are rewritten, not accumulated.
     stdio path. MCP observes (``list_interactions``/``get_interaction``),
     claims, and releases the interaction (claim nonce stays ``<redacted>``);
     the trusted frontend attaches to the session and accepts, so the session
-    reaches RUNNING and MCP closes it. Proves the interaction is attributable
-    to the session and decided outside the model (D003).
+     reaches RUNNING and MCP closes it. Proves the interaction is attributable
+     to the session and decided outside the model (D003).
+   - `tests/mcp/test_runtime_fido_stdio.py`: FIDO/sk-dummy dogfood — generates
+     a real `ed25519-sk` key with OpenSSH's installed `sk-dummy.so`, installs its
+     public key in the Alpine sshd fixture, configures `SecurityKeyProvider`,
+     and opens/closes a session through runtime MCP stdio. Proves the daemon
+     reaches RUNNING through real security-key authentication without hardware;
+     the dummy provider completes presence internally, so no
+     `security_key_presence` askpass interaction is emitted.
   - Capability-driven tool visibility: `create_server` queries the daemon
     capabilities up front and removes tools whose required daemon capability
     is missing (`TOOL_CLIENT_METHOD` maps tools to client methods;
@@ -118,12 +125,11 @@ entries are rewritten, not accumulated.
    `repr=False` markers; it is now daemon-declared `repr=False`, documented as
    sensitive, and redacted wholesale unless content opt-in is enabled. Typed
    DTO fields remain covered by the same marker.
-2. Integration/dogfooding, next slice: FIDO/sk-dummy scenarios. The host-key
-   TOFU dogfood is done (`test_runtime_hostkey_stdio.py`); a real FIDO/sk-dummy
-   round-trip needs the `libsk-libfido2` security-key provider installed (only
-   the `libfido2` runtime is present on this host), and the daemon's own tests
-   deliberately avoid requiring physical FIDO hardware — coordinate system
-   changes with the operator first.
+2. Integration/dogfooding follow-up: real-provider FIDO presence scenarios.
+   The sk-dummy authentication dogfood is complete
+   (`test_runtime_fido_stdio.py`); a physical-key/provider round-trip is still
+   needed to exercise the interactive `security_key_presence` notification.
+   The daemon's own tests deliberately avoid requiring physical FIDO hardware.
 
 ## Important issues for the next agent
 
