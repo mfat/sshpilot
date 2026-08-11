@@ -79,6 +79,12 @@ entries are rewritten, not accumulated.
     surface reflects what the connected daemon can actually do. Capability is
     still rechecked at call time by `DaemonClient`, and drift between the
     tool map and the real client surface is caught by headless tests.
+  - Secret handling: `sshpilot.mcp.runtime.jsonable` honors the daemon's
+    `field(repr=False)` marker, so DTO content (remote file reads, SSH config
+    text, interaction claim nonces, plugin result values) is emitted as
+    `<redacted>` by default and only restored with the explicit
+    `SSHPILOT_MCP_CONTENT=1` opt-in. This is the runtime security review's
+    headline item (D010).
 - **Architecture classification**: `src/sshpilot/mcp/**` is an internal
   (non-GTK, non-service) layer; the MCP boundary is guarded by
   `tests/architecture/test_mcp_boundary.py` (GTK/service-free imports, only
@@ -97,8 +103,10 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-1. Runtime security review — secret handling on the path from daemon result
-   to model context (base64 file reads, SSH config text).
+1. Runtime security review follow-ups — confirm the full list of DTO fields the
+   runtime can surface is secret-free (the redaction layer now covers the
+   daemon-declared ones; audit any result that could smuggle a secret through
+   a non-`repr=False` path, e.g. free-form operation result dicts).
 2. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
    FIDO/sk-dummy scenarios.
 
@@ -108,6 +116,9 @@ entries are rewritten, not accumulated.
   generated artifacts were modified.
 - Confirmation UX decision (D009): MUTATE uses a per-tool ``confirm=True``
   argument — settled, do not reopen without updating `docs/mcp/decisions.md`.
+- Secret handling (D010): DTO fields marked ``field(repr=False)`` are redacted
+  to ``<redacted>`` in MCP results unless ``SSHPILOT_MCP_CONTENT=1`` is set —
+  settled, do not reopen without updating `docs/mcp/decisions.md`.
 - The MCP boundary test allows `mcp` modules to import only stdlib, `mcp`,
   `sshpilot.mcp`, and `sshpilot.api`. The runtime server consumes
   `DaemonClient` via `sshpilot.api` — do not widen the allowlist for `core`/

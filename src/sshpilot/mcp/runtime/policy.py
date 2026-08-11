@@ -12,7 +12,9 @@ previous:
   keys. Disabled by default; requires explicit opt-in. MUTATE tools also
   require human confirmation at the tool layer.
 
-No level ever exposes raw secrets.
+No level ever exposes raw secrets. DTO fields the daemon declares with
+``field(repr=False)`` (remote file content, SSH config text, claim nonces) are
+redacted from MCP results unless ``SSHPILOT_MCP_CONTENT`` explicitly opts in.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ class RuntimePolicy:
         allow_operate: bool = False,
         allow_mutate: bool = False,
         *,
+        allow_content: bool = False,
         name: str = "runtime-mcp",
     ) -> None:
         self._name = name
@@ -50,10 +53,16 @@ class RuntimePolicy:
             PermissionLevel.OPERATE: bool(allow_operate),
             PermissionLevel.MUTATE: bool(allow_mutate),
         }
+        self._allow_content = bool(allow_content)
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def allows_content(self) -> bool:
+        """Whether daemon-declared content fields reach model context."""
+        return self._allow_content
 
     def allows(self, level: PermissionLevel) -> bool:
         """Whether *level* (and every level below it) is enabled."""
@@ -69,7 +78,7 @@ class RuntimePolicy:
 
     def summary(self) -> dict:
         """Return a configuration snapshot for capability/tool discovery."""
-        return {
+        result = {
             name: self.allows(level)
             for level, name in (
                 (PermissionLevel.READ, "read"),
@@ -77,6 +86,8 @@ class RuntimePolicy:
                 (PermissionLevel.MUTATE, "mutate"),
             )
         }
+        result["content"] = self._allow_content
+        return result
 
     @classmethod
     def from_environment(
@@ -90,12 +101,15 @@ class RuntimePolicy:
 
         ``SSHPILOT_MCP_READ``/``SSHPILOT_MCP_OPERATE``/``SSHPILOT_MCP_MUTATE``
         each accept ``1``/``0`` or ``true``/``false``; anything else means the
-        feature stays disabled.
+        feature stays disabled. ``SSHPILOT_MCP_CONTENT`` additionally opts into
+        daemon-declared content fields (remote file content, SSH config text,
+        claim nonces); without it those values are redacted.
         """
         read = _env_bool(dct.get("SSHPILOT_MCP_READ"), allow_read)
         operate = _env_bool(dct.get("SSHPILOT_MCP_OPERATE"), False)
         mutate = _env_bool(dct.get("SSHPILOT_MCP_MUTATE"), False)
-        return cls(read, operate, mutate, name=name)
+        content = _env_bool(dct.get("SSHPILOT_MCP_CONTENT"), False)
+        return cls(read, operate, mutate, allow_content=content, name=name)
 
 
 def _env_bool(value: object, default: bool) -> bool:

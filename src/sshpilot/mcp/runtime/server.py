@@ -49,7 +49,10 @@ class RuntimeHandle:
         handler = getattr(self.client, method, None)
         if not callable(handler):
             raise RuntimeToolError(f"daemon client has no method: {method}")
-        return to_jsonable(handler(*args, **kwargs))
+        return to_jsonable(
+            handler(*args, **kwargs),
+            redact_sensitive=not self.policy.allows_content,
+        )
 
     def _mutate(self, method: str, confirm: bool, *args, **kwargs) -> dict:
         self._require(PermissionLevel.MUTATE)

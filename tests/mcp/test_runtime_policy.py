@@ -69,6 +69,57 @@ def test_policy_from_environment():
     assert not disabled.allows(PermissionLevel.OPERATE)
 
 
+def test_policy_content_opt_in_off_by_default_and_from_env():
+    assert not RuntimePolicy().allows_content
+    policy = RuntimePolicy.from_environment({"SSHPILOT_MCP_CONTENT": "1"})
+    assert policy.allows_content
+    disabled = RuntimePolicy.from_environment({})
+    assert not disabled.allows_content
+
+
+def test_policy_summary_reports_content():
+    snapshot = RuntimePolicy().summary()
+    assert snapshot["content"] is False
+    snapshot = RuntimePolicy(allow_content=True).summary()
+    assert snapshot["content"] is True
+
+
+def test_handle_redacts_sensitive_dto_fields_by_default():
+    from dataclasses import dataclass, field
+
+    client = FakeClient()
+
+    @dataclass(frozen=True)
+    class _Sensitive:
+        name: str
+        content: str = field(repr=False)
+
+    client.get_capabilities = (
+        lambda: _Sensitive(name="file.txt", content="PRIVATE-KEY-MATERIAL")
+    )
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
+    result = handle._run("get_capabilities")
+    assert result == {"name": "file.txt", "content": "<redacted>"}
+
+
+def test_handle_content_opt_in_restores_dto_fields():
+    from dataclasses import dataclass, field
+
+    client = FakeClient()
+
+    @dataclass(frozen=True)
+    class _Sensitive:
+        name: str
+        content: str = field(repr=False)
+
+    client.get_capabilities = (
+        lambda: _Sensitive(name="file.txt", content="PRIVATE-KEY-MATERIAL")
+    )
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True, allow_content=True))
+    result = handle._run("get_capabilities")
+    assert result == {"name": "file.txt", "content": "PRIVATE-KEY-MATERIAL"}
+
+
 def test_handle_read_runs_through_client():
     client = FakeClient()
     handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
