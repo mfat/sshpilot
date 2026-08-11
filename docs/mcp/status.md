@@ -70,6 +70,13 @@ entries are rewritten, not accumulated.
     ``confirm=True``) through the MCP stdio path using password
     authentication with an auto-answering helper (no secret crosses the MCP
     conversation).
+  - Capability-driven tool visibility: `create_server` queries the daemon
+    capabilities up front and removes tools whose required daemon capability
+    is missing (`TOOL_CLIENT_METHOD` maps tools to client methods;
+    `UNSUPPORTED_CLIENT_METHOD_CAPABILITIES` is authoritative), so the MCP
+    surface reflects what the connected daemon can actually do. Capability is
+    still rechecked at call time by `DaemonClient`, and drift between the
+    tool map and the real client surface is caught by headless tests.
 - **Architecture classification**: `src/sshpilot/mcp/**` is an internal
   (non-GTK, non-service) layer; the MCP boundary is guarded by
   `tests/architecture/test_mcp_boundary.py` (GTK/service-free imports, only
@@ -77,16 +84,14 @@ entries are rewritten, not accumulated.
   whitelist is authoritative, controlled-execution allowlists authoritative,
   typed tools only).
 - **Tests**: `tests/mcp/` and `tests/architecture/test_mcp_boundary.py` pass
-  (the stdio smoke test needs the optional `mcp` SDK); `tests/api`,
+  (the stdio/integration smoke tests need the optional `mcp` SDK installed in
+  the venv and integration tests are deselected by default); `tests/api`,
   `tests/core`, ruff, and `generate_api_artifacts --check` are green.
 
 ## What is being worked on
 
-- Nothing in progress; steps 1-5 are complete.
-
-## What is being worked on
-
-- Nothing in progress; steps 1-5 and the stdio round-trip are complete.
+- Nothing in progress; steps 1-5, the stdio round-trip, and capability-driven
+  tool visibility are complete.
 
 ## What is next
 
@@ -95,8 +100,7 @@ entries are rewritten, not accumulated.
    decide the confirmation UX (per-tool ``confirm`` argument vs separate
    authorization step).
 2. Runtime security review — secret handling on the path from daemon result
-   to model context (base64 file reads, SSH config text), and capability-driven
-   tool visibility.
+   to model context (base64 file reads, SSH config text).
 3. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
    FIDO/sk-dummy scenarios.
 
@@ -108,6 +112,8 @@ entries are rewritten, not accumulated.
   `sshpilot.mcp`, and `sshpilot.api`. The runtime server consumes
   `DaemonClient` via `sshpilot.api` — do not widen the allowlist for `core`/
   `daemon` imports.
-- The optional `mcp` SDK is not installed in the current environment, so
-  `tests/mcp/test_dev_server_smoke.py` cannot be collected here. Install
-  `pip install 'sshpilot[mcp]'` before running the stdio smoke tests.
+- The optional `mcp` SDK (`pip install 'sshpilot[mcp]'` / `mcp>=2.0.0`) is
+  installed in the local `.venv`; `tests/mcp/test_dev_server_smoke.py` and the
+  runtime smoke tests run here with it. The integration-marked tests
+  (`test_runtime_stdio_roundtrip.py`, `test_runtime_operate_stdio.py`) need
+  `-m integration` explicitly.

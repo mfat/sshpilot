@@ -99,3 +99,18 @@ only `dev/_git.py` may use `subprocess`; the Git whitelist is exactly
 Reason: keeping the MCP servers out of the GTK-frontend scans would be a hole
 unless the specific MCP rules are guarded elsewhere. This classifies the new
 layer and preserves least-privilege enforcement with a stricter, narrower test.
+
+## D008 — Tool visibility derived from daemon capabilities
+
+Status: Accepted
+
+Decision: `create_server` queries the daemon's supported capabilities up front
+and removes tools whose required capability the daemon lacks. Tool-to-method
+mapping (`TOOL_CLIENT_METHOD`) and the authoritative method-capability map
+(`UNSUPPORTED_CLIENT_METHOD_CAPABILITIES`) drive the filter; capability is
+still rechecked at call time by `DaemonClient`. If capabilities cannot be
+queried, every tool stays visible and the call-time gate remains the guard.
+
+Reason: the MCP surface should advertise only what the connected daemon can do.
+Capability filtering complements (does not replace) the policy/`confirm` MUTATE
+gate, since daemon capability is not authorization.
