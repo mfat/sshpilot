@@ -301,8 +301,87 @@ class RuntimeHandle:
         return {"cancelled_transfer": transfer_id}
 
 
+#: MCP tool name -> daemon-client method it dispatches to. Used to derive the
+#: daemon capability each tool needs (via the authoritative method-capability
+#: map), so the server only advertises tools the connected daemon supports.
+TOOL_CLIENT_METHOD = {
+    "daemon_status": "get_daemon_status",
+    "list_connections": "list_connections",
+    "get_connection": "get_connection",
+    "get_ssh_config_text": "get_ssh_config_text",
+    "list_sessions": "list_sessions",
+    "get_session": "get_session",
+    "list_sftp_services": "list_sftp_services",
+    "get_sftp_service": "get_sftp_service",
+    "list_interactions": "list_interactions",
+    "get_interaction": "get_interaction",
+    "get_operation": "get_operation",
+    "list_transfers": "list_transfers",
+    "get_transfer": "get_transfer",
+    "list_forwards": "list_forwards",
+    "get_forward": "get_forward",
+    "sftp_list_directory": "sftp_list_directory",
+    "sftp_stat": "sftp_stat",
+    "sftp_read_file": "sftp_read_file",
+    "open_session": "open_session",
+    "close_session": "close_session",
+    "open_sftp": "open_sftp",
+    "attach_sftp": "attach_sftp",
+    "detach_sftp": "detach_sftp",
+    "close_sftp": "close_sftp",
+    "cancel_operation": "cancel_operation",
+    "claim_interaction": "claim_interaction",
+    "release_interaction": "release_interaction",
+    "cancel_interaction": "cancel_interaction",
+    "sftp_create_file": "sftp_create_file",
+    "sftp_mkdir": "sftp_mkdir",
+    "sftp_rmdir": "sftp_rmdir",
+    "sftp_remove": "sftp_remove",
+    "sftp_rename": "sftp_rename",
+    "sftp_chmod": "sftp_chmod",
+    "sftp_symlink": "sftp_symlink",
+    "cancel_transfer": "cancel_transfer",
+}
+
+
+def _queried_capabilities(handle: RuntimeHandle) -> object:
+    """Best-effort snapshot of the daemon's supported capabilities.
+
+    Returns ``None`` when they cannot be queried (in which case every tool
+    stays visible; capability is still enforced at call time by the client).
+    """
+    try:
+        capabilities = handle.client.get_capabilities()
+    except Exception:  # noqa: BLE001 - unknown daemon state is not fatal here
+        return None
+    return getattr(capabilities, "supported", None)
+
+
+def _remove_unsupported_tools(server: Any, handle: RuntimeHandle, supported: object) -> None:
+    """Hide tools whose daemon capability the connected daemon lacks."""
+    if supported is None:
+        return
+    from sshpilot.api.method_capabilities import UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
+
+    supported_names = {
+        getattr(item, "value", str(item))
+        for item in supported
+    }
+    for tool_name, method_name in TOOL_CLIENT_METHOD.items():
+        capability = UNSUPPORTED_CLIENT_METHOD_CAPABILITIES.get(method_name)
+        if capability is None:
+            continue
+        if getattr(capability, "value", str(capability)) not in supported_names:
+            server.remove_tool(tool_name)
+
+
 def create_server(handle: RuntimeHandle) -> Any:
-    """Build the runtime MCP server around a :class:`RuntimeHandle`."""
+    """Build the runtime MCP server around a :class:`RuntimeHandle`.
+
+    Tools whose required daemon capability is missing are removed, so the MCP
+    surface reflects what the connected daemon can actually do (capability is
+    still rechecked at call time by ``DaemonClient``).
+    """
     from mcp.server.mcpserver import MCPServer
 
     server = MCPServer(
@@ -315,6 +394,8 @@ def create_server(handle: RuntimeHandle) -> Any:
             "MUTATE tools require confirm=True."
         ),
     )
+
+    supported = _queried_capabilities(handle)
 
     @server.tool()
     def capabilities() -> dict:
@@ -524,6 +605,7 @@ def create_server(handle: RuntimeHandle) -> Any:
         """Cancel an in-flight data transfer (MUTATE; requires confirm=True)."""
         return handle.cancel_transfer(transfer_id, confirm=confirm)
 
+    _remove_unsupported_tools(server, handle, supported)
     return server
 
 
