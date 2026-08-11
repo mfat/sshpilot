@@ -62,6 +62,12 @@ entries are rewritten, not accumulated.
     ``SSHPILOT_MCP_SOCKET``/policy opt-ins against an ephemeral daemon, and
     drives ``ClientSession`` over stdio the way a real MCP client would
     (integration-marked; deselected by the default ``pytest`` filter).
+  - `tests/mcp/test_runtime_operate_stdio.py`: OPERATE round-trips over real
+    OpenSSH — Phase 13 stack (ephemeral daemon + Alpine sshd) with
+    ``python -m sshpilot.mcp.runtime`` as a subprocess; opens and closes a
+    session and an SFTP service through the MCP stdio path using password
+    authentication with an auto-answering helper (no secret crosses the MCP
+    conversation).
 - **Architecture classification**: `src/sshpilot/mcp/**` is an internal
   (non-GTK, non-service) layer; the MCP boundary is guarded by
   `tests/architecture/test_mcp_boundary.py` (GTK/service-free imports, only
@@ -82,10 +88,9 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-1. OPERATE round-trips against a live daemon/OpenSSH — open/close session,
-   SFTP service lifecycle, operation observation over the stdio path (the
-   headless daemon cannot complete SSH handshakes without real OpenSSH
-   fixtures).
+1. SFTP READ/MUTATE round-trips over the stdio path against real OpenSSH
+   (directory listing, stat, file read, mkdir/remove/rename with
+   ``confirm=True``) to prove the MUTATE confirmation flow end-to-end.
 2. Runtime MCP review — decide the exact MUTATE tool set and confirmation UX,
    and whether `confirm` should stay a tool argument or move to a separate
    authorization step.
