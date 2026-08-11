@@ -109,6 +109,7 @@ Issues = "https://github.com/mfat/sshpilot/issues"
 sshpilot-core = "sshpilot.core.cli:main"
 sshpilot-cli = "sshpilot.cli.main:main"
 sshpilot-mcp-dev = "sshpilot.mcp.dev.server:main"
+sshpilot-mcp-runtime = "sshpilot.mcp.runtime.server:main"
 
 [tool.ruff]
 target-version = "py39"
