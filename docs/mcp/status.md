@@ -23,45 +23,71 @@ entries are rewritten, not accumulated.
     `check_api_drift` (API intelligence from
     `docs/api/generated/schema.json` plus AST-scanned client signatures,
     wire-method mapping, daemon dispatch handlers, and drift detection)
+  - `check_frontend_neutrality`, `review_public_api`,
+    `trace_interaction_scope`, `review_commit` (architecture/regression
+    intelligence)
+  - `run_pytest`, `run_lint`, `validate_api_artifacts` (controlled local
+    execution; argv-only allowlists, never arbitrary shell)
   - Implementation: `src/sshpilot/mcp/_scope.py`,
-    `dev/{search,symbols,test_discovery,_git,api_surface,server}.py`.
+    `dev/{search,symbols,test_discovery,_git,api_surface,architecture,execution,server}.py`.
+- **Runtime MCP prototype (step 3-5) complete** —
+  `src/sshpilot/mcp/runtime/` (`policy.py`, `jsonable.py`, `server.py`,
+  `__init__.py`, `__main__.py`):
+  - Consumes `DaemonClient` via `sshpilot.api` only; never calls daemon
+    internals, never spawns SSH binaries, never reads secrets into the model's
+    context.
+  - READ / OPERATE / MUTATE authorization model from environment opt-ins
+    (`SSHPILOT_MCP_READ`/`_OPERATE`/`_MUTATE`); MUTATE disabled by default
+    and every MUTATE tool additionally requires `confirm=True`.
+  - Typed tools only: 19 READ (capabilities, status, connections, sessions,
+    SFTP metadata, transfers, forwards, operations, interactions), OPERATE
+    (open/close session, open/attach/detach/close SFTP, cancel operation,
+    claim/release/cancel interaction), MUTATE (SFTP create/mkdir/rmdir/remove/
+    rename/chmod/symlink, cancel transfer) — all routed through
+    `RuntimeHandle` → `DaemonClient`.
+  - `tests/mcp/test_runtime_policy.py`: headless policy/handle tests that
+    run in the minimal environment (no ``mcp`` SDK).
+  - `tests/mcp/test_runtime_server_smoke.py`: in-process protocol smoke test
+    (handshake, typed-tool enumeration, READ round-trip, MUTATE
+    confirmation/policy refusals) driven over the official SDK's memory
+    streams.
 - **Architecture classification**: `src/sshpilot/mcp/**` is an internal
   (non-GTK, non-service) layer; the MCP boundary is guarded by
   `tests/architecture/test_mcp_boundary.py` (GTK/service-free imports, only
-  `dev/_git.py` may use subprocess, read-only git whitelist is authoritative,
+  `dev/_git.py` and `dev/execution.py` may use subprocess, read-only git
+  whitelist is authoritative, controlled-execution allowlists authoritative,
   typed tools only).
-- **Tests**: `tests/mcp/` (42 files-level + real stdio smoke) and
-  `tests/architecture/test_mcp_boundary.py` all pass; `tests/architecture`,
-  `tests/api`, `tests/core`, ruff, and `generate_api_artifacts --check` are
-  green.
+- **Tests**: `tests/mcp/` and `tests/architecture/test_mcp_boundary.py` pass
+  (the stdio smoke test needs the optional `mcp` SDK); `tests/api`,
+  `tests/core`, ruff, and `generate_api_artifacts --check` are green.
 
 ## What is being worked on
 
-- Step 3 (API intelligence) is complete; architecture intelligence is the
-  next slice and nothing is in progress yet.
+- Nothing in progress; steps 1-5 are complete.
 
 ## What is next
 
-1. Architecture intelligence — frontend-neutrality checks, public API review,
-   interaction-scope tracing, commit/regression review helpers.
-2. Controlled local execution — selected pytest, API artifact validation,
-   lint; never arbitrary shell.
-3. Runtime MCP prototype — `DaemonClient` only, capability discovery, READ
-   tools first.
-4. Runtime OPERATE support — explicit opt-in, sessions, SFTP, operation and
-   interaction observation.
-5. Runtime MUTATE support — explicit opt-in, strong policy boundary, human
-   confirmation where appropriate.
-6. Integration/dogfooding — real bug reproduction, OpenSSH fixtures,
+1. Runtime integration/dogfooding — run `sshpilot-runtime-mcp` against the
+   real `mcp` SDK and daemon, add an stdio smoke test (needs the optional
+   `mcp` dependency), verify SFTP/session/operation round-trips against the
+   openSSH-capable backend or fixtures.
+2. Runtime MCP review — decide the exact MUTATE tool set and confirmation UX,
+   and whether `confirm` should stay a tool argument or move to a separate
+   authorization step.
+3. Runtime security review — secret handling on the path from daemon result
+   to model context (base64 file reads, SSH config text), and capability-driven
+   tool visibility.
+4. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
    FIDO/sk-dummy scenarios.
 
 ## Important issues for the next agent
 
 - No changes were made to the wire protocol, capabilities, or API; no
   generated artifacts were modified.
-- The `runtime` subpackage (`src/sshpilot/mcp/runtime/`) does not exist yet;
-  create it at step 4 above.
 - The MCP boundary test allows `mcp` modules to import only stdlib, `mcp`,
-  `sshpilot.mcp`, and `sshpilot.api`. The runtime server must consume
+  `sshpilot.mcp`, and `sshpilot.api`. The runtime server consumes
   `DaemonClient` via `sshpilot.api` — do not widen the allowlist for `core`/
   `daemon` imports.
+- The optional `mcp` SDK is not installed in the current environment, so
+  `tests/mcp/test_dev_server_smoke.py` cannot be collected here. Install
+  `pip install 'sshpilot[mcp]'` before running the stdio smoke tests.
