@@ -12,7 +12,8 @@ Invariants:
 * ruff runs only over repository paths under ``src/``, ``tests/``, or
   ``scripts/``,
 * the API-artifact check is exactly ``generate_api_artifacts.py --check``,
-* output is captured and capped.
+* output is captured and capped;
+* every subprocess result includes an explicit ``success`` boolean.
 """
 
 from __future__ import annotations
@@ -77,18 +78,38 @@ def _cap(text: str, max_bytes: int = MAX_OUTPUT_BYTES) -> str:
     )
 
 
+def _output_text(value) -> str:
+    """Normalize subprocess output, including timeout exception payloads."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
-    proc = subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
-    )
+    try:
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+    except subprocess.TimeoutExpired as error:
+        return {
+            "success": False,
+            "returncode": None,
+            "stdout": _cap(_output_text(error.stdout)),
+            "stderr": _cap(_output_text(error.stderr)),
+            "timed_out": True,
+        }
+
     return {
+        "success": proc.returncode == 0,
         "returncode": proc.returncode,
-        "stdout": _cap(proc.stdout or ""),
-        "stderr": _cap(proc.stderr or ""),
+        "stdout": _cap(_output_text(proc.stdout)),
+        "stderr": _cap(_output_text(proc.stderr)),
         "timed_out": False,
     }
 
@@ -97,7 +118,8 @@ def run_tests(scope: RepoScope, suite: str, path: Optional[str] = None) -> dict:
     """Run a selected pytest suite (architecture/api/core/daemon/mcp/cli).
 
     ``path`` optionally targets a single repository-relative test file below
-    ``tests/`` so a focused run can stay fast.
+    ``tests/`` so a focused run can stay fast. The result includes ``success``
+    and ``timed_out`` status fields.
     """
     target = _resolve_suite(scope, suite)
     if path is not None:
@@ -121,7 +143,7 @@ def run_tests(scope: RepoScope, suite: str, path: Optional[str] = None) -> dict:
 
 
 def check_api_artifacts(scope: RepoScope) -> dict:
-    """Validate the generated API artifacts are current (read-only check)."""
+    """Validate generated API artifacts; result includes ``success``."""
     script = scope.resolve("scripts/generate_api_artifacts.py")
     if not script.is_file():
         raise ExecutionError("scripts/generate_api_artifacts.py not found")
@@ -131,7 +153,7 @@ def check_api_artifacts(scope: RepoScope) -> dict:
 
 
 def run_lint(scope: RepoScope, path: Optional[str] = None) -> dict:
-    """Run ruff over ``src/`` (default) or an allowed repository path."""
+    """Run ruff over ``src/`` or an allowed path; result includes ``success``."""
     if path is None:
         targets = [str(scope.root / "src")]
     else:

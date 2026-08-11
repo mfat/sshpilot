@@ -5,6 +5,7 @@ would take) and exercises the protocol handshake, tool enumeration, and tool
 invocation.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -55,6 +56,9 @@ async def test_stdio_handshake_and_tools():
                 "trace_api_method",
                 "check_api_drift",
             } <= names
+            run_tests = next(tool for tool in tools.tools if tool.name == "run_tests")
+            assert "path" in run_tests.input_schema["properties"]
+            assert "suite" in run_tests.input_schema["required"]
 
 
 async def test_repo_info_reports_confined_root():
@@ -207,3 +211,22 @@ async def test_check_api_drift_over_stdio():
             text = result.content[0].text
             assert '"clean": true' in text
             assert "0" in text
+
+
+async def test_run_tests_accepts_focused_path_over_stdio():
+    async with stdio_client(_server_parameters(REPO_ROOT)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(
+                "run_tests",
+                {
+                    "suite": "mcp",
+                    "path": "tests/mcp/test_architecture.py",
+                },
+            )
+            assert not result.is_error
+            payload = json.loads(result.content[0].text)
+            assert payload["success"] is True
+            assert payload["returncode"] == 0
+            assert payload["suite"] == "mcp"
+            assert payload["command"].endswith("tests/mcp/test_architecture.py")

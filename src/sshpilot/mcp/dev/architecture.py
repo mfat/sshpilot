@@ -100,8 +100,9 @@ def review_public_api(scope: RepoScope) -> dict:
     """Review the public API surface from the generated schema and exports.
 
     Reports versions, client/daemon method counts by status/capability, and
-    which models are exported by ``sshpilot.api`` but never reached by a client
-    or daemon contract (candidates for dead public surface).
+    which public model classes are exported by ``sshpilot.api.models`` but
+    never reached by a client or daemon contract (candidates for dead public
+    surface).
     """
     try:
         from . import api_surface
@@ -119,7 +120,12 @@ def review_public_api(scope: RepoScope) -> dict:
             if isinstance(capability, str):
                 used_models.add(capability)
 
-    exported: List[str] = []
+    # ``api.models`` re-exports its public surface through ``__all__``.  Scan
+    # the model modules for class definitions, then intersect with that
+    # export list.  Scanning every top-level AST definition here also picks up
+    # validators and conversion helpers, which are not models.
+    exported_names: Set[str] = set()
+    model_classes: Set[str] = set()
     for relative in scope.iter_files(include_suffixes={".py"}):
         text = str(relative)
         if not text.startswith("src/sshpilot/api/models/"):
@@ -130,9 +136,26 @@ def review_public_api(scope: RepoScope) -> dict:
             continue
         tree = ast.parse(source, filename=text)
         for node in tree.body:
-            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-                exported.append(node.name)
-    exported = sorted(exported)
+            if isinstance(node, ast.ClassDef):
+                model_classes.add(node.name)
+            if text.endswith("/__init__.py"):
+                for statement in tree.body:
+                    if not isinstance(statement, ast.Assign):
+                        continue
+                    if not any(
+                        isinstance(target, ast.Name) and target.id == "__all__"
+                        for target in statement.targets
+                    ):
+                        continue
+                    if isinstance(statement.value, (ast.List, ast.Tuple)):
+                        exported_names.update(
+                            element.value
+                            for element in statement.value.elts
+                            if isinstance(element, ast.Constant)
+                            and isinstance(element.value, str)
+                        )
+
+    exported = sorted(exported_names & model_classes)
 
     status_counts: Dict[str, int] = {}
     for entry in client_contract.values():

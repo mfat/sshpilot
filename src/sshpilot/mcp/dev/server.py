@@ -224,7 +224,7 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
         """Review the public API surface from the generated schema.
 
         Reports versions, client/daemon method counts, client method status,
-        and the models exported by ``sshpilot.api.models``.
+        and the public model classes exported by ``sshpilot.api.models``.
         """
         return architecture.review_public_api(scope)
 
@@ -254,15 +254,16 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
             raise ValueError(str(error)) from error
 
     @server.tool()
-    def run_tests(suite: str) -> dict:
+    def run_tests(suite: str, path: Optional[str] = None) -> dict:
         """Run one selected pytest suite (architecture/api/core/daemon/mcp).
 
         The suite must be on the allowlist; it runs against the Python that is
-        executing this server. Output is capped; timing out is reported, not
-        fatal.
+        executing this server. ``path`` optionally selects one test file under
+        ``tests/`` for a focused run. Output is capped; timing out is reported,
+        not fatal.
         """
         try:
-            return execution.run_tests(scope, suite)
+            return execution.run_tests(scope, suite, path=path)
         except execution.ExecutionError as error:
             raise ValueError(str(error)) from error
 

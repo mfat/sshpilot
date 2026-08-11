@@ -48,6 +48,10 @@ def test_review_public_api_reports_surface(repo):
     }
     assert result["models_defined"] >= 100
     assert "OpenSessionRequest" in result["models"]
+    assert result["models_defined"] == len(result["models"])
+    assert all(not name.startswith("_") for name in result["models"])
+    assert "_validate_integer" not in result["models"]
+    assert "validate_config_patch" not in result["models"]
 
 
 def test_trace_interaction_scope_single(repo):
