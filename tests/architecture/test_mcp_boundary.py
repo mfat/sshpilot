@@ -149,20 +149,51 @@ def test_mcp_modules_are_gtk_and_frontend_free():
     )
 
 
-def test_only_dev_git_module_may_use_subprocess():
+def test_only_dev_execution_modules_may_use_subprocess():
+    """Only the git helper and the controlled-execution module may use
+    subprocess. Everything else in the dev MCP must stay headless; SSH/SCP/SFTP
+    work goes through DaemonClient in the runtime server."""
+    allowed = {"dev/_git.py", "dev/execution.py"}
     violations = []
     for path, rel in _modules():
-        if rel == "dev/_git.py":
+        if rel in allowed:
             continue
         text = path.read_text(encoding="utf-8")
         for marker in ("import subprocess", "from subprocess"):
             if marker in text:
                 violations.append(f"{rel}: {marker}")
     assert not violations, (
-        "only the read-only git helper (dev/_git.py) may use subprocess in the "
-        "dev MCP; SSH/SCP/SFTP work must go through DaemonClient in the runtime "
-        "server"
+        "only the read-only git helper (dev/_git.py) and the controlled "
+        "execution module (dev/execution.py) may use subprocess in the dev MCP"
     )
+
+
+def test_execution_allowlists_are_authoritative():
+    """Controlled execution stays argv-only, allowlisted, and non-arbitrary."""
+    from sshpilot.mcp.dev import execution
+
+    assert frozenset(execution.ALLOWED_TEST_SUITES) == frozenset(
+        {
+            "architecture",
+            "api",
+            "core",
+            "daemon",
+            "mcp",
+            "cli",
+            "integration",
+        }
+    ), "the pytest suite allowlist drifted; it must stay explicit."
+    assert frozenset(execution.ALLOWED_LINT_PREFIXES) == frozenset(
+        {"src/", "tests/", "scripts/"}
+    ), "the lint path allowlist drifted."
+
+    script = (SOURCE / "dev" / "execution.py").read_text(encoding="utf-8")
+    assert "shell=True" not in script, "controlled execution must never use a shell"
+    assert "os.exec" not in script and "exec(" not in script.replace("exec(", "exec (")
+    for banned in ("curl", "wget", "apt", "ssh", "scp", "sftp", "git"):
+        assert f'"{banned}"' not in script and f"'{banned}'" not in script, (
+            f"controlled execution must not invoke {banned}"
+        )
 
 
 def test_readonly_git_whitelist_is_authoritative():
