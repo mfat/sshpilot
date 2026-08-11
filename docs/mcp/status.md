@@ -51,6 +51,12 @@ entries are rewritten, not accumulated.
     (handshake, typed-tool enumeration, READ round-trip, MUTATE
     confirmation/policy refusals) driven over the official SDK's memory
     streams.
+  - `tests/mcp/test_runtime_daemon_integration.py`: real-daemon integration
+    — boots an ephemeral ``DaemonServer`` (headless core), connects a real
+    ``DaemonClient``, and drives the runtime MCP server over the SDK streams
+    through the full ``MCP -> DaemonClient -> daemon -> core`` path
+    (capabilities, daemon status, connection listing, and a direct-client
+    sanity check).
 - **Architecture classification**: `src/sshpilot/mcp/**` is an internal
   (non-GTK, non-service) layer; the MCP boundary is guarded by
   `tests/architecture/test_mcp_boundary.py` (GTK/service-free imports, only
@@ -67,10 +73,12 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-1. Runtime integration/dogfooding — run `sshpilot-runtime-mcp` against the
-   real `mcp` SDK and daemon, add an stdio smoke test (needs the optional
-   `mcp` dependency), verify SFTP/session/operation round-trips against the
-   openSSH-capable backend or fixtures.
+1. Runtime integration already exercised over the SDK memory streams; next
+   is a full stdio round-trip: boot ``sshpilot-runtime-mcp`` as a subprocess
+   (console script / ``python -m``) against a live daemon and invoke tools
+   through ``ClientSession`` the way a real MCP client would. Also verify
+   OPERATE round-trips (open/close session, SFTP service lifecycle) against
+   the headless daemon or real OpenSSH fixtures.
 2. Runtime MCP review — decide the exact MUTATE tool set and confirmation UX,
    and whether `confirm` should stay a tool argument or move to a separate
    authorization step.
