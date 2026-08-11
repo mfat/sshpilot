@@ -72,6 +72,15 @@ entries are rewritten, not accumulated.
     conversation); also drives the READ surface (stat, read_file, and
     list_directory) and the remaining MUTATE tools (create_file, rename,
     chmod, symlink, remove) — each refused without ``confirm=True``.
+  - `tests/mcp/test_runtime_hostkey_stdio.py`: host-key TOFU dogfood — mounts
+    a connection config with ``StrictHostKeyChecking ask`` and an empty
+    ``UserKnownHostsFile`` so the Alpine sshd key is genuinely unknown, then
+    drives the real ``HOST_KEY_CONFIRMATION`` interaction over the runtime MCP
+    stdio path. MCP observes (``list_interactions``/``get_interaction``),
+    claims, and releases the interaction (claim nonce stays ``<redacted>``);
+    the trusted frontend attaches to the session and accepts, so the session
+    reaches RUNNING and MCP closes it. Proves the interaction is attributable
+    to the session and decided outside the model (D003).
   - Capability-driven tool visibility: `create_server` queries the daemon
     capabilities up front and removes tools whose required daemon capability
     is missing (`TOOL_CLIENT_METHOD` maps tools to client methods;
@@ -98,8 +107,8 @@ entries are rewritten, not accumulated.
 
 ## What is being worked on
 
-- Nothing in progress; steps 1-5, the stdio round-trip, and capability-driven
-  tool visibility are complete.
+- Nothing in progress; steps 1-5, the stdio round-trip, capability-driven tool
+  visibility, and the interaction dogfood are complete.
 
 ## What is next
 
@@ -107,8 +116,12 @@ entries are rewritten, not accumulated.
    runtime can surface is secret-free (the redaction layer now covers the
    daemon-declared ones; audit any result that could smuggle a secret through
    a non-`repr=False` path, e.g. free-form operation result dicts).
-2. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
-   FIDO/sk-dummy scenarios.
+2. Integration/dogfooding, next slice: FIDO/sk-dummy scenarios. The host-key
+   TOFU dogfood is done (`test_runtime_hostkey_stdio.py`); a real FIDO/sk-dummy
+   round-trip needs the `libsk-libfido2` security-key provider installed (only
+   the `libfido2` runtime is present on this host), and the daemon's own tests
+   deliberately avoid requiring physical FIDO hardware — coordinate system
+   changes with the operator first.
 
 ## Important issues for the next agent
 
