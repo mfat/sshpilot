@@ -62,10 +62,12 @@ entries are rewritten, not accumulated.
     ``SSHPILOT_MCP_SOCKET``/policy opt-ins against an ephemeral daemon, and
     drives ``ClientSession`` over stdio the way a real MCP client would
     (integration-marked; deselected by the default ``pytest`` filter).
-  - `tests/mcp/test_runtime_operate_stdio.py`: OPERATE round-trips over real
-    OpenSSH — Phase 13 stack (ephemeral daemon + Alpine sshd) with
+  - `tests/mcp/test_runtime_operate_stdio.py`: OPERATE/MUTATE round-trips
+    over real OpenSSH — Phase 13 stack (ephemeral daemon + Alpine sshd) with
     ``python -m sshpilot.mcp.runtime`` as a subprocess; opens and closes a
-    session and an SFTP service through the MCP stdio path using password
+    session and an SFTP service, and exercises the MUTATE confirmation flow
+    (mkdir refused without ``confirm``, created + listed + removed with
+    ``confirm=True``) through the MCP stdio path using password
     authentication with an auto-answering helper (no secret crosses the MCP
     conversation).
 - **Architecture classification**: `src/sshpilot/mcp/**` is an internal
@@ -88,16 +90,14 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-1. SFTP READ/MUTATE round-trips over the stdio path against real OpenSSH
-   (directory listing, stat, file read, mkdir/remove/rename with
-   ``confirm=True``) to prove the MUTATE confirmation flow end-to-end.
-2. Runtime MCP review — decide the exact MUTATE tool set and confirmation UX,
-   and whether `confirm` should stay a tool argument or move to a separate
-   authorization step.
-3. Runtime security review — secret handling on the path from daemon result
+1. SFTP READ/MUTATE breadth — cover the remaining MUTATE tools (create file,
+   rename, chmod, symlink) and READ file/stat tools over the stdio path, and
+   decide the confirmation UX (per-tool ``confirm`` argument vs separate
+   authorization step).
+2. Runtime security review — secret handling on the path from daemon result
    to model context (base64 file reads, SSH config text), and capability-driven
    tool visibility.
-4. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
+3. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
    FIDO/sk-dummy scenarios.
 
 ## Important issues for the next agent

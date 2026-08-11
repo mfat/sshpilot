@@ -155,6 +155,59 @@ async def test_open_and_close_sftp_over_stdio(stack):
                 watching.close()
 
 
+async def test_mutate_sftp_with_confirm_over_stdio(stack):
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    stack.start_password_auto_answer()
+
+    async with stdio_client(_server_parameters(stack.server.socket_path)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            result = await session.call_tool(
+                "open_sftp", {"connection_id": str(stack.connection.id)}
+            )
+            assert not result.is_error, result.content[0].text
+            service_id = _extract_json_id(result.content[0].text, label="SFTP service")
+            stack.wait_sftp_ready(service_id)
+
+            path = "mcp-mutate-demo"
+
+            result = await session.call_tool(
+                "sftp_mkdir", {"service_id": service_id, "path": path}
+            )
+            assert result.is_error, "mkdir without confirm must be refused"
+
+            result = await session.call_tool(
+                "sftp_mkdir",
+                {"service_id": service_id, "path": path, "confirm": True},
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_list_directory",
+                {"connection_id": str(stack.connection.id), "service_id": service_id, "path": "."},
+            )
+            assert not result.is_error, result.content[0].text
+            assert path in result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_rmdir",
+                {"service_id": service_id, "path": path, "confirm": True},
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_list_directory",
+                {"connection_id": str(stack.connection.id), "service_id": service_id, "path": "."},
+            )
+            assert not result.is_error, result.content[0].text
+            assert path not in result.content[0].text
+
+            await session.call_tool("close_sftp", {"service_id": service_id})
+
+
 def _extract_json_id(text: str, *, label: str) -> str:
     """Pull the ``id`` field out of an MCP JSON text result."""
     import json
