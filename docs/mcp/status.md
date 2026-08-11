@@ -25,9 +25,13 @@ entries are rewritten, not accumulated.
     wire-method mapping, daemon dispatch handlers, and drift detection)
   - `check_frontend_neutrality`, `review_public_api`,
     `trace_interaction_scope`, `review_commit` (architecture/regression
-    intelligence)
-  - `run_pytest`, `run_lint`, `validate_api_artifacts` (controlled local
-    execution; argv-only allowlists, never arbitrary shell)
+    intelligence; `review_public_api` reports only public model classes from
+    `sshpilot.api.models.__all__`, not validators or conversion helpers)
+  - `run_tests`, `run_lint`, `validate_api_artifacts` (controlled local
+    execution; argv-only allowlists, never arbitrary shell). `run_tests`
+    accepts an optional repository-relative test `path` for focused runs.
+    All subprocess results include explicit `success`, `returncode`, and
+    `timed_out` fields.
   - Implementation: `src/sshpilot/mcp/_scope.py`,
     `dev/{search,symbols,test_discovery,_git,api_surface,architecture,execution,server}.py`.
 - **Runtime MCP prototype (step 3-5) complete** —
@@ -109,13 +113,16 @@ entries are rewritten, not accumulated.
   typed tools only).
 - **Tests**: `tests/mcp/` and `tests/architecture/test_mcp_boundary.py` pass
   (the stdio/integration smoke tests need the optional `mcp` SDK installed in
-  the venv and integration tests are deselected by default); `tests/api`,
-  `tests/core`, ruff, and `generate_api_artifacts --check` are green.
+  the venv and integration tests are deselected by default). The dev-MCP
+  stdio smoke coverage includes the focused `run_tests(path=...)` path;
+  `tests/api`, `tests/core`, ruff, and `generate_api_artifacts --check` are
+  green.
 
 ## What is being worked on
 
 - Nothing in progress; steps 1-5, the stdio round-trip, capability-driven tool
-  visibility, and the interaction dogfood are complete.
+  visibility, interaction dogfooding, and the dev-MCP correctness follow-ups
+  are complete.
 
 ## What is next
 
@@ -142,6 +149,9 @@ entries are rewritten, not accumulated.
   to ``<redacted>`` in MCP results unless ``SSHPILOT_MCP_CONTENT=1`` is set;
   opaque operation result payloads use the same marker — settled, do not
   reopen without updating `docs/mcp/decisions.md`.
+- Dev-MCP controlled subprocess results use the explicit `success` field;
+  callers must not infer success from the MCP transport-level `is_error` flag
+  alone.
 - The MCP boundary test allows `mcp` modules to import only stdlib, `mcp`,
   `sshpilot.mcp`, and `sshpilot.api`. The runtime server consumes
   `DaemonClient` via `sshpilot.api` — do not widen the allowlist for `core`/
