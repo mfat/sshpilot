@@ -114,3 +114,19 @@ queried, every tool stays visible and the call-time gate remains the guard.
 Reason: the MCP surface should advertise only what the connected daemon can do.
 Capability filtering complements (does not replace) the policy/`confirm` MUTATE
 gate, since daemon capability is not authorization.
+
+## D009 — MUTATE confirmation is a per-tool argument
+
+Status: Accepted
+
+Decision: MUTATE tools require `confirm=True` as a per-tool argument rather
+than a separate authorization step. `RuntimeHandle._mutate` refuses any MUTATE
+call without it; the `SSHPILOT_MCP_MUTATE` environment opt-in gates whether the
+level is permitted at all, and `confirm=True` is the second gate.
+
+Reason: MCP is model-driven with no direct human-facing channel on the
+server side (requests arrive as tool calls, responses go back to the model).
+A separate authorization step would be invisible to the standard MCP protocol,
+so the explicit `confirm` argument is what forces a human-approved call to
+surface in the model's own input. A future human-review layer can sit in front
+of the MCP client without changing the server contract.

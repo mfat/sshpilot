@@ -69,7 +69,9 @@ entries are rewritten, not accumulated.
     (mkdir refused without ``confirm``, created + listed + removed with
     ``confirm=True``) through the MCP stdio path using password
     authentication with an auto-answering helper (no secret crosses the MCP
-    conversation).
+    conversation); also drives the READ surface (stat, read_file, and
+    list_directory) and the remaining MUTATE tools (create_file, rename,
+    chmod, symlink, remove) — each refused without ``confirm=True``.
   - Capability-driven tool visibility: `create_server` queries the daemon
     capabilities up front and removes tools whose required daemon capability
     is missing (`TOOL_CLIENT_METHOD` maps tools to client methods;
@@ -95,19 +97,17 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-1. SFTP READ/MUTATE breadth — cover the remaining MUTATE tools (create file,
-   rename, chmod, symlink) and READ file/stat tools over the stdio path, and
-   decide the confirmation UX (per-tool ``confirm`` argument vs separate
-   authorization step).
-2. Runtime security review — secret handling on the path from daemon result
+1. Runtime security review — secret handling on the path from daemon result
    to model context (base64 file reads, SSH config text).
-3. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
+2. Integration/dogfooding with real bug reproduction, OpenSSH fixtures,
    FIDO/sk-dummy scenarios.
 
 ## Important issues for the next agent
 
 - No changes were made to the wire protocol, capabilities, or API; no
   generated artifacts were modified.
+- Confirmation UX decision (D009): MUTATE uses a per-tool ``confirm=True``
+  argument — settled, do not reopen without updating `docs/mcp/decisions.md`.
 - The MCP boundary test allows `mcp` modules to import only stdlib, `mcp`,
   `sshpilot.mcp`, and `sshpilot.api`. The runtime server consumes
   `DaemonClient` via `sshpilot.api` — do not widen the allowlist for `core`/

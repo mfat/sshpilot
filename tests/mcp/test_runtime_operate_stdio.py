@@ -208,6 +208,170 @@ async def test_mutate_sftp_with_confirm_over_stdio(stack):
             await session.call_tool("close_sftp", {"service_id": service_id})
 
 
+async def test_read_and_mutate_breadth_over_stdio(stack):
+    """Exercise READ (stat/read_file) and remaining MUTATE tools over stdio.
+
+    create_file, rename, chmod, symlink, and remove round-trip against a real
+    SSHFS/SFTP backing store and are verified back through the READ surface.
+    Every MUTATE tool must refuse without ``confirm=True``.
+    """
+    from mcp import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    stack.start_password_auto_answer()
+
+    async with stdio_client(_server_parameters(stack.server.socket_path)) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            result = await session.call_tool(
+                "open_sftp", {"connection_id": str(stack.connection.id)}
+            )
+            assert not result.is_error, result.content[0].text
+            service_id = _extract_json_id(result.content[0].text, label="SFTP service")
+            stack.wait_sftp_ready(service_id)
+
+            # ---- READ: stat and read_file -----------------------------
+            result = await session.call_tool(
+                "sftp_stat",
+                {"service_id": service_id, "path": "."},
+            )
+            assert not result.is_error, result.content[0].text
+            assert "directory" in result.content[0].text.lower()
+
+            created_path = "mcp-breadth-file.txt"
+            result = await session.call_tool(
+                "sftp_stat",
+                {"service_id": service_id, "path": created_path},
+            )
+            assert result.is_error, "stat of a missing path must be an error"
+
+            # ---- MUTATE: create_file ----------------------------------
+            result = await session.call_tool(
+                "sftp_create_file",
+                {"service_id": service_id, "path": created_path},
+            )
+            assert result.is_error, "create_file without confirm must be refused"
+
+            result = await session.call_tool(
+                "sftp_create_file",
+                {"service_id": service_id, "path": created_path, "confirm": True},
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_stat",
+                {"service_id": service_id, "path": created_path},
+            )
+            assert not result.is_error, result.content[0].text
+            assert "file" in result.content[0].text.lower()
+
+            result = await session.call_tool(
+                "sftp_read_file",
+                {"service_id": service_id, "path": created_path},
+            )
+            assert not result.is_error, result.content[0].text
+            assert "content" in result.content[0].text
+
+            # ---- MUTATE: rename, chmod, symlink, remove ---------------
+            renamed_path = "mcp-breadth-renamed.txt"
+            result = await session.call_tool(
+                "sftp_rename",
+                {
+                    "service_id": service_id,
+                    "source_path": created_path,
+                    "destination_path": renamed_path,
+                    "overwrite": True,
+                },
+            )
+            assert result.is_error, "rename without confirm must be refused"
+
+            result = await session.call_tool(
+                "sftp_rename",
+                {
+                    "service_id": service_id,
+                    "source_path": created_path,
+                    "destination_path": renamed_path,
+                    "overwrite": True,
+                    "confirm": True,
+                },
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_stat",
+                {"service_id": service_id, "path": renamed_path},
+            )
+            assert not result.is_error, result.content[0].text
+            assert "file" in result.content[0].text.lower()
+
+            result = await session.call_tool(
+                "sftp_chmod",
+                {"service_id": service_id, "path": renamed_path, "mode": 0o640},
+            )
+            assert result.is_error, "chmod without confirm must be refused"
+
+            result = await session.call_tool(
+                "sftp_chmod",
+                {"service_id": service_id, "path": renamed_path, "mode": 0o640, "confirm": True},
+            )
+            assert not result.is_error, result.content[0].text
+
+            link_path = "mcp-breadth-link"
+            result = await session.call_tool(
+                "sftp_symlink",
+                {
+                    "service_id": service_id,
+                    "target_path": renamed_path,
+                    "link_path": link_path,
+                },
+            )
+            assert result.is_error, "symlink without confirm must be refused"
+
+            result = await session.call_tool(
+                "sftp_symlink",
+                {
+                    "service_id": service_id,
+                    "target_path": renamed_path,
+                    "link_path": link_path,
+                    "confirm": True,
+                },
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_stat",
+                {"service_id": service_id, "path": link_path},
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_remove",
+                {"service_id": service_id, "path": link_path},
+            )
+            assert result.is_error, "remove without confirm must be refused"
+
+            result = await session.call_tool(
+                "sftp_remove",
+                {"service_id": service_id, "path": link_path, "confirm": True},
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_remove",
+                {"service_id": service_id, "path": renamed_path, "confirm": True},
+            )
+            assert not result.is_error, result.content[0].text
+
+            result = await session.call_tool(
+                "sftp_stat",
+                {"service_id": service_id, "path": renamed_path},
+            )
+            assert result.is_error, "removed file must no longer stat"
+
+            await session.call_tool("close_sftp", {"service_id": service_id})
+
+
 def _extract_json_id(text: str, *, label: str) -> str:
     """Pull the ``id`` field out of an MCP JSON text result."""
     import json
