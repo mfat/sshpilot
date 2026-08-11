@@ -16,7 +16,7 @@ pytest.importorskip("gi")
 from sshpilot.text_editor import RemoteFileEditorWindow as Ed
 
 
-def _bare_editor(*, session_pw=None, host="web", user="root"):
+def _bare_editor(*, session_pw=None, host="web", user="deploy"):
     """An editor instance without running __init__ (no GTK realize needed)."""
     ed = Ed.__new__(Ed)
     ed._sudo_password = session_pw
@@ -44,6 +44,18 @@ def test_write_cmd_passwordless():
         "sudo -n -- tee -- /etc/hosts > /dev/null"
 
 
+def test_read_cmd_skips_sudo_for_root_session():
+    assert Ed._root_read_cmd(
+        "/etc/hosts", has_pw=False, already_root=True
+    ) == "cat -- /etc/hosts"
+
+
+def test_write_cmd_skips_sudo_for_root_session():
+    assert Ed._root_write_cmd(
+        "/etc/hosts", has_pw=False, already_root=True
+    ) == "tee -- /etc/hosts > /dev/null"
+
+
 def test_cmd_quotes_paths_with_spaces_and_dashes():
     # shlex.quote guards spaces; the leading `--` guards dash-prefixed paths.
     assert Ed._root_read_cmd("/tmp/a b", has_pw=False) == \
@@ -68,6 +80,15 @@ def test_resolve_root_pw_falls_back_to_keyring(monkeypatch):
 def test_resolve_root_pw_none_when_nothing_stored(monkeypatch):
     monkeypatch.setattr(askpass_utils, "lookup_sudo_password", lambda h, u: "")
     ed = _bare_editor(session_pw=None)
+    assert ed._resolve_root_pw() == (None, False)
+
+
+def test_resolve_root_pw_skips_passwords_for_root_session(monkeypatch):
+    def fail_lookup(_host, _user):
+        pytest.fail("keyring should not be queried for a root session")
+
+    monkeypatch.setattr(askpass_utils, "lookup_sudo_password", fail_lookup)
+    ed = _bare_editor(session_pw="stored-password", user="root")
     assert ed._resolve_root_pw() == (None, False)
 
 

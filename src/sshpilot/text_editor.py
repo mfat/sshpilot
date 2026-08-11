@@ -1087,23 +1087,32 @@ class RemoteFileEditorWindow(Adw.Window):
         self._show_error(f"Failed to upload file: {error}")
 
     # ================================================================
-    # Edit as root (remote files only): sudo cat to read, sudo tee to save,
-    # over the same SSH/auth path as the SFTP session.
+    # Edit as root (remote files only): cat to read, tee to save, with sudo
+    # for non-root sessions over the same SSH/auth path as the SFTP session.
     # ================================================================
     @staticmethod
-    def _root_read_cmd(path: str, *, has_pw: bool) -> str:
-        """Remote command to read ``path`` as root. ``sudo -S -p ''`` reads the
-        password from stdin; ``sudo -n`` is the passwordless path."""
+    def _root_read_cmd(path: str, *, has_pw: bool,
+                       already_root: bool = False) -> str:
+        """Remote command to read ``path`` as root. An existing root session
+        runs ``cat`` directly; otherwise ``sudo -S -p ''`` reads the password
+        from stdin and ``sudo -n`` is the passwordless path."""
+        command = f"cat -- {shlex.quote(path)}"
+        if already_root:
+            return command
         sudo = "sudo -S -p ''" if has_pw else "sudo -n"
-        return f"{sudo} -- cat -- {shlex.quote(path)}"
+        return f"{sudo} -- {command}"
 
     @staticmethod
-    def _root_write_cmd(path: str, *, has_pw: bool) -> str:
+    def _root_write_cmd(path: str, *, has_pw: bool,
+                        already_root: bool = False) -> str:
         """Remote command to write stdin to ``path`` as root via ``tee`` (which
-        preserves an existing file's owner/mode). ``> /dev/null`` keeps the file
-        content from being echoed back over the SSH channel."""
+        preserves an existing file's owner/mode), using sudo only when needed.
+        ``> /dev/null`` keeps content from being echoed over the SSH channel."""
+        command = f"tee -- {shlex.quote(path)} > /dev/null"
+        if already_root:
+            return command
         sudo = "sudo -S -p ''" if has_pw else "sudo -n"
-        return f"{sudo} -- tee -- {shlex.quote(path)} > /dev/null"
+        return f"{sudo} -- {command}"
 
     def _root_host_user(self) -> tuple[str, str]:
         """(host, username) keyring identity — shared with the SSH login and the
@@ -1111,6 +1120,10 @@ class RemoteFileEditorWindow(Adw.Window):
         mgr = self._sftp_manager
         return (getattr(mgr, "host", "") or "",
                 getattr(mgr, "username", "") or "")
+
+    def _remote_user_is_root(self) -> bool:
+        _, user = self._root_host_user()
+        return user == "root"
 
     @staticmethod
     def _looks_permission_denied(text: str) -> bool:
@@ -1148,10 +1161,12 @@ class RemoteFileEditorWindow(Adw.Window):
         self._show_error(f"Failed to download file: {message}")
 
     def _resolve_root_pw(self) -> tuple[Optional[str], bool]:
-        """``(password, from_keyring)``: prefer the in-session password, fall back
-        to the shared keyring entry, else ``(None, False)`` (passwordless/prompt).
-        ``from_keyring`` lets callers clear only a stored password that proves
-        wrong — never a freshly prompted one."""
+        """``(password, from_keyring)``: root sessions need no sudo password.
+        Otherwise prefer the in-session password, fall back to the shared
+        keyring entry, or return ``(None, False)`` for passwordless sudo/prompt.
+        ``from_keyring`` lets callers clear only a stored password proven wrong."""
+        if self._remote_user_is_root():
+            return None, False
         if self._sudo_password:
             return self._sudo_password, False
         host, user = self._root_host_user()
@@ -1215,7 +1230,11 @@ class RemoteFileEditorWindow(Adw.Window):
         self._run_root_read(pw, from_keyring)
 
     def _run_root_read(self, pw: Optional[str], from_keyring: bool) -> None:
-        cmd = self._root_read_cmd(self._file_path, has_pw=bool(pw))
+        cmd = self._root_read_cmd(
+            self._file_path,
+            has_pw=bool(pw),
+            already_root=self._remote_user_is_root(),
+        )
         data = (pw + "\n").encode("utf-8") if pw else None
         future = self._sftp_manager.run_command_async(cmd, input=data)
 
@@ -1302,7 +1321,11 @@ class RemoteFileEditorWindow(Adw.Window):
             self._on_upload_error(str(e))
             return
         pw, from_keyring = self._resolve_root_pw()
-        cmd = self._root_write_cmd(self._file_path, has_pw=bool(pw))
+        cmd = self._root_write_cmd(
+            self._file_path,
+            has_pw=bool(pw),
+            already_root=self._remote_user_is_root(),
+        )
         stdin = ((pw + "\n").encode("utf-8") + data) if pw else data
         future = self._sftp_manager.run_command_async(cmd, input=stdin)
 
