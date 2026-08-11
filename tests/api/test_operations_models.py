@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from sshpilot.api.models.common import ConnectionId, RequestId, SessionId
@@ -6,6 +8,9 @@ from sshpilot.api.models.operations import (
     ForwardKind,
     ForwardState,
     ListDirectoryRequest,
+    OperationKind,
+    OperationState,
+    OperationSummary,
     PluginArgument,
     PluginOperationRequest,
     PluginOperationResult,
@@ -81,3 +86,16 @@ def test_plugin_result_values_are_excluded_from_repr():
     )
 
     assert "potentially-sensitive-result" not in repr(result)
+
+
+def test_operation_result_is_excluded_from_repr():
+    result = OperationSummary(
+        operation_id="operation-1",
+        kind=OperationKind.BROADCAST_COMMAND,
+        state=OperationState.SUCCEEDED,
+        message="completed",
+        created_at=datetime.now(timezone.utc),
+        result={"targets": [{"stdout": "PRIVATE-OUTPUT"}]},
+    )
+
+    assert "PRIVATE-OUTPUT" not in repr(result)

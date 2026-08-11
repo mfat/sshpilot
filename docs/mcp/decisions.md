@@ -138,13 +138,16 @@ Status: Accepted
 Decision: The runtime MCP boundary honors the daemon's own "not for
 unstructured output" marker (`field(repr=False)`) by default: those field
 values (`SftpReadFileResult.content`, `SshConfigText.text`,
-`InteractionClaim.nonce`, plugin result values) are emitted as `<redacted>`
-rather than their real value, so remote file content, SSH config text, and
-claim nonces never reach model context implicitly. An explicit opt-in
-`SSHPILOT_MCP_CONTENT=1` restores the live values.
+`InteractionClaim.nonce`, `OperationSummary.result`, plugin result values) are
+emitted as `<redacted>` rather than their real value, so remote file content,
+SSH config text, claim nonces, and opaque operation payloads never reach model
+context implicitly. An explicit opt-in `SSHPILOT_MCP_CONTENT=1` restores the
+live values.
 
 Reason: MCP output goes to a model context, which is a stronger exposure than
 the reference CLI's terminal output, and the daemon already declares which DTO
 fields are unsuitable for unstructured output. Reusing that marker instead of
 maintaining a second secret-field list keeps redaction mechanically derived
-(D004). Content is restored only by an explicit, named operator decision.
+(D004). Free-form operation payloads are treated as opaque because they may
+contain content that has lost a nested DTO's marker. Content is restored only
+by an explicit, named operator decision.

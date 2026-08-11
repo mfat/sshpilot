@@ -4565,7 +4565,7 @@
           "default": null,
           "name": "result",
           "required": false,
-          "sensitive": false,
+          "sensitive": true,
           "type": "Optional[Dict]"
         }
       ],

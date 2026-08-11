@@ -165,6 +165,7 @@ SENSITIVE_FIELDS = {
     "ErrorResponseEnvelope": {"error"},
     "EventEnvelope": {"payload"},
     "InteractionResponse": {"value"},
+    "OperationSummary": {"result"},
     "PluginArgument": {"value"},
     "PluginOperationResult": {"values"},
     "ReplayResult": {"data"},

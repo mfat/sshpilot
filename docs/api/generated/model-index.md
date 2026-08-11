@@ -2447,7 +2447,7 @@ Synthetic representation:
 | `progress` | `Optional[float]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
 | `failure` | `Optional[ServiceFailure]` | No | `null` | No |
-| `result` | `Optional[Dict]` | No | `null` | No |
+| `result` | `Optional[Dict]` | No | `null` | Yes |
 
 Synthetic representation:
 
@@ -2462,7 +2462,7 @@ Synthetic representation:
   "operation_id": {},
   "owner_client_id": null,
   "progress": null,
-  "result": null,
+  "result": "<sensitive value omitted>",
   "started_at": null,
   "state": {}
 }

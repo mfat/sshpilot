@@ -112,10 +112,12 @@ entries are rewritten, not accumulated.
 
 ## What is next
 
-1. Runtime security review follow-ups — confirm the full list of DTO fields the
-   runtime can surface is secret-free (the redaction layer now covers the
-   daemon-declared ones; audit any result that could smuggle a secret through
-   a non-`repr=False` path, e.g. free-form operation result dicts).
+1. Runtime security review follow-up complete: audited the runtime MCP result
+   surface. `OperationSummary.result` was the free-form smuggling path because
+   broadcast output can be flattened into its dict after losing nested
+   `repr=False` markers; it is now daemon-declared `repr=False`, documented as
+   sensitive, and redacted wholesale unless content opt-in is enabled. Typed
+   DTO fields remain covered by the same marker.
 2. Integration/dogfooding, next slice: FIDO/sk-dummy scenarios. The host-key
    TOFU dogfood is done (`test_runtime_hostkey_stdio.py`); a real FIDO/sk-dummy
    round-trip needs the `libsk-libfido2` security-key provider installed (only
@@ -125,13 +127,15 @@ entries are rewritten, not accumulated.
 
 ## Important issues for the next agent
 
-- No changes were made to the wire protocol, capabilities, or API; no
-  generated artifacts were modified.
+- No changes were made to the wire protocol or capabilities. Generated API
+  artifacts were regenerated to document the new sensitive result field; the
+  wire shape is unchanged.
 - Confirmation UX decision (D009): MUTATE uses a per-tool ``confirm=True``
   argument — settled, do not reopen without updating `docs/mcp/decisions.md`.
 - Secret handling (D010): DTO fields marked ``field(repr=False)`` are redacted
-  to ``<redacted>`` in MCP results unless ``SSHPILOT_MCP_CONTENT=1`` is set —
-  settled, do not reopen without updating `docs/mcp/decisions.md`.
+  to ``<redacted>`` in MCP results unless ``SSHPILOT_MCP_CONTENT=1`` is set;
+  opaque operation result payloads use the same marker — settled, do not
+  reopen without updating `docs/mcp/decisions.md`.
 - The MCP boundary test allows `mcp` modules to import only stdlib, `mcp`,
   `sshpilot.mcp`, and `sshpilot.api`. The runtime server consumes
   `DaemonClient` via `sshpilot.api` — do not widen the allowlist for `core`/

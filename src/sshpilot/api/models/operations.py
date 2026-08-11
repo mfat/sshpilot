@@ -731,7 +731,7 @@ class OperationSummary:
     progress: Optional[float] = None
     owner_client_id: Optional[ClientId] = None
     failure: Optional[ServiceFailure] = None
-    result: Optional[Dict] = None
+    result: Optional[Dict] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         require_identifier(self.operation_id, "operation id")

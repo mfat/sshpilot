@@ -120,6 +120,57 @@ def test_handle_content_opt_in_restores_dto_fields():
     assert result == {"name": "file.txt", "content": "PRIVATE-KEY-MATERIAL"}
 
 
+def test_handle_redacts_free_form_operation_results_by_default():
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import (
+        OperationKind,
+        OperationState,
+        OperationSummary,
+    )
+
+    client = FakeClient()
+    client.get_operation = lambda operation_id: OperationSummary(
+        operation_id=operation_id,
+        kind=OperationKind.BROADCAST_COMMAND,
+        state=OperationState.SUCCEEDED,
+        message="completed",
+        created_at=datetime.now(timezone.utc),
+        result={"targets": [{"stdout": "PRIVATE-OUTPUT"}]},
+    )
+    handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
+
+    assert handle.get_operation("operation-1")["result"] == "<redacted>"
+
+
+def test_handle_content_opt_in_restores_free_form_operation_results():
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import (
+        OperationKind,
+        OperationState,
+        OperationSummary,
+    )
+
+    client = FakeClient()
+    client.get_operation = lambda operation_id: OperationSummary(
+        operation_id=operation_id,
+        kind=OperationKind.BROADCAST_COMMAND,
+        state=OperationState.SUCCEEDED,
+        message="completed",
+        created_at=datetime.now(timezone.utc),
+        result={"targets": [{"stdout": "PRIVATE-OUTPUT"}]},
+    )
+    handle = RuntimeHandle(
+        client,
+        RuntimePolicy(allow_read=True, allow_content=True),
+    )
+
+    assert handle.get_operation("operation-1")["result"] == {
+        "targets": [{"stdout": "PRIVATE-OUTPUT"}]
+    }
+
+
 def test_handle_read_runs_through_client():
     client = FakeClient()
     handle = RuntimeHandle(client, RuntimePolicy(allow_read=True))
