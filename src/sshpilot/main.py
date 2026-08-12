@@ -775,6 +775,11 @@ class SshPilotApplication(Adw.Application):
         window = self.window
         if window is not None and not getattr(window, "_is_quitting", False):
             window.client = result.client
+            # Snapshot fetches are daemon RPCs and this handler runs on the
+            # GTK main loop; route them through the bridge worker.
+            submit = getattr(
+                getattr(self, "_api_client_bridge", None), "submit", None
+            )
             for projection_name in (
                 "connection_manager",
                 "connection_runtime_status",
@@ -784,7 +789,10 @@ class SshPilotApplication(Adw.Application):
                 if not callable(attach_client):
                     continue
                 try:
-                    attach_client(result.client)
+                    if callable(submit):
+                        attach_client(result.client, submit=submit)
+                    else:
+                        attach_client(result.client)
                 except Exception:
                     logger.warning(
                         "Failed to refresh %s after daemon reconnect",

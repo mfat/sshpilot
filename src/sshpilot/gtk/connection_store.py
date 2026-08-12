@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from threading import RLock
 from typing import Callable, Iterable, Optional
 from dataclasses import replace
@@ -12,6 +13,8 @@ from sshpilot.api.models.connections import (
     ConnectionId,
     ConnectionSummary,
 )
+
+logger = logging.getLogger(__name__)
 
 _CONNECTION_EVENTS = frozenset(
     {
@@ -132,7 +135,15 @@ class ConnectionPresentationStore:
     def disconnect(self, handler_id: int) -> None:
         self._handlers.pop(handler_id, None)
 
-    def attach_client(self, client) -> ConnectionStoreSnapshot:
+    def attach_client(self, client, *, submit=None) -> Optional[ConnectionStoreSnapshot]:
+        """Subscribe first, then snapshot the store without an event-loss gap.
+
+        The snapshot RPC blocks the calling thread. Pass ``submit`` (a
+        ``GtkClientBridge.submit``-style callable) to run it on a worker so
+        the GTK main loop never waits on the daemon; the snapshot is then
+        installed through the bridge's success callback, and ``None`` is
+        returned since the result lands asynchronously.
+        """
         with self._lock:
             old_subscription = self._subscription
             self._subscription = None
@@ -151,6 +162,20 @@ class ConnectionPresentationStore:
         subscription = client.subscribe_events(
             lambda event: self._accept_event(event, generation, instance_id)
         )
+        if submit is not None:
+            submit(
+                lambda: self._fetch_snapshot(client),
+                on_success=lambda snapshot: self._install_attach_snapshot(
+                    client, generation, instance_id, subscription, snapshot
+                ),
+                on_error=lambda error: self._fail_attach(
+                    client, generation, subscription, error
+                ),
+                on_discard=lambda _snapshot: self._discard_attach(
+                    client, generation, subscription
+                ),
+            )
+            return None
         try:
             snapshot = self._fetch_snapshot(client)
             self._install_fetched_snapshot(snapshot, client, generation, instance_id)
@@ -167,6 +192,34 @@ class ConnectionPresentationStore:
             else:
                 self._subscription = subscription
         return self.snapshot()
+
+    def _install_attach_snapshot(
+        self, client, generation, instance_id, subscription, snapshot
+    ) -> None:
+        with self._lock:
+            if generation != self._attach_generation or client is not self._client:
+                subscription.unsubscribe()
+                return
+            self._subscription = subscription
+        self._install_fetched_snapshot(snapshot, client, generation, instance_id)
+
+    def _fail_attach(self, client, generation, subscription, error) -> None:
+        subscription.unsubscribe()
+        with self._lock:
+            if generation != self._attach_generation or client is not self._client:
+                return
+            self._client = None
+            self._buffering = False
+            self._pending_events = []
+        logger.error("Connection store snapshot attach failed: %s", error)
+
+    def _discard_attach(self, client, generation, subscription) -> None:
+        subscription.unsubscribe()
+        with self._lock:
+            if generation != self._attach_generation or client is not self._client:
+                return
+            self._buffering = False
+            self._pending_events = []
 
     def refresh(self) -> ConnectionStoreSnapshot:
         with self._lock:

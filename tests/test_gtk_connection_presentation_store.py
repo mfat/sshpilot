@@ -95,6 +95,14 @@ class SnapshotClient:
         return self._snapshot
 
 
+class DeferredBridge:
+    def submit(self, operation, *, on_success, on_error, on_discard=None):
+        self.operation = operation
+        self.on_success = on_success
+        self.on_error = on_error
+        self.on_discard = on_discard
+
+
 # ---------------------------------------------------------------------------
 # Snapshot surface
 # ---------------------------------------------------------------------------
@@ -136,6 +144,31 @@ def test_apply_snapshot_exposes_connections_groups_root_and_metadata():
     assert store.groups == (g1,)
     assert store.root_connection_ids == ("two",)
     assert store.metadata == (meta,)
+
+
+def test_async_attach_fetches_snapshot_off_caller_and_replays_buffered_events():
+    client = Client("daemon-a", [summary("old")])
+    store = ConnectionPresentationStore()
+    bridge = DeferredBridge()
+
+    store.attach_client(client, submit=bridge.submit)
+    assert client.list_calls == 0
+
+    client.emit(EventType.CONNECTION_CREATED, summary("new"), 1)
+    bridge.on_success(bridge.operation())
+
+    assert [item.id for item in store.connections] == ["old", "new"]
+
+
+def test_async_attach_discard_unsubscribes_and_stops_buffering():
+    client = Client("daemon-a", [])
+    store = ConnectionPresentationStore()
+    bridge = DeferredBridge()
+
+    store.attach_client(client, submit=bridge.submit)
+    bridge.on_discard(object())
+
+    assert client.subscription.closed
 
 
 def test_lookup_by_id_and_nickname():

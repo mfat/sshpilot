@@ -115,8 +115,12 @@ def test_init_sequence_attaches_exactly_once_for_reused_selection():
     if window.client is not None:
         window._attach_client_backed_services()
 
-    window.connection_manager.attach_client.assert_called_once_with(window.client)
-    window.connection_runtime_status.attach_client.assert_called_once_with(window.client)
+    window.connection_manager.attach_client.assert_called_once_with(
+        window.client, submit=app._api_client_bridge.submit
+    )
+    window.connection_runtime_status.attach_client.assert_called_once_with(
+        window.client, submit=app._api_client_bridge.submit
+    )
     window.plugin_connection_services.attach_client.assert_called_once_with(window.client)
     assert isinstance(window.key_manager, KeyManager)
     assert window.key_manager._scope is KeyStoreScope.DEFAULT

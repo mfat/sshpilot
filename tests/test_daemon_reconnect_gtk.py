@@ -43,7 +43,14 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
         connection_manager=connection_projection,
         connection_runtime_status=runtime_projection,
     )
-    app._api_client_bridge = None
+    class _ReconnectBridge:
+        def submit(self, operation, *, on_success, on_error):
+            try:
+                on_success(operation())
+            except Exception as error:
+                on_error(error)
+
+    app._api_client_bridge = _ReconnectBridge()
     app._api_client_selection = None
     app._api_daemon_launcher = object()
     app._daemon_reconnect_in_progress = False
@@ -97,8 +104,12 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     assert app.window.client is new_client
     assert app._api_client_selection.client is new_client
     assert installed == [new_client]
-    connection_projection.attach_client.assert_called_once_with(new_client)
-    runtime_projection.attach_client.assert_called_once_with(new_client)
+    connection_projection.attach_client.assert_called_once_with(
+        new_client, submit=app._api_client_bridge.submit
+    )
+    runtime_projection.attach_client.assert_called_once_with(
+        new_client, submit=app._api_client_bridge.submit
+    )
     assert app._daemon_reconnect_in_progress is False
 
 

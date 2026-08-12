@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from threading import RLock
 from typing import Callable, Dict, Optional
@@ -9,6 +10,8 @@ from typing import Callable, Dict, Optional
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.sessions import SessionExitInfo, SessionState, SessionSummary
 from sshpilot.connection_model import ConnectionState
+
+logger = logging.getLogger(__name__)
 
 
 _SESSION_EVENTS = frozenset(
@@ -60,8 +63,14 @@ class ConnectionRuntimeStatusStore:
         with self._lock:
             return self._statuses.get(connection_id, UNKNOWN_RUNTIME_STATUS)
 
-    def attach_client(self, client) -> None:
-        """Subscribe first, then snapshot sessions without an event-loss gap."""
+    def attach_client(self, client, *, submit=None) -> None:
+        """Subscribe first, then snapshot sessions without an event-loss gap.
+
+        The snapshot RPC blocks the calling thread. Pass ``submit`` (a
+        ``GtkClientBridge.submit``-style callable) to run it on a worker so
+        the GTK main loop never waits on the daemon; the result is then
+        installed through the bridge's success callback.
+        """
         with self._lock:
             old_subscription = self._subscription
             self._subscription = None
@@ -78,6 +87,20 @@ class ConnectionRuntimeStatusStore:
         subscription = client.subscribe_events(
             lambda event: self._accept_event(event, generation, instance_id)
         )
+        if submit is not None:
+            submit(
+                lambda: self._validated_sessions(client.list_sessions()),
+                on_success=lambda replacement: self._install_attach_snapshot(
+                    client, generation, subscription, replacement
+                ),
+                on_error=lambda error: self._fail_attach(
+                    client, generation, subscription, error
+                ),
+                on_discard=lambda _replacement: self._discard_attach(
+                    client, generation, subscription
+                ),
+            )
+            return
         try:
             sessions = client.list_sessions()
             replacement = self._validated_sessions(sessions)
@@ -88,7 +111,11 @@ class ConnectionRuntimeStatusStore:
                     self._refreshing = False
                     self._pending_events = []
             raise
+        self._install_attach_snapshot(client, generation, subscription, replacement)
 
+    def _install_attach_snapshot(
+        self, client, generation, subscription, replacement
+    ) -> None:
         with self._lock:
             if generation != self._generation or client is not self._client:
                 subscription.unsubscribe()
@@ -103,6 +130,23 @@ class ConnectionRuntimeStatusStore:
             current = dict(self._statuses)
             self._subscription = subscription
         self._notify_changes(previous, current, generation)
+
+    def _fail_attach(self, client, generation, subscription, error) -> None:
+        subscription.unsubscribe()
+        with self._lock:
+            if generation != self._generation or client is not self._client:
+                return
+            self._refreshing = False
+            self._pending_events = []
+        logger.error("Daemon session snapshot attach failed: %s", error)
+
+    def _discard_attach(self, client, generation, subscription) -> None:
+        subscription.unsubscribe()
+        with self._lock:
+            if generation != self._generation or client is not self._client:
+                return
+            self._refreshing = False
+            self._pending_events = []
 
     def close(self) -> None:
         with self._lock:

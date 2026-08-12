@@ -441,7 +441,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if self.client is None:
             self.key_manager = None
             return
-        self.connection_manager.attach_client(self.client)
+        # Snapshot fetches are daemon RPCs that must not block the GTK main
+        # loop (this method runs on it); route them through the bridge worker.
+        submit = getattr(self.client_bridge, "submit", None)
+        if callable(submit):
+            self.connection_manager.attach_client(self.client, submit=submit)
+        else:
+            self.connection_manager.attach_client(self.client)
         self.group_manager.attach_client(self.client)
         from .gtk.group_store import GroupMutationController
         if getattr(self, "_group_mutation_controller", None) is None:
@@ -454,7 +460,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 ),
             )
             self.group_manager.set_mutation_controller(self._group_mutation_controller)
-        self.connection_runtime_status.attach_client(self.client)
+        if callable(submit):
+            self.connection_runtime_status.attach_client(
+                self.client, submit=submit
+            )
+        else:
+            self.connection_runtime_status.attach_client(self.client)
         self.plugin_connection_services.attach_client(self.client)
         self.key_manager = KeyManager(self.client, self._key_scope)
         self.secrets_controller = self._build_secrets_controller()

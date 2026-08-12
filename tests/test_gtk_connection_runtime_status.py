@@ -68,6 +68,14 @@ class Client:
         )
 
 
+class DeferredBridge:
+    def submit(self, operation, *, on_success, on_error, on_discard=None):
+        self.operation = operation
+        self.on_success = on_success
+        self.on_error = on_error
+        self.on_discard = on_discard
+
+
 def connection(connection_id="connection-1"):
     return ConnectionSummary(
         id=connection_id,
@@ -95,6 +103,33 @@ def test_initial_session_snapshot_aggregates_by_connection_id():
     )
     # Runtime status is separate; the immutable connection projection is unchanged.
     assert not hasattr(dto, "is_connected")
+
+
+def test_async_attach_fetches_snapshot_off_caller_and_replays_buffered_events():
+    client = Client("daemon-a", [])
+    store = ConnectionRuntimeStatusStore()
+    bridge = DeferredBridge()
+
+    store.attach_client(client, submit=bridge.submit)
+    client.emit(
+        EventType.SESSION_CREATED,
+        session("session-1", "connection-1", SessionState.RUNNING),
+        1,
+    )
+    bridge.on_success(bridge.operation())
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+def test_async_attach_discard_unsubscribes_and_stops_refreshing():
+    client = Client("daemon-a", [])
+    store = ConnectionRuntimeStatusStore()
+    bridge = DeferredBridge()
+
+    store.attach_client(client, submit=bridge.submit)
+    bridge.on_discard(object())
+
+    assert client.subscription.closed
 
 
 def test_live_session_events_follow_connection_wide_priority():
