@@ -102,6 +102,12 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
     if source_root not in entries:
         entries.insert(0, source_root)
     environment["PYTHONPATH"] = os.pathsep.join(entries)
+    if getattr(sys, "frozen", False):
+        # A frozen child started through sys.executable is a new PyInstaller
+        # application instance, not a Python interpreter invocation.  Reset
+        # the bootloader's inherited onefile/child state before dispatching
+        # the daemon entrypoint from the shared application executable.
+        environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     return environment
 
 
@@ -184,15 +190,25 @@ class DaemonLauncher:
                 self._synchronize_explicit_log_level(client)
                 return DaemonLaunchResult(client=client, process=None)
 
-            command = (
-                self.executable,
-                "-m",
-                "sshpilot.daemon",
-                "--socket",
-                str(self.socket_path),
-                *(("--verbose",) if self._verbose else ()),
-                *(("--quiet",) if self._quiet else ()),
-            )
+            if getattr(sys, "frozen", False):
+                command = (
+                    self.executable,
+                    "--daemon",
+                    "--socket",
+                    str(self.socket_path),
+                    *(("--verbose",) if self._verbose else ()),
+                    *(("--quiet",) if self._quiet else ()),
+                )
+            else:
+                command = (
+                    self.executable,
+                    "-m",
+                    "sshpilot.daemon",
+                    "--socket",
+                    str(self.socket_path),
+                    *(("--verbose",) if self._verbose else ()),
+                    *(("--quiet",) if self._quiet else ()),
+                )
             # Begin verbose forwarding before the child exists so startup
             # failures still contribute their daemon diagnostics.
             self._ensure_daemon_log_forwarder()

@@ -257,6 +257,42 @@ def test_process_launch_uses_argv_no_shell_and_sanitized_environment(
     assert captured["env"]["PYTHONPATH"].endswith("/src")
 
 
+def test_frozen_process_launch_uses_bundle_dispatch_and_resets_bootloader(
+    tmp_path,
+    monkeypatch,
+):
+    captured = {}
+    client = object()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    class _Process:
+        def poll(self):
+            return None
+
+    def _popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return _Process()
+
+    launcher = DaemonLauncher(
+        socket_path=tmp_path / "runtime" / "sshpilotd.sock",
+        environment={"PATH": "/usr/bin"},
+        popen=_popen,
+    )
+    monkeypatch.setattr(launcher, "_wait_until_ready", lambda _process: client)
+
+    result = launcher.connect_or_start()
+
+    assert result.client is client
+    assert captured["argv"] == [
+        launcher.executable,
+        "--daemon",
+        "--socket",
+        str(launcher.socket_path),
+    ]
+    assert captured["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+
+
 def test_verbose_launch_passes_flag_and_starts_askpass_forwarder(tmp_path, monkeypatch):
     class _Process:
         def poll(self):

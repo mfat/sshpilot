@@ -83,6 +83,18 @@ def test_launcher_script_invokes_module():
     assert "status" in result.stdout
 
 
+def test_run_script_dispatches_daemon_before_gtk():
+    result = subprocess.run(
+        [sys.executable, "run.py", "--daemon", "--help"],
+        cwd=str(__import__("pathlib").Path(__file__).resolve().parents[2]),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "Run or manage the local sshPilot daemon" in result.stdout
+
+
 def test_cli_server_start_uses_environment_idle_default_when_unset(monkeypatch, tmp_path):
     """Absent ``daemon.idle_shutdown_seconds`` must not disable idle shutdown."""
 
