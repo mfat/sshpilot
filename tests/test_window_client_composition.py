@@ -152,6 +152,12 @@ def test_apply_client_selection_uses_the_same_helper():
     window._maybe_restore_daemon_sessions = lambda: None
     attached = []
     window._attach_client_backed_services = lambda: attached.append(True)
+    controller = object()
+    preferences = types.SimpleNamespace(
+        set_ssh_overrides_controller=MagicMock()
+    )
+    window._preferences_window = preferences
+    window._build_ssh_overrides_controller = lambda: controller
 
     selection = types.SimpleNamespace(client=object())
     window._apply_client_selection(selection)
@@ -160,6 +166,7 @@ def test_apply_client_selection_uses_the_same_helper():
     assert window.client is selection.client
     assert window._api_client_selection_pending is False
     assert window._api_client_selection_request is None
+    preferences.set_ssh_overrides_controller.assert_called_once_with(controller)
 
 
 def test_apply_client_selection_quitting_does_not_attach():

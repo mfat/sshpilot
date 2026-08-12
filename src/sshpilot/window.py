@@ -523,6 +523,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self.client = selection.client
         self._attach_client_backed_services()
+        preferences = getattr(self, '_preferences_window', None)
+        if preferences is not None:
+            try:
+                preferences.set_ssh_overrides_controller(
+                    self._build_ssh_overrides_controller()
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to attach SSH overrides controller to Preferences",
+                    exc_info=True,
+                )
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()

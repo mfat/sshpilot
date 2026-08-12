@@ -2207,6 +2207,42 @@ class PreferencesWindow(Adw.NavigationPage):
             "debug_enabled": bool(self.config.get_setting('ssh.debug_enabled', False)),
         }
 
+    def set_ssh_overrides_controller(self, controller):
+        """Attach the daemon SSH-overrides controller after Preferences exists.
+
+        Preferences may be preloaded before the daemon client finishes its
+        capability handshake.  In that case the SSH override page was built
+        without a controller and its daemon-owned rows were intentionally
+        disabled.  Rebind the controller when the client arrives and refresh
+        an already-built page from the authoritative daemon snapshot.
+        """
+        self.ssh_overrides_controller = controller
+        if controller is None or not hasattr(self, 'connect_timeout_row'):
+            return
+
+        rows = (
+            self.connect_timeout_row,
+            self.connection_attempts_row,
+            self.keepalive_interval_row,
+            self.keepalive_count_row,
+            self.strict_host_row,
+            self.batch_mode_row,
+            self.compression_row,
+            self.verbosity_row,
+            self.debug_enabled_row,
+        )
+        try:
+            snapshot = controller.load()
+        except Exception:
+            logger.warning("Failed to attach global SSH overrides controller", exc_info=True)
+            for row in rows:
+                row.set_sensitive(False)
+            return
+
+        self._apply_ssh_override_values_to_rows(snapshot)
+        for row in rows:
+            row.set_sensitive(True)
+
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
         ssh_settings_page = Adw.PreferencesPage()

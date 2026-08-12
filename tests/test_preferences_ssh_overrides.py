@@ -26,6 +26,7 @@ from sshpilot.preferences import PreferencesWindow
 class _Spin:
     def __init__(self, value=0):
         self._value = value
+        self._sensitive = True
 
     def get_value(self):
         return self._value
@@ -33,10 +34,14 @@ class _Spin:
     def set_value(self, value):
         self._value = value
 
+    def set_sensitive(self, sensitive):
+        self._sensitive = sensitive
+
 
 class _Switch:
     def __init__(self, active=False):
         self._active = active
+        self._sensitive = True
 
     def get_active(self):
         return self._active
@@ -44,19 +49,23 @@ class _Switch:
     def set_active(self, active):
         self._active = active
 
-    def set_sensitive(self, _sensitive):
-        pass
+    def set_sensitive(self, sensitive):
+        self._sensitive = sensitive
 
 
 class _Combo:
     def __init__(self, selected=0):
         self._selected = selected
+        self._sensitive = True
 
     def get_selected(self):
         return self._selected
 
     def set_selected(self, index):
         self._selected = index
+
+    def set_sensitive(self, sensitive):
+        self._sensitive = sensitive
 
 
 class _ServiceClient:
@@ -262,6 +271,39 @@ def test_save_without_controller_does_not_persist_daemon_fields(
     assert on_disk["ssh"]["apply_default_keepalive"] is True
     # No daemon mutation occurred, so there is no daemon runtime hook to run.
     assert expires == []
+
+
+def test_late_controller_attachment_enables_existing_ssh_override_rows(
+    tmp_path, monkeypatch
+):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 42}},
+    )
+    prefs = _make_prefs(config, None)
+    rows = (
+        prefs.connect_timeout_row,
+        prefs.connection_attempts_row,
+        prefs.keepalive_interval_row,
+        prefs.keepalive_count_row,
+        prefs.strict_host_row,
+        prefs.batch_mode_row,
+        prefs.compression_row,
+        prefs.verbosity_row,
+        prefs.debug_enabled_row,
+    )
+    for row in rows:
+        row.set_sensitive(False)
+
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+
+    prefs.set_ssh_overrides_controller(controller)
+
+    assert prefs.ssh_overrides_controller is controller
+    assert all(row._sensitive is True for row in rows)
+    assert prefs.connect_timeout_row.get_value() == 42
 
 
 # ---------------------------------------------------------------------------
