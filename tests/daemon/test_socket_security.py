@@ -105,3 +105,64 @@ def test_symlink_directory_is_refused(tmp_path):
 
     with pytest.raises(SocketSecurityError):
         prepare_socket_path(linked / "sshpilotd.sock")
+
+
+# -- ensure_private_runtime_directory ----------------------------------------
+
+
+def test_private_runtime_directory_created_with_private_mode(tmp_path):
+    """Under a lax umask a bare makedirs() would create 0755/0775 and poison
+    the shared runtime tree for the daemon's strict socket-parent gate — that
+    exact sequence (ssh_multiplex) silently broke daemon launches."""
+    from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
+
+    target = tmp_path / "sshpilot"
+    previous = os.umask(0o002)
+    try:
+        ensure_private_runtime_directory(target)
+    finally:
+        os.umask(previous)
+
+    assert target.is_dir()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
+    assert target.stat().st_uid == os.getuid()
+
+
+def test_private_runtime_directory_repairs_existing_loose_mode(tmp_path):
+    """An already-created 0775 tree must be tightened, not merely tolerated:
+    mode= in mkdir/makedirs never repairs an existing directory."""
+    from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
+
+    target = tmp_path / "sshpilot"
+    target.mkdir(mode=0o700)
+    os.chmod(target, 0o775)
+
+    ensure_private_runtime_directory(target)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o700
+
+
+def test_private_runtime_directory_refuses_symlink(tmp_path):
+    from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
+
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    linked = tmp_path / "linked"
+    linked.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(SocketSecurityError):
+        ensure_private_runtime_directory(linked)
+
+    assert stat.S_IMODE(real.stat().st_mode) == 0o700
+
+
+def test_private_runtime_directory_refuses_plain_file(tmp_path):
+    from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
+
+    target = tmp_path / "sshpilot"
+    target.write_text("not a dir", encoding="utf-8")
+
+    with pytest.raises(SocketSecurityError):
+        ensure_private_runtime_directory(target)
+
+    assert target.read_text(encoding="utf-8") == "not a dir"

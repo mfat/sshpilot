@@ -150,6 +150,13 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("daemon_quit_policy.py", "resolve_socket_path"),
         # Daemon-adjacent cleanup of stale askpass sockets.
         ("askpass_server.py", "sweep_stale_askpass_sockets"),
+        # Shared rule for the per-user runtime tree the daemon sockets,
+        # askpass sockets, and ControlMaster sockets all live under —
+        # centralizing keeps the three sites from diverging (an unguarded
+        # makedirs under a lax umask once blocked daemon launches with
+        # unsafe_socket).
+        ("askpass_server.py", "ensure_private_runtime_directory"),
+        ("ssh_multiplex.py", "ensure_private_runtime_directory"),
         # App-side daemon bootstrap / launch errors (frontend-owned boundary).
         ("main.py", "DaemonLauncher"),
         ("terminal_manager.py", "DaemonLauncher"),

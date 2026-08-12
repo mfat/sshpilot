@@ -11,7 +11,10 @@ import logging
 import os
 import subprocess
 import threading
+from pathlib import Path
 from typing import List
+
+from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +29,26 @@ def socket_dir() -> str:
 
     Prefers ``$XDG_RUNTIME_DIR/sshpilot/cm`` (tmpfs, auto-cleaned at logout); falls
     back to ``~/.ssh/sockets``. Kept short so the socket path stays under the
-    ~104-char ``sun_path`` limit once ssh appends the ``%C`` hash."""
+    ~104-char ``sun_path`` limit once ssh appends the ``%C`` hash.
+
+    The runtime-dir branch shares ``$XDG_RUNTIME_DIR/sshpilot`` with the daemon
+    socket, whose launcher refuses a parent that is not exactly mode 0700 — so
+    both levels are enrolled in the shared private-directory rule (create with
+    0700, tighten an existing owned dir created under a loose umask) instead
+    of a bare ``makedirs``, which would be normalized by the umask to 0755/0775
+    and block the next daemon launch with ``unsafe_socket``.
+    """
     runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = os.path.join(runtime, "sshpilot", "cm") if runtime \
-        else os.path.expanduser("~/.ssh/sockets")
+    if runtime:
+        root = os.path.join(runtime, "sshpilot")
+        base = os.path.join(root, "cm")
+        try:
+            ensure_private_runtime_directory(Path(root))
+            ensure_private_runtime_directory(Path(base))
+        except OSError:
+            pass
+        return base
+    base = os.path.expanduser("~/.ssh/sockets")
     try:
         os.makedirs(base, exist_ok=True)
     except OSError:

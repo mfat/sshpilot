@@ -70,6 +70,43 @@ def ensure_secure_socket_directory(path: Path) -> None:
         raise SocketSecurityError("The daemon socket directory must use mode 0700")
 
 
+def ensure_private_runtime_directory(path: Path) -> None:
+    """Create or tighten ``path`` itself as an owned mode-0700 directory.
+
+    The shared rule for the per-user runtime tree (``$XDG_RUNTIME_DIR/sshpilot``
+    and its ``cm`` child), used by the daemon, the askpass prompt server, and
+    SSH ControlMaster socket placement. Unlike
+    :func:`ensure_secure_socket_directory` — the daemon's strict launch gate,
+    which only *rejects* wrong modes — this repairs an already-created
+    directory back to 0700, but only after confirming it is a real directory
+    owned by the current user, so a misplaced ``makedirs`` under a loose umask
+    cannot poison the tree or the launcher's validation.
+    """
+
+    try:
+        path.lstat()
+        created = False
+    except FileNotFoundError:
+        try:
+            # OSError from here (read-only runtime, racy parent removal)
+            # propagates unchanged so soft-fail callers keep their contract.
+            path.mkdir(mode=0o700, parents=False, exist_ok=False)
+            created = True
+        except FileExistsError:
+            # A concurrent creator won; validate it as pre-existing.
+            created = False
+    if created:
+        os.chmod(path, 0o700)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise SocketSecurityError("The runtime path must be a real directory")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise SocketSecurityError("The runtime directory has the wrong owner")
+    if stat.S_IMODE(info.st_mode) != 0o700:
+        # Ownership and type are verified, so tightening is safe.
+        os.chmod(path, 0o700, follow_symlinks=False)
+
+
 def validate_client_socket_path(path: Path) -> bool:
     """Validate a client endpoint without unlinking it.
 

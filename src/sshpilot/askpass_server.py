@@ -32,6 +32,9 @@ import json
 import logging
 import os
 import secrets
+from pathlib import Path
+
+from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
 
 import gi
 
@@ -65,8 +68,10 @@ class AskpassPromptServer:
         )
         base = os.path.join(runtime_dir, "sshpilot")
         try:
-            os.makedirs(base, exist_ok=True)
-            os.chmod(base, 0o700)
+            # Shared with the daemon socket and ControlMaster sockets: enroll
+            # the directory in the same type/ownership-validated 0700 rule
+            # (which also repairs a loose-mode dir created under a lax umask).
+            ensure_private_runtime_directory(Path(base))
         except Exception as exc:
             logger.warning("askpass server: cannot prepare runtime dir: %s", exc)
             return
