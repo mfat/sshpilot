@@ -454,12 +454,29 @@ class SSHConfigAdvancedTab(Gtk.Box):
             self.empty_label.set_visible(True)
         else:
             self.update_config_preview()
+
+        self._update_parent_connection()
+        self._notify_parent_session_type_changed()
             
     def on_entry_changed(self, widget, pspec=None):
         """Handle entry text changes"""
         self.update_config_preview()
         # Update the parent connection object if we're editing
         self._update_parent_connection()
+        self._notify_parent_session_type_changed()
+
+    def _notify_parent_session_type_changed(self):
+        """Notify the dialog when the Advanced SessionType entry changes."""
+        try:
+            callback = getattr(
+                self.parent_dialog,
+                '_sync_session_type_toggle_from_advanced',
+                None,
+            )
+            if callable(callback):
+                callback()
+        except Exception:
+            logger.debug("Failed to synchronize SessionType toggle", exc_info=True)
         
     def on_value_entry_activate(self, entry, row_grid):
         """Handle Enter key press in value entry - move to next row or add new one"""
@@ -496,6 +513,49 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 entries.append((key, value))
                 
         return entries
+
+    def get_option(self, keyword):
+        """Return the first value for an extra SSH option, if configured."""
+        wanted = str(keyword or '').strip().lower()
+        if not wanted:
+            return None
+        for key, value in self.get_config_entries():
+            if key.strip().lower() == wanted:
+                return value
+        return None
+
+    def set_option(self, keyword, value):
+        """Set one extra SSH option, removing case-insensitive duplicates."""
+        keyword = str(keyword or '').strip()
+        value = str(value or '').strip()
+        if not keyword or not value:
+            return
+
+        wanted = keyword.lower()
+        entries = [
+            (key, entry_value)
+            for key, entry_value in self.get_config_entries()
+            if key.strip().lower() != wanted
+        ]
+        entries.append((keyword, value))
+        self.set_config_entries(entries)
+
+    def remove_option(self, keyword, value=None):
+        """Remove an extra SSH option, optionally matching its value too."""
+        wanted = str(keyword or '').strip().lower()
+        wanted_value = None if value is None else str(value).strip().lower()
+        if not wanted:
+            return
+
+        entries = [
+            (key, entry_value)
+            for key, entry_value in self.get_config_entries()
+            if not (
+                key.strip().lower() == wanted
+                and (wanted_value is None or entry_value.strip().lower() == wanted_value)
+            )
+        ]
+        self.set_config_entries(entries)
         
     def set_config_entries(self, entries):
         """Set config entries from saved data"""
@@ -1500,6 +1560,7 @@ class ConnectionDialog(
             self.split_original_nickname = ''
 
         self._loading_connection_data = False
+        self._session_type_syncing = False
         self._active_key_path: Optional[str] = None
 
         # Daemon editor-snapshot state.  A daemon edit is gated on the
@@ -1601,6 +1662,7 @@ class ConnectionDialog(
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
+        self._wire_session_type_toggle()
 
         # Wake on LAN on its own page (built by build_connection_groups above).
         wol_page = _page_box()
@@ -1614,6 +1676,50 @@ class ConnectionDialog(
             ("advanced", _("Advanced"), advanced_page),
             ("wol", _("Wake on LAN"), wol_page),
         ]
+
+    def _wire_session_type_toggle(self):
+        """Connect the forwarding-only switch to Advanced SessionType."""
+        self.port_forwarding_only_row.connect(
+            "notify::active", self._on_session_type_toggle_changed
+        )
+        self._sync_session_type_toggle_from_advanced()
+
+    def _sync_session_type_toggle_from_advanced(self):
+        """Reflect Advanced ``SessionType none`` in the forwarding switch."""
+        if getattr(self, '_session_type_syncing', False):
+            return
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        toggle = getattr(self, 'port_forwarding_only_row', None)
+        if advanced_tab is None or toggle is None:
+            return
+
+        value = advanced_tab.get_option('SessionType')
+        active = isinstance(value, str) and value.strip().lower() == 'none'
+        self._session_type_syncing = True
+        try:
+            if toggle.get_active() != active:
+                toggle.set_active(active)
+        finally:
+            self._session_type_syncing = False
+
+    def _on_session_type_toggle_changed(self, row, pspec=None):
+        """Write/remove only ``SessionType none`` when the switch changes."""
+        if getattr(self, '_session_type_syncing', False):
+            return
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        if advanced_tab is None:
+            return
+
+        self._session_type_syncing = True
+        try:
+            if row.get_active():
+                advanced_tab.set_option('SessionType', 'none')
+            else:
+                value = advanced_tab.get_option('SessionType')
+                if isinstance(value, str) and value.strip().lower() == 'none':
+                    advanced_tab.remove_option('SessionType', 'none')
+        finally:
+            self._session_type_syncing = False
 
     # Wider than Adw.PreferencesPage's 600 so the dialog doesn't feel empty;
     # only reins in content on very wide windows.
@@ -2911,6 +3017,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         x11_group = Adw.PreferencesGroup(title=_("X11 Forwarding"))
         x11_group.add(self.x11_row)
+
+        # SessionType none / ssh -N is exposed here as a convenience, while
+        # remaining stored in the shared Advanced SSH option list.
+        self.port_forwarding_only_row = Adw.SwitchRow(
+            title=_("Don't execute any remote command (ssh -N flag)"),
+            subtitle=_("Do not start a remote shell or command (SessionType none)"),
+        )
+        forwarding_only_group = Adw.PreferencesGroup(
+            title=_("Session"),
+            description=_(
+                "Keep the connection open for port forwarding without starting a session"
+            ),
+        )
+        forwarding_only_group.add(self.port_forwarding_only_row)
         
         # Port Forwarding Rules Group
         rules_group = Adw.PreferencesGroup(
@@ -2975,7 +3095,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
 
         # Return groups for PreferencesPage: Port forwarding first, about, X11 last
-        return [rules_group, about_group, x11_group]
+        return [rules_group, forwarding_only_group, about_group, x11_group]
 
     def build_commands_group(self):
         """Build PreferencesGroup for configuring connection commands"""
