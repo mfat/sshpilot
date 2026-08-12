@@ -316,6 +316,7 @@ def test_scp_download_browser_presents_sftp_handshake_password(monkeypatch):
     monkeypatch.setattr(
         dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
     )
+    _patch_browser_widgets(monkeypatch)
     presented = _recording_dialogs(monkeypatch)
     client = _SftpBrowserClient(_sftp_capabilities())
     bridge = _SftpSyncBridge()
@@ -367,6 +368,7 @@ def test_scp_download_browser_handshake_prompt_event_path(monkeypatch):
     monkeypatch.setattr(
         dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
     )
+    _patch_browser_widgets(monkeypatch)
     presented = _recording_dialogs(monkeypatch)
     client = _SftpBrowserClient(_sftp_capabilities())
     bridge = _SftpSyncBridge()
@@ -443,15 +445,20 @@ class _EntryRow(_Widget):
 
 
 class _Dialog:
+    instances = []
+
     def __init__(self, parent, subtitle=""):
         del parent, subtitle
         self.content_box = _Widget()
         self.download_button = _Widget()
+        self.presented = False
+        _Dialog.instances.append(self)
 
     def connect(self, *_args):
         return None
 
     def present(self, *_args):
+        self.presented = True
         return None
 
     def set_application(self, *_args):
@@ -462,18 +469,86 @@ def _patch_browser_widgets(monkeypatch):
     import sshpilot.scp_window as scp_window_mod
     from sshpilot import icon_utils
 
+    class _ActionRow(_Widget):
+        instances = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.title = kwargs.get("title", "")
+            self.subtitle = None
+            self.remote_name = ""
+            self.remote_is_dir = False
+            self.remote_selectable = True
+            _ActionRow.instances.append(self)
+
+        def set_title(self, title):
+            self.title = title
+
+        def set_subtitle(self, subtitle):
+            self.subtitle = subtitle
+
+        def add_prefix(self, _widget):
+            return None
+
+        def set_selectable(self, selectable):
+            self.remote_selectable = selectable
+
+    class _ListBox(_Widget):
+        instances = []
+
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.children = []
+            self.selected = None
+            _ListBox.instances.append(self)
+
+        def append(self, child):
+            if self.children:
+                self.children[-1]._next = child
+            child._next = None
+            self.children.append(child)
+
+        def remove(self, child):
+            self.children.remove(child)
+            for index, current in enumerate(self.children):
+                current._next = (
+                    self.children[index + 1] if index + 1 < len(self.children) else None
+                )
+            if child is self.selected:
+                self.selected = None
+
+        def get_first_child(self):
+            return self.children[0] if self.children else None
+
+        def get_selected_row(self):
+            return self.selected
+
+        def select_row(self, row):
+            self.selected = row
+            for handler in self._handlers.get("row-selected", []):
+                handler(self, row)
+
+    def _get_next_sibling(self):
+        return getattr(self, "_next", None)
+
+    _Widget.get_next_sibling = _get_next_sibling
+
     _EntryRow.instances = []
+    _ActionRow.instances = []
+    _ListBox.instances = []
     monkeypatch.setattr(scp_window_mod, "ScpDownloadWindow", _Dialog)
     monkeypatch.setattr(scp_window_mod.Adw, "EntryRow", _EntryRow)
+    monkeypatch.setattr(scp_window_mod.Adw, "ActionRow", _ActionRow)
     monkeypatch.setattr(scp_window_mod.Adw, "PreferencesGroup", _Widget)
     monkeypatch.setattr(scp_window_mod.Adw, "Clamp", _Widget)
     monkeypatch.setattr(scp_window_mod.Gtk, "Box", _Widget)
     monkeypatch.setattr(scp_window_mod.Gtk, "Label", _Widget)
     monkeypatch.setattr(scp_window_mod.Gtk, "ScrolledWindow", _Widget)
-    monkeypatch.setattr(scp_window_mod.Gtk, "ListBox", _Widget)
+    monkeypatch.setattr(scp_window_mod.Gtk, "ListBox", _ListBox)
     monkeypatch.setattr(
         icon_utils, "new_button_from_icon_name", lambda *args, **_kwargs: _Widget()
     )
+    return _ListBox, _ActionRow
 
 
 def test_scp_browser_remote_path_row_reloads_on_entry_activated(monkeypatch):
@@ -516,11 +591,130 @@ def test_scp_browser_remote_path_row_reloads_on_entry_activated(monkeypatch):
     assert client.listed[-1] is request
 
 
+def test_scp_download_browser_is_presented_before_sftp_ready(monkeypatch):
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    _patch_browser_widgets(monkeypatch)
+    _Dialog.instances = []
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1")
+    )
+
+    assert _Dialog.instances[-1].presented is True
+    assert len(bridge.submitted) == 1
+    assert controller._sftp_browser_controller is not None
+
+
+def test_scp_download_browser_populates_large_listing_incrementally(monkeypatch):
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    _list_box_cls, action_row_cls = _patch_browser_widgets(monkeypatch)
+    import sshpilot.scp_window as scp_window_mod
+
+    pending = []
+    monkeypatch.setattr(
+        scp_window_mod.GLib, "idle_add", lambda callback, *args: pending.append(callback)
+    )
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1"),
+        "sftp-7",
+    )
+    _operation, on_success, _on_error = bridge.submitted[-1]
+    entries = [
+        SimpleNamespace(
+            name=f"file-{index}",
+            file_type=SimpleNamespace(value="file"),
+        )
+        for index in range(2000)
+    ]
+    on_success(SimpleNamespace(entries=entries))
+
+    # The original Adw.ActionRow appearance is retained, but rows are created
+    # in bounded idle batches instead of blocking GTK on one large append.
+    assert len(action_row_cls.instances) == 0
+    assert pending
+    callback = pending.pop(0)
+    if callback() == scp_window_mod.GLib.SOURCE_CONTINUE:
+        pending.append(callback)
+    assert len(action_row_cls.instances) == 50
+
+    while pending:
+        callback = pending.pop(0)
+        if callback() == scp_window_mod.GLib.SOURCE_CONTINUE:
+            pending.append(callback)
+
+    assert len(action_row_cls.instances) == 2001
+
+
+def test_scp_download_browser_ignores_stale_directory_results(monkeypatch):
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    _list_box_cls, _action_row_cls = _patch_browser_widgets(monkeypatch)
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1"),
+        "sftp-7",
+    )
+    remote_row = _EntryRow.instances[0]
+    remote_row._handlers["entry-activated"][0]()
+    assert len(bridge.submitted) == 2
+
+    stale_result = SimpleNamespace(
+        entries=[
+            SimpleNamespace(
+                name="stale.txt", file_type=SimpleNamespace(value="file")
+            )
+        ]
+    )
+    fresh_result = SimpleNamespace(
+        entries=[
+            SimpleNamespace(
+                name="fresh.txt", file_type=SimpleNamespace(value="file")
+            )
+        ]
+    )
+    _old_operation, old_success, _old_error = bridge.submitted[0]
+    _new_operation, new_success, _new_error = bridge.submitted[1]
+    old_success(stale_result)
+    new_success(fresh_result)
+    old_success(stale_result)
+
+    list_box = _list_box_cls.instances[0]
+    assert [row.remote_name for row in list_box.children] == ["..", "fresh.txt"]
+
+
 def test_scp_download_browser_presenter_never_steals_other_scopes(monkeypatch):
     """The browser presenter only claims its own SFTP service interactions."""
     monkeypatch.setattr(
         dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
     )
+    _patch_browser_widgets(monkeypatch)
     presented = _recording_dialogs(monkeypatch)
     client = _SftpBrowserClient(_sftp_capabilities())
     bridge = _SftpSyncBridge()

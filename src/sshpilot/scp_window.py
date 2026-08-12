@@ -303,75 +303,11 @@ class ScpWindowController:
                 self._show_transfer_error("Remote browsing requires the daemon SFTP service.")
                 return
             display_name = getattr(connection, "nickname", "") or getattr(connection, "host", "")
-            if _sftp_service_id is None:
-                from .sftp_service_controller import DaemonSftpServiceController
-
-                # Attach the interaction presenter before opening the SFTP
-                # service so a password/passphrase/host-key/FIDO prompt during
-                # the handshake is never missed (same wiring as
-                # DaemonSftpManager). It starts unbound; on_state_changed binds
-                # it to the public SFTP service id, and set_session()
-                # reconciles any prompt already created by then.
-                dialogs_holder = {"value": None}
-                try:
-                    from .daemon_interaction_dialogs import DaemonInteractionDialogs
-
-                    dialogs_holder["value"] = DaemonInteractionDialogs(
-                        client, bridge, self.window
-                    )
-                except Exception:
-                    logger.debug(
-                        "SCP browser interaction presenter unavailable", exc_info=True
-                    )
-                self._sftp_browser_dialogs_holder = dialogs_holder
-
-                def _on_browser_state_changed(summary):
-                    dialogs = dialogs_holder["value"]
-                    if dialogs is None:
-                        return
-                    try:
-                        from .api.models.common import SessionId
-
-                        dialogs.set_session(SessionId(str(summary.id)))
-                    except Exception:
-                        logger.debug(
-                            "SCP browser interaction presenter bind failed",
-                            exc_info=True,
-                        )
-
-                def _on_browser_error(error):
-                    dialogs = dialogs_holder["value"]
-                    dialogs_holder["value"] = None
-                    if dialogs is not None:
-                        try:
-                            dialogs.close()
-                        except Exception:
-                            logger.debug(
-                                "SCP browser interaction presenter close failed",
-                                exc_info=True,
-                            )
-                    self._sftp_browser_dialogs_holder = None
-                    self._show_transfer_error(str(error))
-
-                self._sftp_browser_controller = DaemonSftpServiceController(
-                    client,
-                    bridge,
-                    ConnectionId(str(getattr(connection, "id", ""))),
-                    on_ready=lambda summary: self._prompt_scp_download(
-                        connection, summary.id
-                    ),
-                    on_state_changed=_on_browser_state_changed,
-                    on_error=_on_browser_error,
-                )
-                self._sftp_browser_controller.open()
-                return
             sftp_service_id = _sftp_service_id
+            browser_closed = {"value": False}
+            request_generation = {"value": 0}
             default_download_dir = self._scp_download_default_dir()
             dialog = ScpDownloadWindow(self.window, subtitle=display_name)
-            dialog.connect(
-                "close-request",
-                lambda *_args: self._close_sftp_browser_controller(),
-            )
             # Prompts raised after the browser appears (e.g. a later
             # re-verification on the same SFTP service) must stack above the
             # browser dialog, not the main window.
@@ -395,6 +331,62 @@ class ScpWindowController:
                     dialog.set_application(app)
             except Exception:
                 pass
+
+            # Attach the interaction presenter before opening the SFTP service
+            # so authentication prompts are visible even while this browser is
+            # in its initial Connecting state.
+            if dialogs_holder is None:
+                dialogs_holder = {"value": None}
+                try:
+                    from .daemon_interaction_dialogs import DaemonInteractionDialogs
+
+                    dialogs_holder["value"] = DaemonInteractionDialogs(
+                        client, bridge, self.window
+                    )
+                except Exception:
+                    logger.debug(
+                        "SCP browser interaction presenter unavailable", exc_info=True
+                    )
+                self._sftp_browser_dialogs_holder = dialogs_holder
+
+            def _on_browser_state_changed(summary):
+                if browser_closed["value"]:
+                    return
+                dialogs = dialogs_holder["value"]
+                if dialogs is None:
+                    return
+                try:
+                    from .api.models.common import SessionId
+
+                    dialogs.set_session(SessionId(str(summary.id)))
+                except Exception:
+                    logger.debug(
+                        "SCP browser interaction presenter bind failed",
+                        exc_info=True,
+                    )
+
+            def _on_browser_ready(summary):
+                nonlocal sftp_service_id
+                if browser_closed["value"]:
+                    return
+                sftp_service_id = summary.id
+                _load_remote()
+
+            def _on_browser_error(error):
+                if browser_closed["value"]:
+                    return
+                self._close_sftp_browser_controller()
+                status_label.set_text(str(error))
+                refresh_button.set_sensitive(False)
+                list_box.set_sensitive(False)
+                download_button.set_sensitive(False)
+
+            def _on_dialog_close(*_args):
+                browser_closed["value"] = True
+                request_generation["value"] += 1
+                self._close_sftp_browser_controller()
+
+            dialog.connect("close-request", _on_dialog_close)
 
             from sshpilot import icon_utils
 
@@ -443,12 +435,12 @@ class ScpWindowController:
             list_box = Gtk.ListBox()
             list_box.set_selection_mode(Gtk.SelectionMode.SINGLE)
             list_box.add_css_class('boxed-list')
-            list_box.set_hexpand(True)
-            list_box.set_vexpand(True)
             try:
                 list_box.set_activate_on_single_click(False)
             except Exception:
                 pass
+            list_box.set_hexpand(True)
+            list_box.set_vexpand(True)
             scroller.set_child(list_box)
             files_box.append(scroller)
 
@@ -636,29 +628,27 @@ class ScpWindowController:
             else:
                 picker_button.connect('clicked', lambda *_: _open_destination_picker())
 
-            def _clear_list():
-                child = list_box.get_first_child()
-                while child is not None:
-                    next_child = child.get_next_sibling()
-                    list_box.remove(child)
-                    child = next_child
+            def _on_selection_changed(_list, row):
+                download_button.set_sensitive(
+                    not browser_closed["value"]
+                    and sftp_service_id is not None
+                    and row is not None
+                    and getattr(row, 'remote_selectable', True)
+                )
 
-            def _on_rows_changed(_list, row):
-                if not row:
-                    download_button.set_sensitive(False)
-                    return
-                download_button.set_sensitive(getattr(row, 'remote_selectable', True))
+            list_box.connect('row-selected', _on_selection_changed)
+            download_button.set_sensitive(False)
 
-            list_box.connect('row-selected', _on_rows_changed)
-
-            def _start_download(row: Optional[Gtk.ListBoxRow] = None):
+            def _start_download(row=None):
                 selected_row = row or list_box.get_selected_row()
-                if not selected_row:
+                if selected_row is None:
                     return
                 remote_name = getattr(selected_row, 'remote_name', '')
                 if not remote_name:
                     return
                 if not getattr(selected_row, 'remote_selectable', True):
+                    return
+                if sftp_service_id is None or browser_closed["value"]:
                     return
 
                 current_dir = _normalize_remote_path(remote_row.get_text())
@@ -726,73 +716,106 @@ class ScpWindowController:
                     direction='download',
                 )
 
-            def _populate_list(entries: List[Tuple[str, bool]], directory: str, error_message: Optional[str]):
-                _clear_list()
+            def _make_remote_row(name: str, is_directory: bool, selectable: bool = True):
+                row = Adw.ActionRow(title=name)
+                if name == '..':
+                    row.set_subtitle(_('Parent directory'))
+                    icon_name = 'go-up-symbolic'
+                elif is_directory:
+                    row.set_subtitle(_('Directory'))
+                    icon_name = 'folder-symbolic'
+                else:
+                    icon_name = 'text-x-generic-symbolic'
+                row.add_prefix(icon_utils.new_image_from_icon_name(icon_name))
+                row.set_activatable(True)
+                row.remote_name = name
+                row.remote_is_dir = is_directory
+                row.remote_selectable = selectable
+                try:
+                    row.set_selectable(selectable)
+                except Exception:
+                    pass
+                return row
+
+            def _populate_list(
+                entries: List[Tuple[str, bool]],
+                directory: str,
+                error_message: Optional[str],
+                generation: int,
+            ):
+                child = list_box.get_first_child()
+                while child is not None:
+                    next_child = child.get_next_sibling()
+                    list_box.remove(child)
+                    child = next_child
                 current_dir = _normalize_remote_path(directory)
 
                 if error_message:
                     status_label.set_text(error_message)
+                    list_box.set_sensitive(True)
                     download_button.set_sensitive(False)
                     return
 
+                row_specs = []
                 parent_dir = _remote_parent(current_dir)
                 if parent_dir is not None:
-                    parent_row = Adw.ActionRow(title='..')
-                    parent_row.set_subtitle(_('Parent directory'))
-                    parent_row.add_prefix(
-                        icon_utils.new_image_from_icon_name('go-up-symbolic')
-                    )
-                    try:
-                        parent_row.set_selectable(False)
-                        parent_row.set_activatable(True)
-                    except Exception:
-                        pass
-                    setattr(parent_row, 'remote_name', '..')
-                    setattr(parent_row, 'remote_is_dir', True)
-                    setattr(parent_row, 'remote_selectable', False)
-                    list_box.append(parent_row)
+                    row_specs.append(('..', True, False))
+                row_specs.extend(
+                    (entry_name, is_dir, True) for entry_name, is_dir in entries
+                )
 
-                if not entries:
-                    status_label.set_text(
-                        _('No entries found for {path}.').format(path=current_dir)
-                    )
-                    download_button.set_sensitive(False)
-                    return
+                cursor = {'value': 0}
+                chunk_size = 50
 
-                for entry_name, is_dir in entries:
-                    row = Adw.ActionRow(title=entry_name)
-                    # ActionRow defaults to non-activatable; without this,
-                    # ListBox never emits row-activated on double-click.
-                    row.set_activatable(True)
-                    if is_dir:
-                        row.set_subtitle(_('Directory'))
-                        row.add_prefix(
-                            icon_utils.new_image_from_icon_name('folder-symbolic')
+                def _append_chunk():
+                    if (
+                        browser_closed["value"]
+                        or generation != request_generation["value"]
+                    ):
+                        return GLib.SOURCE_REMOVE
+
+                    start = cursor['value']
+                    end = min(start + chunk_size, len(row_specs))
+                    for name, is_directory, selectable in row_specs[start:end]:
+                        list_box.append(
+                            _make_remote_row(name, is_directory, selectable)
                         )
+                    cursor['value'] = end
+
+                    if list_box.get_selected_row() is None:
+                        candidate = list_box.get_first_child()
+                        while candidate is not None:
+                            if getattr(candidate, 'remote_selectable', True):
+                                list_box.select_row(candidate)
+                                break
+                            candidate = candidate.get_next_sibling()
+
+                    if end < len(row_specs):
+                        return GLib.SOURCE_CONTINUE
+
+                    if entries:
+                        status_label.set_text(_('Select an item to download.'))
                     else:
-                        row.add_prefix(
-                            icon_utils.new_image_from_icon_name(
-                                'text-x-generic-symbolic'
-                            )
+                        status_label.set_text(
+                            _('No entries found for {path}.').format(path=current_dir)
                         )
-                    setattr(row, 'remote_name', entry_name)
-                    setattr(row, 'remote_is_dir', is_dir)
-                    setattr(row, 'remote_selectable', True)
-                    list_box.append(row)
+                    list_box.set_sensitive(True)
+                    _on_selection_changed(list_box, list_box.get_selected_row())
+                    return GLib.SOURCE_REMOVE
 
-                status_label.set_text(_('Select an item to download.'))
-                try:
-                    candidate = list_box.get_first_child()
-                    while candidate is not None:
-                        if getattr(candidate, 'remote_selectable', True):
-                            list_box.select_row(candidate)
-                            break
-                        candidate = candidate.get_next_sibling()
-                except Exception:
-                    pass
+                GLib.idle_add(_append_chunk)
 
             def _load_remote():
+                if browser_closed["value"]:
+                    return
+                if sftp_service_id is None:
+                    status_label.set_text(_('Connecting…'))
+                    list_box.set_sensitive(False)
+                    download_button.set_sensitive(False)
+                    return
                 directory = remote_row.get_text().strip() or "."
+                request_generation["value"] += 1
+                generation = request_generation["value"]
                 status_label.set_text(_('Loading…'))
                 refresh_button.set_sensitive(False)
                 list_box.set_sensitive(False)
@@ -808,15 +831,22 @@ class ScpWindowController:
                     )
                     bridge.submit(
                         lambda: client.sftp_list_directory(request),
-                        on_success=lambda result: _on_remote_loaded(result, directory),
-                        on_error=lambda error: _on_remote_failed(error),
+                        on_success=lambda result: _on_remote_loaded(
+                            result, directory, generation
+                        ),
+                        on_error=lambda error: _on_remote_failed(error, generation),
                     )
                 except (TypeError, ValueError) as error:
-                    _on_remote_failed(error)
+                    _on_remote_failed(error, generation)
                 except RuntimeError as error:
-                    _on_remote_failed(error)
+                    _on_remote_failed(error, generation)
 
-            def _on_remote_loaded(result, directory):
+            def _on_remote_loaded(result, directory, generation):
+                if (
+                    browser_closed["value"]
+                    or generation != request_generation["value"]
+                ):
+                    return
                 entries = [
                     (
                         entry.name,
@@ -824,19 +854,19 @@ class ScpWindowController:
                     )
                     for entry in result.entries
                 ]
-                _populate_list(entries, directory, None)
+                _populate_list(entries, directory, None, generation)
                 refresh_button.set_sensitive(True)
-                list_box.set_sensitive(True)
-                selected_row = list_box.get_selected_row()
-                if selected_row is not None:
-                    download_button.set_sensitive(
-                        getattr(selected_row, 'remote_selectable', True)
-                    )
 
-            def _on_remote_failed(error):
-                _populate_list([], remote_row.get_text().strip() or ".", str(error))
+            def _on_remote_failed(error, generation):
+                if (
+                    browser_closed["value"]
+                    or generation != request_generation["value"]
+                ):
+                    return
+                _populate_list(
+                    [], remote_row.get_text().strip() or ".", str(error), generation
+                )
                 refresh_button.set_sensitive(True)
-                list_box.set_sensitive(True)
                 download_button.set_sensitive(False)
 
             def _refresh():
@@ -851,8 +881,8 @@ class ScpWindowController:
             remote_row.connect('entry-activated', lambda *_: _refresh())
             download_button.connect('clicked', lambda *_: _start_download())
 
-            def _on_row_activated(_box, row):
-                if not row:
+            def _on_item_activated(_box, row):
+                if row is None:
                     return
                 remote_name = getattr(row, 'remote_name', '')
                 if not remote_name:
@@ -868,13 +898,26 @@ class ScpWindowController:
                     new_dir = _remote_join(current_dir, remote_name)
                     remote_row.set_text(new_dir)
                     _refresh()
-                else:
-                    list_box.select_row(row)
 
-            list_box.connect('row-activated', _on_row_activated)
+            list_box.connect('row-activated', _on_item_activated)
 
             dialog.present()
-            _load_remote()
+            if sftp_service_id is None:
+                status_label.set_text(_('Connecting…'))
+                list_box.set_sensitive(False)
+                from .sftp_service_controller import DaemonSftpServiceController
+
+                self._sftp_browser_controller = DaemonSftpServiceController(
+                    client,
+                    bridge,
+                    ConnectionId(str(getattr(connection, "id", ""))),
+                    on_ready=_on_browser_ready,
+                    on_state_changed=_on_browser_state_changed,
+                    on_error=_on_browser_error,
+                )
+                self._sftp_browser_controller.open()
+            else:
+                _load_remote()
         except Exception as e:
             logger.error(f'SCP download prompt failed: {e}')
 
