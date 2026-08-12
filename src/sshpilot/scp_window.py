@@ -716,6 +716,8 @@ class ScpWindowController:
                     direction='download',
                 )
 
+            from .file_type_icons import get_icon_for_name
+
             def _make_remote_row(name: str, is_directory: bool, selectable: bool = True):
                 row = Adw.ActionRow(title=name)
                 if name == '..':
@@ -723,9 +725,9 @@ class ScpWindowController:
                     icon_name = 'go-up-symbolic'
                 elif is_directory:
                     row.set_subtitle(_('Directory'))
-                    icon_name = 'folder-symbolic'
+                    icon_name = get_icon_for_name(name, True)
                 else:
-                    icon_name = 'text-x-generic-symbolic'
+                    icon_name = get_icon_for_name(name, False)
                 row.add_prefix(icon_utils.new_image_from_icon_name(icon_name))
                 row.set_activatable(True)
                 row.remote_name = name

@@ -488,7 +488,7 @@ def _patch_browser_widgets(monkeypatch):
             self.subtitle = subtitle
 
         def add_prefix(self, _widget):
-            return None
+            self.prefix = _widget
 
         def set_selectable(self, selectable):
             self.remote_selectable = selectable
@@ -662,6 +662,54 @@ def test_scp_download_browser_populates_large_listing_incrementally(monkeypatch)
             pending.append(callback)
 
     assert len(action_row_cls.instances) == 2001
+
+
+def test_scp_download_browser_uses_file_manager_icons(monkeypatch):
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    _list_box_cls, _action_row_cls = _patch_browser_widgets(monkeypatch)
+    from sshpilot import icon_utils
+
+    monkeypatch.setattr(
+        icon_utils,
+        "new_image_from_icon_name",
+        lambda name, **_kwargs: SimpleNamespace(name=name),
+    )
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1"),
+        "sftp-7",
+    )
+    _operation, on_success, _on_error = bridge.submitted[-1]
+    on_success(
+        SimpleNamespace(
+            entries=[
+                SimpleNamespace(
+                    name="src", file_type=SimpleNamespace(value="directory")
+                ),
+                SimpleNamespace(
+                    name="build.py", file_type=SimpleNamespace(value="file")
+                ),
+                SimpleNamespace(
+                    name="photo.png", file_type=SimpleNamespace(value="file")
+                ),
+            ]
+        )
+    )
+
+    rows = _list_box_cls.instances[0].children
+    assert rows[0].prefix.name == "go-up-symbolic"
+    assert rows[1].prefix.name == "inode-directory"
+    assert rows[2].prefix.name == "text-x-script"
+    assert rows[3].prefix.name == "image-x-generic"
 
 
 def test_scp_download_browser_ignores_stale_directory_results(monkeypatch):
