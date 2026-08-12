@@ -266,8 +266,10 @@ class RemoteFileEditorWindow(Adw.Window):
         header_bar.pack_end(self._save_button)
 
         # "Edit as root" toggle — remote files only. Reads/saves the file via
-        # sudo over the same SSH/auth path (see _on_root_toggled).
-        if not self._is_local and self._sftp_manager is not None:
+        # sudo over the same SSH/auth path (see _on_root_toggled). Hidden for
+        # a root login: elevation is meaningless there, and the sudo path can
+        # fail confusingly (e.g. sudo not installed on the host).
+        if not self._is_local and self._root_editing_applicable():
             self._root_button = Gtk.ToggleButton(label=_("Edit as root"))
             self._root_button.set_tooltip_text(
                 _("Re-read and save this file as root (sudo)"))
@@ -1226,6 +1228,23 @@ class RemoteFileEditorWindow(Adw.Window):
                 or "operation not permitted" in low)
 
     @staticmethod
+    def _remote_username(manager: Any) -> str:
+        """Best-effort remote login name from the SFTP manager.
+
+        The manager's username reflects the *resolved* SSH identity (the
+        connection profile username, which for config-derived connections is
+        the ``User`` directive or the local username default)."""
+        username = getattr(manager, "username", "") if manager is not None else ""
+        return str(username or "").strip()
+
+    def _remote_user_is_root(self) -> bool:
+        return self._remote_username(self._sftp_manager) == "root"
+
+    def _root_editing_applicable(self) -> bool:
+        """Whether the 'Edit as root' affordances should exist at all."""
+        return not self._is_local and self._sftp_manager is not None and not self._remote_user_is_root()
+
+    @staticmethod
     def _is_permission_denied_error(exc: object) -> bool:
         """True when a daemon error means the login user cannot write the file.
 
@@ -1348,6 +1367,10 @@ class RemoteFileEditorWindow(Adw.Window):
 
     def _root_read_loaded(self, result: object) -> None:
         self._daemon_file_revision = getattr(result, "revision", "")
+        if getattr(result, "exists", True) is False:
+            self._cancel_root_mode()
+            self._show_error("The remote file no longer exists.")
+            return
         try:
             content = getattr(result, "content", "") or ""
             with open(self._temp_file, "wb") as f:

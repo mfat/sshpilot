@@ -451,7 +451,10 @@ def test_backup_command_failure_is_not_classified_as_password_problem():
 
 def test_password_auth_command_failure_is_not_retried_as_wrong_password():
     """When a password-authenticated sudo command itself fails (disk full),
-    the failure must be reported once and not retried as a wrong password."""
+    the failure must be reported once and not retried as a wrong password.
+
+    The backup command resolves the sudo password once and the write reuses
+    it through the operation-scoped context, so only a single prompt happens."""
     def script(argv, data):
         joined = " ".join(argv)
         if "sudo -n -- cat" in joined:
@@ -468,12 +471,12 @@ def test_password_auth_command_failure_is_not_retried_as_wrong_password():
             return 1, b"", b"tee: /etc/something: No space left on device"
         raise AssertionError(f"unexpected command: {joined}")
 
-    broker = _Broker([_BrokerResult(secret=b"pw"), _BrokerResult(secret=b"pw")])
+    broker = _Broker([_BrokerResult(secret=b"pw")])
     service, _, broker_used = _service(script, broker=broker)
     with pytest.raises(SshPilotError) as raised:
         _replace(service, payload=b"new\n")
     assert raised.value.code is ErrorCode.REMOTE_COMMAND_FAILED
-    assert len(broker_used.created) == 2
+    assert len(broker_used.created) == 1
 
 
 def test_oversized_privileged_read_raises_typed_error_and_kills_process():
@@ -674,3 +677,175 @@ def test_real_subprocess_filling_stderr_does_not_deadlock():
         service._read_bounded(process, None, MAX_READ_BYTES, CONNECTION_ID)
     assert time.monotonic() - started < 10.0
     assert process.poll() is not None
+
+
+@pytest.mark.parametrize(
+    "returncode,stderr,expected",
+    [
+        (127, b"sh: sudo: command not found", True),
+        (127, b"sh: 1: sudo: not found", True),
+        (1, b"sudo: sorry, you must have a tty to run sudo", True),
+        (1, b"sudo: a password is required", False),
+        (1, b"sudo: command not found", True),
+        (0, b"", False),
+    ],
+)
+def test_is_sudo_unavailable(returncode, stderr, expected):
+    from sshpilot.daemon.privileged_file_service import _is_sudo_unavailable
+
+    assert _is_sudo_unavailable(returncode, stderr) is expected
+
+
+def test_sudo_missing_read_reports_unsupported_not_missing():
+    """'sudo: command not found' (exit 127) must not classify a read as an
+    absent file — that would surface an empty editor instead of an error."""
+    def script(_argv, _data):
+        return 127, b"", b"sh: sudo: command not found"
+
+    service, _, _ = _service(script)
+    with pytest.raises(SshPilotError) as raised:
+        _read(service)
+    assert raised.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+
+
+def test_sudo_missing_write_reports_unsupported():
+    def script(argv, data):
+        joined = " ".join(argv)
+        if "sudo -n -- cat" in joined:
+            return 0, b"old\n", b""
+        if "sudo -n -- tee" in joined:
+            return 127, b"", b"sh: sudo: command not found"
+        raise AssertionError(f"unexpected command: {joined}")
+
+    service, _, _ = _service(script)
+    with pytest.raises(SshPilotError) as raised:
+        _replace(service, backup=False)
+    assert raised.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+
+
+def test_sudo_commands_force_c_locale():
+    def script(_argv, _data):
+        return 0, b"root content\n", b""
+
+    service, calls, _ = _service(script)
+    _read(service)
+    assert len(calls) == 1
+    command = calls[0][0][-1]
+    assert command.startswith("env LC_ALL=C sudo -n")
+    assert "cat -- /etc/something" in command
+
+
+def test_password_host_save_prompts_once_for_read_backup_write():
+    """The three sudo invocations of one replace() share one in-memory
+    password context, so a password host prompts exactly once per save."""
+    stdin_sets = []
+    created_broker = _Broker(
+        [_BrokerResult(secret=b"pw", remember_policy=RememberPolicy.DO_NOT_STORE)]
+    )
+
+    def script(argv, data):
+        joined = " ".join(argv)
+        if "sudo -n -- cat" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- cat" in joined:
+            assert data == b"pw\n"
+            return 0, b"old\n", b""
+        if "sudo -n -- sh" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- sh" in joined:
+            stdin_sets.append(data)
+            assert data == b"pw\n"
+            return 0, b"", b""
+        if "sudo -n -- tee" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- tee" in joined:
+            stdin_sets.append(data)
+            assert data == b"pw\nnew\n"
+            return 0, b"", b""
+        raise AssertionError(f"unexpected command: {joined}")
+
+    service, calls, _ = _service(script, broker=created_broker)
+    result = _replace(service, payload=b"new\n")
+
+    assert len(created_broker.created) == 1
+    assert result.revision == hashlib.sha256(b"new\n").hexdigest()
+    assert len(calls) == 6  # 3 operations × (passwordless + password attempt)
+
+
+def test_password_host_save_with_stored_password_skips_reprompt():
+    """A stored sudo password resolves once in the re-read and is then reused
+    for the backup/write without extra keyring lookups or prompts."""
+    lookups = []
+
+    def script(argv, data):
+        joined = " ".join(argv)
+        if "sudo -n -- cat" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- cat" in joined:
+            assert data == b"storedpw\n"
+            return 0, b"old\n", b""
+        if "sudo -n -- sh" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- sh" in joined:
+            assert data == b"storedpw\n"
+            return 0, b"", b""
+        if "sudo -n -- tee" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- tee" in joined:
+            assert data == b"storedpw\nnew\n"
+            return 0, b"", b""
+        raise AssertionError(f"unexpected command: {joined}")
+
+    broker = _Broker()
+    service, _, broker_used = _service(
+        script, broker=broker, lookup=lambda _h, _u: (lookups.append(1) or "storedpw")
+    )
+    result = _replace(service, payload=b"new\n")
+
+    assert len(lookups) == 1
+    assert broker_used.created == []
+    assert result.size == len(b"new\n")
+
+
+def test_wrong_context_password_is_cleared_and_reprompted():
+    """A context-cached password that suddenly fails (e.g. changed on the
+    host) is evicted from the context and the user re-prompted, never looped."""
+    backup_passwordless = {"hit": False}
+    backup_stdin = []
+
+    def script(argv, data):
+        joined = " ".join(argv)
+        if "sudo -n -- cat" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- cat" in joined:
+            assert data == b"pw1\n"
+            return 0, b"old\n", b""
+        if "sudo -n -- sh" in joined:
+            backup_passwordless["hit"] = True
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- sh" in joined:
+            backup_stdin.append(data)
+            if len(backup_stdin) == 1:
+                assert data == b"pw1\n"
+                return 1, b"", b"Sorry, try again."
+            assert data == b"pw2\n"
+            return 0, b"", b""
+        if "sudo -n -- tee" in joined:
+            return 1, b"", b"sudo: a password is required"
+        if "sudo -S -p '' -- tee" in joined:
+            assert data == b"pw2\nnew\n"
+            return 0, b"", b""
+        raise AssertionError(f"unexpected command: {joined}")
+
+    broker = _Broker(
+        [
+            _BrokerResult(secret=b"pw1"),
+            _BrokerResult(secret=b"pw2"),
+        ]
+    )
+    service, _, broker_used = _service(script, broker=broker)
+    result = _replace(service, payload=b"new\n")
+
+    assert result.revision == hashlib.sha256(b"new\n").hexdigest()
+    assert len(broker_used.created) == 2
+    assert backup_passwordless["hit"] is True

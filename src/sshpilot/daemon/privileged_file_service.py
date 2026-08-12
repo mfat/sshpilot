@@ -20,6 +20,14 @@ an existing root-owned file are preserved without the daemon needing to know
 them. Replacement is revision-safe: the daemon re-reads the authoritative
 current content (through sudo), compares ``expected_revision``, and refuses to
 write on ``FILE_REVISION_CONFLICT`` — the caller holds the per-target lock.
+
+The sudo stderr contract is kept locale-stable by prefixing every remote
+command with ``env LC_ALL=C``, so the password-required / wrong-password /
+denied classification does not depend on the host's language. A single
+``replace()`` (its re-read, backup, and write are separate SSH sessions) reuses
+one in-memory sudo password so a password host prompts once per save, and a host
+without usable sudo (``sudo: command not found``) fails fast with
+``UNSUPPORTED_CAPABILITY`` instead of a misleading "missing file".
 """
 
 from __future__ import annotations
@@ -71,6 +79,29 @@ _NOT_FOUND_MARKERS = (
     "no such file",
     "not found",
 )
+_SUDO_UNAVAILABLE_MARKERS = (
+    "sudo: command not found",
+    "sudo: not found",
+    "must have a tty to run sudo",
+)
+
+
+class _SudoPasswordContext:
+    """In-memory sudo password reuse scoped to one ``replace()`` call.
+
+    A single save runs up to three sudo invocations (the authoritative
+    re-read, the ``cp -a`` backup, and the ``tee`` write) as separate SSH
+    sessions, so sudo's own credential timestamp never carries between them.
+    Reusing the just-validated password for the sibling commands spares the
+    user one prompt per extra invocation. The value lives only in daemon
+    memory for the duration of the operation — it is never logged, persisted,
+    or sent anywhere except the ssh child's stdin.
+    """
+
+    __slots__ = ("password",)
+
+    def __init__(self) -> None:
+        self.password: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -105,12 +136,12 @@ class _PromptResult:
 
 def _sudo_read_command(path: str, *, passwordless: bool) -> str:
     sudo = "sudo -n" if passwordless else "sudo -S -p ''"
-    return f"{sudo} -- {_SUDO_READ_HEAD} -- {shlex.quote(path)}"
+    return f"env LC_ALL=C {sudo} -- {_SUDO_READ_HEAD} -- {shlex.quote(path)}"
 
 
 def _sudo_write_command(path: str, *, passwordless: bool) -> str:
     sudo = "sudo -n" if passwordless else "sudo -S -p ''"
-    return f"{sudo} -- {_SUDO_WRITE_HEAD} -- {shlex.quote(path)} > /dev/null"
+    return f"env LC_ALL=C {sudo} -- {_SUDO_WRITE_HEAD} -- {shlex.quote(path)} > /dev/null"
 
 
 def _sudo_backup_command(path: str, backup_path: str, *, passwordless: bool) -> str:
@@ -121,7 +152,7 @@ def _sudo_backup_command(path: str, backup_path: str, *, passwordless: bool) -> 
     """
     sudo = "sudo -n" if passwordless else "sudo -S -p ''"
     return (
-        f"{sudo} -- sh -c 'cp -a -- \"$1\" \"$2\"' sh "
+        f"env LC_ALL=C {sudo} -- sh -c 'cp -a -- \"$1\" \"$2\"' sh "
         f"{shlex.quote(path)} {shlex.quote(backup_path)}"
     )
 
@@ -149,10 +180,34 @@ def _is_missing(stderr: bytes) -> bool:
     return any(marker in text for marker in _NOT_FOUND_MARKERS)
 
 
+def _is_sudo_unavailable(returncode: int, stderr: bytes) -> bool:
+    """True when sudo itself cannot run on the host.
+
+    Covers sudo not being installed (the remote shell reports
+    ``sudo: command not found`` with exit 127) and the legacy ``requiretty``
+    policy that rejects the non-interactive SSH channel. Must be classified
+    *before* the missing-file markers: ``sudo: command not found`` contains
+    "not found", so treating it as an absent file would silently surface a
+    privileged read as an empty document instead of a typed error.
+    """
+    if returncode == 127:
+        return True
+    text = (stderr or b"").decode("utf-8", errors="replace").lower()
+    return any(marker in text for marker in _SUDO_UNAVAILABLE_MARKERS)
+
+
 def _denied_error(connection_id: ConnectionId) -> SshPilotError:
     return SshPilotError(
         ErrorCode.REMOTE_PERMISSION_DENIED,
         "The user is not allowed to run sudo on this host",
+        connection_id=connection_id,
+    )
+
+
+def _sudo_unavailable_error(connection_id: ConnectionId) -> SshPilotError:
+    return SshPilotError(
+        ErrorCode.UNSUPPORTED_CAPABILITY,
+        "sudo is unavailable on this host",
         connection_id=connection_id,
     )
 
@@ -216,6 +271,27 @@ class PrivilegedFileService:
     ) -> PrivilegedFileContent:
         """Read ``path`` as root. Passwordless sudo is attempted first; a
         stored sudo password is tried next; then a protected prompt."""
+        return self._read_content(
+            connection_id=connection_id,
+            scope_id=scope_id,
+            hostname=hostname,
+            username=username,
+            port=port,
+            path=path,
+            password_context=None,
+        )
+
+    def _read_content(
+        self,
+        *,
+        connection_id: ConnectionId,
+        scope_id: SessionId,
+        hostname: str,
+        username: str,
+        port: int,
+        path: str,
+        password_context: Optional[_SudoPasswordContext],
+    ) -> PrivilegedFileContent:
         result = self._execute(
             connection_id,
             scope_id,
@@ -226,6 +302,7 @@ class PrivilegedFileService:
             port=port,
             allow_missing=True,
             read_limit=self._max_read_bytes,
+            password_context=password_context,
         )
         if not result.exists:
             return PrivilegedFileContent(content=b"", exists=False, mode=None)
@@ -248,15 +325,19 @@ class PrivilegedFileService:
 
         The caller holds the per-target lock covering this authoritative read,
         revision comparison, backup, and write. ``sudo tee`` preserves an
-        existing file's owner/mode by writing through its inode.
+        existing file's owner/mode by writing through its inode. The read,
+        backup, and write share one in-memory password context so a password
+        host prompts once per save instead of once per sudo invocation.
         """
-        current = self.read(
+        password_context = _SudoPasswordContext()
+        current = self._read_content(
             connection_id=connection_id,
             scope_id=scope_id,
             hostname=hostname,
             username=username,
             port=port,
             path=path,
+            password_context=password_context,
         )
         if not current.exists:
             raise SshPilotError(
@@ -284,6 +365,7 @@ class PrivilegedFileService:
                 hostname=hostname,
                 username=username,
                 port=port,
+                password_context=password_context,
             )
 
         def _stdin(password: Optional[str]) -> Optional[bytes]:
@@ -297,6 +379,7 @@ class PrivilegedFileService:
             hostname=hostname,
             username=username,
             port=port,
+            password_context=password_context,
         )
         if not result.exists:
             raise SshPilotError(
@@ -324,8 +407,13 @@ class PrivilegedFileService:
         port: int,
         allow_missing: bool = False,
         read_limit: Optional[int] = None,
+        password_context: Optional[_SudoPasswordContext] = None,
     ) -> _CommandResult:
         """Run a sudo command, resolving the password when required.
+
+        A validated password already used earlier in the same operation
+        (``password_context``) is tried before the stored secret and the
+        protected prompt; successful passwords are remembered back into it.
 
         Returns a ``_CommandResult`` with ``exists`` reflecting whether the
         target path is present (missing marker classification). Raises
@@ -342,6 +430,8 @@ class PrivilegedFileService:
         if result.returncode == 0:
             result.exists = True
             return result
+        if _is_sudo_unavailable(result.returncode, result.stderr):
+            raise _sudo_unavailable_error(connection_id)
         if is_sudo_denied_error(result.stderr.decode("utf-8", errors="replace")):
             raise _denied_error(connection_id)
         if allow_missing and _is_missing(result.stderr):
@@ -360,8 +450,12 @@ class PrivilegedFileService:
                 connection_id=connection_id,
             )
 
-        password = self._secret_lookup(hostname, username)
-        from_stored = bool(password)
+        context_password = (
+            password_context.password if password_context is not None else None
+        )
+        password = context_password or self._secret_lookup(hostname, username)
+        from_stored = bool(password) and not context_password
+        from_context = bool(context_password)
         attempt = 1
         while attempt <= self._max_password_attempts:
             if not password:
@@ -388,6 +482,8 @@ class PrivilegedFileService:
             )
             if result.returncode == 0:
                 result.exists = True
+                if password_context is not None:
+                    password_context.password = password
                 self._remember_password(
                     hostname,
                     username,
@@ -396,6 +492,8 @@ class PrivilegedFileService:
                     from_stored,
                 )
                 return result
+            if _is_sudo_unavailable(result.returncode, result.stderr):
+                raise _sudo_unavailable_error(connection_id)
             if is_sudo_denied_error(result.stderr.decode("utf-8", errors="replace")):
                 raise _denied_error(connection_id)
             if allow_missing and _is_missing(result.stderr):
@@ -421,6 +519,10 @@ class PrivilegedFileService:
                 except Exception:
                     logger.debug("Failed to clear a wrong stored sudo password", exc_info=True)
                 from_stored = False
+            if from_context:
+                if password_context is not None:
+                    password_context.password = None
+                from_context = False
             password = None
             attempt += 1
         raise SshPilotError(

@@ -277,6 +277,60 @@ def test_permission_denied_code_is_detected_without_message_markers():
     assert Ed._is_permission_denied_error(ConnectionError("boom")) is False
 
 
+def _bare_for_root_decision(*, is_local=False, manager_username=None):
+    ed = Ed.__new__(Ed)
+    ed._is_local = is_local
+    ed._sftp_manager = (
+        types.SimpleNamespace(username=manager_username)
+        if manager_username is not None
+        else None
+    )
+    return ed
+
+
+@pytest.mark.parametrize("username,expected", [
+    ("root", True),
+    ("root ", True),
+    ("alice", False),
+    ("", False),
+])
+def test_remote_user_is_root(username, expected):
+    ed = _bare_for_root_decision(manager_username=username)
+    assert ed._remote_user_is_root() is expected
+
+
+def test_remote_user_is_root_without_username_attribute():
+    ed = Ed.__new__(Ed)
+    ed._sftp_manager = types.SimpleNamespace(host="web")
+    assert ed._remote_user_is_root() is False
+    assert Ed._remote_username(None) == ""
+
+
+def test_root_editing_applicable():
+    assert _bare_for_root_decision(manager_username="alice")._root_editing_applicable() is True
+    assert _bare_for_root_decision(manager_username="root")._root_editing_applicable() is False
+    assert _bare_for_root_decision(manager_username=None)._root_editing_applicable() is False
+    assert _bare_for_root_decision(is_local=True, manager_username="alice")._root_editing_applicable() is False
+
+
+def test_root_read_missing_file_cancels_root_mode(monkeypatch, tmp_path):
+    future = Future()
+    future.set_result(types.SimpleNamespace(
+        revision="r", content="", exists=False,
+    ))
+    monkeypatch.setattr(text_editor.GLib, "idle_add", lambda fn, *args: fn(*args))
+    ed = _root_load_editor(tmp_path, future)
+    ed._cancel_root_mode = lambda: setattr(ed, "_root_mode", False)
+    errors = []
+    ed._show_error = lambda text: errors.append(text)
+
+    ed._begin_root_load()
+
+    assert ed._root_mode is False
+    assert not hasattr(ed, "loaded_content")
+    assert errors and "no longer exists" in errors[0]
+
+
 def _root_save_editor(tmp_path, future, *, privileged=True):
     class Service:
         privileged_supported = privileged
