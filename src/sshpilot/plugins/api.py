@@ -816,10 +816,10 @@ class PluginContext:
                 if summary.operation.state.value in {"succeeded", "failed", "cancelled"}:
                     break
                 if __import__("time").monotonic() >= deadline:
-                    client.cancel_broadcast_command(summary.operation.id)
+                    client.cancel_broadcast_command(summary.operation.operation_id)
                     return CommandResult(-1, "", "Command timed out")
                 __import__("time").sleep(0.05)
-                summary = client.get_broadcast_command(summary.operation.id)
+                summary = client.get_broadcast_command(summary.operation.operation_id)
             target = summary.targets[0]
             return CommandResult(target.exit_code if target.exit_code is not None else -1,
                                  target.stdout, target.stderr)
@@ -927,7 +927,7 @@ class PluginContext:
                 ),
                 input=input,
             )
-            operation_id = summary.operation.id
+            operation_id = summary.operation.operation_id
             line_buffers = {"stdout": "", "stderr": ""}
 
             def _emit_line(line: str) -> None:

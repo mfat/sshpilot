@@ -561,7 +561,7 @@ def test_plugin_remote_command_and_stream_use_daemon_client():
             self.inputs.append((request, input))
             return types.SimpleNamespace(
                 operation=types.SimpleNamespace(
-                    id="operation-1",
+                    operation_id="operation-1",
                     state=types.SimpleNamespace(value="running"),
                 )
             )
@@ -618,7 +618,7 @@ def test_plugin_command_stream_reassembles_broadcast_chunks():
         def start_broadcast_command(self, _request, *, input=None):
             assert input is None
             return types.SimpleNamespace(
-                operation=types.SimpleNamespace(id="operation-1"),
+                operation=types.SimpleNamespace(operation_id="operation-1"),
             )
 
         def subscribe_broadcast_output(self, _operation_id, on_output, on_done):

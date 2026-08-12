@@ -57,10 +57,10 @@ def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> O
         terminal_states = {"succeeded", "failed", "cancelled"}
         while summary.operation.state.value not in terminal_states:
             if time.monotonic() >= deadline:
-                client.cancel_broadcast_command(summary.operation.id)
+                client.cancel_broadcast_command(summary.operation.operation_id)
                 return None
             time.sleep(0.05)
-            summary = client.get_broadcast_command(summary.operation.id)
+            summary = client.get_broadcast_command(summary.operation.operation_id)
         target = summary.targets[0]
         return target.stdout if target.exit_code == 0 else None
     except Exception:  # noqa: BLE001 — best-effort background suggestion
