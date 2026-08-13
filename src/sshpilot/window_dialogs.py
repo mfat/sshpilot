@@ -31,6 +31,49 @@ BACKUP_EXPORT_WINDOW_WIDTH = 640
 BACKUP_EXPORT_WINDOW_HEIGHT = 720
 BACKUP_EXPORT_CLAMP_MAX = 560
 
+# Backup category keys (mirrors ``BackupManager.BACKUP_OPTION_KEYS``). The daemon owns
+# the backup engine; the frontend only renders these as option rows.
+_BACKUP_OPTION_KEYS = ("app_settings", "ssh_config", "known_hosts", "secrets", "private_keys")
+
+
+def _normalize_backup_options(options=None):
+    """Complete boolean option map — same semantics as ``BackupManager``."""
+    merged = {
+        "app_settings": True,
+        "ssh_config": True,
+        "known_hosts": True,
+        "secrets": True,
+        "private_keys": False,
+    }
+    if options:
+        for key in _BACKUP_OPTION_KEYS:
+            if key in options:
+                merged[key] = bool(options[key])
+    return merged
+
+
+def _secrets_persist_for(parent):
+    """Daemon-backed ``persists_secrets`` for a modal parent (default True).
+
+    Resolves the window's ``secrets_controller`` and reads the daemon's state; a
+    missing controller or a failed state query reports ``True`` (the store
+    checkbox is shown), matching the pre-daemon default."""
+    controller = getattr(parent, "secrets_controller", None)
+    if controller is None:
+        try:
+            if not isinstance(parent, Gtk.Window):
+                parent = parent.get_root()
+            controller = getattr(parent, "secrets_controller", None)
+        except Exception:
+            controller = None
+    if controller is None:
+        return True
+    try:
+        state = controller.load_state()
+        return bool(getattr(state, "persists_secrets", True))
+    except Exception:
+        return True
+
 
 def parent_window(parent):
     """Return a ``Gtk.Window`` for APIs that require one, given a window *or* a widget.
@@ -196,6 +239,7 @@ def show_ssh_password_dialog(
     body: Optional[str] = None,
     store_label: Optional[str] = None,
     on_store: Optional[Any] = None,
+    allow_store: Optional[bool] = None,
 ) -> Optional[str]:
     """Show the standard in-app SSH **password** dialog (blocking).
 
@@ -254,6 +298,7 @@ def show_ssh_password_dialog(
         body=body,
         store_label=store_label,
         on_store=on_store,
+        allow_store=allow_store,
     )
 
 
@@ -271,6 +316,7 @@ def _show_password_passphrase_dialog(
     body: Optional[str] = None,
     store_label: Optional[str] = None,
     on_store: Optional[Any] = None,
+    allow_store: Optional[bool] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
 
@@ -323,7 +369,8 @@ def _show_password_passphrase_dialog(
         confirm_label = _("OK")
     if not store_label:
         store_label = default_store_label
-    allow_store = prompt_type in ("password", "passphrase")
+    if allow_store is None:
+        allow_store = prompt_type in ("password", "passphrase")
 
     dialog = Adw.Dialog()
     dialog.set_title(heading)
@@ -359,12 +406,7 @@ def _show_password_passphrase_dialog(
     store_checkbox = Gtk.CheckButton(label=store_label or _("Store password"))
     store_checkbox.set_active(False)
 
-    persists_secrets = True
-    try:
-        from .secret_storage import get_secret_manager
-        persists_secrets = get_secret_manager().persists_secrets()
-    except Exception:
-        persists_secrets = True
+    persists_secrets = _secrets_persist_for(parent_window)
 
     content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
     content.set_margin_top(18)
@@ -498,9 +540,17 @@ class WindowConfigDialogsMixin:
     def show_known_hosts_editor(self):
         """Show known hosts editor window"""
         logger.info("Show known hosts editor window")
+        client = getattr(self, "client", None)
+        if client is None:
+            logger.error("Known hosts editor requires a daemon-backed client")
+            self._simple_dialog(
+                _("Known hosts unavailable"),
+                _("Connect to the sshPilot daemon before editing known hosts."),
+            )
+            return
         try:
             from .known_hosts_editor import KnownHostsEditorWindow
-            editor = KnownHostsEditorWindow(self, self.connection_manager)
+            editor = KnownHostsEditorWindow(self, client)
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open known hosts editor: {e}")
@@ -523,7 +573,10 @@ class WindowConfigDialogsMixin:
                 # Imported lazily so the heavy Preferences module stays off the
                 # startup path — only needed when Settings is opened.
                 from .preferences import PreferencesWindow
-                prefs = PreferencesWindow(self, self.config)
+                controller = self._build_ssh_overrides_controller()
+                prefs = PreferencesWindow(
+                    self, self.config, ssh_overrides_controller=controller
+                )
                 self._preferences_window = prefs
             except Exception as e:
                 logger.error(f"Failed to create preferences page: {e}")
@@ -561,9 +614,8 @@ class WindowConfigDialogsMixin:
                 if self.connection_manager else []
         except Exception:
             connections = []
-        from .backup_manager import BackupManager
         from sshpilot import icon_utils
-        option_defaults = BackupManager.normalize_backup_options(option_defaults)
+        option_defaults = _normalize_backup_options(option_defaults)
 
         # Modal window + Clamp (same scaffold as session manager / key chooser).
         dialog = Adw.Window(transient_for=self, modal=True)
@@ -871,8 +923,6 @@ class WindowConfigDialogsMixin:
         )
         enc_row.set_active(bool(encrypt_default))
         enc_group.add(enc_row)
-        pw_row = Adw.PasswordEntryRow(title=_("Passphrase"))
-        enc_group.add(pw_row)
         page.append(enc_group)
 
         def _dest_key():
@@ -890,8 +940,10 @@ class WindowConfigDialogsMixin:
             ssh_dir_row.set_visible(to_ssh)
             enc_group.set_visible(not to_bw)
             on = enc_row.get_active() and not to_bw
-            pw_row.set_visible(on)
-            if to_bw:
+            if on:
+                enc_row.set_subtitle(
+                    _("You will be asked to enter the passphrase when the backup is saved."))
+            elif to_bw:
                 enc_row.set_subtitle(
                     _("Bitwarden encrypts the backup with your vault credentials."))
             else:
@@ -951,15 +1003,8 @@ class WindowConfigDialogsMixin:
                 remote = remote_text.strip() or "~/sshpilot-backups"
                 nick = getattr(target, 'nickname', None)
                 if encrypt_on:
-                    passphrase = pw_row.get_text() or ''
-                    if not passphrase:
-                        reopen(
-                            prefill_ids=sel_ids, encrypt_default=True, option_defaults=options,
-                            destination='ssh', target_nick=nick, remote_dir=remote,
-                            error=_("Enter a passphrase, or turn off encryption."))
-                        return
                     dialog.close()
-                    self._export_to_ssh_server(selected, options, passphrase, target, remote)
+                    self._export_to_ssh_server(selected, options, True, target, remote)
                 elif options.get('secrets') or options.get('private_keys'):
                     dialog.close()
                     self._confirm_plaintext_then_export(
@@ -972,15 +1017,8 @@ class WindowConfigDialogsMixin:
                     self._export_to_ssh_server(selected, options, None, target, remote)
                 return
             if encrypt_on:
-                passphrase = pw_row.get_text() or ''
-                if not passphrase:
-                    reopen(
-                        prefill_ids=sel_ids, encrypt_default=True, option_defaults=options,
-                        destination='file',
-                        error=_("Enter a passphrase, or turn off encryption."))
-                    return
                 dialog.close()
-                self._choose_export_path(selected, passphrase, options)
+                self._choose_export_path(selected, True, options)
             else:
                 dialog.close()
                 if options.get('secrets') or options.get('private_keys'):
@@ -1020,7 +1058,8 @@ class WindowConfigDialogsMixin:
 
     def _export_to_bitwarden(self, connections, options, mirror_logins=False):
         """Get Bitwarden ready, then store the backup manifest in a secure note (optionally also
-        mirroring saved secrets as Bitwarden login items)."""
+        mirroring saved secrets as Bitwarden login items). The manifest is built and written
+        entirely inside the daemon — the frontend only shows progress and the outcome counts."""
         from .bitwarden_backup_setup import ensure_bitwarden_ready
 
         def after_ready(ready):
@@ -1028,14 +1067,8 @@ class WindowConfigDialogsMixin:
                 return
 
             def do_export(*_a):
-                from .backup_manager import BackupManager
-                from .backup_backends import BitwardenBackupBackend, BackupTooLargeForNote
-                from .secret_storage import get_secret_manager
                 from .bitwarden_backup_setup import progress_dialog
-                name = _("sshPilot Backup {date}").format(date=datetime.now().strftime('%Y-%m-%d %H:%M'))
-                bw = get_secret_manager().get_backend("bitwarden")
-                mgr = BackupManager(self.config, self.connection_manager)
-                backend = BitwardenBackupBackend(bw, item_name=name)
+                controller = self._secrets_controller()
 
                 cancelled = {'v': False}
                 _set_status, close_spinner = progress_dialog(
@@ -1043,19 +1076,13 @@ class WindowConfigDialogsMixin:
                     _("Exporting to Bitwarden — this may take a while…"),
                     on_cancel=lambda: cancelled.__setitem__('v', True))
 
-                # Building the manifest reads secrets (may hit bw) and the note write spawns bw —
-                # all off the main thread so the UI doesn't freeze ("not responding").
                 def worker():
                     try:
-                        entry = mgr.export_to_backend(
-                            backend, connections=connections, options=options,
-                            mirror_to=(bw if mirror_logins else None))
-                        counts = getattr(mgr, 'last_export_counts', {})
-                        mirror = getattr(mgr, 'last_mirror_counts', None)
-                        payload = ('ok', entry.name, counts.get('credentials', 0),
-                                   counts.get('private_keys', 0), mirror)
-                    except BackupTooLargeForNote as e:
-                        payload = ('toobig', str(e))
+                        result = controller.export_backup(
+                            destination="bitwarden",
+                            connection_ids=self._connection_ids_for(connections),
+                            options=options, mirror_logins=mirror_logins)
+                        payload = ('ok', result)
                     except Exception as e:
                         logger.error("Bitwarden export failed: %s", e)
                         payload = ('error', str(e))
@@ -1065,18 +1092,25 @@ class WindowConfigDialogsMixin:
                     if cancelled['v']:
                         return   # user cancelled the wait
                     close_spinner()
-                    if p[0] == 'ok':
-                        msg = _("Backup saved to Bitwarden as “{}”.\n\n{} credential(s) and {} "
-                                "private key(s) included.").format(p[1], p[2], p[3])
-                        mirror = p[4]
-                        if mirror:
-                            msg += "\n\n" + _("{} secret(s) also copied as Bitwarden login "
-                                              "items.").format(mirror.get('mirrored', 0))
-                        self._simple_dialog(_("Export Successful"), msg)
-                    elif p[0] == 'toobig':
-                        self._simple_dialog(_("Backup too large for Bitwarden"), p[1])
-                    else:
+                    if p[0] != 'ok':
                         self._simple_dialog(_("Export Failed"), p[1])
+                        return
+                    result = p[1]
+                    if result.status.value != 'success':
+                        msg = result.message or _("Bitwarden export failed.")
+                        if result.warnings:
+                            msg += "\n\n" + "\n\n".join(result.warnings)
+                        self._simple_dialog(_("Export Failed"), msg)
+                        return
+                    counts = result.counts or {}
+                    msg = _("Backup saved to Bitwarden.\n\n{} credential(s) and {} "
+                            "private key(s) included.").format(
+                                counts.get('credentials', 0),
+                                counts.get('private_keys', 0))
+                    if counts.get('mirrored'):
+                        msg += "\n\n" + _("{} secret(s) also copied as Bitwarden login "
+                                          "items.").format(counts.get('mirrored'))
+                    self._simple_dialog(_("Export Successful"), msg)
 
                 threading.Thread(target=worker, daemon=True).start()
 
@@ -1087,77 +1121,41 @@ class WindowConfigDialogsMixin:
 
         ensure_bitwarden_ready(self, after_ready)
 
-    def _make_ssh_backup_runner(self, connection):
-        """Build an SFTP-manager (used only for its ``run_command``) targeting ``connection``,
-        exactly as the authorized-keys editor does. Reuses the shared native-auth path."""
-        from .file_manager import create_file_manager_backend
-        host_value = (getattr(connection, 'hostname', '') or getattr(connection, 'host', '')
-                      or getattr(connection, 'nickname', '') or '')
-        username = getattr(connection, 'username', '') or ''
-        port_value = getattr(connection, 'port', 22) or 22
-        ssh_config = None
-        if getattr(self, 'config', None) is not None:
-            try:
-                ssh_config = self.config.get_ssh_config()
-            except Exception:
-                ssh_config = None
-        initial_password = getattr(connection, 'password', None) or None
-        if not initial_password and self.connection_manager is not None:
-            try:
-                # Alias-migrating lookup (handles legacy host aliases), same as the file manager.
-                initial_password = self.connection_manager.get_connection_password(connection)
-            except Exception:
-                initial_password = None
-        return create_file_manager_backend(
-            str(host_value), str(username), int(port_value),
-            password=initial_password, connection=connection,
-            connection_manager=self.connection_manager, ssh_config=ssh_config)
+    def _secrets_controller(self):
+        """The daemon-backed secrets controller the window is bound to.
 
-    def _ensure_ssh_backup_password(self, connection) -> bool:
-        """For a password-auth connection with no stored secret, prompt (blocking) so the ssh
-        transfer has credentials. Key/agent/askpass auth needs nothing here. Returns False only
-        if the user cancels the prompt. Must run on the GTK main thread."""
-        from .sftp_utils import _is_password_auth_enabled
-        if not _is_password_auth_enabled(connection):
-            return True
-        if getattr(connection, 'password', None):
-            return True
-        pw = None
-        if self.connection_manager is not None:
-            try:
-                pw = self.connection_manager.get_connection_password(connection)
-            except Exception:
-                pw = None
-        if not pw:
-            pw = show_ssh_password_dialog(
-                from_widget=self, connection=connection,
-                connection_manager=self.connection_manager)
-            if pw is None:
-                return False   # user cancelled
-        connection.password = pw   # resolve_native_auth reads connection.password
-        return True
+        Backup export/import is daemon-owned: when no controller is reachable there is
+        nothing this process may do locally, so callers surface the error."""
+        controller = getattr(self, "secrets_controller", None)
+        if controller is None:
+            raise RuntimeError(
+                _("Secret storage is managed by the sshPilot daemon, which is not connected."))
+        return controller
 
-    def _export_to_ssh_server(self, connections, options, passphrase, target, remote_dir):
-        """Store the backup manifest as a ``.spbk`` file in ``remote_dir`` on ``target``."""
-        from .backup_manager import BackupManager
-        from .backup_backends import SSHServerBackupBackend, BackupError
+    @staticmethod
+    def _connection_ids_for(connections):
+        """Map connection records to the id/nickname keys the daemon resolves."""
+        out = []
+        for conn in connections or []:
+            key = (getattr(conn, 'nickname', '') or getattr(conn, 'id', '') or '')
+            if key:
+                out.append(str(key))
+        return out
+
+    def _export_to_ssh_server(self, connections, options, encrypt, target, remote_dir):
+        """Store the backup manifest as a ``.spbk`` file in ``remote_dir`` on ``target``.
+
+        The manifest is built, encrypted (when ``encrypt``) and uploaded entirely inside the
+        daemon; the daemon also resolves the connection password from its own secret manager.
+        The passphrase is collected by a protected interaction, never by this window."""
         from .bitwarden_backup_setup import progress_dialog
+        controller = self._secrets_controller()
 
         def do_export(*_a):
-            if not self._ensure_ssh_backup_password(target):
-                return   # user cancelled the password prompt
-            # Seconds in the name so two exports within the same minute don't clobber each other.
-            name = "sshpilot_backup_{}.spbk".format(datetime.now().strftime('%Y%m%d_%H%M%S'))
-            try:
-                runner = self._make_ssh_backup_runner(target)
-            except Exception as e:
-                logger.error("SSH backup: could not prepare connection: %s", e)
-                self._simple_dialog(_("Export Failed"), str(e))
-                return
-            mgr = BackupManager(self.config, self.connection_manager)
-            backend = SSHServerBackupBackend(runner, remote_dir, item_name=name)
             who = getattr(target, 'nickname', '') or getattr(target, 'hostname', '') or '?'
-
+            dest = "ssh:{}:{}".format(
+                getattr(target, 'nickname', '') or getattr(target, 'hostname', '') or '',
+                remote_dir)
             cancelled = {'v': False}
             _set_status, close_spinner = progress_dialog(
                 self, _("Export to SSH Server"),
@@ -1166,14 +1164,11 @@ class WindowConfigDialogsMixin:
 
             def worker():
                 try:
-                    entry = mgr.export_to_backend(
-                        backend, connections=connections, passphrase=passphrase,
-                        options=options)
-                    counts = getattr(mgr, 'last_export_counts', {})
-                    payload = ('ok', entry.id, counts.get('credentials', 0),
-                               counts.get('private_keys', 0))
-                except BackupError as e:
-                    payload = ('error', str(e))
+                    result = controller.export_backup(
+                        destination=dest,
+                        connection_ids=self._connection_ids_for(connections),
+                        options={**options, 'encrypted': bool(encrypt)})
+                    payload = ('ok', result)
                 except Exception as e:
                     logger.error("SSH server export failed: %s", e)
                     payload = ('error', str(e))
@@ -1183,14 +1178,22 @@ class WindowConfigDialogsMixin:
                 if cancelled['v']:
                     return
                 close_spinner()
-                if p[0] == 'ok':
-                    self._simple_dialog(
-                        _("Export Successful"),
-                        _("Backup saved to {}:{}\n\n{} credential(s) and {} private key(s) "
-                          "included; encryption: {}.").format(
-                            who, p[1], p[2], p[3], _("on") if passphrase else _("off")))
-                else:
+                if p[0] != 'ok':
                     self._simple_dialog(_("Export Failed"), p[1])
+                    return
+                result = p[1]
+                if result.status.value != 'success':
+                    self._simple_dialog(
+                        _("Export Failed"), result.message or _("Export failed."))
+                    return
+                counts = result.counts or {}
+                self._simple_dialog(
+                    _("Export Successful"),
+                    _("Backup saved to {}:{}\n\n{} credential(s) and {} private key(s) "
+                      "included; encryption: {}.").format(
+                        who, remote_dir, counts.get('credentials', 0),
+                        counts.get('private_keys', 0),
+                        _("on") if encrypt else _("off")))
 
             threading.Thread(target=worker, daemon=True).start()
 
@@ -1229,8 +1232,12 @@ class WindowConfigDialogsMixin:
         warn.connect('response', on_warn)
         warn.present()
 
-    def _choose_export_path(self, connections, passphrase, options):
-        from .backup_manager import BackupManager
+    def _choose_export_path(self, connections, encrypt, options):
+        """Pick a ``.spbk`` path (GTK file picker), then run the daemon-owned export.
+
+        ``encrypt`` is a flag: the passphrase itself is collected by a protected
+        interaction inside the daemon, so it never passes through this window."""
+        controller = self._secrets_controller()
         file_dialog = Gtk.FileDialog()
         file_dialog.set_title(_("Export Backup"))
         file_dialog.set_initial_name(
@@ -1266,30 +1273,29 @@ class WindowConfigDialogsMixin:
                 export_path += '.spbk'
 
             def do_export(*_args):
-                backup_mgr = BackupManager(self.config, self.connection_manager)
-                success, error = backup_mgr.export_backup(
-                    export_path, connections=connections, passphrase=passphrase,
-                    options=options)
-                if success:
-                    counts = getattr(backup_mgr, 'last_export_counts', {})
-                    msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
-                            "included; encryption: {}.").format(
-                        export_path, counts.get('credentials', 0),
-                        counts.get('private_keys', 0),
-                        _("on") if passphrase else _("off"))
-                    skipped = getattr(backup_mgr, 'last_export_skipped_config_files', []) or []
-                    if skipped:
-                        msg += "\n\n" + _("{} SSH config file(s) outside your ~/.ssh were not "
-                                          "included (system or shared files):\n{}").format(
-                            len(skipped), "\n".join(skipped))
-                    missing_keys = getattr(backup_mgr, 'last_export_missing_key_files', []) or []
-                    if missing_keys:
-                        msg += "\n\n" + _("{} referenced key file(s) were missing and not "
-                                          "included:\n{}").format(
-                            len(missing_keys), "\n".join(missing_keys))
-                    self._simple_dialog(_("Export Successful"), msg)
-                else:
-                    self._simple_dialog(_("Export Failed"), error or _("Unknown error"))
+                try:
+                    result = controller.export_backup(
+                        destination=export_path,
+                        connection_ids=self._connection_ids_for(connections),
+                        options={**options, 'encrypted': bool(encrypt)})
+                except Exception as e:
+                    logger.error(f"Export failed: {e}")
+                    self._simple_dialog(_("Export Failed"), str(e))
+                    return
+                if result.status.value != 'success':
+                    self._simple_dialog(
+                        _("Export Failed"),
+                        result.message or _("Unknown error"))
+                    return
+                counts = result.counts or {}
+                msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
+                        "included; encryption: {}.").format(
+                    export_path, counts.get('credentials', 0),
+                    counts.get('private_keys', 0),
+                    _("on") if encrypt else _("off"))
+                if result.warnings:
+                    msg += "\n\n" + "\n\n".join(result.warnings)
+                self._simple_dialog(_("Export Successful"), msg)
 
             self._run_after_vault_unlock_for_secrets(
                 do_export,
@@ -1379,16 +1385,15 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to show import dialog: {e}")
 
     def _import_from_bitwarden(self):
-        """Ensure Bitwarden is ready, list sshPilot backups, then restore the chosen one."""
+        """Ensure Bitwarden is ready, list sshPilot backups, then restore the chosen one.
+        Listing and reading run inside the daemon — the frontend only sees metadata."""
         from .bitwarden_backup_setup import ensure_bitwarden_ready
 
         def proceed(ready):
             if not ready:
                 return
-            from .backup_backends import BitwardenBackupBackend
-            from .secret_storage import get_secret_manager
             from .bitwarden_backup_setup import progress_dialog
-            backend = BitwardenBackupBackend(get_secret_manager().get_backend("bitwarden"))
+            controller = self._secrets_controller()
             cancelled = {'v': False}
             _set_status, close_spinner = progress_dialog(
                 self, _("Import from Bitwarden"), _("Loading backups from Bitwarden…"),
@@ -1396,7 +1401,7 @@ class WindowConfigDialogsMixin:
 
             def worker():   # bw list items is slow — keep it off the main thread
                 try:
-                    payload = ('ok', backend.list_exports())
+                    payload = ('ok', controller.list_bitwarden_backups())
                 except Exception as e:
                     logger.error("Listing Bitwarden backups failed: %s", e)
                     payload = ('error', str(e))
@@ -1415,15 +1420,23 @@ class WindowConfigDialogsMixin:
                         _("No backups found"),
                         _("No sshPilot backups were found in your Bitwarden vault."))
                     return
-                self._show_bitwarden_entry_chooser(backend, entries)
+                self._show_bitwarden_entry_chooser(entries)
 
             threading.Thread(target=worker, daemon=True).start()
 
         ensure_bitwarden_ready(self, proceed)
 
+    @staticmethod
+    def _entry_label(entry):
+        """Display name for a daemon-provided backup entry dict (id/name/date)."""
+        name = entry.get('name', '') if isinstance(entry, dict) else getattr(entry, 'name', '')
+        date = entry.get('date', '') if isinstance(entry, dict) else getattr(entry, 'date', '')
+        return name + (f"  ({date[:10]})" if date else "")
+
     def _choose_backup_entry(self, entries, *, heading, on_chosen):
-        """Radio list of ``BackupEntry`` items; calls ``on_chosen(entry)`` on the main thread
-        when the user hits Restore. Shared by the Bitwarden and SSH-server import flows."""
+        """Radio list of backup-entry dicts (id/name/date metadata only); calls
+        ``on_chosen(entry)`` on the main thread when the user hits Restore. Shared by
+        the Bitwarden and SSH-server import flows."""
         dialog = Adw.MessageDialog(
             transient_for=self, modal=True, heading=heading,
             body=_("Choose a backup to restore:"))
@@ -1433,8 +1446,7 @@ class WindowConfigDialogsMixin:
         radios = []
         group = None
         for entry in entries:
-            label = entry.name + (f"  ({entry.date[:10]})" if entry.date else "")
-            rb = Gtk.CheckButton(label=label)
+            rb = Gtk.CheckButton(label=self._entry_label(entry))
             if group is None:
                 group = rb
                 rb.set_active(True)
@@ -1458,9 +1470,11 @@ class WindowConfigDialogsMixin:
         dialog.connect('response', on_resp)
         dialog.present()
 
-    def _show_bitwarden_entry_chooser(self, backend, entries):
+    def _show_bitwarden_entry_chooser(self, entries):
         def on_chosen(entry):
             from .bitwarden_backup_setup import progress_dialog
+            controller = self._secrets_controller()
+            entry_id = entry.get('id', '') if isinstance(entry, dict) else getattr(entry, 'id', '')
             cancelled = {'v': False}
             _set_status, close_spinner = progress_dialog(
                 self, _("Import from Bitwarden"), _("Reading backup from Bitwarden…"),
@@ -1468,7 +1482,7 @@ class WindowConfigDialogsMixin:
 
             def worker():   # bw get item is slow — keep it off the main thread
                 try:
-                    payload = ('ok', backend.read(entry))
+                    payload = ('ok', controller.preview_bitwarden_backup(entry_id=entry_id))
                 except Exception as e:
                     logger.error("Reading Bitwarden backup failed: %s", e)
                     payload = ('error', str(e))
@@ -1481,8 +1495,14 @@ class WindowConfigDialogsMixin:
                 if p[0] != 'ok':
                     self._simple_dialog(_("Import Failed"), p[1])
                     return
-                # Reuse the .spbk apply path — a Bitwarden-note manifest has the same shape.
-                self._show_import_mode_dialog("", manifest=p[1])
+                preview = p[1]
+                if preview.get('error'):
+                    self._simple_dialog(_("Import Failed"), preview.get('error'))
+                    return
+                self._show_import_mode_dialog(
+                    preview.get('included'),
+                    self._make_bitwarden_import_apply(entry_id, preview.get('included')),
+                    source_kind='bitwarden')
 
             threading.Thread(target=worker, daemon=True).start()
 
@@ -1592,16 +1612,9 @@ class WindowConfigDialogsMixin:
         dialog.present(self)
 
     def _ssh_import_list_backups(self, target, remote_dir):
-        from .backup_backends import SSHServerBackupBackend
         from .bitwarden_backup_setup import progress_dialog
-        if not self._ensure_ssh_backup_password(target):
-            return   # user cancelled the password prompt
-        try:
-            runner = self._make_ssh_backup_runner(target)
-        except Exception as e:
-            self._simple_dialog(_("Import Failed"), str(e))
-            return
-        backend = SSHServerBackupBackend(runner, remote_dir)
+        controller = self._secrets_controller()
+        nick = getattr(target, 'nickname', '') or getattr(target, 'hostname', '') or ''
         cancelled = {'v': False}
         _set_status, close_spinner = progress_dialog(
             self, _("Import from SSH Server"), _("Loading backups…"),
@@ -1609,7 +1622,8 @@ class WindowConfigDialogsMixin:
 
         def worker():
             try:
-                payload = ('ok', backend.list_exports())
+                payload = ('ok', controller.list_ssh_backups(
+                    connection_id=nick, remote_dir=remote_dir))
             except Exception as e:
                 logger.error("Listing SSH backups failed: %s", e)
                 payload = ('error', str(e))
@@ -1630,57 +1644,60 @@ class WindowConfigDialogsMixin:
                 return
             self._choose_backup_entry(
                 entries, heading=_("Import from SSH Server"),
-                on_chosen=lambda entry: self._ssh_import_download(backend, entry))
+                on_chosen=lambda entry: self._ssh_import_preview(target, remote_dir, entry))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _ssh_import_download(self, backend, entry):
-        """Download the chosen .spbk to a temp file, then hand off to the normal import path
-        (which handles encryption prompt, mode selection, and apply)."""
-        import tempfile
+    def _ssh_import_preview(self, target, remote_dir, entry):
+        """Ask the daemon to preview one SSH-stored backup (it owns the download and
+        decryption), then show the import-mode dialog."""
         from .bitwarden_backup_setup import progress_dialog
+        controller = self._secrets_controller()
+        nick = getattr(target, 'nickname', '') or getattr(target, 'hostname', '') or ''
+        entry_id = entry.get('id', '') if isinstance(entry, dict) else getattr(entry, 'id', '')
         cancelled = {'v': False}
         _set_status, close_spinner = progress_dialog(
-            self, _("Import from SSH Server"), _("Downloading backup…"),
+            self, _("Import from SSH Server"), _("Reading backup…"),
             on_cancel=lambda: cancelled.__setitem__('v', True))
 
         def worker():
-            tmp_path = None
             try:
-                fd, tmp_path = tempfile.mkstemp(suffix=".spbk")
-                os.close(fd)
-                backend.download(entry, tmp_path)
-                payload = ('ok', tmp_path)
+                payload = ('ok', controller.preview_ssh_backup(
+                    connection_id=nick, remote_dir=remote_dir, entry_id=entry_id))
             except Exception as e:
-                logger.error("Downloading SSH backup failed: %s", e)
-                self._safe_unlink(tmp_path)   # download failed after mkstemp — drop the empty temp
+                logger.error("Reading SSH backup failed: %s", e)
                 payload = ('error', str(e))
             GLib.idle_add(lambda: (_after(payload), False)[1])
 
         def _after(p):
             if cancelled['v']:
-                if p[0] == 'ok':
-                    self._safe_unlink(p[1])   # downloaded after cancel — don't leak it
                 return
             close_spinner()
             if p[0] != 'ok':
                 self._simple_dialog(_("Import Failed"), p[1])
                 return
-            tmp = p[1]
-            # Reuse the .spbk import path — handles encryption prompt + mode dialog + apply —
-            # and delete the temp once its manifest has been read (on_cleanup).
-            self._import_spbk(tmp, on_cleanup=lambda: self._safe_unlink(tmp))
+            preview = p[1]
+            if preview.get('error'):
+                self._simple_dialog(_("Import Failed"), preview.get('error'))
+                return
+            self._show_import_mode_dialog(
+                preview.get('included'),
+                self._make_ssh_import_apply(
+                    nick, remote_dir, entry_id, preview.get('included')),
+                source_kind='ssh')
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _begin_import(self, import_path: str):
-        """Route an import by format: .spbk (decrypt as needed) vs legacy JSON."""
+        """Route an import by format: .spbk (daemon preview) vs legacy JSON."""
         try:
             from .backup_archive import is_spbk
             if is_spbk(import_path):
                 self._import_spbk(import_path)
             else:
-                self._show_import_mode_dialog(import_path)
+                self._show_import_mode_dialog(
+                    None, self._make_json_import_apply(import_path),
+                    source_kind='json')
         except Exception as e:
             logger.error(f"Failed to start import: {e}")
             self._simple_dialog(_("Import Failed"), str(e))
@@ -1694,76 +1711,53 @@ class WindowConfigDialogsMixin:
             pass
 
     def _import_spbk(self, import_path: str, on_cleanup=None):
-        """Decrypt (if needed) a .spbk, then proceed to the import-mode dialog with its manifest.
+        """Ask the daemon to preview a .spbk (it owns decryption), then show the import-mode
+        dialog with the included categories.
 
-        ``on_cleanup`` (optional) fires once the manifest is materialised (or on any terminal
+        ``on_cleanup`` (optional) fires once the preview resolves (or on any terminal
         error) — used to delete a downloaded temp file that's no longer needed."""
-        from .backup_archive import read_spbk, spbk_is_encrypted, SpbkError
-        try:
-            if spbk_is_encrypted(import_path):
-                self._prompt_spbk_passphrase(import_path, on_cleanup=on_cleanup)
-                return
-            manifest = read_spbk(import_path, None)
-            if on_cleanup:
-                on_cleanup()
-            self._show_import_mode_dialog(import_path, manifest=manifest)
-        except SpbkError as e:
-            if on_cleanup:
-                on_cleanup()
-            self._simple_dialog(_("Import Failed"), str(e))
-        except Exception as e:
-            if on_cleanup:
-                on_cleanup()
-            logger.error(f"Failed to read backup: {e}")
-            self._simple_dialog(_("Import Failed"), str(e))
+        from .bitwarden_backup_setup import progress_dialog
+        controller = self._secrets_controller()
+        cancelled = {'v': False}
+        _set_status, close_spinner = progress_dialog(
+            self, _("Import Configuration"), _("Reading backup…"),
+            on_cancel=lambda: cancelled.__setitem__('v', True))
 
-    def _prompt_spbk_passphrase(self, import_path: str, error: Optional[str] = None, on_cleanup=None):
-        """Prompt for the backup passphrase; retry on a wrong passphrase.
-
-        ``on_cleanup`` fires on success, on a fatal error, and on cancel — but NOT between
-        wrong-passphrase retries (it's forwarded to the retry instead)."""
-        from .backup_archive import read_spbk, SpbkPassphraseError, SpbkError
-        dialog = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Encrypted Backup"),
-            body=error or _("Enter the passphrase used when this backup was created."))
-        entry = Gtk.PasswordEntry(show_peek_icon=True)
-        entry.set_property('activates-default', True)
-        entry.set_size_request(BACKUP_DIALOG_MIN_WIDTH, -1)
-        dialog.set_extra_child(entry)
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('ok', _('Unlock'))
-        dialog.set_response_appearance('ok', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('ok')
-        dialog.set_close_response('cancel')
-
-        def on_response(dlg, resp):
-            if resp != 'ok':
-                if on_cleanup:
-                    on_cleanup()   # user cancelled — drop any downloaded temp
-                return
-            passphrase = entry.get_text() or ''
+        def worker():
             try:
-                manifest = read_spbk(import_path, passphrase)
-            except SpbkPassphraseError:
-                GLib.idle_add(lambda: (self._prompt_spbk_passphrase(
-                    import_path, _("Wrong passphrase — try again."),
-                    on_cleanup=on_cleanup), False)[1])
-                return
-            except SpbkError as e:
-                if on_cleanup:
-                    on_cleanup()
-                self._simple_dialog(_("Import Failed"), str(e))
-                return
+                payload = ('ok', controller.preview_backup(source=import_path))
+            except Exception as e:
+                logger.error(f"Failed to preview backup: {e}")
+                payload = ('error', str(e))
+            GLib.idle_add(lambda: (_after(payload), False)[1])
+
+        def _after(p):
             if on_cleanup:
                 on_cleanup()
-            self._show_import_mode_dialog(import_path, manifest=manifest)
+            if cancelled['v']:
+                return
+            close_spinner()
+            if p[0] != 'ok':
+                self._simple_dialog(_("Import Failed"), p[1])
+                return
+            preview = p[1]
+            if preview.get('error'):
+                self._simple_dialog(_("Import Failed"), preview.get('error'))
+                return
+            self._show_import_mode_dialog(
+                preview.get('included'),
+                self._make_spbk_import_apply(import_path, preview.get('included')),
+                source_kind='spbk')
 
-        dialog.connect('response', on_response)
-        dialog.present()
-        GLib.idle_add(lambda: (entry.grab_focus(), False)[1])
+        threading.Thread(target=worker, daemon=True).start()
 
-    def _show_import_mode_dialog(self, import_path: str, manifest=None):
-        """Show dialog to select import mode (replace or merge)."""
+    def _show_import_mode_dialog(self, included, on_apply, *, source_kind='spbk'):
+        """Show dialog to select import mode (replace or merge) and — when the daemon
+        previewed the manifest — which categories to restore.
+
+        ``included`` is the daemon's per-category map (``None`` for legacy JSON,
+        which has no previewable manifest). ``on_apply(mode, restore_options)`` runs
+        the daemon-owned import; the frontend never holds the manifest."""
         try:
             from sshpilot import icon_utils
 
@@ -1817,13 +1811,7 @@ class WindowConfigDialogsMixin:
             mode_row.connect('notify::selected', sync_mode_subtitle)
 
             restore_checks = {}
-            if manifest is not None:
-                from .backup_manager import BackupManager, BACKUP_OPTION_KEYS
-                backup_mgr = BackupManager(self.config, self.connection_manager)
-                all_requested = {key: True for key in BACKUP_OPTION_KEYS}
-                included = backup_mgr._restore_options_for_manifest(
-                    manifest, restore_options=all_requested)
-
+            if included is not None:
                 restore_group = Adw.PreferencesGroup(title=_("Restore"))
                 labels = {
                     'app_settings': _("App settings and groups"),
@@ -1832,10 +1820,10 @@ class WindowConfigDialogsMixin:
                     'secrets': _("Saved secrets (passwords and passphrases)"),
                     'private_keys': _("Private key files"),
                 }
-                for key in BACKUP_OPTION_KEYS:
+                for key in _BACKUP_OPTION_KEYS:
                     row = Adw.SwitchRow(title=labels[key])
-                    row.set_active(included.get(key, False))
-                    row.set_sensitive(included.get(key, False))
+                    row.set_active(bool(included.get(key, False)))
+                    row.set_sensitive(bool(included.get(key, False)))
                     if not included.get(key, False):
                         row.set_subtitle(_("This backup does not include this item."))
                     if key == 'private_keys':
@@ -1858,7 +1846,7 @@ class WindowConfigDialogsMixin:
 
             def on_import(_btn):
                 mode = 'replace' if mode_row.get_selected() == 0 else 'merge'
-                if manifest is not None:
+                if included is not None:
                     restore_options = {
                         key: check.get_active()
                         for key, check in restore_checks.items()
@@ -1869,19 +1857,19 @@ class WindowConfigDialogsMixin:
                             _("Choose at least one item to restore from this backup."))
                         dialog.close()
                         GLib.idle_add(lambda: (self._show_import_mode_dialog(
-                            import_path, manifest=manifest), False)[1])
+                            included, on_apply, source_kind=source_kind), False)[1])
                         return
                     dialog.close()
                     will_replace_ssh = restore_options.get('ssh_config', False)
                     self._guard_default_mode_replace(
                         mode, will_replace_ssh,
-                        lambda: self._perform_spbk_import(manifest, mode, restore_options))
+                        lambda: on_apply(mode, restore_options))
                 else:
                     # Legacy JSON: we can't see categories up front, so assume ssh_config.
                     dialog.close()
                     self._guard_default_mode_replace(
                         mode, True,
-                        lambda: self._perform_import(import_path, mode))
+                        lambda: on_apply(mode, None))
 
             import_btn.connect('clicked', on_import)
             dialog.present(self)
@@ -1921,29 +1909,22 @@ class WindowConfigDialogsMixin:
                                             cancelled_heading: str):
         """Run ``proceed()`` once the session vault is unlocked when secrets are involved.
 
-        If the vault is locked, prompt to unlock first. When unlock fails or the user cancels,
-        show ``cancelled_heading`` and do **not** call ``proceed()`` — export/import must not
-        silently continue with zero credentials restored or included."""
+        The lock state comes from the daemon (the controller's ``load_state``). If the
+        vault is locked, prompt to unlock through the daemon. When unlock fails or the
+        user cancels, show ``cancelled_heading`` and do **not** call ``proceed()`` —
+        export/import must not silently continue with zero credentials restored or included."""
         if not needed:
             proceed()
             return
+        controller = getattr(self, "secrets_controller", None)
+        if controller is None:
+            self._simple_dialog(
+                cancelled_heading,
+                _("Secret storage is managed by the sshPilot daemon, which is not "
+                  "connected, so the operation was cancelled."))
+            return
         try:
-            from .secret_storage import get_secret_manager
-            if not get_secret_manager().selected_needs_unlock():
-                proceed()
-                return
-            from .secret_unlock_dialog import prompt_unlock
-
-            def _on_done(unlocked):
-                if unlocked:
-                    proceed()
-                    return
-                self._simple_dialog(
-                    cancelled_heading,
-                    _("Your secret vault must be unlocked to include or restore saved "
-                      "credentials. Unlock it and try again."))
-
-            prompt_unlock(self, on_done=_on_done)
+            state = controller.load_state()
         except Exception:
             # If we cannot even verify the vault, abort rather than silently proceed with a
             # backup/restore that would be missing credentials.
@@ -1952,50 +1933,89 @@ class WindowConfigDialogsMixin:
                 cancelled_heading,
                 _("Could not verify the secret vault, so the operation was cancelled to avoid "
                   "leaving saved credentials out. Try again."))
+            return
+        if state is None or not state.needs_unlock:
+            proceed()
+            return
+        from .secret_unlock_dialog import prompt_unlock
 
-    def _perform_spbk_import(self, manifest, mode: str, restore_options=None):
-        """Apply a decrypted .spbk manifest: config (replace/merge) + restore credentials.
+        def _on_done(unlocked):
+            if unlocked:
+                proceed()
+                return
+            self._simple_dialog(
+                cancelled_heading,
+                _("Your secret vault must be unlocked to include or restore saved "
+                  "credentials. Unlock it and try again."))
 
-        If the manifest carries credentials and the selected secret backend is a **locked
-        session vault** (e.g. Bitwarden), unlock it first — import is aborted if unlock fails
-        or the user cancels, so credentials are never silently skipped.  Applying a manifest
-        may invoke the selected secret backend once per credential, so keep that work off the
-        GTK main thread and show progress until the result is ready."""
-        restore_options = restore_options or {}
-        total = (
-            len([c for c in (manifest.get('credentials') or [])
-                 if c.get('secret') is not None])
-            if restore_options.get('secrets', True) else 0
-        )
-        total_keys = (
-            len(manifest.get('private_keys') or [])
-            if restore_options.get('private_keys', False) else 0
-        )
+        prompt_unlock(self, on_done=_on_done)
 
+    def _make_spbk_import_apply(self, import_path, included):
+        """Daemon-owned import apply for a ``.spbk`` file."""
+        def apply(mode, restore_options):
+            controller = self._secrets_controller()
+            opts = {'mode': mode}
+            if restore_options:
+                opts.update(restore_options)
+            self._run_daemon_import(
+                lambda: controller.import_backup(source=import_path, options=opts),
+                needed=bool((included or {}).get('secrets')),
+                cancelled_heading=_("Import Cancelled"))
+        return apply
+
+    def _make_json_import_apply(self, import_path):
+        """Daemon-owned import apply for a legacy JSON config (no secrets)."""
+        def apply(mode, _restore_options):
+            controller = self._secrets_controller()
+            self._run_daemon_import(
+                lambda: controller.import_backup(
+                    source=import_path, options={'mode': mode}),
+                needed=False,
+                cancelled_heading=_("Import Cancelled"))
+        return apply
+
+    def _make_bitwarden_import_apply(self, entry_id, included):
+        """Daemon-owned import apply for a Bitwarden backup note."""
+        def apply(mode, restore_options):
+            controller = self._secrets_controller()
+            opts = {'mode': mode}
+            if restore_options:
+                opts.update(restore_options)
+            self._run_daemon_import(
+                lambda: controller.import_bitwarden_backup(
+                    entry_id=entry_id, options=opts),
+                needed=bool((included or {}).get('secrets')),
+                cancelled_heading=_("Import Cancelled"))
+        return apply
+
+    def _make_ssh_import_apply(self, connection_id, remote_dir, entry_id, included):
+        """Daemon-owned import apply for an SSH-stored backup."""
+        def apply(mode, restore_options):
+            controller = self._secrets_controller()
+            opts = {'mode': mode}
+            if restore_options:
+                opts.update(restore_options)
+            self._run_daemon_import(
+                lambda: controller.import_ssh_backup(
+                    connection_id=connection_id, remote_dir=remote_dir,
+                    entry_id=entry_id, options=opts),
+                needed=bool((included or {}).get('secrets')),
+                cancelled_heading=_("Import Cancelled"))
+        return apply
+
+    def _run_daemon_import(self, run, *, needed: bool, cancelled_heading: str):
+        """Run a daemon-owned import via ``run()`` (zero-arg callable returning a
+        ``SecretTransferResult``), gated on the vault unlock when the backup carries
+        credentials, with a spinner. The frontend never holds the manifest."""
         def do_apply(*_args):
             from .bitwarden_backup_setup import progress_dialog
-
             _set_status, close_spinner = progress_dialog(
                 self, _("Import Configuration"),
                 _("Applying backup — this may take a while…"))
 
             def worker():
                 try:
-                    from .backup_manager import BackupManager
-                    backup_mgr = BackupManager(self.config, self.connection_manager)
-                    success, error, restored, restored_keys = (
-                        backup_mgr.apply_imported_manifest(
-                            manifest, mode=mode, create_backup=True,
-                            restore_options=restore_options)
-                    )
-                    payload = (
-                        'ok', success, error, restored, restored_keys,
-                        getattr(backup_mgr, 'last_import_skipped_keys', 0),
-                        getattr(backup_mgr, 'last_import_secrets_persisted', True),
-                        getattr(backup_mgr, 'last_import_skipped_credentials', 0),
-                        getattr(backup_mgr, 'last_merge_collisions', []) or [],
-                        getattr(backup_mgr, 'last_merge_dropped_globals', 0),
-                    )
+                    payload = ('ok', run())
                 except Exception as e:
                     logger.error("Backup import failed: %s", e)
                     payload = ('error', str(e))
@@ -2006,80 +2026,50 @@ class WindowConfigDialogsMixin:
                 if payload[0] == 'error':
                     self._simple_dialog(_("Import Failed"), payload[1])
                     return
-                (_, success, error, restored, restored_keys, skipped_keys,
-                 secrets_persisted, skipped_creds, merge_collisions,
-                 dropped_globals) = payload
-                if not success:
-                    self._simple_dialog(
-                        _("Import Failed"), error or _("Unknown error"))
-                    return
-                self._show_import_success(
-                    restored, total, restored_keys, total_keys,
-                    skipped_keys, secrets_persisted, skipped_creds,
-                    merge_collisions=merge_collisions,
-                    dropped_globals=dropped_globals)
+                self._show_daemon_import_result(payload[1])
 
             threading.Thread(target=worker, daemon=True).start()
 
         self._run_after_vault_unlock_for_secrets(
-            do_apply,
-            needed=total > 0,
-            cancelled_heading=_("Import Cancelled"),
-        )
+            do_apply, needed=needed, cancelled_heading=cancelled_heading)
 
-    def _show_import_success(self, restored: int, total: int,
-                             restored_keys: int = 0, total_keys: int = 0,
-                             skipped_keys: int = 0, secrets_persisted: bool = True,
-                             skipped_credentials: int = 0, merge_collisions=None,
-                             dropped_globals: int = 0):
-        # Keys that already existed were left untouched by design (never overwritten), so they
-        # are NOT counted as failures. Genuine key failures are the remainder.
-        failed_keys = max(0, total_keys - restored_keys - skipped_keys)
-        # Secrets that already existed were likewise left untouched — not a failure either.
-        failed_creds = max(0, total - restored - skipped_credentials)
+    def _show_daemon_import_result(self, result):
+        """Display a daemon ``SecretTransferResult`` import outcome — counts and warnings only."""
+        if result.status.value != 'success':
+            msg = result.message or _("The backup could not be imported")
+            if result.warnings:
+                msg += "\n\n" + "\n\n".join(result.warnings)
+            self._simple_dialog(_("Import Failed"), msg)
+            return
+        counts = result.counts or {}
+        restored = int(counts.get('restored', 0) or 0)
+        skipped_creds = int(counts.get('skipped', 0) or 0)
+        keys_written = int(counts.get('keys_written', 0) or 0)
+        keys_skipped = int(counts.get('keys_skipped', 0) or 0)
+        ignored = int(counts.get('ignored_secrets', 0) or 0)
         lines = []
-        if total == 0 and total_keys == 0:
+        if not any((restored, keys_written, skipped_creds, keys_skipped, ignored)):
             lines.append(_("Backup imported successfully."))
         else:
-            all_ok = (failed_creds == 0) and (failed_keys == 0)
-            lines.append(_("Backup imported successfully.") if all_ok
-                         else _("Backup imported, with some items skipped."))
             done = []
             if restored:
                 done.append(_("{count} credential(s)").format(count=restored))
-            if restored_keys:
-                done.append(_("{count} private key(s)").format(count=restored_keys))
+            if keys_written:
+                done.append(_("{count} private key(s)").format(count=keys_written))
             if done:
                 lines.append(_("Restored {items}.").format(items=_(", ").join(done)))
-            if skipped_credentials:
+            if skipped_creds:
                 lines.append(_("{} credential(s) already existed and were left untouched — "
-                               "sshPilot never overwrites a saved secret.").format(
-                                   skipped_credentials))
-            if skipped_keys:
+                               "sshPilot never overwrites a saved secret.").format(skipped_creds))
+            if keys_skipped:
                 lines.append(_("{} private key(s) already existed and were left untouched — "
-                               "sshPilot never overwrites a private key.").format(skipped_keys))
-            if failed_creds:
-                if not secrets_persisted:
-                    lines.append(_("{} credential(s) were not stored because the selected secret "
-                                   "backend does not save secrets (“agent”). Choose a "
-                                   "storage backend in Preferences ▸ Security & Credentials, "
-                                   "then import again.").format(failed_creds))
-                else:
-                    lines.append(_("{} of {} credential(s) could not be restored — the selected "
-                                   "secret backend may be locked or unavailable.").format(
-                                       failed_creds, total))
-            if failed_keys:
-                lines.append(_("{} private key(s) could not be written (the target path may "
-                               "not be writable).").format(failed_keys))
-        if merge_collisions:
-            names = ", ".join(" ".join(p) for p in merge_collisions)
-            lines.append(_("{} imported host(s) shared a name with an existing host; the "
-                           "conflicting names were left as-is: {}.").format(
-                               len(merge_collisions), names))
-        if dropped_globals:
-            lines.append(_("{} global rule(s) from the backup (Host * / Match blocks) were not "
-                           "imported — they affect every connection, so they are not merged "
-                           "automatically.").format(dropped_globals))
+                               "sshPilot never overwrites a private key.").format(keys_skipped))
+            if ignored:
+                lines.append(_("{} saved password(s)/key(s) in this .json file were not "
+                               "imported — legacy JSON backups can't restore secrets. Use an "
+                               "encrypted .spbk backup to include them.").format(ignored))
+        if result.warnings:
+            lines.append("\n\n".join(result.warnings))
         lines.append(_("Reload now to apply the imported configuration. Some settings may still "
                        "need a full restart of sshPilot to take effect."))
         body = "\n\n".join(lines)
@@ -2095,7 +2085,7 @@ class WindowConfigDialogsMixin:
                 try:
                     self.config.config_data = self.config.load_json_config()
                     if self.connection_manager:
-                        self.connection_manager.load_ssh_config()
+                        self.connection_manager.refresh()
                     if self.group_manager:
                         self.group_manager._load_groups()
                     self.rebuild_connection_list()
@@ -2107,77 +2097,6 @@ class WindowConfigDialogsMixin:
         success_dialog.connect('response', on_success_response)
         success_dialog.present()
 
-    def _perform_import(self, import_path: str, mode: str):
-        """Perform the actual import operation"""
-        try:
-            from .backup_manager import BackupManager
-            
-            backup_mgr = BackupManager(self.config, self.connection_manager)
-            success, error = backup_mgr.import_configuration(import_path, mode=mode, create_backup=True)
-            
-            if success:
-                # Show success dialog with restart suggestion
-                body = _("Configuration imported successfully.")
-                ignored = getattr(backup_mgr, 'last_import_ignored_secrets', 0)
-                if ignored:
-                    body += "\n\n" + _("{} saved password(s)/key(s) in this .json file were not "
-                                       "imported — legacy JSON backups can't restore secrets. "
-                                       "Use an encrypted .spbk backup to include them.").format(
-                                           ignored)
-                body += "\n\n" + _("Reload now to apply it. Some settings may still need a full "
-                                   "restart of sshPilot to take effect.")
-                success_dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Import Successful"),
-                    body=body,
-                )
-                success_dialog.add_response('ok', _('OK'))
-                success_dialog.add_response('restart', _('Reload Now'))
-                success_dialog.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
-                
-                def on_success_response(dialog, response):
-                    if response == 'restart':
-                        # Reload the connection list and config
-                        try:
-                            self.config.config_data = self.config.load_json_config()
-                            if self.connection_manager:
-                                self.connection_manager.load_ssh_config()
-                            # Reload group manager to pick up imported groups and colors
-                            if self.group_manager:
-                                self.group_manager._load_groups()
-                            self.rebuild_connection_list()
-                            
-                            # Show confirmation
-                            self.toast_overlay.add_toast(Adw.Toast.new(_("Configuration reloaded")))
-                        except Exception as e:
-                            logger.error(f"Failed to reload configuration: {e}")
-                    dialog.destroy()
-                
-                success_dialog.connect('response', on_success_response)
-                success_dialog.present()
-            else:
-                # Show error dialog
-                error_dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Import Failed"),
-                    body=_("Failed to import configuration:\n{error}").format(error=error or "Unknown error")
-                )
-                error_dialog.add_response('ok', _('OK'))
-                error_dialog.present()
-                
-        except Exception as e:
-            logger.error(f"Import failed: {e}")
-            error_dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Import Failed"),
-                body=_("An error occurred during import:\n{error}").format(error=str(e))
-            )
-            error_dialog.add_response('ok', _('OK'))
-            error_dialog.present()
-
     # --- Group management dialogs (create / edit / rename tag / assign) -----
 
     def _group_form_dialog(self, *, title, label, confirm_label, on_confirm,
@@ -2188,6 +2107,17 @@ class WindowConfigDialogsMixin:
         ``on_confirm(name, color)`` runs on the confirm button; return True to
         close the dialog, False to keep it open (e.g. validation failed).
         ``color`` is an RGBA string, or None when unset/cleared.
+
+        The *on_confirm* callback may also accept a ``set_busy`` keyword
+        argument ``(set_busy: Callable[[bool], None])``.  When provided the
+        dialog disables all controls while the callback is running so that
+        the user cannot re-submit; the callback re-enables them by calling
+        ``set_busy(False)`` on failure.
+
+        The *on_confirm* callback may also accept a ``close_dialog`` keyword
+        argument ``(close_dialog: Callable[[], None])``.  When provided it
+        lets an asynchronous callback dismiss the dialog once the operation
+        has actually completed.
         """
         dialog = Adw.Dialog()
         dialog.set_title(title)
@@ -2284,6 +2214,13 @@ class WindowConfigDialogsMixin:
             color_row.append(color_controls)
             content_area.append(color_row)
 
+        def _set_controls_enabled(enabled: bool) -> None:
+            entry.set_sensitive(enabled)
+            confirm_button.set_sensitive(enabled)
+            cancel_button.set_sensitive(enabled)
+            if color_button is not None:
+                color_button.set_sensitive(enabled)
+
         def on_confirm_clicked(_button):
             name = entry.get_text().strip()
             color = None
@@ -2291,7 +2228,23 @@ class WindowConfigDialogsMixin:
                 rgba_value = color_button.get_rgba()
                 if color_selected and rgba_value.alpha > 0:
                     color = rgba_value.to_string()
-            if on_confirm(name, color):
+            try:
+                result = on_confirm(
+                    name,
+                    color,
+                    set_busy=lambda busy: _set_controls_enabled(not busy),
+                    close_dialog=dialog.close,
+                )
+            except TypeError:
+                try:
+                    result = on_confirm(
+                        name,
+                        color,
+                        set_busy=lambda busy: _set_controls_enabled(not busy),
+                    )
+                except TypeError:
+                    result = on_confirm(name, color)
+            if result is True:
                 dialog.close()
 
         cancel_button.connect('clicked', lambda _b: dialog.close())
@@ -2308,15 +2261,47 @@ class WindowConfigDialogsMixin:
         GLib.idle_add(focus_entry)
 
     def on_create_group_action(self, action, param=None):
-        """Handle create group action"""
+        """Handle create group action."""
         try:
-            def create(name, color):
+            def create(name, color, set_busy=None, close_dialog=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                self.group_manager.create_group(name, color=color)
-                self.rebuild_connection_list()
-                return True
+                controller = getattr(self.group_manager, 'controller', None)
+                if controller is None:
+                    self._simple_dialog(
+                        _("Service unavailable"),
+                        _("Connect to the sshPilot daemon before creating groups."),
+                    )
+                    return False
+                if set_busy is not None:
+                    set_busy(True)
+                def _do_create():
+                    return controller.client.create_group(
+                        name, parent_id="", color=color or "",
+                    )
+                def _on_created(new_group_id):
+                    self.rebuild_connection_list()
+                    if set_busy is not None:
+                        set_busy(False)
+                    if close_dialog is not None:
+                        close_dialog()
+                    return True
+                def _on_error(error):
+                    if set_busy is not None:
+                        set_busy(False)
+                    self._simple_dialog(
+                        _("Error"),
+                        _("Failed to create group: {error}").format(
+                            error=str(error),
+                        ),
+                    )
+                controller.run(
+                    _do_create,
+                    on_success=_on_created,
+                    on_error=_on_error,
+                )
+                return False  # keep dialog open until async completes
 
             self._group_form_dialog(
                 title=_("Create New Group"),
@@ -2349,14 +2334,56 @@ class WindowConfigDialogsMixin:
                 logger.debug(f"Group info not found for ID: {group_id}")
                 return
 
-            def save(name, color):
+            def save(name, color, set_busy=None, close_dialog=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a group name."))
                     return False
-                self.group_manager.rename_group(group_id, name)
-                self.group_manager.set_group_color(group_id, color)
-                self.rebuild_connection_list()
-                return True
+                controller = getattr(self.group_manager, 'controller', None)
+                if controller is None:
+                    self._simple_dialog(
+                        _("Service unavailable"),
+                        _("Connect to the sshPilot daemon before editing groups."),
+                    )
+                    return False
+                if set_busy is not None:
+                    set_busy(True)
+                from sshpilot.api.models.connection_store import (
+                    GroupId,
+                    SetGroupColorRequest,
+                )
+                steps = [
+                    lambda _prev: controller.client.rename_group(group_id, name),
+                ]
+                if color is not None:
+                    steps.append(
+                        lambda _prev: controller.client.set_group_color(
+                            SetGroupColorRequest(
+                                group_id=GroupId(group_id),
+                                color=color or "",
+                            )
+                        )
+                    )
+                def _on_done(_result):
+                    self.rebuild_connection_list()
+                    if set_busy is not None:
+                        set_busy(False)
+                    if close_dialog is not None:
+                        close_dialog()
+                def _on_error(error):
+                    if set_busy is not None:
+                        set_busy(False)
+                    self._simple_dialog(
+                        _("Error"),
+                        _("Failed to update group: {error}").format(
+                            error=str(error),
+                        ),
+                    )
+                controller.run_sequence(
+                    steps,
+                    on_success=_on_done,
+                    on_error=_on_error,
+                )
+                return False  # keep dialog open until async completes
 
             self._group_form_dialog(
                 title=_("Edit Group"),
@@ -2380,28 +2407,64 @@ class WindowConfigDialogsMixin:
             old_name = str(tag_row.group_info.get('name', ''))
             old_key = str(tag_row.group_info.get('tag_key', '')) or old_name.casefold()
 
-            def save(name, _color):
+            def save(name, _color, set_busy=None, close_dialog=None):
                 if not name:
                     self._simple_dialog(_("Error"), _("Please enter a tag name."))
                     return False
                 if ',' in name:
-                    # Tags are entered comma-separated in the connection
-                    # dialog, so a comma in a tag name could not round-trip.
                     self._simple_dialog(_("Error"), _("Tag names cannot contain commas."))
                     return False
-                if name != old_name:
-                    from .tag_groups import migrate_expanded_state
-                    self.config.rename_tag(old_name, name)
-                    try:
-                        state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
-                        self.config.set_setting(
-                            'ui.tag_groups_expanded',
-                            migrate_expanded_state(state, old_key, name.casefold()),
+                if name == old_name:
+                    return True
+                from .tag_groups import migrate_expanded_state
+                controller = getattr(self.group_manager, 'controller', None)
+                client = getattr(self.group_manager, 'client', None)
+                if controller is not None and client is not None:
+                    # Route authoritative tag mutation through the daemon RPC.
+                    if set_busy is not None:
+                        set_busy(True)
+                    from sshpilot.api.models.connection_store import RenameTagRequest
+                    def _do_rename():
+                        return client.rename_tag(
+                            RenameTagRequest(old_tag=old_name, new_tag=name),
                         )
-                    except Exception:
-                        logger.debug("Failed to migrate tag expansion state", exc_info=True)
-                    self.rebuild_connection_list()
-                return True
+                    def _on_done(_result):
+                        # Update frontend expansion state only after daemon rename
+                        # succeeds.
+                        try:
+                            state = self.config.get_setting('ui.tag_groups_expanded', {}) or {}
+                            self.config.set_setting(
+                                'ui.tag_groups_expanded',
+                                migrate_expanded_state(state, old_key, name.casefold()),
+                            )
+                        except Exception:
+                            logger.debug("Failed to migrate tag expansion state", exc_info=True)
+                        self.rebuild_connection_list()
+                        if set_busy is not None:
+                            set_busy(False)
+                        if close_dialog is not None:
+                            close_dialog()
+                    def _on_error(error):
+                        if set_busy is not None:
+                            set_busy(False)
+                        self._simple_dialog(
+                            _("Error"),
+                            _("Failed to rename tag: {error}").format(
+                                error=str(error),
+                            ),
+                        )
+                    controller.run(
+                        _do_rename,
+                        on_success=_on_done,
+                        on_error=_on_error,
+                    )
+                    return False  # keep dialog open until async completes
+                # No controller/client available — service unavailable.
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before renaming tags."),
+                )
+                return False
 
             self._group_form_dialog(
                 title=_("Rename Tag"),
@@ -2430,6 +2493,10 @@ class WindowConfigDialogsMixin:
         ``mode`` is either ``'move'`` (relocate the connection to the chosen
         group) or ``'copy'`` (add it to the chosen group while keeping it in any
         group it already belongs to).
+
+        All mutations run through the controller as serialized sequences.  The
+        dialog disables its controls while busy and only closes after the full
+        sequence succeeds.
         """
         is_copy = mode == 'copy'
         try:
@@ -2443,12 +2510,13 @@ class WindowConfigDialogsMixin:
             if not connection_nicknames:
                 return
 
-            def assign(nickname: str, target_group_id) -> None:
-                if is_copy:
-                    if target_group_id:
-                        self.group_manager.copy_connection_to_group(nickname, target_group_id)
-                else:
-                    self.group_manager.move_connection(nickname, target_group_id)
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before using group operations."),
+                )
+                return
 
             available_groups = self.get_available_groups()
             logger.debug(f"Available groups for {mode} dialog: {len(available_groups)} groups")
@@ -2612,43 +2680,97 @@ class WindowConfigDialogsMixin:
             create_group_entry.connect('changed', update_confirm_state)
             update_confirm_state()
 
+            def _set_controls_enabled(enabled: bool) -> None:
+                """Disable all dialog controls while an async operation runs."""
+                confirm_button.set_sensitive(enabled)
+                cancel_button.set_sensitive(enabled)
+                create_group_entry.set_sensitive(enabled)
+                color_button.set_sensitive(enabled)
+                clear_color_button.set_sensitive(enabled)
+
+            def _show_error(message: str) -> None:
+                _set_controls_enabled(True)
+                self._simple_dialog(_("Error"), message)
+
+            def _build_move_steps(nicknames, target_group_id):
+                """Build sequence steps to move/copy all nicknames to target_group_id."""
+                steps = []
+                if is_copy:
+                    from sshpilot.api.models.connection_store import (
+                        ConnectionId, CopyConnectionToGroupRequest, GroupId,
+                    )
+                    for nick in nicknames:
+                        steps.append(
+                            lambda _prev, n=nick: controller.client.copy_connection_to_group(
+                                CopyConnectionToGroupRequest(
+                                    connection_id=ConnectionId(n),
+                                    group_id=GroupId(target_group_id),
+                                )
+                            )
+                        )
+                else:
+                    for nick in nicknames:
+                        steps.append(
+                            lambda _prev, n=nick: controller.client.assign_connection_to_group(
+                                n, target_group_id
+                            )
+                        )
+                return steps
+
             def perform_move() -> bool:
                 group_name = create_group_entry.get_text().strip()
                 if group_name:
                     existing_group_id = find_existing_group_id(group_name)
                     if existing_group_id:
-                        for nickname in connection_nicknames:
-                            assign(nickname, existing_group_id)
-                        self.rebuild_connection_list()
-                        return True
-                    try:
+                        steps = _build_move_steps(connection_nicknames, existing_group_id)
+                    else:
                         selected_color = None
                         rgba_value = color_button.get_rgba()
                         if color_selected and rgba_value.alpha > 0:
                             selected_color = rgba_value.to_string()
-                        new_group_id = self.group_manager.create_group(group_name, color=selected_color)
-                        for nickname in connection_nicknames:
-                            assign(nickname, new_group_id)
-                        self.rebuild_connection_list()
-                        return True
-                    except ValueError as e:
-                        show_group_exists_error(str(e))
-                        create_group_entry.set_text("")
-                        reset_color_selection()
-                        create_group_entry.grab_focus()
-                        update_confirm_state()
-                        return False
+                        # Reuse the production step builder so the
+                        # create-group result is validated as a nonempty
+                        # string group ID and reused across every assignment
+                        # step (run_sequence only threads the previous step's
+                        # return value, which is a bool for assignment RPCs).
+                        from sshpilot.gtk.group_store import (
+                            build_create_and_assign_steps,
+                        )
+                        steps = build_create_and_assign_steps(
+                            controller.client,
+                            group_name,
+                            connection_nicknames,
+                            is_copy=is_copy,
+                            color=selected_color or "",
+                        )
+                elif selected_group_id is not None:
+                    steps = _build_move_steps(connection_nicknames, selected_group_id)
+                else:
+                    return False
 
-                if selected_group_id is not None:
-                    for nickname in connection_nicknames:
-                        assign(nickname, selected_group_id)
+                _set_controls_enabled(False)
+
+                def _on_done(_result):
+                    dialog.close()
                     self.rebuild_connection_list()
-                    return True
-                return False
+
+                def _on_error(error):
+                    _show_error(
+                        _("Failed to {mode}: {error}").format(
+                            mode=mode, error=str(error),
+                        )
+                    )
+
+                controller.run_sequence(
+                    steps,
+                    on_success=_on_done,
+                    on_error=_on_error,
+                )
+                return False  # dialog stays open until async completes
 
             def on_confirm(*_args):
-                if has_valid_target() and perform_move():
-                    dialog.close()
+                if has_valid_target():
+                    perform_move()
 
             confirm_button.connect('clicked', on_confirm)
             create_group_entry.connect('entry-activated', lambda _e: on_confirm())

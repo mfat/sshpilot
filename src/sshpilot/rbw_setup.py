@@ -10,19 +10,22 @@ of the work itself:
   + optional self-hosted server) and then kicks off ``rbw unlock`` / ``rbw sync``;
   pinentry prompts for the master password and any 2FA.
 
+All lifecycle work is daemon-owned and driven exclusively through the
+daemon-backed :class:`SecretBackendsController`. This module never executes
+``rbw`` itself (no ``_run`` / ``_rbw_argv``), never imports ``secret_storage``
+and never reads or writes ``secrets.*`` configuration directly — only GTK
+dialogs and the CLI-presence check for the install notice stay here.
+
 Public API mirrors bitwarden_setup so Preferences can drive both the same way:
 :func:`probe_rbw_status`, :func:`run_rbw_setup`, :func:`ensure_rbw_ready`.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import subprocess
 from dataclasses import dataclass
 from gettext import gettext as _
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 import gi
 
@@ -35,45 +38,16 @@ from .window_dialogs import parent_window
 logger = logging.getLogger(__name__)
 
 RBW_HELP_URL = "https://github.com/doy/rbw"
-_LOGIN_TIMEOUT = 300  # seconds — generous, master-password + 2FA entry via pinentry
 
 
 # ---------------------------------------------------------------------------
-# CLI plumbing (Flatpak-aware, shared resolver with the backend)
-# ---------------------------------------------------------------------------
-
-
-def _rbw_argv(*args: str) -> Optional[List[str]]:
-    """``rbw`` argv prefix + *args* (host path or ``flatpak-spawn --host rbw``),
-    or ``None`` when ``rbw`` is not installed."""
-    from .platform_utils import resolve_host_binary
-
-    prefix = resolve_host_binary("rbw")
-    return (prefix + list(args)) if prefix else None
-
-
-def _run(*args: str, input_text: Optional[str] = None, timeout: int = 120):
-    argv = _rbw_argv(*args)
-    if not argv:
-        raise RuntimeError("rbw is not available")
-    return subprocess.run(
-        argv,
-        input=(input_text.encode() if input_text is not None else None),
-        capture_output=True,
-        env=os.environ.copy(),
-        check=False,
-        timeout=timeout,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Status
+# Status (daemon-owned — presentation adapter only)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class RbwStatus:
-    """Snapshot of ``rbw`` readiness."""
+    """Snapshot of ``rbw`` readiness (presentation only)."""
 
     cli_installed: bool = False
     configured: bool = False  # an account email is set in `rbw config`
@@ -85,29 +59,43 @@ class RbwStatus:
         return self.cli_installed and self.configured and self.unlocked
 
 
-def probe_rbw_status() -> RbwStatus:
-    """Check CLI presence, account config (``rbw config show``) and unlock state
-    (``rbw unlocked``). Never prompts — ``rbw unlocked`` only reads agent state."""
-    if _rbw_argv() is None:
+def _resolve_controller(window):
+    """The daemon-backed secrets controller reachable from ``window``, or ``None``."""
+    controller = getattr(window, "secrets_controller", None)
+    if controller is not None:
+        return controller
+    owner = getattr(window, "parent_window", None)
+    if owner is not None:
+        controller = getattr(owner, "secrets_controller", None)
+        if controller is not None:
+            return controller
+    try:
+        root = window.get_root()
+    except Exception:
+        return None
+    return getattr(root, "secrets_controller", None)
+
+
+def probe_rbw_status(controller=None) -> RbwStatus:
+    """Adapt the daemon's rbw status into the presentation dataclass.
+
+    Never prompts — the daemon only reads agent state (``rbw unlocked`` and
+    ``rbw config show``).
+    """
+    if controller is None:
         return RbwStatus()
-
-    email = ""
     try:
-        res = _run("config", "show")
-        if res.returncode == 0:
-            cfg = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
-            email = str(cfg.get("email") or "").strip()
+        api_status = controller.rbw_status()
+        installed = bool(getattr(api_status, "installed", False))
+        return RbwStatus(
+            cli_installed=installed,
+            configured=bool(getattr(api_status, "configured", False)),
+            unlocked=bool(getattr(api_status, "unlocked", False)),
+            email=str(getattr(api_status, "email", "") or ""),
+        )
     except Exception:
-        logger.debug("rbw config show failed", exc_info=True)
-
-    unlocked = False
-    try:
-        unlocked = _run("unlocked").returncode == 0
-    except Exception:
-        logger.debug("rbw unlocked check failed", exc_info=True)
-
-    return RbwStatus(cli_installed=True, configured=bool(email),
-                     unlocked=unlocked, email=email)
+        logger.debug("rbw daemon status probe failed", exc_info=True)
+        return RbwStatus(cli_installed=False, configured=False, unlocked=False)
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +154,10 @@ def _error_dialog(window, detail: str, on_done: Callable[[bool], None]) -> None:
     dlg.present()
 
 
-def _prompt_config(window, status: RbwStatus, on_done: Callable[[bool], None]) -> None:
-    """Collect the account email + optional self-hosted server, write them with
-    ``rbw config set``, then continue. ``on_done(True)`` to proceed to login."""
+def _prompt_config(window, status: RbwStatus, controller,
+                   on_done: Callable[[bool], None]) -> None:
+    """Collect the account email + optional self-hosted server, apply them through the
+    daemon (``rbw_configure``), then continue. ``on_done(True)`` to proceed to login."""
     from .bitwarden_setup import _message_dialog
 
     dlg = _message_dialog(
@@ -186,7 +175,7 @@ def _prompt_config(window, status: RbwStatus, on_done: Callable[[bool], None]) -
     email_row = Adw.EntryRow(title=_("Account email"))
     email_row.set_text(status.email or "")
     server_row = Adw.EntryRow(title=_("Server URL (optional)"))
-    server_row.set_text(_current_base_url())
+    server_row.set_text(_current_base_url(controller))
     group = Adw.PreferencesGroup()
     group.add(email_row)
     group.add(server_row)
@@ -202,54 +191,51 @@ def _prompt_config(window, status: RbwStatus, on_done: Callable[[bool], None]) -
         if not email:
             on_done(False)
             return
-        _apply_config_async(window, email, server, on_done)
+        _apply_config_async(window, controller, email, server, on_done)
 
     dlg.connect("response", _respond)
     dlg.present()
 
 
-def _current_base_url() -> str:
+def _current_base_url(controller) -> str:
+    """The daemon-staged rbw base URL (read-only presentation)."""
     try:
-        res = _run("config", "show")
-        if res.returncode == 0:
-            cfg = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
-            return str(cfg.get("base_url") or "").strip()
+        api_status = controller.rbw_status()
+        return str(getattr(api_status, "base_url", "") or "").strip()
     except Exception:
-        pass
-    return ""
+        return ""
 
 
-def _apply_config_async(window, email: str, server: str,
+def _apply_config_async(window, controller, email: str, server: str,
                         on_done: Callable[[bool], None]) -> None:
     from .bitwarden_setup import progress_dialog
 
     _set, close = progress_dialog(window, _("rbw"), _("Saving rbw configuration…"))
 
     def worker():
-        ok = True
+        ok = False
         try:
-            ok = _run("config", "set", "email", email).returncode == 0
-            if server:
-                _run("config", "set", "base_url", server)
-            else:
-                _run("config", "unset", "base_url")
+            requested_email = (email or "").strip()
+            result = controller.rbw_configure(requested_email, server)
+            message = str(getattr(result, "message", "") or "").strip()
+            configured = bool(getattr(result, "configured", False))
+            returned_email = str(getattr(result, "email", "") or "").strip()
+            ok = not message and configured and returned_email == requested_email
         except Exception:
             logger.debug("rbw config set failed", exc_info=True)
-            ok = False
         GLib.idle_add(lambda: (close(), on_done(ok), False)[-1])
 
     _thread(worker)
 
 
 # ---------------------------------------------------------------------------
-# Login / unlock (pinentry-driven)
+# Login / unlock (daemon-owned; pinentry-driven inside the daemon)
 # ---------------------------------------------------------------------------
 
 
-def _login_async(window, on_done: Callable[[bool], None]) -> None:
-    """Run ``rbw unlock`` + ``rbw sync`` off the main thread. rbw's pinentry
-    prompts for the master password (and 2FA / login as needed). Success is
-    decided by the end state (``rbw unlocked``), not intermediate return codes."""
+def _login_async(window, controller, on_done: Callable[[bool], None]) -> None:
+    """Run daemon-owned ``rbw unlock`` + ``rbw sync`` off the main thread. The
+    daemon's pinentry prompts for the master password (and 2FA / login as needed)."""
     from .bitwarden_setup import progress_dialog
 
     _set, close = progress_dialog(
@@ -260,18 +246,22 @@ def _login_async(window, on_done: Callable[[bool], None]) -> None:
     def worker():
         detail = ""
         try:
-            res = _run("unlock", timeout=_LOGIN_TIMEOUT)
-            if res.returncode != 0:
-                detail = res.stderr.decode("utf-8", "replace").strip()
-            _run("sync", timeout=_LOGIN_TIMEOUT)
+            unlock_status = controller.rbw_unlock()
+            detail = str(getattr(unlock_status, "message", "") or "")
         except Exception as exc:
             detail = str(exc)
-        status = probe_rbw_status()
+        if not detail:
+            try:
+                sync_status = controller.rbw_sync()
+                detail = str(getattr(sync_status, "message", "") or "")
+            except Exception as exc:
+                detail = str(exc)
+        status = probe_rbw_status(controller)
         GLib.idle_add(lambda: (_after_login(status, detail), False)[1])
 
     def _after_login(status: RbwStatus, detail: str):
         close()
-        if status.unlocked:
+        if status.unlocked and not detail:
             _ready_dialog(window, status, on_done)
         else:
             _error_dialog(window, detail, on_done)
@@ -296,10 +286,16 @@ def ensure_rbw_ready(window, on_ready: Callable[[bool], None]) -> None:
     rbw only prompts when something is actually missing."""
     from .bitwarden_setup import progress_dialog
 
+    controller = _resolve_controller(window)
+    if controller is None:
+        _error_dialog(window, _("The secret-backend daemon service is not available."),
+                      on_ready)
+        return
+
     _set, close = progress_dialog(window, _("rbw"), _("Checking rbw…"))
 
     def worker():
-        status = probe_rbw_status()
+        status = probe_rbw_status(controller)
         GLib.idle_add(lambda: (_after(status), False)[1])
 
     def _after(status: RbwStatus):
@@ -312,10 +308,11 @@ def ensure_rbw_ready(window, on_ready: Callable[[bool], None]) -> None:
             on_ready(False)
             return
         if not status.configured:
-            _prompt_config(window, status,
-                           lambda ok: _login_async(window, on_ready) if ok else on_ready(False))
+            _prompt_config(window, status, controller,
+                           lambda ok: _login_async(window, controller, on_ready)
+                           if ok else on_ready(False))
             return
-        _login_async(window, on_ready)
+        _login_async(window, controller, on_ready)
 
     _thread(worker)
 
@@ -325,10 +322,16 @@ def run_rbw_setup(window, on_done: Optional[Callable[[bool], None]] = None) -> N
     cb = on_done or (lambda _ok: None)
     from .bitwarden_setup import progress_dialog
 
+    controller = _resolve_controller(window)
+    if controller is None:
+        _error_dialog(window, _("The secret-backend daemon service is not available."),
+                      cb)
+        return
+
     _set, close = progress_dialog(window, _("rbw"), _("Checking rbw…"))
 
     def worker():
-        status = probe_rbw_status()
+        status = probe_rbw_status(controller)
         GLib.idle_add(lambda: (_after(status), False)[1])
 
     def _after(status: RbwStatus):
@@ -341,9 +344,10 @@ def run_rbw_setup(window, on_done: Optional[Callable[[bool], None]] = None) -> N
             _ready_dialog(window, status, cb)
             return
         if not status.configured:
-            _prompt_config(window, status,
-                           lambda ok: _login_async(window, cb) if ok else cb(False))
+            _prompt_config(window, status, controller,
+                           lambda ok: _login_async(window, controller, cb)
+                           if ok else cb(False))
             return
-        _login_async(window, cb)
+        _login_async(window, controller, cb)
 
     _thread(worker)

@@ -6,16 +6,23 @@ Handles application settings, themes, and preferences
 import json
 import logging
 import os
+import shutil
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 
 
 from gi.repository import Gio, GLib, GObject
 from .platform_utils import get_config_dir
+from sshpilot.core.settings import (
+    CONFIG_VERSION as _CORE_CONFIG_VERSION,
+    ensure_config_defaults as _ensure_config_defaults_core,
+    get_default_config as _get_default_config_core,
+)
 
 logger = logging.getLogger(__name__)
 
 # Increment this whenever the configuration format changes
-CONFIG_VERSION = 3
+CONFIG_VERSION = _CORE_CONFIG_VERSION
 
 class Config(GObject.Object):
     """Configuration manager for sshPilot"""
@@ -96,19 +103,98 @@ class Config(GObject.Object):
             logger.error(f"Failed to load JSON config: {e}")
             return self.get_default_config()
 
-    def save_json_config(self, config_data: Optional[Dict[str, Any]] = None):
-        """Save configuration to JSON file"""
+    def read_json_config_strict(self) -> Dict[str, Any]:
+        """Read JSON state without replacing malformed input with defaults.
+
+        Authoritative daemon reload uses this path so a partial external write
+        cannot turn the last-known-good connection snapshot into defaults.
+        """
+
+        if not os.path.exists(self.config_file):
+            return self.get_default_config()
+        with open(self.config_file, encoding="utf-8") as config_file:
+            config = json.load(config_file)
+        if not isinstance(config, dict):
+            raise ValueError("configuration root must be an object")
+        config, _updated = self._ensure_config_defaults(config)
+        return config
+
+    def reload_json_cache_strict(self) -> Dict[str, Any]:
+        """Refresh ``config_data`` from the authoritative JSON file in place.
+
+        Used after a daemon-owned mutation (SSH overrides) so the legacy
+        in-memory cache reflects the authoritative file instead of a stale tree
+        that a later ``save_json_config`` would clobber daemon state with.
+
+        Strict, read-only: raises on malformed input, performs no save, and
+        emits no mutation signals.
+        """
+        config = self.read_json_config_strict()
+        self.config_data = config
+        return config
+
+    def save_json_config(
+        self,
+        config_data: Optional[Dict[str, Any]] = None,
+        *,
+        raise_on_error: bool = False,
+    ) -> bool:
+        """Atomically save configuration JSON with restrictive permissions."""
         try:
             if config_data is None:
                 config_data = self.config_data
 
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            with open(self.config_file, 'w') as f:
-                json.dump(config_data, f, indent=2)
+            directory = os.path.dirname(self.config_file) or '.'
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            try:
+                os.chmod(directory, 0o700)
+            except OSError:
+                pass
+            if os.path.lexists(self.config_file) and os.path.islink(self.config_file):
+                raise OSError("refusing to replace a symlinked configuration file")
+
+            backup_file = f"{self.config_file}.bak"
+            if os.path.exists(self.config_file) and not os.path.exists(backup_file):
+                shutil.copy2(self.config_file, backup_file)
+                os.chmod(backup_file, 0o600)
+
+            fd, temporary = tempfile.mkstemp(
+                dir=directory,
+                prefix='.sshpilot-config-',
+                suffix='.tmp',
+            )
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                    json.dump(config_data, handle, indent=2)
+                    handle.write('\n')
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, self.config_file)
+            except Exception:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
+
+            os.chmod(self.config_file, 0o600)
+            try:
+                directory_fd = os.open(directory, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except OSError:
+                pass
 
             logger.debug("Configuration saved to JSON file")
+            return True
         except Exception as e:
             logger.error(f"Failed to save JSON config: {e}")
+            if raise_on_error:
+                raise
+            return False
 
     # Shortcut helpers (get_shortcut_overrides / get_shortcut_override /
     # set_shortcut_override) live further down — the canonical versions read
@@ -116,163 +202,7 @@ class Config(GObject.Object):
 
     def get_default_config(self) -> Dict[str, Any]:
         """Get default configuration values"""
-        return {
-            'config_version': CONFIG_VERSION,
-            'shortcuts': {},
-            # Built-in plugins that are off by default on a fresh install (the
-            # user can enable them in Preferences ▸ Plugins). Only seeded when the
-            # config file is first created; existing configs are left untouched.
-            'plugins': {
-                'disabled': ['docker-manager'],
-            },
-            'terminal': {
-                'theme': 'default',
-                'font': 'Monospace 12',
-                'scrollback_lines': 10000,
-                'cursor_blink': True,
-                'audible_bell': False,
-                'term': None,
-                'pass_through_mode': False,
-                'copy_on_select': False,
-                'paste_on_right_click': False,
-                'encoding': 'UTF-8',
-            },
-            'secrets': {
-                # Secret storage backend: 'auto' (platform default), 'libsecret',
-                # 'keyring', 'pass', 'bitwarden' (the bw CLI; covers self-hosted
-                # Vaultwarden too), 'agent' ('agent' = don't store secrets), or a
-                # registered custom backend. (Legacy 'vaultwarden' migrates to
-                # 'bitwarden'.)
-                'backend': 'auto',
-                # Session-backed backend (Bitwarden, incl. self-hosted Vaultwarden):
-                # minutes of idle before the cached unlock token is dropped and
-                # re-unlock is required. 0 = keep until the app exits.
-                'session_timeout': 0,
-                # Bitwarden CLI account/profile: a path to a `bw` data directory
-                # (BITWARDENCLI_APPDATA_DIR). Empty = the default account. Use a
-                # separate data dir per account (e.g. a self-hosted Vaultwarden).
-                'bitwarden': {
-                    'profile': '',
-                },
-                # KeePass (.kdbx) backend: path to the database file and an optional key
-                # file. The master password is typed per launch (kept in memory).
-                'keepassxc': {
-                    'database': '',
-                    'keyfile': '',
-                },
-            },
-            'identity': {
-                # Default SSH agent offered to connections. 'auto' = the OS/desktop
-                # ssh-agent (inherited via SSH_AUTH_SOCK). A fixed-socket agent
-                # (e.g. '1password', or 'custom') is written as a global `Host *`
-                # IdentityAgent directive to ~/.ssh/config. The per-connection key is
-                # set via IdentityFile, not here.
-                'provider': 'auto',
-                # Socket path for the 'custom' agent (written as IdentityAgent).
-                'agent_socket': '',
-            },
-            'ui': {
-                # Interface language as a locale code ('de'). Empty = follow the
-                # system locale. Applied at startup by i18n.apply_language();
-                # gettext caches its catalogue, so a change needs a restart.
-                'language': '',
-                'show_hostname': True,
-                'auto_focus_terminal': True,
-                'confirm_close_tabs': True,
-                'remember_window_size': True,
-                'window_width': 1200,
-                'window_height': 800,
-                'sidebar_width': 250,
-                'group_color_display': 'bar',
-                'group_color_child_rows': False,
-                'group_row_display': 'nested',
-                'use_group_color_in_tab': False,
-                'use_group_color_in_terminal': False,
-                'connection_sort_last': 'name-asc',
-                'sidebar_show_user_hostname': True,
-                'sidebar_show_group_count': True,
-                'sidebar_show_connection_status': True,
-                'sidebar_show_port_forwarding': True,
-                'sidebar_show_connection_icon': False,
-                'sidebar_show_group_icon': False,
-                'sidebar_flat_rows': True,
-                # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
-                'sidebar_hide_on_startup': False,
-                'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
-                'sidebar_show_when_no_tabs': False,
-                'sidebar_mode': 'full',  # 'full' | 'minimal' (icon strip)
-                # What happens to the sidebar when a session opens:
-                # 'none' | 'minimize' (icon strip) | 'hide'.
-                'sidebar_on_terminal_open': 'none',
-                'sidebar_minimal_row_style': 'initials',  # 'initials' | 'icon'
-                # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
-                'headerbar_show_sidebar_toggle': False,
-                'headerbar_show_split_view': False,
-                'headerbar_show_commands': True,
-                'headerbar_show_theme_toggle': True,
-                'headerbar_show_local_terminal': True,
-            },
-            'welcome': {
-                'background_color': None,  # None for default, or CSS string for custom
-                'tile_color': None,  # None for default, or hex color for custom
-            },
-            'connections_meta': {},  # per-connection metadata
-            'ssh': {
-                'compression': False,
-                'auto_add_host_keys': True,
-                'batch_mode': False,
-                'verbosity': 0,
-                'debug_enabled': False,
-                'use_isolated_config': False,
-                'ssh_overrides': [],
-                'strict_host_key_checking': 'accept-new',
-                # When the user hasn't configured keepalive (here or in
-                # ~/.ssh/config), apply a sane default ServerAlive* so a dead
-                # link is detected (~interval*count seconds) instead of the
-                # indicator staying green forever. User/per-host values win.
-                'apply_default_keepalive': True,
-                'default_keepalive_interval': 15,
-                'default_keepalive_count': 3,
-                # Preload a host's keyring-backed key(s) into ssh-agent on
-                # connect so a passphrased key locked in gnome-keyring gets
-                # unlocked and can sign (the agent is never disabled).
-                'agent_preload_keys': True,
-                'agent_preload_lifetime': 0,  # ssh-add -t <secs>; 0 = no expiry
-            },
-            'file_manager': {
-                'force_internal': False,
-                'open_externally': False,
-                'sftp_keepalive_interval': 30,
-                'sftp_keepalive_count_max': 5,
-                'sftp_connect_timeout': 20,
-                # Icon size step used by the built-in SFTP file manager. Integer
-                # in [0, 4]; index into the per-view size tables in
-                # file_manager_window.py. Default 1 = list 24px / grid 72px.
-                'icon_size_level': 1,
-                # Set the first time the user is offered a choice between
-                # built-in and system file managers (or skipped because only
-                # built-in is available on the current platform). Prevents
-                # re-prompting on subsequent "Manage Files" clicks.
-                'first_run_prompt_shown': False,
-            },
-            'security': {
-                'store_passwords': True,
-                'ssh_agent_forwarding': True,
-            },
-            'logging': {
-                # 'info' (default) or 'debug'. CLI --verbose / --quiet always
-                # win over this. Migrated from the legacy ssh.debug_enabled
-                # key on first load (see _ensure_config_defaults).
-                'level': 'info',
-            },
-            'command_blocks': {
-                'folders': [],
-                'commands': [],
-                'defaults_loaded': False,
-                'auto_hide_sidebar': False,
-                'insert_only': False,
-            },
-        }
+        return _get_default_config_core()
 
     def load_builtin_themes(self) -> Dict[str, Dict[str, str]]:
         """Load built-in terminal themes"""
@@ -691,24 +621,28 @@ class Config(GObject.Object):
         return {name: theme['name'] for name, theme in self.terminal_themes.items()}
 
     # --- Per-connection metadata helpers ---
+    def bind_connection_identities(self, connections) -> None:
+        """No-op retained for backwards compatibility."""
+        return None
+
     def get_connection_meta(self, key: str) -> Dict[str, Any]:
-        """Return stored metadata for a connection keyed by nickname (or unique key)."""
+        """Return metadata for a connection by nickname / ID."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if isinstance(meta_all, dict):
-                value = meta_all.get(key, {})
+                value = meta_all.get(str(key or ''), {})
                 return value if isinstance(value, dict) else {}
         except Exception:
             pass
         return {}
 
     def set_connection_meta(self, key: str, meta: Dict[str, Any]):
-        """Store metadata for a connection."""
+        """Store metadata for a connection by nickname / ID."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 meta_all = {}
-            meta_all[key] = meta or {}
+            meta_all[str(key or '')] = meta or {}
             self.set_setting('connections_meta', meta_all)
         except Exception:
             logger.error(f"Failed to persist connection meta for {key}")
@@ -730,12 +664,15 @@ class Config(GObject.Object):
         return bool(self.get_connection_meta(nickname).get('pinned', False))
 
     def get_pinned_nicknames(self) -> list:
-        """Return a list of nicknames that are currently pinned."""
+        """Return pinned display nicknames."""
         try:
             meta_all = self.get_setting('connections_meta', {})
             if not isinstance(meta_all, dict):
                 return []
-            return [k for k, v in meta_all.items() if isinstance(v, dict) and v.get('pinned')]
+            return [
+                k for k, v in meta_all.items()
+                if isinstance(v, dict) and v.get('pinned')
+            ]
         except Exception:
             return []
 
@@ -767,8 +704,9 @@ class Config(GObject.Object):
         tag_map = {}
         meta_all = self.get_setting('connections_meta', {})
         if isinstance(meta_all, dict):
-            for nickname, meta in meta_all.items():
+            for connection_key, meta in meta_all.items():
                 if isinstance(meta, dict) and isinstance(meta.get('tags'), list):
+                    nickname = connection_key
                     tag_map[nickname] = meta['tags']
         return [(tag, len(nicks)) for tag, nicks in compute_tag_groups(tag_map)]
 
@@ -1086,211 +1024,8 @@ class Config(GObject.Object):
     # --- Shortcut override helpers ---
     def _ensure_config_defaults(self, config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         """Ensure newly added keys exist in the provided config dict."""
-        updated = False
+        return _ensure_config_defaults_core(config)
 
-        shortcuts = config.get('shortcuts')
-        if not isinstance(shortcuts, dict):
-            config['shortcuts'] = {}
-            updated = True
-
-        terminal_cfg = config.get('terminal')
-        if not isinstance(terminal_cfg, dict):
-            config['terminal'] = self.get_default_config().get('terminal', {}).copy()
-            terminal_cfg = config['terminal']
-            updated = True
-        if 'pass_through_mode' not in terminal_cfg:
-            terminal_cfg['pass_through_mode'] = False
-            updated = True
-        elif not isinstance(terminal_cfg['pass_through_mode'], bool):
-            terminal_cfg['pass_through_mode'] = bool(terminal_cfg['pass_through_mode'])
-            updated = True
-        if 'term' not in terminal_cfg:
-            terminal_cfg['term'] = None
-            updated = True
-        else:
-            term_value = terminal_cfg['term']
-            normalized_term = None
-            if isinstance(term_value, str):
-                normalized_term = term_value.strip() or None
-            elif term_value is None:
-                normalized_term = None
-            if normalized_term != term_value:
-                terminal_cfg['term'] = normalized_term
-                updated = True
-
-        encoding_value = terminal_cfg.get('encoding')
-        if isinstance(encoding_value, str):
-            normalized_encoding = encoding_value.strip()
-            if not normalized_encoding:
-                normalized_encoding = 'UTF-8'
-            if normalized_encoding != encoding_value:
-                terminal_cfg['encoding'] = normalized_encoding
-                updated = True
-        else:
-            terminal_cfg['encoding'] = 'UTF-8'
-            updated = True
-
-        file_manager_defaults = self.get_default_config().get('file_manager', {})
-        file_manager_cfg = config.get('file_manager')
-        if not isinstance(file_manager_cfg, dict):
-            config['file_manager'] = file_manager_defaults.copy()
-            updated = True
-        else:
-            if 'force_internal' not in file_manager_cfg:
-                file_manager_cfg['force_internal'] = bool(
-                    file_manager_defaults.get('force_internal', False)
-                )
-                updated = True
-            elif not isinstance(file_manager_cfg['force_internal'], bool):
-                file_manager_cfg['force_internal'] = bool(file_manager_cfg['force_internal'])
-                updated = True
-
-            if 'open_externally' not in file_manager_cfg:
-                file_manager_cfg['open_externally'] = bool(
-                    file_manager_defaults.get('open_externally', False)
-                )
-                updated = True
-            elif not isinstance(file_manager_cfg['open_externally'], bool):
-                file_manager_cfg['open_externally'] = bool(file_manager_cfg['open_externally'])
-                updated = True
-
-            if 'first_run_prompt_shown' not in file_manager_cfg:
-                file_manager_cfg['first_run_prompt_shown'] = bool(
-                    file_manager_defaults.get('first_run_prompt_shown', False)
-                )
-                updated = True
-            elif not isinstance(file_manager_cfg['first_run_prompt_shown'], bool):
-                file_manager_cfg['first_run_prompt_shown'] = bool(
-                    file_manager_cfg['first_run_prompt_shown']
-                )
-                updated = True
-
-            def _ensure_non_negative_int(key: str) -> None:
-                nonlocal updated
-                default_value = file_manager_defaults.get(key, 0)
-                value = file_manager_cfg.get(key, default_value)
-                try:
-                    coerced = int(value)
-                except (TypeError, ValueError):
-                    coerced = default_value
-                if coerced < 0:
-                    coerced = default_value
-                if file_manager_cfg.get(key) != coerced:
-                    file_manager_cfg[key] = coerced
-                    updated = True
-
-            for int_key in (
-                'sftp_keepalive_interval',
-                'sftp_keepalive_count_max',
-                'sftp_connect_timeout',
-            ):
-                if int_key not in file_manager_cfg:
-                    file_manager_cfg[int_key] = int(file_manager_defaults.get(int_key, 0))
-                    updated = True
-                else:
-                    _ensure_non_negative_int(int_key)
-
-            icon_size_default = int(file_manager_defaults.get('icon_size_level', 1))
-            icon_size_value = file_manager_cfg.get('icon_size_level', icon_size_default)
-            try:
-                coerced_icon_size = int(icon_size_value)
-            except (TypeError, ValueError):
-                coerced_icon_size = icon_size_default
-            clamped_icon_size = max(0, min(4, coerced_icon_size))
-            if file_manager_cfg.get('icon_size_level') != clamped_icon_size:
-                file_manager_cfg['icon_size_level'] = clamped_icon_size
-                updated = True
-
-        # --- Logging level: migrate from legacy ssh.debug_enabled --------
-        logging_cfg = config.get('logging')
-        if not isinstance(logging_cfg, dict):
-            logging_cfg = {}
-            config['logging'] = logging_cfg
-            updated = True
-        if logging_cfg.get('level') not in ('info', 'debug'):
-            # One-shot migration: if the old hidden ssh.debug_enabled key was
-            # True, preserve that as the new 'debug' level. Otherwise default
-            # to 'info'.
-            legacy_ssh = config.get('ssh') if isinstance(config.get('ssh'), dict) else {}
-            legacy_debug = bool(legacy_ssh.get('debug_enabled', False)) if legacy_ssh else False
-            logging_cfg['level'] = 'debug' if legacy_debug else 'info'
-            updated = True
-
-        ui_cfg = config.get('ui')
-        if not isinstance(ui_cfg, dict):
-            default_ui = self.get_default_config().get('ui', {}).copy()
-            config['ui'] = default_ui
-            ui_cfg = default_ui
-            updated = True
-        display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
-        if display_value is None:
-            # Match get_default_config(): Accent Bars for installs missing the key.
-            ui_cfg['group_color_display'] = 'bar'
-            updated = True
-        else:
-            if not isinstance(display_value, str):
-                display_value = str(display_value)
-            normalized = display_value.lower()
-            if normalized not in {'fill', 'badge', 'bar', 'dot'}:
-                normalized = 'fill'
-            if ui_cfg.get('group_color_display') != normalized:
-                ui_cfg['group_color_display'] = normalized
-                updated = True
-
-        if 'use_group_color_in_tab' not in ui_cfg:
-            ui_cfg['use_group_color_in_tab'] = False
-            updated = True
-        elif not isinstance(ui_cfg['use_group_color_in_tab'], bool):
-            ui_cfg['use_group_color_in_tab'] = bool(ui_cfg['use_group_color_in_tab'])
-            updated = True
-
-        if 'use_group_color_in_terminal' not in ui_cfg:
-            ui_cfg['use_group_color_in_terminal'] = False
-            updated = True
-        elif not isinstance(ui_cfg['use_group_color_in_terminal'], bool):
-            ui_cfg['use_group_color_in_terminal'] = bool(ui_cfg['use_group_color_in_terminal'])
-            updated = True
-
-        sort_last = ui_cfg.get('connection_sort_last')
-        if not isinstance(sort_last, str):
-            ui_cfg['connection_sort_last'] = 'name-asc'
-            updated = True
-
-        ssh_cfg = config.get('ssh')
-        if not isinstance(ssh_cfg, dict):
-            default_ssh = self.get_default_config().get('ssh', {}).copy()
-            config['ssh'] = default_ssh
-            updated = True
-            ssh_cfg = config['ssh']
-        elif 'apply_advanced' in ssh_cfg:
-            del ssh_cfg['apply_advanced']
-            updated = True
-        if 'use_isolated_config' not in ssh_cfg:
-            ssh_cfg['use_isolated_config'] = False
-            updated = True
-        elif not isinstance(ssh_cfg['use_isolated_config'], bool):
-            ssh_cfg['use_isolated_config'] = bool(ssh_cfg['use_isolated_config'])
-            updated = True
-
-        if not isinstance(config.get('command_blocks'), dict):
-            config['command_blocks'] = self.get_default_config()['command_blocks'].copy()
-            updated = True
-        else:
-            cb = config['command_blocks']
-            if not isinstance(cb.get('folders'), list):
-                cb['folders'] = []
-                updated = True
-            if not isinstance(cb.get('commands'), list):
-                cb['commands'] = []
-                updated = True
-            if 'insert_only' not in cb:
-                cb['insert_only'] = False
-                updated = True
-            if 'auto_hide_sidebar' not in cb:
-                cb['auto_hide_sidebar'] = False
-                updated = True
-
-        return config, updated
 
     def get_shortcut_overrides(self) -> Dict[str, List[str]]:
         """Return a mapping of action names to user-defined shortcut overrides."""

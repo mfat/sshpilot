@@ -1,49 +1,52 @@
-import asyncio
+"""Keepalive options reach the command via the app-level ``ssh_overrides``.
 
-import pytest
+Native mode composes app-level SSH options from ``ssh_overrides`` (the flat
+list produced by Preferences ▸ SSH Settings) and appends them verbatim to the
+command, so keepalive is provided that way rather than via the old
+``keepalive_interval`` / ``keepalive_count_max`` keys. The plain native
+command builder is the contract surface — no event loop or removed
+``Connection.connect()`` involved.
+"""
 
-from sshpilot.connection_manager import Connection
-import sshpilot.config as config_mod
-
-
-# Ensure a dedicated event loop for Connection instances in this module
-asyncio.set_event_loop(asyncio.new_event_loop())
-
-
-def _prepare_connection(monkeypatch: pytest.MonkeyPatch, interval: int = 45, count: int = 6) -> Connection:
-    # Native mode composes app-level SSH options from ``ssh_overrides`` (the flat
-    # list produced by Preferences ▸ SSH Settings) and appends them verbatim to
-    # the command, so keepalive is provided that way rather than via the old
-    # ``keepalive_interval`` / ``keepalive_count_max`` keys.
-    class _ConfigStub:
-        def get_ssh_config(self) -> dict:
-            return {
-                'ssh_overrides': [
-                    '-o', f'ServerAliveInterval={interval}',
-                    '-o', f'ServerAliveCountMax={count}',
-                ],
-            }
-
-    monkeypatch.setattr(config_mod, 'Config', _ConfigStub)
-
-    conn = Connection({'host': 'example.com', 'username': 'alice'})
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(conn.connect())
-    return conn
+from sshpilot.api.models import ConnectionDetails
+from sshpilot.ssh_connection_builder import build_native_command
 
 
-def test_connection_appends_keepalive_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _prepare_connection(monkeypatch)
-    cmd = conn.ssh_cmd
+class Config:
+    def get_ssh_config(self):
+        return {
+            "ssh_overrides": [
+                "-o", "ServerAliveInterval=45",
+                "-o", "ServerAliveCountMax=6",
+            ],
+        }
 
-    assert 'ServerAliveInterval=45' in cmd
-    assert 'ServerAliveCountMax=6' in cmd
 
-    interval_index = cmd.index('ServerAliveInterval=45')
-    count_index = cmd.index('ServerAliveCountMax=6')
+def test_connection_appends_keepalive_options():
+    connection = ConnectionDetails(
+        id="example",
+        nickname="example",
+        host="example",
+        hostname="example.com",
+        username="alice",
+        port=22,
+    )
+    cmd = build_native_command(connection, Config())
 
-    assert cmd[interval_index - 1] == '-o'
-    assert cmd[count_index - 1] == '-o'
+    assert "ServerAliveInterval=45" in cmd
+    assert "ServerAliveCountMax=6" in cmd
+
+    interval_index = cmd.index("ServerAliveInterval=45")
+    count_index = cmd.index("ServerAliveCountMax=6")
+
+    # Each option is preceded by -o and lands before the host token.
+    assert cmd[interval_index - 1] == "-o"
+    assert cmd[count_index - 1] == "-o"
+
+    # The connection alias is the final host token.
+    assert cmd[-1] == "example"
+    assert interval_index < cmd.index("example")
+    assert count_index < cmd.index("example")
 
 
 # Note: per-connection port forwarding is now expressed as LocalForward/

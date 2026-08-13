@@ -22,6 +22,7 @@ from typing import List, Optional
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from .platform_utils import get_state_dir
+from .logging_support import sanitize_log_text
 from .shortcut_utils import install_esc_to_close, install_search_esc
 
 
@@ -32,6 +33,7 @@ logger = logging.getLogger(__name__)
 # rotated log has grown to its 10 MB cap. The user can ask for the full file
 # from the menu — they almost never need to.
 _DEFAULT_TAIL_LINES = 500
+_DIAGNOSTICS_LOG_MAX_BYTES = 1024 * 1024
 
 
 # (display label, filename in state-dir or absolute) — drives the category
@@ -43,6 +45,7 @@ _CATEGORY_MASTER = 'master'
 _CATEGORY_APP = 'app'
 _CATEGORY_SSH = 'ssh'
 _CATEGORY_ASKPASS = 'askpass'
+_CATEGORY_DAEMON = 'daemon'
 _CATEGORY_CRASH = 'crash'
 
 
@@ -101,6 +104,8 @@ def _resolve_log_path(category: str = _CATEGORY_MASTER) -> str:
         except Exception as exc:
             logger.debug("Could not resolve askpass log path: %s", exc)
             return ''
+    if category == _CATEGORY_DAEMON:
+        return os.path.join(get_state_dir(), 'daemon.log')
     if category == _CATEGORY_CRASH:
         # Prefer a non-empty crash report (rotated previous run, else live).
         return _resolve_crash_path() or os.path.join(get_state_dir(), 'crash.log')
@@ -233,29 +238,41 @@ def _resolve_crash_path(explicit: Optional[str] = None) -> str:
 
 
 def build_report_bundle(crash_path: Optional[str] = None, tail_lines: int = 400) -> str:
-    """Clipboard-ready bug report: platform info + master log tail + crash report.
+    try:
+        from .startup_info import StartupInfo
+        summary = StartupInfo(verbose=True).info
+    except Exception:
+        summary = {}
 
-    Reuses the master-log diagnostic bundle and, when a crash report exists,
-    appends its tail inside the same code block so a single paste carries
-    everything a maintainer needs.
-    """
-    master_path = _resolve_log_path(_CATEGORY_MASTER)
-    master_lines, master_total = _tail_file(master_path, tail_lines)
-    bundle = _build_diagnostic_bundle(master_lines, master_total, master_path)
-
+    state = get_state_dir()
+    sources = [
+        ("Frontend log", os.path.join(state, "sshpilot.log"), tail_lines, True),
+        ("Daemon log", os.path.join(state, "daemon.log"), tail_lines, True),
+    ]
+    try:
+        from .askpass_utils import get_askpass_log_path
+        askpass_path = get_askpass_log_path()
+        if askpass_path and os.path.isfile(askpass_path) and os.path.getsize(askpass_path) > 0:
+            sources.append(("Askpass diagnostics", askpass_path, 200, False))
+    except Exception:
+        pass
     crash = _resolve_crash_path(crash_path)
-    if not crash:
-        return bundle
+    if crash:
+        sources.append(("Crash report", crash, 200, False))
 
-    crash_lines, crash_total = _tail_file(crash, 200)
-    extra: List[str] = ["", "```"]
-    extra.append(f"Crash report: {crash}")
-    if crash_total and len(crash_lines) < crash_total:
-        extra.append(f"Showing last {len(crash_lines)} of {crash_total} lines")
-    extra.append("-" * 48)
-    extra.extend(crash_lines or ["(crash report is empty or unreadable)"])
-    extra.append("```")
-    return bundle + "\n" + "\n".join(extra)
+    lines = [chr(96) * 3, "System / runtime summary", sanitize_log_text(json.dumps(summary, default=str))]
+    for label, path, limit, required in sources:
+        values, total = _tail_file(path, limit)
+        lines.extend(["", f"=== {label} ==="])
+        lines.append(f"source: {sanitize_log_text(path)}")
+        if total and len(values) < total:
+            lines.append(f"showing last {len(values)} of {total} lines")
+        if values:
+            lines.extend(sanitize_log_text(value) for value in values)
+        elif required:
+            lines.append("(log is empty, missing, or unreadable)")
+    lines.append(chr(96) * 3)
+    return "\n".join(lines)
 
 
 # Keys whose values are redacted from the config copy in the diagnostics ZIP.
@@ -282,11 +299,84 @@ def _redact_config(obj):
     return obj
 
 
+def _collect_daemon_diagnostics_snapshot() -> dict:
+    """Return a sanitized daemon diagnostics snapshot when reachable."""
+
+    try:
+        from sshpilot.api.daemon_client import DaemonClient
+        from sshpilot.api.errors import ErrorCode, SshPilotError
+        from sshpilot.api.transport.codec import daemon_diagnostics_to_wire
+        from sshpilot.daemon.lifecycle import resolve_socket_path
+    except Exception as error:  # pragma: no cover - defensive
+        return {
+            "available": False,
+            "reason": "import_failed",
+            "detail": type(error).__name__,
+        }
+
+    client = DaemonClient(
+        socket_path=resolve_socket_path(None),
+        timeout=2.0,
+        client_name="sshpilot-diagnostics",
+        frontend_type="diagnostics",
+    )
+    try:
+        diagnostics = client.get_daemon_diagnostics()
+    except SshPilotError as error:
+        reason = (
+            "unavailable"
+            if error.code is ErrorCode.DAEMON_UNAVAILABLE
+            else error.code.value
+        )
+        return {
+            "available": False,
+            "reason": reason,
+            "message": error.message,
+        }
+    except Exception as error:  # pragma: no cover - defensive
+        return {
+            "available": False,
+            "reason": type(error).__name__,
+        }
+    finally:
+        client.close()
+
+    # Wire encoding is already secret-free: no paths, terminal bytes, or env.
+    return {
+        "available": True,
+        "diagnostics": daemon_diagnostics_to_wire(diagnostics),
+    }
+
+
+def _sanitized_log_tail_for_export(path: str) -> str:
+    """Read a bounded tail and sanitize it before it crosses the ZIP boundary."""
+
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            start = max(0, size - _DIAGNOSTICS_LOG_MAX_BYTES)
+            handle.seek(start)
+            if start:
+                handle.readline()
+            content = handle.read(_DIAGNOSTICS_LOG_MAX_BYTES + 1)
+        text = content.decode("utf-8", errors="replace")
+        if start:
+            text = (
+                f"[diagnostics export: showing final {_DIAGNOSTICS_LOG_MAX_BYTES} bytes]\n"
+                + text
+            )
+        return sanitize_log_text(text)
+    except OSError as exc:
+        return f"(could not read log: {type(exc).__name__})"
+
+
 def build_diagnostics_zip(dest_path: str) -> str:
     """Write a self-contained diagnostics ZIP to dest_path and return it.
 
     Contents: logs/ (all log files incl. crash reports), system-info.txt
-    (platform/runtime/tool details), version.txt, and a redacted config.json.
+    (platform/runtime/tool details), version.txt, a redacted config.json, and
+    a sanitized daemon diagnostics snapshot when the local daemon is reachable.
     Connection lists / ssh_config are intentionally excluded for privacy.
     """
     from .platform_utils import get_config_dir, APP_ID
@@ -295,15 +385,29 @@ def build_diagnostics_zip(dest_path: str) -> str:
     with zipfile.ZipFile(dest_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         # Log files (current + rotated backups + crash reports).
         seen = set()
-        for name in ('sshpilot.log', 'app.log', 'ssh.log',
+        for name in ('sshpilot.log', 'app.log', 'ssh.log', 'daemon.log',
                      'crash.log', 'crash.log.previous'):
             path = os.path.join(state, name)
             if os.path.isfile(path):
-                zf.write(path, arcname='logs/' + name)
+                zf.writestr('logs/' + name, _sanitized_log_tail_for_export(path))
                 seen.add(path)
+        try:
+            from .askpass_utils import get_askpass_log_path
+            askpass_path = get_askpass_log_path()
+            if askpass_path and os.path.isfile(askpass_path):
+                zf.writestr(
+                    'logs/sshpilot-askpass.log',
+                    _sanitized_log_tail_for_export(askpass_path),
+                )
+                seen.add(askpass_path)
+        except Exception:
+            pass
         for path in sorted(glob.glob(os.path.join(state, '*.log.*'))):
             if path not in seen and os.path.isfile(path):
-                zf.write(path, arcname='logs/' + os.path.basename(path))
+                zf.writestr(
+                    'logs/' + os.path.basename(path),
+                    _sanitized_log_tail_for_export(path),
+                )
 
         # System / runtime info. verbose=True for full storage/tool probing.
         try:
@@ -331,6 +435,11 @@ def build_diagnostics_zip(dest_path: str) -> str:
                             json.dumps(_redact_config(data), indent=2, default=str))
         except Exception as exc:
             zf.writestr('config.json', "(could not read/redact config: %s)" % exc)
+
+        zf.writestr(
+            'daemon-diagnostics.json',
+            json.dumps(_collect_daemon_diagnostics_snapshot(), indent=2, default=str),
+        )
 
     return dest_path
 
@@ -388,6 +497,7 @@ class LogViewerWindow(Adw.Window):
             (_CATEGORY_APP,     _("App"),     _resolve_log_path(_CATEGORY_APP)),
             (_CATEGORY_SSH,     _("SSH"),     _resolve_log_path(_CATEGORY_SSH)),
             (_CATEGORY_ASKPASS, _("Askpass"), _resolve_log_path(_CATEGORY_ASKPASS)),
+            (_CATEGORY_DAEMON,  _("Daemon"),  _resolve_log_path(_CATEGORY_DAEMON)),
             (_CATEGORY_CRASH,   _("Crash"),   _resolve_log_path(_CATEGORY_CRASH)),
         ]
         self._current_category: str = _CATEGORY_MASTER
@@ -974,9 +1084,9 @@ class LogViewerWindow(Adw.Window):
     def _on_copy_clicked(self, _btn) -> None:
         """Build the diagnostic bundle and put it on the clipboard.
 
-        Always sources from the master ``sshpilot.log`` (plus the crash report
-        if present) so bug reports contain the full picture, regardless of which
-        category the user is currently viewing.
+        Keep each local process source in its own labelled section so bug
+        reports contain the full picture without inventing a cross-process
+        ordering, regardless of which category the user is currently viewing.
         """
         bundle = build_report_bundle()
         try:

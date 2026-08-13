@@ -1,11 +1,26 @@
-"""Tests for the GTK-free virtual tag group helpers."""
+"""Tests for the GTK-free virtual tag group helpers and their snapshot-backed
+projection owner (ConnectionPresentationStore metadata + compute_tag_groups).
+
+Tag groups are synthesized from immutable snapshot metadata at render time and
+are never stored in GroupManager — the tags in connection metadata remain the
+single source of truth.
+"""
 
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.tag_groups import (
+from sshpilot.api.models.connection_store import (  # noqa: E402
+    ConnectionMetadataSummary,
+    ConnectionStoreSnapshot,
+)
+from sshpilot.api.models.connections import (  # noqa: E402
+    ConnectionId,
+    ConnectionSummary,
+)
+from sshpilot.gtk.connection_store import ConnectionPresentationStore  # noqa: E402
+from sshpilot.tag_groups import (  # noqa: E402
     add_tag_to_list,
     complete_tag_text,
     compute_tag_groups,
@@ -170,7 +185,107 @@ class TestMigrateExpandedState:
         assert migrate_expanded_state({"prod": False}, "prod", "prod") == {"prod": False}
 
 
-class TestGroupManagerNoOpContract:
+class _SnapshotClient:
+    def __init__(self, snapshot):
+        self.server_instance_id = "daemon-tags"
+        self._snapshot = snapshot
+
+    def subscribe_events(self, callback):
+        return type("_Sub", (), {"unsubscribe": lambda self: None})()
+
+    def get_connection_store_snapshot(self):
+        return self._snapshot
+
+
+def _summary(cid):
+    return ConnectionSummary(
+        id=ConnectionId(cid), nickname=cid, host=cid,
+        hostname=f"{cid}.example", username="u", port=22,
+    )
+
+
+def _snapshot(tags_by_id):
+    """Build an immutable store snapshot whose metadata carries ``tags``."""
+    connections = tuple(_summary(cid) for cid in tags_by_id)
+    metadata = tuple(
+        ConnectionMetadataSummary(connection_id=cid, values={"tags": tags})
+        for cid, tags in tags_by_id.items()
+        if tags
+    )
+    return ConnectionStoreSnapshot(
+        generation=0,
+        connections=connections,
+        groups=(),
+        root_connection_ids=tuple(tags_by_id.keys()),
+        metadata=metadata,
+    )
+
+
+def _tag_map(store):
+    """Same derivation the sidebar uses: per-connection metadata tags."""
+    return {
+        conn.nickname: list(store.get_metadata(conn.nickname).get("tags", []))
+        for conn in store.connections
+    }
+
+
+class TestTagGroupProjection:
+    """Virtual tag groups projected from immutable snapshot metadata."""
+
+    def test_one_virtual_group_per_distinct_tag(self):
+        store = ConnectionPresentationStore()
+        store.attach_client(_SnapshotClient(_snapshot({
+            "a": ["prod"],
+            "b": ["prod", "web"],
+        })))
+        groups = compute_tag_groups(_tag_map(store))
+        assert groups == [("prod", ["a", "b"]), ("web", ["b"])]
+
+    def test_connection_appears_in_each_tag_group(self):
+        store = ConnectionPresentationStore()
+        store.attach_client(_SnapshotClient(_snapshot({"srv": ["prod", "web"]})))
+        groups = compute_tag_groups(_tag_map(store))
+        assert groups == [("prod", ["srv"]), ("web", ["srv"])]
+
+    def test_duplicate_tags_do_not_duplicate_membership(self):
+        store = ConnectionPresentationStore()
+        store.attach_client(_SnapshotClient(_snapshot({"srv": ["prod", "PROD"]})))
+        groups = compute_tag_groups(_tag_map(store))
+        assert groups == [("prod", ["srv"])]
+
+    def test_empty_and_whitespace_tags_ignored(self):
+        store = ConnectionPresentationStore()
+        store.attach_client(_SnapshotClient(_snapshot({
+            "a": ["", "  "],
+            "b": ["prod"],
+        })))
+        groups = compute_tag_groups(_tag_map(store))
+        assert groups == [("prod", ["b"])]
+
+    def test_tag_group_ordering_is_deterministic(self):
+        store = ConnectionPresentationStore()
+        store.attach_client(_SnapshotClient(_snapshot({
+            "a": ["zeta"],
+            "b": ["Alpha"],
+        })))
+        groups = compute_tag_groups(_tag_map(store))
+        assert groups == [("Alpha", ["b"]), ("zeta", ["a"])]
+
+    def test_snapshot_replacement_removes_obsolete_tag_groups(self):
+        client = _SnapshotClient(_snapshot({
+            "a": ["prod"],
+            "b": ["web"],
+        }))
+        store = ConnectionPresentationStore()
+        store.attach_client(client)
+        assert compute_tag_groups(_tag_map(store)) == [("prod", ["a"]), ("web", ["b"])]
+
+        client._snapshot = _snapshot({"a": []})  # tags removed daemon-side
+        store.refresh()
+        assert compute_tag_groups(_tag_map(store)) == []
+
+
+class TestGroupManagerTagIdContract:
     """The sidebar relies on GroupManager safely ignoring synthetic tag ids."""
 
     def _make_manager(self):
@@ -193,13 +308,6 @@ class TestGroupManagerNoOpContract:
         before = dict(gm.groups)
         gm.set_group_expanded("tag::x", False)
         assert gm.groups == before
-
-    def test_remove_connection_from_group_ignores_tag_id(self):
-        gm = self._make_manager()
-        gid = gm.create_group("real")
-        gm.move_connection("srv", gid)
-        gm.remove_connection_from_group("srv", "tag::x")
-        assert "srv" in gm.groups[gid]["connections"]
 
 
 class TestComputeUntagged:

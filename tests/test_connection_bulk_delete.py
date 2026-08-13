@@ -26,7 +26,7 @@ def test_bulk_delete_yields_between_connections_and_reloads_once(monkeypatch):
         remove_connection=lambda connection, **kwargs: removed.append(
             (connection.nickname, kwargs)
         ),
-        load_ssh_config=lambda: reloads.append(True),
+        refresh=lambda: reloads.append(True),
     )
     window.group_manager = SimpleNamespace(
         _save_groups=lambda: group_saves.append(True)

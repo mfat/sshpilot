@@ -301,4 +301,3 @@ Potential improvements to the agent architecture:
 3. **Multiple Shells**: Support spawning multiple shells from one agent
 4. **SSH Integration**: Extend agent to handle SSH connections with job control
 5. **Performance Monitoring**: Add metrics for I/O throughput and latency
-

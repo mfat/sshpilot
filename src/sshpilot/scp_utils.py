@@ -1,33 +1,22 @@
-"""Shared helpers for the SCP UI (VTE transfer path in ``scp_window``).
+"""Pure SCP compatibility helpers.
 
-Headless ``download_file`` / ``upload_file`` helpers were removed; transfers
-run in a terminal via ``ScpWindowController._start_scp_transfer``.
+Native SCP execution is daemon-owned. These helpers remain for strict operand
+normalization and legacy ``-O``/SFTP-subsystem error classification; they do
+not own the production transfer lifecycle or GTK execution path.
 """
 
 from __future__ import annotations
 
-import logging
-import os
 import re
-import shlex
-import subprocess
 from gettext import gettext as _
-from typing import Iterable, List, Optional, Dict, Any, Tuple
-
-from .ssh_connection_builder import _build_base_ssh_command
-from .ssh_config_utils import get_effective_ssh_config
-
-logger = logging.getLogger(__name__)
+from typing import Iterable, List, Optional, Tuple
 
 __all__ = [
-    '_apply_native_auth_env',
-    '_build_scp_argv_prefix',
     '_summarize_listing_error',
     'assemble_scp_transfer_args',
     'classify_sftp_error',
     'insert_legacy_scp_flag',
     'legacy_scp_flag_unsupported',
-    'list_remote_files',
 ]
 
 
@@ -178,85 +167,6 @@ def legacy_scp_flag_unsupported(error_text: Optional[str]) -> bool:
     return any(marker in lowered for marker in _LEGACY_FLAG_UNSUPPORTED_MARKERS)
 
 
-def _apply_native_auth_env(env: Dict[str, str], auth: Any) -> None:
-    """Merge the shared native auth env into ``env``, honoring deletions.
-
-    dict.update() cannot remove keys that are absent from the source, so we
-    explicitly drop askpass/agent/session-password vars that the auth resolver
-    cleared (e.g. SSH_ASKPASS in password mode, a consumed session id).
-    """
-    env.update(auth.env)
-    for key in (
-        'SSH_ASKPASS',
-        'SSH_ASKPASS_REQUIRE',
-        'SSH_AUTH_SOCK',
-        'SSHPILOT_SESSION_PASSWORD_ID',
-        'SSHPILOT_SESSION_PASSWORD_FILE',
-        'SSHPILOT_PASSWORD_USER',
-        'SSHPILOT_PASSWORD_HOSTS',
-    ):
-        if key not in auth.env:
-            env.pop(key, None)
-
-
-def _build_scp_argv_prefix(
-    connection: Any,
-    config: Any,
-    recursive: bool,
-    known_hosts_path: Optional[str],
-    extra_ssh_opts: Optional[List[str]],
-    auth: Any,
-) -> List[str]:
-    """Build the scp argv up to (but not including) the transfer sources/dest.
-
-    SCP runs against explicit parameters (raw host, explicit keyfile/port), not
-    a saved ~/.ssh/config alias, so it builds an explicit command via the shared
-    option builder (_build_base_ssh_command) plus the explicit key and the shared
-    authentication options (resolve_native_auth) — the same auth the terminal and
-    ssh-copy-id use.
-    """
-    host_label = (
-        getattr(connection, 'nickname', '')
-        or getattr(connection, 'host', '')
-        or getattr(connection, 'hostname', '')
-    )
-    try:
-        effective_config = get_effective_ssh_config(host_label) if host_label else {}
-    except Exception:
-        effective_config = {}
-
-    argv = _build_base_ssh_command(connection, effective_config, config, 'scp')
-
-    if recursive and '-r' not in argv:
-        argv.insert(1, '-r')
-
-    if known_hosts_path:
-        argv.extend(['-o', f'UserKnownHostsFile={known_hosts_path}'])
-
-    # Explicit keyfile (SCP connections are not config aliases).
-    keyfile_value = getattr(connection, 'keyfile', '') or ''
-    key_select_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-    if (
-        keyfile_value
-        and not str(keyfile_value).startswith('Select key file')
-        and key_select_mode in (1, 2)
-        and os.path.isfile(os.path.expanduser(keyfile_value))
-    ):
-        expanded = os.path.expanduser(keyfile_value)
-        if expanded not in argv:
-            argv.extend(['-i', expanded])
-        if key_select_mode == 1 and 'IdentitiesOnly=yes' not in argv:
-            argv.extend(['-o', 'IdentitiesOnly=yes'])
-
-    # Shared authentication options from resolve_native_auth.
-    argv.extend(auth.extra_opts)
-
-    if extra_ssh_opts:
-        argv.extend(extra_ssh_opts)
-
-    return argv
-
-
 def _summarize_listing_error(raw_stderr: str, fallback: str) -> str:
     """Turn raw ssh stderr into a concise message for the browse UI.
 
@@ -272,123 +182,3 @@ def _summarize_listing_error(raw_stderr: str, fallback: str) -> str:
     if is_ssh_auth_failure_text(cleaned):
         return _('Authentication failed or cancelled.')
     return cleaned
-
-
-def list_remote_files(
-    connection,
-    remote_path: str,
-    *,
-    connection_manager=None,
-    config=None,
-    timeout: float = 10,
-) -> Tuple[List[Tuple[str, bool]], Optional[str]]:
-    """List remote files via the native SSH/auth path.
-
-    Uses ``build_ssh_connection`` + ``resolve_native_auth`` (askpass for
-    passwords, passphrases, and MFA). No sshpass. Returns
-    ``(entries, error_message)`` where entries are ``(name, is_directory)``.
-    """
-    if connection is None:
-        return [], _('Missing host information.')
-
-    from .remote_path_utils import (
-        _normalize_remote_path,
-        _quote_remote_path_for_shell,
-    )
-    from .ssh_connection_builder import (
-        ConnectionContext,
-        apply_headless_askpass_env,
-        build_ssh_connection,
-    )
-
-    safe_path = _normalize_remote_path(remote_path)
-    command_path = _quote_remote_path_for_shell(safe_path)
-    # -L dereferences symlinks when classifying, so a symlink that points to a
-    # directory is marked with a trailing "/" (and thus shown/navigated as a
-    # folder). -p alone leaves symlinked dirs unmarked. See issue #1002.
-    list_command = f"LC_ALL=C ls -1pL --color=never -- {command_path}"
-    wrapped_command = (
-        "set -f; "
-        "printf '__SSHPILOT_BEGIN__\\n'; "
-        f"{list_command}; "
-        "status=$?; "
-        "printf '__SSHPILOT_STATUS__%s\\n' \"$status\"; "
-        "printf '__SSHPILOT_END__\\n'; "
-        "exit $status"
-    )
-    remote_command = f"sh -lc {shlex.quote(wrapped_command)}"
-
-    if config is None:
-        try:
-            from .config import Config
-            config = Config()
-        except Exception:
-            config = None
-
-    try:
-        prepared = build_ssh_connection(
-            ConnectionContext(
-                connection=connection,
-                connection_manager=connection_manager,
-                config=config,
-                command_type='ssh',
-                remote_command=remote_command,
-                native_mode=True,
-            )
-        )
-        env = apply_headless_askpass_env(
-            prepared.env,
-            connection,
-            session_password=getattr(prepared, 'password', None),
-        )
-
-        # A staged secret autofills instantly, so a short timeout only guards
-        # against network stalls. With nothing staged, askpass may pop a
-        # dialog (password/passphrase/OTP/FIDO) and a human needs time to
-        # answer it — don't kill ssh mid-prompt.
-        if not getattr(prepared, 'password', None):
-            timeout = max(timeout, 180)
-
-        result = subprocess.run(
-            list(prepared.command),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-            env=env,
-            stdin=subprocess.DEVNULL,
-        )
-
-        stdout_lines = result.stdout.splitlines()
-        begin_idx = next((idx for idx, line in enumerate(stdout_lines)
-                          if line.strip() == '__SSHPILOT_BEGIN__'), None)
-        status_idx = next((idx for idx, line in enumerate(stdout_lines)
-                           if line.startswith('__SSHPILOT_STATUS__')), None)
-        if begin_idx is None or status_idx is None or status_idx < begin_idx:
-            logger.warning('SCP: Unexpected remote listing output for %s', safe_path)
-            return [], _summarize_listing_error(
-                result.stderr, _('Unable to parse remote listing output.'))
-        try:
-            status_line = stdout_lines[status_idx]
-            status_code = int(status_line.replace('__SSHPILOT_STATUS__', '').strip() or '0')
-        except ValueError:
-            status_code = result.returncode
-
-        listing_lines = stdout_lines[begin_idx + 1:status_idx]
-        if status_code != 0:
-            stderr = _summarize_listing_error(
-                result.stderr, _('Failed to list remote directory.'))
-            logger.warning('SCP: Remote list failed (%s): %s', safe_path, stderr)
-            return [], stderr
-        entries: List[Tuple[str, bool]] = []
-        for raw_line in listing_lines:
-            line = raw_line.rstrip()
-            if not line:
-                continue
-            is_dir = line.endswith('/')
-            name = line[:-1] if is_dir else line
-            entries.append((name, is_dir))
-        return entries, None
-    except Exception as exc:
-        logger.error('SCP: Error listing remote files: %s', exc)
-        return [], str(exc)

@@ -124,3 +124,141 @@ def test_preferences_toggle_persists_choice():
     assert prefs.config.saved[-1] == ('app-startup-behavior', 'welcome')
 
 
+def _storage_info(verbose=True, config=None):
+    """Build only the storage section — the full gather resolves the GLib config
+    dir, which is unreliable headless."""
+    from sshpilot.startup_info import StartupInfo
+
+    info = StartupInfo.__new__(StartupInfo)
+    info.verbose = verbose
+    info.isolated = False
+    info._config = config
+    return info._get_storage_info()
+
+
+def test_startup_info_storage_unavailable_without_daemon():
+    """Without a daemon client/controller the storage section reports unavailable —
+    it never falls back to instantiating a local SecretManager."""
+    storage = _storage_info()
+    assert storage['effective_backend'] == 'none'
+    assert storage['available_backends'] == []
+    assert storage['selected_backend'] == 'none'
+    assert storage['session_locked'] is False
+    assert storage['libsecret']['accessible'] is False
+    assert storage['keyring']['accessible'] is False
+
+
+def test_startup_info_storage_reads_through_daemon_controller():
+    """When config exposes a secrets controller, storage metadata comes from the
+    daemon secrets API (registry/state/configuration)."""
+
+    class Descriptor:
+        name = "bitwarden"
+        available = True
+
+    class FakeRegistry:
+        backends = (Descriptor(),)
+        selected_backend = "bitwarden"
+
+    class FakeState:
+        effective_backend = "bitwarden"
+        selected_backend = "bitwarden"
+        needs_unlock = True
+
+    class FakeConfiguration:
+        backend = "bitwarden"
+        session_timeout = 300
+        remember_in_keyring = False
+
+    class FakeController:
+        def load_registry(self):
+            return FakeRegistry()
+
+        def load_state(self):
+            return FakeState()
+
+        def load_configuration(self):
+            return FakeConfiguration()
+
+    class FakeConfigSource:
+        secrets_controller = FakeController()
+
+    storage = _storage_info(config=FakeConfigSource())
+    assert storage['effective_backend'] == "bitwarden"
+    assert storage['available_backends'] == ["bitwarden"]
+    assert storage['selected_backend'] == "bitwarden"
+    assert storage['session_locked'] is True
+    assert storage['backend'] == "bitwarden"
+    assert storage['session_timeout'] == 300
+    assert storage['remember_in_keyring'] is False
+
+
+def test_startup_info_storage_reads_through_daemon_client():
+    """A raw daemon client with the secrets capability is used for storage metadata."""
+    class Descriptor:
+        name = "keepassxc"
+        available = True
+
+    class FakeRegistry:
+        backends = (Descriptor(),)
+        selected_backend = "keepassxc"
+
+    class FakeState:
+        effective_backend = "keepassxc"
+        selected_backend = "keepassxc"
+        needs_unlock = False
+
+    class FakeConfiguration:
+        backend = "keepassxc"
+        session_timeout = 600
+        remember_in_keyring = True
+
+    class FakeClient:
+        def get_capabilities(self):
+            from sshpilot.api.capabilities import Capabilities, Capability
+
+            return Capabilities(
+                protocol_version="1",
+                api_implementation_version="test",
+                client=None,
+                core=None,
+                supported=frozenset({Capability.SECRETS_READ}),
+                compatibility=None,
+            )
+
+        def get_secret_backends(self):
+            return FakeRegistry()
+
+        def get_secret_state(self):
+            return FakeState()
+
+        def get_secret_configuration(self):
+            return FakeConfiguration()
+
+    class FakeConfigSource:
+        client = FakeClient()
+
+    storage = _storage_info(config=FakeConfigSource())
+    assert storage['effective_backend'] == "keepassxc"
+    assert storage['available_backends'] == ["keepassxc"]
+
+
+def test_startup_info_has_no_secret_storage_import():
+    """GTK diagnostics must never import secret_storage (daemon owns backends)."""
+    import ast
+    import inspect
+    from sshpilot import startup_info
+
+    tree = ast.parse(inspect.getsource(startup_info))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""]
+        else:
+            continue
+        assert not any("secret_storage" in (name or "") for name in names), (
+            f"startup_info.py:{node.lineno} imports secret_storage"
+        )
+
+

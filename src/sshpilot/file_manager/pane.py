@@ -1873,6 +1873,17 @@ class FilePane(Gtk.Box):
             # Build remote path
             file_path = posixpath.join(self._current_path or "/", entry.name)
             
+            # Prefer the typed daemon read/replace provider (revision-safe) when
+            # the daemon SFTP service is ready; otherwise the editor's existing
+            # download/upload path keeps its current behavior.
+            daemon_file_service = None
+            make_service = getattr(sftp_manager, "make_file_editor_service", None)
+            if make_service is not None:
+                try:
+                    daemon_file_service = make_service(file_path)
+                except Exception:
+                    logger.debug("Could not build daemon file editor service", exc_info=True)
+            
             # Create editor window for remote file
             try:
                 editor = RemoteFileEditorWindow(
@@ -1881,6 +1892,7 @@ class FilePane(Gtk.Box):
                     file_name=entry.name,
                     is_local=False,
                     sftp_manager=sftp_manager,
+                    daemon_file_service=daemon_file_service,
                     file_manager_window=window,
                 )
                 editor.present()
@@ -2289,6 +2301,32 @@ class FilePane(Gtk.Box):
         """Called when drag operation ends."""
         # Clean up any drag-related state if needed
 
+    @staticmethod
+    def _drag_copy_modifier_pressed(drop_target: Optional[Gtk.DropTarget]) -> bool:
+        """True when the user held the copy modifier (Ctrl/Cmd) during a drop.
+
+        The drag source advertises both COPY and MOVE; a drop within a single
+        pane defaults to a move, and holding the primary modifier copies.
+        """
+        if drop_target is None:
+            return False
+        try:
+            event = drop_target.get_current_event()
+            state = (
+                event.get_modifier_state()
+                if event is not None
+                else Gdk.ModifierType(0)
+            )
+        except Exception:
+            return False
+        primary_mask = getattr(Gdk.ModifierType, "CONTROL_MASK", 0)
+        if is_macos():
+            primary_mask |= (
+                getattr(Gdk.ModifierType, "META_MASK", 0)
+                | getattr(Gdk.ModifierType, "SUPER_MASK", 0)
+            )
+        return bool(state & primary_mask)
+
     def _on_drop_string(self, drop_target: Gtk.DropTarget, value: str, x: float, y: float) -> bool:
         """Handle dropped files from string data."""
         logger.debug(f"Drop received: value={value}")
@@ -2366,11 +2404,6 @@ class FilePane(Gtk.Box):
             self._is_remote,
             position,
         )
-
-        # Don't allow dropping on the same pane
-        if source_pane == self:
-            logger.debug("Drop rejected: same pane")
-            return False
 
         def _normalise_path(path: Optional[str]) -> Optional[str]:
             if not isinstance(path, str):
@@ -2480,7 +2513,10 @@ class FilePane(Gtk.Box):
                 target_folder.name, self._current_path,
             )
 
-        # Determine operation type based on source and target panes
+        # Determine operation type based on source and target panes.
+        # A drop within the same pane only makes sense onto a folder inside
+        # that pane (dropping into the pane's own directory is a no-op).
+        # Holding the primary modifier (Ctrl/Cmd) copies instead of moving.
         if self._is_remote and not source_pane._is_remote:
             # Local to remote - upload
             logger.debug("Starting upload operation")
@@ -2489,8 +2525,31 @@ class FilePane(Gtk.Box):
             # Remote to local - download
             logger.debug("Starting download operation")
             self._handle_download_from_drag(resolved_items, target_folder)
+        elif source_pane == self:
+            if target_folder is None:
+                logger.debug("Drop rejected: no target folder within the same pane")
+                return False
+            window = self._get_file_manager_window()
+            if not isinstance(window, _file_manager_window_cls()):
+                logger.debug("Drop rejected: file manager window unavailable")
+                return False
+            entries = [entry for _source_file_path, entry in resolved_items]
+            move = not self._drag_copy_modifier_pressed(drop_target)
+            if self._is_remote:
+                # Remote to remote (same pane) - reuse the established remote
+                # copy/move path so progress, refresh and daemon validation
+                # behave exactly like cut/paste within the remote pane.
+                destination = posixpath.join(self._current_path, target_folder.name)
+                window._perform_remote_clipboard_operation(
+                    entries, self._current_path, destination, move
+                )
+            else:
+                # Local to local (same pane)
+                destination = os.path.join(self._current_path, target_folder.name)
+                window._perform_local_clipboard_operation(
+                    entries, self._current_path, destination, move
+                )
         else:
-            # Same type of pane - not supported for now
             logger.debug("Drop rejected: same pane type")
             return False
 
@@ -2709,7 +2768,7 @@ class FilePane(Gtk.Box):
                 toast.set_timeout(timeout)
             self._overlay.add_toast(toast)
             self._current_toast = toast  # Keep reference for dismissal
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
 
@@ -2720,7 +2779,7 @@ class FilePane(Gtk.Box):
             if self._current_toast:
                 self._current_toast.dismiss()
                 self._current_toast = None
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
 

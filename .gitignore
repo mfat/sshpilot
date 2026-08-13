@@ -63,3 +63,4 @@ sshpilot/vendor/pyxtermjs/index.html
 
 # Generated translation template
 po/*.pot
+/.commandcode

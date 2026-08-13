@@ -1,9 +1,9 @@
 """Broadcast banner behavior for MainWindow.
 
-Extracted verbatim from window.py as a mixin (matching the existing
-WindowActions pattern) to shrink the window.py god-object. MainWindow inherits
-this; every method keeps its original signature and `self.` state access, so
-this is a pure code move with no behavior change.
+Extracted from window.py as a mixin (matching the existing WindowActions
+pattern) to keep banner presentation separate from daemon session behavior.
+MainWindow inherits this; the banner submits typed input to existing daemon
+terminal sessions and does not own a backend operation.
 """
 
 import logging
@@ -19,18 +19,44 @@ class WindowBroadcastMixin:
 
     def on_broadcast_send_clicked(self, button):
         """Handle broadcast banner send button click"""
+        if getattr(self, "_broadcast_submission_pending", False):
+            logger.info("Ignored overlapping broadcast submission")
+            return
         command = self.broadcast_entry.get_text().strip()
         if command:
-            sent_count, failed_count = self.terminal_manager.broadcast_command(command)
+            self._broadcast_submission_pending = True
+            self.broadcast_send_button.set_sensitive(False)
+            try:
+                submitted = self.terminal_manager.broadcast_command(
+                    command,
+                    on_success=self._on_broadcast_sent,
+                    on_error=self._on_broadcast_failed,
+                )
+            except Exception as error:
+                self._on_broadcast_failed(error)
+                return
+            if submitted is None:
+                self._broadcast_submission_pending = False
+                self.broadcast_send_button.set_sensitive(True)
 
             # Update banner message with result (we'll need to find the title label)
             # For now, just hide the banner after sending
             self.broadcast_entry_dirty = False
             self._schedule_broadcast_hide_timeout()
         else:
-            # Show error for empty command - could add error styling here
             self.broadcast_entry_dirty = False
             self._schedule_broadcast_hide_timeout()
+
+    def _on_broadcast_sent(self, _result):
+        """Handle the immediate session-input mutation acknowledgement."""
+        self._broadcast_submission_pending = False
+        self.broadcast_send_button.set_sensitive(True)
+        logger.info("Broadcast command sent to existing terminal sessions")
+
+    def _on_broadcast_failed(self, error):
+        self._broadcast_submission_pending = False
+        self.broadcast_send_button.set_sensitive(True)
+        logger.warning("Terminal broadcast command was not accepted: %s", error)
 
     def on_broadcast_cancel_clicked(self, button):
         """Handle broadcast banner cancel button click"""
@@ -59,6 +85,7 @@ class WindowBroadcastMixin:
         """Hide the broadcast banner"""
         self._cancel_broadcast_hide_timeout()
         self.broadcast_banner.set_reveal_child(False)
+        self.broadcast_banner.set_visible(False)
         self.broadcast_entry_dirty = False
         self._suppress_broadcast_entry_changed = True
         try:
@@ -72,27 +99,24 @@ class WindowBroadcastMixin:
     def _focus_active_terminal_tab(self):
         """Focus the currently active terminal tab"""
         try:
-            if hasattr(self, 'tab_view') and self.tab_view:
-                selected_page = self.tab_view.get_selected_page()
-                if selected_page:
-                    terminal_widget = selected_page.get_child()
-                    if terminal_widget:
-                        if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                            terminal_widget.vte.grab_focus()
-                        elif hasattr(terminal_widget, 'grab_focus'):
-                            terminal_widget.grab_focus()
+            terminal_widget = self._get_active_terminal_widget()
+            if terminal_widget is not None:
+                terminal_widget.grab_terminal_focus()
         except Exception as e:
             logger.debug(f"Failed to focus active terminal tab: {e}")
 
     def show_broadcast_banner(self):
         """Show the broadcast banner"""
         self._cancel_broadcast_hide_timeout()
+        self.broadcast_banner.set_visible(True)
         self.broadcast_banner.set_reveal_child(True)
         self.broadcast_entry_dirty = bool(self.broadcast_entry.get_text())
+
         # Focus the entry after a short delay to ensure banner is visible
         def focus_entry():
             self.broadcast_entry.grab_focus()
             return False
+
         GLib.idle_add(focus_entry)
 
     def on_broadcast_entry_changed(self, entry):
@@ -146,9 +170,7 @@ class WindowBroadcastMixin:
         """Handle broadcast command action - shows banner to input command"""
         try:
             # Check if there are any SSH terminals open
-            ssh_terminals_count = sum(
-                1 for _ in self.terminal_manager.iter_ssh_terminals()
-            )
+            ssh_terminals_count = sum(1 for _ in self.terminal_manager.iter_ssh_terminals())
 
             if ssh_terminals_count == 0:
                 # Show message dialog
@@ -157,9 +179,9 @@ class WindowBroadcastMixin:
                         transient_for=self,
                         modal=True,
                         heading=_("No SSH Terminals Open"),
-                        body=_("Connect to your server first!")
+                        body=_("Connect to your server first!"),
                     )
-                    error_dialog.add_response('ok', _('OK'))
+                    error_dialog.add_response("ok", _("OK"))
                     error_dialog.present()
                 except Exception as e:
                     logger.error(f"Failed to show error dialog: {e}")
@@ -176,9 +198,9 @@ class WindowBroadcastMixin:
                     transient_for=self,
                     modal=True,
                     heading=_("Error"),
-                    body=_("Failed to open broadcast command dialog: {error}").format(error=str(e))
+                    body=_("Failed to open broadcast command dialog: {error}").format(error=str(e)),
                 )
-                error_dialog.add_response('ok', _('OK'))
+                error_dialog.add_response("ok", _("OK"))
                 error_dialog.present()
             except Exception:
                 pass

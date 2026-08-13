@@ -182,7 +182,10 @@ def test_ps_builds_command_and_parses_ndjson():
     line = '{"ID":"abc","Names":"web","Image":"nginx","Status":"Up 2h","State":"running","Ports":"80/tcp"}'
     client, calls = _recording_client(lambda c: FakeResult(stdout=line + "\n"))
     rows = client.ps()
-    assert calls[-1] == "docker ps -a --format '{{json .}}'"
+    assert calls[-1] == (
+        "docker ps -a --format "
+        "'{\"ID\":{{json .ID}},\"Names\":{{json .Names}},\"Image\":{{json .Image}},"
+        "\"Status\":{{json .Status}},\"Ports\":{{json .Ports}}}'")
     assert rows == [{"ID": "abc", "Names": "web", "Image": "nginx",
                      "Status": "Up 2h", "State": "running", "Ports": "80/tcp"}]
 
@@ -190,7 +193,10 @@ def test_ps_builds_command_and_parses_ndjson():
 def test_ps_running_only_omits_all_flag():
     client, calls = _recording_client(lambda c: FakeResult(stdout=""))
     client.ps(all=False)
-    assert calls[-1] == "docker ps --format '{{json .}}'"
+    assert calls[-1] == (
+        "docker ps --format "
+        "'{\"ID\":{{json .ID}},\"Names\":{{json .Names}},\"Image\":{{json .Image}},"
+        "\"Status\":{{json .Status}},\"Ports\":{{json .Ports}}}'")
 
 
 def test_stats_and_images_commands():
@@ -656,7 +662,10 @@ def test_sudo_prefixes_captured_commands_with_sudo_n():
 
     client = DockerClient(run_command, "srv", "docker", use_sudo=True)
     client.ps()
-    assert calls[-1] == "sudo -n docker ps -a --format '{{json .}}'"
+    assert calls[-1] == (
+        "sudo -n docker ps -a --format "
+        "'{\"ID\":{{json .ID}},\"Names\":{{json .Names}},\"Image\":{{json .Image}},"
+        "\"Status\":{{json .Status}},\"Ports\":{{json .Ports}}}'")
     client.ping()
     assert calls[-1] == "sudo -n docker ps -q"
 

@@ -43,12 +43,7 @@ class FullscreenController:
 
     def _restore_focus(self):
         try:
-            if hasattr(self.t, 'backend') and self.t.backend:
-                self.t.backend.grab_focus()
-            elif hasattr(self.t, 'vte') and hasattr(self.t.vte, 'grab_focus'):
-                self.t.vte.grab_focus()
-            elif hasattr(self.t, 'grab_focus'):
-                self.t.grab_focus()
+            self.t.grab_terminal_focus()
         except Exception as e:
             logger.debug(f"Failed to restore focus after fullscreen change: {e}")
         return False

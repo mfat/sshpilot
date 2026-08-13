@@ -1,25 +1,8 @@
-"""SSH connection multiplexing (ControlMaster) policy + a small refcounted pool.
+"""Shared ControlMaster policy used by the daemon's native launch path.
 
-Spawning ``ssh -F config host <cmd>`` per call pays a full TCP connect and auth
-handshake every time. OpenSSH's ControlMaster lets the first connection open a
-master socket that later ``ssh`` invocations reuse over a new channel — no
-re-auth, ~10–50 ms per call instead of hundreds of ms / seconds. This is the
-right fix for polling surfaces such as the Docker Console (a 3-second ``ps`` +
-``stats`` refresh).
-
-This module owns two things:
-
-* **Socket policy** — where the control sockets live and the exact ``-o`` options
-  that turn multiplexing on. A single source of truth so every caller (the global
-  Preferences toggle and the per-plugin pool) uses the *same* ``ControlPath`` and
-  therefore shares one master per host with no conflict.
-* **A refcounted pool** — ``acquire``/``release`` keyed by connection nickname so
-  a page can keep a master warm while it is open. ``ControlMaster=auto`` means the
-  first real command creates the master and ``ControlPersist`` keeps it alive, so
-  there is no separate background ssh process to spawn or authenticate, and a
-  dropped master is recreated transparently by the next call.
-
-It is GTK-free and dependency-free so it is unit-testable offline.
+The daemon injects the options into OpenSSH commands and retires stale masters
+after SSH override changes. Frontend acquire/release pooling is intentionally
+gone; plugin compatibility methods remain inert in ``PluginContext``.
 """
 
 from __future__ import annotations
@@ -28,7 +11,10 @@ import logging
 import os
 import subprocess
 import threading
-from typing import Dict, List
+from pathlib import Path
+from typing import List
+
+from sshpilot.daemon.lifecycle import ensure_private_runtime_directory
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +29,26 @@ def socket_dir() -> str:
 
     Prefers ``$XDG_RUNTIME_DIR/sshpilot/cm`` (tmpfs, auto-cleaned at logout); falls
     back to ``~/.ssh/sockets``. Kept short so the socket path stays under the
-    ~104-char ``sun_path`` limit once ssh appends the ``%C`` hash."""
+    ~104-char ``sun_path`` limit once ssh appends the ``%C`` hash.
+
+    The runtime-dir branch shares ``$XDG_RUNTIME_DIR/sshpilot`` with the daemon
+    socket, whose launcher refuses a parent that is not exactly mode 0700 — so
+    both levels are enrolled in the shared private-directory rule (create with
+    0700, tighten an existing owned dir created under a loose umask) instead
+    of a bare ``makedirs``, which would be normalized by the umask to 0755/0775
+    and block the next daemon launch with ``unsafe_socket``.
+    """
     runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = os.path.join(runtime, "sshpilot", "cm") if runtime \
-        else os.path.expanduser("~/.ssh/sockets")
+    if runtime:
+        root = os.path.join(runtime, "sshpilot")
+        base = os.path.join(root, "cm")
+        try:
+            ensure_private_runtime_directory(Path(root))
+            ensure_private_runtime_directory(Path(base))
+        except OSError:
+            pass
+        return base
+    base = os.path.expanduser("~/.ssh/sockets")
     try:
         os.makedirs(base, exist_ok=True)
     except OSError:
@@ -67,43 +69,6 @@ def controlmaster_args(persist: str = DEFAULT_PERSIST) -> List[str]:
         "-o", f"ControlPath={control_path()}",
         "-o", f"ControlPersist={persist}",
     ]
-
-
-def invalidate_master(connection, connection_manager=None, config=None, *,
-                      background: bool = True) -> None:
-    """Gracefully retire *connection*'s ControlMaster after its SSH config
-    changed, so the next connect negotiates a fresh master with the new
-    settings instead of silently riding the old transport.
-
-    Uses ``ssh -O stop`` (not ``exit``): the master stops accepting new mux
-    clients and removes its socket, but live sessions keep running until they
-    end on their own. Best-effort; a dead master simply has no socket to stop.
-    """
-    def _stop() -> None:
-        try:
-            from .ssh_connection_builder import ConnectionContext, build_ssh_connection
-            ctx = ConnectionContext(
-                connection=connection,
-                connection_manager=connection_manager,
-                config=config,
-                command_type='ssh',
-                native_mode=True,
-                extra_args=['-O', 'stop', '-o', f'ControlPath={control_path()}'],
-            )
-            prepared = build_ssh_connection(ctx)
-            env = {**os.environ, **(prepared.env or {})}
-            subprocess.run(
-                list(prepared.command), env=env, capture_output=True,
-                timeout=10, check=False,
-            )
-        except Exception:
-            logger.debug("invalidate_master failed (best-effort)", exc_info=True)
-
-    if background:
-        threading.Thread(target=_stop, daemon=True,
-                         name='ssh-mux-invalidate').start()
-    else:
-        _stop()
 
 
 def expire_all_masters(*, background: bool = True) -> None:
@@ -140,55 +105,3 @@ def expire_all_masters(*, background: bool = True) -> None:
                          name="ssh-mux-expire").start()
     else:
         _stop_all()
-
-
-class _MultiplexPool:
-    """Refcount of how many open surfaces want a warm master per nickname.
-
-    Thread-safe: pages acquire/release on the UI thread while ``run_command``
-    consults ``is_active`` from worker threads."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._refcounts: Dict[str, int] = {}
-
-    def acquire(self, nickname: str) -> None:
-        if not nickname:
-            return
-        with self._lock:
-            self._refcounts[nickname] = self._refcounts.get(nickname, 0) + 1
-
-    def release(self, nickname: str) -> bool:
-        """Drop a reference. Returns True when the last reference went away (the
-        caller should then tear the master down)."""
-        if not nickname:
-            return False
-        with self._lock:
-            count = self._refcounts.get(nickname, 0)
-            if count <= 1:
-                self._refcounts.pop(nickname, None)
-                return count == 1  # only "now zero" if it was actually active
-            self._refcounts[nickname] = count - 1
-            return False
-
-    def is_active(self, nickname: str) -> bool:
-        if not nickname:
-            return False
-        with self._lock:
-            return self._refcounts.get(nickname, 0) > 0
-
-
-# Process-wide singleton: masters are shared across all plugins/pages.
-_pool = _MultiplexPool()
-
-
-def acquire(nickname: str) -> None:
-    _pool.acquire(nickname)
-
-
-def release(nickname: str) -> bool:
-    return _pool.release(nickname)
-
-
-def is_active(nickname: str) -> bool:
-    return _pool.is_active(nickname)

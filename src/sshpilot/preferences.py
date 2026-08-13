@@ -9,6 +9,7 @@ import hashlib
 import zipfile
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
@@ -245,10 +246,11 @@ class PreferencesWindow(Adw.NavigationPage):
     header_bar = Gtk.Template.Child()
     content_stack = Gtk.Template.Child()
 
-    def __init__(self, parent_window, config):
+    def __init__(self, parent_window, config, ssh_overrides_controller=None):
         super().__init__()
         self.parent_window = parent_window
         self.config = config
+        self.ssh_overrides_controller = ssh_overrides_controller
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
@@ -268,7 +270,12 @@ class PreferencesWindow(Adw.NavigationPage):
         self._rbw_probe_in_flight = False
         self._secret_backend_selection_sync = False
         self._secrets_page_probes_done = False
-        self._secrets_page_id = None
+        self._secrets_page_id = self._page_id("Security & Credentials")
+
+        self.pages = {}
+        self._page_builders = {}
+        self._page_placeholders = {}
+        self._idle_building_scheduled = False
 
         if hasattr(self.config, 'connect'):
             try:
@@ -343,12 +350,70 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as e:
             logger.debug(f"Failed to sync NavigationSplitView show_content: {e}")
 
+    def _ensure_page_built(self, page_id: Optional[str]):
+        """Build the page for `page_id` if it was registered with a builder function."""
+        if not page_id:
+            return None
+        builder = getattr(self, '_page_builders', {}).pop(page_id, None)
+        if callable(builder):
+            try:
+                page = builder()
+            except Exception as e:
+                logger.error(f"Failed to build preference page '{page_id}': {e}")
+                page = Adw.PreferencesPage()
+
+            placeholder = getattr(self, '_page_placeholders', {}).pop(page_id, None)
+            if placeholder is not None:
+                try:
+                    self.content_stack.remove(placeholder)
+                except Exception:
+                    pass
+
+            self.content_stack.add_named(page, page_id)
+            self.pages[page_id] = page
+            return page
+
+        return self.pages.get(page_id)
+
+    # Pages with expensive setup (e.g. CLI subprocess probes, plugin indexing)
+    # that should remain strictly on-demand and not pre-built during idle.
+    _EXPENSIVE_PAGE_IDS = {"security-&-credentials", "plugins"}
+
+    def _schedule_idle_page_building(self):
+        """Schedule deferred main-thread building of remaining lightweight preference pages."""
+        if not getattr(self, '_idle_building_scheduled', False):
+            self._idle_building_scheduled = True
+            GLib.idle_add(self._build_next_idle_page, priority=GLib.PRIORITY_LOW)
+
+    def _build_next_idle_page(self):
+        builders = getattr(self, '_page_builders', {})
+        next_id = next(
+            (pid for pid in builders.keys() if pid not in self._EXPENSIVE_PAGE_IDS),
+            None,
+        )
+        if next_id is None:
+            self._idle_building_scheduled = False
+            return GLib.SOURCE_REMOVE
+
+        self._ensure_page_built(next_id)
+
+        remaining_lightweight = any(
+            pid for pid in getattr(self, '_page_builders', {}).keys()
+            if pid not in self._EXPENSIVE_PAGE_IDS
+        )
+        if not remaining_lightweight:
+            self._idle_building_scheduled = False
+            return GLib.SOURCE_REMOVE
+
+        return GLib.SOURCE_CONTINUE
+
     def on_sidebar_row_selected(self, listbox, row):
         """Handle sidebar row selection"""
         if row is not None:
             page_name = row.get_name()
             changed = page_name != getattr(self, '_selected_page_name', None)
             self._selected_page_name = page_name
+            self._ensure_page_built(page_name)
             self.content_stack.set_visible_child_name(page_name)
             # Collapsed: show the detail page. Only on a real change — selecting
             # the already-selected row (e.g. when returning to the list) must not
@@ -378,6 +443,7 @@ class PreferencesWindow(Adw.NavigationPage):
         """
         if not page_id:
             return False
+        self._ensure_page_built(page_id)
         row = self.sidebar.get_first_child()
         while row is not None:
             if row.get_name() == page_id:
@@ -396,7 +462,9 @@ class PreferencesWindow(Adw.NavigationPage):
         return title.lower().replace(' ', '-')
 
     def add_page_to_layout(self, title, icon_name, page):
-        """Add a page to the custom layout"""
+        """Add a page to the custom layout. `page` can be an already-constructed
+        widget or a callable builder function that returns the page widget lazily.
+        """
         # Create sidebar row
         row = Adw.ActionRow()
         # Sidebar titles are plain text; disable Pango markup before setting the title
@@ -409,28 +477,35 @@ class PreferencesWindow(Adw.NavigationPage):
         row.set_title(_(title))
         page_id = self._page_id(title)
         row.set_name(page_id)
-        
+
         # Add icon using bundled icon helper
         from sshpilot import icon_utils
         icon = icon_utils.new_image_from_icon_name(icon_name)
         row.add_prefix(icon)
-        
+
         # Add to sidebar
         self.sidebar.append(row)
-        
-        # Add page to stack
-        self.content_stack.add_named(page, page_id)
-        
-        # Store reference
-        self.pages[page_id] = page
-        
+
+        if callable(page):
+            self._page_builders[page_id] = page
+            placeholder = Adw.PreferencesPage()
+            self._page_placeholders[page_id] = placeholder
+            self.content_stack.add_named(placeholder, page_id)
+            self.pages[page_id] = placeholder
+        else:
+            # Add page to stack
+            self.content_stack.add_named(page, page_id)
+
+            # Store reference
+            self.pages[page_id] = page
+
         # Select first page
         if len(self.pages) == 1:
             self.sidebar.select_row(row)
             if isinstance(row, Adw.ActionRow):
                 title = row.get_title() or ""
                 self._update_header_title(title)
-    
+
     def _add_terminal_appearance_groups(self, terminal_page):
         """Add Terminal appearance and color-scheme preview groups."""
         # Terminal appearance group
@@ -694,6 +769,114 @@ class PreferencesWindow(Adw.NavigationPage):
 
             terminal_page.add(terminal_choice_group)
 
+    def _add_terminal_daemon_group(self, terminal_page):
+        """Add the Daemon Terminal Settings group."""
+        daemon_group = Adw.PreferencesGroup(title=_("Daemon Terminal Settings"))
+        daemon_group.set_description(
+            _("Configure daemon-backed SSH terminals for better session management")
+        )
+
+        # Tab close policy
+        self.tab_close_policy_row = Adw.ComboRow()
+        self.tab_close_policy_row.set_title(_("Tab close policy"))
+        self.tab_close_policy_row.set_subtitle(
+            _("Action when closing daemon-backed terminal tabs")
+        )
+
+        policy_model = Gtk.StringList()
+        policy_model.append(_("Detach (keep session running)"))
+        policy_model.append(_("Terminate (end session)"))
+        policy_model.append(_("Ask each time"))
+        self.tab_close_policy_row.set_model(policy_model)
+
+        current_policy = self.config.get_setting('terminal.daemon_tab_close_policy', 'detach')
+        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 0)
+        self.tab_close_policy_row.set_selected(policy_index)
+        self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
+        daemon_group.add(self.tab_close_policy_row)
+
+        # App quit policy
+        self.app_close_policy_row = Adw.ComboRow()
+        self.app_close_policy_row.set_title(_("Quit policy"))
+        self.app_close_policy_row.set_subtitle(
+            _("Action when quitting with daemon-backed connections")
+        )
+        app_policy_model = Gtk.StringList()
+        app_policy_model.append(_("Keep connections running"))
+        app_policy_model.append(_("Terminate everything"))
+        app_policy_model.append(_("Ask each time"))
+        self.app_close_policy_row.set_model(app_policy_model)
+        current_app_policy = self.config.get_setting(
+            'terminal.daemon_app_close_policy', 'ask'
+        )
+        app_policy_index = {
+            'detach': 0, 'terminate': 1, 'ask': 2
+        }.get(current_app_policy, 2)
+        self.app_close_policy_row.set_selected(app_policy_index)
+        self.app_close_policy_row.connect(
+            'notify::selected', self.on_app_close_policy_changed
+        )
+        daemon_group.add(self.app_close_policy_row)
+
+        # Session restore
+        self.restore_sessions_switch = Adw.SwitchRow()
+        self.restore_sessions_switch.set_title(_("Restore daemon sessions on startup"))
+        self.restore_sessions_switch.set_subtitle(
+            _("Automatically reattach to daemon sessions from previous session")
+        )
+        restore_sessions_active = bool(self.config.get_setting('terminal.daemon_restore_sessions', False))
+        self.restore_sessions_switch.set_active(restore_sessions_active)
+        self.restore_sessions_switch.connect(
+            'notify::active', self.on_restore_sessions_toggled
+        )
+        daemon_group.add(self.restore_sessions_switch)
+
+        # Idle shutdown (seconds); 0 disables.
+        self.daemon_idle_timeout_row = Adw.SpinRow(
+            adjustment=Gtk.Adjustment(
+                value=float(self.config.get_setting('daemon.idle_shutdown_seconds', 300)),
+                lower=0,
+                upper=86400,
+                step_increment=30,
+                page_increment=60,
+            ),
+            digits=0,
+        )
+        self.daemon_idle_timeout_row.set_title(_("Daemon idle shutdown (seconds)"))
+        self.daemon_idle_timeout_row.set_subtitle(
+            _("Exit when idle with no clients or live resources. 0 keeps the daemon running.")
+        )
+        self.daemon_idle_timeout_row.connect(
+            'notify::value', self.on_daemon_idle_timeout_changed
+        )
+        daemon_group.add(self.daemon_idle_timeout_row)
+
+        self.daemon_status_row = Adw.ActionRow()
+        self.daemon_status_row.set_title(_("Daemon status"))
+        self.daemon_status_row.set_subtitle(_("Not queried yet"))
+        refresh_btn = Gtk.Button(label=_("Refresh"))
+        refresh_btn.set_valign(Gtk.Align.CENTER)
+        refresh_btn.connect('clicked', self.on_daemon_status_refresh_clicked)
+        self.daemon_status_row.add_suffix(refresh_btn)
+        daemon_group.add(self.daemon_status_row)
+
+        restart_row = Adw.ActionRow()
+        restart_row.set_title(_("Restart daemon"))
+        restart_row.set_subtitle(
+            _("Stops the daemon and reconnects automatically. "
+              "Live sessions cannot survive a restart.")
+        )
+        restart_btn = Gtk.Button(label=_("Restart"))
+        restart_btn.set_valign(Gtk.Align.CENTER)
+        restart_btn.add_css_class('destructive-action')
+        restart_btn.connect('clicked', self.on_daemon_restart_clicked)
+        restart_row.add_suffix(restart_btn)
+        daemon_group.add(restart_row)
+
+        terminal_page.add(daemon_group)
+        # Best-effort status fill without blocking dialog open.
+        GLib.idle_add(self._refresh_daemon_status_row)
+
     def _build_terminal_preferences_page(self):
         """Build the Terminal preferences page."""
         terminal_page = Adw.PreferencesPage()
@@ -703,6 +886,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._add_terminal_appearance_groups(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
+        self._add_terminal_daemon_group(terminal_page)
         self._add_terminal_preferred_group(terminal_page)
         return terminal_page
 
@@ -1702,14 +1886,23 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         self.secret_backend_row = Adw.ComboRow()
         self.secret_backend_row.set_title(_("Secret storage backend"))
-        try:
-            from .secret_storage import get_secret_manager
-            self._secret_backend_mgr = get_secret_manager()
-            registered = self._secret_backend_mgr.registered_backends()
-        except Exception:
-            self._secret_backend_mgr = None
-            registered = []
-        current_backend = str(self.config.get_setting('secrets.backend', 'auto'))
+        # The daemon owns the backend registry: only names reach the UI. Never
+        # fetch it synchronously here — the first registry probe spawns keyring
+        # backends and `bw login --check` (seconds), which would freeze the page
+        # build. Use the controller's staged snapshot when one exists; the
+        # availability probe that runs when the page is shown refines the list.
+        registered = []
+        self._secret_registry = None
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                self._secret_registry = controller.registry()
+                if self._secret_registry is not None:
+                    registered = [b.name for b in self._secret_registry.backends]
+            except Exception:
+                logger.debug("Staged secret backend registry read failed", exc_info=True)
+                registered = []
+        current_backend = self._secrets_current_backend(controller) or 'auto'
         if current_backend.strip().lower() == 'vaultwarden':
             current_backend = 'bitwarden'   # merged into one bw backend
         self._secret_backend_labels = {
@@ -1724,6 +1917,10 @@ class PreferencesWindow(Adw.NavigationPage):
         # Offer EVERY registered backend (not just the available ones). Unavailable
         # ones are labelled so the choice is honest.
         preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
+        if not registered:
+            # No staged registry yet: the daemon's registered set is static, so
+            # show every known backend now and let the async probe refine.
+            registered = list(preferred_order)
         ordered_names = [n for n in preferred_order if n in registered]
         ordered_names += [n for n in registered if n not in preferred_order]
         self._secret_backend_ids = ['auto'] + ordered_names
@@ -1735,7 +1932,10 @@ class PreferencesWindow(Adw.NavigationPage):
         # Probing availability (keyring/keepassxc is_available) costs ~400ms on
         # the main thread, so show every backend without the "(unavailable)"
         # suffix now and refine off-thread once the window is up.
-        self._set_secret_backend_model(set(self._secret_backend_ids))
+        available = self._registry_available_names()
+        self._set_secret_backend_model(
+            available if available is not None else set(self._secret_backend_ids)
+        )
         try:
             current_index = self._secret_backend_ids.index(current_backend)
         except ValueError:
@@ -1776,9 +1976,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # specific account (incl. a self-hosted Vaultwarden). Empty = default account.
         # Only shown when the Bitwarden backend is selected.
         self.bw_profile_row = Adw.EntryRow(title=_("bw data directory (account/profile)"))
-        self.bw_profile_row.set_text(
-            str(self.config.get_setting('secrets.bitwarden.profile', '') or '')
-        )
+        self.bw_profile_row.set_text(self._secrets_config_value('bitwarden_profile', ''))
         try:
             from .platform_utils import is_flatpak
             flatpak_note = _(
@@ -1804,8 +2002,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # KeePass (.kdbx) database + optional key file — only shown for the KeePassXC
         # backend. The master password is typed per launch (not stored here).
         self.kdbx_db_row = Adw.EntryRow(title=_("KeePass database (.kdbx)"))
-        self.kdbx_db_row.set_text(
-            str(self.config.get_setting('secrets.keepassxc.database', '') or ''))
+        self.kdbx_db_row.set_text(self._secrets_config_value('keepassxc_database', ''))
         kdbx_new_btn = Gtk.Button(icon_name='document-new-symbolic')
         kdbx_new_btn.set_valign(Gtk.Align.CENTER)
         kdbx_new_btn.add_css_class('flat')
@@ -1822,8 +2019,7 @@ class PreferencesWindow(Adw.NavigationPage):
         secrets_group.add(self.kdbx_db_row)
 
         self.kdbx_keyfile_row = Adw.EntryRow(title=_("Key file (optional)"))
-        self.kdbx_keyfile_row.set_text(
-            str(self.config.get_setting('secrets.keepassxc.keyfile', '') or ''))
+        self.kdbx_keyfile_row.set_text(self._secrets_config_value('keepassxc_keyfile', ''))
         kdbx_kf_btn = Gtk.Button(icon_name='document-open-symbolic')
         kdbx_kf_btn.set_valign(Gtk.Align.CENTER)
         kdbx_kf_btn.add_css_class('flat')
@@ -1841,7 +2037,7 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Re-ask for the master password after this idle time. 0 = until app exits.")
         )
         self.secret_session_timeout_row.set_value(
-            int(self.config.get_setting('secrets.session_timeout', 0) or 0)
+            int(self._secrets_config_value('session_timeout', 0) or 0)
         )
         self.secret_session_timeout_row.connect(
             'notify::value', self.on_secret_session_timeout_changed
@@ -1964,6 +2160,89 @@ class PreferencesWindow(Adw.NavigationPage):
         return security_page
 
 
+    def _ssh_override_page_values(self):
+        """Return the nine SSH override field values for the page.
+
+        The daemon-backed controller is authoritative when injected; the page
+        then reflects daemon state instead of the local config cache. Without a
+        controller (legacy construction) the local config view is used.
+        """
+        if self.ssh_overrides_controller is not None:
+            try:
+                snapshot = self.ssh_overrides_controller.load()
+                return {
+                    "connect_timeout": snapshot.connect_timeout,
+                    "connection_attempts": snapshot.connection_attempts,
+                    "server_alive_interval": snapshot.server_alive_interval,
+                    "server_alive_count_max": snapshot.server_alive_count_max,
+                    "strict_host_key_checking": snapshot.strict_host_key_checking,
+                    "batch_mode": snapshot.batch_mode,
+                    "compression": snapshot.compression,
+                    "verbosity": snapshot.verbosity,
+                    "debug_enabled": snapshot.debug_enabled,
+                }
+            except Exception:
+                logger.warning(
+                    "Failed to load global SSH overrides", exc_info=True
+                )
+
+        def _config_int(key, default=0):
+            try:
+                value = int(self.config.get_setting(key, None))
+            except (TypeError, ValueError):
+                value = default
+            return value if value >= 0 else default
+
+        return {
+            "connect_timeout": _config_int('ssh.connection_timeout'),
+            "connection_attempts": _config_int('ssh.connection_attempts'),
+            "server_alive_interval": _config_int('ssh.keepalive_interval'),
+            "server_alive_count_max": _config_int('ssh.keepalive_count_max'),
+            "strict_host_key_checking": str(
+                self.config.get_setting('ssh.strict_host_key_checking', 'accept-new')
+            ),
+            "batch_mode": bool(self.config.get_setting('ssh.batch_mode', False)),
+            "compression": bool(self.config.get_setting('ssh.compression', False)),
+            "verbosity": _config_int('ssh.verbosity'),
+            "debug_enabled": bool(self.config.get_setting('ssh.debug_enabled', False)),
+        }
+
+    def set_ssh_overrides_controller(self, controller):
+        """Attach the daemon SSH-overrides controller after Preferences exists.
+
+        Preferences may be preloaded before the daemon client finishes its
+        capability handshake.  In that case the SSH override page was built
+        without a controller and its daemon-owned rows were intentionally
+        disabled.  Rebind the controller when the client arrives and refresh
+        an already-built page from the authoritative daemon snapshot.
+        """
+        self.ssh_overrides_controller = controller
+        if controller is None or not hasattr(self, 'connect_timeout_row'):
+            return
+
+        rows = (
+            self.connect_timeout_row,
+            self.connection_attempts_row,
+            self.keepalive_interval_row,
+            self.keepalive_count_row,
+            self.strict_host_row,
+            self.batch_mode_row,
+            self.compression_row,
+            self.verbosity_row,
+            self.debug_enabled_row,
+        )
+        try:
+            snapshot = controller.load()
+        except Exception:
+            logger.warning("Failed to attach global SSH overrides controller", exc_info=True)
+            for row in rows:
+                row.set_sensitive(False)
+            return
+
+        self._apply_ssh_override_values_to_rows(snapshot)
+        for row in rows:
+            row.set_sensitive(True)
+
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
         ssh_settings_page = Adw.PreferencesPage()
@@ -1984,30 +2263,18 @@ class PreferencesWindow(Adw.NavigationPage):
 
         advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
 
+        values = self._ssh_override_page_values()
+
         # Connect timeout
         self.connect_timeout_row = Adw.SpinRow.new_with_range(0, 120, 1)
         self.connect_timeout_row.set_title(_("Connect Timeout (s)"))
-        connect_timeout_value = self.config.get_setting('ssh.connection_timeout', None)
-        try:
-            connect_timeout_value = int(connect_timeout_value)
-        except (TypeError, ValueError):
-            connect_timeout_value = 0
-        if connect_timeout_value < 0:
-            connect_timeout_value = 0
-        self.connect_timeout_row.set_value(connect_timeout_value)
+        self.connect_timeout_row.set_value(int(values['connect_timeout']))
         advanced_group.add(self.connect_timeout_row)
 
         # Connection attempts
         self.connection_attempts_row = Adw.SpinRow.new_with_range(0, 10, 1)
         self.connection_attempts_row.set_title(_("Connection Attempts"))
-        connection_attempts_value = self.config.get_setting('ssh.connection_attempts', None)
-        try:
-            connection_attempts_value = int(connection_attempts_value)
-        except (TypeError, ValueError):
-            connection_attempts_value = 0
-        if connection_attempts_value < 0:
-            connection_attempts_value = 0
-        self.connection_attempts_row.set_value(connection_attempts_value)
+        self.connection_attempts_row.set_value(int(values['connection_attempts']))
         advanced_group.add(self.connection_attempts_row)
 
         # Default keepalive opt-out. When on (default) and the user hasn't
@@ -2027,40 +2294,26 @@ class PreferencesWindow(Adw.NavigationPage):
         # Keepalive interval
         self.keepalive_interval_row = Adw.SpinRow.new_with_range(0, 300, 5)
         self.keepalive_interval_row.set_title(_("ServerAlive Interval (s)"))
-        keepalive_interval_value = self.config.get_setting('ssh.keepalive_interval', None)
-        try:
-            keepalive_interval_value = int(keepalive_interval_value)
-        except (TypeError, ValueError):
-            keepalive_interval_value = 0
-        if keepalive_interval_value < 0:
-            keepalive_interval_value = 0
-        self.keepalive_interval_row.set_value(keepalive_interval_value)
+        self.keepalive_interval_row.set_value(int(values['server_alive_interval']))
         advanced_group.add(self.keepalive_interval_row)
 
         # Keepalive count max
         self.keepalive_count_row = Adw.SpinRow.new_with_range(0, 10, 1)
         self.keepalive_count_row.set_title(_("ServerAlive CountMax"))
-        keepalive_count_value = self.config.get_setting('ssh.keepalive_count_max', None)
-        try:
-            keepalive_count_value = int(keepalive_count_value)
-        except (TypeError, ValueError):
-            keepalive_count_value = 0
-        if keepalive_count_value < 0:
-            keepalive_count_value = 0
-        self.keepalive_count_row.set_value(keepalive_count_value)
+        self.keepalive_count_row.set_value(int(values['server_alive_count_max']))
         advanced_group.add(self.keepalive_count_row)
 
         # Strict host key checking
         self.strict_host_row = Adw.ComboRow()
         self.strict_host_row.set_title(_("StrictHostKeyChecking"))
         strict_model = Gtk.StringList()
-        for item in ["accept-new", "yes", "no", "ask"]:
+        strict_options = ["accept-new", "yes", "no", "ask"]
+        for item in strict_options:
             strict_model.append(item)
         self.strict_host_row.set_model(strict_model)
-        # Map current value
-        current_strict = str(self.config.get_setting('ssh.strict_host_key_checking', 'accept-new'))
+        current_strict = str(values['strict_host_key_checking'])
         try:
-            idx = ["accept-new", "yes", "no", "ask"].index(current_strict)
+            idx = strict_options.index(current_strict)
         except ValueError:
             idx = 0
         self.strict_host_row.set_selected(idx)
@@ -2069,13 +2322,13 @@ class PreferencesWindow(Adw.NavigationPage):
         # BatchMode (non-interactive)
         self.batch_mode_row = Adw.SwitchRow()
         self.batch_mode_row.set_title(_("BatchMode (disable prompts)"))
-        self.batch_mode_row.set_active(bool(self.config.get_setting('ssh.batch_mode', False)))
+        self.batch_mode_row.set_active(bool(values['batch_mode']))
         advanced_group.add(self.batch_mode_row)
 
         # Compression
         self.compression_row = Adw.SwitchRow()
         self.compression_row.set_title(_("Enable Compression (-C)"))
-        self.compression_row.set_active(bool(self.config.get_setting('ssh.compression', False)))
+        self.compression_row.set_active(bool(values['compression']))
         advanced_group.add(self.compression_row)
 
         # Connection multiplexing (ControlMaster). When on, the first
@@ -2092,13 +2345,13 @@ class PreferencesWindow(Adw.NavigationPage):
         # SSH verbosity (-v levels)
         self.verbosity_row = Adw.SpinRow.new_with_range(0, 3, 1)
         self.verbosity_row.set_title(_("SSH Verbosity (-v)"))
-        self.verbosity_row.set_value(int(self.config.get_setting('ssh.verbosity', 0)))
+        self.verbosity_row.set_value(int(values['verbosity']))
         advanced_group.add(self.verbosity_row)
 
         # Debug logging toggle
         self.debug_enabled_row = Adw.SwitchRow()
         self.debug_enabled_row.set_title(_("Enable SSH Debug Logging"))
-        self.debug_enabled_row.set_active(bool(self.config.get_setting('ssh.debug_enabled', False)))
+        self.debug_enabled_row.set_active(bool(values['debug_enabled']))
         advanced_group.add(self.debug_enabled_row)
 
 
@@ -2121,6 +2374,23 @@ class PreferencesWindow(Adw.NavigationPage):
 
         ssh_settings_page.add(help_group)
         ssh_settings_page.add(advanced_group)
+
+        if self.ssh_overrides_controller is None:
+            # No daemon overrides service: there is no authoritative owner for
+            # the nine semantic fields, so they stay visible but disabled
+            # rather than being persisted locally.
+            for row in (
+                self.connect_timeout_row,
+                self.connection_attempts_row,
+                self.keepalive_interval_row,
+                self.keepalive_count_row,
+                self.strict_host_row,
+                self.batch_mode_row,
+                self.compression_row,
+                self.verbosity_row,
+                self.debug_enabled_row,
+            ):
+                row.set_sensitive(False)
 
         # Ensure shortcut overview controls reflect current state
         self._set_shortcut_controls_enabled(not self._pass_through_enabled)
@@ -2295,45 +2565,44 @@ class PreferencesWindow(Adw.NavigationPage):
     def setup_preferences(self):
         """Set up preferences UI with current values"""
         try:
-            terminal_page = self._build_terminal_preferences_page()
-            groups_page = self._build_groups_preferences_page()
+            # Build initial page immediately; register remaining page builders lazily
             interface_page = self._build_interface_preferences_page()
-            shortcuts_page = self._build_shortcuts_preferences_page()
-            advanced_page = self._build_advanced_preferences_page()
-            security_page = self._build_security_preferences_page()
-            ssh_settings_page = self._build_ssh_settings_preferences_page()
-            file_management_page = self._build_file_management_preferences_page()
-            updates_page = self._build_updates_preferences_page()
 
-            # Add pages to the custom layout
             self.add_page_to_layout(N_("Interface"), "applications-graphics-symbolic", interface_page)
-            self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", terminal_page)
-            self.add_page_to_layout(N_("File Management"), "folder-symbolic", file_management_page)
-            self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", shortcuts_page)
-            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", groups_page)
-            self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", ssh_settings_page)
-            self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", security_page)
-            self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", updates_page)
-            plugins_page = self._create_plugins_page()
-            self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", plugins_page)
-            command_blocks_page = self._create_command_blocks_page()
-            self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", command_blocks_page)
-            self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", advanced_page)
+            self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
+            self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
+            self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
+            self.add_page_to_layout(N_("Groups"), "folder-open-symbolic", self._build_groups_preferences_page)
+            self.add_page_to_layout(N_("SSH Options"), "network-workgroup-symbolic", self._build_ssh_settings_preferences_page)
+            self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
+            self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
+            self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", self._create_plugins_page)
+            self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", self._create_command_blocks_page)
+            self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", self._build_advanced_preferences_page)
 
+            self._schedule_idle_page_building()
             logger.info("Preferences window initialized")
         except Exception as e:
             logger.error(f"Failed to setup preferences: {e}")
 
     def on_close_request(self, *args):
-        """Persist settings when leaving Settings mode (NavigationView pop)."""
+        """Persist settings when leaving Settings mode (NavigationView pop).
+
+        Every relevant setter persists immediately, so no blanket
+        ``save_json_config`` write is needed here.  When the daemon SSH
+        overrides save fails, the page stays open and a failure state is
+        shown; returns True to signal the caller to keep Settings visible.
+        """
         try:
             if hasattr(self, 'shortcuts_editor_page'):
                 self.shortcuts_editor_page.flush_changes()
-            self.save_advanced_ssh_settings()
-            if hasattr(self.config, 'save_json_config'):
-                self.config.save_json_config()
+            saved = self.save_advanced_ssh_settings()
+            if not saved:
+                self._show_ssh_save_failure()
+                return True
         except Exception:
-            pass
+            logger.debug('Failed to flush preferences on close', exc_info=True)
+            return True
         return False
 
     def on_view_shortcuts_clicked(self, _button):
@@ -2361,13 +2630,85 @@ class PreferencesWindow(Adw.NavigationPage):
             except Exception as exc:
                 logger.debug("Failed to propagate pass-through state to shortcut editor: %s", exc)
 
+    def _resolve_secrets_controller(self):
+        """The daemon-backed secrets controller reachable from this page, or ``None``.
+
+        Preferences is a NavigationPage inside MainWindow; the controller lives on
+        the main window. Never falls back to ``secret_storage``.
+        """
+        controller = getattr(self, 'parent_window', None)
+        if controller is not None:
+            controller = getattr(controller, 'secrets_controller', None)
+            if controller is not None:
+                return controller
+        try:
+            return getattr(self.get_root(), 'secrets_controller', None)
+        except Exception:
+            return None
+
+    def _secrets_config_value(self, key, default=None):
+        """Read one daemon-owned ``secrets.*`` value through the controller snapshot.
+
+        Presentation-only read; the daemon owns mutations.
+        """
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                configuration = controller.configuration()
+                if configuration is None:
+                    configuration = controller.load_configuration()
+                value = getattr(configuration, key, None)
+                if value is not None:
+                    return value
+            except Exception:
+                logger.debug("Secret configuration read failed: %s", key, exc_info=True)
+        return default
+
+    def _secrets_current_backend(self, controller=None):
+        """The daemon-owned selected backend name (fallback to config read for
+        presentation when the daemon is unreachable)."""
+        controller = controller or self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                configuration = controller.configuration()
+                if configuration is None:
+                    configuration = controller.load_configuration()
+                value = getattr(configuration, 'backend', None)
+                if value:
+                    return str(value)
+            except Exception:
+                logger.debug("Secret backend selection read failed", exc_info=True)
+        return str(self.config.get_setting('secrets.backend', 'auto') or 'auto')
+
+    def _registry_available_names(self):
+        """Names of backends the daemon reports available, or ``None`` on failure."""
+        registry = getattr(self, '_secret_registry', None)
+        if registry is None:
+            return None
+        try:
+            return {b.name for b in registry.backends if getattr(b, 'available', False)}
+        except Exception:
+            return None
+
+    def _registry_session_backed(self, name):
+        """Whether the named backend has a lock lifecycle (daemon registry)."""
+        registry = getattr(self, '_secret_registry', None)
+        if registry is not None:
+            try:
+                for backend in registry.backends:
+                    if backend.name == (name or '').strip().lower():
+                        return bool(getattr(backend, 'session_backed', False))
+            except Exception:
+                pass
+        return name == 'bitwarden'
+
     def _current_secret_backend_name(self):
         try:
             index = self.secret_backend_row.get_selected()
             ids = getattr(self, '_secret_backend_ids', ['auto'])
             return ids[index] if 0 <= index < len(ids) else 'auto'
         except Exception:
-            return str(self.config.get_setting('secrets.backend', 'auto') or 'auto')
+            return self._secrets_current_backend() or 'auto'
 
     def _schedule_bitwarden_ui_refresh(self):
         """Probe Bitwarden readiness once on idle (avoid blocking Settings)."""
@@ -2410,42 +2751,77 @@ class PreferencesWindow(Adw.NavigationPage):
             self._secret_backend_selection_sync = False
 
     def _refresh_secret_backend_availability(self):
-        """Compute backend availability off-thread (keyring/keepassxc probes cost
-        ~400ms) and refine the combo labels once done, keeping Settings responsive."""
-        mgr = getattr(self, '_secret_backend_mgr', None)
-        if mgr is None:
+        """Refresh backend availability from the daemon registry (off-thread) and
+        refine the combo labels once done, keeping Settings responsive."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
             return
 
         def worker():
+            registry = None
+            available = None
             try:
-                available = set(mgr.available_backends(cheap=True))
+                registry = controller.load_registry()
+                self._secret_registry = registry
+                available = {b.name for b in registry.backends
+                             if getattr(b, 'available', False)}
             except Exception:
                 available = None
             if available is not None:
+                names = [b.name for b in registry.backends]
                 GLib.idle_add(
-                    lambda: (self._set_secret_backend_model(available), False)[1]
+                    lambda: (self._apply_registry_probe(names, available), False)[1]
                 )
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _apply_registry_probe(self, names, available):
+        """Apply an async registry probe: reconcile the combo's backend list with
+        the daemon's registry (the page may have been built from the fallback
+        name set), then refresh the "(unavailable)" labels."""
+        ordered = getattr(self, '_secret_backend_ordered', [])
+        if set(names) != set(ordered):
+            # The build used fallback names and the registry disagrees — rebuild
+            # the id/order lists, keeping the current selection by name.
+            current = self._current_secret_backend_name()
+            preferred_order = ['libsecret', 'keyring', 'pass', 'bitwarden', 'rbw', 'keepassxc', 'agent']
+            ordered = [n for n in preferred_order if n in names]
+            ordered += [n for n in names if n not in preferred_order]
+            ids = ['auto'] + ordered
+            if current not in ids:
+                ids.append(current)
+                ordered = ordered + [current]
+            self._secret_backend_ids = ids
+            self._secret_backend_ordered = ordered
+            self._set_secret_backend_model(available)
+            self._secret_backend_selection_sync = True
+            try:
+                self.secret_backend_row.set_selected(ids.index(current))
+            except Exception:
+                pass
+            finally:
+                self._secret_backend_selection_sync = False
+        else:
+            self._set_secret_backend_model(available)
+        return False
+
     def _probe_bitwarden_async(self):
         """Probe Bitwarden readiness on a worker thread, then update the status row.
 
-        ``bw status`` blocks on a Node subprocess when the vault is locked/signed
-        out; keeping it off the main thread stops Settings from freezing (and stops
-        GNOME's force-quit dialog from appearing after logout). The logout button is
-        only shown once a probe completes, so there is never an in-flight probe
-        racing a state-changing action.
+        The daemon owns ``bw``; keeping the RPC off the main thread stops Settings
+        from freezing. The logout button is only shown once a probe completes, so
+        there is never an in-flight probe racing a state-changing action.
         """
         if self._bw_probe_in_flight:
             return
         self._bw_probe_in_flight = True
         self._apply_bitwarden_status_row(pending=True)
+        controller = self._resolve_secrets_controller()
 
         def worker():
             try:
                 from .bitwarden_setup import probe_bitwarden_status
-                status = probe_bitwarden_status()
+                status = probe_bitwarden_status(controller)
             except Exception:
                 status = None
             GLib.idle_add(lambda: (self._on_bitwarden_probe_done(status), False)[1])
@@ -2535,11 +2911,12 @@ class PreferencesWindow(Adw.NavigationPage):
             return
         self._rbw_probe_in_flight = True
         self._apply_rbw_status_row(pending=True)
+        controller = self._resolve_secrets_controller()
 
         def worker():
             try:
                 from .rbw_setup import probe_rbw_status
-                status = probe_rbw_status()
+                status = probe_rbw_status(controller)
             except Exception:
                 status = None
             GLib.idle_add(lambda: (self._on_rbw_probe_done(status), False)[1])
@@ -2568,27 +2945,18 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("rbw setup failed: %s", exc)
 
     def on_rbw_lock_clicked(self, _button):
-        """Lock the rbw agent (``rbw lock``) off the main thread."""
+        """Lock the rbw agent through the daemon (``rbw lock``) off the main thread."""
         btn = getattr(self, '_rbw_lock_btn', None)
         if btn is not None:
             btn.set_sensitive(False)
+        controller = self._resolve_secrets_controller()
 
         def worker():
-            try:
-                from .rbw_setup import _run
-                _run("lock")
-                # Also wipe the backend's in-memory secret cache so plaintext doesn't
-                # linger after an explicit lock (peek() already refuses to serve once the
-                # agent is locked, but don't keep the values around either).
+            if controller is not None:
                 try:
-                    from .secret_storage import get_secret_manager
-                    be = get_secret_manager().get_backend("rbw")
-                    if be is not None and hasattr(be, "lock"):
-                        be.lock()
+                    controller.rbw_lock()
                 except Exception:
-                    logger.debug("rbw cache clear failed", exc_info=True)
-            except Exception:
-                logger.debug("rbw lock failed", exc_info=True)
+                    logger.debug("rbw lock failed", exc_info=True)
             GLib.idle_add(lambda: (self._after_rbw_lock(), False)[1])
 
         threading.Thread(target=worker, daemon=True).start()
@@ -2667,8 +3035,7 @@ class PreferencesWindow(Adw.NavigationPage):
             name = (name or 'auto').strip().lower()
             session = False
             try:
-                from .secret_storage import get_secret_manager
-                session = get_secret_manager().is_session_backed(name)
+                session = self._registry_session_backed(name)
             except Exception:
                 session = name == 'bitwarden'
             if hasattr(self, 'bw_profile_row'):
@@ -2721,46 +3088,103 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("Failed to update secret rows visibility: %s", exc)
 
     def _refresh_forget_master_row(self):
-        """Reflect whether a master password is currently saved in the keyring."""
+        """Reflect whether a master password is currently saved (daemon-owned).
+
+        The state query is a daemon RPC, so it runs on a worker thread: the
+        controller rejects overlapping guarded operations, and the backend
+        availability probe that runs when this page opens can hold the
+        controller for seconds — a synchronous call here would both freeze
+        Settings and lose that race. A refresh requested while one is in
+        flight is coalesced and re-run once the in-flight one applies.
+        """
         if not hasattr(self, 'forget_master_row'):
             return
-        saved = False
-        try:
-            from .secret_storage import get_secret_manager, selected_master_spec
-            saved = bool(get_secret_manager().lookup_in_keyring(selected_master_spec()))
-        except Exception:
-            saved = False
-        self.forget_master_row.set_subtitle(
-            _("Remembered in your system keyring.") if saved
-            else _("Not saved. Use “Remember master password” when unlocking.")
-        )
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            self._apply_forget_master_row(False)
+            return
+        if getattr(self, '_forget_master_probe_in_flight', False):
+            self._forget_master_probe_pending = True
+            return
+        self._forget_master_probe_in_flight = True
+
+        def worker():
+            saved = None
+            for _attempt in range(40):
+                try:
+                    state = controller.load_state()
+                    saved = bool(getattr(state, 'remember_in_keyring', False))
+                    break
+                except RuntimeError:
+                    # Another guarded op (e.g. the availability probe) holds the
+                    # controller; wait it out off the main thread.
+                    time.sleep(0.25)
+                except Exception:
+                    logger.debug("remembered-master state query failed", exc_info=True)
+                    break
+            GLib.idle_add(self._apply_forget_master_row, saved)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_forget_master_row(self, saved):
+        """Apply a remembered-master query result to the row (main thread)."""
+        self._forget_master_probe_in_flight = False
+        if getattr(self, '_forget_master_probe_pending', False):
+            self._forget_master_probe_pending = False
+            self._refresh_forget_master_row()
+            return False
+        if saved is None:
+            # The query never succeeded; leave the row untouched rather than
+            # showing a wrong "Not saved" state.
+            return False
+        if hasattr(self, 'forget_master_row'):
+            self.forget_master_row.set_subtitle(
+                _("Remembered in your system keyring.") if saved
+                else _("Not saved. Use “Remember master password” when unlocking.")
+            )
         if hasattr(self, '_forget_master_btn'):
             self._forget_master_btn.set_sensitive(saved)
+        return False
 
     def on_forget_master_password(self, _button):
-        """Delete the remembered master password from the OS keyring."""
-        try:
-            from .secret_storage import get_secret_manager, selected_master_spec
-            get_secret_manager().delete_in_keyring(selected_master_spec())
-            logger.info("Forgot saved vault master password")
-        except Exception:
-            logger.debug("Failed to forget master password", exc_info=True)
+        """Delete the remembered master password from the OS keyring (daemon-owned)."""
+        controller = self._resolve_secrets_controller()
+        if controller is not None:
+            try:
+                controller.forget_master_password()
+                logger.info("Forgot saved vault master password")
+            except Exception:
+                logger.debug("Failed to forget master password", exc_info=True)
         self._refresh_forget_master_row()
 
     def on_secret_backend_changed(self, combo, _pspec):
-        """Persist the selected secret storage backend and apply it live."""
+        """Apply the selected secret storage backend through the daemon (revision-checked)."""
         if getattr(self, '_secret_backend_selection_sync', False):
+            return
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("Secret storage backend change skipped: no daemon controller")
             return
         try:
             index = combo.get_selected()
             ids = getattr(self, '_secret_backend_ids', ['auto'])
             name = ids[index] if 0 <= index < len(ids) else 'auto'
-            self.config.set_setting('secrets.backend', name)
-            from .secret_storage import get_secret_manager
-            manager = get_secret_manager()
-            manager.set_selected(name)
-            # Propagate to child processes (e.g. the askpass helper).
-            os.environ['SSHPILOT_SECRET_BACKEND'] = name
+            # The daemon owns the selection; the controller stages the revision it
+            # last observed so a concurrent change can never be silently overwritten.
+            try:
+                controller.load_configuration()
+            except Exception:
+                logger.debug("Secret configuration preload failed", exc_info=True)
+            try:
+                controller.update_selection(name)
+            except Exception as exc:
+                logger.error("Secret storage backend update failed: %s", exc)
+                self._set_secret_backend_model(
+                    self._registry_available_names()
+                    if self._registry_available_names() is not None
+                    else set(self._secret_backend_ids)
+                )
+                return
             self._update_secret_rows_visibility(name)
             logger.info("Secret storage backend set to: %s", name)
 
@@ -2774,9 +3198,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         logger.debug("Failed to refresh secret backend rows", exc_info=True)
 
             if name == 'bitwarden':
-                # probe_bitwarden_status spawns bw --version/bw status (Node) — run it
-                # off the main thread so switching to Bitwarden doesn't freeze Settings.
-                self._setup_bitwarden_backend_async(manager, _done)
+                self._setup_bitwarden_backend_async(_done)
                 return
             if name == 'rbw':
                 # rbw owns its own unlock (agent + pinentry); make it ready — installed,
@@ -2785,7 +3207,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 ensure_rbw_ready(self, _done)
                 return
             # A session-backed backend must be unlocked before it can store/read.
-            if manager.selected_needs_unlock():
+            if self._selected_needs_unlock_from_state():
                 try:
                     from .secret_unlock_dialog import prompt_unlock
 
@@ -2795,27 +3217,40 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update secret storage backend: %s", exc)
 
-    def _setup_bitwarden_backend_async(self, manager, on_done):
+    def _selected_needs_unlock_from_state(self):
+        """Whether the daemon reports the selected backend needs unlocking."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            return False
+        try:
+            state = controller.load_state()
+            return bool(getattr(state, 'needs_unlock', False))
+        except Exception:
+            logger.debug("secret backend state query failed", exc_info=True)
+            return False
+
+    def _setup_bitwarden_backend_async(self, on_done):
         """Probe Bitwarden off the main thread, then unlock or run setup as needed."""
         from .bitwarden_setup import progress_dialog
         _set_status, close = progress_dialog(
             self, _("Bitwarden"), _("Checking Bitwarden…"),
         )
+        controller = self._resolve_secrets_controller()
 
         def worker():
             try:
                 from .bitwarden_setup import probe_bitwarden_status
-                status = probe_bitwarden_status(force_refresh=True)
+                status = probe_bitwarden_status(controller, force_refresh=True)
             except Exception:
                 status = None
             GLib.idle_add(lambda: (
-                self._after_bitwarden_setup_probe(status, manager, on_done, close),
+                self._after_bitwarden_setup_probe(status, on_done, close),
                 False,
             )[1])
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _after_bitwarden_setup_probe(self, status, manager, on_done, close):
+    def _after_bitwarden_setup_probe(self, status, on_done, close):
         close()
         from .bitwarden_setup import run_bitwarden_setup
         if status is not None and status.is_ready:
@@ -2826,7 +3261,7 @@ class PreferencesWindow(Adw.NavigationPage):
             status is not None
             and status.cli_installed
             and not status.needs_login
-            and manager.selected_needs_unlock()
+            and self._selected_needs_unlock_from_state()
         ):
             try:
                 from .secret_unlock_dialog import prompt_unlock
@@ -2917,15 +3352,13 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Bitwarden setup failed: %s", exc)
 
     def on_bw_logout_clicked(self, _button):
-        """Sign out of Bitwarden (``bw logout``) off the main thread."""
+        """Sign out of Bitwarden through the daemon (``bw logout``) off the main thread."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            return
         try:
             from .bitwarden_setup import invalidate_bitwarden_status_cache, progress_dialog
-            from .platform_utils import invalidate_bw_cli_cache
-            from .secret_storage import get_secret_manager
 
-            backend = get_secret_manager().get_backend('bitwarden')
-            if backend is None or not backend.is_available():
-                return
             logout_btn = getattr(self, '_bw_logout_btn', None)
             if logout_btn is not None:
                 logout_btn.set_sensitive(False)
@@ -2943,7 +3376,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 ok = False
                 if not cancelled["v"]:
                     try:
-                        ok = bool(backend.logout())
+                        # The daemon owns ``bw logout``; a completed RPC is success.
+                        controller.bitwarden_logout()
+                        ok = True
                     except Exception:
                         logger.debug("Bitwarden logout failed", exc_info=True)
                 GLib.idle_add(lambda: (_after_logout(ok), False)[1])
@@ -2966,7 +3401,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     dlg.add_response('ok', _('OK'))
                     dlg.present()
                     return
-                invalidate_bw_cli_cache()
                 invalidate_bitwarden_status_cache()
                 self._update_secret_rows_visibility('bitwarden')
                 logger.info("Signed out of Bitwarden")
@@ -2979,25 +3413,25 @@ class PreferencesWindow(Adw.NavigationPage):
                 logout_btn.set_sensitive(True)
 
     def on_bw_profile_changed(self, row):
-        """Persist and propagate the Bitwarden CLI data dir (account/profile). Changing
-        the account re-locks the vault so a stale session can't leak across accounts."""
+        """Persist the Bitwarden CLI data dir (account/profile) through the daemon.
+        Changing the account re-locks the vault so a stale session can't leak across
+        accounts."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("bw profile change skipped: no daemon controller")
+            return
         try:
             profile = (row.get_text() or '').strip()
-            prev = str(os.environ.get('BITWARDENCLI_APPDATA_DIR', '') or '')
-            self.config.set_setting('secrets.bitwarden.profile', profile)
-            if profile:
-                os.environ['BITWARDENCLI_APPDATA_DIR'] = os.path.expanduser(profile)
-            else:
-                os.environ.pop('BITWARDENCLI_APPDATA_DIR', None)
+            try:
+                controller.update_configuration({'bitwarden_profile': profile})
+            except Exception as exc:
+                logger.error("Failed to persist bw profile: %s", exc)
+                return
             # Account changed → drop any cached session/items for the old account.
-            if os.environ.get('BITWARDENCLI_APPDATA_DIR', '') != prev:
-                try:
-                    from .secret_storage import get_secret_manager
-                    be = get_secret_manager().selected_backend()
-                    if be is not None and hasattr(be, 'lock'):
-                        be.lock()
-                except Exception:
-                    pass
+            try:
+                controller.lock()
+            except Exception:
+                pass
         except Exception as exc:
             logger.error("Failed to update bw profile: %s", exc)
 
@@ -3020,36 +3454,44 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("bw profile browse failed: %s", exc)
 
     def _relock_selected_session_backend(self):
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            return
         try:
-            from .secret_storage import get_secret_manager
-            be = get_secret_manager().selected_backend()
-            if be is not None and hasattr(be, 'lock'):
-                be.lock()
+            controller.lock()
         except Exception:
             pass
 
     def on_kdbx_database_changed(self, row):
-        """Persist + propagate the KeePass database path; re-lock on change."""
+        """Persist the KeePass database path through the daemon; re-lock on change."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("KeePass database change skipped: no daemon controller")
+            return
         try:
             path = (row.get_text() or '').strip()
-            self.config.set_setting('secrets.keepassxc.database', path)
-            if path:
-                os.environ['SSHPILOT_KDBX_DATABASE'] = os.path.expanduser(path)
-            else:
-                os.environ.pop('SSHPILOT_KDBX_DATABASE', None)
+            try:
+                controller.update_configuration({'keepassxc_database': path})
+            except Exception as exc:
+                logger.error("Failed to persist KeePass database path: %s", exc)
+                return
             self._relock_selected_session_backend()
         except Exception as exc:
             logger.error("Failed to update KeePass database path: %s", exc)
 
     def on_kdbx_keyfile_changed(self, row):
-        """Persist + propagate the KeePass key file path; re-lock on change."""
+        """Persist the KeePass key file path through the daemon; re-lock on change."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("KeePass key file change skipped: no daemon controller")
+            return
         try:
             path = (row.get_text() or '').strip()
-            self.config.set_setting('secrets.keepassxc.keyfile', path)
-            if path:
-                os.environ['SSHPILOT_KDBX_KEYFILE'] = os.path.expanduser(path)
-            else:
-                os.environ.pop('SSHPILOT_KDBX_KEYFILE', None)
+            try:
+                controller.update_configuration({'keepassxc_keyfile': path})
+            except Exception as exc:
+                logger.error("Failed to persist KeePass key file path: %s", exc)
+                return
             self._relock_selected_session_backend()
         except Exception as exc:
             logger.error("Failed to update KeePass key file path: %s", exc)
@@ -3120,76 +3562,73 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("KDBX create dialog failed: %s", exc)
 
-    def _prompt_new_kdbx_password(self, path, error=None):
-        dialog = Adw.MessageDialog(
-            transient_for=self.get_root(), modal=True, heading=_("Set Master Password"),
-            body=error or _("Choose a master password for the new database “{name}”.").format(
-                name=os.path.basename(path)))
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        pw = Gtk.PasswordEntry(show_peek_icon=True)
-        pw.set_property('placeholder-text', _("Master password"))
-        pw2 = Gtk.PasswordEntry(show_peek_icon=True)
-        pw2.set_property('placeholder-text', _("Confirm password"))
-        pw2.set_property('activates-default', True)
-        box.append(pw)
-        box.append(pw2)
-        dialog.set_extra_child(box)
-        dialog.add_response('cancel', _('Cancel'))
-        dialog.add_response('create', _('Create'))
-        dialog.set_response_appearance('create', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('create')
-        dialog.set_close_response('cancel')
+    def _prompt_new_kdbx_password(self, path):
+        """Create the new database through the daemon.
 
-        def on_response(dlg, resp):
-            if resp != 'create':
-                return
-            p1, p2 = pw.get_text() or '', pw2.get_text() or ''
-            if not p1:
-                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
-                    path, _("Enter a master password.")), False)[1])
-                return
-            if p1 != p2:
-                GLib.idle_add(lambda: (self._prompt_new_kdbx_password(
-                    path, _("Passwords don't match — try again.")), False)[1])
-                return
-            self._do_create_kdbx(path, p1)
-
-        dialog.connect('response', on_response)
-        dialog.present()
-        GLib.idle_add(lambda: (pw.grab_focus(), False)[1])
-
-    def _do_create_kdbx(self, path, password):
+        The master password is collected by the daemon through a protected
+        interaction (never in this dialog); this only starts the daemon operation
+        and reports the outcome.
+        """
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            self._kdbx_message(_("Cannot Create Database"),
+                               _("The secret-backend daemon service is not available."))
+            return
         keyfile = ''
         if hasattr(self, 'kdbx_keyfile_row'):
             keyfile = (self.kdbx_keyfile_row.get_text() or '').strip()
-        from .secret_storage import get_secret_manager
-        backend = get_secret_manager().selected_backend()
-        if backend is None or not hasattr(backend, 'create_database'):
-            self._kdbx_message(_("Cannot Create Database"),
-                               _("The KeePassXC backend is not selected."))
+
+        from .bitwarden_setup import progress_dialog
+        _set_status, close = progress_dialog(
+            self, _("Create KeePass Database"),
+            _("Creating the database… the master password prompt is shown by the daemon."),
+        )
+
+        def worker():
+            try:
+                result = controller.keepassxc_create_database(
+                    path, keyfile=keyfile or None)
+                state = getattr(getattr(result, 'state', None), 'value', None)
+                message = getattr(result, 'message', '') or ''
+                ok = state == 'success'
+                cancelled = state == 'interaction_required'
+            except Exception as exc:
+                logger.debug("KDBX create failed: %s", exc)
+                ok, message, cancelled = False, str(exc), False
+            GLib.idle_add(lambda: (
+                self._after_create_kdbx(path, ok, message, cancelled, close), False)[1])
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_create_kdbx(self, path, ok, message, cancelled, close):
+        close()
+        if cancelled:
             return
-        if not backend.create_database(path, password, keyfile or None):
+        if not ok:
             self._kdbx_message(
                 _("Cannot Create Database"),
-                _("Failed to create the database. Make sure pykeepass is installed and the "
-                  "location is writable."))
+                message or _("Failed to create the database. Make sure pykeepass is "
+                             "installed and the location is writable."))
             return
-        # Point config/env at the new file (the row's 'changed' handler persists + re-locks)…
-        self.kdbx_db_row.set_text(path)
-        # …then unlock it so the just-typed password isn't asked again.
-        try:
-            backend.unlock(password)
-        except Exception:
-            logger.debug("auto-unlock after create failed", exc_info=True)
+        # Point the row at the new file; the daemon already persists the path via
+        # the create flow, and unlocking happened inside the daemon.
+        if hasattr(self, 'kdbx_db_row'):
+            try:
+                self.kdbx_db_row.set_text(path)
+            except Exception:
+                pass
         self._kdbx_message(_("Database Created"),
                            _("Created and unlocked:\n{path}").format(path=path))
 
     def on_secret_session_timeout_changed(self, row, _pspec):
-        """Persist and propagate the session-backend idle unlock timeout."""
+        """Persist the session-backend idle unlock timeout through the daemon."""
+        controller = self._resolve_secrets_controller()
+        if controller is None:
+            logger.error("Session timeout change skipped: no daemon controller")
+            return
         try:
             minutes = int(row.get_value())
-            self.config.set_setting('secrets.session_timeout', minutes)
-            os.environ['SSHPILOT_SECRET_SESSION_TIMEOUT'] = str(max(0, minutes) * 60)
+            controller.update_configuration({'session_timeout': max(0, minutes)})
         except Exception as exc:
             logger.error("Failed to update secret session timeout: %s", exc)
 
@@ -3221,6 +3660,188 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update paste-on-right-click mode: %s", exc)
 
+    def on_tab_close_policy_changed(self, row, _pspec):
+        """Persist the tab close policy preference."""
+        try:
+            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
+            policy = policy_map.get(row.get_selected(), 'detach')
+            self.config.set_setting('terminal.daemon_tab_close_policy', policy)
+        except Exception as exc:
+            logger.error("Failed to update tab close policy: %s", exc)
+
+    def on_app_close_policy_changed(self, row, _pspec):
+        """Persist the application quit policy preference."""
+        try:
+            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
+            policy = policy_map.get(row.get_selected(), 'detach')
+            self.config.set_setting('terminal.daemon_app_close_policy', policy)
+        except Exception as exc:
+            logger.error("Failed to update app close policy: %s", exc)
+
+    def on_restore_sessions_toggled(self, switch, _pspec):
+        """Persist the restore sessions preference."""
+        try:
+            self.config.set_setting('terminal.daemon_restore_sessions', bool(switch.get_active()))
+        except Exception as exc:
+            logger.error("Failed to update restore sessions setting: %s", exc)
+
+    def on_daemon_idle_timeout_changed(self, row, _pspec):
+        try:
+            self.config.set_setting(
+                'daemon.idle_shutdown_seconds',
+                int(row.get_value()),
+            )
+        except Exception as exc:
+            logger.error("Failed to update daemon idle timeout: %s", exc)
+
+    def on_daemon_status_refresh_clicked(self, _button):
+        self._refresh_daemon_status_row()
+
+    def _refresh_daemon_status_row(self) -> bool:
+        row = getattr(self, 'daemon_status_row', None)
+        if row is None:
+            return False
+        try:
+            from .api.daemon_client import DaemonClient
+
+            client = DaemonClient(timeout=1.0)
+            try:
+                status = client.get_daemon_status()
+                resources = status.resources
+                row.set_subtitle(
+                    _(
+                        "{state} · instance {instance} · "
+                        "{sessions} sessions · {clients} clients"
+                    ).format(
+                        state=status.state.value,
+                        instance=status.server_instance_id[:8],
+                        sessions=resources.sessions_active,
+                        clients=resources.clients,
+                    )
+                )
+            finally:
+                client.close()
+        except Exception as exc:
+            row.set_subtitle(_("Unavailable ({error})").format(error=type(exc).__name__))
+        return False
+
+    def on_daemon_restart_clicked(self, _button):
+        dialog = Adw.AlertDialog(
+            heading=_("Restart the local daemon?"),
+            body=_(
+                "Live terminal sessions, SFTP services, transfers, and forwards "
+                "owned by this daemon will be lost. They cannot survive a restart."
+            ),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('restart', _("Restart"))
+        dialog.set_response_appearance('restart', Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response('cancel')
+        dialog.set_close_response('cancel')
+        dialog.connect('response', self._on_daemon_restart_response)
+        dialog.present(self)
+
+    def _on_daemon_restart_response(self, _dialog, response):
+        if response != 'restart':
+            return
+        try:
+            from .api.daemon_client import DaemonClient
+            from .api.models.daemon import RestartDaemonRequest
+
+            client = DaemonClient(timeout=2.0)
+            try:
+                client.get_daemon_status()
+                request = RestartDaemonRequest(force=False)
+                result = client.restart_daemon(request)
+                if not result.accepted and result.confirmation:
+                    warn = Adw.AlertDialog(
+                        heading=_("Daemon has live resources"),
+                        body=_(
+                            "Restarting will destroy: {resources}. "
+                            "Force the restart?"
+                        ).format(resources=", ".join(result.will_lose) or _("unknown")),
+                    )
+                    warn.add_response('cancel', _("Cancel"))
+                    warn.add_response('force', _("Force restart"))
+                    warn.set_response_appearance(
+                        'force', Adw.ResponseAppearance.DESTRUCTIVE
+                    )
+                    warn.set_default_response('cancel')
+                    warn.set_close_response('cancel')
+
+                    def _force(_d, resp, token=result.confirmation):
+                        if resp != 'force':
+                            return
+                        try:
+                            forced = DaemonClient(timeout=2.0)
+                            try:
+                                forced.restart_daemon(
+                                    RestartDaemonRequest(force=True, confirmation=token)
+                                )
+                            finally:
+                                forced.close()
+                        except Exception as exc:
+                            logger.error("Forced daemon restart failed: %s", exc)
+                        self._schedule_daemon_reconnect_after_restart()
+                        self._refresh_daemon_status_row()
+
+                    warn.connect('response', _force)
+                    warn.present(self)
+                    return
+                if result.accepted:
+                    self._schedule_daemon_reconnect_after_restart()
+            finally:
+                client.close()
+        except Exception as exc:
+            logger.error("Daemon restart failed: %s", exc)
+            err = Adw.AlertDialog(
+                heading=_("Could not restart daemon"),
+                body=str(exc),
+            )
+            err.add_response('ok', _("OK"))
+            err.set_default_response('ok')
+            err.set_close_response('ok')
+            err.present(self)
+        self._refresh_daemon_status_row()
+
+    def _schedule_daemon_reconnect_after_restart(self) -> None:
+        """Ask the running application to spawn/reconnect after an explicit restart."""
+
+        app = None
+        if hasattr(self, "get_application"):
+            try:
+                app = self.get_application()
+            except Exception:
+                app = None
+        if app is None and hasattr(self, "get_root"):
+            root = self.get_root()
+            if root and hasattr(root, "get_application"):
+                try:
+                    app = root.get_application()
+                except Exception:
+                    app = None
+        if app is None and getattr(self, "parent_window", None):
+            parent = self.parent_window
+            if hasattr(parent, "get_application"):
+                try:
+                    app = parent.get_application()
+                except Exception:
+                    app = None
+        if app is None:
+            app = Gio.Application.get_default()
+
+        request = getattr(app, "request_daemon_reconnect", None) if app else None
+        if not callable(request):
+            logger.debug("No application reconnect hook after daemon restart")
+            return
+        try:
+            request(reason="preferences_restart", immediate=True)
+        except Exception:
+            logger.debug(
+                "Failed to schedule daemon reconnect after restart",
+                exc_info=True,
+            )
+
     def _set_shortcut_controls_enabled(self, enabled: bool):
         for widget in (getattr(self, '_shortcuts_row', None), getattr(self, '_shortcuts_button', None)):
             if widget is None:
@@ -3233,26 +3854,26 @@ class PreferencesWindow(Adw.NavigationPage):
     def on_font_button_clicked(self, button):
         """Handle font button click"""
         logger.info("Font button clicked")
-        
+
         # Get current font from config
         current_font = self.config.get_setting('terminal.font', 'Monospace 12')
-        
+
         # Create custom monospace font dialog
         font_dialog = MonospaceFontDialog(parent=self, current_font=current_font)
-        
+
         def on_font_selected(font_string):
             self.font_row.set_subtitle(font_string)
             logger.info(f"Font selected: {font_string}")
-            
+
             # Save to config
             self.config.set_setting('terminal.font', font_string)
-            
+
             # Apply to all active terminals
             self.apply_font_to_terminals(font_string)
-        
+
         font_dialog.set_callback(on_font_selected)
         font_dialog.present()
-    
+
     def apply_font_to_terminals(self, font_string):
         """Apply font to all active terminal widgets"""
         try:
@@ -3266,13 +3887,10 @@ class PreferencesWindow(Adw.NavigationPage):
                         if hasattr(terminal, 'backend') and terminal.backend:
                             terminal.backend.set_font(font_desc)
                             count += 1
-                        elif hasattr(terminal, 'vte') and terminal.vte:
-                            terminal.vte.set_font(font_desc)
-                            count += 1
                 logger.info(f"Applied font {font_string} to {count} terminals")
         except Exception as e:
             logger.error(f"Failed to apply font to terminals: {e}")
-    
+
     def on_language_changed(self, combo_row, param):
         """Persist the interface language and offer a restart.
 
@@ -4660,12 +5278,12 @@ class PreferencesWindow(Adw.NavigationPage):
                 css_rules.append("  background-color: @theme_selected_bg_color;")
                 css_rules.append("  color: @theme_selected_fg_color;")
                 css_rules.append("}")
-                
+
                 # Apply custom CSS
                 provider = Gtk.CssProvider()
                 css = "\n".join(css_rules)
                 provider.load_from_data(css.encode('utf-8'))
-                
+
                 # Add provider to display
                 display = Gdk.Display.get_default()
                 if display:
@@ -4673,8 +5291,8 @@ class PreferencesWindow(Adw.NavigationPage):
                     self.remove_color_override_provider()
 
                     Gtk.StyleContext.add_provider_for_display(
-                        display, 
-                        provider, 
+                        display,
+                        provider,
                         Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
                     # Store provider reference for cleanup
@@ -4683,7 +5301,7 @@ class PreferencesWindow(Adw.NavigationPage):
             else:
                 # Remove any existing color override provider
                 self.remove_color_override_provider()
-                
+
         except Exception as e:
             logger.error(f"Failed to apply color overrides: {e}")
 
@@ -4697,122 +5315,90 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as e:
             logger.error(f"Failed to remove color override provider: {e}")
 
-    def save_advanced_ssh_settings(self):
-        """Persist advanced SSH settings from the preferences UI"""
-        try:
-            connect_timeout = None
-            connection_attempts = None
-            keepalive_interval = None
-            keepalive_count = None
-            strict_host_value = ''
-            batch_mode_enabled = False
-            compression_enabled = False
-            verbosity_value = 0
-            debug_enabled = False
+    def _collect_ssh_override_patch(self):
+        """Read the nine SSH override fields from the page rows."""
+        options = ["accept-new", "yes", "no", "ask"]
+        idx = self.strict_host_row.get_selected()
+        strict_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
+        return {
+            "connect_timeout": int(self.connect_timeout_row.get_value()),
+            "connection_attempts": int(self.connection_attempts_row.get_value()),
+            "server_alive_interval": int(self.keepalive_interval_row.get_value()),
+            "server_alive_count_max": int(self.keepalive_count_row.get_value()),
+            "strict_host_key_checking": strict_value,
+            "batch_mode": bool(self.batch_mode_row.get_active()),
+            "compression": bool(self.compression_row.get_active()),
+            "verbosity": int(self.verbosity_row.get_value()),
+            "debug_enabled": bool(self.debug_enabled_row.get_active()),
+        }
 
-            if hasattr(self, 'connect_timeout_row'):
-                connect_timeout_value = int(self.connect_timeout_row.get_value())
-                if connect_timeout_value <= 0:
-                    connect_timeout = None
-                else:
-                    connect_timeout = connect_timeout_value
-                self.config.set_setting('ssh.connection_timeout', connect_timeout)
-            if hasattr(self, 'connection_attempts_row'):
-                connection_attempts_value = int(self.connection_attempts_row.get_value())
-                if connection_attempts_value <= 0:
-                    connection_attempts = None
-                else:
-                    connection_attempts = connection_attempts_value
-                self.config.set_setting('ssh.connection_attempts', connection_attempts)
+    def _apply_ssh_override_values_to_rows(self, snapshot):
+        """Populate the page rows from a daemon ``GlobalSshOverrides``."""
+        self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
+        self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
+        self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
+        self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
+        options = ["accept-new", "yes", "no", "ask"]
+        try:
+            self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
+        except ValueError:
+            self.strict_host_row.set_selected(0)
+        self.batch_mode_row.set_active(bool(snapshot.batch_mode))
+        self.compression_row.set_active(bool(snapshot.compression))
+        self.verbosity_row.set_value(int(snapshot.verbosity))
+        self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+
+    def save_advanced_ssh_settings(self):
+        """Persist advanced SSH settings from the preferences UI.
+
+        Config-owned rows (``ssh.apply_default_keepalive``, ``ssh.controlmaster``,
+        file-manager settings) persist first — each ``set_setting`` writes the
+        file immediately.  The nine daemon-owned SSH override fields are
+        submitted through the controller last; on success the legacy Config
+        cache is refreshed from the authoritative file without writing it back,
+        so a later Config-owned write cannot clobber the daemon state.
+
+        Before any Config-owned write the legacy cache is refreshed from the
+        authoritative file.  A stale cache would otherwise rewrite an older
+        SSH-overrides revision back to disk on the first ``set_setting``,
+        silently clobbering a concurrent daemon mutation.  If that strict
+        refresh fails nothing is written: the method returns ``False``.
+
+        Returns ``True`` on success.  On a validation, revision-conflict,
+        unsupported-capability, or persistence failure the daemon mutation
+        failed: the page stays open, the controller snapshot is preserved, and
+        no ControlMaster sessions are expired.
+        """
+        try:
+            controller = self.ssh_overrides_controller
+            page_built = hasattr(self, 'connect_timeout_row')
+
+            # 0. Refresh the legacy cache from the authoritative file before
+            #    any Config-owned write.  A stale cache would rewrite an older
+            #    SSH-overrides revision back to disk on the first set_setting,
+            #    clobbering a concurrent daemon mutation.
+            if controller is not None and page_built:
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache before SSH overrides save",
+                        exc_info=True,
+                    )
+                    return False
+
+            # 1. Config-owned rows persist first (each set_setting saves now).
             if hasattr(self, 'apply_default_keepalive_row'):
                 self.config.set_setting(
                     'ssh.apply_default_keepalive',
                     bool(self.apply_default_keepalive_row.get_active()),
                 )
-            if hasattr(self, 'keepalive_interval_row'):
-                keepalive_interval_value = int(self.keepalive_interval_row.get_value())
-                if keepalive_interval_value <= 0:
-                    keepalive_interval = None
-                else:
-                    keepalive_interval = keepalive_interval_value
-                self.config.set_setting('ssh.keepalive_interval', keepalive_interval)
-            if hasattr(self, 'keepalive_count_row'):
-                keepalive_count_value = int(self.keepalive_count_row.get_value())
-                if keepalive_count_value <= 0:
-                    keepalive_count = None
-                else:
-                    keepalive_count = keepalive_count_value
-                self.config.set_setting('ssh.keepalive_count_max', keepalive_count)
-            if hasattr(self, 'strict_host_row'):
-                options = ["accept-new", "yes", "no", "ask"]
-                idx = self.strict_host_row.get_selected()
-                strict_host_value = options[idx] if 0 <= idx < len(options) else 'accept-new'
-                self.config.set_setting('ssh.strict_host_key_checking', strict_host_value)
-            if hasattr(self, 'batch_mode_row'):
-                batch_mode_enabled = bool(self.batch_mode_row.get_active())
-                self.config.set_setting('ssh.batch_mode', batch_mode_enabled)
-            if hasattr(self, 'compression_row'):
-                compression_enabled = bool(self.compression_row.get_active())
-                self.config.set_setting('ssh.compression', compression_enabled)
-            if hasattr(self, 'verbosity_row'):
-                verbosity_value = int(self.verbosity_row.get_value())
-                self.config.set_setting('ssh.verbosity', verbosity_value)
-            if hasattr(self, 'debug_enabled_row'):
-                debug_enabled = bool(self.debug_enabled_row.get_active())
-                self.config.set_setting('ssh.debug_enabled', debug_enabled)
-            controlmaster_enabled = False
             if hasattr(self, 'controlmaster_row'):
-                controlmaster_enabled = bool(self.controlmaster_row.get_active())
-                self.config.set_setting('ssh.controlmaster', controlmaster_enabled)
+                self.config.set_setting(
+                    'ssh.controlmaster',
+                    bool(self.controlmaster_row.get_active()),
+                )
 
-            overrides: List[str] = []
-            if batch_mode_enabled:
-                overrides.extend(['-o', 'BatchMode=yes'])
-            if connect_timeout is not None:
-                overrides.extend(['-o', f'ConnectTimeout={connect_timeout}'])
-            if connection_attempts is not None:
-                overrides.extend(['-o', f'ConnectionAttempts={connection_attempts}'])
-            if keepalive_interval is not None:
-                overrides.extend(['-o', f'ServerAliveInterval={keepalive_interval}'])
-            if keepalive_count is not None:
-                overrides.extend(['-o', f'ServerAliveCountMax={keepalive_count}'])
-            if strict_host_value:
-                overrides.extend(['-o', f'StrictHostKeyChecking={strict_host_value}'])
-            if compression_enabled:
-                overrides.append('-C')
-
-            safe_verbosity = max(0, min(3, verbosity_value))
-            for _unused in range(safe_verbosity):
-                overrides.append('-v')
-
-            log_level = None
-            if safe_verbosity == 1:
-                log_level = 'VERBOSE'
-            elif safe_verbosity == 2:
-                log_level = 'DEBUG2'
-            elif safe_verbosity >= 3:
-                log_level = 'DEBUG3'
-            elif debug_enabled:
-                log_level = 'DEBUG'
-
-            if log_level:
-                overrides.extend(['-o', f'LogLevel={log_level}'])
-
-            # Connection multiplexing applies to every connection via the same
-            # shared socket the per-plugin pool uses, so they never conflict.
-            if controlmaster_enabled:
-                from .ssh_multiplex import controlmaster_args
-                overrides.extend(controlmaster_args())
-
-            self.config.set_setting('ssh.ssh_overrides', overrides)
-            # Global SSH options changed: retire live ControlMasters so new
-            # connections pick up the new overrides instead of riding stale
-            # transports (existing sessions drain naturally via -O stop).
-            try:
-                from .ssh_multiplex import expire_all_masters
-                expire_all_masters()
-            except Exception:
-                logger.debug('Master expiry skipped', exc_info=True)
             if getattr(self, 'force_internal_file_manager_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.force_internal',
@@ -4839,54 +5425,74 @@ class PreferencesWindow(Adw.NavigationPage):
                     connect_timeout_value = 0
                 self.config.set_setting('file_manager.sftp_connect_timeout', connect_timeout_value)
 
+            # 2. The nine daemon-owned fields go through the controller last.
+            if controller is not None and page_built:
+                try:
+                    controller.update(self._collect_ssh_override_patch())
+                except Exception as exc:
+                    logger.error(f"Failed to save global SSH overrides: {exc}")
+                    return False
+
+            # 3. Refresh the legacy cache from the authoritative file so a
+            #    later Config-owned write cannot clobber the daemon state.
+            if controller is not None and page_built:
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache after SSH overrides save",
+                        exc_info=True,
+                    )
+
             manager = None
             if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
                 manager = self.parent_window.connection_manager
             if manager and hasattr(manager, 'invalidate_cached_commands'):
                 manager.invalidate_cached_commands()
+            return True
         except Exception as e:
             logger.error(f"Failed to save advanced SSH settings: {e}")
+            return False
 
     def _apply_default_advanced_settings(self):
-        """Restore advanced SSH settings to defaults and update the UI."""
+        """Restore advanced SSH settings to defaults and update the UI.
+
+        Config-owned rows persist first; the nine daemon-owned SSH override
+        fields reset through the controller last.  Returns ``True`` on
+        success.  On a daemon failure the page keeps its state and no
+        ControlMaster sessions are expired.
+
+        Before any Config-owned write the legacy cache is refreshed from the
+        authoritative file so a stale cache cannot rewrite an older
+        SSH-overrides revision back to disk.  If that strict refresh fails
+        nothing is written: the method returns ``False``.
+        """
         try:
             defaults = self.config.get_default_config().get('ssh', {})
+            controller = self.ssh_overrides_controller
+            page_built = hasattr(self, 'connect_timeout_row')
 
-            if hasattr(self, 'connect_timeout_row'):
-                self.config.set_setting('ssh.connection_timeout', None)
-                self.connect_timeout_row.set_value(0)
-            if hasattr(self, 'connection_attempts_row'):
-                self.config.set_setting('ssh.connection_attempts', None)
-                self.connection_attempts_row.set_value(0)
+            # 0. Refresh the legacy cache from the authoritative file before
+            #    any Config-owned write (same clobber protection as the save
+            #    path).  A malformed file aborts before anything is written.
+            if controller is not None and page_built:
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache before SSH overrides reset",
+                        exc_info=True,
+                    )
+                    return False
+
+            # Config-owned rows first (each set_setting saves immediately).
             if hasattr(self, 'apply_default_keepalive_row'):
                 default_apply = bool(defaults.get('apply_default_keepalive', True))
                 self.config.set_setting('ssh.apply_default_keepalive', default_apply)
                 self.apply_default_keepalive_row.set_active(default_apply)
-            if hasattr(self, 'keepalive_interval_row'):
-                self.config.set_setting('ssh.keepalive_interval', None)
-                self.keepalive_interval_row.set_value(0)
-            if hasattr(self, 'keepalive_count_row'):
-                self.config.set_setting('ssh.keepalive_count_max', None)
-                self.keepalive_count_row.set_value(0)
-            if hasattr(self, 'strict_host_row'):
-                try:
-                    self.strict_host_row.set_selected(["accept-new", "yes", "no", "ask"].index('accept-new'))
-                except ValueError:
-                    self.strict_host_row.set_selected(0)
-                self.config.set_setting('ssh.strict_host_key_checking', 'accept-new')
-            self.config.set_setting('ssh.auto_add_host_keys', defaults.get('auto_add_host_keys'))
-            if hasattr(self, 'batch_mode_row'):
-                self.config.set_setting('ssh.batch_mode', bool(defaults.get('batch_mode', False)))
-                self.batch_mode_row.set_active(bool(defaults.get('batch_mode', False)))
-            if hasattr(self, 'compression_row'):
-                self.config.set_setting('ssh.compression', bool(defaults.get('compression', False)))
-                self.compression_row.set_active(bool(defaults.get('compression', False)))
-            if hasattr(self, 'verbosity_row'):
-                self.config.set_setting('ssh.verbosity', defaults.get('verbosity'))
-                self.verbosity_row.set_value(int(defaults.get('verbosity', 0)))
-            if hasattr(self, 'debug_enabled_row'):
-                self.config.set_setting('ssh.debug_enabled', bool(defaults.get('debug_enabled', False)))
-                self.debug_enabled_row.set_active(bool(defaults.get('debug_enabled', False)))
+            if hasattr(self, 'controlmaster_row'):
+                self.config.set_setting('ssh.controlmaster', False)
+                self.controlmaster_row.set_active(False)
 
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
             default_force_internal = bool(file_manager_defaults.get('force_internal', False))
@@ -4911,9 +5517,38 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.sftp_connect_timeout_row.set_value(max(0, connect_timeout_default))
             self._update_external_file_manager_row()
 
-            self.save_advanced_ssh_settings()
+            if controller is None:
+                # No Preferences row exists for this Config-owned key, but the
+                # legacy no-controller reset restored it to its default.
+                self.config.set_setting(
+                    'ssh.auto_add_host_keys', defaults.get('auto_add_host_keys')
+                )
+
+            # The nine daemon-owned fields reset through the controller last.
+            if controller is not None and page_built:
+                try:
+                    snapshot = controller.reset()
+                except Exception as exc:
+                    logger.error(f"Failed to reset global SSH overrides: {exc}")
+                    return False
+                self._apply_ssh_override_values_to_rows(snapshot)
+                try:
+                    self.config.reload_json_cache_strict()
+                except Exception:
+                    logger.warning(
+                        "Failed to reload config cache after SSH overrides reset",
+                        exc_info=True,
+                    )
+
+            manager = None
+            if self.parent_window and hasattr(self.parent_window, 'connection_manager'):
+                manager = self.parent_window.connection_manager
+            if manager and hasattr(manager, 'invalidate_cached_commands'):
+                manager.invalidate_cached_commands()
+            return True
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
+            return False
 
     def on_reset_advanced_ssh(self, *args):
         """Reset only advanced SSH keys to defaults and update UI."""
@@ -4971,7 +5606,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         current_encoding = self.config.get_setting('terminal.encoding', 'UTF-8')
         self._sync_encoding_row_selection(current_encoding, notify_user=True)
-        
+
         # Update visibility based on current backend
         self._update_encoding_row_visibility()
 
@@ -4990,7 +5625,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 ('UTF-8', 'Unicode (UTF-8)'),
                 ('UTF-16', 'Unicode (UTF-16)'),
             ]
-            
+
             # Add common legacy encodings that can be handled via luit/iconv
             # These will be transcoded at the PTY bridge level
             legacy_encodings = [
@@ -5009,7 +5644,7 @@ class PreferencesWindow(Adw.NavigationPage):
             ]
             options.extend(legacy_encodings)
             return options
-        
+
         # VTE (GTK4) is UTF-8-only and set_encoding is unsupported, so there is
         # nothing to enumerate — and the encoding row is hidden for VTE anyway
         # (_update_encoding_row_visibility). Return a static list instead of
@@ -5085,6 +5720,17 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception:
             # Fallback to logging when toast overlay isn't available
             logger.info(message)
+
+    def _show_ssh_save_failure(self):
+        """Surface a failed daemon SSH overrides save (narrow failure state)."""
+        try:
+            self._show_toast(
+                _("Could not save SSH settings. Please check the values and try again.")
+            )
+        except Exception:
+            logger.error(
+                "Failed to save global SSH overrides; preferences kept open"
+            )
 
     def _update_encoding_config_if_needed(self, target_code):
         current_value = self.config.get_setting('terminal.encoding', 'UTF-8')
@@ -5203,36 +5849,36 @@ class PreferencesWindow(Adw.NavigationPage):
             combo_row.set_selected(self._backend_last_valid_index)
             logger.warning("PyXterm backend unavailable: %s", option.get('error'))
             return
-        
+
         backend_id = option.get('id', 'vte')
         current_backend = self.config.get_setting('terminal.backend', 'vte')
-        
+
         # If backend hasn't actually changed, do nothing
         if backend_id.lower() == current_backend.lower():
             return
-        
+
         # Check if there are any open terminal tabs
         open_terminals = self._get_open_terminals()
-        
+
         if open_terminals:
             # Show info dialog explaining the change only applies to new terminals
             self._show_backend_change_info(backend_id, open_terminals, index)
         else:
             # No open terminals, proceed with backend switch
             self._apply_backend_change(index, backend_id)
-    
+
     def _get_open_terminals(self):
         """Get all currently open terminal tabs (connected or not)"""
         terminals = []
         if not self.parent_window:
             return terminals
-        
+
         # Check active_terminals
         active_terminals = getattr(self.parent_window, 'active_terminals', {})
         for connection, terminal in active_terminals.items():
             if terminal:
                 terminals.append((connection, terminal))
-        
+
         # Also check connection_to_terminals for any other terminals
         connection_to_terminals = getattr(self.parent_window, 'connection_to_terminals', {})
         for connection, terminal_list in connection_to_terminals.items():
@@ -5241,7 +5887,7 @@ class PreferencesWindow(Adw.NavigationPage):
                     # Avoid duplicates
                     if (connection, terminal) not in terminals:
                         terminals.append((connection, terminal))
-        
+
         # Check tab_view for any terminal pages
         tab_view = getattr(self.parent_window, 'tab_view', None)
         if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
@@ -5262,14 +5908,14 @@ class PreferencesWindow(Adw.NavigationPage):
                             terminals.append((None, terminal))
             except Exception:
                 pass
-        
+
         return terminals
-    
+
     def _show_backend_change_info(self, backend_id, open_terminals, index):
         """Show an info dialog explaining that backend change only applies to new terminals"""
         backend_name = 'PyXterm.js' if backend_id.lower() == 'pyxterm' else 'VTE'
         num_terminals = len(open_terminals)
-        
+
         dialog = Gtk.MessageDialog(
             transient_for=self.get_root(),
             modal=True,
@@ -5288,7 +5934,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self._apply_backend_change(index, backend_id)
         dialog.connect("response", _on_info_response)
         dialog.present()
-    
+
     def _apply_backend_change(self, index, backend_id):
         """Apply the backend change (only affects new terminals, not existing ones)"""
         self._backend_last_valid_index = index
@@ -5304,7 +5950,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
-        
+
         # Note: We do NOT call refresh_backends() here
         # This ensures existing terminals keep their current backend
         # Only new terminals will use the new backend setting
@@ -5323,7 +5969,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # Refresh the color preview
         if hasattr(self, 'color_preview_terminal'):
             self.color_preview_terminal.queue_draw()
-    
+
     def draw_color_preview(self, drawing_area, cr, width, height):
         """Draw a preview of the selected color scheme.
 
@@ -5377,7 +6023,7 @@ class PreferencesWindow(Adw.NavigationPage):
             'green': _p(2, '#00ff00'),
             'blue': _p(4, '#0088ff'),
         }
-    
+
     def hex_to_rgba(self, hex_color):
         """Convert hex color to RGBA values (0-1 range)"""
         hex_color = hex_color.lstrip('#')
@@ -5536,22 +6182,69 @@ class PreferencesWindow(Adw.NavigationPage):
         # Apply immediately to the running process so the user sees the
         # change without restarting. CLI overrides still win if the app was
         # launched with --verbose / --quiet.
+        quiet = False
+        verbose = False
+        application = None
         try:
             import logging as _logging
-            target = _logging.DEBUG if level == 'debug' else _logging.INFO
-            _logging.getLogger().setLevel(target)
-            for h in _logging.getLogger().handlers:
-                h.setLevel(target)
+            from .logging_support import set_managed_handler_level
+
+            try:
+                application = self.parent_window.get_application()
+            except Exception:
+                application = None
+            quiet = bool(getattr(application, 'quiet_override', False))
+            verbose = bool(getattr(application, 'verbose_override', False))
+            effective = 'warning' if quiet else 'debug' if verbose else level
+            target = set_managed_handler_level(effective)
             _logging.getLogger('sshpilot').setLevel(target)
         except Exception as exc:
             logger.debug("Could not apply log level on the fly: %s", exc)
-    
+
+        # The daemon owns its handlers. Forward the typed request through the
+        # existing GTK client bridge so a transient/unavailable daemon does not
+        # turn a successful preference save into an operational failure.
+        owner = self.parent_window
+        client = getattr(self, 'client', None) or getattr(owner, 'client', None)
+        bridge = getattr(self, 'client_bridge', None) or getattr(owner, 'client_bridge', None)
+        if client is None:
+            selection = getattr(application, '_api_client_selection', None)
+            client = getattr(selection, 'client', None)
+        if bridge is None:
+            bridge = getattr(application, '_api_client_bridge', None)
+        if client is not None and bridge is not None and hasattr(client, 'set_daemon_log_level'):
+            try:
+                from .api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
+
+                daemon_level = (
+                    DaemonLogLevel.WARNING
+                    if quiet
+                    else DaemonLogLevel.DEBUG
+                    if verbose
+                    else DaemonLogLevel(level)
+                )
+                bridge.submit(
+                    lambda: client.set_daemon_log_level(
+                        SetDaemonLogLevelRequest(level=daemon_level)
+                    ),
+                    on_success=lambda _result: None,
+                    on_error=lambda error: logger.debug(
+                        "Daemon log level update unavailable type=%s",
+                        type(error).__name__,
+                    ),
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Could not schedule daemon log level update type=%s",
+                    type(exc).__name__,
+                )
+
     def on_check_updates_changed(self, switch, *args):
         """Handle check for updates on startup setting change"""
         check_on_startup = switch.get_active()
         logger.info(f"Check for updates on startup changed to: {check_on_startup}")
         self.config.set_setting('updates.check_on_startup', check_on_startup)
-    
+
     def on_startup_behavior_changed(self, radio_button, *args):
         """Handle startup behavior radio button change"""
         if self.terminal_startup_radio.get_active():
@@ -5582,24 +6275,24 @@ class PreferencesWindow(Adw.NavigationPage):
             name = names[index]
             logger.info(f"Startup session changed to: {name}")
             self.config.set_setting('app-startup-session-name', name)
-    
+
     def on_terminal_choice_changed(self, radio_button, *args):
         """Handle terminal choice radio button change"""
         use_external = self.external_terminal_radio.get_active()
         logger.info(f"Terminal choice changed to: {'external' if use_external else 'built-in'}")
-        
+
         # Enable/disable external terminal options
         self.external_terminal_box.set_sensitive(use_external)
-        
+
         # Save preference
         self.config.set_setting('use-external-terminal', use_external)
-    
+
     def on_terminal_dropdown_changed(self, dropdown, *args):
         """Handle terminal dropdown selection change"""
         selected = dropdown.get_selected()
         if selected is None or selected < 0:
             return
-        
+
         # Get the selected terminal from the model
         model = dropdown.get_model()
         if model and selected < model.get_n_items():
@@ -5617,12 +6310,12 @@ class PreferencesWindow(Adw.NavigationPage):
             if terminal_name != "Custom":
                 command = self.terminal_commands.get(terminal_name, terminal_name)
                 self.config.set_setting('external-terminal', command)
-    
+
     def on_custom_terminal_path_changed(self, entry, *args):
         """Handle custom terminal path entry change"""
         custom_path = entry.get_text().strip()
         logger.info(f"Custom terminal path changed to: {custom_path}")
-        
+
         # Save the path if not empty
         if custom_path:
             self.config.set_setting('custom-terminal-path', custom_path)
@@ -5630,7 +6323,7 @@ class PreferencesWindow(Adw.NavigationPage):
         else:
             # Clear empty path
             self.config.set_setting('custom-terminal-path', '')
-    
+
     def _populate_terminal_dropdown(self):
         """Populate the terminal dropdown with available terminals"""
         try:
@@ -5710,10 +6403,10 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.info(
                 f"Populated terminal dropdown with {len(available_terminals)} available terminals"
             )
-            
+
         except Exception as e:
             logger.error(f"Failed to populate terminal dropdown: {e}")
-    
+
     def _set_terminal_dropdown_selection(self, terminal_name):
         """Set the dropdown selection to the specified terminal"""
         try:
@@ -5746,16 +6439,16 @@ class PreferencesWindow(Adw.NavigationPage):
                         else:
                             self.custom_terminal_box.set_visible(False)
                     return
-            
+
             # If not found, default to first available terminal
             if model.get_n_items() > 0:
                 self.terminal_dropdown.set_selected(0)
-                
+
         except Exception as e:
             logger.error(f"Failed to set terminal dropdown selection: {e}")
-    
 
-    
+
+
     def apply_color_scheme_to_terminals(self, scheme_key):
         """Apply color scheme to all active terminal widgets"""
         try:

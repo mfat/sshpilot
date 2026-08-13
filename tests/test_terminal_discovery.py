@@ -30,7 +30,10 @@ def _ssh_terminal(nickname='server'):
     from sshpilot.terminal import TerminalWidget
 
     terminal = TerminalWidget.__new__(TerminalWidget)
-    terminal.backend = types.SimpleNamespace(feed_child=lambda data: None)
+    terminal.backend = types.SimpleNamespace(
+        supports_feature=lambda feature: feature == "local_process",
+        feed_child_data=lambda data: None,
+    )
     terminal.connection = types.SimpleNamespace(
         nickname=nickname,
         hostname=f'{nickname}.example.com',
@@ -152,25 +155,20 @@ def test_get_focused_terminal_returns_regular_tab_terminal():
     assert manager.get_focused_terminal() is regular
 
 
-def test_broadcast_command_sends_to_split_pane_terminals():
+def test_broadcast_session_ids_include_regular_and_split_daemon_terminals():
     from sshpilot.split_view import SplitViewTab
 
     regular = _ssh_terminal('regular')
     pane = _ssh_terminal('pane')
-    sent = []
-
-    def record_feed(data):
-        sent.append(data)
-
-    regular.backend.feed_child = record_feed
-    pane.backend.feed_child = record_feed
+    local = _local_terminal()
+    regular._daemon_mode = True
+    regular._daemon_tab_state = types.SimpleNamespace(session_id="session-regular")
+    pane._daemon_mode = True
+    pane._daemon_tab_state = types.SimpleNamespace(session_id="session-pane")
 
     split = SplitViewTab.__new__(SplitViewTab)
     split._panes = [types.SimpleNamespace(get_terminals=lambda: [pane])]
 
-    manager = _make_manager([_make_page(regular), _make_page(split)])
-    sent_count, failed_count = manager.broadcast_command('uptime')
+    manager = _make_manager([_make_page(regular), _make_page(split), _make_page(local)])
 
-    assert sent_count == 2
-    assert failed_count == 0
-    assert sent == [b'uptime\n', b'uptime\n']
+    assert manager.broadcast_session_ids() == ("session-regular", "session-pane")

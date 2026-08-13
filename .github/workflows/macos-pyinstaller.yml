@@ -175,6 +175,10 @@ jobs:
           fi
           echo "=== DEBUG: Build verification completed ==="
 
+      - name: Smoke-test bundled daemon entrypoint
+        run: |
+          .venv-homebrew/bin/python scripts/verify_macos_daemon_bundle.py dist/SSHPilot.app
+
       - name: Compress app bundle for artifact upload
         run: |
           echo "=== DEBUG: Compressing app bundle ==="

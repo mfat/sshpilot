@@ -113,21 +113,8 @@ class ConnectionDialogValidationMixin:
 
     def _update_save_buttons(self):
         try:
-            has_errors = any(
-                (k in self.validation_results and not self.validation_results[k].is_valid)
-                for k in ('name', 'hostname', 'port', 'username')
-            )
-            enabled = not has_errors
-            for btn in getattr(self, '_save_buttons', []) or []:
-                try:
-                    btn.set_sensitive(enabled)
-                except Exception:
-                    pass
-            if hasattr(self, 'set_response_enabled'):
-                try:
-                    self.set_response_enabled('save', enabled)
-                except Exception:
-                    pass
+            if hasattr(self, '_refresh_save_sensitivity'):
+                self._refresh_save_sensitivity()
         except Exception:
             pass
     def _row_set_message(self, row, message: str, is_error: bool = True):

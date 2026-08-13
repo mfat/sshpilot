@@ -1,150 +1,309 @@
-"""prompt_unlock's owned-vs-rode return contract.
+"""prompt_unlock's daemon-backed contract.
 
-The connect flow relies on this: a call that *shows* the dialog (or needs no unlock)
-returns True ("we own this interaction"); a call that merely *rides* an already-open
-prompt returns False, so the caller won't silently proceed when a ridden prompt (e.g. a
-deferred startup unlock) resolves still-locked.
+The GTK unlock flow no longer owns secret backends: it drives a daemon-owned
+``SecretBackendsController`` on a worker and reports through ``on_done`` on the GLib
+main loop. These tests exercise the daemon path with a fake controller — no
+``secret_storage``, no ``SecretManager``, no master-password collection.
+
+Owned-vs-rode return contract (kept for the connect flow): a call that *starts* the
+unlock (or needs no unlock) returns True; a call that merely *rides* an already-open
+prompt returns False, so the caller won't silently proceed when a ridden prompt (e.g.
+a deferred startup unlock) resolves still-locked.
 """
 
 import pytest
 
-import sshpilot.secret_storage as ss
+from sshpilot.api.models.secrets import UnlockResultKind
 from sshpilot import secret_unlock_dialog as d
 
 
-def test_prompt_unlock_returns_true_when_no_unlock_needed(monkeypatch):
-    mgr = ss.get_secret_manager()
-    monkeypatch.setattr(mgr, 'selected_needs_unlock', lambda: False)
-    got = []
-    assert d.prompt_unlock(None, on_done=got.append) is True   # owns / no-op
-    assert got == [True]
+@pytest.fixture(autouse=True)
+def _reset_unlock_state():
+    """Each test starts and ends with no in-flight prompt or queued callbacks."""
+    d._unlock_in_progress = False
+    d._pending_callbacks.clear()
+    yield
+    d._unlock_in_progress = False
+    d._pending_callbacks.clear()
 
 
-def test_should_finish_cancel_is_signal_order_independent():
-    f = d._should_finish_cancel
-    # Outcome unknown (None) — happens when the dialog's 'closed' fires BEFORE 'response'
-    # (e.g. pressing Enter). Must NOT finish, or the unlock is aborted and the connection
-    # starts while the worker is still unlocking (the reported bug).
-    assert f(None, True, True) is False
-    assert f(None, True, False) is False
-    # 'unlock' is owned by the spinner/worker path — never finish-cancel here.
-    assert f('unlock', True, True) is False
-    assert f('unlock', True, False) is False
-    # A real cancel finishes once the dialog is gone (closed fired)...
-    assert f('cancel', True, True) is True
-    # ...but waits while it's still closing (closed not yet fired)...
-    assert f('cancel', True, False) is False
-    # ...and on the legacy path (no 'closed' signal) finishes immediately.
-    assert f('cancel', False, False) is True
+class _FakeState:
+    def __init__(self, *, needs_unlock, login_required=False, selected_backend="bitwarden"):
+        self.needs_unlock = needs_unlock
+        self.locked = needs_unlock
+        self.login_required = login_required
+        self.selected_backend = selected_backend
 
 
-def test_prompt_unlock_returns_false_when_riding(monkeypatch):
-    mgr = ss.get_secret_manager()
-    monkeypatch.setattr(mgr, 'selected_needs_unlock', lambda: True)
-    monkeypatch.setattr(d, '_unlock_in_progress', True)   # a prompt is already open
+class _FakeController:
+    def __init__(self, state=None, result=None):
+        self.state = state
+        self.result = result
+        self.unlock_calls = []
+        self.lock_calls = []
+
+    def load_state(self):
+        return self.state
+
+    def unlock(self):
+        self.unlock_calls.append(True)
+        return self.result
+
+    def lock(self):
+        self.lock_calls.append(True)
+        return self.state
+
+
+class _FakeUnlockResult:
+    def __init__(self, kind):
+        self.kind = kind
+
+
+class _FakeParent:
+    def __init__(self, controller):
+        self.secrets_controller = controller
+
+
+class _FakeSpinner:
+    """Mimics the spinner dialog: 'closed' fires when close() is called."""
+
+    def __init__(self):
+        self.callbacks = []
+
+    def connect(self, signal, callback):
+        self.callbacks.append(callback)
+
+    def close(self):
+        for cb in list(self.callbacks):
+            cb()
+
+
+def _install_unlock_harness(monkeypatch):
+    """Run the unlock worker and its GLib sequencing synchronously."""
+    spinner = _FakeSpinner()
+    monkeypatch.setattr(
+        d, "_spinner_dialog",
+        lambda parent, heading, body: (lambda _text: None, spinner.close, spinner),
+    )
+    monkeypatch.setattr(
+        d.GLib, "idle_add",
+        lambda callback, *args: (callback(*args), False)[1], raising=False,
+    )
+
+    class SyncThread:
+        def __init__(self, target, args=(), kwargs=None, daemon=None):
+            self.target = target
+            self.args = args
+            self.kwargs = kwargs or {}
+            self.daemon = daemon
+
+        def start(self):
+            self.target(*self.args, **self.kwargs)
+
+    monkeypatch.setattr(d.threading, "Thread", SyncThread)
+    return spinner
+
+
+def test_prompt_unlock_no_controller_reports_false():
+    calls = []
+    owned = d.prompt_unlock(None, on_done=lambda ok: calls.append(ok))
+    assert owned is True            # owns / no-op — GTK must not fall back locally
+    assert calls == [False]
+
+
+def test_prompt_unlock_daemon_path_unlocks_when_needed(monkeypatch):
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True),
+        result=_FakeUnlockResult(UnlockResultKind.UNLOCKED),
+    )
+    _install_unlock_harness(monkeypatch)
+    calls = []
+    owned = d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert owned is True
+    assert controller.unlock_calls == [True]   # daemon unlock driven from a worker
+    assert controller.lock_calls == []         # no stale session to drop
+    assert calls == [True]
+
+
+def test_prompt_unlock_reports_success_when_no_unlock_needed(monkeypatch):
+    controller = _FakeController(state=_FakeState(needs_unlock=False))
+    _install_unlock_harness(monkeypatch)
+    calls = []
+    owned = d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert owned is True
+    assert controller.unlock_calls == []       # daemon said no unlock is needed
+    assert calls == [True]
+
+
+def test_prompt_unlock_rides_in_flight_prompt():
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True),
+        result=_FakeUnlockResult(UnlockResultKind.UNLOCKED),
+    )
+    d._unlock_in_progress = True               # a prompt is already open
     d._pending_callbacks.clear()
     try:
-        assert d.prompt_unlock(None, on_done=lambda _s: None) is False   # rode
-        assert len(d._pending_callbacks) == 1                            # callback queued
+        calls = []
+        assert d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok)) is False
+        assert len(d._pending_callbacks) == 1  # callback queued on the in-flight unlock
     finally:
+        d._unlock_in_progress = False
         d._pending_callbacks.clear()
 
 
-@pytest.mark.parametrize("name, session_backed", [
-    ("bitwarden", True),   # session backend
-    ("rbw", False),        # passive backend — same check now covers it
-    ("pass", False),
-])
-def test_unlock_at_startup_prompts_when_backend_unavailable(monkeypatch, name, session_backed):
+def test_prompt_unlock_cancelled_interaction_reports_failure(monkeypatch):
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True),
+        result=_FakeUnlockResult(UnlockResultKind.INTERACTION_REQUIRED),
+    )
+    _install_unlock_harness(monkeypatch)
+    calls = []
+    owned = d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert owned is True
+    assert controller.unlock_calls == [True]
+    assert calls == [False]                    # user cancelled the daemon prompt
+
+
+def test_prompt_unlock_already_unlocked_backend_object_reports_success():
+    # Explicit backend shim (backup destination / setup): duck-typed state only,
+    # no daemon round-trip, no secret_storage.
     class FakeBackend:
-        def __init__(self):
-            self.name = name
-            self.session_backed = session_backed
+        name = "bitwarden"
+        session_backed = True
 
         def is_available(self):
+            return True
+
+        def is_unlocked(self):
+            return True
+
+    calls = []
+    owned = d.prompt_unlock(None, backend=FakeBackend(), on_done=lambda ok: calls.append(ok))
+    assert owned is True
+    assert calls == [True]
+
+
+def test_prompt_unlock_backend_object_needing_unlock_uses_daemon(monkeypatch):
+    class FakeBackend:
+        name = "bitwarden"
+        session_backed = True
+
+        def is_available(self):
+            return True
+
+        def is_unlocked(self):
             return False
 
-    class FakeManager:
-        def set_selected(self, _name):
-            pass
-
-        def selected_backend(self):
-            return FakeBackend()
-
-        def selected_needs_unlock(self):
-            return False
-
-    prompted = []
-    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
-    monkeypatch.setattr(
-        d, "_prompt_unavailable_backend",
-        lambda parent, backend: prompted.append(backend.name),
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True),
+        result=_FakeUnlockResult(UnlockResultKind.UNLOCKED),
     )
-    monkeypatch.setattr(d, "prompt_unlock", lambda *_a, **_k: (_ for _ in ()).throw(
-        AssertionError("prompt_unlock should not run when backend is unavailable")
-    ))
+    _install_unlock_harness(monkeypatch)
+    calls = []
+    owned = d.prompt_unlock(
+        _FakeParent(controller), backend=FakeBackend(), on_done=lambda ok: calls.append(ok)
+    )
 
-    assert d.unlock_at_startup(None) is False
-    assert prompted == [name]   # every selected+unavailable backend is surfaced
+    assert owned is True
+    assert controller.unlock_calls == [True]   # the daemon owns the actual unlock
+    assert calls == [True]
+
+
+def test_unlock_at_startup_noop_without_controller(monkeypatch):
+    prompted = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+    assert d.unlock_at_startup(object()) is False   # no secrets_controller
+    assert prompted == []
+
+
+def test_unlock_at_startup_unlocks_when_needed(monkeypatch):
+    controller = _FakeController(state=_FakeState(needs_unlock=True))
+    window = _FakeParent(controller)
+    prompted = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+
+    assert d.unlock_at_startup(window) is False
+    assert prompted == [window]
 
 
 def test_unlock_at_startup_noop_for_available_passive_backend(monkeypatch):
-    # An available passive backend (rbw installed) has no unlock lifecycle -> no prompt.
-    class FakeBackend:
+    class Descriptor:
         name = "rbw"
-        session_backed = False
+        selected = True
+        available = True
 
-        def is_available(self):
-            return True
+    class FakeRegistry:
+        backends = (Descriptor(),)
 
-    class FakeManager:
-        def set_selected(self, _name):
-            pass
+    controller = _FakeController(state=_FakeState(needs_unlock=False, selected_backend="rbw"))
+    controller.load_registry = lambda: FakeRegistry()
+    window = _FakeParent(controller)
 
-        def selected_backend(self):
-            return FakeBackend()
+    prompted = []
+    notified = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+    monkeypatch.setattr(d, "_prompt_unavailable_backend", lambda win, b: notified.append(b))
 
-        def selected_needs_unlock(self):
-            raise AssertionError("passive backend must not reach the unlock check")
-
-    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
-    monkeypatch.setattr(d, "_prompt_unavailable_backend", lambda *_a: (_ for _ in ()).throw(
-        AssertionError("available backend must not prompt unavailable")
-    ))
-    assert d.unlock_at_startup(None) is False
+    assert d.unlock_at_startup(window) is False
+    assert prompted == []
+    assert notified == []
 
 
-def test_startup_unlock_prompts_when_signed_in_but_locked(monkeypatch):
-    class FakeManager:
-        def selected_backend(self):
-            return object()
+def test_unlock_at_startup_notices_unavailable_selected_backend(monkeypatch):
+    class Descriptor:
+        name = "bitwarden"
+        selected = True
+        available = False
 
-        def selected_needs_unlock(self):
-            return True
+    class FakeRegistry:
+        backends = (Descriptor(),)
 
-    unlocked = []
-    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
-    monkeypatch.setattr(d, "prompt_unlock", lambda parent: unlocked.append(parent))
+    controller = _FakeController(state=_FakeState(needs_unlock=False, selected_backend="bitwarden"))
+    controller.load_registry = lambda: FakeRegistry()
+    window = _FakeParent(controller)
 
-    d._startup_unlock_after_probe("win", needs_login=False)
-    assert unlocked == ["win"]
+    prompted = []
+    notified = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+    monkeypatch.setattr(d, "_prompt_unavailable_backend", lambda win, b: notified.append(b))
+
+    assert d.unlock_at_startup(window) is False
+    assert prompted == []
+    assert [b.name for b in notified] == ["bitwarden"]
 
 
-def test_startup_unlock_notifies_but_does_not_unlock_when_not_signed_in(monkeypatch):
-    # An unauthenticated vault must get a sign-in notice, never a doomed unlock prompt.
-    backend = object()
-
-    class FakeManager:
-        def selected_backend(self):
-            return backend
+def test_unlock_at_startup_notices_when_not_signed_in(monkeypatch):
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True, login_required=True, selected_backend="bitwarden")
+    )
+    window = _FakeParent(controller)
 
     notified = []
-    monkeypatch.setattr(d, "get_secret_manager", lambda: FakeManager())
-    monkeypatch.setattr(d, "_prompt_not_signed_in", lambda parent, b: notified.append(b))
+    monkeypatch.setattr(d, "_prompt_not_signed_in", lambda win, b: notified.append((win, b)))
     monkeypatch.setattr(d, "prompt_unlock", lambda *_a, **_k: (_ for _ in ()).throw(
         AssertionError("must not prompt for unlock when not signed in")
     ))
 
-    d._startup_unlock_after_probe("win", needs_login=True)
-    assert notified == [backend]
+    assert d.unlock_at_startup(window) is False
+    assert notified == [(window, "bitwarden")]
 
+
+def test_secret_unlock_dialog_has_no_secret_storage_import():
+    """GTK must never import secret_storage (the daemon owns the backends)."""
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(d))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""]
+        else:
+            continue
+        assert not any("secret_storage" in (name or "") for name in names), (
+            f"secret_unlock_dialog.py:{node.lineno} imports secret_storage"
+        )

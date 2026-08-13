@@ -65,3 +65,40 @@ def test_dead_broadcast_copy_removed_from_window_actions():
     wm = _window_module()
     actions_cls = next(c for c in wm.MainWindow.__mro__ if c.__name__ == "WindowActions")
     assert "on_broadcast_command_action" not in vars(actions_cls)
+
+
+def test_send_ignores_overlapping_active_broadcast():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window._broadcast_submission_pending = True
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    window.terminal_manager.broadcast_command.assert_not_called()
+
+
+def test_successful_session_broadcast_reenables_send_action():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window.broadcast_send_button = Mock()
+    window._broadcast_submission_pending = True
+    WindowBroadcastMixin._on_broadcast_sent(window, None)
+    assert window._broadcast_submission_pending is False
+    window.broadcast_send_button.set_sensitive.assert_called_once_with(True)
+
+
+def test_second_send_is_ignored_while_first_submission_callback_is_pending():
+    from unittest.mock import Mock
+    from sshpilot.window_broadcast import WindowBroadcastMixin
+
+    window = Mock()
+    window._broadcast_submission_pending = False
+    window.broadcast_entry.get_text.return_value = "uptime"
+    window.terminal_manager.broadcast_command.return_value = Mock()
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    WindowBroadcastMixin.on_broadcast_send_clicked(window, Mock())
+    window.terminal_manager.broadcast_command.assert_called_once()
+    assert window._broadcast_submission_pending is True
+    window.broadcast_send_button.set_sensitive.assert_called_once_with(False)

@@ -5,15 +5,15 @@ Primary UI with connection list, tabs, and terminal management
 
 from __future__ import annotations
 
+from .api.connection_identity import connection_id_for
 import copy
 import os
 import logging
 import shlex
 import shutil  # noqa: F401  patched as sshpilot.window.shutil by tests
 import sys
-import weakref
+import traceback
 from datetime import datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Dict, Any, List
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ except Exception:
     _HAS_VTE = False
 
 gi.require_version('PangoFT2', '1.0')
-from gi.repository import Gtk, Adw, Gio, GLib, Gdk, GObject
+from gi.repository import Gtk, Adw, Gio, GLib, Gdk
 import threading
 
 # Feature detection for libadwaita versions across distros
@@ -41,9 +41,13 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
-from .connection_manager import ConnectionManager, Connection, ConnectionState
+from .connection_model import Connection, ConnectionState
+from .gtk.connection_store import ConnectionPresentationStore
+from .gtk.daemon_connection_services import DaemonConnectionServices
+from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
 from .key_manager import KeyManager
+from sshpilot.api.models.keys import KeyStoreScope
 from .update_checker import check_for_updates_async
 from .connection_display import (
     get_connection_alias,
@@ -95,7 +99,6 @@ from .shortcut_utils import (
     get_primary_modifier_label,
 )
 from .platform_utils import (
-    get_config_dir,
     get_default_terminal_command,
     get_user_preferred_terminal,
     find_any_terminal,
@@ -191,10 +194,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # Icon theme path is already registered in main.py load_resources()
         # No need to register again here
-        
+
         self.active_terminals = {}
         self.connections = []
         self._is_quitting = False  # Flag to prevent multiple quit attempts
@@ -208,7 +211,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._command_sidebar_visible: bool = False
         self._cmd_blocks_toggle_btn = None
         self._headerbar_theme_menu_button = None
-        
+
         # Update notification
         self.update_banner = None
         self._latest_version = None
@@ -232,8 +235,41 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 self._config_changed_handler = None
         effective_isolated = isolated or bool(self.config.get_setting('ssh.use_isolated_config', False))
-        key_dir = Path(get_config_dir()) if effective_isolated else None
-        self.connection_manager = ConnectionManager(self.config, isolated_mode=effective_isolated)
+        # Semantic key-store scope. GTK never derives a key-directory path; the
+        # daemon resolves it. The key manager is attached below once a daemon
+        # client exists (see _attach_client_backed_services).
+        self._key_scope = (
+            KeyStoreScope.ISOLATED if effective_isolated else KeyStoreScope.DEFAULT
+        )
+        self.key_manager = None
+        # Compatibility attribute while call sites migrate terminology. This is
+        # a DTO projection, never a persistence-capable backend manager.
+        self.connection_manager = ConnectionPresentationStore(
+            dispatch=lambda callback: GLib.idle_add(
+                lambda: (callback(), GLib.SOURCE_REMOVE)[1]
+            )
+        )
+        self.plugin_connection_services = DaemonConnectionServices(
+            self.connection_manager
+        )
+        self.connection_runtime_status = ConnectionRuntimeStatusStore(
+            dispatch=lambda callback: GLib.idle_add(
+                lambda: (callback(), GLib.SOURCE_REMOVE)[1]
+            ),
+            on_changed=self._on_runtime_connection_status_changed,
+        )
+
+        # Wire GTK interaction provider for core.interaction requests.
+        try:
+            from .gtk.interaction import GtkInteractionProvider, set_default_provider
+            set_default_provider(
+                GtkInteractionProvider(
+                    parent_widget=self,
+                    connection_manager=self.connection_manager,
+                )
+            )
+        except Exception:
+            logger.debug("GTK interaction provider setup skipped", exc_info=True)
 
         # Lazy, cached, off-main-thread check of each connection against its
         # effective SSH config (shows a warning icon on mismatched rows).
@@ -254,7 +290,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .plugins.host import PluginHost
             host = getattr(app, 'plugin_host', None) if app else None
             if host is None:
-                host = PluginHost(connection_manager=self.connection_manager)
+                host = PluginHost(
+                    connection_manager=self.plugin_connection_services
+                )
                 if app is not None:
                     setattr(app, 'plugin_host', host)
             self.plugin_host = host
@@ -264,7 +302,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if loaded_plugins is None:
                 loaded_plugins = load_plugins(
                     app_config=self.config,
-                    connection_manager=self.connection_manager,
+                    connection_manager=self.plugin_connection_services,
                     plugin_host=host,
                 )
                 if app is not None:
@@ -275,10 +313,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.loaded_plugins = []
             self.plugin_host = None
 
-        self.key_manager = KeyManager(key_dir)
-        self.group_manager = GroupManager(self.config)
-        self.session_manager = SessionManager(self.config)
-        
+        self.group_manager = GroupManager(
+            self.config,
+            connection_manager=self.connection_manager,
+        )
+        self.session_manager = SessionManager(
+            self.config,
+            connection_manager=self.connection_manager,
+        )
+        self.client_bridge = None
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        self._client_mode_warning = None
+        self._compose_api_client(app)
+        if self.client is not None:
+            self._attach_client_backed_services()
+
         # UI state
         self.active_terminals: Dict[Connection, TerminalWidget] = {}  # most recent terminal per connection
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
@@ -307,14 +357,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             stored_sort = DEFAULT_CONNECTION_SORT
         self._connection_sort_last = stored_sort
         self.sort_button = None
-        
+
         # Set up window
         self.setup_window()
         self.setup_ui()
         self._setup_omnisearch_shortcut()
         self.setup_connections()
         self.setup_signals()
-        self._setup_ssh_config_monitor()
+        # Authoritative SSH files are monitored by the daemon; GTK refreshes
+        # from connection events and never installs a filesystem watcher.
 
         # Apply the persisted sidebar mode (full / minimal icon strip).
         try:
@@ -343,7 +394,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.remove_action('toast-reconnect')
         except Exception:
             pass
-        
+
         # Connect to close request signal
         self.connect('close-request', self.on_close_request)
 
@@ -351,8 +402,301 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Schedule deferred startup behaviors
         self._schedule_startup_tasks()
+        if self._api_client_selection_pending:
+            self._begin_daemon_client_selection()
+        elif self._client_mode_warning:
+            GLib.idle_add(self._show_client_mode_warning)
 
         logger.info("Main window initialized")
+
+    def _compose_api_client(self, app) -> None:
+        """Select and store the client; never attach client-backed services.
+
+        Attaching happens exactly once per selection: ``__init__`` does it for
+        an already-selected client and ``_apply_client_selection`` does it for a
+        newly completed asynchronous selection. Keeping attachment out of this
+        method prevents the duplicate attach path (services were attached here
+        *and* again in ``__init__``).
+        """
+        existing = getattr(app, '_api_client_selection', None) if app else None
+        if existing is not None:
+            self.client = existing.client
+            self.client_bridge = getattr(app, '_api_client_bridge', None)
+            return
+        from .gtk_client_bridge import GtkClientBridge
+        self.client = None
+        self.client_bridge = GtkClientBridge()
+        if app is not None:
+            app._api_client_bridge = self.client_bridge
+        self._api_client_selection_pending = True
+
+    def _attach_client_backed_services(self) -> None:
+        """Attach every client-backed frontend service for the active daemon client.
+
+        Called for both an already-selected client (``_compose_api_client``) and
+        a newly completed asynchronous selection (``_apply_client_selection``).
+        The key manager is only ever built over the daemon client; when no
+        client is available it stays ``None`` and there is no local fallback.
+        """
+        if self.client is None:
+            self.key_manager = None
+            return
+        self.connection_manager.attach_client(self.client)
+        self.group_manager.attach_client(self.client)
+        from .gtk.group_store import GroupMutationController
+        if getattr(self, "_group_mutation_controller", None) is None:
+            self._group_mutation_controller = GroupMutationController(
+                self.client,
+                bridge=self.client_bridge,
+                refresh=self.connection_manager.refresh,
+                dispatch=lambda callback: GLib.idle_add(
+                    lambda: (callback(), GLib.SOURCE_REMOVE)[1]
+                ),
+            )
+            self.group_manager.set_mutation_controller(self._group_mutation_controller)
+        self.connection_runtime_status.attach_client(self.client)
+        self.plugin_connection_services.attach_client(self.client)
+        self.key_manager = KeyManager(self.client, self._key_scope)
+        self.secrets_controller = self._build_secrets_controller()
+        self._attach_secrets_interaction_presenter()
+
+    def _build_secrets_controller(self):
+        """Build the daemon-backed secrets controller for the frontend.
+
+        Returns ``None`` when the daemon does not advertise the secrets
+        capability, so backend management stays disabled instead of falling
+        back to GTK-owned secret code.
+        """
+        client = getattr(self, "client", None)
+        if client is None:
+            return None
+        try:
+            capabilities = client.get_capabilities()
+        except Exception:
+            return None
+        from sshpilot.api.capabilities import Capability
+
+        if not capabilities.supports(Capability.SECRETS_READ):
+            return None
+        from .gtk.secret_backends_controller import SecretBackendsController
+
+        return SecretBackendsController(client)
+
+    def _attach_secrets_interaction_presenter(self) -> None:
+        """Present daemon-owned secret-backend interactions app-wide.
+
+        The presenter subscribes to the daemon event stream and claims
+        interactions in the reserved ``secret-session`` namespace (unlock,
+        Bitwarden login/2FA, backup passphrases). It is not session-scoped.
+        """
+        if self.client is None or self.client_bridge is None:
+            return
+        from .gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+        presenter = getattr(self, "_secrets_interaction_presenter", None)
+        if presenter is not None:
+            presenter.close()
+        try:
+            self._secrets_interaction_presenter = SecretsInteractionPresenter(
+                self.client,
+                self.client_bridge,
+                self,
+            )
+        except Exception:
+            logger.debug("Secret interaction presenter unavailable", exc_info=True)
+
+    def _begin_daemon_client_selection(self) -> None:
+        """Locate/start and validate the sole backend away from the GTK thread."""
+        from .api.client_factory import select_client
+        app = self.get_application()
+        launcher = getattr(app, '_api_daemon_launcher', None) if app else None
+        self._api_client_selection_request = self.client_bridge.submit(
+            lambda: select_client(launcher=launcher),
+            on_success=self._apply_client_selection,
+            on_error=self._handle_client_selection_error,
+            on_discard=lambda selection: selection.client.close(),
+        )
+
+    def _apply_client_selection(self, selection) -> None:
+        if self._is_quitting:
+            selection.client.close()
+            return
+        self.client = selection.client
+        self._attach_client_backed_services()
+        preferences = getattr(self, '_preferences_window', None)
+        if preferences is not None:
+            try:
+                preferences.set_ssh_overrides_controller(
+                    self._build_ssh_overrides_controller()
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to attach SSH overrides controller to Preferences",
+                    exc_info=True,
+                )
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        app = self.get_application()
+        if app is not None:
+            app._api_client_selection = selection
+            if hasattr(app, 'install_api_event_subscription'):
+                app.install_api_event_subscription(self.client)
+        if hasattr(self, 'welcome_view') and self.welcome_view is not None:
+            self.welcome_view.set_client(self.client, bridge=self.client_bridge)
+        self._maybe_restore_daemon_sessions()
+
+    def _handle_client_selection_error(self, error) -> None:
+        """Keep the backend unavailable and expose retry/diagnostic recovery."""
+        self._api_client_selection_pending = False
+        self._api_client_selection_request = None
+        self.client = None
+        self.key_manager = None
+        presenter = getattr(self, "_secrets_interaction_presenter", None)
+        if presenter is not None:
+            presenter.close()
+            self._secrets_interaction_presenter = None
+        self.secrets_controller = None
+        controller = getattr(self, "_group_mutation_controller", None)
+        if controller is not None:
+            controller.close()
+            self._group_mutation_controller = None
+        self.plugin_connection_services.detach_client()
+        self.connection_runtime_status.close()
+        reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
+        logger.error(
+            "Daemon client selection failed reason=%s type=%s",
+            reason,
+            type(error).__name__,
+        )
+        frames = traceback.extract_tb(error.__traceback__)
+        if frames:
+            logger.debug(
+                "Daemon client selection traceback (exception text redacted): %s",
+                " -> ".join(
+                    f"{frame.filename}:{frame.lineno} in {frame.name}"
+                    for frame in frames
+                ),
+            )
+        cause = error.__cause__ or error.__context__
+        if cause is not None:
+            logger.debug(
+                "Daemon client selection cause type=%s code=%s",
+                type(cause).__name__,
+                getattr(getattr(cause, 'code', None), 'value', None),
+            )
+        self._client_mode_warning = _(
+            "SSH Pilot requires its background service. "
+            "The service could not be started (%s). Retry, restart the service, "
+            "inspect diagnostics, or exit."
+        ) % reason
+        if hasattr(self, 'welcome_view') and self.welcome_view is not None:
+            self.welcome_view.set_client(None)
+        self._show_client_mode_warning()
+
+    def retry_daemon_connection(self) -> None:
+        """Explicit recovery action; never changes backend ownership."""
+        if self._api_client_selection_pending:
+            return
+        self._api_client_selection_pending = True
+        self._begin_daemon_client_selection()
+
+    def _show_client_mode_warning(self) -> bool:
+        message = self._client_mode_warning
+        self._client_mode_warning = None
+        if not message or self._is_quitting:
+            return False
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(0)
+            toast.set_button_label(_("Retry"))
+            toast.connect("button-clicked", lambda *_args: self.retry_daemon_connection())
+            self.toast_overlay.add_toast(toast)
+        except Exception:
+            logger.warning("Unable to display daemon recovery diagnostics")
+        return False
+
+    def _maybe_restore_daemon_sessions(self) -> None:
+        """Offer or auto-reattach retained daemon sessions after GTK restart.
+
+        Session listing runs on the client bridge worker so a slow or blocked
+        control RPC cannot stall the GTK main loop (and cannot serialize behind
+        an in-flight welcome ``connections.list`` on the single request gate).
+        """
+
+        try:
+            if not self.config.get_setting("terminal.daemon_restore_sessions", True):
+                return
+            if self.client_bridge is None or not hasattr(self.client, "list_sessions"):
+                return
+            from .daemon_session_restore import DaemonSessionRestoreManager
+
+            restore = DaemonSessionRestoreManager(self.config)
+            client = self.client
+            bridge = self.client_bridge
+            expected_instance = getattr(client, "server_instance_id", "") or ""
+
+            def _list_sessions():
+                return list(client.list_sessions() or [])
+
+            def _on_listed(sessions):
+                if self._is_quitting or self.client is not client:
+                    return
+                if (
+                    expected_instance
+                    and getattr(client, "server_instance_id", "") != expected_instance
+                ):
+                    return
+                restorable = restore.get_restorable_sessions(
+                    client,
+                    sessions=sessions,
+                )
+                if not restorable:
+                    return
+                if self.config.get_setting("terminal.daemon_auto_attach", False):
+                    for metadata in restorable:
+                        restore.restore_session(
+                            self, metadata, self.client, self.client_bridge
+                        )
+                    return
+                dialog = Adw.AlertDialog.new(
+                    _("Restore Daemon Sessions?"),
+                    _(
+                        "One or more SSH sessions are still running in the local "
+                        "service. Restore them into tabs now?"
+                    ),
+                )
+                dialog.add_response("skip", _("Not Now"))
+                dialog.add_response("restore", _("Restore"))
+                dialog.set_response_appearance(
+                    "restore", Adw.ResponseAppearance.SUGGESTED
+                )
+                dialog.set_default_response("restore")
+                dialog.set_close_response("skip")
+
+                def _respond(_dialog, response):
+                    if response != "restore":
+                        return
+                    for metadata in restorable:
+                        restore.restore_session(
+                            self, metadata, self.client, self.client_bridge
+                        )
+
+                dialog.connect("response", _respond)
+                dialog.present(self)
+
+            def _on_error(error):
+                logger.warning(
+                    "Failed to list daemon sessions for restore code=%s",
+                    getattr(getattr(error, "code", None), "value", type(error).__name__),
+                )
+
+            bridge.submit(
+                _list_sessions,
+                on_success=_on_listed,
+                on_error=_on_error,
+            )
+        except Exception:
+            logger.error("Daemon session restore failed", exc_info=True)
 
     @property
     def sshcopyid_runner(self):
@@ -460,16 +804,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             def _focus_terminal_when_ready():
                 try:
-                    page = self.tab_view.get_selected_page() if hasattr(self, 'tab_view') else None
-                    if page is None:
-                        return
-                    terminal_widget = page.get_child()
+                    terminal_widget = self._get_active_terminal_widget()
                     if terminal_widget is None:
                         return
-                    if hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                        terminal_widget.vte.grab_focus()
-                    elif hasattr(terminal_widget, 'grab_focus'):
-                        terminal_widget.grab_focus()
+                    terminal_widget.grab_terminal_focus()
                 except Exception as focus_error:
                     logger.debug(f"Failed to focus startup terminal: {focus_error}")
 
@@ -492,6 +830,44 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # If the previous run crashed, surface it once the UI has settled.
         GLib.timeout_add(1200, self._check_previous_crash)
+
+    def _build_ssh_overrides_controller(self):
+        """Build the daemon-backed SSH overrides controller for Preferences.
+
+        Returns ``None`` when the daemon does not advertise the SSH overrides
+        capability, so the SSH override controls are disabled instead of
+        failing at save time.
+        """
+        client = getattr(self, 'client', None)
+        if client is None:
+            return None
+        try:
+            capabilities = client.get_capabilities()
+        except Exception:
+            return None
+        from sshpilot.api.capabilities import Capability
+
+        if not capabilities.supports(Capability.SSH_OVERRIDES_READ):
+            return None
+        from .gtk.ssh_overrides_controller import SshOverridesController
+        return SshOverridesController(client)
+
+    def _preload_preferences_window(self) -> bool:
+        """Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant."""
+        if getattr(self, '_preferences_window', None) is not None or getattr(self, '_is_quitting', False):
+            return GLib.SOURCE_REMOVE
+        try:
+            from .preferences import PreferencesWindow
+            if getattr(self, '_preferences_window', None) is None:
+                controller = self._build_ssh_overrides_controller()
+                self._preferences_window = PreferencesWindow(
+                    self,
+                    self.config,
+                    ssh_overrides_controller=controller,
+                )
+        except Exception as exc:
+            logger.debug("Preloading preferences page skipped/failed: %s", exc)
+        return GLib.SOURCE_REMOVE
 
     def _check_previous_crash(self):
         """If the previous run left a crash report, offer to view/report it."""
@@ -643,6 +1019,50 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         file_dialog.save(self, None, _on_save)
 
+    def on_daemon_sessions_action(self, action=None, param=None):
+        """Show live daemon sessions management dialog."""
+        del action, param
+        try:
+            if not hasattr(self.client, "list_sessions"):
+                dialog = Adw.AlertDialog.new(
+                    _("Daemon Sessions Unavailable"),
+                    _(
+                        "Daemon sessions are not available. Enable daemon-backed "
+                        "SSH terminals and ensure the local service is running."
+                    ),
+                )
+                dialog.add_response("ok", _("OK"))
+                dialog.set_default_response("ok")
+                dialog.set_close_response("ok")
+                dialog.present(self)
+                return
+
+            bridge = getattr(self, "client_bridge", None)
+            if bridge is None:
+                dialog = Adw.AlertDialog.new(
+                    _("Daemon Sessions Unavailable"),
+                    _("The local SSH Pilot service bridge is unavailable."),
+                )
+                dialog.add_response("ok", _("OK"))
+                dialog.set_default_response("ok")
+                dialog.set_close_response("ok")
+                dialog.present(self)
+                return
+
+            from .daemon_sessions_dialog import DaemonSessionsDialog
+
+            DaemonSessionsDialog(self, self.client, bridge).show()
+        except Exception:
+            logger.error("Failed to show daemon sessions", exc_info=True)
+            dialog = Adw.AlertDialog.new(
+                _("Error"),
+                _("Failed to open the daemon sessions dialog."),
+            )
+            dialog.add_response("ok", _("OK"))
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(self)
+
     def _on_export_diagnostics_done(self, ok, error, path):
         if ok:
             dialog = Adw.MessageDialog(
@@ -702,22 +1122,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_startup_complete(self):
         """Called when startup is complete - process any pending focus operations"""
         self._startup_complete = True
-        
+
         # Process any pending focus operations
         for focus_op in self._pending_focus_operations:
             try:
                 focus_op()
             except Exception as e:
                 logger.debug(f"Failed to execute pending focus operation: {e}")
-        
+
         self._pending_focus_operations.clear()
-        
+
+        # Pre-instantiate PreferencesWindow on low-priority idle so opening Settings is instant
+        try:
+            GLib.idle_add(self._preload_preferences_window, priority=GLib.PRIORITY_LOW)
+        except Exception as e:
+            logger.debug(f"Failed to schedule preferences preloading: {e}")
+
         # Check for updates if enabled in preferences
         try:
             check_on_startup = self.config.get_setting('updates.check_on_startup', True)
             if check_on_startup:
                 logger.debug("Checking for updates on startup")
-                
+
                 def on_update_check_complete(latest_version):
                     """Callback when startup update check completes.
 
@@ -744,7 +1170,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug(f"Failed to schedule operation mode prompt: {e}")
 
         return False  # Don't repeat
-    
+
     def _queue_focus_operation(self, focus_func):
         """Queue a focus operation to be executed after startup is complete"""
         if self._startup_complete:
@@ -759,7 +1185,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _toggle_class(self, widget, name, on):
         """Helper to toggle CSS class on a widget"""
-        if on: 
+        if on:
             widget.add_css_class(name)
         else:
             widget.remove_css_class(name)
@@ -997,231 +1423,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to prime effective-config warning", exc_info=True)
 
-    def _ssh_config_path(self):
-        path = getattr(self.connection_manager, 'ssh_config_path', None)
-        if not path:
-            from .platform_utils import get_ssh_dir
-            path = os.path.join(get_ssh_dir(), 'config')
-        return os.path.abspath(os.path.expanduser(path))
-
-    def _ssh_config_fingerprint(self):
-        return self._ssh_config_file_fingerprint(self._ssh_config_path())
-
-    @staticmethod
-    def _ssh_config_file_fingerprint(path):
-        try:
-            stat = os.stat(path)
-            return (stat.st_ino, stat.st_size, stat.st_mtime_ns)
-        except OSError:
-            return None
-
-    def _ssh_config_paths(self):
-        root = self._ssh_config_path()
-        paths = {root}
-        try:
-            from .ssh_config_utils import resolve_ssh_config_files
-            paths.update(
-                os.path.abspath(os.path.expanduser(path))
-                for path in resolve_ssh_config_files(root)
-                if path
-            )
-        except Exception:
-            logger.debug("Failed to resolve SSH config includes", exc_info=True)
-        return paths
-
-    def _ssh_config_fingerprints(self):
-        return {
-            path: self._ssh_config_file_fingerprint(path)
-            for path in self._ssh_config_paths()
-        }
-
     def _reload_ssh_config(self, create_missing=True):
-        """Reload connections after any internal or external config save."""
+        """Compatibility callback: refresh only from the attached daemon."""
         try:
-            old_connections = {
-                conn.nickname: conn
-                for conn in self.connection_manager.get_connections()
-            }
-            old_group_memberships = {}
-            for nickname in old_connections:
-                group_id = self.group_manager.get_connection_group(nickname)
-                if group_id:
-                    old_group_memberships[nickname] = group_id
-
-            self.connection_manager.load_ssh_config(
-                create_missing=create_missing)
+            self.connection_manager.refresh()
+            self.group_manager.bind_connections(self.connection_manager.get_connections())
             checker = getattr(self, 'effective_config_checker', None)
             if checker is not None:
                 checker.invalidate()
-            new_connections = {
-                conn.nickname: conn
-                for conn in self.connection_manager.get_connections()
-            }
-
-            for old_nickname, old_conn in old_connections.items():
-                if old_nickname not in old_group_memberships:
-                    continue
-                group_id = old_group_memberships[old_nickname]
-                matching_new_nickname = None
-                for new_nickname, new_conn in new_connections.items():
-                    if (new_conn.hostname == old_conn.hostname and
-                            new_conn.username == old_conn.username and
-                            new_conn.port == old_conn.port):
-                        matching_new_nickname = new_nickname
-                        break
-                if (matching_new_nickname and
-                        matching_new_nickname != old_nickname):
-                    try:
-                        self.group_manager.rename_connection(
-                            old_nickname, matching_new_nickname)
-                        logger.info(
-                            "Preserved group membership: '%s' -> '%s' in group %s",
-                            old_nickname, matching_new_nickname, group_id)
-                    except Exception as e:
-                        logger.error(
-                            "Failed to preserve group membership for renamed "
-                            "connection: %s", e)
-
             self.rebuild_connection_list()
-            if hasattr(self, '_ssh_config_monitors'):
-                self._refresh_ssh_config_monitors()
-            logger.info("SSH config reloaded after file change")
-        except Exception as e:
-            logger.error(
-                "Failed to refresh connections after SSH config change: %s", e)
+        except Exception as error:
+            logger.error("Failed to refresh daemon connection state: %s", error)
 
     def _observe_and_reload_ssh_config(self):
-        """Record the current file state and reload immediately."""
-        self._ssh_config_observed_fingerprints = (
-            self._ssh_config_fingerprints())
+        """Compatibility callback for dialogs; no local file is observed."""
         self._reload_ssh_config()
 
-    def _reload_ssh_config_if_changed(self):
-        self._ssh_config_reload_timeout_id = 0
-        fingerprints = self._ssh_config_fingerprints()
-        if fingerprints == self._ssh_config_observed_fingerprints:
-            return False
-        self._ssh_config_observed_fingerprints = fingerprints
-        self._reload_ssh_config(create_missing=False)
-        return False
-
-    def _on_connection_manager_config_written(self, _manager, path):
-        """Prevent the directory watcher from replaying an app-owned write."""
-        path = os.path.abspath(os.path.expanduser(path))
-        if path in self._ssh_config_observed_fingerprints:
-            self._ssh_config_observed_fingerprints[path] = (
-                self._ssh_config_file_fingerprint(path))
-
-    def _on_ssh_config_directory_changed(
-            self, _monitor, file, other_file, _event_type):
-        try:
-            changed_paths = {
-                os.path.abspath(candidate.get_path())
-                for candidate in (file, other_file)
-                if candidate is not None and candidate.get_path()
-            }
-            if not changed_paths.intersection(
-                    self._ssh_config_observed_fingerprints):
-                return
-            timeout_id = getattr(
-                self, '_ssh_config_reload_timeout_id', 0)
-            if timeout_id:
-                GLib.source_remove(timeout_id)
-            self._ssh_config_reload_timeout_id = GLib.timeout_add(
-                150, self._reload_ssh_config_if_changed)
-        except Exception:
-            logger.debug("Error handling SSH config change", exc_info=True)
-
-    def _refresh_ssh_config_monitors(self):
-        """Watch directories containing the root config and resolved Includes."""
-        for monitor, handler_id in getattr(
-                self, '_ssh_config_monitors', {}).values():
-            try:
-                monitor.disconnect(handler_id)
-            except Exception:
-                pass
-            try:
-                monitor.cancel()
-            except Exception:
-                pass
-        self._ssh_config_monitors = {}
-        self._ssh_config_observed_fingerprints = (
-            self._ssh_config_fingerprints())
-        window_ref = weakref.ref(self)
-
-        def _changed(monitor, file, other_file, event_type):
-            window = window_ref()
-            if window is not None:
-                window._on_ssh_config_directory_changed(
-                    monitor, file, other_file, event_type)
-
-        for config_dir in {
-                os.path.dirname(path)
-                for path in self._ssh_config_observed_fingerprints
-        }:
-            try:
-                monitor = Gio.File.new_for_path(config_dir).monitor_directory(
-                    Gio.FileMonitorFlags.WATCH_MOVES, None)
-                handler_id = monitor.connect("changed", _changed)
-                self._ssh_config_monitors[config_dir] = (
-                    monitor, handler_id)
-            except Exception:
-                logger.debug(
-                    "Failed to monitor SSH config directory %s",
-                    config_dir, exc_info=True)
-
-    def _setup_ssh_config_monitor(self):
-        """Set up lifetime-safe monitoring for root and included config files."""
-        self._ssh_config_reload_timeout_id = 0
-        self._ssh_config_monitors = {}
-        self._refresh_ssh_config_monitors()
-        window_ref = weakref.ref(self)
-
-        def _written(manager, path):
-            window = window_ref()
-            if window is not None:
-                window._on_connection_manager_config_written(manager, path)
-
-        try:
-            self._ssh_config_written_handler = (
-                self.connection_manager.connect_after(
-                    'config-written', _written))
-        except Exception:
-            self._ssh_config_written_handler = None
-            logger.debug(
-                "Failed to observe app-owned SSH config writes",
-                exc_info=True)
-
     def _teardown_ssh_config_monitor(self):
-        """Release timeouts, native monitors, and manager signal handlers."""
-        timeout_id = getattr(self, '_ssh_config_reload_timeout_id', 0)
-        if timeout_id:
-            try:
-                GLib.source_remove(timeout_id)
-            except Exception:
-                pass
-            self._ssh_config_reload_timeout_id = 0
-
-        for monitor, handler_id in getattr(
-                self, '_ssh_config_monitors', {}).values():
-            try:
-                monitor.disconnect(handler_id)
-            except Exception:
-                pass
-            try:
-                monitor.cancel()
-            except Exception:
-                pass
-        self._ssh_config_monitors = {}
-
-        handler_id = getattr(self, '_ssh_config_written_handler', None)
-        if handler_id is not None:
-            try:
-                GObject.Object.disconnect(
-                    self.connection_manager, handler_id)
-            except Exception:
-                pass
-            self._ssh_config_written_handler = None
+        """Compatibility no-op: GTK never creates configuration monitors."""
 
     def _rows_for_connection(self, connection) -> List[Gtk.ListBoxRow]:
         """Return every visible row representing ``connection``.
@@ -1396,19 +1615,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return False
 
 
-        
+
         # Sidebar toggle action registered via register_window_actions
 
     def setup_window(self):
         """Configure main window properties"""
         self.set_title('SSH Pilot')
         self.set_icon_name('io.github.mfat.sshpilot')
-        
+
         # Load window geometry
         geometry = self.config.get_window_geometry()
         self.set_default_size(geometry['width'], geometry['height'])
         self.set_resizable(True)
-        
+
         # Connect window state signals
         self.connect('notify::default-width', self.on_window_size_changed)
         self.connect('notify::default-height', self.on_window_size_changed)
@@ -1430,11 +1649,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Use overlay to position dismiss button on top of banner
         banner_overlay = Gtk.Overlay()
         banner_overlay.set_visible(False)  # Hidden by default
-        
+
         self.update_banner = Adw.Banner()
         self.update_banner.set_revealed(False)
         banner_overlay.set_child(self.update_banner)
-        
+
         # Create dismiss button with text, positioned at the left
         dismiss_button = Gtk.Button()
         dismiss_button.set_label(_('Dismiss'))
@@ -1443,7 +1662,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         dismiss_button.set_margin_start(12)
         dismiss_button.connect('clicked', self._on_update_banner_dismiss)
         banner_overlay.add_overlay(dismiss_button)
-        
+
         self.update_banner_container = banner_overlay
         self.update_banner_dismiss_button = dismiss_button
         # Note: Update banner will be added to content area in setup_content_area()
@@ -1512,15 +1731,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Safely configure native window controls (macOS only, GTK 4.18+)
         maybe_set_native_controls(self.header_bar, False)
-        
-        
+
+
         # Add sidebar toggle button to the left side of header bar
         self.sidebar_toggle_button = Gtk.ToggleButton()
         self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
-        
+
         # Sidebar always starts visible
         sidebar_visible = True
-        
+
         from sshpilot import icon_utils
         icon_utils.set_button_icon(self.sidebar_toggle_button, 'sidebar-show-symbolic')
         # Show the effective (possibly user-customized) shortcut in the tooltip.
@@ -1558,11 +1777,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Add tab button to header bar (will be created later in setup_content_area)
         # This will be added after the tab view is created
-        
+
         # Add header bar to main container only when using traditional split views
         if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
             main_box.append(self.header_bar)
-        
+
         # Honor the saved max-sidebar-width on startup (previously it was read but
         # ignored here, so the saved width only took effect after being changed
         # mid-session); fall back to 400 when unset/invalid.
@@ -1598,7 +1817,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.split_view.set_vexpand(True)
             self._split_variant = 'paned'
             logger.debug("Using Gtk.Paned fallback")
-        
+
         # Initial sidebar visibility. Apply "hide on startup" HERE — before the
         # window is presented — so it never flashes visible then collapses.
         try:
@@ -1627,7 +1846,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._toggle_sidebar_visibility(False)
             except Exception:
                 pass
-        
+
         # Create sidebar
         self.setup_sidebar()
 
@@ -1716,9 +1935,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         prefs = getattr(self, '_preferences_window', None)
         if prefs is not None and page is prefs:
             try:
-                prefs.on_close_request()
+                keep_open = prefs.on_close_request()
             except Exception:
                 logger.debug('Failed to flush preferences on pop', exc_info=True)
+                keep_open = False
+            if keep_open and not getattr(self, '_is_quitting', False):
+                # A daemon-backed save failed; keep Settings visible so the
+                # user can fix the value instead of silently losing it.
+                nav = getattr(self, 'nav_view', None)
+                if nav is not None:
+                    try:
+                        nav.push(prefs)
+                    except Exception:
+                        logger.debug(
+                            'Failed to re-push preferences after save failure',
+                            exc_info=True,
+                        )
 
     def is_preferences_visible(self) -> bool:
         """True when Settings mode is the visible NavigationView page."""
@@ -1829,14 +2061,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
             return
-        
+
+        try:
+            connections = self.connection_manager.get_connections()
+        except Exception:
+            connections = []
+        self._attach_sidebar_forwarding_rules(connections)
+        self._refresh_sidebar_forwarding_rules(connections)
+
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
-        
+
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
         while row:
@@ -1856,7 +2095,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     row.status_icon.set_visible(show_status)
             if hasattr(row, '_update_forwarding_indicators'):
                 row._update_forwarding_indicators()
-            
+
             # Update GroupRow elements
             if hasattr(row, 'count_label'):
                 row.count_label.set_visible(show_group_count)
@@ -1870,6 +2109,150 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # not while detached into the popup, which shows full rows).
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
+
+    def _sidebar_forwarding_rules_enabled(self) -> bool:
+        try:
+            return bool(self.config.get_setting('ui.sidebar_show_port_forwarding', True))
+        except Exception:
+            return True
+
+    def _sidebar_store_generation(self) -> int:
+        try:
+            return int(getattr(self.connection_manager, 'generation', 0) or 0)
+        except Exception:
+            return 0
+
+    @staticmethod
+    def _sidebar_connection_key(connection) -> Optional[str]:
+        value = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+        return str(value or '').strip() or None
+
+    @staticmethod
+    def _sidebar_connection_uses_ssh(connection) -> bool:
+        return str(getattr(connection, 'protocol', 'ssh') or 'ssh').lower() == 'ssh'
+
+    def _attach_sidebar_forwarding_rules(self, connections) -> None:
+        cache = getattr(self, '_forwarding_rules_cache', None)
+        if not cache:
+            return
+        generation = self._sidebar_store_generation()
+        for connection in connections:
+            if not self._sidebar_connection_uses_ssh(connection):
+                continue
+            key = self._sidebar_connection_key(connection)
+            if key is None:
+                continue
+            entry = cache.get(key)
+            if entry is None or entry[0] != generation:
+                continue
+            try:
+                object.__setattr__(connection, 'forwarding_rules', entry[1])
+            except Exception:
+                pass
+
+    def _refresh_sidebar_forwarding_rules(self, connections) -> None:
+        if not self._sidebar_forwarding_rules_enabled():
+            return
+        if getattr(self, '_is_quitting', False):
+            return
+        bridge = getattr(self, 'client_bridge', None)
+        client = getattr(self, 'client', None)
+        if bridge is None or client is None:
+            return
+        cache = getattr(self, '_forwarding_rules_cache', None)
+        if cache is None:
+            cache = {}
+            self._forwarding_rules_cache = cache
+        pending = getattr(self, '_forwarding_rules_pending', None)
+        if pending is None:
+            pending = set()
+            self._forwarding_rules_pending = pending
+        generation = self._sidebar_store_generation()
+        for connection in connections:
+            if not self._sidebar_connection_uses_ssh(connection):
+                continue
+            key = self._sidebar_connection_key(connection)
+            if key is None:
+                continue
+            entry = cache.get(key)
+            if entry is not None and entry[0] == generation:
+                continue
+            if key in pending:
+                continue
+            pending.add(key)
+            self._submit_sidebar_forwarding_fetch(
+                client, bridge, connection, key, generation, cache, pending
+            )
+
+    def _submit_sidebar_forwarding_fetch(
+        self, client, bridge, connection, key, generation, cache, pending
+    ) -> None:
+        def on_success(details):
+            pending.discard(key)
+            current_generation = self._sidebar_store_generation()
+            if current_generation != generation:
+                logger.debug(
+                    "Discarding stale forwarding rules for %s (generation %s -> %s)",
+                    key,
+                    generation,
+                    current_generation,
+                )
+                self._refresh_sidebar_forwarding_rules([connection])
+                return
+            try:
+                from .api.models.connections import (
+                    ForwardingRule,
+                    forwarding_rule_to_dict,
+                )
+                raw = getattr(details, 'forwarding_rules', None) or ()
+                rules = tuple(
+                    forwarding_rule_to_dict(rule)
+                    for rule in raw
+                    if isinstance(rule, (ForwardingRule, dict))
+                )
+                cache[key] = (generation, rules)
+                self._apply_sidebar_forwarding_rules(connection, rules)
+            except Exception:
+                logger.debug(
+                    "Failed to cache forwarding rules for %s", key, exc_info=True
+                )
+
+        def on_error(error):
+            pending.discard(key)
+            if self._sidebar_store_generation() != generation:
+                self._refresh_sidebar_forwarding_rules([connection])
+
+        try:
+            bridge.submit(
+                lambda: client.get_connection_editor(connection_id_for(connection)),
+                on_success=on_success,
+                on_error=on_error,
+            )
+        except Exception:
+            pending.discard(key)
+            logger.debug(
+                "Failed to submit forwarding-rule fetch for %s", key, exc_info=True
+            )
+
+    def _apply_sidebar_forwarding_rules(self, connection, rules) -> None:
+        try:
+            object.__setattr__(connection, 'forwarding_rules', rules)
+        except Exception:
+            pass
+        try:
+            target = self._sidebar_connection_key(connection)
+            for conn, rows in list(getattr(self, 'connection_rows', {}).items()):
+                if self._sidebar_connection_key(conn) != target:
+                    continue
+                try:
+                    object.__setattr__(conn, 'forwarding_rules', rules)
+                except Exception:
+                    pass
+                for row in (rows if isinstance(rows, list) else [rows]):
+                    if hasattr(row, '_update_forwarding_indicators'):
+                        row._update_forwarding_indicators()
+        except Exception:
+            logger.debug("Failed to refresh sidebar forwarding rows", exc_info=True)
 
     def update_sidebar_max_width(self, max_width: int):
         """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
@@ -2208,30 +2591,55 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
 
-    def duplicate_connection(self, connection: Optional[Connection]) -> Optional[Connection]:
-        """Duplicate an existing connection, persist it, and select the new entry."""
-        if connection is None:
-            return None
-        try:
-            duplicated = self.connection_manager.duplicate_connection(connection, self.group_manager)
-        except Exception as error:
-            self._show_duplicate_connection_error(connection, error)
-            logger.error(f"Failed to duplicate connection: {error}", exc_info=True)
-            return None
+    def duplicate_connection(self, connection: Optional[Connection]) -> None:
+        """Duplicate through the daemon and select its refreshed projection."""
+        if connection is None or self.client_bridge is None or self.client is None:
+            return
 
-        self.rebuild_connection_list()
-        row = self._primary_row_for_connection(duplicated)
-        if row is not None:
+        def _select_duplicate(result):
+            duplicated = self.connection_manager.get_connection_by_id(
+                result.connection_id
+            )
+            self.rebuild_connection_list()
+            row = self._primary_row_for_connection(duplicated)
+            if row is None:
+                return
             self._select_only_row(row)
             try:
                 self.connection_list.scroll_to_row(row)
-            except Exception:
-                pass
-            try:
                 self.connection_list.grab_focus()
             except Exception:
                 pass
-        return duplicated
+
+        def _refresh_after_duplicate(result):
+            try:
+                self.client_bridge.submit(
+                    self.connection_manager.refresh,
+                    on_success=lambda _snapshot: _select_duplicate(result),
+                    on_error=lambda error: self._show_duplicate_connection_error(
+                        connection, error
+                    ),
+                )
+            except RuntimeError as error:
+                self._show_duplicate_connection_error(connection, error)
+
+        def _failed(error):
+            self._show_duplicate_connection_error(connection, error)
+            logger.error(
+                "Failed to duplicate connection type=%s",
+                type(error).__name__,
+            )
+
+        try:
+            self.client_bridge.submit(
+                lambda: self.client.duplicate_connection(
+                    connection_id_for(connection)
+                ),
+                on_success=_refresh_after_duplicate,
+                on_error=_failed,
+            )
+        except RuntimeError as error:
+            _failed(error)
 
     def setup_sidebar(self):
         """Build the sidebar UI (implementation in sidebar.build_sidebar)."""
@@ -2260,12 +2668,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if not conns:
             return
         try:
-            all_pinned = all(self.config.is_pinned(c.nickname) for c in conns)
+            all_pinned = all(
+                bool(self.connection_manager.get_metadata(c.nickname).get("pinned"))
+                for c in conns
+            )
             for c in conns:
-                if all_pinned:
-                    self.config.unpin_connection(c.nickname)
-                else:
-                    self.config.pin_connection(c.nickname)
+                self.client.update_connection_metadata(
+                    c.nickname, {"pinned": not all_pinned}
+                )
             if len(conns) == 1:
                 msg = _("Unpinned from start page") if all_pinned else _("Pinned to start page")
             elif all_pinned:
@@ -2556,7 +2966,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             GLib.idle_add(_push_now)
         except Exception:
             pass
-        
+
         # Create tab overview
         self.tab_overview = Adw.TabOverview()
         self.tab_overview.set_view(self.tab_view)
@@ -2565,7 +2975,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Hide window buttons in tab overview
         self.tab_overview.set_show_start_title_buttons(False)
         self.tab_overview.set_show_end_title_buttons(False)
-        
+
         # Create tab bar
         self.tab_bar = Adw.TabBar()
         self.tab_bar.set_view(self.tab_view)
@@ -2619,13 +3029,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_content_box.append(self.tab_view)
         if hasattr(self.tab_view, 'add_css_class'):
             self.tab_view.add_css_class('terminal-bg')
-        
+
         # Set the tab content box as the child of the tab overview
         self.tab_overview.set_child(self.tab_content_box)
 
         self._create_start_tab()
         self._update_tab_button_visibility()
-        
+
         # Split-view button — opens a new split-view tab
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
@@ -2663,46 +3073,47 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Create broadcast command banner (custom banner-like widget)
         self.broadcast_banner = Gtk.Revealer()
+        self.broadcast_banner.set_visible(False)
         self.broadcast_banner.set_reveal_child(False)
-        self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.broadcast_banner.set_transition_type(Gtk.RevealerTransitionType.NONE)
         self.broadcast_hide_timeout_id: Optional[int] = None
         self.broadcast_entry_dirty = False
         self._suppress_broadcast_entry_changed = False
-        
+
         # Create banner content box
         banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         banner_box.add_css_class('banner')
         banner_box.set_can_focus(True)
         banner_box.set_focusable(True)
-        
+
         # Create banner header with title and send button
         banner_header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         banner_header.set_margin_start(12)
         banner_header.set_margin_end(12)
         banner_header.set_margin_top(8)
         banner_header.set_margin_bottom(4)
-        
+
         # Banner title
         banner_title = Gtk.Label(label=_("Broadcast Command"))
         banner_title.set_xalign(0)
         banner_title.add_css_class('title-4')
         banner_header.append(banner_title)
-        
+
         # Send button
         self.broadcast_send_button = Gtk.Button()
         self.broadcast_send_button.set_label(_("Send"))
         self.broadcast_send_button.add_css_class('suggested-action')
         self.broadcast_send_button.connect('clicked', self.on_broadcast_send_clicked)
         banner_header.append(self.broadcast_send_button)
-        
+
         banner_box.append(banner_header)
-        
+
         # Create banner content with entry and cancel button
         banner_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         banner_content.set_margin_start(12)
         banner_content.set_margin_end(12)
         banner_content.set_margin_bottom(8)
-        
+
         # Create command entry
         self.broadcast_entry = Gtk.Entry()
         self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
@@ -2721,18 +3132,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.broadcast_entry.add_controller(focus_controller)
 
         banner_content.append(self.broadcast_entry)
-        
+
         # Create cancel button
         self.broadcast_cancel_button = Gtk.Button()
         self.broadcast_cancel_button.set_label(_("Cancel"))
         self.broadcast_cancel_button.connect('clicked', self.on_broadcast_cancel_clicked)
         banner_content.append(self.broadcast_cancel_button)
-        
+
         banner_box.append(banner_content)
-        
+
         # Set the banner box as the revealer's child
         self.broadcast_banner.set_child(banner_box)
-        
+
         # Add global ESC key handling to the entire banner
         banner_controller = Gtk.EventControllerKey()
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
@@ -2959,7 +3370,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def setup_connections(self):
         """Load and display existing connections with grouping"""
         self.rebuild_connection_list()
-        
+
         # Select first connection if available
         connections = self.connection_manager.get_connections()
         if connections:
@@ -2968,8 +3379,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._select_only_row(first_row)
                 # Defer focus to the list to ensure keyboard navigation works immediately
                 GLib.idle_add(self._focus_connection_list_first_row)
-    
-    def _finish_rebuild(self, scroll_position) -> None:
+
+    def _finish_rebuild(
+        self,
+        scroll_position,
+        selected_connection_rows=(),
+    ) -> None:
         """Common tail for every rebuild_connection_list() exit path.
 
         Freshly-built rows always start expanded; re-collapse them when the
@@ -2983,6 +3398,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # omnisearch lands — re-enable by calling self._append_command_matches().
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
+        for connection_uuid, group_id in selected_connection_rows:
+            connection = self.connection_manager.get_connection_by_uuid(
+                connection_uuid
+            )
+            for row in self.connection_rows.get(connection, ()):
+                if getattr(row, '_group_id', None) == group_id:
+                    self.connection_list.select_row(row)
+                    break
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
@@ -3012,7 +3435,32 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
                 scroll_position = vadj.get_value()
-        
+        selected_connection_rows = []
+        get_selected_rows = getattr(
+            self.connection_list,
+            'get_selected_rows',
+            None,
+        )
+        get_selected_row = getattr(
+            self.connection_list,
+            'get_selected_row',
+            None,
+        )
+        if callable(get_selected_rows):
+            selected_rows = list(get_selected_rows())
+        elif callable(get_selected_row):
+            selected = get_selected_row()
+            selected_rows = [selected] if selected is not None else []
+        else:
+            selected_rows = []
+        for row in selected_rows:
+            connection = getattr(row, 'connection', None)
+            connection_id = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+            if connection_id:
+                selected_connection_rows.append(
+                    (connection_id, getattr(row, '_group_id', None))
+                )
+
         # Clear existing rows
         child = self.connection_list.get_first_child()
         while child:
@@ -3020,16 +3468,29 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.connection_list.remove(child)
             child = next_child
         self.connection_rows.clear()
-        
+
         # Get all connections
         connections = self.connection_manager.get_connections()
         # Attach tags so the search filter and freshly built rows see them.
         for conn in connections:
             try:
-                conn.tags = self.config.get_connection_tags(conn.nickname)
+                object.__setattr__(
+                    conn,
+                    "tags",
+                    list(self.connection_manager.get_metadata(conn.nickname).get("tags", [])),
+                )
             except Exception:
-                conn.tags = []
+                object.__setattr__(conn, 'tags', [])
+        self._attach_sidebar_forwarding_rules(connections)
+        self._refresh_sidebar_forwarding_rules(connections)
         connections_dict = {conn.nickname: conn for conn in connections}
+        connections_dict.update(
+            {
+                conn.id: conn
+                for conn in connections
+                if getattr(conn, 'id', None)
+            }
+        )
         search_text = ''
         if hasattr(self, 'search_entry') and self.search_entry:
             search_text = self.search_entry.get_text().strip().lower()
@@ -3048,7 +3509,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-            self._finish_rebuild(scroll_position)
+            self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
         if tag_filter:
@@ -3059,7 +3520,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-            self._finish_rebuild(scroll_position)
+            self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
         if search_text:
@@ -3092,17 +3553,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             indent_level=1,
                             display_group_id=group_info.get('id'),
                         )
-                        displayed_connections.add(conn_nickname)
+                        displayed_connections.add(conn.id)
 
             matches = [
                 c for c in connections
                 if connection_matches(c, search_text)
-                and c.nickname not in displayed_connections
+                and c.id not in displayed_connections
             ]
             for conn in sorted(matches, key=lambda c: c.nickname.lower()):
                 self.add_connection_row(conn)
-                displayed_connections.add(conn.nickname)
-            self._finish_rebuild(scroll_position)
+                displayed_connections.add(conn.id)
+            self._finish_rebuild(scroll_position, selected_connection_rows)
             return
 
 
@@ -3115,8 +3576,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Add ungrouped connections at the end. A connection is only ungrouped
         # when it does not belong to any group (it may belong to several).
         ungrouped_nicks = [
-            conn.nickname for conn in connections
-            if not self.group_manager.get_connection_groups(conn.nickname)
+            conn.id for conn in connections
+            if not self.group_manager.get_connection_groups(conn.id)
         ]
 
         if ungrouped_nicks:
@@ -3144,7 +3605,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.add_connection_row(conn)
 
 
-        self._finish_rebuild(scroll_position)
+        self._finish_rebuild(scroll_position, selected_connection_rows)
     def _build_grouped_list(self, hierarchy, connections_dict, level):
         """Recursively build the grouped connection list.
 
@@ -3199,7 +3660,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, "group_id") and row.group_id == group_id:
                 self._select_only_row(row)
                 break
-    
+
     def add_connection_row(
         self,
         connection: Connection,
@@ -3208,19 +3669,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         in_tag_section: bool = False,
     ):
         """Add a connection row to the list with optional indentation"""
+        runtime_status = getattr(self, 'connection_runtime_status', None)
+        status_resolver = (
+            runtime_status.status_for if runtime_status is not None else None
+        )
         row = ConnectionRow(
             connection,
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
             effective_warning_callback=self._request_effective_warning,
+            status_resolver=status_resolver,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
         )
-        
+
         # Apply indentation preference for grouped connections
         row.set_indentation(indent_level)
-        
+
         self.connection_list.append(row)
         # A connection can appear under multiple groups, so keep a list of rows
         self.connection_rows.setdefault(connection, []).append(row)
@@ -3230,6 +3696,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             row.apply_hide_hosts(getattr(self, '_hide_hosts', False))
 
         return row
+
+    def _on_runtime_connection_status_changed(self, connection_id, _status):
+        """Refresh every row representing a changed daemon connection status."""
+        connection = self.connection_manager.get_connection_by_id(connection_id)
+        if connection is None:
+            return
+        for row in self._rows_for_connection(connection):
+            row.update_status()
+            row.queue_draw()
 
     def on_search_changed(self, entry):
         """Handle search text changes and update connection list."""
@@ -3282,8 +3757,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Connection manager signals - use connect_after to avoid conflict with GObject.connect
         self.connection_manager.connect_after('connection-added', self.on_connection_added)
         self.connection_manager.connect_after('connection-removed', self.on_connection_removed)
+        self.connection_manager.connect_after('projection-reset', self.on_projection_reset)
         self.connection_manager.connect_after('connection-status-changed', self.on_connection_status_changed)
-        
+
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
 
@@ -3468,8 +3944,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     target_row.grab_focus()
                 else:
                     self.connection_list.grab_focus()
-                
-                
+
+
                 # Show toast notification
                 toast = Adw.Toast.new(
                     _("Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new tab").format(
@@ -3622,6 +4098,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if intent == 'ssh-copy-id':
             if connection is None:
                 self.show_connection_selection_for_ssh_copy()
+            elif self.key_manager is None:
+                self._show_key_service_unavailable()
             else:
                 from .sshcopyid_window import SshCopyIdWindow
                 SshCopyIdWindow(
@@ -3645,7 +4123,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     getattr(self, 'sidebar_toggle_button', None)
                     and self.sidebar_toggle_button.get_active()
                 )
-                
+
                 # Toggle search container visibility
                 if hasattr(self, 'search_container') and self.search_container:
                     is_visible = self.search_container.get_visible()
@@ -3657,12 +4135,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         # Search was hidden, now showing it
                         # Focus the search entry
                         self.search_entry.grab_focus()
-                        
+
                         # Select all text if there's any
                         text = self.search_entry.get_text()
                         if text:
                             self.search_entry.select_region(0, len(text))
-                        
+
                         # Show toast notification
                         toast = Adw.Toast.new(
                             _("Search mode — Type to filter connections, Esc to clear and hide")
@@ -3680,7 +4158,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         # Return focus to connection list
                         if hasattr(self, 'connection_list') and self.connection_list:
                             self.connection_list.grab_focus()
-                        
+
                         # Show toast notification
                         toast = Adw.Toast.new(
                             _("Search hidden — {modifier}+F to search again").format(
@@ -3720,7 +4198,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Refresh connection from disk to ensure latest auth method
         if connection is not None and not as_new:
             try:
-                self.connection_manager.load_ssh_config()
+                self.connection_manager.refresh()
                 refreshed = self.connection_manager.find_connection_by_nickname(connection.nickname)
                 if refreshed:
                     connection = refreshed
@@ -3729,11 +4207,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         if connection is not None and not as_new and not skip_group_warning:
             block_info = None
-            try:
-                source_path = split_group_source or getattr(connection, 'source', None)
-                block_info = self.connection_manager.get_host_block_details(connection.nickname, source_path)
-            except Exception as e:
-                logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
+            inspect_host_block = getattr(
+                self.connection_manager, 'get_host_block_details', None
+            )
+            if callable(inspect_host_block):
+                try:
+                    source_path = split_group_source or getattr(connection, 'source', None)
+                    block_info = inspect_host_block(connection.nickname, source_path)
+                except Exception as e:
+                    logger.debug(f"Failed to inspect host block for {connection.nickname}: {e}")
             if block_info and len(block_info.get('hosts') or []) > 1:
                 self._prompt_group_edit_options(connection, block_info)
                 return
@@ -3753,7 +4235,193 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             as_new=as_new,
         )
         dialog.connect('connection-saved', self.on_connection_saved)
+
+        # Daemon mode: the authoritative editor snapshot gates the form.  A
+        # blank/new connection (``connection is None`` or ``as_new``) needs no
+        # generation and must never enter the load-failed state; an existing
+        # edit is populated (and Save enabled) only once the daemon DTO
+        # arrives.
+        if connection is None or as_new:
+            dialog._daemon_generation = 0
+            dialog.set_editor_source('local')
+        elif self._daemon_mode_active() and getattr(connection, 'protocol', 'ssh') == 'ssh':
+            dialog.set_editor_source('daemon')
+            dialog.set_daemon_editor_loading()
+            self._fetch_daemon_editor_generation(dialog, connection)
+        else:
+            dialog.set_editor_source('local')
+
         dialog.present()
+
+    def _fetch_daemon_editor_generation(self, dialog, connection):
+        """Load the authoritative daemon editor snapshot (non-blocking).
+
+        Fetches ``ConnectionEditorDetails`` through the GTK client bridge so
+        the form is populated from, and ``expected_generation`` derives from,
+        the same daemon response.  Transport churn is retried with a short
+        delay — every retry re-resolves ``self.client`` and
+        ``self.client_bridge`` at call time, so a reconnected client is used
+        once the daemon is back.
+
+        The chain has explicit ownership: exactly one of success, terminal
+        failure, or dialog cancellation terminates it; any late callback is
+        ignored.  Save stays gated on ``dialog._daemon_editor_loaded``: a
+        terminal failure disables Save rather than silently degrading
+        stale-editor protection, and pending is never treated as a real
+        generation (``_daemon_generation`` stays None until loaded).
+        """
+        from .api import ErrorCode, SshPilotError
+        from .api.models.common import ConnectionId
+
+        # Defensive entry guard: this loader only exists for active daemon
+        # edits.  A missing connection is a hard failure (Save stays off);
+        # leaving daemon mode mid-flight is left to the caller's gating.
+        if connection is None:
+            dialog.set_daemon_editor_load_failed()
+            return
+        if not self._daemon_mode_active():
+            return
+
+        class _TransportUnavailable(Exception):
+            pass
+
+        state: Dict[str, Any] = {
+            'finished': False,
+            'closed': False,
+            'request': None,
+            'timeout_source': None,
+            'remaining_retries': 3,
+        }
+
+        def _finished():
+            return state['finished']
+
+        def _clear_timer():
+            source = state['timeout_source']
+            if source is not None:
+                try:
+                    GLib.source_remove(source)
+                except Exception:
+                    pass
+                state['timeout_source'] = None
+
+        def _on_success(editor):
+            if _finished():
+                return
+            state['finished'] = True
+            state['request'] = None
+            _clear_timer()
+            try:
+                dialog.populate_from_editor_details(editor)
+            except Exception as error:
+                # A populate failure must never wedge Save or smuggle a zero
+                # generation into the stale-editor check.  Report it so the
+                # empty form is not left unexplained.
+                logger.warning(
+                    "Failed to populate editor from daemon snapshot type=%s",
+                    type(error).__name__,
+                )
+                dialog.set_daemon_editor_load_failed()
+                try:
+                    dialog.show_daemon_editor_load_error(on_retry=None)
+                except Exception:
+                    pass
+
+        def _handle_error(error):
+            if _finished():
+                return
+            state['request'] = None
+            retryable = isinstance(error, _TransportUnavailable) or (
+                isinstance(error, SshPilotError)
+                and (
+                    error.retryable
+                    or error.code
+                    in (ErrorCode.TRANSPORT_CLOSED, ErrorCode.TRANSPORT_TIMEOUT)
+                )
+            )
+            if retryable and state['remaining_retries'] > 0:
+                state['remaining_retries'] -= 1
+                state['timeout_source'] = GLib.timeout_add(500, _schedule_retry)
+                return
+            state['finished'] = True
+            _clear_timer()
+            logger.debug("Could not fetch daemon editor snapshot: %s", error)
+            dialog.set_daemon_editor_load_failed()
+            try:
+                dialog.show_daemon_editor_load_error(
+                    on_retry=lambda: self._retry_daemon_editor_load(dialog, connection)
+                )
+            except Exception:
+                pass
+
+        def _schedule_retry():
+            state['timeout_source'] = None
+            _submit_fetch()
+            return False
+
+        def _submit_fetch():
+            if _finished():
+                return
+            # Re-resolve the live client and bridge on every attempt so a
+            # reconnect between retries is picked up immediately.
+            bridge = self.client_bridge
+            client = self.client
+            if bridge is None or client is None:
+                _handle_error(_TransportUnavailable('daemon transport unavailable'))
+                return
+            try:
+                state['request'] = bridge.submit(
+                    lambda: client.get_connection_editor(
+                        ConnectionId(connection.nickname)
+                    ),
+                    on_success=_on_success,
+                    on_error=_handle_error,
+                )
+            except RuntimeError as exc:
+                # A bridge that raises on submit() is mid-shutdown/replacement —
+                # the transport-churn case this retry loop exists for.  Classify
+                # it as retryable so the replacement bridge is picked up on the
+                # next attempt; the message is logged, never shown to the user.
+                state['request'] = None
+                _handle_error(_TransportUnavailable(str(exc)))
+
+        def _cancel(_dialog=None):
+            if state['finished']:
+                return
+            state['closed'] = True
+            state['finished'] = True
+            _clear_timer()
+            request = state['request']
+            state['request'] = None
+            if request is not None:
+                try:
+                    cancel = getattr(request, 'cancel', None)
+                    if callable(cancel):
+                        cancel()
+                except Exception:
+                    pass
+
+        # Hook the real close lifecycle.  Adw.Dialog exposes `closed`; our
+        # dialog is an Adw.Window, so fall back to `destroy`.  Connecting an
+        # unknown signal raises under real GTK, hence the defensive wiring.
+        connect = getattr(dialog, 'connect', None)
+        if callable(connect):
+            for signal_name in ('closed', 'destroy'):
+                try:
+                    connect(signal_name, _cancel)
+                except Exception:
+                    pass
+
+        _submit_fetch()
+
+    def _retry_daemon_editor_load(self, dialog, connection):
+        """Re-attempt a failed daemon editor snapshot load (Retry action).
+
+        Resets the dialog to the loading state and starts a fresh fetch; the
+        new chain re-resolves the current client and bridge.
+        """
+        dialog.set_daemon_editor_loading()
+        self._fetch_daemon_editor_generation(dialog, connection)
 
     def open_cli_connect(self, ssh_tokens):
         """Resolve CLI tokens and open a tab, or refuse without starting SSH.
@@ -3819,37 +4487,66 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.show_connection_dialog(connection, skip_group_warning=True)
 
     def _open_ssh_config_editor(self):
+        """Open the SSH config text editor backed by the daemon.
+
+        GTK never decides which SSH config file is active and never writes it:
+        the daemon resolves the root (normal or isolated mode), serves the
+        text, performs the hardened atomic write, and reloads connection
+        state. This reuses the existing raw text editor UI unchanged.
+        """
         try:
-            # Single editor for the SSH config: the GtkSourceView-backed editor,
-            # which self-degrades to a plain TextView if GtkSourceView is absent.
             from .text_editor import RemoteFileEditorWindow
-            from .ssh_config_utils import validate_ssh_config_text
+            from .ssh_config_editor_service import DaemonSshConfigTextService
 
-            config_path = self._ssh_config_path()
-            config_name = os.path.basename(config_path)
+            client = getattr(self, 'client', None)
+            if client is None or not hasattr(client, 'get_ssh_config_text'):
+                self.show_toast(_(
+                    "SSH config editing requires the background service. "
+                    "Start it and try again."
+                ))
+                return
 
+            service = DaemonSshConfigTextService(client)
             editor = RemoteFileEditorWindow(
                 parent=self,
-                file_path=config_path,
-                file_name=config_name,
-                is_local=True,
-                sftp_manager=None,
+                file_path="",  # the daemon resolves the active config file
+                file_name=_("SSH Config"),
+                is_local=False,
+                daemon_file_service=service,
                 file_manager_window=None,
-                pre_save_validator=validate_ssh_config_text,
-                on_local_saved=self._observe_and_reload_ssh_config,
                 language_id="sshconfig",
                 show_outline=True,
+                on_saved=self._on_ssh_config_editor_saved,
             )
 
-            # Set custom title for SSH config editor (the path shows as the
-            # header subtitle automatically).
-            editor.set_title(_("Edit SSH Config"))  # window/taskbar title
+            # Window/taskbar title; the header title shows the daemon-resolved
+            # display name as the subtitle automatically.
+            editor.set_title(_("Edit SSH Config"))
             if hasattr(editor, 'set_editor_title'):
                 editor.set_editor_title(_("SSH Config"))
 
             editor.present()
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
+            self.show_toast(_("Could not open the SSH config editor."))
+
+    def _on_ssh_config_editor_saved(self):
+        """SSH config editor wrote the config: refresh effective-config warnings.
+
+        A global-scope edit (e.g. removing a ``Host *`` block) can change every
+        connection's effective config, so drop ALL cached checker results and
+        recompute — fresh results reach sidebar rows via the checker callback.
+        """
+        checker = getattr(self, 'effective_config_checker', None)
+        if checker is None:
+            return
+        try:
+            checker.invalidate()
+            for connection in self.connection_manager.get_connections():
+                checker.schedule(connection)
+        except Exception:
+            logger.debug("effective-config refresh after config save failed",
+                         exc_info=True)
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its
@@ -3858,6 +4555,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # No connections available, show new connection dialog instead
             logger.info("No connections available, showing new connection dialog")
             self.show_connection_dialog()
+            return
+        if self.key_manager is None:
+            self._show_key_service_unavailable()
             return
         try:
             from .sshcopyid_window import SshCopyIdWindow
@@ -3892,11 +4592,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     # --- Single, simplified key generator (no copy-to-server inside) ------------
 
+    def _show_key_service_unavailable(self) -> None:
+        """Recovery message when the daemon (and therefore keys) is unavailable."""
+        try:
+            dialog = Adw.AlertDialog.new(
+                _("Key Service Unavailable"),
+                _(
+                    "SSH keys require the background service. "
+                    "Restart the service and try again."
+                ),
+            )
+            dialog.add_response("ok", _("OK"))
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+            dialog.present(self)
+        except Exception:
+            logger.warning("Unable to show key service unavailable dialog", exc_info=True)
+
     def show_key_dialog(self, on_success=None):
         """
         Single key generation dialog (Adw). Optional passphrase.
         No copy-to-server in this dialog. If provided, `on_success(key)` is called.
         """
+        if self.key_manager is None:
+            self._show_key_service_unavailable()
+            return None
         try:
             dlg = Adw.Dialog.new()
             dlg.set_title(_("Generate SSH Key"))
@@ -3916,22 +4636,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             name_row = Adw.EntryRow()
             name_row.set_title(_("Key file name"))
             name_row.set_text("id_ed25519")
-            
+
             # Add real-time validation
             def on_name_changed(entry):
                 key_name = (entry.get_text() or "").strip()
                 if key_name and not key_name.startswith(".") and "/" not in key_name:
-                    key_path = self.key_manager.ssh_dir / key_name
-                    if key_path.exists():
-                        entry.add_css_class("error")
-                        entry.set_title(_("Key file name (already exists)"))
-                    else:
-                        entry.remove_css_class("error")
-                        entry.set_title(_("Key file name"))
-                else:
                     entry.remove_css_class("error")
                     entry.set_title(_("Key file name"))
-            
+                else:
+                    entry.add_css_class("error")
+                    entry.set_title(_("Key file name"))
+
             name_row.connect("changed", on_name_changed)
             form.add(name_row)
 
@@ -3947,19 +4662,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass_switch.set_active(False)
             form.add(pass_switch)
 
-            pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-            pass1 = Gtk.PasswordEntry()
-            pass1.set_property("placeholder-text", _("Passphrase"))
-            pass2 = Gtk.PasswordEntry()
-            pass2.set_property("placeholder-text", _("Confirm passphrase"))
-            pass_box.append(pass1); pass_box.append(pass2)
-            pass_box.set_visible(False)
-
-
-            def on_pass_toggle(*_):
-                pass_box.set_visible(pass_switch.get_active())
-            pass_switch.connect("notify::active", on_pass_toggle)
-
             # Buttons
             btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             btn_box.set_halign(Gtk.Align.END)
@@ -3973,7 +4675,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             # Compose
             content.append(form)
-            content.append(pass_box)
             content.append(btn_box)
             tv.set_content(content)
             dlg.set_child(tv)
@@ -3987,6 +4688,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             btn_cancel.connect("clicked", close_dialog)
 
             def do_generate(*args):
+                dialogs = None
                 try:
                     key_name = (name_row.get_text() or "").strip()
                     if not key_name:
@@ -3994,84 +4696,92 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     if "/" in key_name or key_name.startswith("."):
                         raise ValueError(_("Key file name must not contain '/' or start with '.'"))
 
-                    # Check if key already exists before attempting generation
-                    key_path = self.key_manager.ssh_dir / key_name
-                    if key_path.exists():
-                        # Suggest alternative names
+                    # Existence check against the daemon inventory — never the filesystem.
+                    existing_names = {
+                        key.name for key in (self.key_manager.discover_keys() or [])
+                    }
+                    if key_name in existing_names:
                         base_name = key_name
                         counter = 1
-                        while (self.key_manager.ssh_dir / f"{base_name}_{counter}").exists():
+                        while f"{base_name}_{counter}" in existing_names:
                             counter += 1
                         suggestion = f"{base_name}_{counter}"
-                        
+
                         raise ValueError(_("A key named '{name}' already exists. Try '{suggestion}' instead.").format(name=key_name, suggestion=suggestion))
 
                     kt = "ed25519" if type_row.get_selected() == 0 else "rsa"
 
-                    passphrase = None
-                    if pass_switch.get_active():
-                        p1 = pass1.get_text() or ""
-                        p2 = pass2.get_text() or ""
-                        logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
-                        if p1 != p2:
-                            logger.debug("SshCopyIdWindow: Passphrases do not match")
-                            raise ValueError("Passphrases do not match")
-                        passphrase = p1
-                        logger.info("SshCopyIdWindow: Passphrase enabled")
-                        logger.debug("SshCopyIdWindow: Passphrase validation successful")
+                    encrypted = bool(pass_switch.get_active())
+                    interaction_scope_id = None
+                    if encrypted:
+                        from .api.models import SessionId
+                        from .daemon_interaction_dialogs import DaemonInteractionDialogs
+                        from .runtime_identity import new_operation_id
 
-                    logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
-                    logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
-                               f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
-                    
-                    new_key = self._km.generate_key(
-                        key_name=key_name,
-                        key_type=kt,
-                        key_size=3072 if kt == "rsa" else 0,
-                        comment=None,
-                        passphrase=passphrase,
+                        interaction_scope_id = SessionId(
+                            f"key-{new_operation_id()}"
+                        )
+                        dialogs = DaemonInteractionDialogs(
+                            self.client,
+                            self.client_bridge,
+                            self,
+                        )
+                        dialogs.set_session(interaction_scope_id)
+
+                    btn_primary.set_sensitive(False)
+
+                    def _generate():
+                        return self.key_manager.generate_key(
+                            key_name=key_name,
+                            key_type=kt,
+                            key_size=3072 if kt == "rsa" else 0,
+                            comment=None,
+                            encrypted=encrypted,
+                            interaction_scope_id=interaction_scope_id,
+                        )
+
+                    def _generated(new_key):
+                        if dialogs is not None:
+                            dialogs.close()
+                        btn_primary.set_sensitive(True)
+                        if not new_key:
+                            _failed(RuntimeError("Key generation failed"))
+                            return
+                        logger.info("SSH key generated")
+                        if on_success:
+                            on_success(new_key)
+                        close_dialog()
+
+                    def _failed(error):
+                        if dialogs is not None:
+                            dialogs.close()
+                        btn_primary.set_sensitive(True)
+                        logger.error(
+                            "Key generation failed type=%s",
+                            type(error).__name__,
+                        )
+                        self._error_dialog(
+                            _("Key Generation Failed"),
+                            str(error) or _("Could not generate the SSH key."),
+                        )
+
+                    self.client_bridge.submit(
+                        _generate,
+                        on_success=_generated,
+                        on_error=_failed,
                     )
-                    
-                    if not new_key:
-                        logger.debug("SshCopyIdWindow: Key generation returned None")
-                        raise RuntimeError("Key generation failed. See logs for details.")
-
-                    logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
-                    logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
-                               f"public_path='{new_key.public_path}'")
-                    
-                    # Ensure the key files are properly written and accessible
-                    import time
-                    logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
-                    time.sleep(0.5)  # Small delay to ensure files are written
-                    
-                    # Verify the key files exist and are accessible
-                    private_exists = os.path.exists(new_key.private_path)
-                    public_exists = os.path.exists(new_key.public_path)
-                    logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
-                    
-                    if not private_exists:
-                        logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
-                        raise RuntimeError(f"Private key file not found: {new_key.private_path}")
-                    if not public_exists:
-                        logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
-                        raise RuntimeError(f"Public key file not found: {new_key.public_path}")
-                    
-                    logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
-                    logger.debug("SshCopyIdWindow: All key files verified successfully")
-                    
-                    # Run your terminal ssh-copy-id flow
-                    logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
-                    self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key)
-                    logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
-                    self.close()
 
                 except Exception as e:
-                    logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-                    logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
-                    self._error("Generate & Copy failed",
-                                "Could not generate a new key and copy it to the server.",
-                                str(e))
+                    if dialogs is not None:
+                        dialogs.close()
+                    logger.error("Key generation failed: %s", type(e).__name__)
+                    try:
+                        self._error_dialog(
+                            _("Key Generation Failed"),
+                            str(e) or _("Could not generate the SSH key."),
+                        )
+                    except Exception:
+                        logger.debug("Unable to show key generation error dialog", exc_info=True)
 
             btn_primary.connect("clicked", do_generate)
             dlg.present()
@@ -4085,7 +4795,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_copy_key_to_server_clicked(self, _button):
         logger.info("Main window: ssh-copy-id button clicked")
         logger.debug("Main window: Starting ssh-copy-id process")
-        
+
         selected_row = self.connection_list.get_selected_row()
         if not selected_row or not getattr(selected_row, "connection", None):
             logger.warning("Main window: No connection selected for ssh-copy-id")
@@ -4106,6 +4816,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
             logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
                          getattr(connection, 'protocol', 'ssh'))
+            return
+        if self.key_manager is None:
+            self._show_key_service_unavailable()
             return
         logger.info(f"Main window: Selected connection: {getattr(connection, 'nickname', 'unknown')}")
         logger.debug(f"Main window: Connection details - host: {getattr(connection, 'hostname', getattr(connection, 'host', 'unknown'))}, "
@@ -4140,7 +4853,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if self._focus_is_in_connection_list():
             # Focus the active terminal. Use the split-view-aware lookup so this
             # also returns focus to the active pane of a SplitViewTab (a
-            # SplitViewTab child has no .vte attribute of its own).
+            # SplitViewTab owns a child terminal container.
             terminal = self._get_active_terminal_widget()
             if terminal is not None:
                 self._focus_terminal_widget(terminal)
@@ -4167,9 +4880,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Handle group row activation - toggle expand/collapse
             logger.debug(f"Group row activated - toggling expand/collapse for group: {row.group_id}")
             row._toggle_expand()
-            
 
-        
+
+
     def on_connection_activate(self, list_box, row):
         """Handle connection activation (Enter key or double-click)"""
         self._return_to_tab_view_if_welcome()
@@ -4177,7 +4890,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._cycle_connection_tabs_or_open(row.connection)
             return True  # Stop event propagation
         return False
-        
+
     def on_activate_connection(self, action, param):
         """Handle the activate-connection action"""
         self._return_to_tab_view_if_welcome()
@@ -4332,9 +5045,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     _('Show Sidebar (F9, {modifier}+B)').format(
                         modifier=get_primary_modifier_label())
                 )
-            
+
             # No need to save state - sidebar always starts visible
-                
+
         except Exception as e:
             logger.error(f"Failed to toggle sidebar: {e}")
 
@@ -4549,7 +5262,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             connection = getattr(selected_row, 'connection', None)
             if not connection:
                 return
-            
+
             # Use the same logic as the context menu action
             self.open_in_system_terminal(connection)
         except Exception as e:
@@ -4605,6 +5318,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             if response not in {'delete', 'close_remove'}:
                 return
+            if self._daemon_mode_active():
+                self._delete_connections_via_client(
+                    connections,
+                    close_terminals=response == 'close_remove',
+                )
+                return
 
             pending = iter(connection for connection in connections if connection)
             self._deleting_connections_batch = True
@@ -4616,7 +5335,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self._deleting_connections_batch = False
                     self.group_manager._save_groups()
                     try:
-                        self.connection_manager.load_ssh_config()
+                        self.connection_manager.refresh()
                     except Exception:
                         logger.exception(
                             "Failed to reload connections after batch deletion"
@@ -4647,12 +5366,98 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._deleting_connections_batch = False
             logger.error(f"Failed to delete connections: {e}")
 
+    def _delete_connections_via_client(
+        self,
+        connections,
+        *,
+        close_terminals=False,
+    ) -> None:
+        """Delete daemon-owned connections serially without optimistic rows."""
+
+        from .api import SshPilotError
+        from .api.models import DeleteConnectionRequest
+
+        bridge = self.client_bridge
+        if bridge is None:
+            return
+        pending = iter(connection for connection in connections if connection)
+        self._deleting_connections_batch = True
+
+        def _finish():
+            self._deleting_connections_batch = False
+            if self._is_quitting:
+                return
+            try:
+                self.connection_manager.refresh()
+                self.rebuild_connection_list()
+            except Exception as error:
+                logger.warning(
+                    "Post-delete connection refresh failed type=%s",
+                    type(error).__name__,
+                )
+
+        def _delete_next():
+            if self._is_quitting:
+                self._deleting_connections_batch = False
+                return
+            try:
+                connection = next(pending)
+            except StopIteration:
+                _finish()
+                return
+            request = DeleteConnectionRequest(
+                connection_id=connection_id_for(connection)
+            )
+
+            def _success(_result):
+                if close_terminals:
+                    self._disconnect_connection_terminals(connection)
+                _delete_next()
+
+            def _failure(error):
+                self._deleting_connections_batch = False
+                if isinstance(error, SshPilotError):
+                    logger.warning(
+                        "Daemon connection delete failed code=%s",
+                        error.code.value,
+                    )
+                else:
+                    logger.error(
+                        "Daemon connection delete failed type=%s",
+                        type(error).__name__,
+                    )
+                if not self._is_quitting:
+                    self._error_dialog(
+                        _("Failed to delete connection"),
+                        _(
+                            "The connection could not be deleted. "
+                            "No list changes were applied."
+                        ),
+                    )
+
+            try:
+                bridge.submit(
+                    lambda: self.client.delete_connection(request),
+                    on_success=_success,
+                    on_error=_failure,
+                )
+            except RuntimeError:
+                _failure(RuntimeError("client bridge closed"))
+
+        _delete_next()
+
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
-        self.group_manager.connections.setdefault(connection.nickname, None)
-        if connection.nickname not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.nickname)
+        self.group_manager.bind_connections(self.connection_manager.connections)
+        self.group_manager.connections.setdefault(connection.id, None)
+        if connection.id not in self.group_manager.root_connections:
+            self.group_manager.root_connections.append(connection.id)
             self.group_manager._save_groups()
+        self.rebuild_connection_list()
+
+    def on_projection_reset(self, manager, _connection=None):
+        """Rebuild presentation state after an authoritative store refresh."""
+        self.group_manager.bind_connections(manager.connections)
         self.rebuild_connection_list()
 
     def on_connection_removed(self, manager, connection):
@@ -4671,15 +5476,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for row in self._rows_for_connection(connection):
                 self.connection_list.remove(row)
             del self.connection_rows[connection]
-        
+
         # Remove from group manager, including any group it was copied into
-        self.group_manager.connections.pop(connection.nickname, None)
-        if connection.nickname in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.nickname)
+        self.group_manager.connections.pop(connection.id, None)
+        if connection.id in self.group_manager.root_connections:
+            self.group_manager.root_connections.remove(connection.id)
         for group in self.group_manager.groups.values():
-            if connection.nickname in group.get('connections', []):
+            if connection.id in group.get('connections', []):
                 group['connections'] = [
-                    n for n in group['connections'] if n != connection.nickname
+                    n for n in group['connections'] if n != connection.id
                 ]
         if not getattr(self, '_deleting_connections_batch', False):
             self.group_manager._save_groups()
@@ -4732,6 +5537,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             conn.nickname: conn
             for conn in self.connection_manager.get_connections()
         }
+        connections_dict.update(
+            {
+                conn.id: conn
+                for conn in self.connection_manager.get_connections()
+                if getattr(conn, 'id', None)
+            }
+        )
         row = self.connection_list.get_first_child()
         while row:
             if isinstance(row, GroupRow):
@@ -4850,7 +5662,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_setting_changed(self, config, key, value):
         """Handle configuration setting change"""
         logger.debug(f"Setting changed: {key} = {value}")
-        
+
         # Apply relevant changes
         if key.startswith('terminal.'):
             # Update terminal themes/fonts
@@ -4877,18 +5689,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         width = self.get_default_size()[0]
         height = self.get_default_size()[1]
         sidebar_width = self._get_sidebar_width()
-        
+
         self.config.save_window_geometry(width, height, sidebar_width)
 
     def simple_close_handler(self, window):
         """Handle window close - distinguish between tab close and window close"""
         logger.info("")
-        
+
         try:
             # Check if we have any tabs open
             n_pages = self.tab_view.get_n_pages()
             logger.info(f" Number of tabs: {n_pages}")
-            
+
             # If we have tabs, close all tabs first and then quit
             if n_pages > 0:
                 logger.info(" CLOSING ALL TABS FIRST")
@@ -4896,20 +5708,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 while self.tab_view.get_n_pages() > 0:
                     page = self.tab_view.get_nth_page(0)
                     self.tab_view.close_page(page)
-            
+
             # Now quit the application
             logger.info(" QUITTING APPLICATION")
             app = self.get_application()
             if app:
                 app.quit()
-                
+
         except Exception as e:
             logger.error(f" ERROR IN WINDOW CLOSE: {e}")
             # Force quit even if there's an error
             app = self.get_application()
             self.show_quit_confirmation_dialog()
             return False  # Don't quit yet, let dialog handle it
-        
+
         # No active connections, safe to quit
         self._do_quit()
         return True  # Safe to quit
@@ -4918,6 +5730,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Handle window close request - MAIN ENTRY POINT"""
         if self._is_quitting:
             self._teardown_ssh_config_monitor()
+            self._invalidate_api_window_callbacks()
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch
@@ -4928,12 +5741,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 session_manager.save_previous(self.capture_session())
         except Exception as e:
             logger.debug(f"Failed to capture previous session on close: {e}")
-            
+
         # Check for active connections across all tabs
         actually_connected = {}
         local_terminals = []
         ssh_terminals = []
-        
+
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
@@ -4943,12 +5756,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         local_terminals.append(term)
                     else:
                         ssh_terminals.append(term)
-        
+
         # If there are SSH terminals, always show warning
         if ssh_terminals:
             self.show_quit_confirmation_dialog()
             return True  # Prevent close, let dialog handle it
-        
+
         # If there are only local terminals, check their job status
         if local_terminals:
             # Check if any local terminal has an active job
@@ -4957,15 +5770,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if hasattr(term, 'has_active_job') and term.has_active_job():
                     has_active_jobs = True
                     break
-            
+
             # If any local terminal has an active job, show warning
             if has_active_jobs:
                 self.show_quit_confirmation_dialog()
                 return True  # Prevent close, let dialog handle it
-        
+
         # No active connections or all local terminals are idle, safe to close
         self._teardown_ssh_config_monitor()
+        self._invalidate_api_window_callbacks()
         return False  # Allow close
+
+    def _invalidate_api_window_callbacks(self) -> None:
+        """Detach this window without closing the application-owned client."""
+
+        welcome = getattr(self, 'welcome_view', None)
+        if welcome is not None:
+            welcome.close()
+        request = getattr(self, '_api_client_selection_request', None)
+        self._api_client_selection_request = None
+        if request is not None:
+            request.cancel()
 
     def _askpass_dialog_parent(self):
         """Topmost app window to parent a routed askpass prompt on.
@@ -5133,12 +5958,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def show_quit_confirmation_dialog(self):
-        """Show confirmation dialog when quitting with active connections"""
-        # Best-effort raise of the main window. On X11 / for a minimized window
-        # this brings it forward; on Wayland a background app can't force a raise
-        # without an activation token, so this only flags attention there. The
-        # confirmation itself is a real top-level Gtk.AlertDialog (below) so it is
-        # surfaced by the compositor regardless.
+        """Show confirmation dialog when quitting with active connections.
+
+        When daemon-backed work is active (or the app-close policy is ASK),
+        presents Keep running / Terminate everything / Cancel. Otherwise falls
+        back to Cancel / Quit Anyway for local-terminal jobs.
+        """
         try:
             self.unminimize()
         except Exception as e:
@@ -5148,26 +5973,70 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.debug(f"Failed to bring window to foreground: {e}")
 
-        # Categorize connected terminals
+        from .daemon_quit_policy import (
+            DaemonQuitDecision,
+            apply_keep_running,
+            apply_terminate_all,
+            has_daemon_active_work,
+            present_daemon_quit_dialog,
+            resolve_quit_decision_from_policy,
+        )
+
+        daemon_work = has_daemon_active_work(self)
+        auto = None
+        if daemon_work:
+            auto = resolve_quit_decision_from_policy(getattr(self, "config", None))
+            # ASK (None) → dialog; DETACH/TERMINATE apply immediately.
+            if auto is DaemonQuitDecision.KEEP_RUNNING:
+                apply_keep_running(self)
+                return
+            if auto is DaemonQuitDecision.TERMINATE_ALL:
+                apply_terminate_all(self)
+                return
+            if auto is None:
+                app = self.get_application()
+                if app is not None:
+                    app.hold()
+
+                def _on_daemon_decision(decision: DaemonQuitDecision) -> None:
+                    try:
+                        if decision is DaemonQuitDecision.KEEP_RUNNING:
+                            apply_keep_running(self)
+                        elif decision is DaemonQuitDecision.TERMINATE_ALL:
+                            apply_terminate_all(self)
+                        else:
+                            try:
+                                self.unminimize()
+                            except Exception:
+                                pass
+                            try:
+                                self.present()
+                            except Exception:
+                                pass
+                    finally:
+                        if app is not None:
+                            app.release()
+
+                present_daemon_quit_dialog(self, on_decision=_on_daemon_decision)
+                return
+
+        # Local terminals / no daemon work: Cancel / Quit Anyway.
         connected_items = []
         local_terminals = []
         ssh_terminals = []
-        
+
         for conn, terms in self.connection_to_terminals.items():
             for term in terms:
                 if getattr(term, 'is_connected', False):
                     connected_items.append((conn, term))
-                    # Categorize terminals
                     if hasattr(term, '_is_local_terminal') and term._is_local_terminal():
                         local_terminals.append((conn, term))
                     else:
                         ssh_terminals.append((conn, term))
-        
+
         active_count = len(connected_items)
-        
-        # Determine dialog content based on terminal types
+
         if ssh_terminals:
-            # SSH terminals present - use original messaging
             if active_count == 1:
                 message = _("You have 1 open terminal tab.")
                 detail = _("Closing the application will disconnect this connection.")
@@ -5175,7 +6044,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 message = _("You have {count} open terminal tabs.").format(count=active_count)
                 detail = _("Closing the application will disconnect all connections.")
         else:
-            # Only local terminals with active jobs
             if active_count == 1:
                 message = _("You have 1 local terminal with an active job.")
                 detail = _("Closing the application will terminate the running process.")
@@ -5183,17 +6051,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 message = _("You have {count} local terminals with active jobs.").format(count=active_count)
                 detail = _("Closing the application will terminate all running processes.")
 
-        # Use Gtk.AlertDialog: it builds its own top-level window, so the
-        # compositor maps it even when the main window is in the background
-        # (an in-window Adw.AlertDialog is drawn inside the background surface
-        # and stays unreachable on Wayland).
+        # Gtk.AlertDialog: own top-level window so Wayland still maps it when
+        # the main window is in the background (Adw.AlertDialog stays inside
+        # the background surface). Daemon path above uses Adw because the
+        # main window was just presented.
         dialog = Gtk.AlertDialog()
         dialog.set_modal(True)
         dialog.set_message(_("Quit SSH Pilot?"))
         dialog.set_detail("{message}\n\n{detail}".format(message=message, detail=detail))
         dialog.set_buttons([_('Cancel'), _('Quit Anyway')])
-        dialog.set_cancel_button(0)   # Escape / dismiss -> Cancel
-        dialog.set_default_button(1)  # Enter -> Quit Anyway
+        dialog.set_cancel_button(0)
+        dialog.set_default_button(1)
 
         app = self.get_application()
         if app is not None:
@@ -5230,88 +6098,63 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
 
     def on_manage_local_authorized_keys_action(self, action, param=None):
-        """Open the structured editor on the local user's ~/.ssh/authorized_keys."""
-        try:
-            from .authorized_keys_window import AuthorizedKeysWindow
-        except Exception as exc:
-            logger.error("authorized_keys editor unavailable: %s", exc)
+        """Open the daemon-owned local authorized_keys editor."""
+        if self.client is None:
+            logger.debug("Local authorized_keys editor requires the daemon")
             return
         try:
+            from .authorized_keys_window import AuthorizedKeysWindow
             window = AuthorizedKeysWindow(
                 parent=self,
-                local_path="~/.ssh/authorized_keys",
-                connection_manager=self.connection_manager,
-                key_manager=getattr(self, 'key_manager', None),
+                client=self.client,
+                local=True,
+                key_manager=getattr(self, "key_manager", None),
             )
             window.present()
         except Exception as exc:
-            logger.error("Failed to open local authorized_keys editor: %s", exc)
+            logger.error("Failed to open local authorized_keys editor: %s", type(exc).__name__)
 
     def on_manage_authorized_keys_action(self, action, param=None):
-        """Open the structured authorized_keys editor for the right-clicked connection."""
-        if not (hasattr(self, '_context_menu_connection') and self._context_menu_connection):
+        """Open the daemon-owned authorized_keys editor for the selected connection."""
+        if self.client is None:
             return
-        connection = self._context_menu_connection
+        connection = getattr(self, "_context_menu_connection", None)
+        if connection is None:
+            return
         if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
-            logger.debug("authorized_keys editor unavailable: protocol %r has no key deployment",
-                         getattr(connection, 'protocol', 'ssh'))
             return
+        dialogs = None
         try:
             from .authorized_keys_window import AuthorizedKeysWindow
-            from .file_manager import create_file_manager_backend
-        except Exception as exc:
-            logger.error("authorized_keys editor unavailable: %s", exc)
-            return
-
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        username = getattr(connection, 'username', '') or ''
-        port_value = getattr(connection, 'port', 22) or 22
-
-        ssh_config = None
-        if hasattr(self, 'config') and self.config is not None:
-            try:
-                ssh_config = self.config.get_ssh_config()
-            except Exception as exc:
-                logger.debug("Failed to read SSH configuration for authorized_keys editor: %s", exc)
-                ssh_config = None
-
-        initial_password = getattr(connection, 'password', None) or None
-        if not initial_password and self.connection_manager is not None:
-            try:
-                initial_password = self.connection_manager.get_password(host_value, username)
-            except Exception as exc:
-                logger.debug("Password lookup failed for authorized_keys editor: %s", exc)
-                initial_password = None
-
-        try:
-            manager = create_file_manager_backend(
-                str(host_value or ''),
-                str(username or ''),
-                int(port_value),
-                password=initial_password,
-                connection=connection,
-                connection_manager=self.connection_manager,
-                ssh_config=ssh_config,
-            )
-        except Exception as exc:
-            logger.error("Failed to create SFTP manager for authorized_keys: %s", exc)
-            return
-
-        try:
+            from .api.models import SessionId
+            from .api.models.operations import OpenSftpRequest
+            from .api.connection_identity import connection_id_for
+            bridge = getattr(self, "client_bridge", None)
+            if bridge is not None:
+                # Attach the interaction presenter before opening the service
+                # so a password/host-key prompt during the handshake is never
+                # missed (same ordering as the daemon SFTP backend).
+                from .daemon_interaction_dialogs import DaemonInteractionDialogs
+                dialogs = DaemonInteractionDialogs(self.client, bridge, self)
+            service = self.client.open_sftp(OpenSftpRequest(connection_id=connection_id_for(connection)))
+            if dialogs is not None:
+                dialogs.set_session(SessionId(str(service.id)))
             window = AuthorizedKeysWindow(
                 parent=self,
+                client=self.client,
+                service_id=service.id,
                 connection=connection,
-                sftp_manager=manager,
-                connection_manager=self.connection_manager,
-                key_manager=getattr(self, 'key_manager', None),
+                key_manager=getattr(self, "key_manager", None),
+                interaction_dialogs=dialogs,
             )
+            if dialogs is not None:
+                # Prompts must stack above the editor window, not the main one.
+                dialogs.set_parent(window)
             window.present()
         except Exception as exc:
-            logger.error("Failed to open authorized_keys editor: %s", exc)
-            try:
-                manager.close()
-            except Exception:
-                pass
+            if dialogs is not None:
+                dialogs.close()
+            logger.error("Failed to open authorized_keys editor: %s", type(exc).__name__)
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
@@ -5365,7 +6208,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection = getattr(row, 'connection', None) if row else None
             if connection is None:
                 return
-            
+
             self.open_in_system_terminal(connection)
         except Exception as e:
             logger.error(f"Failed to open in system terminal: {e}")
@@ -5423,9 +6266,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if not connections:
                 return
 
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before moving connections."),
+                )
+                return
+
             context_row = getattr(self, '_context_menu_row', None)
             context_group_id = getattr(context_row, '_group_id', None)
 
+            steps = []
             for connection in connections:
                 nickname = getattr(connection, 'nickname', None)
                 if not nickname:
@@ -5437,23 +6289,68 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     and context_group_id in member_groups
                     and len(member_groups) > 1
                 ):
-                    # Only detach from the group the row is displayed under
-                    self.group_manager.remove_connection_from_group(nickname, context_group_id)
+                    from sshpilot.api.models.connection_store import (
+                        ConnectionId, GroupId, RemoveConnectionFromGroupRequest,
+                    )
+                    steps.append(
+                        lambda _prev, n=nickname, gid=context_group_id: (
+                            controller.client.remove_connection_from_group(
+                                RemoveConnectionFromGroupRequest(
+                                    connection_id=ConnectionId(n),
+                                    group_id=GroupId(gid),
+                                )
+                            )
+                        )
+                    )
                 else:
-                    self.group_manager.move_connection(nickname, None)
-            self.rebuild_connection_list()
+                    steps.append(
+                        lambda _prev, n=nickname: (
+                            controller.client.assign_connection_to_group(n, "")
+                        )
+                    )
+            if steps:
+                controller.run_sequence(
+                    steps,
+                    on_success=lambda _r: self.rebuild_connection_list(),
+                    on_error=lambda e: self._simple_dialog(
+                        _("Error"),
+                        _("Failed to move connection: {error}").format(error=str(e)),
+                    ),
+                )
 
         except Exception as e:
             logger.error(f"Failed to move connection to ungrouped: {e}")
-    
+
     def move_connection_to_group(self, connection_nickname: str, target_group_id: Optional[str] = None):
         """Move a connection to a specific group"""
         try:
-            self.group_manager.move_connection(connection_nickname, target_group_id)
-            self.rebuild_connection_list()
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before moving connections."),
+                )
+                return
+            controller.run(
+                lambda: controller.client.assign_connection_to_group(
+                    connection_nickname, target_group_id or ""
+                ),
+                on_success=lambda _r: self.rebuild_connection_list(),
+                on_error=lambda e: self._simple_dialog(
+                    _("Error"),
+                    _("Failed to move connection: {error}").format(error=str(e)),
+                ),
+            )
         except Exception as e:
             logger.error(f"Failed to move connection {connection_nickname} to group: {e}")
-    
+
+    def _find_connection_id_for_nickname(self, nickname: str):
+        """Find the daemon connection ID for a connection by nickname."""
+        for conn in self.connection_manager.connections:
+            if getattr(conn, 'nickname', '') == nickname:
+                return connection_id_for(conn)
+        return None
+
     def get_available_groups(self) -> List[Dict]:
         """Get list of available groups for selection"""
         return self.group_manager.get_all_groups()
@@ -5541,12 +6438,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 heading=_("No Terminal Found"),
                 body=_("Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm.")
             )
-            
+
             dialog.add_response("ok", _("OK"))
             dialog.set_default_response("ok")
             dialog.set_close_response("ok")
             dialog.present()
-            
+
         except Exception as e:
             logger.error(f"Failed to show terminal error dialog: {e}")
 
@@ -5556,11 +6453,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Determine error type for appropriate messaging
             is_ssh_error = "ssh connection" in error_message.lower() or "connection failed" in error_message.lower()
             is_timeout_error = "timeout" in error_message.lower()
-            
+
             if is_ssh_error or is_timeout_error:
                 heading = _("SSH Connection Failed")
                 body = _("Could not establish SSH connection to the server. Please check:")
-                
+
                 suggestions = [
                     _("• Server is running and accessible"),
                     _("• SSH service is enabled on the server"),
@@ -5576,17 +6473,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     _("• Check if the server is accessible"),
                     _("• Ensure you have proper permissions")
                 ]
-            
+
             # Create suggestions box
             suggestions_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
             suggestions_box.set_margin_top(12)
-            
+
             for suggestion in suggestions:
                 label = Gtk.Label(label=suggestion)
                 label.set_halign(Gtk.Align.START)
                 label.set_wrap(True)
                 suggestions_box.append(label)
-            
+
             msg = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
@@ -5594,7 +6491,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 body=body
             )
             msg.set_extra_child(suggestions_box)
-            
+
             # Add technical details if available
             if error_message and error_message.strip():
                 detail_label = Gtk.Label(label=error_message)
@@ -5602,12 +6499,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 detail_label.set_wrap(True)
                 detail_label.set_margin_top(8)
                 suggestions_box.append(detail_label)
-            
+
             msg.add_response("ok", _("OK"))
             msg.set_default_response("ok")
             msg.set_close_response("ok")
             msg.present()
-            
+
         except Exception as e:
             logger.error(f"Failed to show manage files error dialog: {e}")
 
@@ -5615,7 +6512,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Actually quit the application - FINAL STEP"""
         try:
             logger.info("Quitting application")
-            
+
             # Close all file manager windows first
             if hasattr(self, '_internal_file_manager_windows'):
                 count = len(self._internal_file_manager_windows)
@@ -5639,7 +6536,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                             logger.error(f"Error closing file manager window: {exc}", exc_info=True)
                 self._internal_file_manager_windows.clear()
                 logger.info("All file manager windows closed")
-            
+
             # Also check all application windows for file manager windows (defensive)
             try:
                 app = self.get_application()
@@ -5659,10 +6556,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                                     logger.error(f"Error closing untracked file manager window: {exc}", exc_info=True)
             except Exception as exc:
                 logger.debug(f"Error checking for untracked file manager windows: {exc}")
-            
+
             # Save window geometry
             self._save_window_state()
-            
+
             # Get the application and quit
             app = self.get_application()
             if app:
@@ -5670,13 +6567,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             else:
                 # Fallback: close the window directly
                 self.close()
-                
+
         except Exception as e:
             logger.error(f"Error during final quit: {e}")
             # Force exit as last resort
             import sys
             sys.exit(0)
-        
+
         return False  # Don't repeat timeout
 
     def _save_window_state(self):
@@ -5688,19 +6585,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:
             logger.error(f"Failed to save window state: {e}")
-    
+
     def _apply_saved_connection_meta(self, nickname, meta):
         """Persist the dialog's WoL/tags metadata after a successful save."""
         if not nickname or not isinstance(meta, dict):
             return
         try:
-            if 'tags' in meta:
-                self.config.set_connection_tags(nickname, list(meta.get('tags') or []))
-            wol = {k: meta[k] for k in ('wol_mac', 'wol_broadcast_ip', 'wol_port') if k in meta}
-            if wol:
-                existing = self.config.get_connection_meta(nickname)
-                existing.update(wol)
-                self.config.set_connection_meta(nickname, existing)
+            values = {}
+            if "tags" in meta:
+                values["tags"] = list(meta.get("tags") or [])
+            values.update(
+                {
+                    key: meta[key]
+                    for key in ("wol_mac", "wol_broadcast_ip", "wol_port")
+                    if key in meta
+                }
+            )
+            if values:
+                self.client.update_connection_metadata(nickname, values)
         except Exception:
             # The connection itself saved; only the app-side metadata failed.
             # Surface it — a silent miss here means WoL/tags quietly vanish.
@@ -5723,7 +6625,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if dialog.is_editing and dialog.connection is not None:
             old_connection = dialog.connection
             original_nickname = old_connection.nickname
-            if not self.connection_manager.update_connection(old_connection, connection_data):
+            if not self.plugin_connection_services.update_connection(
+                old_connection, connection_data
+            ):
                 logger.error("Failed to update plugin connection")
                 _done(False)
                 return
@@ -5736,19 +6640,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self.group_manager.rename_connection(original_nickname, new_nickname)
                 except Exception:
                     pass
-                try:
-                    old_meta = self.config.get_connection_meta(original_nickname)
-                    if old_meta:
-                        new_meta = self.config.get_connection_meta(new_nickname)
-                        merged = {**old_meta, **new_meta}
-                        meta_all = self.config.get_setting('connections_meta', {}) or {}
-                        meta_all.pop(original_nickname, None)
-                        self.config.set_setting('connections_meta', meta_all)
-                        self.config.set_connection_meta(new_nickname, merged)
-                except Exception:
-                    logger.debug("Failed to migrate connection meta on rename", exc_info=True)
             try:
-                old_connection.tags = self.config.get_connection_tags(old_connection.nickname)
+                object.__setattr__(
+                    old_connection,
+                    "tags",
+                    list(self.connection_manager.get_metadata(new_nickname).get("tags", [])),
+                )
             except Exception:
                 pass
             rows = self._rows_for_connection(old_connection)
@@ -5760,8 +6657,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.info(f"Updated plugin connection: {old_connection.nickname}")
             _done(True)
         else:
-            connection = Connection(connection_data)
-            if self.connection_manager.update_connection(connection, connection_data):
+            if self.plugin_connection_services.add_connection_from_data(
+                connection_data
+            ):
                 self._apply_saved_connection_meta(
                     connection_data.get('nickname'), pending_meta)
                 self.rebuild_connection_list()
@@ -5771,23 +6669,456 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.error("Failed to save plugin connection")
                 _done(False)
 
-    def on_connection_saved(self, dialog, connection_data):
-        """Handle connection saved from dialog"""
-        save_completion = connection_data.pop('__save_completion', None)
-        pending_meta = connection_data.pop('__meta', None)
+    def _daemon_mode_active(self) -> bool:
+        """Return whether this window is attached to the daemon client.
 
-        def _complete_save(ok):
+        ``ClientSelection`` is daemon-only now and intentionally no longer
+        carries the former ``mode`` enum.  Checking that removed field made
+        every real selection look like local/legacy mode, routing edits into
+        the read-only presentation store.
+        """
+        get_application = getattr(self, 'get_application', None)
+        app = get_application() if callable(get_application) else None
+        selection = (
+            getattr(app, '_api_client_selection', None)
+            if app is not None
+            else None
+        )
+        return (
+            selection is not None
+            and getattr(selection, 'client', None) is self.client
+        )
+
+    @staticmethod
+    def _normalise_daemon_editor_value(value):
+        if isinstance(value, (list, tuple)):
+            return tuple(
+                MainWindow._normalise_daemon_editor_value(item)
+                for item in value
+            )
+        if isinstance(value, dict):
+            return tuple(
+                sorted(
+                    (
+                        str(key),
+                        MainWindow._normalise_daemon_editor_value(item),
+                    )
+                    for key, item in value.items()
+                )
+            )
+        return value
+
+    def prepare_connection_save_for_client(self, dialog, connection_data):
+        """Reject daemon edits the v1 secret-free write DTO cannot represent."""
+
+        if not self._daemon_mode_active():
+            return None
+        if connection_data.get('protocol', 'ssh') != 'ssh':
+            # Plugins remain owned by their local persistence backend even
+            # while SSH connections are routed through the daemon.
+            return None
+
+        # An unchanged pre-filled password must never enter the mutation
+        # request or trigger local secret storage after a daemon write.
+        connection_data['password'] = ''
+
+        return None
+
+    def _save_connection_via_client(
+        self,
+        dialog,
+        connection_data,
+        complete_save,
+        pending_meta=None,
+    ) -> None:
+        from .api import SshPilotError
+        from .api.models.connections import (
+            EDITABLE_CONFIG_FIELDS,
+            ForwardingRule,
+            forwarding_rule_to_dict,
+        )
+        from .api.models import CreateConnectionRequest, UpdateConnectionRequest
+
+        bridge = self.client_bridge
+        if bridge is None:
+            complete_save(False)
+            return
+
+        # A later metadata/secret stage may be retried after the config
+        # mutation has committed.  Keep the authoritative mutation result on
+        # the dialog so retry never repeats create/update/rename/split.
+        resumable = bool(getattr(dialog, '_resumable_save_active', False))
+        checkpoint = (getattr(dialog, '_daemon_save_checkpoint', None)
+                      if resumable else None)
+        config_fingerprint = self._normalise_daemon_editor_value({
+            key: value for key, value in connection_data.items()
+            if not key.startswith('__')
+        })
+        metadata_fingerprint = self._normalise_daemon_editor_value(pending_meta or {})
+        if checkpoint is not None and getattr(
+            dialog, '_daemon_config_fingerprint', None
+        ) != config_fingerprint:
+            checkpoint = None
+            for name in ('_daemon_metadata_saved',
+                         '_daemon_metadata_fingerprint'):
+                try:
+                    delattr(dialog, name)
+                except AttributeError:
+                    pass
+
+        # Daemon edits may never save against a pending/failed snapshot: the
+        # dialog disables Save in that state, but the signal path (accelerator,
+        # programmatic) is gated here too.
+        is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
+        if (
+            callable(is_daemon_editor)
+            and is_daemon_editor()
+            and not getattr(dialog, '_daemon_editor_loaded', False)
+        ):
+            complete_save(False)
+            return
+
+        def _build_config_patch():
+            import re
+            patch = {}
+
+            for key in EDITABLE_CONFIG_FIELDS:
+                if key in ("nickname", "hostname", "username", "port", "protocol"):
+                    continue
+                if key not in connection_data:
+                    continue
+
+                if key == "forwarding_rules":
+                    raw = connection_data.get(key, ())
+                    if raw:
+                        patch[key] = [
+                            forwarding_rule_to_dict(r) if isinstance(r, ForwardingRule)
+                            else r if isinstance(r, dict) else {}
+                            for r in raw
+                        ]
+                    else:
+                        patch[key] = []
+                elif key in ("identity_files", "certificate_files", "proxy_jump", "aliases"):
+                    val = connection_data.get(key, ())
+                    if isinstance(val, str):
+                        if key in ("proxy_jump", "aliases"):
+                            patch[key] = [h.strip() for h in re.split(r'[\s,]+', val) if h.strip()]
+                        else:
+                            patch[key] = [f.strip() for f in re.split(r'[\r\n,]+', val) if f.strip()]
+                    else:
+                        patch[key] = [str(item).strip() for item in val if str(item).strip()] if val else []
+
+                elif isinstance(connection_data.get(key), bool):
+                    patch[key] = connection_data[key]
+                else:
+                    val = connection_data.get(key, '')
+                    if val is not None:
+                        patch[key] = val
+            return patch
+
+        try:
+            if dialog.is_editing:
+                connection_id = getattr(dialog, '_saved_connection_id', None)
+                if not connection_id:
+                    connection_id = connection_id_for(dialog.connection)
+                config_patch = _build_config_patch()
+
+                # In daemon mode, use the generation loaded from the daemon
+                # snapshot when the dialog opened (None until the snapshot
+                # arrives — never a zero sentinel).  In in-process mode,
+                # re-read the generation from the shared connection_manager,
+                # which is authoritative.
+                current_generation = None
+                if self._daemon_mode_active():
+                    current_generation = getattr(dialog, '_daemon_generation', None)
+                else:
+                    try:
+                        live = self.connection_manager.find_connection_by_nickname(
+                            str(getattr(dialog.connection, "nickname", "") or ""),
+                        )
+                        if live is not None:
+                            current_generation = getattr(live, "generation", 0)
+                    except Exception:
+                        current_generation = getattr(dialog.connection, "generation", 0)
+
+                # Pop split params — they drive a dedicated RPC, not
+                # the normal update_connection path.
+                split_from_group = connection_data.pop('__split_from_group', None)
+                split_source = connection_data.pop('__split_source', None)
+                split_original = connection_data.pop('__split_original_nickname', None)
+
+                if split_from_group:
+                    from .api.models.connections import SplitConnectionRequest
+                    split_req = SplitConnectionRequest(
+                        connection_id=connection_id,
+                        original_host_token=split_original or connection_data.get('nickname', ''),
+                        source_config_path=split_source or '',
+                        nickname=connection_data.get('nickname'),
+                        hostname=connection_data.get('hostname'),
+                        username=connection_data.get('username'),
+                        port=connection_data.get('port'),
+                        config_patch=config_patch,
+                        expected_generation=current_generation,
+                    )
+                    operation = lambda: self.client.split_connection(split_req)
+                else:
+                    request = UpdateConnectionRequest(
+                        nickname=connection_data.get('nickname'),
+                        hostname=connection_data.get('hostname'),
+                        username=connection_data.get('username'),
+                        port=connection_data.get('port'),
+                        config_patch=config_patch,
+                        expected_generation=current_generation,
+                    )
+                    operation = lambda: self.client.update_connection(
+                        connection_id,
+                        request,
+                    )
+            else:
+                config_patch = _build_config_patch()
+                request = CreateConnectionRequest(
+                    nickname=connection_data.get('nickname', ''),
+                    hostname=connection_data.get('hostname', ''),
+                    username=connection_data.get('username', ''),
+                    port=connection_data.get('port', 22),
+                    protocol='ssh',
+                    config_patch=config_patch,
+                )
+                operation = lambda: self.client.create_connection(request)
+        except (ValueError, TypeError) as build_err:
+            logger.error(
+                "Failed to build connection request: %s",
+                build_err,
+                exc_info=True,
+            )
+            complete_save(False)
+            return
+
+        def _success(_details):
+            if self._is_quitting:
+                complete_save(False, None)
+                return
+            
+            try:
+                new_conn_id = _details.connection_id
+                new_generation = _details.generation
+            except AttributeError:
+                logger.error("Daemon mutation succeeded but returned invalid details")
+                complete_save(False, None)
+                return
+
+            # The config mutation is committed. Transition immediately, before
+            # metadata/secrets can fail, so every retry addresses the returned
+            # identity and generation and can never repeat create/split.
+            dialog.is_editing = True
+            dialog._saved_connection_id = new_conn_id
+            dialog._daemon_generation = int(new_generation)
+            dialog._config_stage_complete = True
+            dialog._save_mutation_result = _details
+            dialog._daemon_save_checkpoint = _details
+            dialog._daemon_config_fingerprint = config_fingerprint
+            dialog.force_split_from_group = False
+
+            def _finish_save_flow(meta_error=None):
+                complete_save(True, _details, meta_error=meta_error)
+                try:
+                    is_daemon_editor = getattr(dialog, 'is_daemon_editor', None)
+                    if callable(is_daemon_editor) and is_daemon_editor():
+                        dialog._daemon_generation = int(new_generation)
+                except Exception:
+                    pass
+                if getattr(_details, 'changed', True):
+                    try:
+                        self._prompt_reconnect_after_daemon_save(
+                            new_conn_id,
+                            connection_data.get('nickname'),
+                        )
+                    except Exception:
+                        pass
+                
+                try:
+                    conf = getattr(self.connection_manager, 'config', None)
+                    if conf and hasattr(conf, 'load_json_config'):
+                        conf.config_data = conf.load_json_config()
+                    self.connection_manager.refresh()
+                    self.rebuild_connection_list()
+                except Exception as error:
+                    logger.warning(
+                        "Post-mutation connection refresh failed type=%s",
+                        type(error).__name__,
+                    )
+
+            pending_meta_local = pending_meta or {}
+            metadata_saved = getattr(dialog, '_daemon_metadata_saved', False)
+            if metadata_saved and getattr(
+                dialog, '_daemon_metadata_fingerprint', None
+            ) == metadata_fingerprint:
+                _finish_save_flow()
+                return
+            if pending_meta_local and new_conn_id:
+                def _meta_success(result):
+                    if result is not True:
+                        _meta_failure(RuntimeError(
+                            "Metadata persistence returned false"
+                        ))
+                        return
+                    dialog._daemon_metadata_saved = True
+                    dialog._daemon_metadata_fingerprint = metadata_fingerprint
+                    _finish_save_flow()
+                def _meta_failure(error):
+                    logger.debug("Metadata update via daemon RPC failed: %s", error)
+                    complete_save(
+                        False, _details,
+                        meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."),
+                    )
+                try:
+                    bridge.submit(
+                        lambda: self.client.update_connection_metadata(new_conn_id, pending_meta_local),
+                        on_success=_meta_success,
+                        on_error=_meta_failure,
+                    )
+                    return
+                except RuntimeError:
+                    complete_save(False, _details, meta_error=_("Saved, but tags/Wake-on-LAN settings could not be stored."))
+                    return
+                    
+            _finish_save_flow()
+
+        def _failure(error):
+            if isinstance(error, SshPilotError):
+                logger.warning(
+                    "Daemon connection mutation failed code=%s retryable=%s message=%s",
+                    error.code.value,
+                    error.retryable,
+                    error.message,
+                )
+            else:
+                logger.error(
+                    "Daemon connection mutation failed type=%s",
+                    type(error).__name__,
+                    exc_info=error,
+                )
+            complete_save(False)
+
+        if checkpoint is not None:
+            _success(checkpoint)
+            return
+
+        def _checkpoint_success(details):
+            _success(details)
+
+        try:
+            bridge.submit(
+                operation,
+                on_success=_checkpoint_success,
+                on_error=_failure,
+            )
+        except RuntimeError:
+            complete_save(False)
+
+    def _prompt_reconnect_after_daemon_save(
+        self,
+        connection_id: str,
+        nickname: str,
+    ) -> None:
+        """Offer to reconnect an active terminal after a daemon config save.
+
+        The daemon save path emits ``connection-updated`` to every open
+        terminal (which logs "waiting for user confirmation to reconnect")
+        but, unlike the local save path, never surfaces a prompt.  Match the
+        active terminal by the authoritative daemon connection identity and
+        present the same reconnect confirmation.
+        """
+        if self._is_quitting:
+            return
+        if not connection_id or not nickname:
+            return
+        for active_connection, terminal in tuple(self.active_terminals.items()):
+            if active_connection is None or terminal is None:
+                continue
+            active_ids = {
+                str(value)
+                for value in (
+                    getattr(active_connection, 'id', None),
+                    getattr(active_connection, 'connection_id', None),
+                    getattr(active_connection, 'uuid', None),
+                )
+                if value is not None
+            }
+            active_nickname = getattr(active_connection, 'nickname', '')
+            if str(connection_id) not in active_ids and active_nickname != nickname:
+                continue
+            try:
+                active_connection._terminal_instance = terminal
+            except Exception:
+                pass
+            self.terminal_manager.prompt_reconnect(active_connection)
+            return
+
+    def on_connection_saved(self, dialog, connection_data, pending_meta=None,
+                            secret_plan=None, save_completion=None):
+        """Handle connection saved from dialog"""
+        claim = getattr(save_completion, 'claim', None)
+        if callable(claim):
+            claim()
+        # Compatibility for third-party/plugin emitters using the pre-v2
+        # one-object signal.  Values are removed before any persistence call.
+        if save_completion is None:
+            save_completion = connection_data.pop('__save_completion', None)
+        if pending_meta is None:
+            pending_meta = connection_data.pop('__meta', None)
+        # The signal contract keeps these objects separate by construction.
+        # Assert at the persistence boundary as defence in depth.
+        if '__secret_plan' in connection_data:
+            logger.error("Rejected connection payload containing a secret plan")
             if callable(save_completion):
-                save_completion(bool(ok))
+                save_completion(False)
+            return
+
+        def _complete_save(ok, result=None, meta_error=None):
+            if callable(save_completion):
+                try:
+                    save_completion(bool(ok), result, meta_error)
+                except TypeError:
+                    # Compatibility only for legacy third-party signal handlers;
+                    # ConnectionDialog.SaveRequest has one fixed signature.
+                    save_completion(bool(ok), result)
+            has_secret_work = bool(
+                secret_plan and (
+                    secret_plan.get('password_changed')
+                    or secret_plan.get('passphrase_operations')
+                )
+            )
+            if ok and not meta_error and not has_secret_work:
+                for name in ('_daemon_save_checkpoint', '_daemon_metadata_saved',
+                             '_daemon_config_fingerprint',
+                             '_daemon_metadata_fingerprint',
+                             '_resumable_save_active'):
+                    try:
+                        delattr(dialog, name)
+                    except AttributeError:
+                        pass
 
         try:
             if connection_data.get('protocol', 'ssh') != 'ssh':
                 self._on_plugin_connection_saved(
                     dialog, connection_data, _complete_save, pending_meta)
                 return
+            if self._daemon_mode_active():
+                dialog._resumable_save_active = True
+                self._save_connection_via_client(
+                    dialog,
+                    connection_data,
+                    _complete_save,
+                    pending_meta=pending_meta,
+                )
+                return
             if dialog.is_editing:
                 # Update existing connection
                 old_connection = dialog.connection
+                before_config_fingerprint = self._normalise_daemon_editor_value(
+                    getattr(old_connection, 'data', {}) or {}
+                )
                 is_connected = old_connection in self.active_terminals
 
                 # Store the current terminal instance if connected
@@ -5821,30 +7152,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         self.group_manager.rename_connection(original_nickname, new_nickname)
                     except Exception:
                         pass
-                    # Migrate per-connection metadata (pinned, WoL, tags) to the
-                    # new nickname. The dialog already wrote its own fields under
-                    # the new key, so those win over the old entry's values.
-                    try:
-                        old_meta = self.config.get_connection_meta(original_nickname)
-                        if old_meta:
-                            new_meta = self.config.get_connection_meta(new_nickname)
-                            merged = {**old_meta, **new_meta}
-                            meta_all = self.config.get_setting('connections_meta', {}) or {}
-                            meta_all.pop(original_nickname, None)
-                            self.config.set_setting('connections_meta', meta_all)
-                            self.config.set_connection_meta(new_nickname, merged)
-                    except Exception:
-                        logger.debug("Failed to migrate connection meta on rename", exc_info=True)
 
                 # Update UI. The tag-filtered list is derived during rebuilds,
                 # so a tag change needs a full rebuild while a tag filter is
                 # active — update_display() alone leaves it stale.
                 tags_changed = False
                 try:
-                    fresh_tags = self.config.get_connection_tags(old_connection.nickname)
+                    fresh_tags = list(
+                        self.connection_manager.get_metadata(new_nickname).get("tags", [])
+                    )
                     if list(getattr(old_connection, 'tags', None) or []) != fresh_tags:
                         tags_changed = True
-                    old_connection.tags = fresh_tags
+                    object.__setattr__(old_connection, 'tags', fresh_tags)
                 except Exception:
                     pass
                 rows = self._rows_for_connection(old_connection)
@@ -5860,9 +7179,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 logger.info(f"Updated connection: {old_connection.nickname}")
 
-                # If the connection is active, ask if user wants to reconnect
-                if is_connected and terminal is not None:
-                    # Store the terminal in the connection for later use
+                after_config_fingerprint = self._normalise_daemon_editor_value(
+                    connection_data
+                )
+                if (
+                    before_config_fingerprint != after_config_fingerprint
+                    and is_connected
+                    and terminal is not None
+                ):
                     old_connection._terminal_instance = terminal
                     self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)
@@ -5890,7 +7214,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to save connection: {e}")
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
-    
+
     def _warn_if_effective_config_differs(self, connection, connection_data):
         """After a save, warn if global SSH config overrides/adds values for this
         connection. Informational only — offers a diff view and a shortcut to the

@@ -352,6 +352,12 @@ def create_internal_file_manager_tab(
 
     from .file_manager_window import FileManagerWindow
 
+    daemon_client = getattr(parent_window, "client", None) if parent_window else None
+    bridge = getattr(parent_window, "client_bridge", None) if parent_window else None
+    connection_id = None
+    if connection is not None:
+        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+
     controller = FileManagerWindow(
         application=app,
         host=host,
@@ -362,6 +368,10 @@ def create_internal_file_manager_tab(
         connection=connection,
         connection_manager=connection_manager,
         ssh_config=ssh_config,
+        daemon_client=daemon_client,
+        bridge=bridge,
+        connection_id=connection_id,
+        config=getattr(parent_window, "config", None) if parent_window else None,
     )
     # Remove the controller window from the application so it does not count
     # as a top-level window while embedded in a tab.

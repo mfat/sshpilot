@@ -1,16 +1,14 @@
+from .api.connection_identity import connection_id_for
 import os
-import asyncio
 import logging
 import threading
 from typing import Optional
-
 
 
 from gi.repository import Gio, GLib, Adw, Gdk, Gtk
 from gettext import gettext as _
 
 from .terminal import TerminalWidget
-from .file_manager_integration import should_hide_external_terminal_options
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +21,15 @@ class TerminalManager:
 
     def _ensure_backend_alignment(self, terminal) -> None:
         """Ensure the given terminal uses the configured backend."""
-        if not terminal or not hasattr(self.window, 'config'):
+        if not terminal or not hasattr(self.window, "config"):
             return
-        desired = self.window.config.get_setting('terminal.backend', 'vte')
-        getter = getattr(terminal, 'get_backend_name', None)
-        current = getter() if callable(getter) else 'vte'
+        desired = self.window.config.get_setting("terminal.backend", "vte")
+        getter = getattr(terminal, "get_backend_name", None)
+        current = getter() if callable(getter) else "vte"
         if isinstance(desired, str) and isinstance(current, str):
-            if current.lower() == (desired or 'vte').lower():
+            if current.lower() == (desired or "vte").lower():
                 return
-        aligner = getattr(terminal, 'ensure_backend', None)
+        aligner = getattr(terminal, "ensure_backend", None)
         if callable(aligner):
             try:
                 aligner(desired)
@@ -42,10 +40,10 @@ class TerminalManager:
         """Ensure all existing terminals use the configured backend."""
         seen = set()
         collections = []
-        connection_terms = getattr(self.window, 'connection_to_terminals', None)
+        connection_terms = getattr(self.window, "connection_to_terminals", None)
         if isinstance(connection_terms, dict):
             collections.extend(connection_terms.values())
-        active = getattr(self.window, 'active_terminals', None)
+        active = getattr(self.window, "active_terminals", None)
         if isinstance(active, dict):
             collections.append(active.values())
         for group in collections:
@@ -54,8 +52,8 @@ class TerminalManager:
                     continue
                 self._ensure_backend_alignment(term)
                 seen.add(term)
-        tab_view = getattr(self.window, 'tab_view', None)
-        if tab_view is not None and hasattr(tab_view, 'get_n_pages'):
+        tab_view = getattr(self.window, "tab_view", None)
+        if tab_view is not None and hasattr(tab_view, "get_n_pages"):
             try:
                 for index in range(tab_view.get_n_pages()):
                     page = tab_view.get_nth_page(index)
@@ -81,21 +79,13 @@ class TerminalManager:
         the user can unlock for this connection. After that one re-prompt we proceed
         regardless (the user cancelling their own prompt falls back to SSH's own prompt)."""
         try:
-            from .secret_storage import get_secret_manager
-            manager = get_secret_manager()
-
-            # rbw is passive (session_backed=False), so selected_needs_unlock() skips it —
-            # but a locked rbw-agent silently yields no secret on connect. Nudge through
-            # rbw's own pinentry (rbw_setup runs `rbw unlock` + sync), then retry regardless
-            # of the result (a cancel falls back to ssh's own prompt, like the bw path).
-            rbw = manager.selected_backend()
-            if (getattr(rbw, "name", "") == "rbw"
-                    and rbw.is_available() and not rbw.is_unlocked()):
-                from .rbw_setup import ensure_rbw_ready
-                ensure_rbw_ready(self.window, lambda _ready: retry())
-                return True
-
-            if not manager.selected_needs_unlock():
+            controller = getattr(self.window, "secrets_controller", None)
+            if controller is None:
+                # A missing daemon controller is not permission to inspect or
+                # unlock a frontend-owned backend.
+                return False
+            state = controller.load_state()
+            if not state.needs_unlock and not state.login_required:
                 return False
             from .secret_unlock_dialog import prompt_unlock
 
@@ -103,23 +93,29 @@ class TerminalManager:
                 def _on_done(_success):
                     still_locked = False
                     try:
-                        still_locked = get_secret_manager().selected_needs_unlock()
+                        current = controller.load_state()
+                        still_locked = bool(current.needs_unlock or current.login_required)
                     except Exception:
                         still_locked = False
-                    if (still_locked and _allow_reprompt and not owned[0]
-                            and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)):
+                    if (
+                        still_locked
+                        and _allow_reprompt
+                        and not owned[0]
+                        and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)
+                    ):
                         return  # rode a deferred prompt -> our own prompt now drives the retry
                     retry()
 
                 owned = [True]
                 owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
 
-            # Locked. A vault that isn't signed in can't be unlocked, so decide off the
-            # main thread (``selected_needs_login`` spawns a slow ``bw`` process): when
-            # not signed in, skip the doomed "Unlock vault" dialog and just proceed with
-            # the connection (SSH prompts for auth itself); otherwise show the unlock prompt.
+            # A vault that isn't signed in can't be unlocked. Re-read that
+            # daemon-owned state before deciding whether to show the prompt.
             def _probe():
-                needs_login = manager.selected_needs_login()
+                try:
+                    needs_login = bool(controller.load_state().login_required)
+                except Exception:
+                    needs_login = False
                 GLib.idle_add(lambda: (_after_probe(needs_login), False)[1])
 
             def _after_probe(needs_login):
@@ -134,15 +130,32 @@ class TerminalManager:
             logger.error("Secret unlock prompt failed: %s", exc)
             return False
 
-    def connect_to_host(self, connection, force_new: bool = False,
-                        remote_command: Optional[str] = None,
-                        tab_title: Optional[str] = None,
-                        force_tty: bool = False,
-                        pty_prompt: Optional[str] = None,
-                        pty_response: Optional[str] = None,
-                        _secret_unlock_attempted: bool = False):
+    def connect_to_host(
+        self,
+        connection,
+        force_new: bool = False,
+        remote_command: Optional[str] = None,
+        tab_title: Optional[str] = None,
+        force_tty: bool = False,
+        pty_prompt: Optional[str] = None,
+        pty_response: Optional[str] = None,
+        _secret_unlock_attempted: bool = False,
+    ):
+        """Open an SSH terminal using an explicit route decided once up front.
+
+        Phases:
+        1. Resolve route (policy only — never readiness)
+        2. External / legacy / daemon ownership branches
+        3. Daemon readiness (+ bounded startup) without legacy fallthrough
+        4. Construct terminal view and launch the selected backend only
+        """
+
+        from .daemon_terminal_policy import (
+            SshTerminalRoute,
+            resolve_ssh_terminal_route,
+        )
+
         window = self.window
-        group_color = self._resolve_group_color(connection)
         if not force_new:
             if connection in window.active_terminals:
                 terminal = window.active_terminals[connection]
@@ -151,148 +164,328 @@ class TerminalManager:
                 if page is not None:
                     window.tab_view.set_selected_page(page)
                     return
-                else:
-                    logger.warning(
-                        f"Terminal for {connection.nickname} not found in tab view, removing from active terminals"
-                    )
-                    del window.active_terminals[connection]
+                logger.warning(
+                    f"Terminal for {connection.nickname} not found in tab view, "
+                    "removing from active terminals"
+                )
+                del window.active_terminals[connection]
             existing_terms = window.connection_to_terminals.get(connection) or []
-            for t in reversed(existing_terms):
-                page = window._page_for_child(t)
+            for existing in reversed(existing_terms):
+                page = window._page_for_child(existing)
                 if page is not None:
-                    self._ensure_backend_alignment(t)
-                    window.active_terminals[connection] = t
+                    self._ensure_backend_alignment(existing)
+                    window.active_terminals[connection] = existing
                     window.tab_view.set_selected_page(page)
                     return
 
-        # A session-backed secret store (Bitwarden/Vaultwarden) must be unlocked
-        # before this connection's password/passphrase can be autofilled. Prompt
-        # once on the main thread, then re-enter to actually connect. We retry
-        # regardless of the unlock result (and skip a second prompt) so a cancel
-        # falls back to ssh's own prompt instead of looping.
+        route = resolve_ssh_terminal_route(window, connection)
+        if route is None:
+            route = SshTerminalRoute.DAEMON
+
+        if route is SshTerminalRoute.EXTERNAL:
+            self._open_external_ssh(
+                connection,
+                _secret_unlock_attempted=_secret_unlock_attempted,
+            )
+            return
+
+        # Daemon route — never fall through to local SSH on readiness failure.
+        self._open_daemon_ssh(
+            connection,
+            remote_command=remote_command,
+            tab_title=tab_title,
+            force_tty=force_tty,
+            pty_prompt=pty_prompt,
+            pty_response=pty_response,
+            _secret_unlock_attempted=_secret_unlock_attempted,
+        )
+
+    def _open_external_ssh(self, connection, *, _secret_unlock_attempted: bool = False):
+        """External-process-owned SSH — no internal tab, no daemon session."""
+
+        window = self.window
+
+        def _launch():
+            window._open_connection_in_external_terminal(connection)
+
+        # External terminals still use GTK-side askpass/secret policy when a
+        # session-backed vault must be unlocked before the external spawn.
         if not _secret_unlock_attempted and self._maybe_unlock_secrets_then(
-            lambda: self.connect_to_host(
-                connection, force_new=force_new, remote_command=remote_command,
-                tab_title=tab_title, force_tty=force_tty,
-                pty_prompt=pty_prompt, pty_response=pty_response,
+            lambda: self._open_external_ssh(connection, _secret_unlock_attempted=True)
+        ):
+            return
+        _launch()
+
+    def _open_daemon_ssh(
+        self,
+        connection,
+        *,
+        remote_command: Optional[str] = None,
+        tab_title: Optional[str] = None,
+        force_tty: bool = False,
+        pty_prompt: Optional[str] = None,
+        pty_response: Optional[str] = None,
+        _secret_unlock_attempted: bool = False,
+    ):
+        """Daemon-owned SSH — no native_connect, VTE SSH spawn, or local askpass.
+
+        GTK may unlock a session-backed *vault* after readiness succeeds so the
+        daemon broker can read stored credentials; SSH secrets themselves stay
+        daemon-owned and are never retrieved into GTK for this route.
+        """
+
+        from .daemon_terminal_policy import (
+            daemon_readiness_user_message,
+            resolve_daemon_terminal_readiness,
+        )
+
+        window = self.window
+        readiness = self._ensure_daemon_terminal_ready()
+        if not readiness.ready:
+            self._show_daemon_error_dialog(
+                window,
+                daemon_readiness_user_message(readiness),
+            )
+            return
+
+        # Backend unlock only — not SSH password/passphrase retrieval into GTK.
+        # After unlock, the daemon interaction broker remains authoritative.
+        if not _secret_unlock_attempted and self._maybe_unlock_secrets_then(
+            lambda: self._open_daemon_ssh(
+                connection,
+                remote_command=remote_command,
+                tab_title=tab_title,
+                force_tty=force_tty,
+                pty_prompt=pty_prompt,
+                pty_response=pty_response,
                 _secret_unlock_attempted=True,
             )
         ):
             return
 
-        # The user's "use external terminal" preference is only applied when
-        # external terminal options are not hidden by policy or environment.
-        use_external = window.config.get_setting('use-external-terminal', False)
-        if use_external and not should_hide_external_terminal_options():
-            window._open_connection_in_external_terminal(connection)
-            return
-        else:
-            group_color, group_name = self._resolve_group_color_and_name(connection)
-
-            terminal = TerminalWidget(
-                connection,
-                window.config,
-                window.connection_manager,
-                group_color=group_color,
+        # Re-check after unlock: session may have closed / daemon dropped.
+        readiness = resolve_daemon_terminal_readiness(
+            getattr(window, "client", None),
+            getattr(window, "client_bridge", None),
+            selection_pending=bool(getattr(window, "_api_client_selection_pending", False)),
+        )
+        if not readiness.ready:
+            self._show_daemon_error_dialog(
+                window,
+                daemon_readiness_user_message(readiness),
             )
-            terminal.connect('connection-established', self.on_terminal_connected)
-            terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
-            terminal.connect('connection-lost', self.on_terminal_disconnected)
-            terminal.connect('title-changed', self.on_terminal_title_changed)
+            return
 
-            # One-shot PTY auto-fill: answer a known remote prompt (e.g. a sudo
-            # password) by typing the response when the prompt appears. Set
-            # before _connect_ssh() so the watcher is armed at spawn time.
-            if pty_prompt and pty_response is not None:
-                terminal._pty_autofill = (pty_prompt, pty_response)
+        terminal, _page = self._create_internal_terminal_tab(
+            connection,
+            tab_title=tab_title,
+            pty_prompt=pty_prompt,
+            pty_response=pty_response,
+        )
 
-            from sshpilot import icon_utils
-            page = window.tab_view.append(terminal)
-            page.set_title(tab_title or connection.nickname)
-            page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
-            if group_name:
-                setattr(terminal, 'group_name', group_name)
-            self._apply_tab_group_color(page, group_color, tooltip=group_name)
-
-
-            window.connection_to_terminals.setdefault(connection, []).append(terminal)
-            window.terminal_to_connection[terminal] = connection
-            window.active_terminals[connection] = terminal
-
-            window.show_tab_view()
-            window.tab_view.set_selected_page(page)
-
-        def _cleanup_failed_terminal():
-            connection.is_connected = False
-            window.tab_view.close_page(page)
-
+        try:
+            connection_id = connection_id_for(connection)
+            terminal.start_daemon_session(
+                window.client,
+                window.client_bridge,
+                connection_id,
+                remote_command=remote_command,
+                force_tty=force_tty,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to initialize daemon session type=%s",
+                type(exc).__name__,
+            )
+            self._unregister_terminal(connection, terminal)
             try:
-                if connection in window.active_terminals and window.active_terminals[connection] is terminal:
-                    del window.active_terminals[connection]
-                if terminal in window.terminal_to_connection:
-                    del window.terminal_to_connection[terminal]
-                if connection in window.connection_to_terminals and terminal in window.connection_to_terminals[connection]:
-                    window.connection_to_terminals[connection].remove(terminal)
-                    if not window.connection_to_terminals[connection]:
-                        del window.connection_to_terminals[connection]
+                page = window._page_for_child(terminal)
+                if page is not None:
+                    window.tab_view.close_page(page)
             except Exception:
                 pass
+            self._show_daemon_error_dialog(
+                window,
+                _(
+                    "The daemon-backed SSH session could not be started.\n"
+                    "Check the daemon status and try again."
+                ),
+            )
+            return
 
-        def _set_terminal_colors():
-            # Shutdown race guard: this idle callback can fire after the window
-            # started closing. Drawing/connecting now queues rendering against a
-            # disposed GSK renderer and spawns SSH post-cleanup, so bail early.
-            if getattr(window, '_is_quitting', False):
+        def _apply_theme():
+            if getattr(window, "_is_quitting", False):
                 return
-
             try:
-                if hasattr(window, 'get_application'):
-                    try:
-                        app = window.get_application()
-                    except Exception:
-                        app = None
-                else:
-                    app = None
-                if app is None:
-                    try:
-                        app = Adw.Application.get_default()
-                    except Exception:
-                        app = None
-                # sshPilot connects in native mode only; connect() delegates to
-                # native_connect(), so either entry point prepares a native command.
-                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
-                        and not getattr(connection, 'ssh_cmd', None)):
-                    prepare = (
-                        connection.native_connect(remote_command=remote_command,
-                                                  force_tty=force_tty)
-                        if hasattr(connection, 'native_connect')
-                        else connection.connect()
-                    )
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
-                            fut.result()
-                        else:
-                            loop.run_until_complete(prepare)
-                    except Exception as prep_err:
-                        logger.error(f"Failed to prepare SSH command: {prep_err}")
-
                 terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection')
-                    _cleanup_failed_terminal()
-            except Exception as e:
-                logger.error(f"Error setting terminal colors: {e}")
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection')
-                    _cleanup_failed_terminal()
+                terminal.queue_terminal_draw()
+            except Exception as exc:
+                logger.error("Error applying daemon terminal theme: %s", exc)
 
-        GLib.idle_add(_set_terminal_colors)
+        GLib.idle_add(_apply_theme)
+
+    def _ensure_daemon_terminal_ready(self):
+        """Evaluate readiness; attempt one bounded on-demand daemon start if needed."""
+
+        from .daemon_terminal_policy import (
+            DaemonTerminalReadinessReason,
+            resolve_daemon_terminal_readiness,
+        )
+
+        window = self.window
+        pending = bool(getattr(window, "_api_client_selection_pending", False))
+        readiness = resolve_daemon_terminal_readiness(
+            getattr(window, "client", None),
+            getattr(window, "client_bridge", None),
+            selection_pending=pending,
+        )
+        if readiness.ready:
+            return readiness
+        if readiness.reason is DaemonTerminalReadinessReason.SELECTION_PENDING:
+            return readiness
+        if readiness.reason not in {
+            DaemonTerminalReadinessReason.CLIENT_UNAVAILABLE,
+            DaemonTerminalReadinessReason.HANDSHAKE_INCOMPLETE,
+            DaemonTerminalReadinessReason.SERVER_INSTANCE_MISSING,
+        }:
+            return readiness
+
+        startup_failure = self._try_start_daemon_client()
+        return resolve_daemon_terminal_readiness(
+            getattr(window, "client", None),
+            getattr(window, "client_bridge", None),
+            selection_pending=bool(getattr(window, "_api_client_selection_pending", False)),
+            startup_failure=startup_failure,
+        )
+
+    def _try_start_daemon_client(self) -> Optional[object]:
+        """Bounded reconnect/start. Returns a readiness reason on failure, else None."""
+
+        from .daemon_terminal_policy import DaemonTerminalReadinessReason
+        from .daemon.launcher import DaemonLaunchError, DaemonLauncher, DaemonStartupFailure
+        from .gtk_client_bridge import GtkClientBridge
+
+        window = self.window
+        app = None
+        try:
+            app = window.get_application()
+        except Exception:
+            app = None
+
+        bridge = getattr(window, "client_bridge", None)
+        if bridge is None:
+            bridge = getattr(app, "_api_client_bridge", None) if app is not None else None
+        if bridge is None:
+            try:
+                bridge = GtkClientBridge()
+            except Exception:
+                return DaemonTerminalReadinessReason.BRIDGE_UNAVAILABLE
+            window.client_bridge = bridge
+            if app is not None:
+                app._api_client_bridge = bridge
+
+        launcher = getattr(app, "_api_daemon_launcher", None) if app else None
+        if launcher is None:
+            verbose = bool(getattr(app, "verbose_override", False)) if app else False
+            quiet = bool(getattr(app, "quiet_override", False)) if app else False
+            launcher = DaemonLauncher(verbose=verbose, quiet=quiet)
+            if app is not None:
+                app._api_daemon_launcher = launcher
+
+        try:
+            launched = launcher.connect_or_start()
+        except DaemonLaunchError as error:
+            if error.reason is DaemonStartupFailure.STARTUP_TIMEOUT:
+                return DaemonTerminalReadinessReason.DAEMON_START_TIMEOUT
+            return DaemonTerminalReadinessReason.DAEMON_START_FAILED
+        except Exception:
+            logger.error("On-demand daemon start failed", exc_info=True)
+            return DaemonTerminalReadinessReason.DAEMON_START_FAILED
+
+        previous = getattr(window, "client", None)
+        window.client = launched.client
+        if app is not None:
+            from .api.client_factory import ClientSelection
+
+            app._api_client_selection = ClientSelection(
+                client=launched.client,
+                daemon_process=launched.process,
+            )
+            if hasattr(app, "install_api_event_subscription"):
+                try:
+                    app.install_api_event_subscription(launched.client)
+                except Exception:
+                    logger.debug(
+                        "Failed to install API event subscription after daemon start",
+                        exc_info=True,
+                    )
+        if previous is not None and previous is not launched.client:
+            try:
+                previous.close()
+            except Exception:
+                pass
+        return None
+
+    def _create_internal_terminal_tab(
+        self,
+        connection,
+        *,
+        tab_title: Optional[str] = None,
+        pty_prompt: Optional[str] = None,
+        pty_response: Optional[str] = None,
+    ):
+        window = self.window
+        group_color, group_name = self._resolve_group_color_and_name(connection)
+        terminal = TerminalWidget(
+            connection,
+            window.config,
+            window.connection_manager,
+            group_color=group_color,
+        )
+        terminal._reconnect_handler = self.reconnect_terminal
+        terminal.connect("connection-established", self.on_terminal_connected)
+        terminal.connect(
+            "connection-failed",
+            lambda _w, error: logger.error(f"Connection failed: {error}"),
+        )
+        terminal.connect("connection-lost", self.on_terminal_disconnected)
+        terminal.connect("title-changed", self.on_terminal_title_changed)
+
+        if pty_prompt and pty_response is not None:
+            terminal._pty_autofill = (pty_prompt, pty_response)
+
+        from sshpilot import icon_utils
+
+        page = window.tab_view.append(terminal)
+        page.set_title(tab_title or connection.nickname)
+        page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
+        if group_name:
+            setattr(terminal, "group_name", group_name)
+        self._apply_tab_group_color(page, group_color, tooltip=group_name)
+
+        window.connection_to_terminals.setdefault(connection, []).append(terminal)
+        window.terminal_to_connection[terminal] = connection
+        window.active_terminals[connection] = terminal
+        window.show_tab_view()
+        window.tab_view.set_selected_page(page)
+        return terminal, page
+
+    def _unregister_terminal(self, connection, terminal) -> None:
+        window = self.window
+        try:
+            if (
+                connection in window.active_terminals
+                and window.active_terminals[connection] is terminal
+            ):
+                del window.active_terminals[connection]
+            window.terminal_to_connection.pop(terminal, None)
+            terms = window.connection_to_terminals.get(connection)
+            if terms and terminal in terms:
+                terms.remove(terminal)
+                if not terms:
+                    del window.connection_to_terminals[connection]
+        except Exception:
+            pass
 
     def create_terminal_for_pane(self, connection, on_connected=None, on_disconnected=None):
         """
@@ -300,8 +493,38 @@ class TerminalManager:
 
         Unlike connect_to_host(), this does NOT append the terminal to tab_view.
         The caller (SplitPane) embeds the returned widget in its own layout.
+
+        Route is resolved once. Daemon readiness failure never falls through to
+        local SSH spawn for a daemon-selected route.
         """
+        from .daemon_terminal_policy import (
+            daemon_readiness_user_message,
+        )
+
         window = self.window
+        # Split panes are internal renderers, so external preference still uses
+        # the daemon rather than creating a second process-owning path.
+        use_daemon = True
+        if use_daemon:
+            readiness = self._ensure_daemon_terminal_ready()
+            if not readiness.ready:
+                self._show_daemon_error_dialog(
+                    window,
+                    daemon_readiness_user_message(readiness),
+                )
+                # Return an inert widget rather than spawning local SSH.
+                group_color, group_name = self._resolve_group_color_and_name(connection)
+                terminal = TerminalWidget(
+                    connection,
+                    window.config,
+                    window.connection_manager,
+                    group_color=group_color,
+                )
+                terminal._reconnect_handler = self.reconnect_terminal
+                if group_name:
+                    setattr(terminal, "group_name", group_name)
+                return terminal
+
         group_color, group_name = self._resolve_group_color_and_name(connection)
 
         terminal = TerminalWidget(
@@ -310,18 +533,19 @@ class TerminalManager:
             window.connection_manager,
             group_color=group_color,
         )
-        terminal.connect('connection-established', self.on_terminal_connected)
-        terminal.connect('connection-failed', lambda w, e: logger.error(f"Connection failed: {e}"))
-        terminal.connect('connection-lost', self.on_terminal_disconnected)
-        terminal.connect('title-changed', self._on_pane_terminal_title_changed)
+        terminal._reconnect_handler = self.reconnect_terminal
+        terminal.connect("connection-established", self.on_terminal_connected)
+        terminal.connect("connection-failed", lambda w, e: logger.error(f"Connection failed: {e}"))
+        terminal.connect("connection-lost", self.on_terminal_disconnected)
+        terminal.connect("title-changed", self._on_pane_terminal_title_changed)
 
         if on_connected:
-            terminal.connect('connection-established', on_connected)
+            terminal.connect("connection-established", on_connected)
         if on_disconnected:
-            terminal.connect('connection-lost', on_disconnected)
+            terminal.connect("connection-lost", on_disconnected)
 
         if group_name:
-            setattr(terminal, 'group_name', group_name)
+            setattr(terminal, "group_name", group_name)
 
         window.connection_to_terminals.setdefault(connection, []).append(terminal)
         window.terminal_to_connection[terminal] = connection
@@ -329,63 +553,31 @@ class TerminalManager:
 
         def _set_terminal_colors():
             try:
-                try:
-                    app = window.get_application()
-                except Exception:
-                    app = None
-                if app is None:
+                if use_daemon:
                     try:
-                        from gi.repository import Adw as _Adw
-                        app = _Adw.Application.get_default()
-                    except Exception:
-                        app = None
-                # Native-only connection (connect() delegates to native_connect()).
-                if (getattr(connection, 'protocol', 'ssh') == 'ssh'
-                        and not getattr(connection, 'ssh_cmd', None)):
-                    prepare = (
-                        connection.native_connect()
-                        if hasattr(connection, 'native_connect')
-                        else connection.connect()
-                    )
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            fut = asyncio.run_coroutine_threadsafe(prepare, loop)
-                            fut.result()
-                        else:
-                            loop.run_until_complete(prepare)
-                    except Exception as prep_err:
-                        logger.error(f"Failed to prepare SSH command for pane: {prep_err}")
+                        connection_id = connection_id_for(connection)
+                        terminal.start_daemon_session(
+                            window.client,
+                            window.client_bridge,
+                            connection_id,
+                        )
+                        terminal.apply_theme()
+                        terminal.queue_terminal_draw()
+                    except Exception as exc:
+                        logger.error(
+                            "Failed to initialize daemon session for pane type=%s",
+                            type(exc).__name__,
+                        )
+                        self._unregister_terminal(connection, terminal)
+                    return
 
-                terminal.apply_theme()
-                if terminal.backend:
-                    terminal.backend.queue_draw()
-                elif hasattr(terminal, 'vte') and terminal.vte:
-                    terminal.vte.queue_draw()
-                if not terminal._connect_ssh():
-                    logger.error('Failed to establish SSH connection for pane')
-                    connection.is_connected = False
-                    try:
-                        if window.active_terminals.get(connection) is terminal:
-                            del window.active_terminals[connection]
-                        window.terminal_to_connection.pop(terminal, None)
-                        terms = window.connection_to_terminals.get(connection, [])
-                        if terminal in terms:
-                            terms.remove(terminal)
-                            if not terms:
-                                del window.connection_to_terminals[connection]
-                    except Exception:
-                        pass
             except Exception as exc:
                 logger.error(f"Error initialising pane terminal: {exc}")
 
-        # Gate the ssh spawn behind the vault unlock (same as connect_to_host) so a pane
-        # connection doesn't start in the background while a session vault is locked. The
-        # widget is returned now (it shows "connecting" until the spawn runs after unlock).
         def _start_pane_connect():
             GLib.idle_add(_set_terminal_colors)
-        if not self._maybe_unlock_secrets_then(_start_pane_connect):
-            _start_pane_connect()
+
+        _start_pane_connect()
         return terminal
 
     def _on_pane_terminal_title_changed(self, terminal, title):
@@ -397,11 +589,11 @@ class TerminalManager:
         return color_value
 
     def _resolve_group_color_and_name(self, connection):
-        manager = getattr(self.window, 'group_manager', None)
+        manager = getattr(self.window, "group_manager", None)
         if not manager:
             return None, None
 
-        nickname = getattr(connection, 'nickname', None)
+        nickname = getattr(connection, "nickname", None)
         if not nickname:
             return None, None
 
@@ -417,18 +609,18 @@ class TerminalManager:
             visited.add(group_id)
 
             try:
-                group_info = getattr(manager, 'groups', {}).get(group_id)
+                group_info = getattr(manager, "groups", {}).get(group_id)
             except Exception:
                 group_info = None
 
             if not isinstance(group_info, dict):
                 break
 
-            color = group_info.get('color')
+            color = group_info.get("color")
             if color:
-                return color, group_info.get('name')
+                return color, group_info.get("name")
 
-            group_id = group_info.get('parent_id')
+            group_id = group_info.get("parent_id")
 
         return None, None
 
@@ -440,9 +632,7 @@ class TerminalManager:
     def _apply_tab_group_color(self, page, color_value, tooltip=None):
         use_pref = False
         try:
-            use_pref = bool(
-                self.window.config.get_setting('ui.use_group_color_in_tab', False)
-            )
+            use_pref = bool(self.window.config.get_setting("ui.use_group_color_in_tab", False))
         except Exception:
             use_pref = False
 
@@ -450,7 +640,7 @@ class TerminalManager:
             self._clear_tab_group_color(page)
             return
 
-        tooltip_text = tooltip or _('Group color')
+        tooltip_text = tooltip or _("Group color")
 
         rgba = Gdk.RGBA()
         try:
@@ -467,80 +657,82 @@ class TerminalManager:
             self._clear_tab_group_color(page)
             return
 
-        if hasattr(page, 'set_indicator_icon'):
+        if hasattr(page, "set_indicator_icon"):
             try:
                 page.set_indicator_icon(icon)
-                if hasattr(page, 'set_indicator_tooltip'):
+                if hasattr(page, "set_indicator_tooltip"):
                     page.set_indicator_tooltip(tooltip_text)
 
                 # Apply color to the icon using CSS
                 self._apply_tab_icon_color(page, rgba, tooltip_text)
-                setattr(page, '_sshpilot_group_indicator_icon', icon)
-                setattr(page, '_sshpilot_group_color', rgba.to_string())
+                setattr(page, "_sshpilot_group_indicator_icon", icon)
+                setattr(page, "_sshpilot_group_color", rgba.to_string())
             except Exception as exc:
                 logger.debug("Failed to set tab indicator icon: %s", exc)
-        elif hasattr(page, 'set_icon') and hasattr(page, 'get_icon'):
+        elif hasattr(page, "set_icon") and hasattr(page, "get_icon"):
             try:
-                if not hasattr(page, '_sshpilot_original_icon'):
-                    setattr(page, '_sshpilot_original_icon', page.get_icon())
+                if not hasattr(page, "_sshpilot_original_icon"):
+                    setattr(page, "_sshpilot_original_icon", page.get_icon())
                 page.set_icon(icon)
 
-                if hasattr(page, 'set_indicator_tooltip'):
+                if hasattr(page, "set_indicator_tooltip"):
                     page.set_indicator_tooltip(tooltip_text)
 
                 # Apply color to the icon using CSS
                 self._apply_tab_icon_color(page, rgba, tooltip_text)
-                setattr(page, '_sshpilot_group_indicator_icon', icon)
-                setattr(page, '_sshpilot_group_color', rgba.to_string())
+                setattr(page, "_sshpilot_group_indicator_icon", icon)
+                setattr(page, "_sshpilot_group_color", rgba.to_string())
             except Exception as exc:
                 logger.debug("Failed to set tab icon for group color: %s", exc)
 
     def _clear_tab_group_color(self, page):
-        if hasattr(page, 'set_indicator_icon'):
+        if hasattr(page, "set_indicator_icon"):
             try:
                 page.set_indicator_icon(None)
-                if hasattr(page, 'set_indicator_tooltip'):
+                if hasattr(page, "set_indicator_tooltip"):
                     page.set_indicator_tooltip(None)
             except Exception:
                 pass
-        elif hasattr(page, 'set_icon') and hasattr(page, '_sshpilot_original_icon'):
+        elif hasattr(page, "set_icon") and hasattr(page, "_sshpilot_original_icon"):
             try:
-                original = getattr(page, '_sshpilot_original_icon')
+                original = getattr(page, "_sshpilot_original_icon")
                 if original is not None:
                     page.set_icon(original)
             except Exception:
                 pass
 
         # Clear the custom icon from the tab page
-        if hasattr(page, 'set_indicator_icon'):
+        if hasattr(page, "set_indicator_icon"):
             try:
                 page.set_indicator_icon(None)
-                if hasattr(page, 'set_indicator_tooltip'):
+                if hasattr(page, "set_indicator_tooltip"):
                     page.set_indicator_tooltip(None)
             except Exception:
                 pass
 
         # No CSS provider to remove since we're using direct colored icons
 
-        setattr(page, '_sshpilot_group_indicator_icon', None)
-        if hasattr(page, '_sshpilot_group_color'):
-            delattr(page, '_sshpilot_group_color')
+        setattr(page, "_sshpilot_group_indicator_icon", None)
+        if hasattr(page, "_sshpilot_group_color"):
+            delattr(page, "_sshpilot_group_color")
 
     def _create_colored_tab_icon(self, rgba: Gdk.RGBA):
         """Create a simple colored icon for the tab indicator"""
         try:
             # Use a simple approach - create a basic colored icon
             # Convert RGBA to hex for CSS
-            hex_color = f"#{int(rgba.red * 255):02x}{int(rgba.green * 255):02x}{int(rgba.blue * 255):02x}"
-            
+            hex_color = (
+                f"#{int(rgba.red * 255):02x}{int(rgba.green * 255):02x}{int(rgba.blue * 255):02x}"
+            )
+
             # Create a tag SVG icon with the color
             # Based on tag-symbolic.svg but with the group color
             svg_data = f"""<svg xmlns="http://www.w3.org/2000/svg" height="16px" viewBox="0 0 16 16" width="16px">
                 <path d="m 1 2 v 6 l 6.691406 6.691406 c 0.1875 0.1875 0.414063 0.203125 0.597656 0.019532 l 6.382813 -6.382813 c 0.222656 -0.222656 0.207031 -0.449219 0.019531 -0.636719 l -6.691406 -6.691406 h -6 c -0.464844 0 -1 0.492188 -1 1 z m 3 0.960938 c 0.589844 0 1.070312 0.480468 1.070312 1.070312 s -0.480468 1.070312 -1.070312 1.070312 s -1.070312 -0.480468 -1.070312 -1.070312 s 0.480468 -1.070312 1.070312 -1.070312 z m 0 0" fill="{hex_color}"/>
             </svg>"""
-            
+
             # Create a bytes icon from the SVG
-            svg_bytes = svg_data.encode('utf-8')
+            svg_bytes = svg_data.encode("utf-8")
             return Gio.BytesIcon.new(GLib.Bytes.new(svg_bytes))
         except Exception as exc:
             logger.debug(f"Failed to create colored tab icon: {exc}")
@@ -553,30 +745,28 @@ class TerminalManager:
             # Get the tab view
             tab_view = None
             try:
-                if hasattr(self.window, 'tab_view'):
+                if hasattr(self.window, "tab_view"):
                     tab_view = self.window.tab_view
             except Exception:
                 pass
-            
+
             if not tab_view:
                 return
-            
+
             # Remove any existing CSS provider
-            if hasattr(tab_view, '_sshpilot_tab_css_provider'):
+            if hasattr(tab_view, "_sshpilot_tab_css_provider"):
                 tab_view.get_style_context().remove_provider(tab_view._sshpilot_tab_css_provider)
-            
+
             # Create new CSS provider with the group color
             provider = Gtk.CssProvider()
             color_value = rgba.to_string()
-            
+
             # Use a simple CSS rule to color indicator icons
             css_data = f"tab page indicator-icon {{ color: {color_value}; }}"
             provider.load_from_data(css_data.encode())
-            tab_view.get_style_context().add_provider(
-                provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
-            )
+            tab_view.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
             tab_view._sshpilot_tab_css_provider = provider
-            
+
         except Exception as exc:
             logger.debug(f"Failed to apply tab CSS color: {exc}")
 
@@ -588,23 +778,23 @@ class TerminalManager:
             if icon is None:
                 self._clear_tab_group_color(page)
                 return
-            
+
             # Set the colored icon on the tab page
             page.set_indicator_icon(icon)
             page.set_indicator_activatable(True)
-            if hasattr(page, 'set_indicator_tooltip'):
-                page.set_indicator_tooltip(tooltip_text or _('Group color'))
+            if hasattr(page, "set_indicator_tooltip"):
+                page.set_indicator_tooltip(tooltip_text or _("Group color"))
 
             # Store reference to the icon and color for cleanup
-            setattr(page, '_sshpilot_group_indicator_icon', icon)
-            setattr(page, '_sshpilot_group_color', rgba)
+            setattr(page, "_sshpilot_group_indicator_icon", icon)
+            setattr(page, "_sshpilot_group_color", rgba)
         except Exception as exc:
             logger.debug("Failed to apply tab icon color: %s", exc)
             self._clear_tab_group_color(page)
 
     def restyle_open_terminals(self):
         window = self.window
-        n_pages = window.tab_view.get_n_pages() if hasattr(window.tab_view, 'get_n_pages') else 0
+        n_pages = window.tab_view.get_n_pages() if hasattr(window.tab_view, "get_n_pages") else 0
         for index in range(n_pages):
             try:
                 page = window.tab_view.get_nth_page(index)
@@ -613,7 +803,7 @@ class TerminalManager:
             if not page:
                 continue
 
-            terminal = page.get_child() if hasattr(page, 'get_child') else None
+            terminal = page.get_child() if hasattr(page, "get_child") else None
             if terminal is None:
                 continue
 
@@ -621,27 +811,26 @@ class TerminalManager:
             if connection:
                 color_value, group_name = self._resolve_group_color_and_name(connection)
                 if group_name:
-                    setattr(terminal, 'group_name', group_name)
+                    setattr(terminal, "group_name", group_name)
             else:
                 color_value, group_name = None, None
 
-            if hasattr(terminal, 'set_group_color'):
+            if hasattr(terminal, "set_group_color"):
                 try:
                     terminal.set_group_color(color_value, force=True)
                 except Exception as exc:
                     logger.debug("Failed to update terminal group color: %s", exc)
 
-            tooltip = getattr(terminal, 'group_name', None)
+            tooltip = getattr(terminal, "group_name", None)
             self._apply_tab_group_color(page, color_value, tooltip=tooltip)
-
 
     def _on_disconnect_confirmed(self, dialog, response_id, connection):
         dialog.destroy()
         window = self.window
-        if response_id == 'disconnect' and connection in window.active_terminals:
+        if response_id == "disconnect" and connection in window.active_terminals:
             terminal = window.active_terminals[connection]
             terminal.disconnect()
-            if getattr(window, '_pending_delete_connection', None) is connection:
+            if getattr(window, "_pending_delete_connection", None) is connection:
                 try:
                     window.connection_manager.remove_connection(connection)
                 finally:
@@ -651,21 +840,25 @@ class TerminalManager:
         window = self.window
         if connection not in window.active_terminals:
             return
-        confirm_disconnect = window.config.get_setting('confirm-disconnect', True)
+        confirm_disconnect = window.config.get_setting("confirm-disconnect", True)
         if confirm_disconnect:
-            host_value = getattr(connection, 'hostname', getattr(connection, 'host', getattr(connection, 'nickname', '')))
+            host_value = getattr(
+                connection,
+                "hostname",
+                getattr(connection, "host", getattr(connection, "nickname", "")),
+            )
             dialog = Adw.MessageDialog(
                 transient_for=window,
                 modal=True,
                 heading=_("Disconnect from {host}").format(host=connection.nickname or host_value),
-                body=_("Are you sure you want to disconnect from this host?")
+                body=_("Are you sure you want to disconnect from this host?"),
             )
-            dialog.add_response('cancel', _("Cancel"))
-            dialog.add_response('disconnect', _("Disconnect"))
-            dialog.set_response_appearance('disconnect', Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response('close')
-            dialog.set_close_response('cancel')
-            dialog.connect('response', self._on_disconnect_confirmed, connection)
+            dialog.add_response("cancel", _("Cancel"))
+            dialog.add_response("disconnect", _("Disconnect"))
+            dialog.set_response_appearance("disconnect", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_default_response("close")
+            dialog.set_close_response("cancel")
+            dialog.connect("response", self._on_disconnect_confirmed, connection)
             dialog.present()
         else:
             terminal = window.active_terminals[connection]
@@ -675,31 +868,40 @@ class TerminalManager:
     def _add_terminal_tab(self, terminal_widget, title):
         try:
             from sshpilot import icon_utils
+
             page = self.window.tab_view.append(terminal_widget)
             page.set_title(title)
-            page.set_icon(icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic'))
+            page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
             self.window.show_tab_view()
             self.window.tab_view.set_selected_page(page)
             logger.info(f"Added terminal tab: {title}")
         except Exception as e:
             logger.error(f"Failed to add terminal tab: {e}")
 
-    def show_local_terminal(self, *, title="Local Terminal",
-                            command: Optional[str] = None,
-                            pty_prompt: Optional[str] = None,
-                            pty_response: Optional[str] = None) -> bool:
+    def show_local_terminal(
+        self,
+        *,
+        title="Local Terminal",
+        command: Optional[str] = None,
+        pty_prompt: Optional[str] = None,
+        pty_response: Optional[str] = None,
+    ) -> bool:
         logger.info("Show local terminal tab")
         try:
+
             class LocalConnection:
                 def __init__(self):
                     self.nickname = title
                     self.hostname = "localhost"
                     self.host = self.hostname
-                    self.username = os.getenv('USER', 'user')
+                    self.username = os.getenv("USER", "user")
                     self.port = 22
                     self.is_connected = True
+
             local_connection = LocalConnection()
-            terminal_widget = TerminalWidget(local_connection, self.window.config, self.window.connection_manager)
+            terminal_widget = TerminalWidget(
+                local_connection, self.window.config, self.window.connection_manager
+            )
             if pty_prompt and pty_response is not None:
                 terminal_widget._pty_autofill = (pty_prompt, pty_response)
             if command and str(command).strip():
@@ -707,11 +909,7 @@ class TerminalManager:
 
                 def _run_command(*_args):
                     data = (command_text + "\n").encode("utf-8")
-                    backend = getattr(terminal_widget, "backend", None)
-                    if backend is not None and hasattr(backend, "feed_child"):
-                        backend.feed_child(data)
-                    elif getattr(terminal_widget, "vte", None) is not None:
-                        terminal_widget.vte.feed_child(data)
+                    terminal_widget.feed_child_data(data)
 
                 terminal_widget.connect("connection-established", _run_command)
             terminal_widget.setup_local_shell()
@@ -725,26 +923,18 @@ class TerminalManager:
 
             GLib.idle_add(terminal_widget.show)
             # Show the terminal widget (backend-agnostic)
-            if hasattr(terminal_widget, 'terminal_widget') and terminal_widget.terminal_widget:
-                GLib.idle_add(terminal_widget.terminal_widget.show)
-            elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
-                GLib.idle_add(terminal_widget.vte.show)
+            GLib.idle_add(terminal_widget.show_terminal)
 
             def _focus_local_terminal():
                 try:
-                    if hasattr(terminal_widget, 'get_mapped') and not terminal_widget.get_mapped():
+                    if hasattr(terminal_widget, "get_mapped") and not terminal_widget.get_mapped():
                         return
-                    if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
-                        terminal_widget.backend.grab_focus()
-                    elif hasattr(terminal_widget, 'vte') and hasattr(terminal_widget.vte, 'grab_focus'):
-                        terminal_widget.vte.grab_focus()
-                    elif hasattr(terminal_widget, 'grab_focus'):
-                        terminal_widget.grab_focus()
+                    terminal_widget.grab_terminal_focus()
                 except Exception as focus_error:
                     logger.debug(f"Failed to focus local terminal: {focus_error}")
 
             # Use window's focus coordinator to avoid race conditions
-            if hasattr(self.window, '_queue_focus_operation'):
+            if hasattr(self.window, "_queue_focus_operation"):
                 self.window._queue_focus_operation(_focus_local_terminal)
             else:
                 # Fallback for older versions
@@ -758,7 +948,7 @@ class TerminalManager:
                     transient_for=self.window,
                     modal=True,
                     heading=_("Error"),
-                    body=_("Could not open local terminal.\n\n{error}").format(error=e)
+                    body=_("Could not open local terminal.\n\n{error}").format(error=e),
                 )
                 dialog.add_response("ok", _("OK"))
                 dialog.present()
@@ -770,21 +960,21 @@ class TerminalManager:
     def _is_broadcastable_ssh_terminal(self, terminal) -> bool:
         if terminal is None:
             return False
-        if not (hasattr(terminal, 'backend') or hasattr(terminal, 'vte')):
+        if not (hasattr(terminal, "backend") or hasattr(terminal, "vte")):
             return False
-        connection = getattr(terminal, 'connection', None)
+        connection = getattr(terminal, "connection", None)
         if connection is None:
             return False
-        nickname = getattr(connection, 'nickname', None)
+        nickname = getattr(connection, "nickname", None)
         if nickname == "Local Terminal":
             return False
-        return hasattr(connection, 'hostname')
+        return hasattr(connection, "hostname")
 
     def iter_terminals(self):
         """Yield TerminalWidgets from regular tabs and split-view panes."""
         from .split_view import SplitViewTab
 
-        tab_view = getattr(self.window, 'tab_view', None)
+        tab_view = getattr(self.window, "tab_view", None)
         if tab_view is None:
             return
 
@@ -822,7 +1012,7 @@ class TerminalManager:
         """Return the focused TerminalWidget from the selected main tab, if any."""
         from .split_view import SplitViewTab
 
-        tab_view = getattr(self.window, 'tab_view', None)
+        tab_view = getattr(self.window, "tab_view", None)
         if tab_view is None:
             return None
 
@@ -845,32 +1035,109 @@ class TerminalManager:
         return None
 
     # Broadcast commands
-    def broadcast_command(self, command: str):
-        cmd = (command + "\n").encode("utf-8")
-        sent_count = 0
-        failed_count = 0
+    def broadcast_connection_ids(self):
+        """Return unique saved SSH targets in visible display order."""
+        result = []
+        seen = set()
         for terminal_widget in self.iter_ssh_terminals():
             connection = terminal_widget.connection
             try:
-                if hasattr(terminal_widget, 'backend') and terminal_widget.backend:
-                    terminal_widget.backend.feed_child(cmd)
-                elif hasattr(terminal_widget, 'vte') and terminal_widget.vte:
-                    terminal_widget.vte.feed_child(cmd)
-                sent_count += 1
-                logger.debug(
-                    "Sent command to SSH terminal: %s",
-                    getattr(connection, 'nickname', ''),
-                )
-            except Exception as e:
-                failed_count += 1
-                logger.error(
-                    "Failed to send command to terminal %s: %s",
-                    getattr(connection, 'nickname', ''),
-                    e,
-                )
-        logger.info(
-            f"Broadcast command completed: {sent_count} terminals received command, {failed_count} failed")
-        return sent_count, failed_count
+                connection_id = connection_id_for(connection)
+            except Exception:
+                continue
+            if connection_id not in seen:
+                seen.add(connection_id)
+                result.append(connection_id)
+        return tuple(result)
+
+    def broadcast_session_ids(self):
+        """Return unique daemon session IDs from open SSH terminals."""
+        result = []
+        seen = set()
+        for terminal_widget in self.iter_ssh_terminals():
+            if not getattr(terminal_widget, "is_daemon_backed", False):
+                continue
+            tab_state = getattr(terminal_widget, "daemon_tab_state", None)
+            session_id = getattr(tab_state, "session_id", None)
+            if session_id is not None and session_id not in seen:
+                seen.add(session_id)
+                result.append(session_id)
+        return tuple(result)
+
+    def broadcast_command(self, command: str, *, on_success=None, on_error=None):
+        """Write a command to the existing daemon-backed terminal sessions."""
+        from .api.models.terminal import BroadcastTerminalInputRequest
+
+        session_ids = self.broadcast_session_ids()
+        if not command.strip() or not session_ids:
+            return None
+        client = getattr(self.window, "client", None)
+        bridge = getattr(self.window, "client_bridge", None)
+        if client is None or bridge is None:
+            if on_error:
+                on_error(RuntimeError("Daemon broadcast capability unavailable"))
+            return None
+        request = BroadcastTerminalInputRequest(session_ids, command)
+        return bridge.submit(
+            lambda: client.broadcast_terminal_input(request),
+            on_success=on_success or (lambda _result: None),
+            on_error=on_error
+            or (lambda error: logger.error("Broadcast request failed: %s", error)),
+        )
+
+    def run_command_on_connections(self, command: str, *, on_success=None, on_error=None):
+        """Submit one-shot command execution for saved connection targets."""
+        from .api.models.broadcast import BroadcastCommandRequest
+
+        connection_ids = self.broadcast_connection_ids()
+        if not command.strip() or not connection_ids:
+            return None
+        client = getattr(self.window, "client", None)
+        bridge = getattr(self.window, "client_bridge", None)
+        if client is None or bridge is None:
+            if on_error:
+                on_error(RuntimeError("Daemon broadcast capability unavailable"))
+            return None
+        request = BroadcastCommandRequest(connection_ids, command)
+        return bridge.submit(
+            lambda: client.start_broadcast_command(request),
+            on_success=on_success or (lambda _summary: None),
+            on_error=on_error
+            or (lambda error: logger.error("Broadcast command request failed: %s", error)),
+        )
+
+    def _show_daemon_error_dialog(self, window, message):
+        """Show error dialog for daemon terminal failures (no automatic fallback)."""
+        try:
+            dialog = Adw.AlertDialog.new(
+                _("Daemon Terminal Unavailable"),
+                message,
+            )
+            dialog.add_response("ok", _("OK"))
+            dialog.add_response("prefs", _("Open Preferences"))
+            dialog.set_response_appearance("prefs", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("ok")
+            dialog.set_close_response("ok")
+
+            def _respond(_dialog, response):
+                if response != "prefs":
+                    return
+                try:
+                    app = window.get_application()
+                    if app is not None and hasattr(app, "on_preferences_action"):
+                        app.on_preferences_action(None, None)
+                    elif hasattr(window, "on_preferences_action"):
+                        window.on_preferences_action(None, None)
+                except Exception:
+                    logger.debug(
+                        "Failed to open preferences from daemon error dialog",
+                        exc_info=True,
+                    )
+
+            dialog.connect("response", _respond)
+            dialog.present(window)
+        except Exception as e:
+            logger.error(f"Failed to show daemon error dialog: {e}")
 
     # Terminal signal handlers
     def on_terminal_connected(self, terminal):
@@ -882,13 +1149,12 @@ class TerminalManager:
         # Stamp last-used time so the start page can order Recent connections.
         try:
             import time
-            nickname = getattr(terminal.connection, 'nickname', None)
+
+            nickname = getattr(terminal.connection, "nickname", None)
             if nickname:
-                meta = self.window.config.get_connection_meta(nickname)
-                meta['last_used'] = time.time()
-                self.window.config.set_connection_meta(nickname, meta)
-                welcome = getattr(self.window, 'welcome_view', None)
-                if welcome is not None and hasattr(welcome, 'refresh_recent'):
+                self.window.client.update_connection_metadata(nickname, {"last_used": time.time()})
+                welcome = getattr(self.window, "welcome_view", None)
+                if welcome is not None and hasattr(welcome, "refresh_recent"):
                     welcome.refresh_recent()
         except Exception:
             logger.debug("Failed to record last-used time", exc_info=True)
@@ -900,19 +1166,24 @@ class TerminalManager:
             GLib.idle_add(self.window._hide_reconnecting_message)
 
         self.window._is_controlled_reconnect = False
-        if not getattr(self.window, '_is_controlled_reconnect', False):
-            host_value = getattr(terminal.connection, 'hostname', getattr(terminal.connection, 'host', getattr(terminal.connection, 'nickname', '')))
+        if not getattr(self.window, "_is_controlled_reconnect", False):
+            host_value = getattr(
+                terminal.connection,
+                "hostname",
+                getattr(terminal.connection, "host", getattr(terminal.connection, "nickname", "")),
+            )
             logger.info(
                 f"Terminal connected: {terminal.connection.nickname} ({terminal.connection.username}@{host_value})"
             )
         else:
             logger.debug(
-                f"Terminal reconnected after settings update: {terminal.connection.nickname}")
+                f"Terminal reconnected after settings update: {terminal.connection.nickname}"
+            )
 
         # Notify plugins (session_opened). The host dedupes reconnects by
         # terminal identity, so this is safe to call on every connect.
         try:
-            host = getattr(self.window, 'plugin_host', None)
+            host = getattr(self.window, "plugin_host", None)
             if host is not None:
                 host.dispatch_session_opened(terminal)
         except Exception:
@@ -923,26 +1194,27 @@ class TerminalManager:
     def _maybe_offer_save_connection(self, terminal):
         """After a successful CLI/ad-hoc connect, offer to save if the host is unsaved."""
         try:
-            connection = getattr(terminal, 'connection', None)
+            connection = getattr(terminal, "connection", None)
             if connection is None:
                 return
-            data = getattr(connection, 'data', None) or {}
+            data = getattr(connection, "data", None) or {}
             from .cli_connect import CLI_CONNECT_FLAG
+
             if not data.get(CLI_CONNECT_FLAG):
                 return
 
             from .unsaved_host import SavePromptDismissals, is_unsaved_host
 
             window = self.window
-            app = window.get_application() if hasattr(window, 'get_application') else None
-            dismissals = getattr(app, 'save_prompt_dismissals', None) if app else None
+            app = window.get_application() if hasattr(window, "get_application") else None
+            dismissals = getattr(app, "save_prompt_dismissals", None) if app else None
             if dismissals is None:
                 dismissals = SavePromptDismissals()
                 if app is not None:
                     app.save_prompt_dismissals = dismissals
 
-            mgr = getattr(window, 'connection_manager', None)
-            cfg_path = getattr(mgr, 'ssh_config_path', None) if mgr else None
+            mgr = getattr(window, "connection_manager", None)
+            cfg_path = getattr(mgr, "ssh_config_path", None) if mgr else None
             if dismissals.is_connection_dismissed(connection, config_file=cfg_path):
                 return
             if not is_unsaved_host(connection, mgr, config_file=cfg_path):
@@ -952,28 +1224,26 @@ class TerminalManager:
                 try:
                     window.show_connection_dialog(term.connection, as_new=True)
                 except Exception:
-                    logger.debug('Failed to open save connection dialog', exc_info=True)
+                    logger.debug("Failed to open save connection dialog", exc_info=True)
 
             def _on_dismiss(term):
                 try:
-                    dismissals.dismiss_connection(
-                        term.connection, config_file=cfg_path)
+                    dismissals.dismiss_connection(term.connection, config_file=cfg_path)
                 except Exception:
-                    logger.debug('Failed to record save-prompt dismissal', exc_info=True)
+                    logger.debug("Failed to record save-prompt dismissal", exc_info=True)
 
-            if hasattr(terminal, 'show_save_connection_prompt'):
+            if hasattr(terminal, "show_save_connection_prompt"):
                 # Delay the reveal so the revealer is mapped by the time it
                 # fires; otherwise GTK skips the slide-up animation.
                 from gi.repository import GLib
 
                 def _reveal():
-                    terminal.show_save_connection_prompt(
-                        on_save=_on_save, on_dismiss=_on_dismiss)
+                    terminal.show_save_connection_prompt(on_save=_on_save, on_dismiss=_on_dismiss)
                     return False
 
                 GLib.timeout_add(600, _reveal)
         except Exception:
-            logger.debug('Save-connection offer skipped', exc_info=True)
+            logger.debug("Save-connection offer skipped", exc_info=True)
 
     def on_terminal_disconnected(self, terminal):
         # The just-disconnected terminal has already flipped its own
@@ -985,8 +1255,8 @@ class TerminalManager:
             row.queue_draw()
         host_value = getattr(
             terminal.connection,
-            'hostname',
-            getattr(terminal.connection, 'host', getattr(terminal.connection, 'nickname', ''))
+            "hostname",
+            getattr(terminal.connection, "host", getattr(terminal.connection, "nickname", "")),
         )
         logger.info(
             f"Terminal disconnected: {terminal.connection.nickname} ({terminal.connection.username}@{host_value})"
@@ -994,7 +1264,7 @@ class TerminalManager:
 
         # Notify plugins (session_closed).
         try:
-            host = getattr(self.window, 'plugin_host', None)
+            host = getattr(self.window, "plugin_host", None)
             if host is not None:
                 host.dispatch_session_closed(terminal)
         except Exception:
@@ -1003,10 +1273,14 @@ class TerminalManager:
     def on_terminal_title_changed(self, terminal, title):
         page = self.window._page_for_child(terminal)
         if page:
-            if getattr(page, 'custom_tab_title', None):
+            if getattr(page, "custom_tab_title", None):
                 return
             if title and title != terminal.connection.nickname:
-                page.set_title(_("{nickname} - {title}").format(nickname=terminal.connection.nickname, title=title))
+                page.set_title(
+                    _("{nickname} - {title}").format(
+                        nickname=terminal.connection.nickname, title=title
+                    )
+                )
             else:
                 page.set_title(terminal.connection.nickname)
 
@@ -1014,72 +1288,75 @@ class TerminalManager:
         """
         Get the job status of a terminal.
         Only works for local terminals.
-        
+
         Args:
             terminal: TerminalWidget instance
-            
+
         Returns:
             dict: Job status information including idle state and status string
         """
-        if not hasattr(terminal, 'is_terminal_idle'):
+        if not hasattr(terminal, "is_terminal_idle"):
             return {
-                'is_idle': False,
-                'has_active_job': False,
-                'status': 'UNKNOWN',
-                'error': 'Terminal does not support job detection'
+                "is_idle": False,
+                "has_active_job": False,
+                "status": "UNKNOWN",
+                "error": "Terminal does not support job detection",
             }
-        
+
         try:
             is_idle = terminal.is_terminal_idle()
             has_active_job = terminal.has_active_job()
             status = terminal.get_job_status()
-            
+
             # Check if this is an SSH terminal
             is_ssh = status == "SSH_TERMINAL"
-            
+
             return {
-                'is_idle': is_idle,
-                'has_active_job': has_active_job,
-                'status': status,
-                'is_ssh_terminal': is_ssh,
-                'error': None
+                "is_idle": is_idle,
+                "has_active_job": has_active_job,
+                "status": status,
+                "is_ssh_terminal": is_ssh,
+                "error": None,
             }
         except Exception as e:
             return {
-                'is_idle': False,
-                'has_active_job': False,
-                'status': 'ERROR',
-                'is_ssh_terminal': False,
-                'error': str(e)
+                "is_idle": False,
+                "has_active_job": False,
+                "status": "ERROR",
+                "is_ssh_terminal": False,
+                "error": str(e),
             }
 
     def get_all_terminal_job_statuses(self):
         """
         Get job status for all active terminals.
         Only local terminals will have meaningful job detection.
-        
+
         Returns:
             list: List of dicts with terminal info and job status
         """
         statuses = []
 
         for terminal_widget in self.iter_terminals():
-            if not (hasattr(terminal_widget, 'backend') or hasattr(terminal_widget, 'vte')):
+            if not (hasattr(terminal_widget, "backend") or hasattr(terminal_widget, "vte")):
                 continue
 
             connection_info = (
                 terminal_widget.get_connection_info()
-                if hasattr(terminal_widget, 'get_connection_info') else None
+                if hasattr(terminal_widget, "get_connection_info")
+                else None
             )
             job_status = self.get_terminal_job_status(terminal_widget)
-            connection = getattr(terminal_widget, 'connection', None)
-            page_title = getattr(connection, 'nickname', None) or _('Terminal')
+            connection = getattr(terminal_widget, "connection", None)
+            page_title = getattr(connection, "nickname", None) or _("Terminal")
 
-            statuses.append({
-                'page_title': page_title,
-                'connection_info': connection_info,
-                'job_status': job_status,
-            })
+            statuses.append(
+                {
+                    "page_title": page_title,
+                    "connection_info": connection_info,
+                    "job_status": job_status,
+                }
+            )
 
         return statuses
 
@@ -1089,29 +1366,33 @@ class TerminalManager:
         """Ask whether to reconnect *connection* with its updated settings."""
         dialog = Adw.AlertDialog(
             heading=_("Settings Changed"),
-            body=_("The connection settings have been updated.\n"
-                   "Would you like to reconnect with the new settings?"),
+            body=_(
+                "The connection settings have been updated.\n"
+                "Would you like to reconnect with the new settings?"
+            ),
         )
-        dialog.add_response('cancel', _("Cancel"))
-        dialog.add_response('reconnect', _("Reconnect"))
-        dialog.set_response_appearance('reconnect', Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response('reconnect')
-        dialog.set_close_response('cancel')
-        dialog.connect('response', self._on_reconnect_response, connection)
+        dialog.add_response("cancel", _("Cancel"))
+        dialog.add_response("reconnect", _("Reconnect"))
+        dialog.set_response_appearance("reconnect", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("reconnect")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", self._on_reconnect_response, connection)
         dialog.present(self.window)
 
     def _on_reconnect_response(self, dialog, response, connection):
         """Handle response from the reconnect prompt."""
         window = self.window
         # Only proceed if the user confirmed and the connection is still active
-        if response != 'reconnect' or connection not in window.active_terminals:
+        if response != "reconnect" or connection not in window.active_terminals:
             # Clean up the stored terminal instance if it exists
-            if hasattr(connection, '_terminal_instance'):
-                delattr(connection, '_terminal_instance')
+            if hasattr(connection, "_terminal_instance"):
+                delattr(connection, "_terminal_instance")
             return
 
         # Get the terminal instance either from active_terminals or the stored instance
-        terminal = window.active_terminals.get(connection) or getattr(connection, '_terminal_instance', None)
+        terminal = window.active_terminals.get(connection) or getattr(
+            connection, "_terminal_instance", None
+        )
         if not terminal:
             logger.warning("No terminal instance found for reconnection")
             return
@@ -1128,25 +1409,22 @@ class TerminalManager:
         window._is_controlled_reconnect = True
 
         try:
-            # Disconnect first (defer to avoid blocking)
-            logger.debug("Disconnecting terminal before reconnection")
+            # The reconnect helper terminates the old daemon controller and
+            # opens its replacement.  Do not call TerminalWidget.disconnect()
+            # first: its normal tab-close policy may detach or prompt, neither
+            # of which is appropriate after the user explicitly confirmed a
+            # settings-change reconnect.
+            logger.debug("Scheduling daemon terminal reconnection")
 
-            def _safe_disconnect():
+            def _safe_reconnect():
                 try:
-                    terminal.disconnect()
-                    logger.debug("Terminal disconnected, scheduling reconnect")
-                    # Store the connection temporarily in active_terminals if not present
-                    if connection not in window.active_terminals:
-                        window.active_terminals[connection] = terminal
-                    # Reconnect after disconnect completes
-                    GLib.timeout_add(1000, self._reconnect_terminal, connection)
+                    self._reconnect_terminal(connection)
                 except Exception as e:
-                    logger.error(f"Error during disconnect: {e}")
+                    logger.error(f"Error during daemon reconnect: {e}")
                     GLib.idle_add(self._show_reconnect_error, connection, str(e))
                 return False
 
-            # Defer disconnect to avoid blocking the UI thread
-            GLib.idle_add(_safe_disconnect)
+            GLib.idle_add(_safe_reconnect)
 
         except Exception as e:
             logger.error(f"Error during reconnection: {e}")
@@ -1155,13 +1433,15 @@ class TerminalManager:
                 del window.active_terminals[connection]
             window._error_dialog(
                 _("Reconnection Failed"),
-                _("Failed to reconnect with the new settings. Please try connecting again manually."),
+                _(
+                    "Failed to reconnect with the new settings. Please try connecting again manually."
+                ),
             )
 
         finally:
             # Clean up the stored terminal instance
-            if hasattr(connection, '_terminal_instance'):
-                delattr(connection, '_terminal_instance')
+            if hasattr(connection, "_terminal_instance"):
+                delattr(connection, "_terminal_instance")
 
             # Reset the flag after a delay to ensure it's not set during normal operations
             GLib.timeout_add(1000, self._reset_controlled_reconnect)
@@ -1182,32 +1462,7 @@ class TerminalManager:
         try:
             logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
 
-            # Rebuild the SSH command using the latest configuration so that
-            # options resolved via ssh -G are honored for the reconnect.
-            # Plugin protocols rebuild statelessly in build_spawn() instead.
-            if getattr(connection, 'protocol', 'ssh') == 'ssh':
-                try:
-                    loop = asyncio.get_event_loop()
-                    # Native-only (connect() delegates to native_connect()).
-                    if hasattr(connection, 'native_connect'):
-                        connect_coro = connection.native_connect()
-                    else:
-                        connect_coro = connection.connect()
-                    if loop.is_running():
-                        future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
-                        future.result()
-                    else:
-                        loop.run_until_complete(connect_coro)
-                except Exception as prep_err:
-                    logger.error(
-                        "Failed to prepare SSH command before reconnect: %s",
-                        prep_err,
-                    )
-                    GLib.idle_add(self._show_reconnect_error, connection, str(prep_err))
-                    return False
-
-            # Reconnect with new settings
-            if not terminal._connect_ssh():
+            if not self.reconnect_terminal(terminal):
                 logger.error("Failed to reconnect with new settings")
                 GLib.idle_add(self._show_reconnect_error, connection)
                 return False
@@ -1219,6 +1474,74 @@ class TerminalManager:
             GLib.idle_add(self._show_reconnect_error, connection, str(e))
 
         return False  # Don't repeat the timeout
+
+    def reconnect_terminal(self, terminal) -> bool:
+        """Open a fresh daemon session in an existing terminal widget."""
+        from .daemon_terminal_policy import (
+            daemon_readiness_user_message,
+        )
+
+        window = self.window
+        connection = getattr(terminal, "connection", None)
+        if connection is None:
+            logger.error("Cannot reconnect terminal without a connection")
+            return False
+
+        readiness = self._ensure_daemon_terminal_ready()
+        if not readiness.ready:
+            message = daemon_readiness_user_message(readiness)
+            logger.error("Daemon terminal reconnect unavailable: %s", message)
+            return False
+
+        old_controller = getattr(terminal, "_daemon_controller", None)
+        if old_controller is not None:
+            try:
+                # Retire widget callbacks before the asynchronous close.  A
+                # transport error while closing the old session must not mark
+                # its freshly opened replacement as failed.
+                old_controller._on_output = None
+                old_controller._on_continuity_lost = None
+                old_controller._on_state_changed = None
+                old_controller._on_error = lambda error: logger.debug(
+                    "Retired daemon controller close error: %s", error
+                )
+                old_controller.close()
+            except Exception:
+                logger.debug(
+                    "Failed to close previous daemon session during reconnect",
+                    exc_info=True,
+                )
+
+        terminal._uninstall_daemon_backend_io()
+        terminal._daemon_mode = False
+        terminal._daemon_controller = None
+        terminal._daemon_tab_state = None
+        terminal._hide_view_only_indicator()
+        terminal.last_error_message = None
+        terminal.connection_state_reason = ""
+        terminal._set_disconnected_banner_visible(False)
+        terminal._set_connecting_overlay_visible(True)
+
+        try:
+            started = terminal.start_daemon_session(
+                window.client,
+                window.client_bridge,
+                connection_id_for(connection),
+            )
+        except Exception:
+            logger.exception("Failed to start replacement daemon terminal session")
+            started = False
+
+        if not started:
+            terminal._set_connecting_overlay_visible(False)
+            return False
+
+        try:
+            terminal.apply_theme()
+            terminal.queue_terminal_draw()
+        except Exception:
+            logger.debug("Failed to refresh reconnected terminal theme", exc_info=True)
+        return True
 
     def _show_reconnect_error(self, connection, error_message=None):
         """Show an error message when reconnection fails"""
@@ -1233,5 +1556,8 @@ class TerminalManager:
 
         window._error_dialog(
             _("Reconnection Failed"),
-            error_message or _("Failed to reconnect with the new settings. Please try connecting again manually."),
+            error_message
+            or _(
+                "Failed to reconnect with the new settings. Please try connecting again manually."
+            ),
         )

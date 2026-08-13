@@ -1,38 +1,40 @@
-"""Unit tests for the SSH key fingerprint helpers.
+"""Unit tests for frontend-safe public-key fingerprint helpers."""
 
-These were extracted verbatim from connection_dialog.py into the leaf module
-sshpilot/ssh_key_fingerprint.py so they can be imported and tested without the
-GTK dialog. They had no direct coverage before. The subprocess-backed lookups
-are tested with a monkeypatched ssh-keygen so the tests are hermetic.
-"""
-
-import subprocess
+import base64
+import hashlib
 
 from sshpilot import ssh_key_fingerprint as skf
 from sshpilot.ssh_key_fingerprint import (
-    _parse_keygen_line,
     _fingerprint_for_path,
     _fingerprint_for_pub_line,
+    _parse_keygen_line,
 )
 
 
-class TestParseKeygenLine:
-    def test_full_line_with_type_and_comment(self):
-        line = "256 SHA256:abc123 user@host (ED25519)"
-        assert _parse_keygen_line(line) == ("ED25519", "SHA256:abc123", "user@host")
+def _fingerprint(raw: bytes) -> str:
+    encoded = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
+    return f"SHA256:{encoded}"
 
-    def test_multiword_comment(self):
-        line = "3072 SHA256:deadbeef my laptop key (RSA)"
-        assert _parse_keygen_line(line) == ("RSA", "SHA256:deadbeef", "my laptop key")
 
-    def test_no_type_parenthesis(self):
-        # parts[-1] does not start with "(" -> no type label
-        line = "256 SHA256:xyz user@host"
-        assert _parse_keygen_line(line) == ("", "SHA256:xyz", "user@host")
+class TestParsePublicKeyLine:
+    def test_ed25519_with_comment(self):
+        assert _parse_keygen_line("ssh-ed25519 YWJj user@host") == (
+            "ED25519",
+            _fingerprint(b"abc"),
+            "user@host",
+        )
 
-    def test_empty_and_too_short(self):
+    def test_rsa_with_multiword_comment(self):
+        assert _parse_keygen_line("ssh-rsa ZGVm my laptop key") == (
+            "RSA",
+            _fingerprint(b"def"),
+            "my laptop key",
+        )
+
+    def test_empty_and_invalid(self):
         assert _parse_keygen_line("") == ("", "", "")
-        assert _parse_keygen_line("256") == ("", "", "")
+        assert _parse_keygen_line("ssh-ed25519") == ("", "", "")
+        assert _parse_keygen_line("ssh-ed25519 not-base64!") == ("", "", "")
         assert _parse_keygen_line(None) == ("", "", "")
 
 
@@ -40,47 +42,30 @@ class TestFingerprintForPath:
     def setup_method(self):
         skf._FINGERPRINT_CACHE.clear()
 
-    def test_success_parses_and_caches(self, monkeypatch):
-        calls = []
+    def test_reads_only_public_companion_and_caches(self, tmp_path):
+        private = tmp_path / "id_ed25519"
+        private.write_text("PRIVATE-MATERIAL-MUST-NOT-BE-PARSED")
+        public = tmp_path / "id_ed25519.pub"
+        public.write_text("ssh-ed25519 YWJj user@host\n")
 
-        def fake_run(cmd, **kwargs):
-            calls.append(cmd)
-            return subprocess.CompletedProcess(
-                cmd, 0, stdout="256 SHA256:abc user@host (ED25519)", stderr="")
+        result = _fingerprint_for_path(str(private))
+        assert result == ("ED25519", _fingerprint(b"abc"), "user@host")
+        public.unlink()
+        assert _fingerprint_for_path(str(private)) == result
 
-        monkeypatch.setattr(skf.subprocess, "run", fake_run)
-        result = _fingerprint_for_path("~/key")
-        assert result == ("ED25519", "SHA256:abc", "user@host")
-        # Second call is served from cache (ssh-keygen not invoked again).
-        assert _fingerprint_for_path("~/key") == result
-        assert len(calls) == 1
-
-    def test_nonzero_returncode_yields_empty(self, monkeypatch):
-        monkeypatch.setattr(
-            skf.subprocess, "run",
-            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, stdout="", stderr="nope"))
-        assert _fingerprint_for_path("/missing") == ("", "", "")
-
-    def test_exception_is_swallowed(self, monkeypatch):
-        def boom(cmd, **kw):
-            raise OSError("ssh-keygen not found")
-
-        monkeypatch.setattr(skf.subprocess, "run", boom)
-        assert _fingerprint_for_path("/x") == ("", "", "")
+    def test_missing_public_companion_yields_empty(self, tmp_path):
+        private = tmp_path / "id_ed25519"
+        private.write_text("PRIVATE-MATERIAL-MUST-NOT-BE-PARSED")
+        assert _fingerprint_for_path(str(private)) == ("", "", "")
 
 
 class TestFingerprintForPubLine:
-    def test_success(self, monkeypatch):
-        monkeypatch.setattr(
-            skf.subprocess, "run",
-            lambda cmd, **kw: subprocess.CompletedProcess(
-                cmd, 0, stdout="256 SHA256:pub comment (ED25519)", stderr=""))
-        assert _fingerprint_for_pub_line("ssh-ed25519 AAAA...") == (
-            "ED25519", "SHA256:pub", "comment")
+    def test_success(self):
+        assert _fingerprint_for_pub_line("ssh-ed25519 YWJj comment") == (
+            "ED25519",
+            _fingerprint(b"abc"),
+            "comment",
+        )
 
-    def test_failure_yields_empty(self, monkeypatch):
-        def boom(cmd, **kw):
-            raise OSError()
-
-        monkeypatch.setattr(skf.subprocess, "run", boom)
+    def test_failure_yields_empty(self):
         assert _fingerprint_for_pub_line("bad") == ("", "", "")

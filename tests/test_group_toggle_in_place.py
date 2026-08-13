@@ -20,6 +20,7 @@ from sshpilot.sidebar import (
     _record_group_reorder_tree_target,
     _resolve_group_color_by_id,
     _row_at_y_or_nearest,
+    _set_group_tree_drop_target,
     _sync_group_member_rows,
     _tree_target_insert_before,
     reset_connection_list_drag_session,
@@ -639,6 +640,11 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
 
     placed = []
 
+    class _Client:
+        def place_group(self, request):
+            placed.append((request.group_id, request.parent_id, request.index))
+            return True
+
     class _Manager:
         def __init__(self):
             self.groups = {
@@ -666,6 +672,8 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
         window.connection_list = object()
         indicator_row.bind_listbox(window.connection_list)
         window.group_manager = _Manager()
+        window.client = _Client()
+        window.connection_manager = types.SimpleNamespace(snapshot=lambda: None)
         window.rebuilt = []
         window.rebuild_connection_list = lambda: window.rebuilt.append(True)
         return window
@@ -682,6 +690,221 @@ def test_group_drop_follows_captured_indicator(monkeypatch):
     window = _make_window("above", parent_id=None, index=1, tree_set=True)
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
     assert placed == [("src", None, 1)]
+
+
+def test_group_drop_carries_projection_generation(monkeypatch):
+    """Group drops attach the authoritative projection generation."""
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    placed = []
+
+    class _Client:
+        def place_group(self, request):
+            placed.append(request)
+            return True
+
+    class _Manager:
+        def __init__(self):
+            self.groups = {
+                "src": {"id": "src", "parent_id": None},
+                "dst": {"id": "dst", "parent_id": None},
+            }
+
+        def get_ordered_siblings(self, parent_id):
+            if parent_id == "dst":
+                return []
+            return ["src", "dst"]
+
+        def sibling_index(self, group_id):
+            return None, 0
+
+    def _make_window(position, parent_id=None, index=None, tree_set=False,
+                     drop_generation=None, projection_generation=None):
+        window = types.SimpleNamespace()
+        indicator_row = _AllocRow(0, 40, group_id="dst")
+        window._drop_indicator_row = indicator_row
+        window._drop_indicator_position = position
+        window._drop_group_parent_id = parent_id
+        window._drop_group_index = index
+        window._drop_group_tree_target_set = tree_set
+        window._drop_group_generation = drop_generation
+        window.connection_list = object()
+        indicator_row.bind_listbox(window.connection_list)
+        window.group_manager = _Manager()
+        window.client = _Client()
+        snapshot = (
+            types.SimpleNamespace(generation=projection_generation)
+            if projection_generation is not None
+            else None
+        )
+        window.connection_manager = types.SimpleNamespace(snapshot=lambda: snapshot)
+        return window
+
+    value = {"type": "group", "group_id": "src"}
+
+    # on_group nest uses the authoritative projection generation.
+    window = _make_window("on_group", projection_generation=5)
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
+    assert placed[-1].group_id == "src"
+    assert placed[-1].parent_id == "dst"
+    assert placed[-1].index == 0
+    assert placed[-1].expected_generation == 5
+
+    # Tree-set reorder uses the generation captured with the drop target, even
+    # when the projection has since moved on.
+    placed.clear()
+    window = _make_window(
+        "above",
+        parent_id=None,
+        index=1,
+        tree_set=True,
+        drop_generation=7,
+        projection_generation=5,
+    )
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
+    assert placed[-1].expected_generation == 7
+
+    # above/below recompute uses the authoritative projection generation.
+    placed.clear()
+    window = _make_window("above", projection_generation=9)
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
+    assert placed[-1].expected_generation == 9
+
+
+def test_group_on_group_drop_uses_captured_nest_target(monkeypatch):
+    """A nest drop submits the tuple captured with the preview, not a recompute.
+
+    The nest preview is calculated at motion time and its generation captured.
+    If the authoritative projection advances before the drop, the request must
+    still describe the projection the user saw (WYSIWYG)."""
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    placed = []
+
+    class _Client:
+        def place_group(self, request):
+            placed.append(request)
+            return True
+
+    class _Manager:
+        def __init__(self):
+            self.groups = {
+                "src": {"id": "src", "parent_id": None},
+                "dst": {"id": "dst", "parent_id": None},
+            }
+
+        def get_ordered_siblings(self, parent_id):
+            if parent_id == "dst":
+                return ["existing"]
+            return ["src", "dst"]
+
+    window = types.SimpleNamespace()
+    indicator_row = _AllocRow(0, 40, group_id="dst")
+    window._drop_indicator_row = indicator_row
+    window._drop_indicator_position = "on_group"
+    # Captured at motion time: nest "src" into "dst" before "existing" (index 0),
+    # when the projection was generation 7.
+    window._drop_group_parent_id = "dst"
+    window._drop_group_index = 0
+    window._drop_group_tree_target_set = True
+    window._drop_group_generation = 7
+    window.connection_list = object()
+    indicator_row.bind_listbox(window.connection_list)
+    window.group_manager = _Manager()
+    window.client = _Client()
+    # The authoritative projection has advanced to generation 8 by drop time.
+    window.connection_manager = types.SimpleNamespace(
+        snapshot=lambda: types.SimpleNamespace(generation=8)
+    )
+
+    value = {"type": "group", "group_id": "src"}
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
+    assert placed[-1].group_id == "src"
+    assert placed[-1].parent_id == "dst"
+    assert placed[-1].index == 0
+    assert placed[-1].expected_generation == 7
+
+
+def test_set_group_tree_drop_target_captures_projection_generation():
+    """The captured drop target records the projection generation at motion time."""
+
+    class _Manager:
+        groups = {"a": {"id": "a", "parent_id": None}}
+
+    window = types.SimpleNamespace()
+    window.group_manager = _Manager()
+    window.connection_manager = types.SimpleNamespace(
+        snapshot=lambda: types.SimpleNamespace(generation=11)
+    )
+
+    _set_group_tree_drop_target(window, "a", 2)
+    assert window._drop_group_generation == 11
+    assert window._drop_group_parent_id == "a"
+    assert window._drop_group_index == 2
+    assert window._drop_group_tree_target_set is True
+
+
+def test_group_dnd_unsupported_capability_has_no_local_fallback(monkeypatch):
+    """An unsupported group capability must not fall back to a local mutation."""
+    from sshpilot.api import Capability
+    from sshpilot.api.errors import UnsupportedCapabilityError
+
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    local_places = []
+    request_seen = []
+
+    class _Client:
+        def place_group(self, request):
+            request_seen.append(request)
+            raise UnsupportedCapabilityError(
+                "daemon does not support group changes",
+                Capability.CONNECTIONS_GROUPS,
+            )
+
+    class _Manager:
+        def __init__(self):
+            self.groups = {
+                "src": {"id": "src", "parent_id": None},
+                "dst": {"id": "dst", "parent_id": None},
+            }
+
+        def get_ordered_siblings(self, parent_id):
+            if parent_id == "dst":
+                return []
+            return ["src", "dst"]
+
+        def place_group(self, group_id, parent_id, index):
+            local_places.append((group_id, parent_id, index))
+            return True
+
+    window = types.SimpleNamespace()
+    indicator_row = _AllocRow(0, 40, group_id="dst")
+    window._drop_indicator_row = indicator_row
+    window._drop_indicator_position = "on_group"
+    window._drop_group_parent_id = None
+    window._drop_group_index = None
+    window._drop_group_tree_target_set = False
+    window._drop_group_generation = 3
+    window.connection_list = object()
+    indicator_row.bind_listbox(window.connection_list)
+    window.group_manager = _Manager()
+    window.client = _Client()
+    window.connection_manager = types.SimpleNamespace(
+        snapshot=lambda: types.SimpleNamespace(generation=3)
+    )
+
+    value = {"type": "group", "group_id": "src"}
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is False
+    assert local_places == []
+    assert len(request_seen) == 1
+    assert request_seen[0].expected_generation == 3
 
 
 def test_record_group_reorder_tree_target_before_root_sibling():
@@ -860,14 +1083,6 @@ def test_group_drop_ignores_connection_target(monkeypatch):
     conn_row = _ConnRow()
     monkeypatch.setattr(sidebar_module, "_row_at_y_or_nearest", lambda w, y: conn_row)
 
-    class _Manager:
-        def __init__(self):
-            self.groups = {"src": {"id": "src", "parent_id": None}}
-            self.reordered = []
-
-        def reorder_group(self, *args):
-            self.reordered.append(args)
-
     window = types.SimpleNamespace()
     window._drop_indicator_row = conn_row
     window._drop_indicator_position = None
@@ -1040,24 +1255,28 @@ def test_connection_drop_skips_rebuild_when_inplace_succeeds(monkeypatch):
 
     target_row = types.SimpleNamespace()
     target_row.connection = _RefConn()
+    target_row._group_id = "g1"
     target_row._in_tag_section = False
     target_row.get_parent = lambda: object()
 
     class _Manager:
-        def get_connection_group(self, nickname):
-            return "g1"
+        controller = None
 
-        def move_connection(self, nickname, group_id):
-            pass
+    class _Client:
+        def __init__(self):
+            self.requests = []
 
-        def reorder_connection_in_group(self, nickname, reference, position):
-            pass
+        def move_connections(self, request):
+            self.requests.append(request)
+            return True
 
     window = types.SimpleNamespace()
     window._drop_indicator_row = target_row
     window._drop_indicator_position = "below"
     window._drag_in_progress = True
     window.group_manager = _Manager()
+    window.client = _Client()
+    window.connection_manager = types.SimpleNamespace(snapshot=lambda: None)
     window.connection_list = types.SimpleNamespace(
         set_selection_mode=lambda mode: None,
         get_row_at_y=lambda y: target_row,
@@ -1065,10 +1284,76 @@ def test_connection_drop_skips_rebuild_when_inplace_succeeds(monkeypatch):
     window.rebuilt = []
     window.rebuild_connection_list = lambda: window.rebuilt.append(True)
 
-    value = {"type": "connection", "connection_nickname": "host-a"}
+    value = {
+        "type": "connection",
+        "connection_nickname": "host-a",
+        "source_group_id": "g1",
+        "source_group_coherent": True,
+    }
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is True
-    assert applied == [["host-a"]]
+    assert applied == []
+    assert len(window.client.requests) == 1
+    assert window.client.requests[0].connection_ids == ("host-a",)
+    assert window.client.requests[0].target_connection_id == "host-b"
+    assert window.client.requests[0].source_group_id == "g1"
+    assert window.client.requests[0].target_group_id == "g1"
+    assert window.client.requests[0].mode.value == "preserve"
     assert window.rebuilt == []
+
+
+def test_connection_tag_drop_submits_one_atomic_mutation(monkeypatch):
+    monkeypatch.setattr(sidebar_module, "_clear_drop_indicator", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_hide_ungrouped_area", lambda w: None)
+    monkeypatch.setattr(sidebar_module, "_stop_connection_autoscroll", lambda w: None)
+
+    class _Manager:
+        controller = None
+
+    class _Client:
+        def __init__(self):
+            self.tag_requests = []
+            self.metadata_calls = []
+
+        def add_tag_to_connections(self, request):
+            self.tag_requests.append(request)
+            return 3
+
+        def update_connection_metadata(self, *args):
+            self.metadata_calls.append(args)
+            raise AssertionError("tag DnD must not patch metadata per connection")
+
+    target_row = types.SimpleNamespace(
+        is_tag_group=True,
+        group_info={"name": "prod", "untagged": False},
+        get_parent=lambda: object(),
+    )
+    window = types.SimpleNamespace(
+        _drop_indicator_row=target_row,
+        _drop_indicator_position="on_group",
+        _drag_in_progress=True,
+        group_manager=_Manager(),
+        client=_Client(),
+        connection_manager=types.SimpleNamespace(
+            snapshot=lambda: types.SimpleNamespace(generation=9)
+        ),
+        connection_list=types.SimpleNamespace(
+            set_selection_mode=lambda mode: None,
+            get_row_at_y=lambda y: target_row,
+        ),
+    )
+    value = {
+        "type": "connection",
+        "connection_nicknames": ["a", "b", "c"],
+        "source_group_id": "web",
+        "source_group_coherent": True,
+    }
+    assert sidebar_module._on_connection_list_drop(window, None, value, 0, 50) is True
+    assert len(window.client.tag_requests) == 1
+    request = window.client.tag_requests[0]
+    assert request.connection_ids == ("a", "b", "c")
+    assert request.tag == "prod"
+    assert request.expected_generation == 9
+    assert window.client.metadata_calls == []
 
 
 def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
@@ -1090,7 +1375,12 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
                 "dst": {"id": "dst", "parent_id": None},
             }
 
-        def place_group(self, group_id, parent_id, index):
+    class _Client:
+        def __init__(self):
+            self.requests = []
+
+        def place_group(self, request):
+            self.requests.append(request)
             return True
 
     window = types.SimpleNamespace()
@@ -1100,12 +1390,17 @@ def test_group_drop_reorder_skips_rebuild_when_inplace_succeeds(monkeypatch):
     window._drop_group_index = 1
     window._drop_group_tree_target_set = True
     window.group_manager = _Manager()
+    window.client = _Client()
+    window.connection_manager = types.SimpleNamespace(snapshot=lambda: None)
     window.rebuilt = []
     window.rebuild_connection_list = lambda: window.rebuilt.append(True)
 
     value = {"type": "group", "group_id": "src"}
     assert sidebar_module._on_connection_list_drop(window, None, value, 0, 99999) is True
-    assert applied == [("src", {"nested": False, "reparented": False})]
+    assert applied == []
+    assert len(window.client.requests) == 1
+    assert window.client.requests[0].group_id == "src"
+    assert window.client.requests[0].index == 1
     assert window.rebuilt == []
 
 

@@ -509,16 +509,28 @@ class BackupManager:
     def export_configuration(self, export_path: str) -> Tuple[bool, Optional[str]]:
         """Export all configuration to a plain JSON file (legacy format; no secrets)."""
         try:
+            from sshpilot.core.import_export import atomic_write_json
+
             export_data = self._build_export_data()
             export_path = os.path.expanduser(export_path)
-            with open(export_path, 'w', encoding='utf-8') as f:
-                json.dump(export_data, f, indent=2)
+            atomic_write_json(export_path, export_data)
             logger.info(f"Configuration exported successfully to {export_path}")
             return True, None
         except Exception as e:
             error_msg = f"Failed to export configuration: {e}"
             logger.error(error_msg)
             return False, error_msg
+
+    def plan_configuration_import(self, import_data: Dict[str, Any], *, mode: str = 'merge'):
+        """Dry-run import plan via core.import_export (no GTK, no mutation)."""
+        from sshpilot.core.import_export import MergeStrategy, plan_import
+
+        strategy = {
+            'replace': MergeStrategy.REPLACE,
+            'merge': MergeStrategy.MERGE,
+            'skip': MergeStrategy.SKIP,
+        }.get(mode, MergeStrategy.MERGE)
+        return plan_import(import_data, strategy=strategy, include_secrets=False)
 
     def _gather_credentials(self, connections) -> List[Dict[str, Any]]:
         """Serialized credentials (password/sudo/key passphrase) for the given connections —
@@ -936,12 +948,22 @@ class BackupManager:
         return success, error, restored, restored_keys
 
     def _validate_import_data(self, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
-        """Validate import data structure"""
+        """Validate import data structure via core import/export policy."""
         if not isinstance(data, dict):
             return False, "Import data must be a JSON object"
 
-        # Check version
-        version = data.get('version')
+        try:
+            from sshpilot.core.import_export import migrate_payload, plan_import
+            from sshpilot.core.errors import CoreError
+
+            migrated = migrate_payload(data)
+        except CoreError as exc:
+            return False, str(exc.message or exc)
+        except Exception as exc:
+            return False, str(exc)
+
+        # Check version (legacy path still requires app_config for full restores)
+        version = migrated.get('version')
         if version is None:
             return False, "Missing 'version' field in import data"
         if not isinstance(version, int) or version > BACKUP_VERSION:
@@ -954,6 +976,12 @@ class BackupManager:
 
         if not isinstance(data['app_config'], dict):
             return False, "'app_config' must be a JSON object"
+
+        # Structural connection checks (when present) via core planner.
+        if data.get('connections') is not None or data.get('hosts') is not None:
+            plan = plan_import(data)
+            if not plan.ok and plan.errors:
+                return False, plan.errors[0].message
 
         # Warn about platform/mode differences (but don't fail)
         current_isolated = self.config.get_setting('ssh.use_isolated_config', False)
@@ -1293,12 +1321,12 @@ class BackupManager:
             }
 
             # Import groups that don't exist by name
-            import uuid
+            from .core.connections.models import generate_group_slug
             for imported_id, imported_info in imported_group_data.items():
                 group_name = imported_info.get('name', '')
                 if group_name.lower() not in existing_names:
-                    # Create new group with new UUID to avoid conflicts
-                    new_id = str(uuid.uuid4())
+                    # Create new group with stable slug to avoid conflicts
+                    new_id = generate_group_slug(group_name, set(current_group_data.keys()))
                     new_info = imported_info.copy()
                     new_info['id'] = new_id
                     new_info['order'] = len(current_group_data)

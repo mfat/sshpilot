@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from sshpilot.api.models.connection_store import ConnectionMetadataSummary
 from sshpilot.omni_search import (
     CommandSpec,
     _match_score,
@@ -8,29 +9,47 @@ from sshpilot.omni_search import (
 
 
 class _Connections:
-    def __init__(self, connections):
-        self._connections = connections
+    """Connection-manager projection double owning pinning/recent metadata.
+
+    Production reads pinning and recent-use data from
+    ``window.connection_manager.metadata`` and ``get_metadata(connection_id)``,
+    so the fake owns that state instead of stashing it on window.config.
+    """
+
+    def __init__(self, connections, *, pinned=(), recent=None):
+        self._connections = list(connections)
+        recent = dict(recent or {})
+        pinned = set(pinned)
+
+        names = {
+            *(c.nickname for c in self._connections),
+            *pinned,
+            *recent,
+        }
+        self.metadata = tuple(
+            ConnectionMetadataSummary(
+                connection_id=name,
+                values={
+                    "pinned": name in pinned,
+                    "last_used": recent.get(name, 0),
+                },
+            )
+            for name in sorted(names)
+        )
 
     def get_connections(self):
         return list(self._connections)
 
-
-class _Config:
-    def __init__(self, pinned=(), recent=None):
-        self._pinned = list(pinned)
-        self._recent = recent or {}
-
-    def get_pinned_nicknames(self):
-        return list(self._pinned)
-
-    def get_connection_meta(self, nickname):
-        return {"last_used": self._recent.get(nickname, 0)}
+    def get_metadata(self, connection_id):
+        for item in self.metadata:
+            if item.connection_id == connection_id:
+                return item.values
+        return {}
 
 
 def _window(connections=(), pinned=(), recent=None):
     return SimpleNamespace(
-        connection_manager=_Connections(connections),
-        config=_Config(pinned, recent),
+        connection_manager=_Connections(connections, pinned=pinned, recent=recent),
     )
 
 

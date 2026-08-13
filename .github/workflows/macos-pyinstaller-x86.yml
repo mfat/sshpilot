@@ -120,6 +120,10 @@ jobs:
           ls -la dist/
           [ -d "dist/SSHPilot.app" ] || (echo "ERROR: SSHPilot.app not found" && exit 1)
 
+      - name: Smoke-test bundled daemon entrypoint
+        run: |
+          .venv-homebrew/bin/python scripts/verify_macos_daemon_bundle.py dist/SSHPilot.app
+
       - name: Compress app bundle for artifact upload
         run: |
           ditto -c -k --sequesterRsrc --keepParent dist/SSHPilot.app dist/SSHPilot.app.zip

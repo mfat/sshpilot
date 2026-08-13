@@ -10,7 +10,6 @@ import faulthandler
 import resource
 import logging
 import threading
-from logging.handlers import RotatingFileHandler
 
 
 def _clamp_thirdparty_loggers() -> None:
@@ -169,9 +168,10 @@ class SshPilotApplication(Adw.Application):
 
     def __init__(self, verbose: bool = False, quiet: bool = False,
                  isolated: bool = False, log_gtk_warnings: bool = False,
-                 fatal_warnings: bool = False):
+                 fatal_warnings: bool = False,
+                 application_id: str | None = None):
         super().__init__(
-            application_id='io.github.mfat.sshpilot',
+            application_id=application_id or 'io.github.mfat.sshpilot',
             flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
 
@@ -191,6 +191,16 @@ class SshPilotApplication(Adw.Application):
         self.verbose_override = verbose and not quiet
         self.quiet_override = quiet and not verbose
         self.isolated_mode = isolated
+        # App-launched daemons inherit this so ``--verbose`` reaches sshpilotd
+        # (stdout/stderr are redirected to DEVNULL; file logging uses the flag).
+        if self.verbose_override:
+            os.environ["SSHPILOT_DAEMON_VERBOSE"] = "1"
+        else:
+            os.environ.pop("SSHPILOT_DAEMON_VERBOSE", None)
+        if self.quiet_override:
+            os.environ["SSHPILOT_DAEMON_QUIET"] = "1"
+        else:
+            os.environ.pop("SSHPILOT_DAEMON_QUIET", None)
 
         # Session-scoped dismissals for the post-connect save prompt
         from .unsaved_host import SavePromptDismissals
@@ -487,6 +497,420 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
 
+    def install_api_event_subscription(self, client) -> None:
+        """Subscribe once for the application-scoped daemon client."""
+
+        self.clear_api_event_subscription()
+
+        set_lost = getattr(client, "set_on_transport_lost", None)
+        if callable(set_lost):
+            set_lost(
+                lambda error: GLib.idle_add(
+                    self._on_daemon_transport_lost,
+                    error,
+                )
+            )
+
+        def _on_event(event):
+            from .api.events import EventType
+
+            if event.type in {
+                EventType.CONNECTION_CREATED,
+                EventType.CONNECTION_UPDATED,
+                EventType.CONNECTION_DELETED,
+                EventType.ERROR_OCCURRED,
+            }:
+                GLib.idle_add(self._handle_api_client_event, event.type)
+            elif event.type in {
+                EventType.SESSION_CREATED,
+                EventType.SESSION_STATE_CHANGED,
+                EventType.SESSION_EXITED,
+                EventType.SESSION_CLOSED,
+            }:
+                GLib.idle_add(self._handle_api_session_event, event)
+
+        try:
+            self._api_event_subscription = client.subscribe_events(_on_event)
+        except Exception as error:
+            self._api_event_subscription = None
+            logger.warning(
+                "Application API event subscription failed type=%s",
+                type(error).__name__,
+            )
+
+    def _daemon_reconnect_suppressed(self) -> bool:
+        """True when reconnect must not run (intentional terminate / quit)."""
+        if getattr(self, "_daemon_shutdown_intent", None) == "terminate":
+            return True
+        from .daemon_quit_policy import DaemonQuitDecision
+
+        if getattr(self, "_daemon_quit_decision", None) is DaemonQuitDecision.TERMINATE_ALL:
+            return True
+        window = self.window
+        if window is None:
+            return False
+        if getattr(window, "_is_quitting", False):
+            return True
+        if getattr(window, "_daemon_shutdown_intent", None) == "terminate":
+            return True
+        if getattr(window, "_daemon_quit_decision", None) is DaemonQuitDecision.TERMINATE_ALL:
+            return True
+        return False
+
+    def cancel_daemon_reconnect(self, *, reason: str = "shutdown") -> None:
+        """Abort in-flight / pending reconnect (Terminate everything / quit)."""
+        self._daemon_reconnect_generation = (
+            getattr(self, "_daemon_reconnect_generation", 0) + 1
+        )
+        self._daemon_reconnect_in_progress = False
+        logger.debug("daemon reconnect cancelled reason=%s", reason)
+
+    def _discard_accidental_daemon_reconnect(self, result) -> None:
+        """Stop a daemon that reconnect started during intentional terminate."""
+        if result is None:
+            return
+        client = getattr(result, "client", None)
+        if client is None:
+            return
+        try:
+            from .api.models.daemon import StopDaemonRequest
+
+            stop = getattr(client, "stop_daemon", None)
+            if callable(stop):
+                stop(StopDaemonRequest(force=True))
+        except Exception:
+            logger.debug(
+                "Failed to stop accidental reconnect daemon during terminate-all",
+                exc_info=True,
+            )
+        try:
+            client.close()
+        except Exception:
+            logger.debug(
+                "Failed to close accidental reconnect client during terminate-all",
+                exc_info=True,
+            )
+
+    def _on_daemon_transport_lost(self, error) -> bool:
+        """Schedule a bounded daemon reconnect after unexpected transport loss."""
+
+        if self._daemon_reconnect_suppressed():
+            code = getattr(getattr(error, "code", None), "value", None)
+            logger.debug(
+                "Ignoring expected daemon transport loss during intentional "
+                "shutdown code=%s",
+                code or type(error).__name__,
+            )
+            return False
+        code = getattr(getattr(error, "code", None), "value", None)
+        logger.warning(
+            "Daemon transport lost code=%s; scheduling reconnect",
+            code or type(error).__name__,
+        )
+        window = self.window
+        runtime_status = (
+            getattr(window, "connection_runtime_status", None)
+            if window is not None
+            else None
+        )
+        close_runtime_status = getattr(runtime_status, "close", None)
+        if callable(close_runtime_status):
+            close_runtime_status()
+        self.request_daemon_reconnect(
+            reason="transport_loss",
+            immediate=False,
+        )
+        return False
+
+    def _ensure_daemon_reconnect_helper(self):
+        helper = getattr(self, "_api_daemon_reconnect_helper", None)
+        if helper is not None:
+            return helper
+        from .api.daemon_reconnect import DaemonReconnectHelper
+        from .daemon.launcher import DaemonLauncher
+
+        launcher = getattr(self, "_api_daemon_launcher", None)
+        if launcher is None:
+            launcher = DaemonLauncher(
+                verbose=bool(getattr(self, "verbose_override", False)),
+                quiet=bool(getattr(self, "quiet_override", False)),
+            )
+            self._api_daemon_launcher = launcher
+        helper = DaemonReconnectHelper(launcher=launcher)
+        self._api_daemon_reconnect_helper = helper
+        return helper
+
+    def request_daemon_reconnect(
+        self,
+        *,
+        reason: str = "transport_loss",
+        immediate: bool = False,
+    ) -> None:
+        """Reconnect or start a compatible daemon without restoring live resources.
+
+        ``immediate`` skips backoff (used after an explicit in-app restart).
+        Concurrent requests are coalesced.
+        """
+
+        if self._daemon_reconnect_suppressed():
+            logger.debug(
+                "daemon reconnect suppressed reason=%s (intentional shutdown)",
+                reason,
+            )
+            return
+        if getattr(self, "_daemon_reconnect_in_progress", False):
+            logger.debug(
+                "daemon reconnect already in progress; ignoring reason=%s",
+                reason,
+            )
+            return
+        self._daemon_reconnect_in_progress = True
+        generation = getattr(self, "_daemon_reconnect_generation", 0)
+        helper = self._ensure_daemon_reconnect_helper()
+        helper.note_transport_loss()
+        bridge = getattr(self, "_api_client_bridge", None)
+
+        def _run():
+            if (
+                self._daemon_reconnect_suppressed()
+                or getattr(self, "_daemon_reconnect_generation", 0) != generation
+            ):
+                logger.debug(
+                    "daemon reconnect aborted before attempt reason=%s",
+                    reason,
+                )
+                GLib.idle_add(self._finish_daemon_reconnect, None, generation)
+                return None
+            try:
+                result = helper.reconnect(wait_for_backoff=not immediate)
+            except Exception as error:
+                logger.error(
+                    "daemon reconnect worker failed type=%s",
+                    type(error).__name__,
+                    exc_info=True,
+                )
+                GLib.idle_add(self._finish_daemon_reconnect, None, generation)
+                return None
+            if (
+                self._daemon_reconnect_suppressed()
+                or getattr(self, "_daemon_reconnect_generation", 0) != generation
+            ):
+                logger.info(
+                    "Discarding daemon reconnect during intentional terminate-all"
+                )
+                self._discard_accidental_daemon_reconnect(result)
+                GLib.idle_add(self._finish_daemon_reconnect, None, generation)
+                return None
+            GLib.idle_add(self._finish_daemon_reconnect, result, generation)
+            return None
+
+        if bridge is not None and hasattr(bridge, "submit"):
+            try:
+                bridge.submit(
+                    _run,
+                    on_success=lambda _value: None,
+                    on_error=lambda error: GLib.idle_add(
+                        self._finish_daemon_reconnect,
+                        None,
+                        generation,
+                    ),
+                )
+                return
+            except Exception:
+                logger.debug(
+                    "bridge submit for daemon reconnect failed; using thread",
+                    exc_info=True,
+                )
+        thread = threading.Thread(
+            target=_run,
+            name="sshpilot-daemon-reconnect",
+            daemon=True,
+        )
+        thread.start()
+
+    def _finish_daemon_reconnect(self, result, generation: int = -1) -> bool:
+        if (
+            generation >= 0
+            and getattr(self, "_daemon_reconnect_generation", 0) != generation
+        ):
+            logger.debug("Ignoring stale daemon reconnect finish")
+            return False
+        self._daemon_reconnect_in_progress = False
+        if self._daemon_reconnect_suppressed():
+            if result is not None and getattr(result, "client", None) is not None:
+                logger.info(
+                    "Discarding daemon reconnect during intentional terminate-all"
+                )
+                self._discard_accidental_daemon_reconnect(result)
+            return False
+        if result is None or getattr(result, "client", None) is None:
+            decision = getattr(result, "decision", None) if result is not None else None
+            message = getattr(decision, "message", None) if decision is not None else None
+            logger.warning(
+                "daemon reconnect did not restore a client message=%s",
+                message or "unavailable",
+            )
+            return False
+
+        from .api.client_factory import ClientSelection
+
+        launched = getattr(result, "launched", None)
+        process = getattr(launched, "process", None) if launched is not None else None
+        selection = ClientSelection(
+            client=result.client,
+            daemon_process=process,
+        )
+        previous = None
+        existing = getattr(self, "_api_client_selection", None)
+        if existing is not None:
+            previous = getattr(existing, "client", None)
+        self._api_client_selection = selection
+        try:
+            self.install_api_event_subscription(result.client)
+        except Exception:
+            logger.debug(
+                "Failed to reinstall API events after daemon reconnect",
+                exc_info=True,
+            )
+        window = self.window
+        if window is not None and not getattr(window, "_is_quitting", False):
+            window.client = result.client
+            for projection_name in (
+                "connection_manager",
+                "connection_runtime_status",
+            ):
+                projection = getattr(window, projection_name, None)
+                attach_client = getattr(projection, "attach_client", None)
+                if not callable(attach_client):
+                    continue
+                try:
+                    attach_client(result.client)
+                except Exception:
+                    logger.warning(
+                        "Failed to refresh %s after daemon reconnect",
+                        projection_name,
+                        exc_info=True,
+                    )
+            welcome = getattr(window, "welcome_view", None)
+            if welcome is not None and hasattr(welcome, "set_client"):
+                try:
+                    welcome.set_client(
+                        result.client,
+                        bridge=getattr(self, "_api_client_bridge", None),
+                    )
+                except Exception:
+                    logger.debug(
+                        "Failed to refresh welcome client after reconnect",
+                        exc_info=True,
+                    )
+        if previous is not None and previous is not result.client:
+            try:
+                previous.close()
+            except Exception:
+                pass
+        logger.info(
+            "daemon reconnect applied instance=%s",
+            getattr(result.client, "server_instance_id", ""),
+        )
+        return False
+
+    def _handle_api_session_event(self, event) -> bool:
+        """Record daemon session state on GTK's main context for diagnostics."""
+
+        window = self.window
+        if window is not None and getattr(window, '_is_quitting', False):
+            return False
+        self._last_api_session_event = event
+        callback = getattr(self, '_api_session_event_callback', None)
+        if callable(callback):
+            callback(event)
+        return False
+
+    def open_daemon_session_for_diagnostics(
+        self,
+        connection_id,
+        *,
+        on_success=None,
+        on_error=None,
+    ):
+        """Submit a non-terminal session open without blocking GTK.
+
+        This remains a development/test hook. Normal VTE and PyXtermJS launch
+        paths do not call it in Phase 6.
+        """
+
+        from .api.errors import ErrorCode, SshPilotError
+        from .api.models.sessions import OpenSessionRequest
+
+        selection = getattr(self, '_api_client_selection', None)
+        client = getattr(selection, 'client', None)
+        bridge = getattr(self, '_api_client_bridge', None)
+        if client is None or bridge is None:
+            error = SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Daemon session diagnostics are unavailable",
+            )
+            self._last_api_session_error_code = error.code
+            if callable(on_error):
+                on_error(error)
+            return None
+
+        def _success(summary):
+            if self.window is not None and getattr(
+                self.window,
+                '_is_quitting',
+                False,
+            ):
+                return
+            self._last_api_session_summary = summary
+            if callable(on_success):
+                on_success(summary)
+
+        def _error(error):
+            if self.window is not None and getattr(
+                self.window,
+                '_is_quitting',
+                False,
+            ):
+                return
+            self._last_api_session_error_code = getattr(
+                error,
+                'code',
+                ErrorCode.INTERNAL_ERROR,
+            )
+            if callable(on_error):
+                on_error(error)
+
+        return bridge.submit(
+            lambda: client.open_session(
+                OpenSessionRequest(connection_id=connection_id)
+            ),
+            on_success=_success,
+            on_error=_error,
+        )
+
+    def clear_api_event_subscription(self) -> None:
+        subscription = getattr(self, '_api_event_subscription', None)
+        self._api_event_subscription = None
+        if subscription is not None:
+            try:
+                subscription.unsubscribe()
+            except Exception:
+                logger.warning("Application API event unsubscription failed")
+
+    def _handle_api_client_event(self, event_type) -> bool:
+        from .api.events import EventType
+
+        window = self.window
+        welcome = getattr(window, 'welcome_view', None) if window else None
+        if welcome is None or getattr(window, '_is_quitting', False):
+            return False
+        if event_type is EventType.ERROR_OCCURRED:
+            welcome.mark_connection_data_unavailable()
+        else:
+            welcome.schedule_connection_refresh()
+        return False
+
     def do_command_line(self, command_line):
         """Handle argv for first launch and single-instance handoff.
 
@@ -560,6 +984,12 @@ class SshPilotApplication(Adw.Application):
     def on_shutdown(self, app):
         """Clean up all resources when application is shutting down"""
         logger.info("Application shutdown initiated, cleaning up...")
+        try:
+            from .logging_support import stop_daemon_log_forwarder
+
+            stop_daemon_log_forwarder()
+        except Exception:
+            logger.debug("Failed to stop daemon log forwarder", exc_info=True)
 
         # Mark every window quitting before any teardown. This path (direct app
         # shutdown) bypasses cleanup_and_quit, which is the only other place
@@ -665,6 +1095,88 @@ class SshPilotApplication(Adw.Application):
                 logger.debug(f"Error accessing file manager registry: {exc}")
         except Exception as exc:
             logger.error(f"Error closing file manager windows: {exc}", exc_info=True)
+
+        # The frontend-neutral client and its GTK command bridge are
+        # application-scoped. Closing a window only suppresses that window's
+        # callbacks; final application shutdown owns transport teardown.
+        self.clear_api_event_subscription()
+        selection = getattr(self, '_api_client_selection', None)
+        client = getattr(selection, 'client', None)
+        if client is None and self.window is not None:
+            client = getattr(self.window, 'client', None)
+
+        # App-launched daemon: request graceful stop before closing the
+        # transport — unless the user chose Keep connections running.
+        # Externally-managed daemons (daemon_process is None) are left alone.
+        from .daemon_quit_policy import DaemonQuitDecision
+
+        quit_decision = getattr(self, "_daemon_quit_decision", None)
+        if quit_decision is None and self.window is not None:
+            quit_decision = getattr(self.window, "_daemon_quit_decision", None)
+
+        daemon_process = getattr(selection, 'daemon_process', None)
+        keep_running = quit_decision is DaemonQuitDecision.KEEP_RUNNING
+        already_force_stopped = (
+            getattr(self, "_daemon_shutdown_intent", None) == "terminate"
+            or (
+                self.window is not None
+                and getattr(self.window, "_daemon_shutdown_intent", None)
+                == "terminate"
+            )
+        )
+        if (
+            client is not None
+            and daemon_process is not None
+            and not keep_running
+            and not already_force_stopped
+        ):
+            try:
+                from .api.models.daemon import StopDaemonRequest
+                force = quit_decision is DaemonQuitDecision.TERMINATE_ALL
+                result = client.stop_daemon(StopDaemonRequest(force=force))
+                if not result.accepted and result.confirmation:
+                    # Active resources exist — force stop to terminate all work.
+                    logger.info(
+                        "Daemon stop refused (%s); force-terminating all work",
+                        result.will_lose,
+                    )
+                    client.stop_daemon(
+                        StopDaemonRequest(force=True)
+                    )
+                else:
+                    logger.info(
+                        "Requested graceful stop of app-launched daemon"
+                    )
+            except Exception:
+                logger.debug(
+                    "Daemon graceful stop request failed (will idle out)",
+                    exc_info=True,
+                )
+        elif already_force_stopped:
+            logger.debug(
+                "Terminate-all already force-stopped the daemon; skipping on_shutdown stop"
+            )
+        elif keep_running:
+            logger.info(
+                "Keep-running quit: leaving app-launched daemon intact"
+            )
+
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                logger.warning(
+                    "Application API client cleanup failed type=%s",
+                    type(client).__name__,
+                )
+        bridge = getattr(self, '_api_client_bridge', None)
+        if bridge is not None:
+            try:
+                bridge.shutdown()
+            except Exception:
+                logger.warning("Application API bridge cleanup failed")
+        self._api_client_selection = None
+        self._api_client_bridge = None
         
         if self._config_handler is not None and self.config is not None:
             try:
@@ -745,130 +1257,12 @@ class SshPilotApplication(Adw.Application):
             # Migration is best-effort; never block startup over it.
             pass
 
-        # Default log level is INFO for cleaner logs
-        log_level = logging.INFO
+        # The process-specific policy is shared with the daemon.  It removes
+        # only handlers owned by sshPilot, preserving embedding applications'
+        # handlers and closing every replaced rotating file.
+        from .logging_support import configure_frontend_logging, normalize_log_level
 
-        # Full timestamp + fully-qualified logger name on the file handler —
-        # we want detail in bug-report logs. Console gets a shorter format
-        # that's easier to scan.
-        file_formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-        )
-        console_formatter = logging.Formatter(
-            '%(asctime)s %(levelname)-5s %(short_name)s: %(message)s',
-            datefmt='%H:%M:%S',
-        )
-
-        class _ShortNameFilter(logging.Filter):
-            """Strip the leading ``sshpilot.`` from logger names for the console."""
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                name = record.name or ''
-                if name.startswith('sshpilot.'):
-                    record.short_name = name[len('sshpilot.'):]
-                else:
-                    record.short_name = name or '-'
-                return True
-
-        # --- Category filters for the per-feature log files. -------------
-        # Master ``sshpilot.log`` always receives everything (it's what bug
-        # reports cite). The category files are filtered convenience views.
-        _SSH_CATEGORY_NAMES: tuple = (
-            'sshpilot.connection_manager',
-            'sshpilot.terminal',
-            'sshpilot.terminal_manager',
-            'sshpilot.terminal_backends',
-            'sshpilot.ssh_utils',
-            'sshpilot.ssh_config_utils',
-            'sshpilot.ssh_connection_builder',
-            'sshpilot.sshcopyid_window',
-            'sshpilot.sshpilot_agent',
-            'sshpilot.scp_utils',
-            'sshpilot.sftp_utils',
-            'sshpilot.known_hosts_editor',
-        )
-
-        def _matches_any(name: str, prefixes: tuple) -> bool:
-            for p in prefixes:
-                if name == p or name.startswith(p + '.'):
-                    return True
-            return False
-
-        class _SshCategoryFilter(logging.Filter):
-            """Pass our SSH/connection/terminal modules."""
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                return _matches_any(record.name or '', _SSH_CATEGORY_NAMES)
-
-        class _AppCategoryFilter(logging.Filter):
-            """Pass our own loggers EXCEPT the SSH-category ones.
-
-            We deliberately don't let arbitrary third-party loggers leak into
-            the app log — they'd just add noise no one can act on. Paramiko
-            already goes to ssh.log via the filter above.
-            """
-
-            def filter(self, record: logging.LogRecord) -> bool:
-                name = record.name or ''
-                if not (name == 'sshpilot' or name.startswith('sshpilot.') or name == 'root'):
-                    return False
-                return not _matches_any(name, _SSH_CATEGORY_NAMES)
-
-        # Clear any existing handlers
-        logging.getLogger().handlers.clear()
-
-        # --- Master file (everything) ------------------------------------
-        # ``sshpilot.log`` is the authoritative log used by bug reports.
-        file_handler = RotatingFileHandler(
-            os.path.join(log_dir, 'sshpilot.log'),
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5,
-            encoding='utf-8'
-        )
-        file_handler.setLevel(log_level)
-        file_handler.setFormatter(file_formatter)
-
-        # --- App-only file -----------------------------------------------
-        app_file_handler = RotatingFileHandler(
-            os.path.join(log_dir, 'app.log'),
-            maxBytes=10*1024*1024, backupCount=5, encoding='utf-8',
-        )
-        app_file_handler.setLevel(log_level)
-        app_file_handler.setFormatter(file_formatter)
-        app_file_handler.addFilter(_AppCategoryFilter())
-
-        # --- SSH-only file ------------------------------------------------
-        ssh_file_handler = RotatingFileHandler(
-            os.path.join(log_dir, 'ssh.log'),
-            maxBytes=10*1024*1024, backupCount=5, encoding='utf-8',
-        )
-        ssh_file_handler.setLevel(log_level)
-        ssh_file_handler.setFormatter(file_formatter)
-        ssh_file_handler.addFilter(_SshCategoryFilter())
-
-        # Console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(log_level)
-        console_handler.setFormatter(console_formatter)
-        console_handler.addFilter(_ShortNameFilter())
-
-        # Add handlers to root logger
-        root_logger = logging.getLogger()
-        root_logger.setLevel(log_level)
-        root_logger.addHandler(file_handler)
-        root_logger.addHandler(app_file_handler)
-        root_logger.addHandler(ssh_file_handler)
-        root_logger.addHandler(console_handler)
-        # Track the per-category handlers so subsequent level changes
-        # (verbose / quiet) can be applied uniformly below.
-        self._category_handlers = (file_handler, app_file_handler, ssh_file_handler)
-
-        # Determine verbosity. Precedence (highest first):
-        #   CLI --quiet  →  WARNING (ERROR-and-up only)
-        #   CLI --verbose → DEBUG
-        #   logging.level config key ('info' | 'debug')
-        #   legacy ssh.debug_enabled (already migrated in config validator)
+        # Determine verbosity. Explicit CLI flags take precedence over config.
         quiet = bool(getattr(self, 'quiet_override', False))
         verbose = bool(getattr(self, 'verbose_override', False))
         if not (quiet or verbose):
@@ -876,20 +1270,20 @@ class SshPilotApplication(Adw.Application):
                 from .config import Config
                 cfg = Config()
                 level_setting = cfg.get_setting('logging.level', 'info')
-                verbose = str(level_setting).lower() == 'debug'
+                configured_level = str(level_setting).lower()
             except Exception:
-                verbose = False
+                configured_level = 'info'
+        else:
+            configured_level = 'warning' if quiet else 'debug'
 
         if quiet:
-            effective_level = logging.WARNING
+            effective_level = 'warning'
         elif verbose:
-            effective_level = logging.DEBUG
+            effective_level = 'debug'
         else:
-            effective_level = logging.INFO
-        for h in self._category_handlers:
-            h.setLevel(effective_level)
-        console_handler.setLevel(effective_level)
-        root_logger.setLevel(effective_level)
+            effective_level = configured_level
+        self._category_handlers = configure_frontend_logging(log_dir, effective_level)
+        numeric_level = normalize_log_level(effective_level)
 
         # Reapply third-party clamp. At default level they stay at WARNING
         # (so we don't drown the user in keyring/PIL chatter). In verbose mode
@@ -900,7 +1294,7 @@ class SshPilotApplication(Adw.Application):
             for noisy in ('keyring', 'gi', 'PIL', 'urllib3', 'asyncio'):
                 logging.getLogger(noisy).setLevel(logging.INFO)
 
-        app_level = logging.DEBUG if verbose else logging.INFO
+        app_level = numeric_level
         logging.getLogger('sshpilot').setLevel(app_level)
         logging.getLogger(__name__).setLevel(app_level)
 

@@ -2,7 +2,7 @@ name: Lint
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
 
 jobs:
@@ -20,7 +20,7 @@ jobs:
         run: pip install "ruff==0.15.17"
 
       - name: ruff check
-        run: ruff check src/ tests/
+        run: ruff check src/ tests/ scripts/generate_api_artifacts.py
 
   resources:
     # Guard against committed UI artifacts drifting from their Blueprint source:

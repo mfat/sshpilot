@@ -14,7 +14,10 @@ import asyncio
 from typing import List, Optional
 
 
-from sshpilot.connection_manager import Connection, ConnectionManager
+from sshpilot.connection_model import Connection
+from sshpilot.api.models import AuthenticationMethod, ConnectionDetails
+from sshpilot.core.connections.models import ConnectionRecord
+from sshpilot.daemon.connection_launch_provider import HeadlessConnectionView
 from sshpilot.ssh_connection_builder import (
     ConnectionContext,
     NativeAuth,
@@ -24,6 +27,70 @@ from sshpilot.ssh_connection_builder import (
 )
 
 asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+def runtime_connection(
+    *,
+    nickname="demo",
+    hostname="demo.example",
+    username="alice",
+    auth_method=0,
+    data=None,
+):
+    """Daemon launch-compatible connection view for a fresh record.
+
+    The legacy ``Connection`` presentation value drops persisted SSH-policy
+    fields such as ``auth_method``, so builder auth tests must use the view
+    the daemon launch provider builds instead.
+    """
+    record_data = dict(data or {})
+    record_data["auth_method"] = auth_method
+
+    record = ConnectionRecord(
+        id=nickname,
+        nickname=nickname,
+        host=nickname,
+        hostname=hostname,
+        username=username,
+        port=22,
+        protocol="ssh",
+        data=record_data,
+    )
+    return HeadlessConnectionView(record)
+
+
+class CredentialLookup:
+    """Narrow secret-backend fake: passwords, key passphrases, agent preload.
+
+    Deliberately contains no repository, group, Config, GTK, or persistence
+    behavior — it only answers the lookup/prepare methods the builder reads.
+    """
+
+    secret_lookup_authoritative = True
+
+    def __init__(
+        self,
+        *,
+        password=None,
+        passphrases=None,
+        preload_result=True,
+    ):
+        self.password = password
+        self.passphrases = dict(passphrases or {})
+        self.preload_result = preload_result
+        self.prepared_keys = []
+        self.password_lookups = []
+
+    def get_connection_password(self, connection):
+        self.password_lookups.append(connection.id)
+        return self.password
+
+    def get_key_passphrase(self, key_path):
+        return self.passphrases.get(key_path)
+
+    def prepare_key_for_connection(self, key_path):
+        self.prepared_keys.append(key_path)
+        return self.preload_result
 
 
 def _host_index(cmd: List[str]) -> int:
@@ -139,19 +206,21 @@ def test_local_command_not_emitted_to_command():
 
 
 def test_password_auth_with_stored_password_uses_askpass():
-    cmd, result = _build(
-        {
-            'host': 'pw.example',
-            'hostname': 'pw.example',
-            'username': 'u',
-            'auth_method': 1,
-            'password': 'secret',
-        },
-    )
+    connection = runtime_connection(auth_method=1)
+    credentials = CredentialLookup(password="secret")
+    # password_mode lives on NativeAuth only (SSHConnectionCommand has no
+    # such field), so resolve the auth contract directly before building.
+    auth = resolve_native_auth(connection, credentials)
+    assert auth.password_mode is True
+    cmd, result = _build_from(connection, connection_manager=credentials)
     assert result.use_sshpass is False
     assert result.password == 'secret'
     assert result.use_askpass is True
     assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
+    # BatchMode must never be added for password mode (it needs to prompt).
+    assert not _has_o_option(cmd, 'BatchMode=yes')
+    # The saved secret never lands in the persisted record data.
+    assert 'password' not in connection.data
     # PreferredAuthentications/PubkeyAuthentication now come from ~/.ssh/config.
     assert not _has_o_option(cmd, 'PreferredAuthentications')
     # No agent-bypass for password mode.
@@ -161,21 +230,19 @@ def test_password_auth_with_stored_password_uses_askpass():
 def test_key_auth_with_stored_password_uses_askpass_not_sshpass():
     # Key auth + a stored password (no saved key passphrase) -> askpass for the
     # login password; MFA declined by the helper falls back to the TTY.
-    conn = Connection({
-        'host': 'combo.example',
-        'hostname': 'combo.example',
-        'username': 'u',
-        'auth_method': 0,
-        'password': 'backup',
-    })
-    conn.resolved_identity_files = []  # no saved passphrase
-    cmd, result = _build_from(conn)
+    connection = runtime_connection(auth_method=0)
+    connection.resolved_identity_files = []  # no saved passphrase
+    credentials = CredentialLookup(password='backup')
+    cmd, result = _build_from(connection, connection_manager=credentials)
     assert result.use_sshpass is False
     assert result.password == 'backup'
     assert result.use_askpass is True
     assert result.env.get('SSH_ASKPASS')
     assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
     assert not _has_o_option(cmd, 'PreferredAuthentications')
+    # The fallback password comes from the secret backend, not the record.
+    assert credentials.password_lookups == [connection.id]
+    assert 'password' not in connection.data
 
 
 def test_password_auth_without_stored_password_not_sshpass():
@@ -195,15 +262,11 @@ def test_password_auth_without_stored_password_not_sshpass():
 
 
 def test_in_memory_password_used_when_password_auth_selected():
-    cmd, result = _build(
-        {
-            'host': 'mem.example',
-            'hostname': 'mem.example',
-            'username': 'u',
-            'auth_method': 1,
-            'password': 'inline-secret',
-        },
-    )
+    # The explicit transient password surface: held on the view, never stored
+    # in the persisted record data.
+    connection = runtime_connection(auth_method=1)
+    connection.password = 'inline-secret'
+    cmd, result = _build_from(connection)
     assert result.use_sshpass is False
     assert result.use_askpass is True
     assert result.password == 'inline-secret'
@@ -212,17 +275,16 @@ def test_in_memory_password_used_when_password_auth_selected():
         result.env.get('SSHPILOT_SESSION_PASSWORD_ID')
         or result.env.get('SSHPILOT_SESSION_PASSWORD_FILE')
     )
+    # The underlying record data contains no password.
+    assert 'password' not in connection.data
 
 
 # --- resolve_native_auth modes ---
 
 
 def test_resolve_native_auth_password_mode():
-    conn = Connection({
-        'host': 'h', 'hostname': 'h', 'username': 'u',
-        'auth_method': 1, 'password': 'p',
-    })
-    auth = resolve_native_auth(conn)
+    connection = runtime_connection(auth_method=1)
+    auth = resolve_native_auth(connection, CredentialLookup(password='p'))
     assert isinstance(auth, NativeAuth)
     assert auth.password_mode is True
     assert auth.use_sshpass is False
@@ -241,6 +303,43 @@ def test_resolve_native_auth_askpass_disabled():
     assert auth.extra_opts == []
     assert 'SSH_ASKPASS' not in auth.env
     assert 'SSH_ASKPASS_REQUIRE' not in auth.env
+
+
+def test_noninteractive_daemon_auth_skips_secrets_and_allowlists_environment(
+    monkeypatch,
+):
+    import sshpilot.ssh_connection_builder as scb
+
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/run/user/test/agent.sock")
+    monkeypatch.setenv("SSH_ASKPASS", "/unsafe/helper")
+    monkeypatch.setenv("BW_SESSION", "secret-session")
+    monkeypatch.setattr(
+        scb,
+        "_get_stored_password",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("secret lookup must not run")
+        ),
+    )
+    monkeypatch.setattr(
+        scb,
+        "lookup_passphrase",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("passphrase lookup must not run")
+        ),
+    )
+
+    cmd, result = _build(
+        {"host": "h", "hostname": "h", "auth_method": 1},
+        interaction_policy="none",
+    )
+
+    assert _has_o_option(cmd, "BatchMode=yes")
+    assert _has_o_option(cmd, "StrictHostKeyChecking=yes")
+    assert result.env["SSH_AUTH_SOCK"] == "/run/user/test/agent.sock"
+    assert result.env["TERM"] == "xterm-256color"
+    assert "SSH_ASKPASS" not in result.env
+    assert "SSH_ASKPASS_REQUIRE" not in result.env
+    assert "BW_SESSION" not in result.env
 
 
 def test_resolve_native_auth_key_mode_saved_passphrase_uses_askpass(monkeypatch):
@@ -279,6 +378,29 @@ def test_resolve_native_auth_key_mode_probe_error_failsafe_askpass(monkeypatch):
     conn.resolved_identity_files = ['/home/u/.ssh/k']
     auth = resolve_native_auth(conn)
     # Fail-safe: can't tell -> keep askpass on (never regress autofill).
+    assert auth.use_askpass is True
+
+
+def test_resolve_native_auth_understands_daemon_authentication_method():
+    class Credentials:
+        @staticmethod
+        def get_connection_password(_connection):
+            return "stored-password"
+
+    connection = ConnectionDetails(
+        id="demo",
+        nickname="demo",
+        host="demo.example",
+        hostname="demo.example",
+        username="alice",
+        port=22,
+        authentication_method=AuthenticationMethod.PASSWORD,
+    )
+
+    auth = resolve_native_auth(connection, Credentials())
+
+    assert auth.password_mode is True
+    assert auth.password == "stored-password"
     assert auth.use_askpass is True
 
 
@@ -344,6 +466,28 @@ def test_build_native_command_plain_ssh():
     assert 'IdentityAgent=none' not in cmd
 
 
+def test_build_native_command_uses_isolated_config_for_daemon_dto(monkeypatch):
+    import sshpilot.ssh_connection_builder as scb
+
+    monkeypatch.setattr(scb, "get_config_dir", lambda: "/tmp/sshpilot-config")
+    connection = ConnectionDetails(
+        id="demo",
+        nickname="demo",
+        host="demo.example",
+        hostname="demo.example",
+        username="alice",
+        port=22,
+    )
+    config = _ConfigStub(settings={"ssh.use_isolated_config": True})
+
+    assert build_native_command(connection, config) == [
+        "ssh",
+        "-F",
+        "/tmp/sshpilot-config/ssh_config",
+        "demo",
+    ]
+
+
 def test_build_native_command_binary_selection():
     conn = Connection({'host': 'b.example', 'hostname': 'b.example'})
     assert build_native_command(conn, command_type='scp')[0] == 'scp'
@@ -384,40 +528,46 @@ def test_app_config_batch_mode_added_for_key_auth():
 
 def test_app_config_batch_mode_skipped_for_password_mode():
     cfg = _ConfigStub({'batch_mode': True})
-    cmd, _ = _build(
-        {
-            'host': 'pwbatch.example',
-            'hostname': 'pwbatch.example',
-            'auth_method': 1,
-            'password': 'p',
-        },
-        config=cfg,
+    connection = runtime_connection(auth_method=1)
+    credentials = CredentialLookup(password='secret')
+    # Password mode (auth_method=1), not a mutable Connection.password field,
+    # is what suppresses BatchMode.
+    auth = resolve_native_auth(connection, credentials, cfg)
+    assert auth.password_mode is True
+    assert auth.password == 'secret'
+    assert auth.use_askpass is True
+    cmd, result = _build_from(
+        connection, connection_manager=credentials, config=cfg
     )
+    assert result.use_askpass is True
     # BatchMode must never be added for password mode (it needs to prompt).
     assert not _has_o_option(cmd, 'BatchMode=yes')
 
 
-def test_app_config_batch_mode_skipped_for_combined_auth_pty_password(monkeypatch):
-    import sshpilot.ssh_connection_builder as scb
-
+def test_app_config_batch_mode_skipped_for_combined_auth_pty_password():
     cfg = _ConfigStub({'batch_mode': True})
-    conn = Connection({
-        'host': 'bothbatch.example',
-        'hostname': 'bothbatch.example',
-        'auth_method': 0,
-        'password': 'account-password',
-    })
-    conn.resolved_identity_files = ['/home/u/.ssh/k']
-    monkeypatch.setattr(scb, 'lookup_passphrase', lambda _p: 'key-passphrase')
-    monkeypatch.setattr(scb, 'ensure_key_in_agent', lambda _p, *, force=False, lifetime=0: True)
+    connection = runtime_connection(auth_method=0)
+    connection.resolved_identity_files = ['/home/u/.ssh/k']
+    credentials = CredentialLookup(
+        password='account-password',
+        passphrases={'/home/u/.ssh/k': 'key-passphrase'},
+        preload_result=True,
+    )
 
-    cmd, result = _build_from(conn, config=cfg)
+    cmd, result = _build_from(
+        connection, connection_manager=credentials, config=cfg
+    )
 
     assert result.use_sshpass is False
     assert result.use_askpass is True
     assert result.password == 'account-password'
+    assert result.env.get('SSH_ASKPASS_REQUIRE') == 'prefer'
+    # The key was loaded into the agent via the credential lookup.
+    assert credentials.prepared_keys == ['/home/u/.ssh/k']
     # Askpass password delivery needs prompts enabled (BatchMode would skip them).
     assert not _has_o_option(cmd, 'BatchMode=yes')
+    # The account password lives in the secret backend, not the record data.
+    assert 'password' not in connection.data
 
 
 def test_keepalive_and_timeout_only_via_ssh_overrides():
@@ -433,57 +583,9 @@ def test_keepalive_and_timeout_only_via_ssh_overrides():
 
 
 # --- connect() integration ---
-
-
-def test_connect_stores_ssh_cmd_and_env(monkeypatch):
-    captured = {}
-
-    def fake_build(ctx):
-        captured['manager'] = ctx.connection_manager
-        from sshpilot.ssh_connection_builder import SSHConnectionCommand
-
-        return SSHConnectionCommand(
-            command=['ssh', '-o', 'BatchMode=yes', 'myhost'],
-            env={'SSH_ASKPASS': '/tmp/askpass', 'SSH_ASKPASS_REQUIRE': 'prefer'},
-            use_sshpass=False,
-            use_askpass=True,
-        )
-
-    monkeypatch.setattr('sshpilot.connection_manager.build_ssh_connection', fake_build)
-    monkeypatch.setattr('sshpilot.config.Config', lambda: _ConfigStub())
-
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.known_hosts_path = ''
-    manager.connections = []
-    conn = Connection({'host': 'myhost', 'hostname': 'myhost'})
-    manager._register_connection(conn)
-
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(conn.connect()) is True
-    assert conn.ssh_cmd == ['ssh', '-o', 'BatchMode=yes', 'myhost']
-    assert conn.ssh_env.get('SSH_ASKPASS') == '/tmp/askpass'
-    assert captured['manager'] is manager
-
-
-def test_connect_builds_native_command(tmp_path, monkeypatch):
-    # known_hosts is no longer injected into the command in native mode; it lives
-    # in ~/.ssh/config. connect() should still produce a minimal native command.
-    monkeypatch.setattr('sshpilot.config.Config', lambda: _ConfigStub())
-
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.known_hosts_path = ''
-    manager.connections = []
-
-    conn = Connection({'host': 'khhost', 'hostname': 'khhost', 'auth_method': 0})
-    manager._register_connection(conn)
-
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(conn.connect()) is True
-    assert conn.ssh_cmd[0] == 'ssh'
-    assert conn.ssh_cmd[-1] == 'khhost'
-    # No known_hosts injected into the command.
-    assert not any('UserKnownHostsFile' in part for part in conn.ssh_cmd)
-
+# ``Connection.connect()`` was retired with the frontend connection manager;
+# command preparation now lives in the daemon launch provider (covered by
+# tests/daemon/test_connection_launch_provider.py) and the builder tests above.
 
 # --- _build_base_ssh_command: per-binary option guards ---
 
@@ -500,6 +602,24 @@ def test_base_command_scp_and_copy_id_clear_forwardings():
     assert _has_o_option(_base_cmd('ssh-copy-id'), 'ClearAllForwardings=yes')
     assert not _has_o_option(_base_cmd('ssh'), 'ClearAllForwardings')
     assert not _has_o_option(_base_cmd('sftp'), 'ClearAllForwardings')
+
+
+def test_base_copy_id_command_uses_explicit_isolated_config():
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    connection = Connection({'host': 'demo', 'hostname': 'demo'})
+    command = _build_base_ssh_command(
+        connection,
+        {},
+        command_type='ssh-copy-id',
+        config_file='/tmp/sshpilot-config/ssh_config',
+    )
+
+    assert command[:3] == [
+        'ssh-copy-id',
+        '-F',
+        '/tmp/sshpilot-config/ssh_config',
+    ]
 
 
 def test_base_command_limits_password_prompts_for_transfers_only():

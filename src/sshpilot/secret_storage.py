@@ -118,15 +118,17 @@ class CredentialsError(Exception):
 
 
 def _get_secret():
-    """Return the ``gi.repository.Secret`` module, or ``None`` if unavailable."""
+    """Return the ``gi.repository.Secret`` module, or ``None`` if unavailable.
+
+    The ``gi`` import lives in ``sshpilot.platform.linux.libsecret`` so this
+    module stays AST-clean for the headless core boundary.
+    """
     global Secret
     if Secret is _UNSET:
         try:  # pragma: no cover - optional dependency
-            import gi
+            from sshpilot.platform.linux.libsecret import load_secret_module
 
-            gi.require_version("Secret", "1")
-            from gi.repository import Secret as _mod
-            Secret = _mod
+            Secret = load_secret_module()
         except Exception:  # pragma: no cover - optional dependency
             Secret = None
     return Secret
@@ -297,7 +299,12 @@ def normalize_key_path_for_storage(key_path: str) -> str:
 def key_path_lookup_candidates(key_path: str) -> List[str]:
     """Account variants to probe for a key passphrase: the canonical (home-relative) title, the
     absolute expansion, home aliases, and the raw input — so both portable ``~`` entries and
-    legacy absolute entries resolve, and passphrases saved under a previous backend still hit."""
+    legacy absolute entries resolve, and passphrases saved under a previous backend still hit.
+
+    Also synthesizes ``~/.ssh/...`` from any absolute ``.../.ssh/...`` path so a secret stored
+    under the portable tilde account still resolves when ``$HOME`` differs from the machine
+    that saved it (daemon sandbox, relocated profile, etc.).
+    """
     if not key_path:
         return []
     candidates: List[str] = []
@@ -315,6 +322,16 @@ def key_path_lookup_candidates(key_path: str) -> List[str]:
     for base in (canonical, expanded):
         _add(home_alias_for_path(base))
     _add(key_path)
+    # Portable vault titles use ``~/.ssh/<name>``. When $HOME is not the home that
+    # owned the absolute path (daemon XDG isolation, portable backups),
+    # ``home_alias_for_path`` returns '' — still probe the tilde form.
+    for existing in list(candidates):
+        normalized = existing.replace("\\", "/")
+        marker = "/.ssh/"
+        if marker in normalized:
+            tail = normalized.split(marker, 1)[1]
+            if tail:
+                _add("~/.ssh/" + tail)
     return candidates
 
 
@@ -2127,17 +2144,23 @@ class SecretManager:
         self._backends[name] = backend
 
     def set_selected(self, name: Optional[str]) -> None:
-        self._selected = (name or "auto").strip().lower()
+        from sshpilot.core.secrets import normalize_backend_name
+
+        self._selected = normalize_backend_name(name)
 
     def _selected_name(self) -> str:
         if self._selected is None:
+            from sshpilot.core.secrets import normalize_backend_name
+
             env = os.environ.get("SSHPILOT_SECRET_BACKEND")
-            self._selected = (env or "auto").strip().lower()
+            self._selected = normalize_backend_name(env or "auto")
         return self._selected
 
     @staticmethod
     def _platform_default_order() -> List[str]:
-        return ["keyring"] if is_macos() else ["libsecret", "keyring"]
+        from sshpilot.core.secrets import platform_default_order
+
+        return platform_default_order()
 
     # -- platform keyring (selection-independent) -------------------------
     # Used for the session vault's master password, which must be stored in the OS
@@ -2283,14 +2306,11 @@ class SecretManager:
 
     def selected_needs_unlock(self) -> bool:
         """True when the selected backend is session-backed and currently locked,
-        so the GTK layer should drive an unlock prompt."""
-        backend = self.selected_backend()
-        return bool(
-            backend is not None
-            and getattr(backend, "session_backed", False)
-            and backend.is_available()
-            and not backend.is_unlocked()
-        )
+        so the GTK layer should drive an unlock prompt.
+
+        Delegates to core ``decide_unlock`` via :meth:`needs_unlock`.
+        """
+        return self.needs_unlock()
 
     def selected_needs_login(self) -> bool:
         """True when the selected session backend has no authenticated account, so
@@ -2304,14 +2324,47 @@ class SecretManager:
         except Exception:
             return False
 
+    def needs_unlock(self) -> bool:
+        """True when the selected session backend is locked (core policy)."""
+        from sshpilot.core.secrets import decide_unlock
+
+        backend = self.selected_backend()
+        if backend is None:
+            return False
+        decision = decide_unlock(
+            backend=getattr(backend, "name", "") or self._selected,
+            session_backed=bool(getattr(backend, "session_backed", False)),
+            is_unlocked=bool(backend.is_unlocked()) if hasattr(backend, "is_unlocked") else True,
+            available=bool(backend.is_available()) if hasattr(backend, "is_available") else False,
+        )
+        from sshpilot.core.secrets import SecretDecisionKind
+
+        return decision.kind == SecretDecisionKind.UNLOCK_REQUIRED
+
     def unlock_selected(self, secret: str, progress=None) -> bool:
         """Unlock the selected session-backed backend (no-op otherwise).
 
         ``progress(stage: str)`` is forwarded to the backend for staged UI reporting
         (e.g. a startup spinner); passing nothing keeps the simple two-arg call so
-        backends without a ``progress`` parameter still work."""
+        backends without a ``progress`` parameter still work.
+
+        GTK unlock UI lives in ``secret_unlock_dialog`` / ``gtk`` — this method
+        never opens dialogs.
+        """
+        from sshpilot.core.secrets import SecretDecisionKind, decide_unlock
+
         backend = self.selected_backend()
         if backend is None or not getattr(backend, "session_backed", False):
+            return True
+        decision = decide_unlock(
+            backend=getattr(backend, "name", "") or self._selected,
+            session_backed=True,
+            is_unlocked=bool(backend.is_unlocked()),
+            available=bool(backend.is_available()),
+        )
+        if decision.kind == SecretDecisionKind.BACKEND_UNAVAILABLE:
+            return False
+        if decision.kind == SecretDecisionKind.READY:
             return True
         if progress is None:
             return backend.unlock(secret)

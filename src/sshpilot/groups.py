@@ -1,495 +1,353 @@
-"""Group management utilities for sshPilot.
+"""Compatibility view of daemon-owned connection groups.
 
-This module provides the :class:`GroupManager`, which handles creation,
-deletion and organisation of hierarchical connection groups.
+Authoritative group names, colors, membership, hierarchy, and ordering
+remain snapshot-only.  The daemon client owns all group mutations; this
+class only adapts immutable snapshots for older GTK callers.
+
+``ui.group_expansion`` is the sole frontend-owned persistence: exact
+Boolean values loaded at construction, persisted by ``set_group_expanded``,
+and migrated from legacy ``connection_groups.groups.*.expanded`` once.
 """
 
-from typing import Dict, List, Optional
-import logging
+from __future__ import annotations
 
-from .config import Config
-
-logger = logging.getLogger(__name__)
+from typing import Optional
 
 
 class GroupManager:
-    """Manages hierarchical groups for connections"""
+    """Snapshot-backed compatibility adapter for legacy GTK call sites."""
 
-    def __init__(self, config: Config):
+    def __init__(self, config=None, connection_manager=None, *, client=None, controller=None):
+        self.connection_manager = connection_manager
+        self.client = client
+        self.controller = controller
         self.config = config
-        self.groups = {}  # group_id -> GroupInfo
-        self.connections = {}  # connection_nickname -> group_id
-        self.root_connections: List[str] = []  # order of ungrouped connections
-        self._load_groups()
+        self.groups = {}
+        self.connections = {}
+        self.root_connections = []
+        self._expanded = {}
+        self._projection_handler = None
+        self._load_expansion_from_config()
+        if connection_manager is not None:
+            connect_after = getattr(connection_manager, "connect_after", None)
+            if callable(connect_after):
+                self._projection_handler = connect_after(
+                    "projection-reset", lambda *_args: self._refresh()
+                )
+        self._refresh()
 
-    def _load_groups(self):
-        """Load groups from configuration"""
-        try:
-            groups_data = self.config.get_setting('connection_groups', {})
-            if not isinstance(groups_data, dict):
-                groups_data = {}
+    def attach_client(self, client) -> None:
+        self.client = client
+        self._refresh()
 
-            raw_groups = groups_data.get('groups', {})
-            if not isinstance(raw_groups, dict):
-                raw_groups = {}
+    def set_mutation_controller(self, controller) -> None:
+        self.controller = controller
 
-            migration_needed = False
-            normalised_groups: Dict[str, Dict] = {}
-            for group_id, group_info in raw_groups.items():
-                if not isinstance(group_info, dict):
-                    migration_needed = True
-                    continue
+    def bind_connections(self, _connections) -> None:
+        self._refresh()
 
-                normalised = group_info.copy()
-                if 'color' not in normalised:
-                    normalised['color'] = None
-                    migration_needed = True
+    def connection_key(self, reference) -> str:
+        return str(
+            getattr(reference, "nickname", None)
+            or getattr(reference, "id", None)
+            or reference
+            or ""
+        )
 
-                normalised_groups[group_id] = normalised
+    connection_nickname = connection_key
 
-            self.groups = normalised_groups
+    def _snapshot(self):
+        store = self.connection_manager
+        if store is None:
+            return None
+        getter = getattr(store, "snapshot", None)
+        return getter() if callable(getter) else None
 
-            raw_connections = groups_data.get('connections', {})
-            self.connections = raw_connections if isinstance(raw_connections, dict) else {}
-
-            raw_root_connections = groups_data.get('root_connections', [])
-            self.root_connections = raw_root_connections if isinstance(raw_root_connections, list) else []
-
-            if migration_needed:
-                # Persist any normalised structure so future loads use the updated format
-                self._save_groups()
-        except Exception as e:
-            logger.error(f"Failed to load groups: {e}")
+    def _refresh(self) -> None:
+        snapshot = self._snapshot()
+        if snapshot is None:
             self.groups = {}
             self.connections = {}
             self.root_connections = []
-
-        # Ensure root_connections only contains ungrouped connections
-        for nickname, group_id in self.connections.items():
-            if group_id is None:
-                if nickname not in self.root_connections:
-                    self.root_connections.append(nickname)
-            elif nickname in self.root_connections:
-                self.root_connections.remove(nickname)
-
-        # Deduplicate while preserving order
-        seen = set()
-        self.root_connections = [n for n in self.root_connections if not (n in seen or seen.add(n))]
-
-    def _save_groups(self):
-        """Save groups to configuration"""
-        try:
-            groups_data = {
-                'groups': self.groups,
-                'connections': self.connections,
-                'root_connections': self.root_connections,
+            return
+        grouped = set()
+        groups = {}
+        for group in snapshot.groups:
+            grouped.update(str(cid) for cid in group.connection_ids)
+            groups[group.id] = {
+                "id": group.id,
+                "name": group.name,
+                "parent_id": group.parent_id,
+                "children": [
+                    child.id for child in snapshot.groups if child.parent_id == group.id
+                ],
+                "connections": list(group.connection_ids),
+                "expanded": self._expanded.get(group.id, True),
+                "order": group.order,
+                "color": group.color,
             }
-            self.config.set_setting('connection_groups', groups_data)
-        except Exception as e:
-            logger.error(f"Failed to save groups: {e}")
-
-    def group_name_exists(self, name: str) -> bool:
-        """Check if a group name already exists"""
-        for group in self.groups.values():
-            if group['name'].lower() == name.lower():
-                return True
-        return False
-
-    def create_group(self, name: str, parent_id: Optional[str] = None, color: Optional[str] = None) -> str:
-        """Create a new group and return its ID"""
-        # Check for duplicate names (case-insensitive)
-        if self.group_name_exists(name):
-            raise ValueError(f"Group name '{name}' already exists")
-
-        import uuid
-        group_id = str(uuid.uuid4())
-
-        self.groups[group_id] = {
-            'id': group_id,
-            'name': name,
-            'parent_id': parent_id,
-            'children': [],
-            'connections': [],
-            'expanded': True,
-            'order': len(self.groups),
-            'color': color,
+        self.groups = groups
+        self.root_connections = list(snapshot.root_connection_ids)
+        self.connections = {
+            str(connection.id): self.get_connection_group(connection.id)
+            for connection in snapshot.connections
+            if str(connection.id) in grouped or connection.id in snapshot.root_connection_ids
         }
 
-        if parent_id and parent_id in self.groups:
-            self.groups[parent_id]['children'].append(group_id)
+    def _require_client(self):
+        if self.client is None:
+            raise RuntimeError("daemon connection service is unavailable")
+        return self.client
 
-        self._save_groups()
-        return group_id
+    def group_name_exists(self, name: str) -> bool:
+        return any(item["name"].lower() == name.lower() for item in self.groups.values())
 
-    def set_group_color(self, group_id: str, color: Optional[str]):
-        """Update a group's color and persist the change."""
-        if group_id not in self.groups:
-            return
-
-        # Normalise empty strings to None for consistency
-        self.groups[group_id]['color'] = color or None
-        self._save_groups()
-
-    def rename_group(self, group_id: str, new_name: str):
-        """Rename a group and persist the change."""
-        if group_id not in self.groups:
-            return
-        self.groups[group_id]['name'] = new_name
-        self._save_groups()
+    def create_group(self, name: str, parent_id: Optional[str] = None, color: Optional[str] = None):
+        if self.controller is not None:
+            return self.controller.create_group(name, parent_id, color or "")
+        result = self._require_client().create_group(name, parent_id or "", color or "")
+        self._refresh()
+        return result
 
     def delete_group(self, group_id: str):
-        """Delete a group and move its contents to parent or root"""
-        if group_id not in self.groups:
-            return
+        if self.controller is not None:
+            return self.controller.delete_group(group_id)
+        result = self._require_client().delete_group(group_id)
+        self._refresh()
+        return result
 
-        group = self.groups[group_id]
-        parent_id = group.get('parent_id')
+    def rename_group(self, group_id: str, new_name: str):
+        if self.controller is not None:
+            return self.controller.rename_group(group_id, new_name)
+        result = self._require_client().rename_group(group_id, new_name)
+        self._refresh()
+        return result
 
-        # Move connections to parent or root. A connection may belong to more
-        # than one group, so it only becomes ungrouped when no other group
-        # still references it.
-        for conn_nickname in list(group.get('connections', [])):
-            other_groups = [
-                gid for gid in self.get_connection_groups(conn_nickname)
-                if gid != group_id
-            ]
-            if parent_id and parent_id in self.groups:
-                parent_conns = self.groups[parent_id].setdefault('connections', [])
-                if conn_nickname not in parent_conns:
-                    parent_conns.append(conn_nickname)
-                if self.connections.get(conn_nickname) in (None, group_id):
-                    self.connections[conn_nickname] = parent_id
-            elif other_groups:
-                # Still a member of another group; just repoint the primary
-                if self.connections.get(conn_nickname) in (None, group_id):
-                    self.connections[conn_nickname] = other_groups[0]
-            else:
-                self.connections[conn_nickname] = None
-                if conn_nickname not in self.root_connections:
-                    self.root_connections.append(conn_nickname)
+    def set_group_color(self, group_id: str, color: Optional[str]):
+        from sshpilot.api.models.connection_store import GroupId, SetGroupColorRequest
 
-        # Move child groups to parent
-        for child_id in group['children']:
-            if child_id in self.groups:
-                self.groups[child_id]['parent_id'] = parent_id
-                if parent_id and parent_id in self.groups:
-                    self.groups[parent_id]['children'].append(child_id)
+        if self.controller is not None:
+            return self.controller.set_group_color(
+                SetGroupColorRequest(group_id=GroupId(group_id), color=color or "")
+            )
+        result = self._require_client().set_group_color(
+            SetGroupColorRequest(group_id=GroupId(group_id), color=color or "")
+        )
+        self._refresh()
+        return result
 
-        # Remove from parent's children
-        if parent_id and parent_id in self.groups:
-            if group_id in self.groups[parent_id]['children']:
-                self.groups[parent_id]['children'].remove(group_id)
+    def move_connections(self, connection_ids, target_group_id=None,
+                         target_connection_id=None, position=None,
+                         expected_generation=None, *,
+                         on_success=None, on_error=None):
+        from sshpilot.api.models.connection_store import MoveConnectionsRequest
 
-        # Delete the group
-        del self.groups[group_id]
-        self._save_groups()
+        request = MoveConnectionsRequest(
+            connection_ids=tuple(self.connection_key(item) for item in connection_ids),
+            target_group_id=target_group_id,
+            target_connection_id=target_connection_id,
+            position=position,
+            expected_generation=expected_generation,
+        )
+        if self.controller is not None:
+            return self.controller.run(
+                lambda: self._require_client().move_connections(request),
+                on_success=on_success or (lambda _result: None),
+                on_error=on_error or (lambda _error: None),
+            )
+        result = self._require_client().move_connections(request)
+        self._refresh()
+        if on_success is not None:
+            on_success(result)
+        return result
 
-    def move_connection(self, connection_nickname: str, target_group_id: Optional[str] = None):
-        """Move a connection to a different group"""
-        self.connections[connection_nickname] = target_group_id
+    def move_connection(self, connection, target_group_id: Optional[str] = None):
+        if self.controller is not None:
+            return self.controller.move_connection(
+                self.connection_key(connection), target_group_id
+            )
+        result = self._require_client().assign_connection_to_group(
+            self.connection_key(connection), target_group_id or ""
+        )
+        self._refresh()
+        return result
 
-        # Remove from old group and root list
-        for group in self.groups.values():
-            if connection_nickname in group['connections']:
-                group['connections'].remove(connection_nickname)
-        if connection_nickname in self.root_connections:
-            self.root_connections.remove(connection_nickname)
-
-        # Add to new group or root list
-        if target_group_id and target_group_id in self.groups:
-            if connection_nickname not in self.groups[target_group_id]['connections']:
-                self.groups[target_group_id]['connections'].append(connection_nickname)
-        else:
-            if connection_nickname not in self.root_connections:
-                self.root_connections.append(connection_nickname)
-
-        self._save_groups()
-
-    def copy_connection_to_group(self, connection_nickname: str, target_group_id: str):
-        """Add a connection to ``target_group_id`` without removing it from any
-        group it already belongs to.
-
-        Unlike :meth:`move_connection`, this keeps existing memberships so the
-        same connection can appear in several groups at once.
-        """
-        if not target_group_id or target_group_id not in self.groups:
-            return
-
-        target_conns = self.groups[target_group_id].setdefault('connections', [])
-        if connection_nickname not in target_conns:
-            target_conns.append(connection_nickname)
-
-        # A grouped connection is never part of the ungrouped/root list
-        if connection_nickname in self.root_connections:
-            self.root_connections.remove(connection_nickname)
-
-        # Record the first group as the "primary" one for legacy single-group
-        # lookups (used for colours, etc.) without overriding an existing one.
-        if not self.connections.get(connection_nickname):
-            self.connections[connection_nickname] = target_group_id
-
-        self._save_groups()
-
-    def remove_connection_from_group(self, connection_nickname: str, group_id: str):
-        """Remove a connection from a single group.
-
-        The connection stays in any other groups it belongs to. If it ends up
-        without any group it returns to the ungrouped/root list.
-        """
-        group = self.groups.get(group_id)
-        if group and connection_nickname in group.get('connections', []):
-            group['connections'] = [
-                n for n in group['connections'] if n != connection_nickname
-            ]
-
-        remaining = self.get_connection_groups(connection_nickname)
-        if remaining:
-            if self.connections.get(connection_nickname) not in remaining:
-                self.connections[connection_nickname] = remaining[0]
-            if connection_nickname in self.root_connections:
-                self.root_connections.remove(connection_nickname)
-        else:
-            self.connections[connection_nickname] = None
-            if connection_nickname not in self.root_connections:
-                self.root_connections.append(connection_nickname)
-
-        self._save_groups()
-
-    def rename_connection(self, old_nickname: str, new_nickname: str):
-        """Rename a connection while preserving all of its group memberships."""
-        if old_nickname == new_nickname:
-            return
-
-        primary_group = self.connections.pop(old_nickname, None)
-        self.connections[new_nickname] = primary_group
-
-        # Replace the nickname in every group's ordered list, preserving its
-        # position so multi-group membership and ordering survive the rename.
-        for group in self.groups.values():
-            conns = group.get('connections', [])
-            if old_nickname in conns or new_nickname in conns:
-                renamed = [new_nickname if n == old_nickname else n for n in conns]
-                seen = set()
-                group['connections'] = [n for n in renamed if not (n in seen or seen.add(n))]
-
-        # Replace in the root (ungrouped) list as well
-        if old_nickname in self.root_connections or new_nickname in self.root_connections:
-            renamed_root = [new_nickname if n == old_nickname else n for n in self.root_connections]
-            seen = set()
-            self.root_connections = [n for n in renamed_root if not (n in seen or seen.add(n))]
-
-        # A connection that belongs to a group must not linger in the root list
-        if any(new_nickname in g.get('connections', []) for g in self.groups.values()):
-            self.root_connections = [n for n in self.root_connections if n != new_nickname]
-
-        self._save_groups()
-
-    def get_group_hierarchy(self) -> List[Dict]:
-        """Get the complete group hierarchy"""
-
-        def build_tree(parent_id=None):
-            result = []
-            for group_id, group in self.groups.items():
-                if group.get('parent_id') == parent_id:
-                    group_copy = group.copy()
-                    group_copy['children'] = build_tree(group_id)
-                    result.append(group_copy)
-            return sorted(result, key=lambda x: x.get('order', 0))
-
-        return build_tree()
-
-    def get_all_groups(self) -> List[Dict]:
-        """Get all groups as a flat list for selection dialogs"""
-        result = []
-        for group_id, group in self.groups.items():
-            group_copy = group.copy()
-            # Remove children list to avoid confusion in flat view
-            if 'children' in group_copy:
-                del group_copy['children']
-            result.append(group_copy)
-        logger.debug(f"get_all_groups: Found {len(result)} groups: {[g['name'] for g in result]}")
-        return sorted(result, key=lambda x: x.get('order', 0))
-
-    def get_connection_group(self, connection_nickname: str) -> str:
-        """Get the primary group ID for a connection (or ``None``).
-
-        A connection may belong to several groups; this returns a single
-        representative group for legacy callers (e.g. colour resolution).
-        """
-        primary = self.connections.get(connection_nickname)
-        if primary and connection_nickname in self.groups.get(primary, {}).get('connections', []):
-            return primary
-        # Fall back to the authoritative group lists if the primary pointer is
-        # stale or unset.
-        groups = self.get_connection_groups(connection_nickname)
-        return groups[0] if groups else None
-
-    def resolve_display_group_id(
-        self, connection_nickname: str, context_group_id: Optional[str] = None
-    ) -> Optional[str]:
-        """Resolve which group ID should drive UI for a connection row.
-
-        When a connection appears in several groups, each sidebar row carries a
-        display context (``context_group_id``). Prefer that over the primary
-        group so colours match the group the row is listed under.
-        """
-        if context_group_id:
-            group = self.groups.get(context_group_id)
-            if group and connection_nickname in group.get('connections', []):
-                return context_group_id
-        return self.get_connection_group(connection_nickname)
-
-    def get_connection_groups(self, connection_nickname: str) -> List[str]:
-        """Return every group ID that contains the connection."""
-        return [
-            group_id
-            for group_id, group in self.groups.items()
-            if connection_nickname in group.get('connections', [])
-        ]
-
-    def set_group_expanded(self, group_id: str, expanded: bool):
-        """Set whether a group is expanded"""
-        if group_id in self.groups:
-            self.groups[group_id]['expanded'] = expanded
-            self._save_groups()
-
-    def reorder_connection_in_group(self, connection_nickname: str, target_connection_nickname: str, position: str):
-        """Reorder a connection within the same group relative to another connection"""
-        # Get the group for both connections
-        source_group_id = self.connections.get(connection_nickname)
-        target_group_id = self.connections.get(target_connection_nickname)
-
-        # Both connections must be in the same group
-        if source_group_id != target_group_id:
-            return
-
-        if source_group_id:
-            group = self.groups.get(source_group_id)
-            if not group:
-                return
-            connections = group['connections']
-        else:
-            connections = self.root_connections
-
-        # Remove the source connection from its current position
-        if connection_nickname in connections:
-            connections.remove(connection_nickname)
-
-        # Find the target connection's position
-        try:
-            target_index = connections.index(target_connection_nickname)
-        except ValueError:
-            # Target not found, append to end
-            connections.append(connection_nickname)
-            self._save_groups()
-            return
-
-        # Insert at the appropriate position
-        if position == 'above':
-            connections.insert(target_index, connection_nickname)
-        else:  # 'below'
-            connections.insert(target_index + 1, connection_nickname)
-
-        self._save_groups()
-    
-    def get_ordered_siblings(self, parent_id: Optional[str]) -> List[str]:
-        """Return ordered child group ids for ``parent_id`` (``None`` = root level)."""
-        if parent_id:
-            parent = self.groups.get(parent_id)
-            if not parent:
-                return []
-            return list(parent.get('children', []))
-        root_ids = [
-            gid for gid, ginfo in self.groups.items()
-            if ginfo.get('parent_id') is None
-        ]
-        return sorted(root_ids, key=lambda gid: self.groups[gid].get('order', 0))
-
-    def sibling_index(self, group_id: str) -> tuple:
-        """Return ``(parent_id, index)`` of ``group_id`` among its siblings."""
-        group = self.groups.get(group_id)
-        if not group:
-            raise ValueError(f"Unknown group '{group_id}'")
-        parent_id = group.get('parent_id')
-        siblings = self.get_ordered_siblings(parent_id)
-        return parent_id, siblings.index(group_id)
-
-    def _write_sibling_order(self, parent_id: Optional[str], ordered_ids: List[str]) -> None:
-        if parent_id:
-            if parent_id in self.groups:
-                self.groups[parent_id]['children'] = list(ordered_ids)
-        else:
-            self._update_group_orders(ordered_ids, None)
-
-    def _is_descendant(self, ancestor_id: str, node_id: Optional[str]) -> bool:
-        """True if ``node_id`` is ``ancestor_id`` or nested under it."""
-        if not node_id:
-            return False
-        cur = node_id
-        seen = set()
-        while cur and cur not in seen:
-            if cur == ancestor_id:
-                return True
-            seen.add(cur)
-            cur = self.groups.get(cur, {}).get('parent_id')
-        return False
-
-    def place_group(self, group_id: str, parent_id: Optional[str], index: int) -> bool:
-        """Move ``group_id`` to ``index`` among ``parent_id``'s children (root if ``None``).
-
-        The flattened sidebar is a view; all placement is tree-relative.
-        """
-        if group_id not in self.groups:
-            return False
-        if parent_id is not None and parent_id not in self.groups:
-            return False
-        if parent_id is not None and self._is_descendant(group_id, parent_id):
-            return False
-
-        group = self.groups[group_id]
-        old_parent = group.get('parent_id')
-
-        old_siblings = self.get_ordered_siblings(old_parent)
-        old_index = (
-            old_siblings.index(group_id) if group_id in old_siblings else None
+    def copy_connection_to_group(self, connection, group_id: str):
+        from sshpilot.api.models.connection_store import (
+            ConnectionId,
+            CopyConnectionToGroupRequest,
+            GroupId,
         )
 
-        if group_id in old_siblings:
-            old_siblings.remove(group_id)
-            self._write_sibling_order(old_parent, old_siblings)
-        if old_parent and old_parent in self.groups:
-            children = self.groups[old_parent].get('children', [])
-            if group_id in children:
-                children.remove(group_id)
+        request = CopyConnectionToGroupRequest(
+            connection_id=ConnectionId(self.connection_key(connection)),
+            group_id=GroupId(group_id),
+        )
+        if self.controller is not None:
+            return self.controller.copy_connection_to_group(request)
+        result = self._require_client().copy_connection_to_group(
+            request
+        )
+        self._refresh()
+        return result
 
-        group['parent_id'] = parent_id
+    def remove_connection_from_group(self, connection, group_id: str):
+        from sshpilot.api.models.connection_store import (
+            ConnectionId,
+            GroupId,
+            RemoveConnectionFromGroupRequest,
+        )
 
-        new_siblings = self.get_ordered_siblings(parent_id)
-        if group_id in new_siblings:
-            new_siblings.remove(group_id)
+        request = RemoveConnectionFromGroupRequest(
+            connection_id=ConnectionId(self.connection_key(connection)),
+            group_id=GroupId(group_id),
+        )
+        if self.controller is not None:
+            return self.controller.remove_connection_from_group(request)
+        result = self._require_client().remove_connection_from_group(request)
+        self._refresh()
+        return result
 
-        if old_parent == parent_id and old_index is not None and old_index < index:
-            index -= 1
-        index = max(0, min(int(index), len(new_siblings)))
-        new_siblings.insert(index, group_id)
-        self._write_sibling_order(parent_id, new_siblings)
+    def reorder_connection_in_group(self, connection, target, position="below", group_id=None):
+        from sshpilot.api.models.connection_store import (
+            ConnectionId,
+            GroupId,
+            ReorderConnectionRequest,
+        )
 
-        self._save_groups()
-        return True
+        request = ReorderConnectionRequest(
+            connection_id=ConnectionId(self.connection_key(connection)),
+            target_connection_id=ConnectionId(self.connection_key(target)),
+            group_id=GroupId(group_id) if group_id else None,
+            position=position,
+        )
+        if self.controller is not None:
+            return self.controller.reorder_connection(request)
+        result = self._require_client().reorder_connection(request)
+        self._refresh()
+        return result
 
-    def reorder_group(self, source_group_id: str, target_group_id: str, position: str):
-        """Reorder a group relative to another group at the same level."""
-        try:
-            parent_id, target_index = self.sibling_index(target_group_id)
-        except ValueError:
+    def get_connection_groups(self, connection) -> list[str]:
+        key = self.connection_key(connection)
+        return [group_id for group_id, group in self.groups.items() if key in group["connections"]]
+
+    def get_connection_group(self, connection) -> Optional[str]:
+        groups = self.get_connection_groups(connection)
+        return groups[0] if groups else None
+
+    def get_all_groups(self):
+        return list(self.groups.values())
+
+    def get_group_hierarchy(self):
+        def build(group_id, active):
+            group = self.groups[group_id]
+            if group_id in active:
+                raise ValueError("group hierarchy contains a cycle")
+            result = dict(group)
+            next_active = active | {group_id}
+            result["children"] = [
+                build(child_id, next_active)
+                for child_id in group.get("children", [])
+                if child_id in self.groups
+            ]
+            return result
+
+        return [
+            build(group_id, set())
+            for group_id, group in self.groups.items()
+            if group.get("parent_id") is None
+        ]
+
+    def resolve_display_group_id(self, connection_reference, context_group_id=None):
+        if context_group_id is not None:
+            if context_group_id in self.get_connection_groups(connection_reference):
+                return context_group_id
+        return self.get_connection_group(connection_reference)
+
+    def get_ordered_siblings(self, group_id=None):
+        return sorted(
+            [g for g in self.groups.values() if g.get("parent_id") == group_id],
+            key=lambda g: g.get("order", 0),
+        )
+
+    def sibling_index(self, group_id: str):
+        group = self.groups.get(group_id)
+        if group is None:
+            raise ValueError(f"unknown group: {group_id}")
+        parent_id = group.get("parent_id")
+        siblings = self.get_ordered_siblings(parent_id)
+        for index, sibling in enumerate(siblings):
+            if sibling.get("id") == group_id:
+                return parent_id, index
+        raise ValueError(f"group is missing from sibling projection: {group_id}")
+
+    def set_group_expanded(self, group_id: str, expanded: bool):
+        self._expanded[group_id] = bool(expanded)
+        if group_id in self.groups:
+            self.groups[group_id]["expanded"] = bool(expanded)
+        # Persist to ``ui.group_expansion`` so the setting survives restarts.
+        if self.config is not None:
+            try:
+                self.config.set_setting(
+                    "ui.group_expansion",
+                    dict(self._expanded),
+                )
+            except Exception:
+                pass
+
+    def is_group_expanded(self, group_id: str) -> bool:
+        return self._expanded.get(group_id, True)
+
+    def run(self, operation, *, on_success, on_error, refresh_after=True):
+        """Delegate to the mutation controller's ``run()``."""
+        if self.controller is None:
+            raise RuntimeError("no mutation controller attached")
+        return self.controller.run(
+            operation, on_success=on_success, on_error=on_error,
+            refresh_after=refresh_after,
+        )
+
+    def run_sequence(self, steps, *, on_success, on_error):
+        """Delegate to the mutation controller's ``run_sequence()``."""
+        if self.controller is None:
+            raise RuntimeError("no mutation controller attached")
+        return self.controller.run_sequence(
+            steps, on_success=on_success, on_error=on_error,
+        )
+
+    def _load_expansion_from_config(self):
+        """Load ``ui.group_expansion``; migrate from legacy once."""
+        if self.config is None:
             return
-        if position == 'below':
-            target_index += 1
-        self.place_group(source_group_id, parent_id, target_index)
-    
-    def _update_group_orders(self, groups_list, parent_id):
-        """Update the order field for groups at a given level"""
-        for i, group_id in enumerate(groups_list):
-            if group_id in self.groups:
-                self.groups[group_id]['order'] = i
+        try:
+            stored = self.config.get_setting("ui.group_expansion", None)
+            if stored is not None and isinstance(stored, dict):
+                self._expanded = {
+                    str(k): bool(v) for k, v in stored.items()
+                }
+                return
+        except Exception:
+            pass
+        # One-time migration from legacy ``connection_groups.groups.*.expanded``.
+        try:
+            legacy = self.config.get_setting("connection_groups", None)
+            if legacy is not None and isinstance(legacy, dict):
+                groups = legacy.get("groups", {})
+                if isinstance(groups, dict):
+                    for gid, info in groups.items():
+                        if isinstance(info, dict) and "expanded" in info:
+                            self._expanded[str(gid)] = bool(info["expanded"])
+                    # Write the new overlay so the migration runs only once.
+                    if self._expanded:
+                        self.config.set_setting(
+                            "ui.group_expansion",
+                            dict(self._expanded),
+                        )
+        except Exception:
+            pass
 
+    def _load_groups(self):
+        self._refresh()
+
+    def _save_groups(self):
+        raise RuntimeError("authoritative group persistence belongs to the daemon")

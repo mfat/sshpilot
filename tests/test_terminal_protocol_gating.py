@@ -1,5 +1,4 @@
-"""Non-SSH connections must not run through the SSH command-preparation
-machinery (native_connect / ssh_connection_cmd) in the terminal layer."""
+"""Terminal exit classification remains protocol-aware."""
 
 import os
 import sys
@@ -13,7 +12,6 @@ from sshpilot.terminal import TerminalWidget
 class _StubTerminal:
     """Bare stand-in providing only what the methods under test touch."""
 
-    _refresh_connection_command = TerminalWidget._refresh_connection_command
     _classify_exit = TerminalWidget._classify_exit
 
     def __init__(self, connection):
@@ -21,27 +19,6 @@ class _StubTerminal:
         self.last_error_message = ''
         self._connect_failure_hint = ''
         self._used_stored_password = False
-
-
-class _TrackingConnection(Connection):
-    def __init__(self, data):
-        super().__init__(data)
-        self.native_connect_called = False
-
-    async def native_connect(self):
-        self.native_connect_called = True
-        return True
-
-
-def test_refresh_skips_native_connect_for_plugin_protocols():
-    conn = _TrackingConnection({'nickname': 't', 'protocol': 'telnet',
-                                'host': '10.0.0.5'})
-    conn.ssh_connection_cmd = object()  # must be left alone
-    term = _StubTerminal(conn)
-
-    assert term._refresh_connection_command() is True
-    assert conn.native_connect_called is False
-    assert conn.ssh_connection_cmd is not None
 
 
 def test_classify_exit_nonzero_is_failure_for_plugin_protocols():

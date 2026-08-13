@@ -1,189 +1,232 @@
-import asyncio
+"""SSH overrides controller tests (fake daemon-backed client)."""
 
-from sshpilot.connection_manager import Connection
-from sshpilot.preferences import PreferencesWindow
+import threading
+
+from sshpilot.api.models.settings import (
+    GlobalSshOverrides,
+    UpdateGlobalSshOverridesRequest,
+)
+from sshpilot.core.settings import compose_ssh_overrides
+from sshpilot.core.settings.ssh_overrides import (
+    DEFAULT_SSH_OVERRIDES,
+    compute_ssh_overrides_revision,
+)
+from sshpilot.gtk.ssh_overrides_controller import SshOverridesController
+from sshpilot.ssh_connection_builder import build_native_command
 
 
-class DummyConfig:
+def _defaults(**overrides):
+    values = dict(DEFAULT_SSH_OVERRIDES)
+    values.update(overrides)
+    return GlobalSshOverrides(
+        revision=compute_ssh_overrides_revision(values),
+        **values,
+    )
+
+
+class RecordingOverridesClient:
+    """Fake ``SshPilotClient`` implementing the three overrides methods."""
+
+    def __init__(self, initial=None):
+        self.snapshot = initial or _defaults()
+        self.calls = []
+
+    def get_global_ssh_overrides(self):
+        self.calls.append("get")
+        return self.snapshot
+
+    def update_global_ssh_overrides(self, request):
+        assert type(request) is UpdateGlobalSshOverridesRequest
+        self.calls.append(("update", dict(request.patch), request.expected_revision))
+        values = dict(DEFAULT_SSH_OVERRIDES)
+        for field, value in request.patch.items():
+            values[field] = value
+        self.snapshot = GlobalSshOverrides(
+            revision=compute_ssh_overrides_revision(values), **values
+        )
+        return self.snapshot
+
+    def reset_global_ssh_overrides(self, expected_revision=None):
+        self.calls.append(("reset", expected_revision))
+        self.snapshot = _defaults()
+        return self.snapshot
+
+
+class BlockingOverridesClient(RecordingOverridesClient):
+    """A client that blocks inside ``get`` until released."""
+
     def __init__(self):
-        self.settings = {}
-        self.default_config = {
-            'ssh': {
-                'auto_add_host_keys': True,
-                'batch_mode': False,
-                'compression': False,
-                'verbosity': 0,
-                'debug_enabled': False,
-                'native_connect': True,
-                'ssh_overrides': [],
-                'strict_host_key_checking': 'accept-new',
-            },
-            'file_manager': {
-                'force_internal': False,
-                'open_externally': False,
-                'sftp_keepalive_interval': 30,
-                'sftp_keepalive_count_max': 5,
-                'sftp_connect_timeout': 20,
-            },
-        }
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
 
-    def set_setting(self, key, value):
-        self.settings[key] = value
-
-    def get_setting(self, key, default=None):
-        return self.settings.get(key, default)
-
-    def get_default_config(self):
-        return {
-            'ssh': dict(self.default_config['ssh']),
-            'file_manager': dict(self.default_config['file_manager']),
-        }
-
-    def get_file_manager_config(self):
-        defaults = self.default_config['file_manager']
-
-        def _bool(setting_key, default):
-            return bool(self.settings.get(setting_key, default))
-
-        def _int(setting_key, default):
-            value = self.settings.get(setting_key, default)
-            try:
-                return int(value)
-            except (TypeError, ValueError):
-                return int(default)
-
-        return {
-            'force_internal': _bool('file_manager.force_internal', defaults['force_internal']),
-            'open_externally': _bool('file_manager.open_externally', defaults['open_externally']),
-            'sftp_keepalive_interval': _int('file_manager.sftp_keepalive_interval', defaults['sftp_keepalive_interval']),
-            'sftp_keepalive_count_max': _int('file_manager.sftp_keepalive_count_max', defaults['sftp_keepalive_count_max']),
-            'sftp_connect_timeout': _int('file_manager.sftp_connect_timeout', defaults['sftp_connect_timeout']),
-        }
+    def get_global_ssh_overrides(self):
+        self.calls.append("get")
+        self.entered.set()
+        assert self.release.wait(5)
+        return self.snapshot
 
 
-class DummySwitchRow:
-    def __init__(self, active=False):
-        self._active = bool(active)
-
-    def get_active(self):
-        return self._active
-
-    def set_active(self, value):
-        self._active = bool(value)
+def _controller(client):
+    return SshOverridesController(client)
 
 
-class DummySpinRow:
-    def __init__(self, value=0):
-        self._value = value
+def test_load_reads_from_client_and_caches_snapshot():
+    client = RecordingOverridesClient()
+    controller = _controller(client)
 
-    def get_value(self):
-        return self._value
-
-    def set_value(self, value):
-        self._value = value
-
-
-class DummyComboRow:
-    def __init__(self, selected=0):
-        self._selected = selected
-
-    def get_selected(self):
-        return self._selected
-
-    def set_selected(self, value):
-        self._selected = value
+    snapshot = controller.load()
+    assert snapshot is client.snapshot
+    assert controller.snapshot() is snapshot
+    assert client.calls == ["get"]
 
 
-def _build_preferences(**values):
-    prefs = PreferencesWindow.__new__(PreferencesWindow)
-    prefs.config = values.get('config', DummyConfig())
-    prefs.parent_window = values.get('parent_window', None)
-    prefs.native_connect_row = values.get('native_connect_row', DummySwitchRow(True))
-    prefs.legacy_connect_row = values.get('legacy_connect_row', DummySwitchRow(False))
-    prefs._updating_connection_switches = False
-    prefs.connect_timeout_row = values.get('connect_timeout_row', DummySpinRow(12))
-    prefs.connection_attempts_row = values.get('connection_attempts_row', DummySpinRow(4))
-    prefs.keepalive_interval_row = values.get('keepalive_interval_row', DummySpinRow(45))
-    prefs.keepalive_count_row = values.get('keepalive_count_row', DummySpinRow(6))
-    prefs.strict_host_row = values.get('strict_host_row', DummyComboRow(1))
-    prefs.batch_mode_row = values.get('batch_mode_row', DummySwitchRow(False))
-    prefs.compression_row = values.get('compression_row', DummySwitchRow(True))
-    prefs.verbosity_row = values.get('verbosity_row', DummySpinRow(2))
-    prefs.debug_enabled_row = values.get('debug_enabled_row', DummySwitchRow(True))
-    prefs.force_internal_file_manager_row = values.get('force_internal_file_manager_row', None)
-    prefs.open_file_manager_externally_row = values.get('open_file_manager_externally_row', None)
-    prefs.sftp_keepalive_interval_row = values.get('sftp_keepalive_interval_row', DummySpinRow(30))
-    prefs.sftp_keepalive_count_row = values.get('sftp_keepalive_count_row', DummySpinRow(5))
-    prefs.sftp_connect_timeout_row = values.get('sftp_connect_timeout_row', DummySpinRow(20))
-    return prefs
+def test_update_uses_loaded_revision_for_conflict_checking():
+    client = RecordingOverridesClient(initial=_defaults(connect_timeout=1))
+    controller = _controller(client)
+    loaded = controller.load()
+
+    updated = controller.update({"connect_timeout": 30})
+    assert client.calls[-1] == (
+        "update",
+        {"connect_timeout": 30},
+        loaded.revision,
+    )
+    assert updated.connect_timeout == 30
+    assert updated.revision != loaded.revision
 
 
-# The native/legacy connection-mode toggle was removed: sshPilot connects in
-# native mode only, so there is no longer a UI switch or a per-mode save path.
+def test_update_without_load_uses_explicit_revision():
+    client = RecordingOverridesClient()
+    controller = _controller(client)
+
+    updated = controller.update(
+        {"batch_mode": True}, expected_revision="explicit-rev"
+    )
+    assert client.calls[-1] == ("update", {"batch_mode": True}, "explicit-rev")
+    assert updated.batch_mode is True
 
 
-def test_save_advanced_ssh_settings_persists_overrides():
-    prefs = _build_preferences(batch_mode_row=DummySwitchRow(True))
-    prefs.save_advanced_ssh_settings()
+def test_reset_calls_client_reset_with_loaded_revision():
+    client = RecordingOverridesClient(initial=_defaults(verbosity=2))
+    controller = _controller(client)
+    loaded = controller.load()
 
-    overrides = prefs.config.settings.get('ssh.ssh_overrides')
-    assert overrides == [
-        '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=12',
-        '-o', 'ConnectionAttempts=4',
-        '-o', 'ServerAliveInterval=45',
-        '-o', 'ServerAliveCountMax=6',
-        '-o', 'StrictHostKeyChecking=yes',
-        '-C',
-        '-v', '-v',
-        '-o', 'LogLevel=DEBUG2',
-    ]
+    reset = controller.reset()
+    assert client.calls[-1] == ("reset", loaded.revision)
+    assert reset.verbosity == 0
+    assert reset.connect_timeout == 0
 
 
-def test_apply_default_clears_overrides():
-    config = DummyConfig()
-    config.set_setting('ssh.ssh_overrides', ['-o', 'Something'])
-    prefs = _build_preferences(config=config)
+def test_reset_without_load_uses_explicit_revision():
+    client = RecordingOverridesClient()
+    controller = _controller(client)
 
-    prefs._apply_default_advanced_settings()
-
-    assert prefs.config.settings['ssh.ssh_overrides'] == [
-        '-o', 'StrictHostKeyChecking=accept-new',
-    ]
+    controller.reset(expected_revision="explicit-rev")
+    assert client.calls[-1] == ("reset", "explicit-rev")
 
 
-def test_native_connect_appends_overrides_even_when_native_disabled(monkeypatch):
-    overrides = ['-o', 'ConnectTimeout=10', '-C']
+def test_overlapping_operations_rejected():
+    client = BlockingOverridesClient()
+    controller = _controller(client)
 
-    class NativeConfig:
-        def get_ssh_config(self):
-            return {
-                'native_connect': False,
-                'ssh_overrides': overrides,
-            }
+    result = {}
 
-    monkeypatch.setattr('sshpilot.config.Config', lambda: NativeConfig())
+    def _load():
+        result["snapshot"] = controller.load()
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    thread = threading.Thread(target=_load)
+    thread.start()
+    assert client.entered.wait(2)
+
+    # A second operation while the first is in flight is rejected.
     try:
-        connection = Connection({'host': 'example.com', 'nickname': 'example'})
-        result = loop.run_until_complete(connection.native_connect())
-    finally:
-        loop.close()
-        asyncio.set_event_loop(None)
+        controller.update({"connect_timeout": 5})
+        raised = False
+    except RuntimeError:
+        raised = True
+    assert raised
 
-    assert result is True
-    # ssh_overrides are appended verbatim; default keepalive is injected after.
-    assert connection.ssh_cmd == [
-        'ssh', '-o', 'ConnectTimeout=10', '-C',
-        '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
-        'example.com',
-    ]
+    client.release.set()
+    thread.join(timeout=5)
+    assert "snapshot" in result
 
 
-# Removed: test_dynamic_forwarding_uses_configured_keepalive.
-# Per-connection dynamic forwarding is now a ``DynamicForward`` directive in
-# ~/.ssh/config (applied by ssh in the single native command); the former
-# ``Connection.start_dynamic_forwarding`` subprocess method was removed.
-# Config-based forwarding output is covered by tests/test_connection_forwarding.py.
+def test_update_updates_controller_snapshot_after_success():
+    client = RecordingOverridesClient()
+    controller = _controller(client)
+    controller.load()
+
+    updated = controller.update({"connect_timeout": 9})
+    assert controller.snapshot() is updated
+    assert controller.snapshot().connect_timeout == 9
+
+
+# ---------------------------------------------------------------------------
+# SSH / SCP argv equivalence from the derived override list
+# ---------------------------------------------------------------------------
+class _Connection:
+    id = "example"
+    nickname = "example"
+    host = "example"
+    hostname = "example.com"
+    username = ""
+    port = 22
+
+
+def _service_config():
+    ssh = {
+        "batch_mode": True,
+        "connection_timeout": 12,
+        "connection_attempts": 4,
+        "keepalive_interval": 45,
+        "keepalive_count_max": 6,
+        "strict_host_key_checking": "accept-new",
+        "compression": True,
+        "verbosity": 2,
+        "debug_enabled": False,
+        "controlmaster": False,
+    }
+    ssh["ssh_overrides"] = compose_ssh_overrides(ssh)
+    return type(
+        "AppConfig",
+        (),
+        {"get_ssh_config": lambda self: ssh, "get_setting": lambda self, k, d=None: d},
+    )()
+
+
+def test_ssh_and_scp_argv_carry_identical_override_fragment():
+    connection = _Connection()
+    ssh_cmd = build_native_command(connection, _service_config(), command_type="ssh")
+    scp_cmd = build_native_command(connection, _service_config(), command_type="scp")
+
+    # Same binary-prefixed prefix: overrides land verbatim ahead of the host.
+    assert ssh_cmd[0] == "ssh"
+    assert scp_cmd[0] == "scp"
+    assert ssh_cmd[1:-1] == scp_cmd[1:-1]
+    assert ssh_cmd[-1] == scp_cmd[-1] == "example"
+
+    joined = " ".join(ssh_cmd)
+    for fragment in (
+        "BatchMode=yes",
+        "ConnectTimeout=12",
+        "ConnectionAttempts=4",
+        "ServerAliveInterval=45",
+        "ServerAliveCountMax=6",
+        "StrictHostKeyChecking=accept-new",
+        "-C",
+        "LogLevel=DEBUG2",
+    ):
+        assert fragment in joined
+    # No default keepalive arguments are invented.
+    assert not any("default_keepalive" in token for token in ssh_cmd)
+    assert ssh_cmd.index("ConnectTimeout=12") < ssh_cmd.index("example")
+
+
+def test_derived_overrides_override_config_values():
+    # The same fragment the controller's daemon composes is what the builder
+    # consumes, so Preferences no longer needs to write ssh_overrides itself.
+    config = _service_config()
+    fragment = config.get_ssh_config()["ssh_overrides"]
+    assert "-o" in fragment
+    assert fragment[0] == "-o"

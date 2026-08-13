@@ -1,14 +1,17 @@
 name: Test environment
 
 # Builds the test-environment image (real mosh/kubectl/kind/docker/socat/picocom)
-# and runs the FULL pytest suite inside it on every PR — including the
-# `integration` tests that actually invoke those binaries. Catches regressions in
-# how protocol backends parse/pass arguments to the PTY before a user hits them.
+# and runs the complete headless suite at the pre-merge/nightly gates, not on
+# every pull-request update. It can also be started manually when a change needs
+# integration coverage before entering the merge queue.
 
 on:
-  pull_request:
+  merge_group:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
   push:
-    branches: [main, dev]
+    branches: [main]
 
 concurrency:
   group: test-env-${{ github.workflow }}-${{ github.ref }}
@@ -32,4 +35,4 @@ jobs:
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra
+            pytest -ra -m "not gui"

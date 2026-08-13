@@ -6,7 +6,6 @@ Dialog for adding/editing SSH connections
 import os
 import logging
 import re
-import subprocess
 import threading
 import types
 from typing import Optional, Dict, Any
@@ -41,11 +40,10 @@ except (ImportError, AttributeError):  # pragma: no cover - used in tests withou
 
     GLib = _DummyGLib
     GObject.SignalFlags = types.SimpleNamespace(RUN_FIRST=None)
-from .platform_utils import is_macos, get_ssh_dir, get_config_dir
+from .platform_utils import is_macos, get_ssh_dir
 from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
-    _fingerprint_for_pub_line,
 )
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
@@ -60,6 +58,69 @@ from .plugins.registry import protocol_registry
 from gettext import gettext as _
 
 logger = logging.getLogger(__name__)
+
+
+def _editor_details_to_connection(details):
+    """Adapt a daemon ``ConnectionEditorDetails`` DTO to a form source.
+
+    ``load_connection_data`` reads from ``self.connection``; in daemon mode we
+    point that at this adapter so every editable field is populated from the
+    same authoritative daemon snapshot that supplies ``expected_generation``
+    (never from a stale local ``Connection``).
+    """
+    from .api.models.connections import AuthenticationMethod, ForwardingRule
+    from .api.models.connections import forwarding_rule_to_dict
+
+    identity_files = [
+        p for p in (getattr(details, 'identity_files', None) or []) if str(p).strip()
+    ]
+    certificate_files = [
+        p for p in (getattr(details, 'certificate_files', None) or []) if str(p).strip()
+    ]
+    authentication_method = getattr(details, 'authentication_method', None)
+
+    # The dialog's forwarding UI (and the save handler) consume the dict
+    # schema (``rule.get("enabled", True)``…); the DTO carries typed
+    # ForwardingRule objects, so normalize them here.
+    forwarding_rules = [
+        forwarding_rule_to_dict(rule)
+        if isinstance(rule, ForwardingRule)
+        else dict(rule)
+        for rule in (getattr(details, 'forwarding_rules', None) or ())
+    ]
+    return types.SimpleNamespace(
+        nickname=getattr(details, 'nickname', '') or '',
+        hostname=getattr(details, 'hostname', '') or '',
+        host=getattr(details, 'host', '') or '',
+        username=getattr(details, 'username', '') or '',
+        port=getattr(details, 'port', None) or 22,
+        protocol=getattr(details, 'protocol', None) or 'ssh',
+        proxy_jump=getattr(details, 'proxy_jump', None) or (),
+        forward_agent=bool(getattr(details, 'forward_agent', False)),
+        auth_method=(
+            1 if authentication_method == AuthenticationMethod.PASSWORD else 0
+        ),
+        pubkey_auth_no=bool(getattr(details, 'pubkey_auth_no', False)),
+        identity_files=identity_files,
+        keyfile=(identity_files[0] if identity_files else ''),
+        certificate_files=certificate_files,
+        certificate=(certificate_files[0] if certificate_files else ''),
+        identity_agent=getattr(details, 'identity_agent', '') or '',
+        pkcs11_provider=getattr(details, 'pkcs11_provider', '') or '',
+        security_key_provider=getattr(details, 'security_key_provider', '') or '',
+        add_keys_to_agent=getattr(details, 'add_keys_to_agent', '') or '',
+        key_select_mode=int(getattr(details, 'key_select_mode', 0) or 0),
+        x11_forwarding=bool(getattr(details, 'x11_forwarding', False)),
+        extra_ssh_config=getattr(details, 'extra_ssh_config', '') or '',
+        pre_command=getattr(details, 'pre_command', '') or '',
+        local_command=getattr(details, 'local_command', '') or '',
+        remote_command=getattr(details, 'remote_command', '') or '',
+        forwarding_rules=forwarding_rules,
+        aliases=getattr(details, 'aliases', None) or (),
+        source=getattr(details, 'source', '') or '',
+        generation=getattr(details, 'generation', 0) or 0,
+        data=getattr(details, 'data', None) or {},
+    )
 
 
 class _AuthMethodToggleFallback(Gtk.Box):
@@ -393,12 +454,29 @@ class SSHConfigAdvancedTab(Gtk.Box):
             self.empty_label.set_visible(True)
         else:
             self.update_config_preview()
+
+        self._update_parent_connection()
+        self._notify_parent_session_type_changed()
             
     def on_entry_changed(self, widget, pspec=None):
         """Handle entry text changes"""
         self.update_config_preview()
         # Update the parent connection object if we're editing
         self._update_parent_connection()
+        self._notify_parent_session_type_changed()
+
+    def _notify_parent_session_type_changed(self):
+        """Notify the dialog when the Advanced SessionType entry changes."""
+        try:
+            callback = getattr(
+                self.parent_dialog,
+                '_sync_session_type_toggle_from_advanced',
+                None,
+            )
+            if callable(callback):
+                callback()
+        except Exception:
+            logger.debug("Failed to synchronize SessionType toggle", exc_info=True)
         
     def on_value_entry_activate(self, entry, row_grid):
         """Handle Enter key press in value entry - move to next row or add new one"""
@@ -435,6 +513,49 @@ class SSHConfigAdvancedTab(Gtk.Box):
                 entries.append((key, value))
                 
         return entries
+
+    def get_option(self, keyword):
+        """Return the first value for an extra SSH option, if configured."""
+        wanted = str(keyword or '').strip().lower()
+        if not wanted:
+            return None
+        for key, value in self.get_config_entries():
+            if key.strip().lower() == wanted:
+                return value
+        return None
+
+    def set_option(self, keyword, value):
+        """Set one extra SSH option, removing case-insensitive duplicates."""
+        keyword = str(keyword or '').strip()
+        value = str(value or '').strip()
+        if not keyword or not value:
+            return
+
+        wanted = keyword.lower()
+        entries = [
+            (key, entry_value)
+            for key, entry_value in self.get_config_entries()
+            if key.strip().lower() != wanted
+        ]
+        entries.append((keyword, value))
+        self.set_config_entries(entries)
+
+    def remove_option(self, keyword, value=None):
+        """Remove an extra SSH option, optionally matching its value too."""
+        wanted = str(keyword or '').strip().lower()
+        wanted_value = None if value is None else str(value).strip().lower()
+        if not wanted:
+            return
+
+        entries = [
+            (key, entry_value)
+            for key, entry_value in self.get_config_entries()
+            if not (
+                key.strip().lower() == wanted
+                and (wanted_value is None or entry_value.strip().lower() == wanted_value)
+            )
+        ]
+        self.set_config_entries(entries)
         
     def set_config_entries(self, entries):
         """Set config entries from saved data"""
@@ -808,6 +929,7 @@ class FileListEditor(Adw.PreferencesGroup):
 
     def __init__(self, *, title, add_actions=None,
                  with_passphrase=False, connection_manager=None,
+                 parent_window=None,
                  on_changed=None, verify=None, rows_group=None,
                  add_at_bottom=False, empty_placeholder=None,
                  reorderable=False):
@@ -818,6 +940,7 @@ class FileListEditor(Adw.PreferencesGroup):
         self._with_passphrase = with_passphrase
         self._reorderable = reorderable
         self._connection_manager = connection_manager
+        self._parent_window = parent_window
         self._on_changed = on_changed
         self._rows_group = rows_group or self
         self._rows_visible = True
@@ -1077,6 +1200,13 @@ class FileListEditor(Adw.PreferencesGroup):
         # Second column: per-key passphrase entry, always visible next to the key.
         pass_entry = Gtk.PasswordEntry()
         pass_entry.set_show_peek_icon(True)
+        row._pass_saved = False
+        pass_entry.connect(
+            "notify::visibility",
+            lambda _entry, r=row, e=pass_entry, n=norm: self._on_passphrase_visibility_changed(
+                r, e, n
+            ),
+        )
         pass_entry.set_valign(Gtk.Align.CENTER)
         pass_entry.set_width_chars(18)
         try:
@@ -1087,7 +1217,7 @@ class FileListEditor(Adw.PreferencesGroup):
         # A stored passphrase can come from a slow secret backend (rbw on a large vault
         # is ≈1s per lookup), so load it off the main thread: the dialog opens instantly
         # and the entry fills in when ready, unless the user is already typing.
-        if self._connection_manager is not None:
+        if self._connection_manager is not None or getattr(self, '_parent_window', None) is not None:
             self._load_passphrase_async(pass_entry, row, norm)
         # Clear the error state as soon as the user edits the value again.
         pass_entry.connect('changed', lambda e: e.remove_css_class('error'))
@@ -1111,27 +1241,92 @@ class FileListEditor(Adw.PreferencesGroup):
         return row
 
     def _load_passphrase_async(self, pass_entry, row, norm):
-        """Fetch a stored passphrase off the main thread and fill the entry when ready.
+        """Load the saved passphrase into the masked editor field."""
+        parent = getattr(self, '_parent_window', None)
+        client = getattr(parent, 'client', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and client is not None
+            and hasattr(client, 'reveal_key_passphrase')
+        )
 
-        Skips the fill if the user has already typed into the entry, and syncs
-        ``_pass_initial`` to the loaded value so the save flow sees no spurious change.
-        Widget writes are guarded — the dialog may have closed while we waited."""
         def _apply(value):
             try:
-                if not pass_entry.get_text():   # don't clobber what the user typed
-                    pass_entry.set_text(value)
-                    row._pass_initial = value
+                if type(value) is str:
+                    if not pass_entry.get_text():
+                        pass_entry.set_text(value)
+                        row._pass_initial = value
+                    row._pass_saved = bool(value)
+                else:
+                    row._pass_saved = bool(value)
+                if row._pass_saved and hasattr(pass_entry, 'set_show_peek_icon'):
+                    pass_entry.set_show_peek_icon(True)
             except Exception:
                 pass
-            return False  # one-shot idle
+            return False
 
         def worker():
             try:
-                existing = self._connection_manager.get_key_passphrase(norm) or ''
+                if use_daemon:
+                    secret = client.reveal_key_passphrase(norm)
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                else:
+                    value = self._connection_manager.get_key_passphrase(norm) or ''
             except Exception:
-                existing = ''
-            if existing:
-                GLib.idle_add(_apply, existing)
+                value = False
+            GLib.idle_add(_apply, value)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_passphrase_visibility_changed(self, row, pass_entry, norm):
+        try:
+            visible = bool(pass_entry.get_visibility())
+        except Exception:
+            return
+        if not visible or pass_entry.get_text() or not getattr(row, '_pass_saved', False):
+            return
+        if getattr(row, '_pass_reveal_pending', False):
+            return
+        row._pass_reveal_pending = True
+        parent = getattr(self, '_parent_window', None)
+        client = getattr(parent, 'client', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and client is not None
+            and hasattr(client, 'reveal_key_passphrase')
+        )
+
+        def apply(value):
+            try:
+                if value and not pass_entry.get_text():
+                    pass_entry.set_text(value)
+                    row._pass_initial = value
+                if not value:
+                    pass_entry.set_visibility(False)
+            except Exception:
+                pass
+            row._pass_reveal_pending = False
+            return False
+
+        def worker():
+            value = ''
+            try:
+                if use_daemon:
+                    secret = client.reveal_key_passphrase(norm)
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                else:
+                    value = self._connection_manager.get_key_passphrase(norm) or ''
+            except Exception:
+                value = ''
+            GLib.idle_add(apply, value)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1139,23 +1334,19 @@ class FileListEditor(Adw.PreferencesGroup):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
         text = pass_entry.get_text()
         if text and callable(self._verify):
+            secret = bytearray(text.encode("utf-8"))
             try:
-                ok = bool(self._verify(path, text))
+                ok = bool(self._verify(path, secret))
             except Exception:
                 ok = False
+            finally:
+                secret[:] = b"\0" * len(secret)
+                secret.clear()
             if not ok:
                 pass_entry.add_css_class('error')
                 return False
         pass_entry.remove_css_class('error')
         return True
-
-    @staticmethod
-    def _secret_backend_needs_unlock() -> bool:
-        try:
-            from .secret_storage import get_secret_manager
-            return bool(get_secret_manager().selected_needs_unlock())
-        except Exception:
-            return False
 
     def _passphrase_rows(self):
         """(entry, path, norm) for each key row that carries a passphrase entry."""
@@ -1307,8 +1498,43 @@ class ConnectionDialog(
     __gtype_name__ = 'ConnectionDialog'
 
     __gsignals__ = {
-        'connection-saved': (GObject.SignalFlags.RUN_FIRST, None, (object,)),
+        # Config, metadata, secrets and completion deliberately travel as
+        # separate objects.  In particular, secret values must never be added
+        # to the dictionary that is accepted by ConnectionManager or encoded
+        # into a daemon mutation DTO.
+        'connection-saved': (
+            GObject.SignalFlags.RUN_FIRST, None,
+            (object, object, object, object),
+        ),
     }
+
+    class SaveRequest:
+        """Claimable, cancellable, exactly-once save completion."""
+
+        def __init__(self, callback):
+            self.claimed = False
+            self.completed = False
+            self.cancelled = False
+            self._callback = callback
+
+        def claim(self):
+            self.claimed = True
+            return self
+
+        def complete(self, ok, result=None, meta_error=None):
+            # Synchronous consumers claim implicitly by completing; asynchronous
+            # consumers must call claim() before returning from signal dispatch.
+            self.claimed = True
+            if self.completed or self.cancelled:
+                return None
+            self.completed = True
+            return self._callback(ok, result, meta_error)
+
+        __call__ = complete
+
+        def cancel(self):
+            if not self.completed:
+                self.cancelled = True
 
     content_mount = Gtk.Template.Child()
     cancel_button = Gtk.Template.Child()
@@ -1334,7 +1560,18 @@ class ConnectionDialog(
             self.split_original_nickname = ''
 
         self._loading_connection_data = False
+        self._session_type_syncing = False
         self._active_key_path: Optional[str] = None
+
+        # Daemon editor-snapshot state.  A daemon edit is gated on the
+        # authoritative ``ConnectionEditorDetails`` response: Save stays
+        # disabled and the form stays unpopulated until it arrives, and a
+        # failed fetch permanently disables Save. ``_daemon_generation`` is
+        # None until loaded (never a zero sentinel).
+        self._editor_source = 'local'  # 'daemon' when the DTO flow owns the form
+        self._daemon_editor_loaded = False
+        self._daemon_generation: Optional[int] = None
+        self._editor_load_failed = False
 
         self.set_title(_('Edit Connection') if self.is_editing else _('New Connection'))
         # Set modal and transient parent to ensure dialog stays on top
@@ -1346,9 +1583,18 @@ class ConnectionDialog(
         self.validator = SSHConnectionValidator()
         self.validation_results: Dict[str, ValidationResult] = {}
         self._save_buttons = []
+        self._active_save_request = None
+        self.connect('close-request', self._cancel_active_save_request)
         
         self.setup_ui()
         GLib.idle_add(self.load_connection_data)
+
+    def _cancel_active_save_request(self, *_args):
+        request = self._active_save_request
+        if request is not None:
+            request.cancel()
+            self._active_save_request = None
+        return False
     
     def setup_ui(self):
         """Wire the dynamic content + buttons into the template skeleton."""
@@ -1416,6 +1662,7 @@ class ConnectionDialog(
         advanced_group = Adw.PreferencesGroup()
         advanced_group.add(self.advanced_tab)
         advanced_page.append(advanced_group)
+        self._wire_session_type_toggle()
 
         # Wake on LAN on its own page (built by build_connection_groups above).
         wol_page = _page_box()
@@ -1429,6 +1676,50 @@ class ConnectionDialog(
             ("advanced", _("Advanced"), advanced_page),
             ("wol", _("Wake on LAN"), wol_page),
         ]
+
+    def _wire_session_type_toggle(self):
+        """Connect the forwarding-only switch to Advanced SessionType."""
+        self.port_forwarding_only_row.connect(
+            "notify::active", self._on_session_type_toggle_changed
+        )
+        self._sync_session_type_toggle_from_advanced()
+
+    def _sync_session_type_toggle_from_advanced(self):
+        """Reflect Advanced ``SessionType none`` in the forwarding switch."""
+        if getattr(self, '_session_type_syncing', False):
+            return
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        toggle = getattr(self, 'port_forwarding_only_row', None)
+        if advanced_tab is None or toggle is None:
+            return
+
+        value = advanced_tab.get_option('SessionType')
+        active = isinstance(value, str) and value.strip().lower() == 'none'
+        self._session_type_syncing = True
+        try:
+            if toggle.get_active() != active:
+                toggle.set_active(active)
+        finally:
+            self._session_type_syncing = False
+
+    def _on_session_type_toggle_changed(self, row, pspec=None):
+        """Write/remove only ``SessionType none`` when the switch changes."""
+        if getattr(self, '_session_type_syncing', False):
+            return
+        advanced_tab = getattr(self, 'advanced_tab', None)
+        if advanced_tab is None:
+            return
+
+        self._session_type_syncing = True
+        try:
+            if row.get_active():
+                advanced_tab.set_option('SessionType', 'none')
+            else:
+                value = advanced_tab.get_option('SessionType')
+                if isinstance(value, str) and value.strip().lower() == 'none':
+                    advanced_tab.remove_option('SessionType', 'none')
+        finally:
+            self._session_type_syncing = False
 
     # Wider than Adw.PreferencesPage's 600 so the dialog doesn't feel empty;
     # only reins in content on very wide windows.
@@ -1654,59 +1945,23 @@ class ConnectionDialog(
 
     # ---- discovery / browse for the key & certificate FileListEditors -------
     def _agent_keys(self):
-        """List of (raw_line, blob, key_type, comment) for keys in ssh-agent."""
-        keys = []
+        """Return safe metadata for keys loaded in the daemon-selected agent."""
+        parent = self.get_transient_for()
+        client = getattr(parent, "client", None)
+        if client is None:
+            return []
         try:
-            result = subprocess.run(
-                ['ssh-add', '-L'], capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        comment = parts[2] if len(parts) >= 3 else ''
-                        keys.append((line.strip(), parts[1], parts[0], comment))
+            return [
+                (key.fingerprint, key.fingerprint, key.key_type, key.comment)
+                for key in client.list_agent_keys().keys
+            ]
         except Exception:
-            logger.debug("ssh-add -L unavailable", exc_info=True)
-        return keys
+            logger.debug("daemon agent listing unavailable", exc_info=True)
+            return []
 
     def _make_agent_materializer(self, raw_line):
-        return lambda: self._materialize_agent_pubkey(raw_line)
-
-    def _materialize_agent_pubkey(self, raw_line):
-        """Write an agent key's public key to the app config dir and return its path.
-
-        Referencing that .pub as IdentityFile makes ssh use the agent's matching
-        private key — the standard way to pin an agent-held key with no local
-        private key file. Stored under the app's own config directory (keeping
-        ~/.ssh untouched). Idempotent (named by comment + key-blob hash).
-        """
-        import hashlib
-        parts = raw_line.split()
-        if len(parts) < 2:
-            return ''
-        blob = parts[1]
-        comment = parts[2] if len(parts) >= 3 else ''
-        base = re.sub(r'[^A-Za-z0-9._-]+', '_', comment).strip('_') or 'agent'
-        digest = hashlib.sha256(blob.encode()).hexdigest()[:8]
-        try:
-            agent_dir = os.path.join(get_config_dir(), 'agent_keys')
-            os.makedirs(agent_dir, exist_ok=True)
-        except Exception:
-            return ''
-        path = os.path.join(agent_dir, f"{base}-{digest}.pub")
-        try:
-            if not os.path.exists(path):
-                with open(path, 'w') as f:
-                    f.write(raw_line.strip() + "\n")
-                try:
-                    os.chmod(path, 0o644)
-                except Exception:
-                    pass
-        except Exception:
-            logger.debug("Failed to materialise agent public key", exc_info=True)
-            return ''
-        return path
+        """Agent identities are daemon-owned and cannot become file paths."""
+        return lambda: ''
 
     @staticmethod
     def _key_type_label(pub_first_field):
@@ -1733,33 +1988,58 @@ class ConnectionDialog(
             return None
 
     def _discover_disk_keys(self):
-        """[(key_name, path)] of private key files on disk (names only)."""
+        """[(key_name, path)] of private key files discovered by the daemon.
+
+        Key discovery is daemon-owned: the legacy ``ConnectionManager
+        .load_ssh_keys`` surface was retired with the connection-store
+        migration, so the dialog uses the parent window's daemon-backed
+        ``KeyManager`` (the same object the ssh-copy-id window uses). When the
+        parent has a daemon client but no pre-built manager, one is
+        constructed with the parent's key scope. Without either, the chooser
+        shows its empty-state placeholder.
+        """
+        parent = getattr(self, 'parent_window', None)
+        if parent is None:
+            try:
+                parent = self.get_transient_for()
+            except Exception:
+                parent = None
+        key_manager = getattr(parent, 'key_manager', None)
+        if key_manager is None:
+            client = getattr(parent, 'client', None)
+            if client is not None:
+                try:
+                    from .api.models.keys import KeyStoreScope
+                    from .key_manager import KeyManager
+
+                    key_manager = KeyManager(
+                        client,
+                        scope=getattr(parent, '_key_scope', KeyStoreScope.DEFAULT),
+                    )
+                except Exception:
+                    logger.debug("daemon key manager unavailable", exc_info=True)
+                    key_manager = None
+        if key_manager is None:
+            return []
         out = []
         seen = set()
-        cm = getattr(self, 'connection_manager', None)
         try:
-            if cm is not None and hasattr(cm, 'load_ssh_keys'):
-                for path in (cm.load_ssh_keys() or []):
-                    if path and path not in seen:
-                        seen.add(path)
-                        out.append((os.path.basename(path), path))
+            for key in key_manager.discover_keys() or []:
+                path = key.private_path
+                if path and path not in seen:
+                    seen.add(path)
+                    out.append((key.name or os.path.basename(path), path))
         except Exception:
             logger.debug("disk key discovery failed", exc_info=True)
         return out
 
     def _discover_agent_keys(self):
-        """[(display, materialiser)] of every key currently loaded in ssh-agent.
-
-        Selecting one writes its public key to the app config dir so ssh can use
-        the agent's matching private key."""
-        import hashlib
+        """Return display-only metadata for daemon-owned agent identities."""
         out = []
-        for raw_line, blob, ktype, comment in self._agent_keys():
+        for fingerprint, _display, ktype, comment in self._agent_keys():
             label = self._key_type_label(ktype)
             name = comment or _("agent key")
-            short = hashlib.sha256(blob.encode()).hexdigest()[:8]
-            out.append((f"{name}  —  {label} ({short})",
-                        self._make_agent_materializer(raw_line)))
+            out.append((f"{name}  —  {label} ({fingerprint})", lambda: ""))
         return out
 
     def _discover_certs(self):
@@ -1786,9 +2066,6 @@ class ConnectionDialog(
                 pass
             if filters is not None:
                 dialog.set_filters(filters)
-            parent = self.get_transient_for()
-            if not isinstance(parent, Gtk.Window):
-                parent = None
 
             def _done(dlg, result):
                 try:
@@ -1798,7 +2075,12 @@ class ConnectionDialog(
                 except Exception:
                     logger.debug("File chooser cancelled or failed", exc_info=True)
 
-            dialog.open(parent, None, _done)
+            # Parent the chooser to THIS dialog — the window the user is
+            # looking at — never to ``get_transient_for()``. The connection
+            # dialog is modal and stacked above its transient parent, so a
+            # chooser parented to the MainWindow opens invisibly behind the
+            # modal dialog on Wayland portal stacks (issue #1103).
+            dialog.open(self, None, _done)
         except Exception:
             logger.debug("Failed to open file chooser", exc_info=True)
 
@@ -1810,14 +2092,12 @@ class ConnectionDialog(
             disk_keys.append({'name': name, 'path': path, 'ktype': ktype, 'meta': fp})
 
         agent_keys = []
-        for raw_line, blob, ktype_raw, comment in self._agent_keys():
-            ktype, fp, _c = _fingerprint_for_pub_line(raw_line)
-            title = comment or _("agent key")
+        for fingerprint, _display, ktype, comment in self._agent_keys():
             agent_keys.append({
-                'title': title,
+                'title': comment or _("agent key"),
                 'ktype': ktype,
-                'meta': fp,
-                'materializer': self._make_agent_materializer(raw_line),
+                'meta': fingerprint,
+                'materializer': lambda: "",
             })
 
         parent = self.get_root() if hasattr(self, 'get_root') else None
@@ -1934,14 +2214,9 @@ class ConnectionDialog(
                 config_lines.append("    PermitLocalCommand yes")
                 config_lines.append(f"    LocalCommand {local_cmd}")
             
-            # Add remote command if specified
             if hasattr(self, 'remote_command_row') and self.remote_command_row.get_text().strip():
                 remote_cmd = self.remote_command_row.get_text().strip()
-                # Ensure shell stays active after command
-                if 'exec $SHELL' not in remote_cmd:
-                    remote_cmd = f"{remote_cmd} ; exec $SHELL -l"
                 config_lines.append(f"    RemoteCommand {remote_cmd}")
-                config_lines.append("    RequestTTY yes")
             
             return '\n'.join(config_lines)
             
@@ -1956,31 +2231,103 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
     def _load_password_async(self):
-        """Fetch the saved SSH password off the main thread and fill the row when ready.
-
-        rbw on a large vault is ≈1s per lookup; doing it inline froze dialog open. Skips
-        the fill if the user is already typing and syncs ``_orig_password`` so the loaded
-        value isn't mistaken for a user edit. Widget writes are guarded (dialog may close)."""
-        mgr = getattr(self.parent_window, 'connection_manager', None)
-        if not mgr or not hasattr(self.connection, 'username'):
+        """Load the saved password into the masked editor field."""
+        if not hasattr(self.connection, 'username'):
             return
 
-        def _apply(pw):
+        parent = getattr(self, 'parent_window', None)
+        mgr = getattr(parent, 'connection_manager', None)
+        client = getattr(parent, 'client', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and client is not None
+            and hasattr(client, 'reveal_connection_password')
+        )
+        if not use_daemon and not mgr:
+            return
+
+        def _apply(value):
             try:
-                if pw and not self.password_row.get_text():
-                    self.password_row.set_text(pw)
-                    self._orig_password = pw
+                if type(value) is str:
+                    if not self.password_row.get_text():
+                        self.password_row.set_text(value)
+                        self._orig_password = value
+                    self._password_saved = bool(value)
+                else:
+                    self._password_saved = bool(value)
             except Exception:
                 pass
-            return False  # one-shot idle
+            return False
 
         def worker():
             try:
-                pw = mgr.get_connection_password(self.connection)
+                if use_daemon:
+                    from .api.connection_identity import connection_id_for
+                    secret = client.reveal_connection_password(
+                        connection_id_for(self.connection)
+                    )
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                else:
+                    value = mgr.get_connection_password(self.connection) or ''
             except Exception:
-                pw = None
-            if pw:
-                GLib.idle_add(_apply, pw)
+                value = False
+            GLib.idle_add(_apply, value)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_password_visibility_changed(self, *_args):
+        try:
+            visible = bool(self.password_row.get_visibility())
+        except Exception:
+            return
+        if not visible or self.password_row.get_text() or not self._password_saved:
+            return
+        if getattr(self, '_password_reveal_pending', False):
+            return
+        self._password_reveal_pending = True
+        parent = getattr(self, 'parent_window', None)
+        mgr = getattr(parent, 'connection_manager', None)
+        client = getattr(parent, 'client', None)
+        use_daemon = (
+            getattr(parent, '_daemon_mode_active', lambda: False)()
+            and client is not None
+            and hasattr(client, 'reveal_connection_password')
+        )
+
+        def apply(value):
+            try:
+                if value and not self.password_row.get_text():
+                    self.password_row.set_text(value)
+                    self._orig_password = value
+                if not value:
+                    self.password_row.set_visibility(False)
+            except Exception:
+                pass
+            self._password_reveal_pending = False
+            return False
+
+        def worker():
+            value = ''
+            try:
+                if use_daemon:
+                    from .api.connection_identity import connection_id_for
+                    secret = client.reveal_connection_password(
+                        connection_id_for(self.connection)
+                    )
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                else:
+                    value = mgr.get_connection_password(self.connection) or ''
+            except Exception:
+                value = ''
+            GLib.idle_add(apply, value)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1989,6 +2336,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # Load whenever we have a connection object — including as_new prefills
         # from CLI/ad-hoc connect (is_editing is False in that case).
         if not self.connection:
+            return
+
+        # Daemon edits must never render from a stale local Connection: keep
+        # the form untouched until the authoritative editor snapshot arrives.
+        if self.is_daemon_editor() and not self._daemon_editor_loaded:
             return
 
         required_attrs = [
@@ -2132,24 +2484,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Key selection mode → Automatic/Specific radios + IdentitiesOnly switch.
             # (Per-key passphrases are loaded on demand by the editor's key button.)
             try:
-                mode = None
                 try:
-                    mgr = getattr(self.parent_window, 'connection_manager', None)
-                    if mgr and hasattr(self.connection, 'nickname'):
-                        fresh = mgr.find_connection_by_nickname(self.connection.nickname)
-                        if fresh is not None and hasattr(fresh, 'key_select_mode'):
-                            mode = int(getattr(fresh, 'key_select_mode', 0) or 0)
+                    mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
                 except Exception:
-                    mode = None
-                if mode is None:
                     try:
-                        mode = int(getattr(self.connection, 'key_select_mode', 0) or 0)
+                        mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
                     except Exception:
-                        try:
-                            mode = int(self.connection.data.get('key_select_mode', 0)) if hasattr(self.connection, 'data') else 0
-                        except Exception:
-                            mode = 0
-                if has_specific_key and mode not in (1, 2):
+                        mode = 0
+                if (has_specific_key or bool(certificate_files)) and mode not in (1, 2):
                     mode = 2
                 specific = mode in (1, 2)
                 self.key_select_row.set_selected(1 if specific else 0)
@@ -2243,6 +2585,91 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._loading_connection_data = False
 
 
+    def set_editor_source(self, source):
+        """Mark the dialog as owned by the daemon editor flow (or local)."""
+        self._editor_source = source if source == 'daemon' else 'local'
+
+
+    def is_daemon_editor(self):
+        return getattr(self, '_editor_source', 'local') == 'daemon'
+
+
+    def set_daemon_editor_loading(self):
+        """Enter the loading state: keep the form empty and Save disabled."""
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = False
+        self._refresh_save_sensitivity()
+
+
+    def set_daemon_editor_loaded(self, generation):
+        """Populate the form from the daemon snapshot; enable Save."""
+        self._daemon_editor_loaded = True
+        self._daemon_generation = generation
+        self._editor_load_failed = False
+        self._refresh_save_sensitivity()
+
+
+    def set_daemon_editor_load_failed(self):
+        """Terminal fetch failure: block saving, keep form empty."""
+        self._daemon_editor_loaded = False
+        self._daemon_generation = None
+        self._editor_load_failed = True
+        self._refresh_save_sensitivity()
+
+
+    def populate_from_editor_details(self, details):
+        """Populate the whole form from a daemon ``ConnectionEditorDetails``.
+
+        Both the visible values and ``expected_generation`` come from this one
+        authoritative DTO so a freshly saved generation can never be attached
+        to stale form content. Called on the GTK thread only.
+        """
+        self.connection = _editor_details_to_connection(details)
+        self.is_editing = True
+        self.set_title(_('Edit Connection'))
+        self._daemon_editor_loaded = True
+        self._daemon_generation = getattr(details, 'generation', None)
+        self._editor_load_failed = False
+        try:
+            self.load_connection_data()
+        finally:
+            self._refresh_save_sensitivity()
+
+
+    def _refresh_save_sensitivity(self):
+        """Gate every save button on the daemon snapshot (daemon edits only)."""
+        has_errors = False
+        if hasattr(self, 'validation_results'):
+            has_errors = any(
+                (k in self.validation_results and not self.validation_results[k].is_valid)
+                for k in ('name', 'hostname', 'port', 'username')
+            )
+        form_is_valid = not has_errors
+        secret_busy = getattr(self, '_secret_save_in_progress', False)
+        
+        if self.is_daemon_editor():
+            snapshot_ok = self._daemon_editor_loaded
+            load_failed = self._editor_load_failed
+        else:
+            snapshot_ok = True
+            load_failed = False
+            
+        sensitive = form_is_valid and not secret_busy and snapshot_ok and not load_failed
+
+        for button in getattr(self, '_save_buttons', ()):
+            try:
+                button.set_sensitive(sensitive)
+            except Exception:
+                pass
+                
+        if hasattr(self, 'set_response_enabled'):
+            try:
+                self.set_response_enabled('save', sensitive)
+            except Exception:
+                pass
+
+
     def build_authentication_groups(self):
         """Build PreferencesGroups for authentication settings."""
         cm = getattr(self, 'connection_manager', None)
@@ -2273,6 +2700,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Private Keys"),
             with_passphrase=True,
             connection_manager=cm,
+            parent_window=self.parent_window,
             add_actions=[{
                 'icon': 'plus-large-symbolic',
                 'label': _("Add"),
@@ -2280,8 +2708,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             }],
             add_at_bottom=True,
             reorderable=True,
-            verify=lambda path, passphrase: self.validator.verify_key_passphrase(
-                os.path.expanduser(path), passphrase
+            verify=lambda path, secret: self.parent_window.key_manager.verify_key_passphrase(
+                os.path.expanduser(path), secret
             ),
         )
 
@@ -2295,6 +2723,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             add_at_bottom=True,
             with_passphrase=False,
             connection_manager=cm,
+            parent_window=self.parent_window,
         )
 
         # --- Key handling ---
@@ -2321,6 +2750,18 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         password_group = Adw.PreferencesGroup(title=_("Password"))
         self.password_row = Adw.PasswordEntryRow(title=_("Password (optional)"))
         self.password_row.set_show_apply_button(False)
+        try:
+            self.password_row.set_show_peek_icon(True)
+        except Exception:
+            pass
+        self._password_saved = False
+        try:
+            self.password_row.connect(
+                "notify::visibility",
+                self._on_password_visibility_changed,
+            )
+        except Exception:
+            pass
         password_group.add(self.password_row)
 
         self.pubkey_auth_row = Adw.SwitchRow()
@@ -2576,6 +3017,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
         x11_group = Adw.PreferencesGroup(title=_("X11 Forwarding"))
         x11_group.add(self.x11_row)
+
+        # SessionType none / ssh -N is exposed here as a convenience, while
+        # remaining stored in the shared Advanced SSH option list.
+        self.port_forwarding_only_row = Adw.SwitchRow(
+            title=_("Don't execute any remote command (ssh -N flag)"),
+            subtitle=_("Do not start a remote shell or command (SessionType none)"),
+        )
+        forwarding_only_group = Adw.PreferencesGroup(
+            title=_("Session"),
+            description=_(
+                "Keep the connection open for port forwarding without starting a session"
+            ),
+        )
+        forwarding_only_group.add(self.port_forwarding_only_row)
         
         # Port Forwarding Rules Group
         rules_group = Adw.PreferencesGroup(
@@ -2640,7 +3095,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         )
 
         # Return groups for PreferencesPage: Port forwarding first, about, X11 last
-        return [rules_group, about_group, x11_group]
+        return [rules_group, forwarding_only_group, about_group, x11_group]
 
     def build_commands_group(self):
         """Build PreferencesGroup for configuring connection commands"""
@@ -2651,7 +3106,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 "Run a command automatically on connect.\n\n"
                 "• Pre-Connection Command: Runs locally before connecting.\n"
                 "• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
-                "• Remote Command: Runs on the remote host (uses RequestTTY for interactive shell)."
+                "• Remote Command: Runs on the remote host (RequestTTY is configured separately)."
             )
         )
         self.pre_command_row = Adw.EntryRow(title=_("Pre-Connection Command"))
@@ -2920,10 +3375,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Load protocol-agnostic app metadata (Wake-on-LAN, tags) into rows."""
         if hasattr(self, 'wol_mac_row'):
             try:
-                cfg = getattr(self.parent_window, 'config', None)
+                store = getattr(self.parent_window, 'connection_manager', None)
                 nickname = getattr(self.connection, 'nickname', '').strip()
-                if cfg and nickname:
-                    meta = cfg.get_connection_meta(nickname)
+                if store and nickname:
+                    meta = store.get_metadata(nickname)
                     if meta:
                         self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
                         self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
@@ -2938,13 +3393,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         if hasattr(self, 'tags_row'):
             try:
-                cfg = getattr(self.parent_window, 'config', None)
+                store = getattr(self.parent_window, 'connection_manager', None)
                 nickname = getattr(self.connection, 'nickname', '').strip()
-                if cfg and nickname:
+                if store and nickname:
                     # Suppress inline autocompletion while loading.
                     self._set_text_without_completion(
                         self.tags_row,
-                        ', '.join(cfg.get_connection_tags(nickname)),
+                        ', '.join(store.get_metadata(nickname).get('tags', [])),
                     )
             except Exception as e:
                 logger.debug("Load tags meta: %s", e)
@@ -2999,7 +3454,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # The live object is only mutated by the manager after a successful
         # persist; metadata rides the payload and the dialog closes only once
         # the window reports the save outcome.
-        data['__meta'] = self._collect_connection_meta()
+        metadata = self._collect_connection_meta()
         completion_called = [False]
 
         def _after_saved(ok):
@@ -3009,16 +3464,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             else:
                 self.show_error(_("The connection settings could not be saved."))
 
-        data['__save_completion'] = _after_saved
-        self.emit('connection-saved', data)
+        self.emit('connection-saved', data, metadata, {}, _after_saved)
         if not completion_called[0]:
-            if '__save_completion' in data:
-                # No consumer popped the marker (standalone dialog, e.g. in
-                # tests): keep the legacy emit-then-close behavior.
-                data.pop('__save_completion', None)
-                self.close()
-            else:
-                _after_saved(False)
+            # No consumer (standalone dialog, e.g. in tests): keep the legacy
+            # emit-then-close behavior.
+            self.close()
+            # else: consumer popped the marker and is handling the
+            # completion asynchronously (e.g. daemon bridge).  Do NOT
+            # assume failure here — the async callback will invoke
+            # _after_saved with the real result.
 
     def _collect_connection_meta(self):
         """Collect Wake-on-LAN and tags metadata (protocol-agnostic app meta)
@@ -3042,6 +3496,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         """Handle save button click or dialog save response"""
         if getattr(self, '_secret_save_in_progress', False):
             return
+        # Daemon edits: never save before the authoritative editor snapshot
+        # arrived, and never save after a terminal load failure.
+        if self.is_daemon_editor():
+            if not self._daemon_editor_loaded:
+                if self._editor_load_failed:
+                    self.show_error(_("Could not load the connection from the daemon"))
+                else:
+                    self.show_error(_("Connection is still loading"))
+                return
         # Plugin protocols collect their own (declarative) fields; the rest of
         # this method is the SSH path, which serializes to ~/.ssh/config.
         backend = self._selected_protocol_backend()
@@ -3128,7 +3591,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                                 if hasattr(self, 'pkcs11_provider_row') else ''),
             'security_key_provider': (self.security_key_provider_row.get_text().strip()
                                       if hasattr(self, 'security_key_provider_row') else ''),
-            'password': self.password_row.get_text(),
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
@@ -3139,22 +3601,47 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'local_command': (self.local_command_row.get_text() if hasattr(self, 'local_command_row') else ''),
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,
+        }
+
+        # Create a separate local-only secret plan that never enters wire DTOs.
+        passphrase_ops = []
+        try:
+            if hasattr(self, 'key_editor') and self.key_editor:
+                ops = self.key_editor.pending_passphrase_operations()
+                if ops is None:
+                    self.show_error(_("Please correct the invalid key passphrase."))
+                    return
+                passphrase_ops = ops
+        except Exception:
+            logger.debug("Failed to collect key passphrase changes", exc_info=True)
+
+        secret_plan = {
             'password_changed': bool(password_changed),
+            'password': self.password_row.get_text(),
+            'passphrase_operations': passphrase_ops,
         }
         
         if getattr(self, 'force_split_from_group', False):
             connection_data['__split_from_group'] = True
-            if getattr(self, 'split_group_source', None):
-                connection_data['__split_source'] = self.split_group_source
-            if getattr(self, 'split_original_nickname', None):
-                connection_data['__split_original_nickname'] = self.split_original_nickname
+            
+            # Prefer the authoritative daemon snapshot if available
+            is_daemon = getattr(self, '_daemon_editor_loaded', False)
+            source_path = getattr(self.connection, 'source', None) if is_daemon else None
+            source_path = source_path or getattr(self, 'split_group_source', None)
+            if source_path:
+                connection_data['__split_source'] = source_path
+                
+            orig_nick = getattr(self.connection, 'nickname', None) if is_daemon else None
+            orig_nick = orig_nick or getattr(self, 'split_original_nickname', None)
+            if orig_nick:
+                connection_data['__split_original_nickname'] = orig_nick
 
         # Wake-on-LAN and tags metadata ride the payload; the window persists
         # them only after the config write succeeds.
-        connection_data['__meta'] = self._collect_connection_meta()
+        metadata = self._collect_connection_meta()
 
         if self.is_editing and self.connection:
-            connection_data['__previous_secret_identity'] = {
+            secret_plan['previous_identity'] = {
                 'nickname': getattr(self.connection, 'nickname', ''),
                 'hostname': getattr(self.connection, 'hostname', ''),
                 'host': getattr(self.connection, 'host', ''),
@@ -3169,17 +3656,32 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if self.is_editing and self.connection:
             connection_data['aliases'] = []
 
+        prepare_save = getattr(
+            getattr(self, 'parent_window', None),
+            'prepare_connection_save_for_client',
+            None,
+        )
+        if callable(prepare_save):
+            problem = prepare_save(self, connection_data)
+            if problem:
+                self._set_secret_save_busy(False)
+                self.show_error(problem)
+                return
+
+        # Config and metadata are asynchronous too; all saves become busy
+        # before emitting any persistence request, not only secret-bearing ones.
+        self._set_secret_save_busy(True, stage='CONFIG_PENDING')
 
         # Unlock first when needed, then persist all changed secrets in one worker. Secret
         # backends may invoke external tools (notably ``bw``), so none of this I/O may run
         # in the GTK signal handler.
-        if self._needs_secret_unlock_before_save(connection_data):
+        if self._needs_secret_unlock_before_save(secret_plan):
             try:
                 from .secret_unlock_dialog import prompt_unlock
 
                 def _after_unlock(ok):
                     if ok:
-                        self._store_secrets_then_save(connection_data)
+                        self._store_secrets_then_save(connection_data, metadata, secret_plan)
                     else:
                         self._set_secret_save_busy(False)
 
@@ -3191,42 +3693,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._set_secret_save_busy(False)
                 self.show_error(_("The secure storage backend could not be unlocked."))
                 return
-        self._store_secrets_then_save(connection_data)
+        self._store_secrets_then_save(connection_data, metadata, secret_plan)
 
-    def _set_secret_save_busy(self, busy):
+    def _set_secret_save_busy(self, busy, stage=None):
         self._secret_save_in_progress = bool(busy)
-        for button in getattr(self, '_save_buttons', []) or []:
-            try:
-                button.set_sensitive(not busy)
-            except Exception:
-                pass
+        self._save_stage = stage or ('CONFIG_PENDING' if busy else 'IDLE')
+        self._refresh_save_sensitivity()
 
-    def _store_secrets_then_save(self, connection_data):
+    def _store_secrets_then_save(self, connection_data, metadata=None, secret_plan=None):
         """Persist changed secrets off-thread, then emit the normal save signal."""
+        metadata = metadata or {}
+        secret_plan = secret_plan or {}
         operations = []
-        previous_identity = connection_data.pop('__previous_secret_identity', None)
-        manager = getattr(self, 'connection_manager', None)
-        if manager is None:
-            manager = getattr(getattr(self, 'parent_window', None),
-                              'connection_manager', None)
-
-        password = connection_data.get('password') or ''
-        if password or connection_data.get('password_changed'):
+        previous_identity = secret_plan.get('previous_identity')
+        password = secret_plan.get('password') or ''
+        if secret_plan.get('password_changed'):
             operations.append(('password', 'store' if password else 'delete', '', password))
 
-        editor = getattr(self, 'key_editor', None)
-        if editor is not None:
-            try:
-                passphrase_operations = editor.pending_passphrase_operations()
-                if passphrase_operations is None:
-                    self._set_secret_save_busy(False)
-                    self.show_error(_("Please correct the invalid key passphrase."))
-                    return
-                operations.extend(
-                    ('passphrase', action, path, value)
-                    for action, path, value in passphrase_operations)
-            except Exception:
-                logger.debug("Failed to collect key passphrase changes", exc_info=True)
+        passphrase_ops = secret_plan.get('passphrase_operations') or []
+        for action, path, value in passphrase_ops:
+            operations.append(('passphrase', action, path, value))
 
         # update_connection normally persists the password synchronously. Mark this save
         # as pre-handled even when nothing changed so it does not repeat backend I/O.
@@ -3234,105 +3720,181 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if not operations:
             # No secret I/O — but the dialog still only closes once the window
             # reports a successful config write.
-            plain_completion_called = [False]
-
-            def _after_plain_save(ok):
-                plain_completion_called[0] = True
+            def _after_plain_save(ok, result=None, meta_error=None):
+                self._active_save_request = None
                 self._set_secret_save_busy(False)
-                if ok:
+                if meta_error:
+                    self.show_error(meta_error)
+                elif ok:
+                    self._clear_save_checkpoint()
                     self.close()
                 else:
                     self.show_error(_("The connection settings could not be saved."))
 
-            connection_data['__save_completion'] = _after_plain_save
-            self.emit('connection-saved', connection_data)
-            if not plain_completion_called[0]:
-                if '__save_completion' in connection_data:
-                    # No consumer popped the marker (standalone dialog, e.g. in
-                    # tests): keep the legacy emit-then-close behavior.
-                    connection_data.pop('__save_completion', None)
-                    self._set_secret_save_busy(False)
-                    self.close()
-                else:
-                    _after_plain_save(False)
+            request = self.SaveRequest(_after_plain_save)
+            self._active_save_request = request
+            self.emit('connection-saved', connection_data, metadata, secret_plan,
+                      request)
+            if not request.claimed:
+                # An unclaimed request means there is no persistence consumer.
+                # Never infer that from whether an asynchronous callback happened
+                # to complete while emit() was on the stack.
+                self._set_secret_save_busy(False)
+                self.close()
             return
-        if manager is None:
+        from .secret_unlock_dialog import _friendly_backend_name, _spinner_dialog
+
+        parent = getattr(self, 'parent_window', None)
+        client = getattr(parent, 'client', None)
+        bridge = getattr(parent, 'client_bridge', None)
+        use_daemon = (
+            connection_data.get('protocol', 'ssh') == 'ssh'
+            and getattr(parent, '_daemon_mode_active', lambda: False)()
+            and bridge is not None
+            and client is not None
+            and hasattr(client, 'store_connection_password')
+        )
+        if not use_daemon:
             self._set_secret_save_busy(False)
             self.show_error(_("Secure storage is unavailable."))
             return
-
-        from .secret_storage import get_secret_manager
-        from .secret_unlock_dialog import _friendly_backend_name, _spinner_dialog
-
-        secret_manager = get_secret_manager()
-        backend = secret_manager.selected_backend()
-        backend_name = _friendly_backend_name(backend)
+        try:
+            backend_name = _friendly_backend_name(
+                self._secret_backend_state().selected_backend
+            )
+        except Exception:
+            backend_name = _friendly_backend_name("")
         _set_status, close_spinner, spinner = _spinner_dialog(
             self,
             _("Saving to {backend}").format(backend=backend_name),
             _("Saving passwords and passphrases to secure storage…"),
         )
-        self._set_secret_save_busy(True)
+        self._set_secret_save_busy(True, stage='CONFIG_PENDING')
+
+        pipeline = self.SaveRequest(lambda *_args: None)
+        pipeline.claim()
 
         def _worker():
             ok = True
             try:
                 for secret_type, action, key, value in operations:
                     if secret_type == 'password':
-                        username = connection_data.get('username') or ''
-                        if action == 'store':
-                            ok = bool(manager.store_connection_password(
-                                connection_data, value, username=username,
-                                previous_connection=previous_identity))
-                        else:
-                            # Delete is idempotent: "nothing was stored" already is the
-                            # desired end state, not a storage failure. Real backend
-                            # errors raise and are caught below.
-                            manager.delete_connection_passwords(
-                                connection_data, username=username)
-                            if previous_identity:
-                                previous_user = previous_identity.get('username') or username
-                                manager.delete_connection_passwords(
-                                    previous_identity, username=previous_user)
-                            ok = True
+                        if use_daemon:
+                            # Route through daemon RPCs
+                            from .api.models.connections import (
+                                StoreConnectionPasswordRequest,
+                                DeleteConnectionPasswordRequest,
+                            )
+                            # Use the real connection_id returned by the mutation
+                            mutation_result = getattr(self, '_save_mutation_result', None)
+                            conn_id = getattr(mutation_result, 'connection_id', None)
+                            if not conn_id:
+                                raise RuntimeError(
+                                    "Daemon secret save has no authoritative mutation result"
+                                )
+                            if conn_id and action == 'store':
+                                req = StoreConnectionPasswordRequest(
+                                    connection_id=conn_id,
+                                    password=value,
+                                    previous_hostname=previous_identity.get('hostname', '') if previous_identity else '',
+                                    previous_host=previous_identity.get('host', '') if previous_identity else '',
+                                    previous_username=previous_identity.get('username', '') if previous_identity else '',
+                                )
+                                ok = client.store_connection_password(req)
+                            elif conn_id:
+                                req = DeleteConnectionPasswordRequest(
+                                    connection_id=conn_id,
+                                    previous_hostname=previous_identity.get('hostname', '') if previous_identity else '',
+                                    previous_host=previous_identity.get('host', '') if previous_identity else '',
+                                    previous_username=previous_identity.get('username', '') if previous_identity else '',
+                                )
+                                ok = client.delete_connection_password(req)
                     elif action == 'store':
-                        ok = bool(manager.store_key_passphrase(key, value))
+                        if use_daemon:
+                            key_manager = getattr(parent, 'key_manager', None)
+                            if key_manager is None:
+                                raise RuntimeError(
+                                    "Daemon key passphrase storage is unavailable"
+                                )
+                            secret = bytearray(value.encode('utf-8'))
+                            try:
+                                ok = key_manager.store_key_passphrase(key, secret)
+                            finally:
+                                secret[:] = b'\0' * len(secret)
+                                secret.clear()
+                        else:
+                            raise RuntimeError(
+                                "Daemon key passphrase storage is unavailable"
+                            )
                     else:
-                        manager.delete_key_passphrase(key)
-                        ok = True
+                        if use_daemon:
+                            from .api.models.connections import DeleteKeyPassphraseRequest
+                            req = DeleteKeyPassphraseRequest(key_path=key)
+                            ok = client.delete_key_passphrase(req)
+                        else:
+                            raise RuntimeError(
+                                "Daemon key passphrase deletion is unavailable"
+                            )
                     if not ok:
                         break
             except Exception:
                 logger.exception("Failed to save connection secrets")
                 ok = False
-            GLib.idle_add(self._finish_secret_save, connection_data, ok,
-                          close_spinner, spinner, True)
+            GLib.idle_add(self._finish_secret_save, ok,
+                          close_spinner, spinner, True, pipeline)
 
-        completion_called = [False]
-
-        def _after_config_saved(ok):
-            completion_called[0] = True
-            if ok:
+        def _after_config_saved(ok, mutation_result=None, meta_error=None):
+            if mutation_result:
+                self._save_mutation_result = mutation_result
+            if meta_error:
+                self._save_meta_error = meta_error
+                self._finish_secret_save(
+                    False, close_spinner, spinner, True, pipeline
+                )
+            elif ok:
+                try:
+                    delattr(self, '_save_meta_error')
+                except AttributeError:
+                    pass
+                if mutation_result:
+                    self._save_mutation_result = mutation_result
                 threading.Thread(target=_worker, daemon=True).start()
             else:
                 self._finish_secret_save(
-                    connection_data, False, close_spinner, spinner, False)
+                    False, close_spinner, spinner, False, pipeline
+                )
 
         # Preserve the established save order: persist connection/config data first, then
         # its credentials. The private marker keeps update_connection from performing the
         # same secret I/O synchronously inside this signal emission.
-        connection_data['__save_completion'] = _after_config_saved
-        self.emit('connection-saved', connection_data)
-        if not completion_called[0]:
-            _after_config_saved(False)
+        request = self.SaveRequest(_after_config_saved)
+        self._active_save_request = pipeline
+        self.emit('connection-saved', connection_data, metadata, secret_plan,
+                  request)
+        if not request.claimed:
+            self._finish_secret_save(
+                False, close_spinner, spinner, False, pipeline
+            )
 
-    def _finish_secret_save(self, connection_data, ok, close_spinner, spinner,
-                            settings_saved):
+    def _finish_secret_save(self, ok, close_spinner, spinner,
+                            settings_saved, pipeline=None):
         """Finish an asynchronous secret save on the GTK main thread."""
+        if pipeline is not None and pipeline.cancelled:
+            close_spinner()
+            return False
+        if pipeline is not None and self._active_save_request is pipeline:
+            self._active_save_request = None
         def _after_closed(*_args):
             self._set_secret_save_busy(False)
             if ok:
-                self.close()
+                meta_error = getattr(self, '_save_meta_error', None)
+                if meta_error:
+                    self.show_error(meta_error)
+                else:
+                    self._clear_save_checkpoint()
+                    self.close()
+            elif getattr(self, '_save_meta_error', None):
+                self.show_error(self._save_meta_error)
             elif not settings_saved:
                 self.show_error(_("The connection settings could not be saved."))
             else:
@@ -3352,25 +3914,47 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             _after_closed()
         return False
 
-    def _needs_secret_unlock_before_save(self, connection_data) -> bool:
+    def _clear_save_checkpoint(self):
+        """Forget resumable daemon stages after the entire save succeeds."""
+        for name in ('_save_mutation_result', '_save_meta_error',
+                     '_daemon_save_checkpoint', '_daemon_metadata_saved',
+                     '_daemon_config_fingerprint', '_daemon_metadata_fingerprint',
+                     '_resumable_save_active'):
+            try:
+                delattr(self, name)
+            except AttributeError:
+                pass
+
+    def _needs_secret_unlock_before_save(self, secret_plan) -> bool:
         """True when saving would store or delete a secret — a host password or a key
         passphrase — and the selected session backend (Bitwarden/Vaultwarden) is locked
         or not signed in, so it should be unlocked before the secret I/O runs."""
         try:
-            from .secret_storage import get_secret_manager
-            if not get_secret_manager().selected_needs_unlock():
-                return False
-            pw = connection_data.get('password')
-            if pw and str(pw).strip():
-                return True
+            pw = secret_plan.get('password')
+            has_secret_operation = bool(pw and str(pw).strip())
             # Clearing a stored password is a vault delete, which a locked
             # session backend silently skips — unlock for it too.
-            if connection_data.get('password_changed'):
-                return True
+            has_secret_operation = has_secret_operation or bool(
+                secret_plan.get('password_changed')
+            )
             editor = getattr(self, 'key_editor', None)
-            return bool(editor is not None and editor.has_pending_passphrases())
+            has_secret_operation = has_secret_operation or bool(
+                editor is not None and editor.has_pending_passphrases()
+            )
+            if not has_secret_operation:
+                return False
+            state = self._secret_backend_state()
+            return state is None or bool(state.needs_unlock or state.login_required)
         except Exception:
-            return False
+            return True
+
+    def _secret_backend_state(self):
+        """Read secret-backend metadata through the daemon-owned controller."""
+        parent = getattr(self, 'parent_window', None)
+        controller = getattr(parent, 'secrets_controller', None)
+        if controller is None:
+            return None
+        return controller.load_state()
 
     def show_error(self, message):
         """Show error message"""
@@ -3392,3 +3976,46 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         dialog.set_close_response("ok")
         dialog.present()
 
+    def show_daemon_editor_load_error(self, on_retry=None):
+        """Explain a terminal daemon snapshot load failure.
+
+        The form stays empty and Save stays disabled, so present a clear
+        dialog offering ``_Retry`` (re-run the load via ``on_retry``) and
+        ``_Close`` (leave the editor as-is).  When ``on_retry`` is None only
+        ``_Close`` is offered (e.g. an unrepairable populate failure).
+        """
+        try:
+            if hasattr(self, 'present'):
+                self.present()
+        except Exception:
+            pass
+        parent_window = getattr(self, 'parent_window', None)
+        if callable(on_retry):
+            msg = _("The connection could not be loaded from the service. "
+                    "You can retry or close the editor.")
+        else:
+            msg = _("The connection could not be loaded from the service. "
+                    "Please close the editor and try again.")
+        dialog = Adw.MessageDialog.new(
+            parent_window,
+            _("Could not load connection"),
+            msg,
+        )
+        if callable(on_retry):
+            dialog.add_response("retry", _("_Retry"))
+            try:
+                dialog.set_response_appearance("retry", Adw.ResponseAppearance.SUGGESTED)
+            except Exception:
+                pass
+        dialog.add_response("close", _("_Close"))
+        dialog.set_default_response("close")
+        dialog.set_close_response("close")
+
+        def _on_response(_dialog, response):
+            if response == "retry" and callable(on_retry):
+                on_retry()
+            elif response == "close":
+                self.close()
+
+        dialog.connect("response", _on_response)
+        dialog.present()

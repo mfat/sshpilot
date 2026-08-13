@@ -10,6 +10,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  api-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up canonical artifact Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project (no GTK)
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-deps -e .
+          pip install paramiko cryptography keyring psutil
+
+      - name: Check generated API documentation artifacts
+        run: python scripts/generate_api_artifacts.py --check
+
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -18,10 +39,10 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -40,6 +61,7 @@ jobs:
             psutil \
             pytest \
             pytest-cov \
+            pytest-xdist \
             jsonschema
 
       # Unit suite only — the `integration` tests run the real tool binaries and
@@ -48,5 +70,5 @@ jobs:
       # least-covered modules are visible (informational, does not fail the run).
       - name: Run pytest
         run: >
-          pytest -ra -m "not integration"
+          pytest -ra -m "not integration and not gui"
           --cov=sshpilot --cov-report=term-missing --cov-report=xml

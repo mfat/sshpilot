@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
+import tempfile
 from typing import Dict, List, Optional
 
 from .platform_utils import get_config_dir
@@ -41,7 +43,7 @@ SESSIONS_FILENAME = "sessions.json"
 class SessionManager:
     """Manages named tab sessions and the auto-captured previous session."""
 
-    def __init__(self, config=None):
+    def __init__(self, config=None, connection_manager=None):
         # ``config`` is accepted for symmetry with the other managers but the
         # session store uses its own JSON file rather than the shared config.
         self.config = config
@@ -49,6 +51,8 @@ class SessionManager:
         self.previous: Optional[dict] = None
         self._path = os.path.join(get_config_dir(), SESSIONS_FILENAME)
         self._load()
+        if connection_manager is not None:
+            self.migrate_connection_references(connection_manager)
 
     # ── persistence ──────────────────────────────────────────────────────────
 
@@ -79,17 +83,85 @@ class SessionManager:
             self.previous = None
 
     def _save(self) -> None:
-        """Persist sessions to disk."""
+        """Persist sessions atomically with restrictive permissions."""
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            directory = os.path.dirname(self._path)
+            os.makedirs(directory, mode=0o700, exist_ok=True)
             payload = {
                 "sessions": self.sessions,
                 "previous": self.previous,
+                "connection_identity_version": 1,
             }
-            with open(self._path, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle, indent=2)
+            if os.path.lexists(self._path) and os.path.islink(self._path):
+                raise OSError("refusing to replace a symlinked session file")
+            backup = f"{self._path}.bak"
+            if os.path.exists(self._path) and not os.path.exists(backup):
+                shutil.copy2(self._path, backup)
+                os.chmod(backup, 0o600)
+            fd, temporary = tempfile.mkstemp(
+                dir=directory,
+                prefix=".sshpilot-sessions-",
+                suffix=".tmp",
+            )
+            try:
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(payload, handle, indent=2)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, self._path)
+                os.chmod(self._path, 0o600)
+            except Exception:
+                try:
+                    os.unlink(temporary)
+                except OSError:
+                    pass
+                raise
         except Exception as exc:
             logger.error(f"Failed to save sessions to {self._path}: {exc}")
+
+    def migrate_connection_references(self, connection_manager) -> bool:
+        """Add stable IDs to legacy nickname session references."""
+
+        changed = False
+
+        def migrate_payload(payload):
+            nonlocal changed
+            if not isinstance(payload, dict):
+                return
+            for tab in payload.get("tabs", []) or []:
+                if not isinstance(tab, dict):
+                    continue
+                entries = []
+                if tab.get("type") == "ssh":
+                    entries.append(tab)
+                elif tab.get("type") == "split":
+                    for pane in tab.get("panes", []) or []:
+                        entries.extend(
+                            entry for entry in pane or ()
+                            if isinstance(entry, dict)
+                        )
+                for entry in entries:
+                    if entry.get("connection_id"):
+                        continue
+                    nickname = entry.get("nickname")
+                    connection = (
+                        connection_manager.find_connection_by_nickname(nickname)
+                        if nickname
+                        else None
+                    )
+                    if connection is None:
+                        continue
+                    entry["connection_id"] = connection.nickname
+                    changed = True
+
+        for payload in self.sessions.values():
+            migrate_payload(payload)
+        migrate_payload(self.previous)
+        if changed:
+            self._save()
+        return changed
 
     # ── named sessions ─────────────────────────────────────────────────────────
 

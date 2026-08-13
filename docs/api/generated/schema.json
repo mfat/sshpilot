@@ -1,0 +1,6686 @@
+{
+  "api_implementation_version": "0.31",
+  "client_method_contract": {
+    "add_agent_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
+    "add_tag_to_connections": {
+      "capability": "connections.metadata.write",
+      "status": "implemented"
+    },
+    "assign_connection_to_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
+    "attach_session": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "attach_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "bitwarden_api_key_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_configure_server": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_logout": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_sso_login": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_status": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_sync": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "bitwarden_unlock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "broadcast_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "cancel_broadcast_command": {
+      "capability": "broadcast.write",
+      "status": "schema-only"
+    },
+    "cancel_interaction": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "cancel_operation": {
+      "capability": "operations.control",
+      "status": "daemon-only"
+    },
+    "cancel_transfer": {
+      "capability": "transfers.write",
+      "status": "daemon-only"
+    },
+    "claim_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
+    "claim_interaction": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "claim_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "close": {
+      "capability": null,
+      "status": "implemented"
+    },
+    "close_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
+    "close_session": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "close_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "create_connection": {
+      "capability": "connections.write",
+      "status": "implemented"
+    },
+    "create_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
+    "delete_connection": {
+      "capability": "connections.write",
+      "status": "implemented"
+    },
+    "delete_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "delete_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
+    "delete_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "deploy_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
+    "detach_session": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "detach_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "duplicate_connection": {
+      "capability": "connections.write",
+      "status": "implemented"
+    },
+    "export_secret_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "forget_master_password": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "get_broadcast_command": {
+      "capability": "broadcast.read",
+      "status": "schema-only"
+    },
+    "get_capabilities": {
+      "capability": null,
+      "status": "implemented"
+    },
+    "get_connection": {
+      "capability": "connections.read",
+      "status": "implemented"
+    },
+    "get_connection_editor": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
+    "get_daemon_diagnostics": {
+      "capability": "daemon.status",
+      "status": "daemon-only"
+    },
+    "get_daemon_status": {
+      "capability": "daemon.status",
+      "status": "daemon-only"
+    },
+    "get_forward": {
+      "capability": "forwards.read",
+      "status": "daemon-only"
+    },
+    "get_global_ssh_overrides": {
+      "capability": "ssh_overrides.read",
+      "status": "implemented"
+    },
+    "get_identity_providers": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "get_identity_state": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "get_interaction": {
+      "capability": "interactions.read",
+      "status": "daemon-only"
+    },
+    "get_operation": {
+      "capability": "operations.read",
+      "status": "daemon-only"
+    },
+    "get_plugin_secret": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "get_plugin_setting": {
+      "capability": "plugins.settings.read",
+      "status": "daemon-only"
+    },
+    "get_secret_backends": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_secret_configuration": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_secret_state": {
+      "capability": "secrets.read",
+      "status": "daemon-only"
+    },
+    "get_session": {
+      "capability": "sessions.read",
+      "status": "daemon-only"
+    },
+    "get_sftp_service": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "get_ssh_config_text": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
+    "get_transfer": {
+      "capability": "transfers.read",
+      "status": "daemon-only"
+    },
+    "has_connection_password": {
+      "capability": "connections.secrets.status.read",
+      "status": "daemon-only"
+    },
+    "has_key_passphrase": {
+      "capability": "connections.secrets.status.read",
+      "status": "daemon-only"
+    },
+    "import_bitwarden_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "import_secret_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "import_ssh_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "keepassxc_create_database": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "keepassxc_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "keepassxc_unlock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "list_agent_keys": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "list_authorized_keys": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "list_bitwarden_backups": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "list_connections": {
+      "capability": "connections.read",
+      "status": "implemented"
+    },
+    "list_forwards": {
+      "capability": "forwards.read",
+      "status": "daemon-only"
+    },
+    "list_interactions": {
+      "capability": "interactions.read",
+      "status": "daemon-only"
+    },
+    "list_provider_agent_keys": {
+      "capability": "identity.read",
+      "status": "daemon-only"
+    },
+    "list_sessions": {
+      "capability": "sessions.read",
+      "status": "daemon-only"
+    },
+    "list_sftp_services": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "list_ssh_backups": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "list_transfers": {
+      "capability": "transfers.read",
+      "status": "daemon-only"
+    },
+    "lock_secrets": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "move_connections": {
+      "capability": "connections.groups",
+      "status": "daemon-only"
+    },
+    "open_forward": {
+      "capability": "forwards.write",
+      "status": "daemon-only"
+    },
+    "open_session": {
+      "capability": "sessions.write",
+      "status": "daemon-only"
+    },
+    "open_sftp": {
+      "capability": "sftp.write",
+      "status": "daemon-only"
+    },
+    "preview_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "preview_bitwarden_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "preview_ssh_backup": {
+      "capability": "secrets.transfer",
+      "status": "daemon-only"
+    },
+    "rbw_configure": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_lock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_status": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_sync": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "rbw_unlock": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "release_interaction": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "release_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "remember_master_password": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "remove_agent_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
+    "remove_authorized_key": {
+      "capability": "identity.operate",
+      "status": "daemon-only"
+    },
+    "rename_group": {
+      "capability": "connections.groups",
+      "status": "implemented"
+    },
+    "replay_terminal": {
+      "capability": "terminal.replay",
+      "status": "daemon-only"
+    },
+    "reset_global_ssh_overrides": {
+      "capability": "ssh_overrides.write",
+      "status": "implemented"
+    },
+    "resize_terminal": {
+      "capability": "terminal.resize",
+      "status": "daemon-only"
+    },
+    "respond_to_interaction": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "restart_daemon": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
+    "reveal_connection_password": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "reveal_key_passphrase": {
+      "capability": "connections.secrets.reveal",
+      "status": "daemon-only"
+    },
+    "save_ssh_config_text": {
+      "capability": "connections.config.write",
+      "status": "implemented"
+    },
+    "send_interaction_secret": {
+      "capability": "interactions.respond",
+      "status": "daemon-only"
+    },
+    "send_terminal_input": {
+      "capability": "terminal.input",
+      "status": "daemon-only"
+    },
+    "set_daemon_log_level": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
+    "set_plugin_setting": {
+      "capability": "plugins.settings.write",
+      "status": "daemon-only"
+    },
+    "sftp_chmod": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_copy": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_create_file": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_directory_size": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "sftp_list_directory": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "sftp_lstat": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_mkdir": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_read_file": {
+      "capability": "sftp.read",
+      "status": "daemon-only"
+    },
+    "sftp_readlink": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_realpath": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_remove": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_rename": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_replace_file": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_rmdir": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "sftp_stat": {
+      "capability": "sftp.metadata",
+      "status": "daemon-only"
+    },
+    "sftp_symlink": {
+      "capability": "sftp.mutate",
+      "status": "daemon-only"
+    },
+    "split_connection": {
+      "capability": "connections.split",
+      "status": "implemented"
+    },
+    "start_broadcast_command": {
+      "capability": "broadcast.write",
+      "status": "schema-only"
+    },
+    "start_scp_transfer": {
+      "capability": "transfers.scp",
+      "status": "daemon-only"
+    },
+    "start_transfer": {
+      "capability": "transfers.write",
+      "status": "daemon-only"
+    },
+    "stop_daemon": {
+      "capability": "daemon.control",
+      "status": "daemon-only"
+    },
+    "store_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "store_key_passphrase": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
+    "subscribe_broadcast_output": {
+      "capability": "broadcast.events",
+      "status": "daemon-only"
+    },
+    "subscribe_events": {
+      "capability": "connections.events",
+      "status": "implemented"
+    },
+    "subscribe_terminal": {
+      "capability": "terminal.output",
+      "status": "daemon-only"
+    },
+    "unlock_secrets": {
+      "capability": "secrets.operate",
+      "status": "daemon-only"
+    },
+    "update_connection": {
+      "capability": "connections.write",
+      "status": "implemented"
+    },
+    "update_connection_metadata": {
+      "capability": "connections.metadata.write",
+      "status": "implemented"
+    },
+    "update_global_ssh_overrides": {
+      "capability": "ssh_overrides.write",
+      "status": "implemented"
+    },
+    "update_identity_configuration": {
+      "capability": "identity.write",
+      "status": "daemon-only"
+    },
+    "update_identity_selection": {
+      "capability": "identity.write",
+      "status": "daemon-only"
+    },
+    "update_secret_configuration": {
+      "capability": "secrets.write",
+      "status": "daemon-only"
+    },
+    "update_secret_selection": {
+      "capability": "secrets.write",
+      "status": "daemon-only"
+    }
+  },
+  "daemon_method_contract": {
+    "authorized_keys.list": {
+      "capability": "identity.read"
+    },
+    "authorized_keys.remove": {
+      "capability": "identity.operate"
+    },
+    "broadcast.cancel": {
+      "capability": "broadcast.write"
+    },
+    "broadcast.get": {
+      "capability": "broadcast.read"
+    },
+    "broadcast.start": {
+      "capability": "broadcast.write"
+    },
+    "connections.assign_to_group": {
+      "capability": "connections.groups"
+    },
+    "connections.create": {
+      "capability": "connections.write"
+    },
+    "connections.create_group": {
+      "capability": "connections.groups"
+    },
+    "connections.delete": {
+      "capability": "connections.write"
+    },
+    "connections.delete_group": {
+      "capability": "connections.groups"
+    },
+    "connections.delete_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.delete_password": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.delete_plugin_secret": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.duplicate": {
+      "capability": "connections.write"
+    },
+    "connections.get": {
+      "capability": "connections.read"
+    },
+    "connections.get_editor": {
+      "capability": "connections.config.read"
+    },
+    "connections.get_plugin_secret": {
+      "capability": "connections.secrets.reveal"
+    },
+    "connections.get_ssh_config_text": {
+      "capability": "connections.config.read"
+    },
+    "connections.has_passphrase": {
+      "capability": "connections.secrets.status.read"
+    },
+    "connections.has_password": {
+      "capability": "connections.secrets.status.read"
+    },
+    "connections.list": {
+      "capability": "connections.read"
+    },
+    "connections.metadata.add_tag": {
+      "capability": "connections.metadata.write"
+    },
+    "connections.metadata.rename_tag": {
+      "capability": "connections.metadata.write"
+    },
+    "connections.metadata.update": {
+      "capability": "connections.metadata.write"
+    },
+    "connections.move": {
+      "capability": "connections.groups"
+    },
+    "connections.rename_group": {
+      "capability": "connections.groups"
+    },
+    "connections.reveal_passphrase": {
+      "capability": "connections.secrets.reveal"
+    },
+    "connections.reveal_password": {
+      "capability": "connections.secrets.reveal"
+    },
+    "connections.save_ssh_config_text": {
+      "capability": "connections.config.write"
+    },
+    "connections.snapshot": {
+      "capability": "connections.read"
+    },
+    "connections.split": {
+      "capability": "connections.split"
+    },
+    "connections.store_passphrase": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_password": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.store_plugin_secret": {
+      "capability": "connections.secrets.write"
+    },
+    "connections.update": {
+      "capability": "connections.write"
+    },
+    "connections.update_metadata": {
+      "capability": "connections.metadata.write"
+    },
+    "daemon.diagnostics": {
+      "capability": "daemon.status"
+    },
+    "daemon.restart": {
+      "capability": "daemon.control"
+    },
+    "daemon.set_log_level": {
+      "capability": "daemon.control"
+    },
+    "daemon.status": {
+      "capability": "daemon.status"
+    },
+    "daemon.stop": {
+      "capability": "daemon.control"
+    },
+    "forwards.claim": {
+      "capability": "forwards.write"
+    },
+    "forwards.close": {
+      "capability": "forwards.write"
+    },
+    "forwards.get": {
+      "capability": "forwards.read"
+    },
+    "forwards.list": {
+      "capability": "forwards.read"
+    },
+    "forwards.open": {
+      "capability": "forwards.write"
+    },
+    "groups.copy_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.create": {
+      "capability": "connections.groups"
+    },
+    "groups.delete": {
+      "capability": "connections.groups"
+    },
+    "groups.place": {
+      "capability": "connections.groups"
+    },
+    "groups.remove_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.rename": {
+      "capability": "connections.groups"
+    },
+    "groups.reorder_connection": {
+      "capability": "connections.groups"
+    },
+    "groups.set_color": {
+      "capability": "connections.groups"
+    },
+    "identity.agent.key.add": {
+      "capability": "identity.operate"
+    },
+    "identity.agent.key.remove": {
+      "capability": "identity.operate"
+    },
+    "identity.agent.keys.get": {
+      "capability": "identity.read"
+    },
+    "identity.configuration.update": {
+      "capability": "identity.write"
+    },
+    "identity.deploy_key": {
+      "capability": "identity.operate"
+    },
+    "identity.provider.keys.get": {
+      "capability": "identity.read"
+    },
+    "identity.providers.get": {
+      "capability": "identity.read"
+    },
+    "identity.selection.update": {
+      "capability": "identity.write"
+    },
+    "identity.state.get": {
+      "capability": "identity.read"
+    },
+    "interactions.cancel": {
+      "capability": "interactions.respond"
+    },
+    "interactions.claim": {
+      "capability": "interactions.respond"
+    },
+    "interactions.get": {
+      "capability": "interactions.read"
+    },
+    "interactions.list": {
+      "capability": "interactions.read"
+    },
+    "interactions.release": {
+      "capability": "interactions.respond"
+    },
+    "interactions.respond": {
+      "capability": "interactions.respond"
+    },
+    "keys.delete": {
+      "capability": "keys.write"
+    },
+    "keys.generate": {
+      "capability": "keys.write"
+    },
+    "keys.get_public": {
+      "capability": "keys.read"
+    },
+    "keys.list": {
+      "capability": "keys.read"
+    },
+    "keys.verify_passphrase": {
+      "capability": "keys.write"
+    },
+    "known_hosts.list": {
+      "capability": "known_hosts.read"
+    },
+    "known_hosts.remove": {
+      "capability": "known_hosts.write"
+    },
+    "operations.cancel": {
+      "capability": "operations.control"
+    },
+    "operations.get": {
+      "capability": "operations.read"
+    },
+    "plugins.settings.get": {
+      "capability": "plugins.settings.read"
+    },
+    "plugins.settings.set": {
+      "capability": "plugins.settings.write"
+    },
+    "secrets.backends.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.bitwarden.api_key_login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.configure_server": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.logout": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.sso_login": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.status": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.sync": {
+      "capability": "secrets.operate"
+    },
+    "secrets.bitwarden.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.configuration.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.configuration.update": {
+      "capability": "secrets.write"
+    },
+    "secrets.forget_master_password": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.create_database": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.keepassxc.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.configure": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.lock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.status": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.sync": {
+      "capability": "secrets.operate"
+    },
+    "secrets.rbw.unlock": {
+      "capability": "secrets.operate"
+    },
+    "secrets.remember_master_password": {
+      "capability": "secrets.operate"
+    },
+    "secrets.selection.update": {
+      "capability": "secrets.write"
+    },
+    "secrets.state.get": {
+      "capability": "secrets.read"
+    },
+    "secrets.transfer.export": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.import_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.list_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.list_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview_bitwarden": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.transfer.preview_ssh": {
+      "capability": "secrets.transfer"
+    },
+    "secrets.unlock": {
+      "capability": "secrets.operate"
+    },
+    "sessions.attach": {
+      "capability": "sessions.write"
+    },
+    "sessions.close": {
+      "capability": "sessions.write"
+    },
+    "sessions.detach": {
+      "capability": "sessions.write"
+    },
+    "sessions.get": {
+      "capability": "sessions.read"
+    },
+    "sessions.list": {
+      "capability": "sessions.read"
+    },
+    "sessions.open": {
+      "capability": "sessions.write"
+    },
+    "sftp.attach": {
+      "capability": "sftp.write"
+    },
+    "sftp.chmod": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.close": {
+      "capability": "sftp.write"
+    },
+    "sftp.copy": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.create_file": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.detach": {
+      "capability": "sftp.write"
+    },
+    "sftp.directory_size": {
+      "capability": "sftp.read"
+    },
+    "sftp.get_service": {
+      "capability": "sftp.read"
+    },
+    "sftp.list": {
+      "capability": "sftp.read"
+    },
+    "sftp.list_services": {
+      "capability": "sftp.read"
+    },
+    "sftp.lstat": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.mkdir": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.open": {
+      "capability": "sftp.write"
+    },
+    "sftp.read_file": {
+      "capability": "sftp.read"
+    },
+    "sftp.readlink": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.realpath": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.remove": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.rename": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.replace_file": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.rmdir": {
+      "capability": "sftp.mutate"
+    },
+    "sftp.stat": {
+      "capability": "sftp.metadata"
+    },
+    "sftp.symlink": {
+      "capability": "sftp.mutate"
+    },
+    "ssh_overrides.get": {
+      "capability": "ssh_overrides.read"
+    },
+    "ssh_overrides.reset": {
+      "capability": "ssh_overrides.write"
+    },
+    "ssh_overrides.update": {
+      "capability": "ssh_overrides.write"
+    },
+    "system.get_capabilities": {
+      "capability": null
+    },
+    "system.handshake": {
+      "capability": null
+    },
+    "terminal.broadcast_input": {
+      "capability": "terminal.input"
+    },
+    "terminal.claim_input": {
+      "capability": "terminal.input"
+    },
+    "terminal.release_input": {
+      "capability": "terminal.input"
+    },
+    "terminal.replay": {
+      "capability": "terminal.replay"
+    },
+    "terminal.resize": {
+      "capability": "terminal.resize"
+    },
+    "transfers.cancel": {
+      "capability": "transfers.write"
+    },
+    "transfers.get": {
+      "capability": "transfers.read"
+    },
+    "transfers.list": {
+      "capability": "transfers.read"
+    },
+    "transfers.scp.start": {
+      "capability": "transfers.scp"
+    },
+    "transfers.start": {
+      "capability": "transfers.write"
+    }
+  },
+  "enums": {
+    "AuthenticationMethod": [
+      "key",
+      "password"
+    ],
+    "Capability": [
+      "connections.read",
+      "connections.events",
+      "connections.write",
+      "connections.config.read",
+      "connections.config.write",
+      "connections.secrets.write",
+      "connections.secrets.status.read",
+      "connections.secrets.reveal",
+      "connections.metadata.write",
+      "connections.groups",
+      "connections.split",
+      "sessions.read",
+      "sessions.write",
+      "sessions.events",
+      "sessions.command",
+      "terminal",
+      "terminal.attach",
+      "terminal.output",
+      "terminal.input",
+      "terminal.resize",
+      "terminal.replay",
+      "interactions",
+      "interactions.read",
+      "interactions.respond",
+      "interactions.events",
+      "interactions.host_key",
+      "interactions.password",
+      "interactions.passphrase",
+      "sftp",
+      "sftp.read",
+      "sftp.write",
+      "sftp.events",
+      "sftp.metadata",
+      "sftp.mutate",
+      "sftp.privileged_file",
+      "transfers.read",
+      "transfers.write",
+      "transfers.events",
+      "transfers.upload",
+      "transfers.download",
+      "transfers.scp",
+      "port_forwarding",
+      "forwards.read",
+      "forwards.write",
+      "forwards.events",
+      "forwards.local",
+      "forwards.remote",
+      "forwards.dynamic",
+      "daemon.status",
+      "daemon.control",
+      "daemon.events",
+      "known_hosts.read",
+      "known_hosts.write",
+      "keys.read",
+      "keys.write",
+      "identity.read",
+      "identity.write",
+      "identity.operate",
+      "operations.read",
+      "operations.control",
+      "broadcast.read",
+      "broadcast.write",
+      "broadcast.events",
+      "ssh_overrides.read",
+      "ssh_overrides.write",
+      "plugins",
+      "plugins.settings.read",
+      "plugins.settings.write",
+      "secrets",
+      "secrets.read",
+      "secrets.write",
+      "secrets.operate",
+      "secrets.transfer"
+    ],
+    "ConnectionHealth": [
+      "unknown",
+      "checking",
+      "reachable",
+      "unreachable"
+    ],
+    "ConnectionPlacementMode": [
+      "exclusive",
+      "preserve",
+      "additive"
+    ],
+    "DaemonDisconnectReason": [
+      "clean_shutdown",
+      "restart",
+      "crash",
+      "transport_loss",
+      "socket_replaced",
+      "incompatible",
+      "idle_shutdown",
+      "forced_stop"
+    ],
+    "DaemonLifecycleState": [
+      "starting",
+      "ready",
+      "idle",
+      "draining",
+      "stopping",
+      "stopped",
+      "failed"
+    ],
+    "DaemonLogLevel": [
+      "warning",
+      "info",
+      "debug"
+    ],
+    "ErrorCode": [
+      "unsupported_capability",
+      "api_version_mismatch",
+      "invalid_request",
+      "validation_failed",
+      "connection_already_exists",
+      "connection_not_found",
+      "persistence_failed",
+      "mutation_ambiguous",
+      "session_not_found",
+      "session_already_closed",
+      "session_invalid_state",
+      "session_startup_failed",
+      "session_termination_failed",
+      "unsupported_session_protocol",
+      "terminal_attachment_required",
+      "terminal_input_owner_required",
+      "terminal_input_owner_exists",
+      "terminal_input_backpressure",
+      "terminal_invalid_dimensions",
+      "terminal_unavailable",
+      "terminal_replay_unavailable",
+      "terminal_sequence_out_of_range",
+      "terminal_continuity_lost",
+      "pty_allocation_failed",
+      "server_busy",
+      "interaction_not_found",
+      "interaction_expired",
+      "interaction_already_answered",
+      "interaction_claim_conflict",
+      "interaction_responder_unauthorized",
+      "interaction_secret_expected",
+      "interaction_secret_duplicate",
+      "interaction_type_unsupported",
+      "prompt_classification_failed",
+      "askpass_helper_unavailable",
+      "secret_backend_unavailable",
+      "secret_storage_failed",
+      "host_key_persistence_failed",
+      "authentication_attempts_exhausted",
+      "permission_denied",
+      "operation_cancelled",
+      "operation_timed_out",
+      "operation_not_found",
+      "remote_command_failed",
+      "sftp_service_not_found",
+      "sftp_service_not_ready",
+      "sftp_command_failed",
+      "sftp_protocol_lost",
+      "sftp_protocol_error",
+      "remote_path_not_found",
+      "remote_path_exists",
+      "remote_permission_denied",
+      "remote_not_directory",
+      "remote_is_directory",
+      "remote_directory_not_empty",
+      "remote_unsupported_operation",
+      "file_content_too_large",
+      "file_revision_conflict",
+      "file_replacement_failed",
+      "file_backup_failed",
+      "transfer_not_found",
+      "transfer_conflict",
+      "transfer_cancelled",
+      "transfer_io_failed",
+      "transfer_disk_full",
+      "forward_not_found",
+      "forward_bind_failed",
+      "forward_destination_invalid",
+      "forward_startup_failed",
+      "forward_not_active",
+      "service_owner_required",
+      "internal_error",
+      "daemon_unavailable",
+      "stale_editor",
+      "key_not_found",
+      "key_already_exists",
+      "key_public_unavailable",
+      "key_generation_failed",
+      "key_deletion_failed",
+      "key_verification_failed",
+      "transport_closed",
+      "transport_timeout",
+      "frame_too_large",
+      "invalid_frame",
+      "handshake_required",
+      "handshake_already_completed",
+      "protocol_version_unsupported",
+      "protocol_error",
+      "unsupported_method",
+      "daemon_shutting_down",
+      "daemon_active_resources",
+      "daemon_confirmation_required",
+      "daemon_incompatible",
+      "daemon_restart_required"
+    ],
+    "EventType": [
+      "connection.created",
+      "connection.updated",
+      "connection.deleted",
+      "connection_store.changed",
+      "session.created",
+      "session.state_changed",
+      "session.output",
+      "session.interaction_requested",
+      "session.exited",
+      "session.closed",
+      "interaction.created",
+      "interaction.state_changed",
+      "sftp.created",
+      "sftp.state_changed",
+      "sftp.closed",
+      "sftp.failed",
+      "transfer.created",
+      "transfer.started",
+      "transfer.progress",
+      "transfer.item_completed",
+      "transfer.completed",
+      "transfer.cancelled",
+      "transfer.failed",
+      "forward.created",
+      "forward.starting",
+      "forward.active",
+      "forward.closed",
+      "forward.failed",
+      "operation.created",
+      "operation.state_changed",
+      "broadcast.output",
+      "daemon.state_changed",
+      "error.occurred"
+    ],
+    "ExecutionInteractionMode": [
+      "interactive",
+      "autofill_only"
+    ],
+    "FileEntryKind": [
+      "file",
+      "directory",
+      "symlink",
+      "other"
+    ],
+    "ForwardState": [
+      "created",
+      "starting",
+      "active",
+      "closing",
+      "closed",
+      "failed",
+      "stopping",
+      "stopped"
+    ],
+    "ForwardType": [
+      "local",
+      "remote",
+      "dynamic"
+    ],
+    "HostKeyDecision": [
+      "accept",
+      "reject"
+    ],
+    "HostKeyStatus": [
+      "unknown",
+      "changed",
+      "revoked"
+    ],
+    "InteractionKind": [
+      "password",
+      "key_passphrase",
+      "host_key_confirmation",
+      "keyboard_interactive",
+      "overwrite_confirmation",
+      "plugin_question"
+    ],
+    "InteractionState": [
+      "pending",
+      "claimed",
+      "answered",
+      "cancelled",
+      "expired",
+      "failed"
+    ],
+    "InteractionStatus": [
+      "pending",
+      "answered",
+      "cancelled",
+      "timed_out",
+      "rejected"
+    ],
+    "InteractionType": [
+      "host_key_confirmation",
+      "password",
+      "private_key_passphrase",
+      "keyboard_interactive",
+      "security_key_presence",
+      "confirmation"
+    ],
+    "KeyStoreScope": [
+      "default",
+      "isolated"
+    ],
+    "OperationKind": [
+      "broadcast_command",
+      "key_deployment",
+      "authorized_key_removal",
+      "sftp_directory_size",
+      "sftp_remove_tree",
+      "sftp_copy_tree"
+    ],
+    "OperationState": [
+      "queued",
+      "running",
+      "succeeded",
+      "failed",
+      "cancelled"
+    ],
+    "RememberPolicy": [
+      "do_not_store",
+      "store_after_success",
+      "replace_stored_after_success",
+      "delete_stored_secret"
+    ],
+    "RemoteFileType": [
+      "regular",
+      "directory",
+      "symlink",
+      "socket",
+      "fifo",
+      "block",
+      "character",
+      "unknown"
+    ],
+    "SecretDecision": [
+      "submit",
+      "cancel"
+    ],
+    "SessionState": [
+      "created",
+      "starting",
+      "running",
+      "closing",
+      "exited",
+      "failed",
+      "closed"
+    ],
+    "SftpFileAccess": [
+      "normal",
+      "sudo"
+    ],
+    "SftpFileTarget": [
+      "remote",
+      "local_authorized_keys"
+    ],
+    "SftpServiceState": [
+      "created",
+      "starting",
+      "ready",
+      "closing",
+      "closed",
+      "failed"
+    ],
+    "TransferBackend": [
+      "sftp",
+      "native_scp"
+    ],
+    "TransferConflictPolicy": [
+      "fail",
+      "overwrite",
+      "skip",
+      "rename"
+    ],
+    "TransferDirection": [
+      "upload",
+      "download"
+    ],
+    "TransferLocalMode": [
+      "daemon_path",
+      "binary_stream"
+    ],
+    "TransferState": [
+      "queued",
+      "starting",
+      "running",
+      "paused",
+      "cancelling",
+      "cancelled",
+      "completed",
+      "failed"
+    ]
+  },
+  "format": "sshpilot-api-schema-v1",
+  "identifiers": [
+    "AttachmentId",
+    "ClientId",
+    "ConnectionId",
+    "ForwardId",
+    "InteractionId",
+    "RequestId",
+    "SessionId",
+    "SftpServiceId",
+    "TransferId"
+  ],
+  "models": {
+    "AddTagToConnectionsRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "tag",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AssignConnectionToGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": "",
+          "name": "group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "AttachSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": true,
+          "name": "request_input",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "want_terminal_output",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "from_sequence",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AttachSessionResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionSummary"
+        },
+        {
+          "default": null,
+          "name": "attachment",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentInfo"
+        },
+        {
+          "default": 0,
+          "name": "available_start",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "live_sequence",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": false,
+          "name": "replay_truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "eof",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AttachSftpRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AttachmentInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": null,
+          "name": "input_owner",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "BroadcastTerminalInputRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[SessionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "command",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CancelTransferRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "transfer_id",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "Capabilities": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "api_implementation_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "client",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientInfo"
+        },
+        {
+          "default": null,
+          "name": "core",
+          "required": true,
+          "sensitive": false,
+          "type": "CoreInfo"
+        },
+        {
+          "default": null,
+          "name": "supported",
+          "required": true,
+          "sensitive": false,
+          "type": "frozenset[Capability]"
+        },
+        {
+          "default": null,
+          "name": "compatibility",
+          "required": true,
+          "sensitive": false,
+          "type": "CompatibilityResult"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ChallengePrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ClaimForwardRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "forward_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ClaimTerminalInputRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ClientInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CloseForwardRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "forward_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CloseSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CloseSftpRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CompatibilityResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "compatible",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "message",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConfirmationPrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionDetails": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "unknown",
+          "name": "health",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionHealth"
+        },
+        {
+          "default": [],
+          "name": "groups",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[GroupReference, ...]"
+        },
+        {
+          "default": [],
+          "name": "aliases",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "key",
+          "name": "authentication_method",
+          "required": false,
+          "sensitive": false,
+          "type": "AuthenticationMethod"
+        },
+        {
+          "default": false,
+          "name": "identity_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "certificate_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "x11_forwarding",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "forwarding_rule_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "proxy_jump",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionEditorCapabilities": {
+      "fields": [
+        {
+          "default": [],
+          "name": "writable_fields",
+          "required": false,
+          "sensitive": false,
+          "type": "frozenset[str]"
+        },
+        {
+          "default": false,
+          "name": "supports_secrets",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "supports_metadata",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "supports_groups",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "supports_split",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionEditorDetails": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "unknown",
+          "name": "health",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionHealth"
+        },
+        {
+          "default": [],
+          "name": "groups",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[GroupReference, ...]"
+        },
+        {
+          "default": [],
+          "name": "aliases",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "key",
+          "name": "authentication_method",
+          "required": false,
+          "sensitive": false,
+          "type": "AuthenticationMethod"
+        },
+        {
+          "default": false,
+          "name": "identity_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "certificate_configured",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "x11_forwarding",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": 0,
+          "name": "forwarding_rule_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "proxy_jump",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": 0,
+          "name": "key_select_mode",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": [],
+          "name": "identity_files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "certificate_files",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "identity_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "add_keys_to_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "pkcs11_provider",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "security_key_provider",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "pubkey_auth_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "forward_agent",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "forward_agent_explicit_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "forward_agent_target",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "proxy_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "forwarding_rules",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[ForwardingRule, ...]"
+        },
+        {
+          "default": "",
+          "name": "pre_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "local_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "remote_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "request_tty",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "extra_ssh_config",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "identity_file_none",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "x11_forwarding_explicit_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "identities_only_explicit_no",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "preferred_authentications",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "source",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionMetadataSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": {},
+          "name": "values",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionMutationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "generation",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": true,
+          "name": "changed",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "changed_fields",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionStoreSnapshot": {
+      "fields": [
+        {
+          "default": null,
+          "name": "generation",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "connections",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple['ConnectionSummary', ...]"
+        },
+        {
+          "default": null,
+          "name": "groups",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[GroupSummary, ...]"
+        },
+        {
+          "default": null,
+          "name": "root_connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "metadata",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionMetadataSummary, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "unknown",
+          "name": "health",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionHealth"
+        },
+        {
+          "default": [],
+          "name": "groups",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[GroupReference, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ConnectionValidationError": {
+      "fields": [
+        {
+          "default": null,
+          "name": "field",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ConnectionValidationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "valid",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "errors",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[ConnectionValidationError, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "CopyConnectionToGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CoreEvent": {
+      "fields": [
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "EventType"
+        },
+        {
+          "default": null,
+          "name": "payload",
+          "required": true,
+          "sensitive": true,
+          "type": "PayloadT"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "timestamp",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": false,
+          "sensitive": false,
+          "type": "RequestId | None"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionId | None"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionId | None"
+        }
+      ],
+      "status": "Partially implemented"
+    },
+    "CoreInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "implementation",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CreateConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 22,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": {},
+          "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": {},
+          "name": "plugin_data",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "CreateGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "parent_id",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "color",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "DaemonDiagnostics": {
+      "fields": [
+        {
+          "default": null,
+          "name": "status",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonStatus"
+        },
+        {
+          "default": null,
+          "name": "uptime_seconds",
+          "required": true,
+          "sensitive": false,
+          "type": "float"
+        },
+        {
+          "default": 0,
+          "name": "executor_queue_depth",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": {},
+          "name": "thread_counts_by_role",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, int]"
+        },
+        {
+          "default": null,
+          "name": "open_descriptor_count",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "rss_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": true,
+          "name": "socket_bound",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "keep_alive_lease",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonIdleInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "idle_shutdown_enabled",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "idle_shutdown_seconds",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "idle_since",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "idle_deadline",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": [],
+          "name": "idle_blockers",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonResourceCounts": {
+      "fields": [
+        {
+          "default": 0,
+          "name": "clients",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sessions_active",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sessions_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sftp_active",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "sftp_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_queued",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_starting",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_running",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "transfers_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "forwards_active",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "forwards_retained",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": 0,
+          "name": "interactions_pending",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonStatus": {
+      "fields": [
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonLifecycleState"
+        },
+        {
+          "default": null,
+          "name": "server_instance_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "api_implementation_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "daemon_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "development_revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "resources",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonResourceCounts"
+        },
+        {
+          "default": null,
+          "name": "idle",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonIdleInfo"
+        },
+        {
+          "default": null,
+          "name": "shutdown_deadline",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "disconnect_reason",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": false,
+          "name": "restart_requested",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DaemonStopResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "accepted",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonLifecycleState"
+        },
+        {
+          "default": null,
+          "name": "resources",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonResourceCounts"
+        },
+        {
+          "default": [],
+          "name": "will_lose",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "confirmation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": "",
+          "name": "message",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "restart_requested",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteConnectionPasswordRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": "",
+          "name": "previous_hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteConnectionResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "deleted",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "DeleteKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteKeyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeleteKeyResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": true,
+          "name": "deleted",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DeletePluginSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "DetachSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ErrorData": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": {},
+          "name": "details",
+          "required": false,
+          "sensitive": true,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": false,
+          "name": "retryable",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[RequestId]"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ConnectionId]"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SessionId]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ErrorResponseEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "error",
+          "required": true,
+          "sensitive": true,
+          "type": "ErrorData"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "EventEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "event",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": {},
+          "name": "payload",
+          "required": false,
+          "sensitive": true,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ForwardSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardType"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardState"
+        },
+        {
+          "default": null,
+          "name": "bind_host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bind_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "destination_host",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "destination_port",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "active_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "closed_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SessionId]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ForwardingRule": {
+      "fields": [
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "listen_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "listen_addr",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "remote_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "remote_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "local_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "local_port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": true,
+          "name": "enabled",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "socks",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "GenerateKeyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "ed25519",
+          "name": "key_type",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 0,
+          "name": "key_size",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "comment",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "encrypted",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "interaction_scope_id",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionId | None"
+        },
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "GenerateKeyResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "KeySummary"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "GetPluginSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "GroupReference": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "GroupSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "parent_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": 0,
+          "name": "order",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "color",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "connection_ids",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "HandshakeRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "client_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "client_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "supported_protocol_versions",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "client_capabilities",
+          "required": false,
+          "sensitive": false,
+          "type": "FrozenSet[str]"
+        },
+        {
+          "default": null,
+          "name": "frontend_type",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": [],
+          "name": "supported_frame_types",
+          "required": false,
+          "sensitive": false,
+          "type": "FrozenSet[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "HandshakeResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "daemon_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "core_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "selected_protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "daemon_capabilities",
+          "required": true,
+          "sensitive": false,
+          "type": "FrozenSet[Capability]"
+        },
+        {
+          "default": null,
+          "name": "compatibility_status",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "server_instance_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "daemon_started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "development_revision",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "api_implementation_version",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "HostKeyPrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "key_type",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "fingerprint",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "required": true,
+          "sensitive": false,
+          "type": "HostKeyStatus"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InputOwner": {
+      "fields": [
+        {
+          "default": null,
+          "name": "client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionCancellation": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": "",
+          "name": "reason",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionClaim": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "responder_client_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ClientId"
+        },
+        {
+          "default": null,
+          "name": "nonce",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "InteractionDecisionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "host_key_decision",
+          "required": false,
+          "sensitive": false,
+          "type": "HostKeyDecision | None"
+        },
+        {
+          "default": null,
+          "name": "secret_decision",
+          "required": false,
+          "sensitive": false,
+          "type": "SecretDecision | None"
+        },
+        {
+          "default": "do_not_store",
+          "name": "remember_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "RememberPolicy"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "InteractionRejection": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "reason",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionKind"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "secret",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "allow_empty",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "choices",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionId | None"
+        },
+        {
+          "default": null,
+          "name": "originating_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId | None"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime | None"
+        },
+        {
+          "default": "pending",
+          "name": "status",
+          "required": false,
+          "sensitive": false,
+          "type": "InteractionStatus"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionResponse": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "status",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionStatus"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": false,
+          "sensitive": true,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "choice",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "InteractionSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionType"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionState"
+        },
+        {
+          "default": null,
+          "name": "created_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "expires_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "prompt",
+          "required": true,
+          "sensitive": false,
+          "type": "HostKeyPrompt | PasswordPrompt | PassphrasePrompt | ChallengePrompt | PresencePrompt | ConfirmationPrompt"
+        },
+        {
+          "default": null,
+          "name": "responder_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "InteractionTimeout": {
+      "fields": [
+        {
+          "default": null,
+          "name": "interaction_id",
+          "required": true,
+          "sensitive": false,
+          "type": "InteractionId"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "expired_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "KeyList": {
+      "fields": [
+        {
+          "default": null,
+          "name": "keys",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[KeySummary, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "KeySummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "private_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "public_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "public_key_available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "KnownHostEntrySummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "entry_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KnownHostEntryId"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key_type",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "display_line",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "KnownHostsMutationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "removed_count",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "entries",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[KnownHostEntrySummary, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "KnownHostsSnapshot": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "entries",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[KnownHostEntrySummary, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ListDirectoryRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": null,
+          "name": "cursor",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "limit",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ListDirectoryResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "entries",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[RemoteFileEntry, ...]"
+        },
+        {
+          "default": false,
+          "name": "truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "next_cursor",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ListKeysRequest": {
+      "fields": [
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "LookupKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "MoveConnectionsRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[ConnectionId, ...]"
+        },
+        {
+          "default": null,
+          "name": "target_group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": null,
+          "name": "target_connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ConnectionId]"
+        },
+        {
+          "default": null,
+          "name": "position",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "source_group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": "exclusive",
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "ConnectionPlacementMode"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "OpenForwardRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "type",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardType"
+        },
+        {
+          "default": null,
+          "name": "bind_host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bind_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "destination_host",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        },
+        {
+          "default": null,
+          "name": "destination_port",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "OpenSessionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "dimensions",
+          "required": false,
+          "sensitive": false,
+          "type": "TerminalDimensions | None"
+        },
+        {
+          "default": null,
+          "name": "remote_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": false,
+          "name": "force_tty",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "OpenSftpRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "OperationSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "operation_id",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationId"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationKind"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationState"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "created_at",
+          "required": true,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ConnectionId]"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "finished_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "progress",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "result",
+          "required": false,
+          "sensitive": true,
+          "type": "Optional[Dict]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "PassphrasePrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_display_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key_fingerprint",
+          "required": true,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "can_remember",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "stored_secret_available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "confirmation_required",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PasswordPrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "attempt",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "can_remember",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "stored_secret_available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PlaceGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "parent_id",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": null,
+          "name": "index",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "PluginArgument": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "secret",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PluginOperationRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "operation",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "arguments",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[PluginArgument, ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PluginOperationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "values",
+          "required": false,
+          "sensitive": true,
+          "type": "Tuple[Tuple[str, str], ...]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PortForwardSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardKind"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "ForwardState"
+        },
+        {
+          "default": null,
+          "name": "bind_host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "bind_port",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "",
+          "name": "target_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "target_port",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PresencePrompt": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "PublicKeyResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ReadPublicKeyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_id",
+          "required": true,
+          "sensitive": false,
+          "type": "KeyId"
+        },
+        {
+          "default": "default",
+          "name": "scope",
+          "required": false,
+          "sensitive": false,
+          "type": "KeyStoreScope"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ReleaseTerminalInputRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RemoteFileEntry": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "file_type",
+          "required": true,
+          "sensitive": false,
+          "type": "RemoteFileType"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "uid",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "gid",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "modified_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "link_target",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RemoveConnectionFromGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RemoveKnownHostEntriesRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "entry_ids",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[KnownHostEntryId, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RenameGroupRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "new_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "RenameTagRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "old_tag",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "new_tag",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ReorderConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "target_connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "group_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[GroupId]"
+        },
+        {
+          "default": "below",
+          "name": "position",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ReplayBounds": {
+      "fields": [
+        {
+          "default": null,
+          "name": "earliest_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "latest_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "retained_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ReplayRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": false,
+          "sensitive": false,
+          "type": "AttachmentId | None"
+        },
+        {
+          "default": null,
+          "name": "after_sequence",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": 1048576,
+          "name": "max_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ReplayResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "first_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "next_sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "bounds",
+          "required": true,
+          "sensitive": false,
+          "type": "ReplayBounds"
+        },
+        {
+          "default": "<binary bytes>",
+          "name": "data",
+          "required": false,
+          "sensitive": true,
+          "type": "bytes"
+        },
+        {
+          "default": false,
+          "name": "truncated",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "eof",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RequestEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "method",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": {},
+          "name": "params",
+          "required": false,
+          "sensitive": true,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": "client:unknown",
+          "name": "client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "ClientId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ResizeTerminalRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "dimensions",
+          "required": true,
+          "sensitive": false,
+          "type": "TerminalDimensions"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "RestartDaemonRequest": {
+      "fields": [
+        {
+          "default": false,
+          "name": "force",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "confirmation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SaveSshConfigTextRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expected_revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ServiceFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SessionCapabilities": {
+      "fields": [
+        {
+          "default": [],
+          "name": "supported",
+          "required": false,
+          "sensitive": false,
+          "type": "frozenset[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SessionExitInfo": {
+      "fields": [
+        {
+          "default": null,
+          "name": "exit_code",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": null,
+          "name": "signal",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": "",
+          "name": "reason",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SessionFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SessionSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionState"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "input_owner",
+          "required": false,
+          "sensitive": false,
+          "type": "InputOwner | None"
+        },
+        {
+          "default": {
+            "supported": []
+          },
+          "name": "capabilities",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionCapabilities"
+        },
+        {
+          "default": null,
+          "name": "exit_info",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionExitInfo | None"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "SessionFailure | None"
+        },
+        {
+          "default": 0,
+          "name": "attachment_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetDaemonLogLevelRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "level",
+          "required": true,
+          "sensitive": false,
+          "type": "DaemonLogLevel"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetGroupColorRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "group_id",
+          "required": true,
+          "sensitive": false,
+          "type": "GroupId"
+        },
+        {
+          "default": null,
+          "name": "color",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpChmodRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpCopyRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "source_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "destination_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "move",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpCreateFileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpCreateFileResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": 420,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpDirectorySizeRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpDirectorySizeResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "size_bytes",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "file_count",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "directory_count",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpEntry": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "FileEntryKind"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "SftpPathRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpReadFileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": "normal",
+          "name": "access",
+          "required": false,
+          "sensitive": false,
+          "type": "SftpFileAccess"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpReadFileResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "content",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "exists",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpRenameRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "source_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "destination_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "overwrite",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpReplaceFileRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "content",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "expected_revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": true,
+          "name": "backup",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "service_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": "normal",
+          "name": "access",
+          "required": false,
+          "sensitive": false,
+          "type": "SftpFileAccess"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpReplaceFileResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "target",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFileTarget"
+        },
+        {
+          "default": null,
+          "name": "path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "size",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "backup_path",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpServiceSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceState"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "closed_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": 0,
+          "name": "attachment_count",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SftpSymlinkRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "target_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "link_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SplitConnectionRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "original_host_token",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "source_config_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "nickname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": null,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        },
+        {
+          "default": {},
+          "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SshConfigText": {
+      "fields": [
+        {
+          "default": null,
+          "name": "text",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "revision",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "display_name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "writable",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StartScpTransferRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "sources",
+          "required": true,
+          "sensitive": false,
+          "type": "Tuple[str, ...]"
+        },
+        {
+          "default": null,
+          "name": "destination",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "overwrite",
+          "name": "conflict_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferConflictPolicy"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StartTransferRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "sftp_service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpServiceId"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "remote_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "local_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "fail",
+          "name": "conflict_policy",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferConflictPolicy"
+        },
+        {
+          "default": false,
+          "name": "recursive",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "daemon_path",
+          "name": "local_mode",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferLocalMode"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StopDaemonRequest": {
+      "fields": [
+        {
+          "default": false,
+          "name": "force",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "confirmation",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[str]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StoreConnectionPasswordRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "password",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_host",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "previous_username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StoreKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "interaction_scope_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "StorePluginSecretRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "plugin_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "key",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "value",
+          "required": true,
+          "sensitive": true,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SuccessResponseEnvelope": {
+      "fields": [
+        {
+          "default": null,
+          "name": "protocol_version",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "request_id",
+          "required": true,
+          "sensitive": false,
+          "type": "RequestId"
+        },
+        {
+          "default": null,
+          "name": "result",
+          "required": true,
+          "sensitive": true,
+          "type": "Any"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "TerminalDimensions": {
+      "fields": [
+        {
+          "default": null,
+          "name": "rows",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "columns",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "TerminalInput": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "attachment_id",
+          "required": true,
+          "sensitive": false,
+          "type": "AttachmentId"
+        },
+        {
+          "default": null,
+          "name": "data",
+          "required": true,
+          "sensitive": true,
+          "type": "bytes"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "TerminalOutput": {
+      "fields": [
+        {
+          "default": null,
+          "name": "session_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        },
+        {
+          "default": null,
+          "name": "sequence",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": null,
+          "name": "data",
+          "required": true,
+          "sensitive": true,
+          "type": "bytes"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": false,
+          "name": "replay",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "eof",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "TransferSummary": {
+      "fields": [
+        {
+          "default": null,
+          "name": "id",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferId"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "sftp_service_id",
+          "required": true,
+          "sensitive": false,
+          "type": "Optional[SftpServiceId]"
+        },
+        {
+          "default": null,
+          "name": "direction",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferDirection"
+        },
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "TransferState"
+        },
+        {
+          "default": null,
+          "name": "source_display",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "destination_display",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "sftp",
+          "name": "backend",
+          "required": false,
+          "sensitive": false,
+          "type": "TransferBackend"
+        },
+        {
+          "default": null,
+          "name": "bytes_total",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": 0,
+          "name": "bytes_completed",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "<UTC timestamp at creation>",
+          "name": "created_at",
+          "required": false,
+          "sensitive": false,
+          "type": "datetime"
+        },
+        {
+          "default": null,
+          "name": "started_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "completed_at",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[datetime]"
+        },
+        {
+          "default": null,
+          "name": "owner_client_id",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ClientId]"
+        },
+        {
+          "default": null,
+          "name": "failure",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "bytes_transferred",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "total_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "UpdateConnectionMetadataRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
+        },
+        {
+          "default": null,
+          "name": "meta",
+          "required": true,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "UpdateConnectionRequest": {
+      "fields": [
+        {
+          "default": "`UNSET`",
+          "name": "nickname",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None | UNSET"
+        },
+        {
+          "default": "`UNSET`",
+          "name": "hostname",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None | UNSET"
+        },
+        {
+          "default": "`UNSET`",
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None | UNSET"
+        },
+        {
+          "default": "`UNSET`",
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None | UNSET"
+        },
+        {
+          "default": {},
+          "name": "config_patch",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": {},
+          "name": "plugin_data",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
+        },
+        {
+          "default": null,
+          "name": "expected_generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "VerifyKeyPassphraseRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "key_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "interaction_scope_id",
+          "required": true,
+          "sensitive": false,
+          "type": "SessionId"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "VerifyKeyPassphraseResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "valid",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    }
+  },
+  "protocol_version": "1.0"
+}

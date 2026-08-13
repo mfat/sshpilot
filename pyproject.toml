@@ -39,6 +39,11 @@ test = [
     "pytest>=7.0",
     "paramiko>=3.4",
 ]
+# Optional MCP servers (sshpilot-mcp-dev and, later, sshpilot-mcp-runtime).
+# The MCP SDK requires Python 3.10+; the core application keeps 3.9 support.
+mcp = [
+    "mcp>=2.0.0",
+]
 # Note: This package also requires system dependencies that must be installed separately:
 # - GTK4, libadwaita, VTE (for terminal backend)
 # - WebKit 6.0 (for PyXterm.js backend, optional but recommended on Linux only)
@@ -98,6 +103,13 @@ exclude = ["packaging*", "screenshots*", "sshpilot.plugins.examples*"]
 [project.urls]
 Homepage = "https://github.com/mfat/sshpilot"
 Issues = "https://github.com/mfat/sshpilot/issues"
+
+
+[project.scripts]
+sshpilot-core = "sshpilot.core.cli:main"
+sshpilot-cli = "sshpilot.cli.main:main"
+sshpilot-mcp-dev = "sshpilot.mcp.dev.server:main"
+sshpilot-mcp-runtime = "sshpilot.mcp.runtime.server:main"
 
 [tool.ruff]
 target-version = "py39"

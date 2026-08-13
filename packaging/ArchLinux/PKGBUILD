@@ -18,7 +18,7 @@ depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography'
          'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0')
 # Meson is the upstream build system: it compiles the Blueprint .blp sources into
 # the bundled GResource and installs the launcher, the Python package, the desktop
-# entry, the AppStream metainfo, the icon and sshpilot-agent.
+# entry, the AppStream metainfo, the icon, sshpilot-agent, and sshpilot-daemon.
 makedepends=('meson' 'ninja' 'blueprint-compiler' 'glib2-devel' 'gtk4' 'gettext'
              'desktop-file-utils' 'appstream')
 # Built-in protocol plugins shell out to these; all degrade gracefully if absent.

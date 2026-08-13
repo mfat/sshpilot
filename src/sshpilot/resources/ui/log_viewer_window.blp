@@ -24,7 +24,7 @@ template $SshPilotLogViewerWindow: Adw.Window {
       [end]
       Gtk.Button copy_btn {
         label: _("Copy log output");
-        tooltip-text: _("Copy platform info and recent log lines to the clipboard, formatted for pasting into a bug report. Always uses the master log regardless of the current view selection.");
+        tooltip-text: _("Copy platform info and recent frontend, daemon, askpass, and crash diagnostics to the clipboard for a bug report.");
 
         styles [
           "suggested-action",
@@ -101,7 +101,7 @@ template $SshPilotLogViewerWindow: Adw.Window {
         }
 
         Gtk.DropDown category_dropdown {
-          tooltip-text: _("Which log file to view. The bug-report bundle always uses the complete master log regardless of this selection.");
+          tooltip-text: _("Which local process log to view. Bug-report output keeps each process in a labelled section.");
         }
 
         Gtk.Box {

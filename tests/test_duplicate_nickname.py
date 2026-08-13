@@ -2,49 +2,44 @@
 
 The duplicate generator used to produce "Name (Copy)", but the app's own
 validator rejects whitespace and parens make an invalid ssh Host alias (see
-#953). The generated nickname must pass SSHConnectionValidator and be safe to
-use verbatim as a Host alias.
+#953). The generated nickname must be safe to use verbatim as a Host alias:
+whitespace-free, parenthesis-free, and composed of literal ssh Host-alias
+characters. The canonical implementation is the pure, GTK-free
+``generate_duplicate_nickname`` helper.
 """
 
 import re
-from types import SimpleNamespace
 
 import pytest
 
-# Importing these modules needs GTK typelibs (incl. GdkPixbuf); skip cleanly
-# where they aren't available (e.g. headless CI without the full stack).
-connection_manager = pytest.importorskip("sshpilot.connection_manager")
-from sshpilot.connection_dialog import SSHConnectionValidator
+from sshpilot.core.connections.models import generate_duplicate_nickname
 
 
 def _generate(existing_names, base):
-    manager = SimpleNamespace(
-        get_connections=lambda: [SimpleNamespace(nickname=n) for n in existing_names]
-    )
-    return connection_manager.ConnectionManager.generate_duplicate_nickname(manager, base)
+    return generate_duplicate_nickname(base, set(existing_names))
 
 
 @pytest.mark.parametrize(
-    "existing,base",
+    "existing,base,expected",
     [
-        (set(), "myserver"),
-        ({"myserver-copy"}, "myserver"),                      # first copy taken -> -2
-        ({"myserver-copy", "myserver-copy-2"}, "myserver"),   # -> -3
-        ({"myserver"}, "myserver (Copy)"),                    # legacy-format base
-        ({"myserver"}, "myserver-Copy"),                      # new-format base
-        (set(), ""),                                          # empty base -> "Connection"
+        (set(), "myserver", "myserver-Copy"),
+        ({"myserver-copy"}, "myserver", "myserver-Copy-2"),          # first copy taken -> -2
+        ({"myserver-copy", "myserver-copy-2"}, "myserver", "myserver-Copy-3"),  # -> -3
+        ({"myserver"}, "myserver (Copy)", "myserver-Copy"),          # legacy-format base
+        ({"myserver"}, "myserver-Copy", "myserver-Copy"),            # new-format base
+        (set(), "", "Connection-Copy"),                              # empty base -> "Connection"
+        ({"myserver-Copy"}, "myserver-Copy", "myserver-Copy-2"),     # no stacked suffixes
     ],
 )
-def test_duplicate_nickname_is_valid(existing, base):
-    validator = SSHConnectionValidator()
-    validator.set_existing_names(existing)
-
+def test_duplicate_nickname_is_valid(existing, base, expected):
     name = _generate(existing, base)
 
+    assert name == expected
     assert not re.search(r"\s", name), f"nickname has whitespace: {name!r}"
     assert "(" not in name and ")" not in name, f"nickname has parens: {name!r}"
     assert name.lower() not in {n.lower() for n in existing}, f"nickname not unique: {name!r}"
-    assert validator.validate_connection_name(name).is_valid, f"validator rejected: {name!r}"
+    # Safe literal ssh Host-alias characters.
+    assert re.fullmatch(r"[A-Za-z0-9_@.-]+", name), f"unsafe alias: {name!r}"
 
 
 def test_re_duplicating_does_not_stack_suffixes():

@@ -16,7 +16,6 @@ version does not match ``API_VERSION[0]``.
 from __future__ import annotations
 
 import abc
-import enum
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -34,8 +33,7 @@ logger = logging.getLogger(__name__)
 #      (refresh an existing connection in place).
 # 1.4: ctx.list_connections() — read-only snapshot of all saved connections.
 # 1.5: power APIs — ctx.run_command (one-shot remote command via the native
-#      SSH/auth path), ctx.get_effective_ssh_config, ctx.copy_key_to_host,
-#      ctx.list_keys/ctx.delete_key, terminal/session access
+#      SSH/auth path), ctx.list_keys/ctx.delete_key, terminal/session access
 #      (ctx.list_sessions/ctx.read_terminal/ctx.send_terminal), and
 #      self-contained ctx.data_dir/ctx.files/ctx.http helpers.
 # 1.6: ctx.open_command_terminal(nickname, remote_command, title=) — open a new
@@ -48,85 +46,39 @@ logger = logging.getLogger(__name__)
 # 1.8: ctx.ui.register_page(..., add_menu_item=False, on_activate=cb) — register
 #      a page with no Tools-menu entry (opened directly, e.g. one tab per host),
 #      and/or have the menu entry run a callback instead of opening the page.
-# 1.9: ctx.acquire_multiplex(nickname) / ctx.release_multiplex(nickname) — keep a
-#      shared SSH ControlMaster warm for a host while a surface is open; run_command
-#      then transparently reuses that one connection (no re-auth per call). For
-#      polling surfaces such as the Docker Console.
+# 1.9: ctx.acquire_multiplex(nickname) / ctx.release_multiplex(nickname) —
+#      deprecated transport-compatibility no-ops; reuse is daemon-owned.
 # 1.10: ctx.identities — read-only view of SSH identities from the configured
 #      identity providers (ctx.identities.list() / .is_agent_available()),
 #      paralleling ctx.secrets. See sshpilot.identity / docs/IDENTITY_PROVIDERS.md.
 # 1.11: ctx.run_local_command / ctx.open_local_command_terminal — captured and
 #      streamed/interactive commands on the local machine (Flatpak-host aware).
 # 1.12: ctx.ensure_local_forward(nickname, remote_port) — local port forwarded
-#      to the host over the single SSH/auth path (ControlMaster -O forward,
-#      background ssh -N fallback); ctx.ui.open_web_tab(url, title=) — show a
-#      URL in an embedded WebKit tab (system-browser fallback).
+#      to the host through the daemon-owned forwarding service.
+#      ctx.ui.open_web_tab(url, title=) — show a URL in an embedded WebKit tab
+#      (system-browser fallback).
 # 1.13: ctx.run_command_stream / ctx.run_local_command_stream — long-lived
 #      line-oriented streams (e.g. `docker logs -f`, `docker events`) over the
 #      same native SSH/local paths as the one-shot command APIs; returns a
 #      StreamHandle the caller stops when done.
-API_VERSION: Tuple[int, int] = (1, 13)
+# 1.14: daemon-owned remote commands, streams, settings, and session views.
+#
+# Headless contracts (Capability, SpawnSpec, FieldSpec, Events, …) live in
+# ``sshpilot.core.plugins``; this module re-exports them for plugin compatibility.
+from sshpilot.core.plugins import (  # noqa: E402,F401
+    API_VERSION,
+    Capability,
+    FieldSpec,
+    SpawnSpec,
+)
 
-# Stable event names and event payload types live in host.py; re-exported here
-# so plugins import everything from sshpilot.plugins.api. (host.py imports
-# nothing from this module, so there is no import cycle.)
+# Stable event names and event payload types live in host.py (backed by core);
+# re-exported here so plugins import everything from sshpilot.plugins.api.
 from .host import ConnectionInfo, Events, SessionInfo  # noqa: E402,F401
 
 # Re-exported so plugins can type/inspect ctx.identities.list() results without
 # reaching into a private module. (identity.py imports nothing from plugins.)
 from ..identity import Identity  # noqa: E402,F401
-
-
-class Capability(enum.Enum):
-    """Things a protocol backend can do. UI code uses these to show/hide
-    actions (SFTP button, port-forwarding page, ssh-copy-id, ...) instead
-    of checking ``protocol == 'ssh'``."""
-
-    FILE_TRANSFER = "file-transfer"          # SFTP/SCP-style browsing
-    PORT_FORWARDING = "port-forwarding"
-    REMOTE_COMMAND = "remote-command"
-    AUTH_PASSWORD = "auth-password"
-    AUTH_KEY = "auth-key"
-    KEY_DEPLOYMENT = "key-deployment"        # ssh-copy-id flow
-    AGENT = "ssh-agent"
-    JUMP_HOST = "jump-host"
-
-
-@dataclass
-class SpawnSpec:
-    """A fully prepared, ready-to-spawn command for a terminal tab.
-
-    This is the generalized successor of ``SSHConnectionCommand``: argv +
-    env is all the terminal layer fundamentally needs. ``extras`` carries
-    protocol-private hints during the migration period (e.g. the SSH
-    backend's sshpass/askpass flags, which terminal.py still orchestrates);
-    new protocols should NOT rely on extras being interpreted by core.
-    """
-
-    argv: List[str]
-    env: Dict[str, str] = field(default_factory=dict)
-    working_directory: Optional[str] = None  # spawn cwd; defaults to ~ if None
-    # Transitional, protocol-private data. See docstring.
-    extras: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class FieldSpec:
-    """Declarative description of one connection-editor field.
-
-    Phase 2: the connection dialog renders these for non-SSH protocols
-    instead of hardcoding rows. ``key`` is where the value lives in
-    ``Connection.data``.
-    """
-
-    key: str
-    label: str
-    kind: str = "text"  # text | int | password | file | choice | switch
-    default: Any = None
-    choices: Optional[List[Tuple[str, str]]] = None  # (value, label)
-    placeholder: str = ""
-    required: bool = False
-    group: str = "general"  # dialog section the row belongs to
 
 
 class ProtocolBackend(abc.ABC):
@@ -296,23 +248,80 @@ class _SecretStore:
 class _IdentityView:
     """Read-only view of SSH identities (``ctx.identities``).
 
-    Lists the identities the configured identity providers currently expose (e.g.
-    keys loaded in the system ssh-agent), paralleling the credential side. This is
-    observation only — choosing/configuring providers is the user's job, not the
-    plugin's.
+    Lists the keys the identity providers currently expose (e.g. keys loaded
+    in the system ssh-agent), paralleling the credential side. Everything is
+    answered by the daemon through the typed API — the facade never runs
+    ``ssh-add`` or reads a frontend ``IdentityManager``. This is observation
+    only — choosing/configuring providers is the user's job, not the plugin's.
     """
 
-    def list(self) -> List["Identity"]:
-        """All identities across currently-available providers."""
-        from ..identity import get_identity_manager
+    # The daemon registry id of the system ssh-agent provider. The legacy
+    # ``provider_name`` on returned ``Identity`` objects stays "system-agent".
+    SYSTEM_AGENT_PROVIDER = "auto"
 
-        return get_identity_manager().list_identities()
+    def __init__(self, client_resolver: Optional[Callable[[], Any]] = None):
+        self._client_resolver = client_resolver
+
+    def _client(self) -> Any:
+        resolver = self._client_resolver
+        if not callable(resolver):
+            return None
+        try:
+            return resolver()
+        except Exception:
+            return None
+
+    def list(self) -> List["Identity"]:
+        """All identities the system ssh-agent currently exposes.
+
+        An empty list means the daemon client is unavailable or the agent
+        cannot be reached — never a partial frontend fallback.
+        """
+        client = self._client()
+        if client is None:
+            return []
+        from ..api.models.identity import ListProviderAgentKeysRequest
+        from ..identity import Identity
+
+        try:
+            key_list = client.list_provider_agent_keys(
+                ListProviderAgentKeysRequest(provider_id=self.SYSTEM_AGENT_PROVIDER)
+            )
+        except Exception:
+            return []
+        identities: List[Identity] = []
+        for key in key_list.keys:
+            fingerprint = key.fingerprint
+            identities.append(
+                Identity(
+                    id=fingerprint,
+                    display_name=key.comment or key.key_type or key.fingerprint,
+                    fingerprint=fingerprint,
+                    provider_name="system-agent",
+                )
+            )
+        return identities
 
     def is_agent_available(self) -> bool:
-        """Whether the system ssh-agent is reachable right now."""
-        from ..identity import get_identity_manager
+        """Whether the system ssh-agent is reachable right now.
 
-        return get_identity_manager().system_agent().is_available()
+        Answered from daemon-owned provider state: the availability flag on
+        the registry descriptor for the ``'auto'`` (system ssh-agent)
+        provider, even when another provider is selected.
+        """
+        client = self._client()
+        if client is None:
+            return False
+        try:
+            registry = client.get_identity_providers()
+        except Exception:
+            return False
+        if registry is None:
+            return False
+        for provider in registry.providers:
+            if provider.provider_id == self.SYSTEM_AGENT_PROVIDER:
+                return bool(provider.available)
+        return False
 
 
 class _SettingStore:
@@ -320,18 +329,25 @@ class _SettingStore:
     ``plugins.<plugin_id>.<key>`` in the app config. For non-secret data;
     use ``ctx.secrets`` for credentials."""
 
-    def __init__(self, app_config: Any, plugin_id: str):
+    def __init__(self, app_config: Any, plugin_id: str, client_getter=None):
         self._config = app_config
         self._plugin_id = plugin_id
+        self._client_getter = client_getter
 
     def _full(self, key: str) -> str:
         return f"plugins.{self._plugin_id}.{key}"
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self._config.get_setting(self._full(key), default)
+        client = self._client_getter() if self._client_getter else None
+        if client is not None and hasattr(client, "get_plugin_setting"):
+            return client.get_plugin_setting(self._plugin_id, key, default)
+        return default
 
     def set(self, key: str, value: Any) -> None:
-        self._config.set_setting(self._full(key), value)
+        client = self._client_getter() if self._client_getter else None
+        if client is None or not hasattr(client, "set_plugin_setting"):
+            raise RuntimeError("daemon settings are unavailable")
+        client.set_plugin_setting(self._plugin_id, key, value)
 
 
 @dataclass
@@ -357,6 +373,9 @@ class StreamHandle:
         self._proc: Any = None
         self._thread: Optional[threading.Thread] = None
         self._cleanup: Optional[Callable[[], None]] = None
+        self._remote_cancel: Optional[Callable[[], None]] = None
+        self._remote_running = False
+        self._remote_finished = False
         self._stopped = False
         self._lock = threading.Lock()
 
@@ -366,13 +385,24 @@ class StreamHandle:
         self._thread = thread
         self._cleanup = cleanup
 
+    def _attach_remote(self, cancel: Callable[[], None]) -> None:
+        self._remote_cancel = cancel
+        self._remote_running = not self._remote_finished
+
+    def _finish_remote(self) -> None:
+        with self._lock:
+            self._remote_running = False
+            self._remote_finished = True
+            self._remote_cancel = None
+
     @property
     def running(self) -> bool:
         with self._lock:
             if self._stopped:
                 return False
             proc = self._proc
-        return proc is not None and proc.poll() is None
+            remote_running = self._remote_running
+        return remote_running or (proc is not None and proc.poll() is None)
 
     def stop(self) -> None:
         """Terminate the stream process (if still running) and wait for the
@@ -384,7 +414,15 @@ class StreamHandle:
             proc = self._proc
             thread = self._thread
             cleanup = self._cleanup
+            remote_cancel = self._remote_cancel
             self._cleanup = None
+            self._remote_cancel = None
+            self._remote_running = False
+        if remote_cancel is not None:
+            try:
+                remote_cancel()
+            except Exception:  # noqa: BLE001
+                pass
         if proc is not None and proc.poll() is None:
             try:
                 proc.terminate()
@@ -517,31 +555,15 @@ class _HttpFacade:
 
 
 # --- plugin-requested local port forwards (ctx.ensure_local_forward) ------
-# Keyed by (nickname, remote_port). ``proc`` is None for forwards added onto
-# the shared ControlMaster with ``ssh -O forward`` (they die with the master);
-# fallback forwards own a background ``ssh -N`` process, killed at app exit.
-# ponytail: forwards live until app quit / master exit; add `ssh -O cancel`
-# per-tab teardown if port hoarding ever matters.
+# Keyed by (nickname, remote_port). The daemon owns the forwarding process;
+# this cache only keeps the presentation-side port lookup stable.
 @dataclass
 class _Forward:
     local_port: int
-    proc: Optional[Any] = None  # subprocess.Popen for the ssh -N fallback
 
 
 _FORWARDS: Dict[Tuple[str, int], _Forward] = {}
 _FORWARDS_LOCK = threading.Lock()
-_FORWARDS_ATEXIT = False
-
-
-def _kill_forward_procs() -> None:
-    with _FORWARDS_LOCK:
-        procs = [f.proc for f in _FORWARDS.values() if f.proc is not None]
-        _FORWARDS.clear()
-    for proc in procs:
-        try:
-            proc.terminate()
-        except Exception:
-            pass
 
 
 class PluginContext:
@@ -575,8 +597,15 @@ class PluginContext:
         self.events = _EventsFacade(host.events, plugin_id) if host is not None else None
         self.ui = _UiFacade(host.ui, plugin_id) if host is not None else None
         self.secrets = _SecretStore(connection_manager, plugin_id)
-        self.identities = _IdentityView()
-        self.settings = _SettingStore(app_config, plugin_id)
+        client_resolver = getattr(host, "daemon_client", None)
+        self.identities = _IdentityView(
+            client_resolver if callable(client_resolver) else None
+        )
+        self.settings = _SettingStore(
+            app_config,
+            plugin_id,
+            lambda: self._host.daemon_client() if self._host is not None else None,
+        )
         # Self-contained helpers (no host needed) — available even in for_spawn.
         self.files = _FilesFacade(self._data_dir)
         self.http = _HttpFacade()
@@ -720,7 +749,8 @@ class PluginContext:
         """Generate an SSH key via the app's key manager and return its
         private-key path (None on failure). Accepts the same keyword args as
         the key manager (``key_type``, ``key_size``, ``comment``,
-        ``passphrase``). Valid after ``app_started``."""
+        ``encrypted``). Protected input is collected by the daemon interaction
+        flow. Valid after ``app_started``."""
         return self._host.generate_key(name, **kwargs) if self._host is not None else None
 
     def list_keys(self) -> List[Dict[str, str]]:
@@ -730,9 +760,12 @@ class PluginContext:
         return self._host.list_keys() if self._host is not None else []
 
     def delete_key(self, private_path: str) -> bool:
-        """Delete an SSH key pair (private + ``.pub``) managed by the app. Only
-        keys inside the app's key directory may be deleted; returns False
-        otherwise or if the UI isn't ready. Valid after ``app_started``."""
+        """Delete a daemon-managed key using the legacy path signature.
+
+        The path is compatibility input only; the host resolves it against
+        daemon-listed key metadata and delegates deletion by opaque key id.
+        Valid after ``app_started``.
+        """
         return (self._host.delete_key(private_path)
                 if self._host is not None else False)
 
@@ -742,8 +775,7 @@ class PluginContext:
                     input: Optional[str] = None) -> "CommandResult":
         """Run a one-shot command on a saved connection and capture its output.
 
-        Reuses the app's single SSH/auth path (``build_ssh_connection`` +
-        ``resolve_native_auth`` via ``~/.ssh/config``), so ProxyJump, ports,
+        Reuses the daemon's native SSH/auth path, so ProxyJump, ports,
         identities and stored credentials all apply. **Blocking** — call from a
         worker thread and marshal UI work back via ``run_on_ui_thread``.
         Returns a ``CommandResult`` (``exit_code == -1`` means it could not be
@@ -751,88 +783,50 @@ class PluginContext:
 
         ``input`` is written to the remote command's stdin (e.g. a password for
         ``sudo -S``); the SSH transport itself is non-interactive (no PTY)."""
-        import os
-        import subprocess
-        from ..ssh_connection_builder import (
-            ConnectionContext, build_ssh_connection)
-        from .. import ssh_multiplex
-        conn = self.connection_manager.find_connection_by_nickname(nickname)
-        if conn is None:
+        client = self._host.daemon_client() if self._host is not None else None
+        if client is None:
+            return CommandResult(-1, "", "The daemon is unavailable")
+        try:
+            connection = next(
+                (item for item in client.list_connections() if item.nickname == nickname),
+                None,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return CommandResult(-1, "", str(exc))
+        if connection is None:
             logger.debug("run_command(%r): no such connection", nickname)
             return CommandResult(-1, "", f"No connection named {nickname!r}")
-        mux = ssh_multiplex.is_active(nickname)
-        logger.debug(
-            "run_command(%r) mux=%s timeout=%s stdin=%s: %s",
-            nickname, mux, timeout, "yes" if input else "no", command,
-        )
-        cleanup = None
         try:
-            # When a surface has acquired multiplexing for this host, reuse its
-            # ControlMaster socket: the first call opens the master, the rest ride
-            # it (no re-auth). Transparent — callers don't opt in per-call.
-            extra_args = (ssh_multiplex.controlmaster_args() if mux else None)
-            ctx = ConnectionContext(
-                connection=conn, connection_manager=self.connection_manager,
-                config=self.config, command_type='ssh',
-                remote_command=command, native_mode=True, extra_args=extra_args)
-            prepared = build_ssh_connection(ctx)
-            argv = list(prepared.command)
-            from ..ssh_connection_builder import apply_headless_askpass_env
-            # No user-visible TTY — force graphical askpass for secrets/MFA.
-            env = apply_headless_askpass_env(
-                prepared.env, conn,
-                session_password=getattr(prepared, "password", None),
+            from ..api.models.broadcast import (
+                BroadcastCommandRequest, BroadcastExecutionPolicy,
             )
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug("run_command(%r) argv: %s", nickname, argv)
-            # Capture via temp files — NOT pipes (capture_output=True).
-            # ControlPersist backgrounds a master that inherits our stderr pipe;
-            # with verbose SSH (-v) that master keeps writing/holding the pipe so
-            # subprocess.run never sees EOF and hangs until timeout (~30s). File
-            # redirection does not block on the master's lifetime.
-            # Also: don't inherit the app's stdin unless the caller fed input
-            # (e.g. sudo -S password).
-            import tempfile
-            with tempfile.TemporaryDirectory(prefix="sshpilot-cmd-") as td:
-                out_path = os.path.join(td, "stdout")
-                err_path = os.path.join(td, "stderr")
-                with open(out_path, "w", encoding="utf-8") as out_f, \
-                        open(err_path, "w", encoding="utf-8") as err_f:
-                    run_kwargs: dict = dict(
-                        env=env, stdout=out_f, stderr=err_f,
-                        timeout=timeout, check=False, text=True,
-                    )
-                    if input is not None:
-                        run_kwargs["input"] = input
-                    else:
-                        run_kwargs["stdin"] = subprocess.DEVNULL
-                    completed = subprocess.run(argv, **run_kwargs)
-                with open(out_path, encoding="utf-8", errors="replace") as out_f:
-                    stdout = out_f.read()
-                with open(err_path, encoding="utf-8", errors="replace") as err_f:
-                    stderr = err_f.read()
-            logger.debug(
-                "run_command(%r) exit=%s stdout=%dB stderr=%dB",
-                nickname, completed.returncode,
-                len(stdout or ""), len(stderr or ""),
+            summary = client.start_broadcast_command(
+                BroadcastCommandRequest(
+                    (connection.id,),
+                    command,
+                    BroadcastExecutionPolicy(
+                        concurrency_limit=1,
+                        timeout_seconds=timeout,
+                    ),
+                ),
+                input=input,
             )
-            if completed.returncode != 0 and (stderr or stdout):
-                logger.debug(
-                    "run_command(%r) failure output: %.800s",
-                    nickname, (stderr or stdout or "").strip(),
-                )
-            return CommandResult(completed.returncode, stdout, stderr)
-        except subprocess.TimeoutExpired:
-            logger.debug("run_command(%r) timed out after %ss: %s",
-                         nickname, timeout, command)
-            return CommandResult(-1, "", "Command timed out")
+            deadline = __import__("time").monotonic() + timeout
+            while True:
+                if summary.operation.state.value in {"succeeded", "failed", "cancelled"}:
+                    break
+                if __import__("time").monotonic() >= deadline:
+                    client.cancel_broadcast_command(summary.operation.operation_id)
+                    return CommandResult(-1, "", "Command timed out")
+                __import__("time").sleep(0.05)
+                summary = client.get_broadcast_command(summary.operation.operation_id)
+            target = summary.targets[0]
+            return CommandResult(target.exit_code if target.exit_code is not None else -1,
+                                 target.stdout, target.stderr)
         except Exception as exc:  # noqa: BLE001 — surface as a failed result
             logger.debug("run_command(%r) failed: %s", nickname, exc,
                          exc_info=True)
             return CommandResult(-1, "", str(exc))
-        finally:
-            if cleanup is not None:
-                cleanup()
 
     def run_local_command(self, command: str, *, timeout: float = 30,
                           input: Optional[str] = None) -> "CommandResult":
@@ -893,8 +887,8 @@ class PluginContext:
             input: Optional[str] = None) -> StreamHandle:
         """Start a long-lived remote command and deliver stdout/stderr lines.
 
-        Reuses the same native SSH/auth path as :meth:`run_command` (including
-        ControlMaster when acquired). There is no timeout — the caller must
+        Reuses the daemon's native SSH/auth path as :meth:`run_command`. There
+        is no timeout — the caller must
         :meth:`StreamHandle.stop` when finished (e.g. page unmap, selection
         change). ``on_line`` / ``on_done`` are invoked on the UI thread via
         :meth:`run_on_ui_thread`.
@@ -903,45 +897,76 @@ class PluginContext:
         returned handle is already stopped.
         """
         handle = StreamHandle()
-        from ..ssh_connection_builder import (
-            ConnectionContext, build_ssh_connection)
-        from .. import ssh_multiplex
-        conn = self.connection_manager.find_connection_by_nickname(nickname)
-        if conn is None:
-            logger.debug("run_command_stream(%r): no such connection", nickname)
-            self._finish_stream_early(handle, on_done, -1)
+        client = self._host.daemon_client() if self._host is not None else None
+        if client is None:
+            self._finish_local_stream_early(handle, on_done, -1)
             return handle
-        mux = ssh_multiplex.is_active(nickname)
-        logger.debug(
-            "run_command_stream(%r) mux=%s stdin=%s: %s",
-            nickname, mux, "yes" if input else "no", command,
-        )
-        cleanup = None
         try:
-            extra_args = (ssh_multiplex.controlmaster_args() if mux else None)
-            ctx = ConnectionContext(
-                connection=conn, connection_manager=self.connection_manager,
-                config=self.config, command_type='ssh',
-                remote_command=command, native_mode=True, extra_args=extra_args)
-            prepared = build_ssh_connection(ctx)
-            argv = list(prepared.command)
-            from ..ssh_connection_builder import apply_headless_askpass_env
-            env = apply_headless_askpass_env(
-                prepared.env, conn,
-                session_password=getattr(prepared, "password", None),
+            connection = next(
+                (item for item in client.list_connections() if item.nickname == nickname),
+                None,
             )
-            self._spawn_stream(
-                handle, argv, env, on_line=on_line, on_done=on_done,
-                input_text=input, cleanup=cleanup)
+        except Exception:
+            connection = None
+        if connection is None:
+            logger.debug("run_command_stream(%r): no such connection", nickname)
+            self._finish_local_stream_early(handle, on_done, -1)
+            return handle
+        try:
+            from ..api.models.broadcast import (
+                BroadcastCommandRequest, BroadcastExecutionPolicy,
+            )
+            summary = client.start_broadcast_command(
+                BroadcastCommandRequest(
+                    (connection.id,),
+                    command,
+                    BroadcastExecutionPolicy(
+                        concurrency_limit=1,
+                        timeout_seconds=None,
+                    ),
+                ),
+                input=input,
+            )
+            operation_id = summary.operation.operation_id
+            line_buffers = {"stdout": "", "stderr": ""}
+
+            def _emit_line(line: str) -> None:
+                # Broadcast output is chunked, not line-oriented. Keep the
+                # plugin contract compatible with the former stream facade.
+                self.run_on_ui_thread(on_line, line.rstrip("\r"))
+
+            def _on_output(stream: str, text: str) -> None:
+                buffer = line_buffers.get(stream, "") + text
+                parts = buffer.split("\n")
+                line_buffers[stream] = parts.pop()
+                for line in parts:
+                    _emit_line(line)
+
+            def _flush_output() -> None:
+                for stream in ("stdout", "stderr"):
+                    partial = line_buffers[stream]
+                    if partial:
+                        _emit_line(partial)
+                    line_buffers[stream] = ""
+
+            def _on_done(code):
+                _flush_output()
+                handle._finish_remote()
+                if on_done is not None:
+                    self.run_on_ui_thread(on_done, code)
+
+            subscription = client.subscribe_broadcast_output(
+                operation_id,
+                _on_output,
+                _on_done,
+            )
+            handle._attach_remote(
+                lambda: (client.cancel_broadcast_command(operation_id), subscription.close())
+            )
         except Exception as exc:  # noqa: BLE001
             logger.debug("run_command_stream(%r) failed: %s", nickname, exc,
                          exc_info=True)
-            if cleanup is not None:
-                try:
-                    cleanup()
-                except Exception:  # noqa: BLE001
-                    pass
-            self._finish_stream_early(handle, on_done, -1)
+            self._finish_local_stream_early(handle, on_done, -1)
         return handle
 
     def run_local_command_stream(
@@ -962,14 +987,14 @@ class PluginContext:
 
         if not command or not str(command).strip():
             logger.debug("run_local_command_stream: empty command")
-            self._finish_stream_early(handle, on_done, -1)
+            self._finish_local_stream_early(handle, on_done, -1)
             return handle
         shell = shutil.which("sh") or "/bin/sh"
         argv = [shell, "-lc", str(command)]
         if is_flatpak():
             spawn = shutil.which("flatpak-spawn")
             if spawn is None:
-                self._finish_stream_early(handle, on_done, -1)
+                self._finish_local_stream_early(handle, on_done, -1)
                 return handle
             argv = [spawn, "--host", "sh", "-lc", str(command)]
         logger.debug(
@@ -977,16 +1002,16 @@ class PluginContext:
             "yes" if input else "no", command,
         )
         try:
-            self._spawn_stream(
+            self._spawn_local_stream(
                 handle, argv, os.environ.copy(), on_line=on_line,
                 on_done=on_done, input_text=input)
         except Exception as exc:  # noqa: BLE001
             logger.debug("run_local_command_stream failed: %s", exc,
                          exc_info=True)
-            self._finish_stream_early(handle, on_done, -1)
+            self._finish_local_stream_early(handle, on_done, -1)
         return handle
 
-    def _finish_stream_early(
+    def _finish_local_stream_early(
             self, handle: StreamHandle,
             on_done: Optional[Callable[[int], None]],
             exit_code: int) -> None:
@@ -994,7 +1019,7 @@ class PluginContext:
         if on_done is not None:
             self.run_on_ui_thread(on_done, exit_code)
 
-    def _spawn_stream(
+    def _spawn_local_stream(
             self, handle: StreamHandle, argv: List[str], env: dict, *,
             on_line: Callable[[str], None],
             on_done: Optional[Callable[[int], None]],
@@ -1051,186 +1076,164 @@ class PluginContext:
         thread.start()
 
     def acquire_multiplex(self, nickname: str) -> None:
-        """Keep a shared SSH master (ControlMaster) warm for ``nickname`` while a
-        surface is open, so its ``run_command`` calls reuse one connection instead
-        of re-handshaking each time. Refcounted and reusable by any plugin —
-        balance every call with :meth:`release_multiplex`. The master itself is
-        created lazily by the first ``run_command`` (``ControlMaster=auto``)."""
-        from .. import ssh_multiplex
-        if nickname:
-            ssh_multiplex.acquire(nickname)
+        """Deprecated compatibility no-op; transport reuse is daemon-owned."""
+        del nickname
 
     def release_multiplex(self, nickname: str) -> None:
-        """Drop a multiplex reference acquired with :meth:`acquire_multiplex`. When
-        the last reference goes away, tear the master down promptly via
-        ``ssh -O exit`` (reusing the native auth path); if that fails the master
-        expires on its own via ControlPersist."""
-        from .. import ssh_multiplex
-        if not nickname or not ssh_multiplex.release(nickname):
-            return
+        """Deprecated compatibility no-op; transport reuse is daemon-owned."""
+        del nickname
+
+    def _daemon_client_for_forwards(self):
+        """Return the live API client from the plugin host / main window."""
+
+        host = self._host
+        if host is None:
+            return None
+        resolver = getattr(host, "daemon_client", None)
+        if callable(resolver):
+            return resolver()
+        client = getattr(host, "client", None)
+        if client is not None:
+            return client
+        window = getattr(host, "window", None)
+        return getattr(window, "client", None) if window is not None else None
+
+    def _open_daemon_local_forward(
+        self,
+        connection: Any,
+        remote_port: int,
+        timeout: float,
+    ) -> int:
+        """Open a daemon-owned local forward. Raises ``RuntimeError`` on failure.
+
+        Never returns ``None`` and never falls back to a frontend SSH process.
+        """
+
+        import time
+
+        from ..api.capabilities import Capability as ApiCapability
+        from ..api.daemon_client import DaemonClient
+        from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
+        from ..extended_service_policy import daemon_forward_unavailable_message
+        from ..port_utils import find_available_port
+
+        client = self._daemon_client_for_forwards()
+        if not isinstance(client, DaemonClient):
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail="no DaemonClient is available"
+                )
+            )
         try:
-            import os
-            import subprocess
-            from ..ssh_connection_builder import (
-                ConnectionContext, build_ssh_connection)
-            conn = self.connection_manager.find_connection_by_nickname(nickname)
-            if conn is None:
-                return
-            ctx = ConnectionContext(
-                connection=conn, connection_manager=self.connection_manager,
-                config=self.config, command_type='ssh', native_mode=True,
-                extra_args=["-O", "exit", "-o",
-                            f"ControlPath={ssh_multiplex.control_path()}"])
-            prepared = build_ssh_connection(ctx)
-            env = {**os.environ, **(prepared.env or {})}
-            subprocess.run(list(prepared.command), env=env, capture_output=True,
-                           text=True, timeout=10, check=False)
-        except Exception:  # noqa: BLE001 — best-effort teardown; ControlPersist
-            pass               # expiry is the fallback, so failures are harmless
+            supported = client.get_capabilities().supported
+        except Exception as exc:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"capabilities unavailable ({type(exc).__name__})"
+                )
+            ) from exc
+        required = {
+            ApiCapability.FORWARDS_READ,
+            ApiCapability.FORWARDS_WRITE,
+            ApiCapability.FORWARDS_LOCAL,
+        }
+        missing = required - supported
+        if missing:
+            names = ", ".join(sorted(c.value for c in missing))
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"missing capabilities: {names}"
+                )
+            )
+        connection_id = str(
+            getattr(connection, "id", None)
+            or getattr(connection, "nickname", None)
+            or ""
+        )
+        if not connection_id:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail="connection has no ID"
+                )
+            )
+        local_port = find_available_port(
+            remote_port if remote_port >= 1024 else 8000 + remote_port
+        )
+        if not local_port:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(detail="no free local port")
+            )
+        try:
+            summary = client.open_forward(
+                OpenForwardRequest(
+                    connection_id=connection_id,
+                    type=ForwardType.LOCAL,
+                    bind_host="127.0.0.1",
+                    bind_port=int(local_port),
+                    destination_host="127.0.0.1",
+                    destination_port=int(remote_port),
+                )
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail=f"open_forward failed ({type(exc).__name__})"
+                )
+            ) from exc
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        forward_id = summary.id
+        while time.monotonic() < deadline:
+            try:
+                current = client.get_forward(forward_id)
+            except Exception as exc:
+                raise RuntimeError(
+                    daemon_forward_unavailable_message(
+                        detail=f"get_forward failed ({type(exc).__name__})"
+                    )
+                ) from exc
+            if current.state is ForwardState.ACTIVE:
+                with _FORWARDS_LOCK:
+                    _FORWARDS[(getattr(connection, "nickname", ""), int(remote_port))] = _Forward(
+                        int(current.bind_port or local_port)
+                    )
+                return int(current.bind_port or local_port)
+            if current.state in {ForwardState.FAILED, ForwardState.CLOSED}:
+                raise RuntimeError(
+                    daemon_forward_unavailable_message(
+                        detail=f"forward ended in state {current.state.value}"
+                    )
+                )
+            time.sleep(0.1)
+        raise RuntimeError(
+            daemon_forward_unavailable_message(detail="timed out waiting for ACTIVE")
+        )
 
     def ensure_local_forward(self, nickname: str, remote_port: int, *,
                              timeout: float = 15) -> int:
         """Return a local TCP port forwarded to ``localhost:remote_port`` on the
-        connection's host (API >= 1.12), establishing it if needed over the
-        app's single SSH/auth path. Prefers adding the forward onto the shared
-        ControlMaster (``ssh -O forward``); otherwise spawns a background
-        ``ssh -N``. Forwards are reused per (nickname, remote_port) and live
-        until app quit (or with the master). **Blocking** — call from a worker
-        thread. Raises ``RuntimeError`` on failure."""
-        import atexit
-        import subprocess
-        import time
-        from ..ssh_connection_builder import (
-            ConnectionContext, build_ssh_connection)
-        from ..port_utils import find_available_port, is_port_available
-        from .. import ssh_multiplex
+        connection's host (API >= 1.12), establishing it through the daemon's
+        forwarding service. **Blocking** — call from a worker thread. Raises
+        ``RuntimeError`` on failure.
+        """
 
-        global _FORWARDS_ATEXIT
-        key = (nickname, int(remote_port))
-        with _FORWARDS_LOCK:
-            if not _FORWARDS_ATEXIT:
-                atexit.register(_kill_forward_procs)
-                _FORWARDS_ATEXIT = True
-            fwd = _FORWARDS.get(key)
-            if fwd is not None:
-                alive = (fwd.proc.poll() is None if fwd.proc is not None
-                         else not is_port_available(fwd.local_port))
-                if alive:
-                    return fwd.local_port
-                _FORWARDS.pop(key, None)
-
-        conn = self.connection_manager.find_connection_by_nickname(nickname)
-        if conn is None:
-            raise RuntimeError(f"No connection named {nickname!r}")
-        lp = find_available_port(
-            remote_port if remote_port >= 1024 else 8000 + remote_port)
-        if not lp:
-            raise RuntimeError("No free local port")
-        forward = f"{lp}:localhost:{int(remote_port)}"
-
-        def _build(extra_args: List[str]):
-            ctx = ConnectionContext(
-                connection=conn, connection_manager=self.connection_manager,
-                config=self.config, command_type='ssh', native_mode=True,
-                extra_args=extra_args)
-            return build_ssh_connection(ctx)
-
-        # Preferred: add the forward onto the shared ControlMaster. Failure is
-        # normal (mux off, master not created yet) — fall through, don't error.
-        if ssh_multiplex.is_active(nickname):
-            try:
-                prepared = _build(
-                    ["-O", "forward", "-o",
-                     f"ControlPath={ssh_multiplex.control_path()}",
-                     "-L", forward])
-                from ..ssh_connection_builder import apply_headless_askpass_env
-                env = apply_headless_askpass_env(
-                    prepared.env, conn,
-                    session_password=getattr(prepared, "password", None),
+        from ..api.daemon_client import DaemonClient
+        client = self._daemon_client_for_forwards()
+        if not isinstance(client, DaemonClient):
+            from ..extended_service_policy import daemon_forward_unavailable_message
+            raise RuntimeError(
+                daemon_forward_unavailable_message(
+                    detail="no DaemonClient is available"
                 )
-                result = subprocess.run(
-                    list(prepared.command), env=env, capture_output=True,
-                    text=True, timeout=10, check=False)
-                if result.returncode == 0:
-                    with _FORWARDS_LOCK:
-                        _FORWARDS[key] = _Forward(lp)
-                    return lp
-            except Exception:
-                pass
-
-        # Fallback: a dedicated background ssh -N via the same builder/auth.
-        cleanup = None
-        try:
-            prepared = _build(
-                ["-N", "-o", "ExitOnForwardFailure=yes", "-L", forward])
-            argv = list(prepared.command)
-            from ..ssh_connection_builder import apply_headless_askpass_env
-            env = apply_headless_askpass_env(
-                prepared.env, conn,
-                session_password=getattr(prepared, "password", None),
             )
-            proc = subprocess.Popen(
-                argv, env=env, stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline and proc.poll() is None:
-                if not is_port_available(lp):
-                    with _FORWARDS_LOCK:
-                        _FORWARDS[key] = _Forward(lp, proc)
-                    return lp
-                time.sleep(0.2)
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            raise RuntimeError(f"Could not establish port forward to {nickname}")
-        finally:
-            if cleanup is not None:
-                cleanup()
-
-    def get_effective_ssh_config(self, nickname: str) -> Dict[str, Any]:
-        """Return the resolved per-host SSH options for a connection, as
-        computed by ``ssh -G`` (keys lowercased; multi-value options are
-        lists). Reflects everything in ``~/.ssh/config`` for that host."""
-        from ..ssh_config_utils import get_effective_ssh_config
-        conn = self.connection_manager.find_connection_by_nickname(nickname)
-        host = nickname
-        if conn is not None:
-            host = getattr(conn, "nickname", None) or getattr(conn, "host", None) or nickname
-        return dict(get_effective_ssh_config(host) or {})
-
-    def copy_key_to_host(self, nickname: str, public_key_path: str) -> bool:
-        """Install a public key on a saved host via the app's ssh-copy-id path
-        (reusing ``resolve_native_auth`` and ``~/.ssh/config``). **Blocking** —
-        call from a worker thread. Returns True on success."""
-        import subprocess
-        from ..ssh_connection_builder import (
-            _build_base_ssh_command,
-            apply_forced_askpass_env,
-            resolve_native_auth,
+        connections = client.list_connections()
+        connection = next(
+            (item for item in connections if item.nickname == nickname), None
         )
-        from ..ssh_config_utils import get_effective_ssh_config
-        conn = self.connection_manager.find_connection_by_nickname(nickname)
-        if conn is None or not public_key_path:
-            return False
-        try:
-            host = getattr(conn, "nickname", None) or getattr(conn, "host", None) or nickname
-            effective = get_effective_ssh_config(host) or {}
-            argv = _build_base_ssh_command(conn, effective, self.config,
-                                           'ssh-copy-id')
-            argv.extend(['-i', public_key_path])
-            auth = resolve_native_auth(conn, self.connection_manager, self.config)
-            argv.extend(auth.extra_opts or [])
-            # Same as the ssh-copy-id UI: REQUIRE=force → graphical askpass.
-            env = apply_forced_askpass_env(
-                auth.env, conn,
-                session_password=getattr(auth, "password", None),
-            )
-            result = subprocess.run(
-                argv, env=env, capture_output=True, text=True, check=False)
-            return result.returncode == 0
-        except Exception:  # noqa: BLE001
-            return False
+        if connection is None:
+            raise RuntimeError(f"No connection named {nickname!r}")
+        return self._open_daemon_local_forward(
+            connection, int(remote_port), timeout
+        )
 
     # --- terminals / sessions -----------------------------------------
     def list_sessions(self) -> List["SessionInfo"]:

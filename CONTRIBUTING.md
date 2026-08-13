@@ -100,6 +100,42 @@ module top, mark the module `pytest.mark.gui`, and use the `gui` fixture
 `respond`). See `tests/test_gui_tab_close.py` for examples. They are NOT for pixel-gesture,
 drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 
+## Frontend-neutral API changes
+
+Before changing `sshpilot.api`, the client/core ownership boundary, or behaviour
+that GTK and future clients must share, read:
+
+- [API reference](docs/api/README.md)
+- [API maintenance workflow](docs/api/maintenance.md)
+- [Compatibility policy](docs/api/compatibility.md)
+- [API changelog](docs/api/CHANGELOG.md)
+
+Public API changes require matching contract tests, documentation, changelog,
+and a deliberate review of the generated surface snapshot. Schema existence
+does not justify advertising a capability. After review, regenerate artifacts
+with:
+
+```bash
+python3 scripts/generate_api_artifacts.py
+python3 scripts/generate_api_artifacts.py --check
+pytest -q tests/api
+```
+
+Frontend-only changes may mark the API checklist in the pull-request template
+not applicable.
+
+## Architecture and API documentation
+
+For API or ownership changes, update the current architecture references in
+`docs/architecture.md`, the relevant subsystem document, and
+`docs/api/README.md`/`docs/api/CHANGELOG.md`. Regenerate API methods/schema when
+the contract changes, and record any approved compatibility debt and native
+OpenSSH reuse. Historical migration evidence belongs under
+`docs/history/frontend-neutral-migration/`; it is not an active phase tracker.
+
+This checklist applies to API and ownership changes. It does not require
+narrative documentation updates for trivial bug fixes.
+
 ## Code style
 
 - Follow [PEP 8](https://peps.python.org/pep-0008/); use type hints where appropriate.
@@ -147,7 +183,7 @@ enforces this).
 **Meson is the build system for every Linux package.** It compiles the Blueprint
 `.blp` sources into the bundled GResource and installs the launcher, the Python
 package, the desktop entry, the AppStream metainfo, the icon and
-`sshpilot-agent`. Never re-implement any of that by hand in a packaging file —
+icon and `sshpilot-agent` / `sshpilot-daemon`. Never re-implement any of that by hand in a packaging file —
 that is exactly how the packaging silently desynced from the tree when the
 sources moved under `src/`.
 

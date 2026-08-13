@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional, Sequence
 
 from .command_converter import SSH_OPTIONS_EXPECTING_ARGUMENT, parse_ssh_command
-from .connection_manager import Connection
+from .connection_model import Connection
 from .ssh_connection_builder import SSHConnectionCommand
 from .ssh_connection_validator import SSHConnectionValidator
 

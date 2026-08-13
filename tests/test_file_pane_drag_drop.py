@@ -212,3 +212,208 @@ def test_drag_prepare_includes_multi_selection(monkeypatch):
 
     drag_entries = pane._entries_for_drag_at_position(1)
     assert [entry.name for entry in drag_entries] == ["two.txt"]
+
+
+def _dummy_window_for_drop(module, source_pane, *, local_pane=None):
+    DummyWindow = type("DummyWindow", (), {})
+    module.FileManagerWindow = DummyWindow
+
+    window = DummyWindow()
+    window._left_pane = local_pane or type("LocalPane", (), {})()
+    window._right_pane = source_pane
+    source_pane._get_file_manager_window = lambda: window
+    return window
+
+
+def _make_drag_value(module, source_pane, entry):
+    payload = {
+        "pane_id": id(source_pane),
+        "path": source_pane._current_path,
+        "position": 0,
+        "entry_name": entry.name,
+        "entry_path": os.path.join(source_pane._current_path, entry.name),
+    }
+    return json.dumps(
+        {"format": "sshpilot_drag", "payload": payload},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def test_same_pane_remote_drop_into_folder_moves(monkeypatch):
+    module = _load_file_manager_window()
+
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+
+    source_pane = FilePane.__new__(FilePane)
+    entry = FileEntry("report.txt", False, 0, 0)
+    folder = FileEntry("archive", True, 0, 0)
+    source_pane._entries = [entry, folder]
+    source_pane._current_path = "/srv/data"
+    source_pane._is_remote = True
+    source_pane.show_toast = lambda *args, **kwargs: None
+
+    window = _dummy_window_for_drop(module, source_pane)
+    calls = []
+    window._perform_remote_clipboard_operation = (
+        lambda *args: calls.append(args)
+    )
+    source_pane._resolve_drop_target_folder = lambda *args, **kwargs: folder
+
+    drag_value = _make_drag_value(module, source_pane, entry)
+
+    result = source_pane._on_drop_string(None, drag_value, 0.0, 0.0)
+
+    assert result is True
+    assert len(calls) == 1
+    entries, source_dir, destination, move = calls[0]
+    assert [e.name for e in entries] == ["report.txt"]
+    assert source_dir == "/srv/data"
+    assert destination == "/srv/data/archive"
+    assert move is True
+
+
+def test_same_pane_remote_drop_on_empty_space_is_rejected(monkeypatch):
+    module = _load_file_manager_window()
+
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+
+    source_pane = FilePane.__new__(FilePane)
+    entry = FileEntry("report.txt", False, 0, 0)
+    source_pane._entries = [entry]
+    source_pane._current_path = "/srv/data"
+    source_pane._is_remote = True
+    source_pane.show_toast = lambda *args, **kwargs: None
+
+    window = _dummy_window_for_drop(module, source_pane)
+    calls = []
+    window._perform_remote_clipboard_operation = (
+        lambda *args: calls.append(args)
+    )
+    source_pane._resolve_drop_target_folder = lambda *args, **kwargs: None
+
+    drag_value = _make_drag_value(module, source_pane, entry)
+
+    result = source_pane._on_drop_string(None, drag_value, 0.0, 0.0)
+
+    assert result is False
+    assert calls == []
+
+
+def test_same_pane_remote_drop_copies_with_primary_modifier(monkeypatch):
+    module = _load_file_manager_window()
+
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+
+    source_pane = FilePane.__new__(FilePane)
+    entry = FileEntry("report.txt", False, 0, 0)
+    folder = FileEntry("archive", True, 0, 0)
+    source_pane._entries = [entry, folder]
+    source_pane._current_path = "/srv/data"
+    source_pane._is_remote = True
+    source_pane.show_toast = lambda *args, **kwargs: None
+
+    window = _dummy_window_for_drop(module, source_pane)
+    calls = []
+    window._perform_remote_clipboard_operation = (
+        lambda *args: calls.append(args)
+    )
+    source_pane._resolve_drop_target_folder = lambda *args, **kwargs: folder
+
+    class FakeEvent:
+        def get_modifier_state(self):
+            return 1  # CONTROL_MASK
+
+    class FakeDropTarget:
+        def get_current_event(self):
+            return FakeEvent()
+
+    drag_value = _make_drag_value(module, source_pane, entry)
+
+    result = source_pane._on_drop_string(FakeDropTarget(), drag_value, 0.0, 0.0)
+
+    assert result is True
+    assert len(calls) == 1
+    assert calls[0][3] is False  # copy, not move
+
+
+def test_same_pane_local_drop_into_folder_moves(monkeypatch):
+    module = _load_file_manager_window()
+
+    FilePane = module.FilePane
+    FileEntry = module.FileEntry
+
+    source_pane = FilePane.__new__(FilePane)
+    entry = FileEntry("notes.md", False, 0, 0)
+    folder = FileEntry("docs", True, 0, 0)
+    source_pane._entries = [entry, folder]
+    source_pane._current_path = "/home/user"
+    source_pane._is_remote = False
+    source_pane.show_toast = lambda *args, **kwargs: None
+
+    window = _dummy_window_for_drop(module, source_pane, local_pane=source_pane)
+    calls = []
+    window._perform_local_clipboard_operation = (
+        lambda *args: calls.append(args)
+    )
+    source_pane._resolve_drop_target_folder = lambda *args, **kwargs: folder
+
+    drag_value = _make_drag_value(module, source_pane, entry)
+
+    result = source_pane._on_drop_string(None, drag_value, 0.0, 0.0)
+
+    assert result is True
+    assert len(calls) == 1
+    entries, source_dir, destination, move = calls[0]
+    assert [e.name for e in entries] == ["notes.md"]
+    assert source_dir == "/home/user"
+    assert destination == "/home/user/docs"
+    assert move is True
+
+
+def test_remote_clipboard_skips_self_descendant_paste(monkeypatch):
+    module = _load_file_manager_window()
+
+    FileEntry = module.FileEntry
+    window = module.FileManagerWindow.__new__(module.FileManagerWindow)
+    window._right_pane = type("Pane", (), {"show_toast": lambda *a, **k: None})()
+    calls = []
+    window._manager = type(
+        "Manager", (), {"copy_remote": lambda *a, **k: calls.append((a, k))}
+    )()
+    window._show_progress_dialog = lambda *a, **k: None
+    window._attach_refresh = lambda *a, **k: None
+
+    docs = FileEntry("docs", True, 0, 0)
+
+    window._perform_remote_clipboard_operation(
+        [docs], "/srv/data", "/srv/data", False
+    )
+    window._perform_remote_clipboard_operation(
+        [docs], "/srv/data", "/srv/data/docs/sub", True
+    )
+    assert calls == []
+
+    window._perform_remote_clipboard_operation(
+        [docs], "/srv/data", "/srv/backup", True
+    )
+    assert len(calls) == 1
+    manager, source_path, destination_path = calls[0][0]
+    assert source_path == "/srv/data/docs"
+    assert destination_path == "/srv/backup/docs"
+    assert calls[0][1]["recursive"] is True
+    assert calls[0][1]["move"] is True
+
+
+def test_is_remote_descendant_guard(monkeypatch):
+    module = _load_file_manager_window()
+
+    cls = module.FileManagerWindow
+    assert cls._is_remote_descendant("/a", "/a") is True
+    assert cls._is_remote_descendant("/a", "/a/b") is True
+    assert cls._is_remote_descendant("/a/b", "/a") is False
+    assert cls._is_remote_descendant("/a", "/ab") is False
+    assert cls._is_remote_descendant("/", "/a") is False

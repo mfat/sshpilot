@@ -6,9 +6,9 @@ module into focused submodules.  Phase 4a moved the low-coupling helpers
 cancellation exception).  Phase 4b moved the standalone dialogs and
 pane-level UI controls (``SFTPProgressDialog``, ``PathEntry``,
 ``PaneControls``, ``PaneToolbar``, ``PropertiesDialog``).  Phase 4c
-extracted ``FilePane`` (4c-ii) and the OpenSSH SFTP backend (4c-i).
-``FileManagerWindow`` remains in ``sshpilot.file_manager_window`` and will
-move in 4c-iii.
+extracted ``FilePane`` (4c-ii).  The in-app backend is now the daemon-owned
+``DaemonSftpManager``; ``FileManagerWindow`` remains in
+``sshpilot.file_manager_window``.
 """
 
 import logging
@@ -51,17 +51,62 @@ from .properties_dialog import PropertiesDialog
 from .remote_walk import _sftp_path_exists, stat_isdir, walk_remote
 
 
-def create_file_manager_backend(*args, **kwargs):
-    """Construct the file-manager backend.
+def create_file_manager_backend(
+    *args,
+    daemon_client=None,
+    bridge=None,
+    connection_id=None,
+    parent_widget=None,
+    config=None,
+    prefer_daemon=None,
+    **kwargs,
+):
+    """Construct the daemon-backed file-manager presentation backend."""
 
-    The OpenSSH SFTP backend (driving the native ``ssh -s sftp`` subprocess) is
-    the only backend; this factory remains as the single construction point.
-    """
+    from ..api.daemon_client import DaemonClient
+    from ..extended_service_policy import (
+        daemon_sftp_unavailable_message,
+        resolve_file_manager_route,
+        ExtendedServiceRoute,
+    )
 
-    from .openssh_backend import OpenSSHSFTPManager
+    route_config = config
+    if route_config is None and parent_widget is not None:
+        route_config = getattr(parent_widget, "config", None)
 
-    logger.info("File manager backend: openssh")
-    return OpenSSHSFTPManager(*args, **kwargs)
+    route = resolve_file_manager_route(
+        route_config,
+        prefer_daemon=prefer_daemon,
+        client=daemon_client,
+    )
+
+    if (
+        isinstance(daemon_client, DaemonClient)
+        and bridge is not None
+        and connection_id is not None
+    ):
+        from ..daemon_sftp_backend import (
+            DaemonSftpManager,
+            daemon_file_manager_capabilities_missing,
+        )
+
+        missing = daemon_file_manager_capabilities_missing(daemon_client)
+        if missing:
+            raise RuntimeError(daemon_sftp_unavailable_message(missing=missing))
+        logger.info("File manager backend: daemon-sftp")
+        return DaemonSftpManager(
+            *args,
+            connection_id=connection_id,
+            daemon_client=daemon_client,
+            bridge=bridge,
+            parent_widget=parent_widget,
+            **kwargs,
+        )
+
+    if route is ExtendedServiceRoute.DAEMON:
+        raise RuntimeError(daemon_sftp_unavailable_message())
+
+    raise RuntimeError(daemon_sftp_unavailable_message())
 
 
 __all__ = [

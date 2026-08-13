@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""
+sshPilot Daemon Launcher Script
+
+Installed to /usr/bin/sshpilot-daemon (and /app/bin in Flatpak). Runs the local
+per-user daemon or issues management commands (status, diagnostics, stop,
+restart) against a running instance.
+"""
+
+import glob
+import os
+import sys
+
+# Add sshpilot module to Python path. Covers Flatpak (/app), distro installs
+# and Debian, which installs to dist-packages -- including the unversioned
+# /usr/lib/python3/dist-packages that Meson picks there.
+for base_path in ['/app', '/usr', '/usr/local']:
+    for pkg_dir in ['site-packages', 'dist-packages']:
+        for path in sorted(glob.glob(f'{base_path}/lib/python3*/{pkg_dir}')):
+            sys.path.insert(0, path)
+    # Builds that must not encode the Python minor version in their paths
+    # (the noarch RPM, via -Dpython_install_dir) land outside site-packages.
+    for path in (f'{base_path}/share/sshpilot', f'{base_path}/lib/sshpilot'):
+        if os.path.isdir(path):
+            sys.path.insert(0, path)
+
+# Source-tree runs: prefer the checkout beside this script over an older install.
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_src_path = os.path.join(_script_dir, 'src')
+if os.path.isdir(_src_path):
+    sys.path.insert(0, _src_path)
+
+try:
+    from sshpilot.daemon.cli import main
+except ImportError as error:
+    print(f"Error: Could not import sshpilot daemon module: {error}", file=sys.stderr)
+    print(f"Python path: {sys.path}", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == '__main__':
+    sys.exit(main())

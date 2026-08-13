@@ -1,59 +1,11 @@
 import os
-import sys
-import types
+import shutil
 import subprocess
-import asyncio
 
-# Stub external modules not available in the test environment before importing the app code.
-# Create dummy 'gi' module
-if 'gi' not in sys.modules:
-    gi = types.ModuleType('gi')
-    gi.require_version = lambda *args, **kwargs: None
-    repository = types.SimpleNamespace()
+import pytest
 
-    class DummyGLib:
-        MainLoop = object
-
-        @staticmethod
-        def idle_add(func, *args, **kwargs):
-            return None
-
-    class DummyGObject:
-        class Object:
-            pass
-
-        class SignalFlags:
-            RUN_FIRST = 0
-
-    repository.GLib = DummyGLib
-    repository.GObject = DummyGObject
-    repository.Gtk = types.SimpleNamespace()
-    repository.Secret = types.SimpleNamespace(
-        Schema=types.SimpleNamespace(new=lambda *a, **k: object()),
-        SchemaFlags=types.SimpleNamespace(NONE=0),
-        SchemaAttributeType=types.SimpleNamespace(STRING=0),
-        password_store_sync=lambda *a, **k: True,
-        password_lookup_sync=lambda *a, **k: None,
-        password_clear_sync=lambda *a, **k: None,
-        COLLECTION_DEFAULT=None,
-    )
-    gi.repository = repository
-    sys.modules['gi'] = gi
-    sys.modules['gi.repository'] = repository
-    sys.modules['gi.repository.GLib'] = repository.GLib
-    sys.modules['gi.repository.GObject'] = repository.GObject
-    sys.modules['gi.repository.Gtk'] = repository.Gtk
-    sys.modules['gi.repository.Secret'] = repository.Secret
-
-
-# Ensure the project root is on sys.path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-# Now import application classes
-from sshpilot.connection_manager import Connection, ConnectionManager
-
-# Ensure an event loop is available for Connection objects
-asyncio.set_event_loop(asyncio.new_event_loop())
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
 
 def _generate_key_and_certificate(tmpdir: str) -> tuple[str, str]:
@@ -75,6 +27,8 @@ def _generate_key_and_certificate(tmpdir: str) -> tuple[str, str]:
 
 
 def test_certificate_support(tmp_path):
+    if shutil.which("ssh-keygen") is None:
+        pytest.skip("ssh-keygen not available")
     key_path, cert_path = _generate_key_and_certificate(str(tmp_path))
 
     data = {
@@ -87,29 +41,22 @@ def test_certificate_support(tmp_path):
         'key_select_mode': 2,
     }
 
-    conn = Connection(data)
-    asyncio.get_event_loop().run_until_complete(conn.connect())
-
-    # Native mode keeps per-host settings in ~/.ssh/config, not on the command
-    # line. The prepared command should stay minimal, while the config writer
+    # Native mode keeps per-host settings in ~/.ssh/config; the config writer
     # emits the certificate directive.
-    assert not any('CertificateFile' in part for part in conn.ssh_cmd)
-    cm = ConnectionManager.__new__(ConnectionManager)
-    entry = cm.format_ssh_config_entry(data)
+    entry = format_ssh_config_entry(data)
     assert f'CertificateFile {cert_path}' in entry
 
     # Verify parsing from SSH config format
-    parsed = ConnectionManager.parse_host_config(cm, {
-        'host': 'cert-test',
-        'hostname': 'localhost',
-        'user': 'testuser',
-        'identityfile': key_path,
-        'certificatefile': cert_path,
-    })
+    config_path = tmp_path / "config"
+    config_path.write_text(
+        "Host cert-test\n"
+        f"    HostName localhost\n"
+        f"    User testuser\n"
+        f"    IdentityFile {key_path}\n"
+        f"    CertificateFile {cert_path}\n",
+        encoding="utf-8",
+    )
+    loaded = load_ssh_configuration(config_path, isolated=False)
+    parsed = loaded.connections[0].data
     assert parsed['certificate'] == cert_path
     assert parsed['certificate_files'] == [cert_path]
-
-    # Ensure updates propagate the certificate field
-    conn2 = Connection({'hostname': 'localhost'})
-    conn2.update_data({'certificate': cert_path})
-    assert conn2.certificate == cert_path

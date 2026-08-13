@@ -546,7 +546,7 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         try:
             self.action_button.set_label(_("Done"))
             self.action_button.add_css_class("suggested-action")
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Button may have been destroyed if the dialog is mid-close.
             pass
 

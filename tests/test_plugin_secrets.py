@@ -1,9 +1,13 @@
-"""PluginContext secrets are namespaced per plugin id and ride the existing
-ConnectionManager keyring path (no raw keyring access from plugins).
+"""PluginContext secrets are namespaced per plugin id and ride the injected
+secret surface (``store_plugin_secret`` / ``get_plugin_secret`` /
+``delete_plugin_secret``), which the daemon secret provider implements as a
+``sshpilot-plugin/<plugin_id>`` keyring namespace (no raw keyring access from
+plugins).
 
 Two surfaces are tested: the preferred scoped ``ctx.secrets`` (auto-scoped to
 the plugin) and the legacy explicit-id ``ctx.get_secret/set_secret/delete_secret``
-which now refuses any id other than the context's own plugin."""
+which now refuses any id other than the context's own plugin.
+"""
 
 import os
 import sys
@@ -12,35 +16,35 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.daemon.connection_secret_provider import DaemonConnectionSecretProvider
 from sshpilot.plugins.api import PluginContext
 from sshpilot.plugins.registry import ProtocolRegistry
 
 
-class FakeStoreManager:
-    """Stands in for ConnectionManager: an in-memory (host, user) -> secret map
-    matching the store_password/get_password/delete_password contract."""
+class FakeSecretManager:
+    """Stands in for the daemon secret provider's injected secret surface: an
+    in-memory (host, key) -> value map keyed under the reserved per-plugin
+    namespace, mirroring ``DaemonConnectionSecretProvider.store_plugin_secret``."""
 
-    store_plugin_secret = ConnectionManager.store_plugin_secret
-    get_plugin_secret = ConnectionManager.get_plugin_secret
-    delete_plugin_secret = ConnectionManager.delete_plugin_secret
-    _plugin_secret_host = staticmethod(ConnectionManager._plugin_secret_host)
+    @staticmethod
+    def _plugin_secret_host(plugin_id):
+        return DaemonConnectionSecretProvider._plugin_secret_host(plugin_id)
 
     def __init__(self, available=True):
         self.secrets = {}
         self.available = available
 
-    def store_password(self, host, username, password):
+    def store_plugin_secret(self, plugin_id, key, value):
         if not self.available:
             return False
-        self.secrets[(host, username)] = password
+        self.secrets[(self._plugin_secret_host(plugin_id), key)] = value
         return True
 
-    def get_password(self, host, username):
-        return self.secrets.get((host, username))
+    def get_plugin_secret(self, plugin_id, key):
+        return self.secrets.get((self._plugin_secret_host(plugin_id), key))
 
-    def delete_password(self, host, username):
-        return self.secrets.pop((host, username), None) is not None
+    def delete_plugin_secret(self, plugin_id, key):
+        return self.secrets.pop((self._plugin_secret_host(plugin_id), key), None) is not None
 
 
 def _ctx(manager, plugin_id="test-plugin"):
@@ -50,7 +54,7 @@ def _ctx(manager, plugin_id="test-plugin"):
 
 
 def test_scoped_store_round_trip_and_namespacing():
-    manager = FakeStoreManager()
+    manager = FakeSecretManager()
     ctx = _ctx(manager)
 
     ctx.secrets.set('api_token', 's3cret')
@@ -70,7 +74,7 @@ def test_scoped_store_round_trip_and_namespacing():
 
 
 def test_legacy_api_allows_only_own_id():
-    manager = FakeStoreManager()
+    manager = FakeSecretManager()
     ctx = _ctx(manager, plugin_id="vps-tool")
 
     # Same id (the plugin's own) works exactly like the scoped store.
@@ -81,7 +85,7 @@ def test_legacy_api_allows_only_own_id():
 
 
 def test_legacy_api_rejects_foreign_id():
-    ctx = _ctx(FakeStoreManager(), plugin_id="vps-tool")
+    ctx = _ctx(FakeSecretManager(), plugin_id="vps-tool")
     with pytest.raises(ValueError):
         ctx.get_secret('someone-else', 'api_token')
     with pytest.raises(ValueError):
@@ -91,7 +95,7 @@ def test_legacy_api_rejects_foreign_id():
 
 
 def test_invalid_arguments_rejected():
-    ctx = _ctx(FakeStoreManager(), plugin_id="test-plugin")
+    ctx = _ctx(FakeSecretManager(), plugin_id="test-plugin")
     with pytest.raises(ValueError):
         ctx.set_secret('', 'k', 'v')
     with pytest.raises(ValueError):
@@ -101,12 +105,13 @@ def test_invalid_arguments_rejected():
 
 
 def test_storage_unavailable_raises():
-    ctx = _ctx(FakeStoreManager(available=False))
+    ctx = _ctx(FakeSecretManager(available=False))
     with pytest.raises(RuntimeError):
         ctx.secrets.set('api_token', 's3cret')
 
 
 def test_plugin_namespace_cannot_collide_with_ssh_hosts():
     # The reserved prefix differs from any plain hostname identifier the SSH
-    # password path uses ('host' is a bare hostname/nickname there).
-    assert ConnectionManager._plugin_secret_host('vps') == 'sshpilot-plugin/vps'
+    # password path uses ('host' is a bare hostname/nickname there). The
+    # daemon secret provider owns this namespace mapping.
+    assert DaemonConnectionSecretProvider._plugin_secret_host('vps') == 'sshpilot-plugin/vps'

@@ -18,18 +18,15 @@ test_complex_config_parsing.py for the underlying parser behaviour):
   * Runtime tokens (%h, %r, ...) are deliberately NOT used in these fixtures —
     ssh expands them but our parser leaves them literal by design.
   * Wildcard / negated / Match entries are not queryable via ``ssh -G`` and are
-    skipped (they live in cm.rules, not cm.connections).
+    skipped (they live in the loader rules, not connections).
 """
 
-import asyncio
 import os
 import shutil
 
 import pytest
 
-asyncio.set_event_loop(asyncio.new_event_loop())
-
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
 from sshpilot.ssh_config_utils import get_effective_ssh_config
 
 
@@ -41,13 +38,6 @@ pytestmark = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def make_cm():
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.rules = []
-    return cm
-
 
 def _norm(path: str) -> str:
     return os.path.realpath(os.path.expanduser(str(path)))
@@ -85,60 +75,67 @@ def _forward_listen_ports(eff: dict, key: str):
     return sorted(ports)
 
 
+def _scalar(conn, key, default=""):
+    return conn.data.get(key, default) or default
+
+
 def assert_connection_matches_ssh_g(conn, config_path):
-    """Assert a parsed Connection agrees with ``ssh -G`` for the handled fields."""
+    """Assert a parsed connection agrees with ``ssh -G`` for the handled fields."""
     eff = get_effective_ssh_config(conn.nickname, config_file=str(config_path))
     assert eff, f"ssh -G returned nothing for {conn.nickname!r}"
 
+    data = conn.data
     # --- scalars we explicitly handle -------------------------------------
-    assert conn.port == int(eff["port"]), (
-        f"{conn.nickname}: port {conn.port} != ssh -G {eff['port']}"
+    assert int(data.get("port") or 22) == int(eff["port"]), (
+        f"{conn.nickname}: port {data.get('port')} != ssh -G {eff['port']}"
     )
-    assert conn.username == eff["user"], (
-        f"{conn.nickname}: user {conn.username!r} != ssh -G {eff['user']!r}"
+    assert data.get("username") == eff["user"], (
+        f"{conn.nickname}: user {data.get('username')!r} != ssh -G {eff['user']!r}"
     )
     # When HostName is omitted the app keeps hostname empty and falls back to the
     # alias; ssh -G reports the alias.
-    expected_hostname = conn.hostname or conn.nickname
+    expected_hostname = data.get("hostname") or conn.nickname
     assert expected_hostname == eff["hostname"], (
         f"{conn.nickname}: hostname {expected_hostname!r} != ssh -G {eff['hostname']!r}"
     )
 
     # ForwardAgent: truthy unless ssh resolves it to "no".
     ssh_fa = str(eff.get("forwardagent", "no")).strip().lower()
-    assert conn.forward_agent == (ssh_fa != "no"), (
-        f"{conn.nickname}: forward_agent {conn.forward_agent} vs ssh -G {ssh_fa!r}"
+    assert bool(data.get("forward_agent")) == (ssh_fa != "no"), (
+        f"{conn.nickname}: forward_agent {data.get('forward_agent')} vs ssh -G {ssh_fa!r}"
     )
 
     # --- lists: our authored entries must be a subset of ssh's resolution --
-    our_ids = {_norm(f) for f in conn.identity_files}
+    our_ids = {_norm(f) for f in _as_list(data.get("identity_files"))}
     ssh_ids = {_norm(f) for f in _as_list(eff.get("identityfile"))}
     assert our_ids <= ssh_ids, (
         f"{conn.nickname}: identity_files {our_ids} not a subset of ssh -G {ssh_ids}"
     )
 
-    our_certs = {_norm(f) for f in conn.certificate_files}
+    our_certs = {_norm(f) for f in _as_list(data.get("certificate_files"))}
     ssh_certs = {_norm(f) for f in _as_list(eff.get("certificatefile"))}
     assert our_certs <= ssh_certs, (
         f"{conn.nickname}: certificate_files {our_certs} not a subset of ssh -G {ssh_certs}"
     )
 
     # --- ProxyJump host tokens --------------------------------------------
-    if conn.proxy_jump:
+    proxy_jump = _as_list(data.get("proxy_jump"))
+    if proxy_jump:
         ssh_pj = str(eff.get("proxyjump", "")).strip()
-        for hop in conn.proxy_jump:
+        for hop in proxy_jump:
             assert hop in ssh_pj, (
                 f"{conn.nickname}: ProxyJump hop {hop!r} missing from ssh -G {ssh_pj!r}"
             )
 
     # --- Port forwardings: listen ports per type --------------------------
+    forwarding_rules = _as_list(data.get("forwarding_rules"))
     for our_type, ssh_key in (
         ("local", "localforward"),
         ("remote", "remoteforward"),
         ("dynamic", "dynamicforward"),
     ):
         our_ports = sorted(
-            r["listen_port"] for r in conn.forwarding_rules if r["type"] == our_type
+            r["listen_port"] for r in forwarding_rules if r["type"] == our_type
         )
         assert our_ports == _forward_listen_ports(eff, ssh_key), (
             f"{conn.nickname}: {our_type} listen ports {our_ports} != "
@@ -149,12 +146,10 @@ def assert_connection_matches_ssh_g(conn, config_path):
 def load_and_cross_check(tmp_path, config_text):
     main = tmp_path / "config"
     main.write_text(config_text)
-    cm = make_cm()
-    cm.ssh_config_path = str(main)
-    cm.load_ssh_config()
-    for conn in cm.connections:
+    loaded = load_ssh_configuration(main, isolated=False)
+    for conn in loaded.connections:
         assert_connection_matches_ssh_g(conn, main)
-    return cm, main
+    return loaded, main
 
 
 # ---------------------------------------------------------------------------
@@ -226,10 +221,10 @@ Host *
 
 class TestParserMatchesSshG:
     def test_rich_config_all_hosts_match(self, tmp_path):
-        cm, _ = load_and_cross_check(tmp_path, RICH_CONFIG)
+        loaded, _ = load_and_cross_check(tmp_path, RICH_CONFIG)
         # Sanity: the wildcard host is a rule, not a cross-checked connection.
-        assert all(c.nickname != "*" for c in cm.connections)
-        assert len(cm.connections) >= 11
+        assert all(c.id != "*" for c in loaded.connections)
+        assert len(loaded.connections) >= 11
 
     def test_multikey_subset_is_exact(self, tmp_path):
         """For an explicitly-keyed host, ssh -G returns exactly our entries
@@ -241,12 +236,12 @@ class TestParserMatchesSshG:
             "    IdentityFile ~/.ssh/id_rsa\n"
             "    IdentityFile ~/.ssh/id_ed25519\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        conn = next(c for c in cm.connections if c.nickname == "mk")
+        conn = next(
+            c for c in load_ssh_configuration(main, isolated=False).connections
+            if c.id == "mk"
+        )
         eff = get_effective_ssh_config("mk", config_file=str(main))
-        our = {_norm(f) for f in conn.identity_files}
+        our = {_norm(f) for f in _as_list(conn.data.get("identity_files"))}
         ssh = {_norm(f) for f in _as_list(eff.get("identityfile"))}
         assert our == ssh, "explicit IdentityFile set should match ssh -G exactly"
 
@@ -261,10 +256,8 @@ class TestParserMatchesSshG:
             "    User seconduser\n"
             "    Port 2002\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        reps = [c for c in cm.connections if c.nickname == "repeated"]
+        loaded = load_ssh_configuration(main, isolated=False)
+        reps = [c for c in loaded.connections if c.id == "repeated"]
         assert len(reps) == 1
         assert_connection_matches_ssh_g(reps[0], main)
 
@@ -273,11 +266,11 @@ class TestParserMatchesSshG:
         main.write_text(
             "Host fa\n    HostName fa.example.com\n    ForwardAgent /tmp/a.sock\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        conn = next(c for c in cm.connections if c.nickname == "fa")
+        conn = next(
+            c for c in load_ssh_configuration(main, isolated=False).connections
+            if c.id == "fa"
+        )
         eff = get_effective_ssh_config("fa", config_file=str(main))
         # ssh -G keeps the literal path; we map any non-"no" value to truthy.
         assert str(eff.get("forwardagent")).lower() != "no"
-        assert conn.forward_agent is True
+        assert conn.data.get("forward_agent") is True

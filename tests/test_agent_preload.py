@@ -92,7 +92,7 @@ def test_prepare_key_for_connection_forces_by_default(monkeypatch):
     assert seen == {'path': '/home/u/.ssh/k', 'force': True}
 
 
-# --- Connection._preload_keys_into_agent: keyring-gated, guarded ------------
+# --- HeadlessConnectionView._preload_keys_into_agent: keyring-gated --------
 
 class _Cfg:
     def __init__(self, preload=True, lifetime=0):
@@ -105,81 +105,144 @@ class _Cfg:
         return self._vals.get(key, default)
 
 
-def _make_connection(**attrs):
-    from sshpilot.connection_manager import Connection
+class CredentialLookup:
+    """Narrow credential fake: stored passphrases + an observable preparer.
 
-    conn = Connection({'host': 'h', 'hostname': 'h', 'auth_method': attrs.get('auth_method', 0)})
-    conn.identity_agent_disabled = attrs.get('identity_agent_disabled', False)
-    conn.identity_agent_directive = attrs.get('identity_agent_directive', '')
-    conn.resolved_identity_files = attrs.get('resolved_identity_files', ['/home/u/.ssh/k'])
-    return conn
+    Deliberately has no repository, group, Config, GTK, or persistence
+    behavior — it only answers the preload lookup/prepare surface.
+    """
+
+    def __init__(self, *, passphrases=None, preload_result=True):
+        self.passphrases = dict(passphrases or {})
+        self.preload_result = preload_result
+        self.prepared = []
+
+    def get_key_passphrase(self, key_path):
+        return self.passphrases.get(key_path)
+
+    def prepare_key_for_connection(self, key_path, *, force=True, lifetime=0):
+        self.prepared.append((key_path, force, lifetime))
+        return self.preload_result
 
 
-def _patch_preload(monkeypatch, stored_paths):
-    """Patch askpass_utils so lookup returns a passphrase only for stored_paths."""
-    from sshpilot import askpass_utils
+def _make_view(**attrs):
+    """HeadlessConnectionView whose record carries the requested SSH policy."""
+    from sshpilot.core.connections.models import ConnectionRecord
+    from sshpilot.daemon.connection_launch_provider import HeadlessConnectionView
 
-    added = []
-    monkeypatch.setattr(
-        askpass_utils, 'lookup_passphrase',
-        lambda p: 'secret' if p in stored_paths else '',
+    record_data = {'auth_method': attrs.get('auth_method', 0)}
+    identity_agent = attrs.get('identity_agent')
+    if identity_agent is not None:
+        record_data['identity_agent'] = identity_agent
+    record = ConnectionRecord(
+        id='h',
+        nickname='h',
+        host='h',
+        hostname='h',
+        username='u',
+        port=22,
+        protocol='ssh',
+        data=record_data,
     )
-
-    def fake_ensure(path, *, force=False, lifetime=0):
-        added.append((path, force, lifetime))
-        return True
-
-    monkeypatch.setattr(askpass_utils, 'ensure_key_in_agent', fake_ensure)
-    return added
+    view = HeadlessConnectionView(record)
+    if 'resolved_identity_files' in attrs:
+        view.resolved_identity_files = list(attrs['resolved_identity_files'])
+    return view
 
 
-def test_preload_only_adds_stored_keys(monkeypatch):
-    conn = _make_connection(resolved_identity_files=['/k/stored', '/k/unstored'])
-    added = _patch_preload(monkeypatch, stored_paths={'/k/stored'})
+def test_preload_only_adds_stored_keys():
+    view = _make_view(resolved_identity_files=['/k/stored', '/k/unstored'])
+    lookup = CredentialLookup(passphrases={'/k/stored': 'secret'})
 
-    conn._preload_keys_into_agent(_Cfg(lifetime=600))
+    view._preload_keys_into_agent(_Cfg(lifetime=600), credential_lookup=lookup)
 
-    # Keyring-only: the stored key loads (force-unlock); the unstored key is
-    # never ssh-added — the user gets the natural OS/agent prompt for it.
-    assert added == [('/k/stored', True, 600)]
+    # Keyring-only: the stored key loads (force-unlock, with the configured
+    # lifetime); the unstored key is never ssh-added — the user gets the
+    # natural OS/agent prompt for it.
+    assert lookup.prepared == [('/k/stored', True, 600)]
 
 
-def test_preload_skips_all_unstored_keys(monkeypatch):
-    conn = _make_connection(resolved_identity_files=['/k/a', '/k/b', '/k/c'])
-    added = _patch_preload(monkeypatch, stored_paths=set())  # none stored
+def test_preload_skips_all_unstored_keys():
+    view = _make_view(resolved_identity_files=['/k/a', '/k/b', '/k/c'])
+    lookup = CredentialLookup(passphrases={})  # none stored
 
-    conn._preload_keys_into_agent(_Cfg())
+    view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)
 
     # No stored passphrases → nothing is added to the agent.
-    assert added == []
+    assert lookup.prepared == []
 
 
-def test_preload_skipped_for_password_auth(monkeypatch):
-    conn = _make_connection(auth_method=1)
-    added = _patch_preload(monkeypatch, stored_paths={'/home/u/.ssh/k'})
-    conn._preload_keys_into_agent(_Cfg())
-    assert added == []
+def test_preload_skipped_for_password_auth():
+    view = _make_view(auth_method=1, resolved_identity_files=['/home/u/.ssh/k'])
+    lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
+    view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)
+    assert lookup.prepared == []
 
 
-def test_preload_skipped_when_identity_agent_disabled(monkeypatch):
-    conn = _make_connection(identity_agent_disabled=True)
-    added = _patch_preload(monkeypatch, stored_paths={'/home/u/.ssh/k'})
-    conn._preload_keys_into_agent(_Cfg())
-    assert added == []
+def test_preload_skipped_when_identity_agent_disabled():
+    view = _make_view(
+        identity_agent='none', resolved_identity_files=['/home/u/.ssh/k']
+    )
+    lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
+    view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)
+    assert lookup.prepared == []
 
 
-def test_preload_skipped_when_custom_identity_agent(monkeypatch):
-    conn = _make_connection(identity_agent_directive='/run/user/1000/agent.sock')
-    added = _patch_preload(monkeypatch, stored_paths={'/home/u/.ssh/k'})
-    conn._preload_keys_into_agent(_Cfg())
-    assert added == []
+def test_preload_skipped_when_custom_identity_agent():
+    view = _make_view(
+        identity_agent='/run/user/1000/agent.sock',
+        resolved_identity_files=['/home/u/.ssh/k'],
+    )
+    lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
+    view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)
+    assert lookup.prepared == []
 
 
-def test_preload_skipped_when_setting_disabled(monkeypatch):
-    conn = _make_connection()
-    added = _patch_preload(monkeypatch, stored_paths={'/home/u/.ssh/k'})
-    conn._preload_keys_into_agent(_Cfg(preload=False))
-    assert added == []
+def test_preload_skipped_when_setting_disabled():
+    view = _make_view(resolved_identity_files=['/home/u/.ssh/k'])
+    lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
+    view._preload_keys_into_agent(_Cfg(preload=False), credential_lookup=lookup)
+    assert lookup.prepared == []
+
+
+def test_identity_agent_policy_derived_from_record():
+    # Empty value -> defaults; "none" (case-insensitive) -> disabled;
+    # any other value -> a custom IdentityAgent directive.
+    plain = _make_view()
+    assert plain.identity_agent_disabled is False
+    assert plain.identity_agent_directive == ""
+
+    none_view = _make_view(identity_agent="none")
+    assert none_view.identity_agent_disabled is True
+    assert none_view.identity_agent_directive == ""
+
+    mixed_case = _make_view(identity_agent="NONE")
+    assert mixed_case.identity_agent_disabled is True
+
+    custom = _make_view(identity_agent="/run/user/1000/agent.sock")
+    assert custom.identity_agent_disabled is False
+    assert custom.identity_agent_directive == "/run/user/1000/agent.sock"
+
+
+def test_preload_collects_candidates_when_cache_empty():
+    # An empty resolved_identity_files cache falls back to
+    # collect_identity_file_candidates() and stores the shared candidate set.
+    view = _make_view()
+    assert view.resolved_identity_files == []
+    view.collect_identity_file_candidates = lambda: ["/home/u/.ssh/k"]
+    lookup = CredentialLookup(passphrases={"/home/u/.ssh/k": "secret"})
+
+    view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)
+
+    assert view.resolved_identity_files == ["/home/u/.ssh/k"]
+    assert lookup.prepared == [("/home/u/.ssh/k", True, 0)]
+
+
+def test_preload_forwards_configured_lifetime():
+    view = _make_view(resolved_identity_files=['/home/u/.ssh/k'])
+    lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
+    view._preload_keys_into_agent(_Cfg(lifetime=300), credential_lookup=lookup)
+    assert lookup.prepared == [('/home/u/.ssh/k', True, 300)]
 
 
 def test_askpass_autofill_stays_enabled_by_default(monkeypatch):
@@ -192,15 +255,13 @@ def test_askpass_autofill_stays_enabled_by_default(monkeypatch):
     assert askpass_utils._askpass_enabled() is True
 
 
-def test_preload_swallows_errors(monkeypatch):
-    from sshpilot import askpass_utils
-
-    conn = _make_connection()
-    monkeypatch.setattr(askpass_utils, 'lookup_passphrase', lambda p: 'secret')
+def test_preload_swallows_errors():
+    view = _make_view(resolved_identity_files=['/home/u/.ssh/k'])
+    lookup = CredentialLookup(passphrases={'/home/u/.ssh/k': 'secret'})
 
     def boom(*_a, **_k):
         raise RuntimeError("ssh-add blew up")
 
-    monkeypatch.setattr(askpass_utils, 'ensure_key_in_agent', boom)
+    lookup.prepare_key_for_connection = boom
     # Must not raise.
-    conn._preload_keys_into_agent(_Cfg())
+    view._preload_keys_into_agent(_Cfg(), credential_lookup=lookup)

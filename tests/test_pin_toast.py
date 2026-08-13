@@ -15,18 +15,29 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class _Config:
+class _MetadataStore:
+    """Connection-manager metadata double (pinning lives in metadata now)."""
+
     def __init__(self):
-        self.pinned = set()
+        self.values = {}
 
-    def is_pinned(self, nickname):
-        return nickname in self.pinned
+    def get_metadata(self, connection_id):
+        return dict(self.values.get(connection_id, {}))
 
-    def pin_connection(self, nickname):
-        self.pinned.add(nickname)
 
-    def unpin_connection(self, nickname):
-        self.pinned.discard(nickname)
+class _Client:
+    """Daemon client double recording update_connection_metadata mutations."""
+
+    def __init__(self, store):
+        self.store = store
+        self.calls = []
+
+    def update_connection_metadata(self, connection_id, patch):
+        current = dict(self.store.values.get(connection_id, {}))
+        current.update(patch)
+        self.store.values[connection_id] = current
+        self.calls.append((connection_id, dict(patch)))
+        return True
 
 
 class _ToastOverlay:
@@ -67,8 +78,11 @@ class _ToastFactory:
 def test_pin_status_toasts_expire_and_replace_previous_toast(monkeypatch):
     monkeypatch.setattr(window_module.Adw, 'Toast', _ToastFactory)
     overlay = _ToastOverlay()
+    store = _MetadataStore()
+    client = _Client(store)
     window = SimpleNamespace(
-        config=_Config(),
+        connection_manager=store,
+        client=client,
         toast_overlay=overlay,
         welcome_view=None,
     )
@@ -88,3 +102,8 @@ def test_pin_status_toasts_expire_and_replace_previous_toast(monkeypatch):
     assert second is not first
     assert second.get_timeout() == 3
     assert window._pin_status_toast is second
+    # The pin toggle is a metadata mutation through the client boundary.
+    assert client.calls == [
+        ("demo", {"pinned": True}),
+        ("demo", {"pinned": False}),
+    ]

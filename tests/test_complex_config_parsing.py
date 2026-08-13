@@ -62,13 +62,13 @@ Not bugs:
   - Empty Host block – valid no-op; silently discarding it is correct UX
 """
 
-import asyncio
 import os
+from pathlib import Path
+
 import pytest
 
-asyncio.set_event_loop(asyncio.new_event_loop())
-
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 from sshpilot.ssh_config_utils import resolve_ssh_config_files
 
 
@@ -76,15 +76,26 @@ from sshpilot.ssh_config_utils import resolve_ssh_config_files
 # Helpers
 # ---------------------------------------------------------------------------
 
-def make_cm():
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.rules = []
-    return cm
+def _load(path: Path):
+    return load_ssh_configuration(path, isolated=False)
+
+
+def _by_id(loaded, name):
+    """Return the first connection with the given id, or None."""
+    return next((c for c in loaded.connections if c.id == name), None)
+
+
+def _d(conn):
+    """Access a connection's parsed data dict."""
+    return conn.data
+
+
+def _field(conn, key):
+    return conn.data.get(key)
 
 
 def load_config(tmp_path, main_text, conf_d_files=None):
-    """Write config files and return a loaded ConnectionManager."""
+    """Write config files and return a LoadedSshConfiguration."""
     conf_d = tmp_path / "conf.d"
     conf_d.mkdir(exist_ok=True)
 
@@ -94,15 +105,8 @@ def load_config(tmp_path, main_text, conf_d_files=None):
     main_cfg = tmp_path / "config"
     main_cfg.write_text(main_text)
 
-    cm = make_cm()
-    cm.ssh_config_path = str(main_cfg)
-    cm.load_ssh_config()
-    return cm, main_cfg, conf_d
-
-
-def conn_by_nickname(cm, name):
-    """Return the first Connection with the given nickname, or None."""
-    return next((c for c in cm.connections if c.nickname == name), None)
+    loaded = _load(main_cfg)
+    return loaded, main_cfg, conf_d
 
 
 # ---------------------------------------------------------------------------
@@ -223,9 +227,9 @@ CONF_D_FILES = {
 
 
 @pytest.fixture
-def complex_cm(tmp_path):
-    cm, main_cfg, conf_d = load_config(tmp_path, MAIN_CONFIG, CONF_D_FILES)
-    return cm, main_cfg, conf_d, tmp_path
+def complex_config(tmp_path):
+    loaded, main_cfg, conf_d = load_config(tmp_path, MAIN_CONFIG, CONF_D_FILES)
+    return loaded, main_cfg, conf_d, tmp_path
 
 
 # ===========================================================================
@@ -233,9 +237,9 @@ def complex_cm(tmp_path):
 # ===========================================================================
 
 class TestComplexConfigLoading:
-    def test_all_regular_hosts_loaded(self, complex_cm):
-        cm, *_ = complex_cm
-        names = {c.nickname for c in cm.connections}
+    def test_all_regular_hosts_loaded(self, complex_config):
+        loaded, *_ = complex_config
+        names = {c.id for c in loaded.connections}
         # tab-host and eq-host now load (spec-valid separators are parsed).
         expected = {
             "bastion",
@@ -248,27 +252,27 @@ class TestComplexConfigLoading:
         }
         assert expected.issubset(names), f"Missing: {expected - names}"
 
-    def test_wildcard_all_stored_as_rule(self, complex_cm):
-        cm, *_ = complex_cm
-        names = {c.nickname for c in cm.connections}
+    def test_wildcard_all_stored_as_rule(self, complex_config):
+        loaded, *_ = complex_config
+        names = {c.id for c in loaded.connections}
         assert "*" not in names, "Host * should be a rule, not a connection"
 
-    def test_wildcard_all_appears_in_rules(self, complex_cm):
-        cm, *_ = complex_cm
-        rule_hosts = [r.get("host", "") for r in cm.rules if isinstance(r, dict)]
+    def test_wildcard_all_appears_in_rules(self, complex_config):
+        loaded, *_ = complex_config
+        rule_hosts = [r.get("host", "") for r in loaded.rules if isinstance(r, dict)]
         assert "*" in rule_hosts
 
-    def test_match_block_stored_as_rule(self, complex_cm):
-        cm, *_ = complex_cm
-        raw_rules = [r.get("raw", "") for r in cm.rules if "raw" in r]
+    def test_match_block_stored_as_rule(self, complex_config):
+        loaded, *_ = complex_config
+        raw_rules = [r.get("raw", "") for r in loaded.rules if "raw" in r]
         assert any("Match" in raw for raw in raw_rules)
 
-    def test_total_connection_count(self, complex_cm):
-        cm, *_ = complex_cm
+    def test_total_connection_count(self, complex_config):
+        loaded, *_ = complex_config
         # 1 bastion + 2 work (work-db/work-app) + 1 work-ci + 2 personal +
         # 3 tunnels + 1 corp + 4 edge (multi-key, no-trailing-newline,
         # tab-host, eq-host) = 14
-        assert len(cm.connections) == 14
+        assert len(loaded.connections) == 14
 
 
 # ===========================================================================
@@ -276,28 +280,28 @@ class TestComplexConfigLoading:
 # ===========================================================================
 
 class TestSourceTracking:
-    def test_bastion_source_is_main_config(self, complex_cm):
-        cm, main_cfg, *_ = complex_cm
-        c = conn_by_nickname(cm, "bastion")
-        assert c.source == str(main_cfg)
+    def test_bastion_source_is_main_config(self, complex_config):
+        loaded, main_cfg, *_ = complex_config
+        c = _by_id(loaded, "bastion")
+        assert str(c.source) == str(main_cfg)
 
-    def test_work_host_source_is_work_conf(self, complex_cm):
-        cm, _, conf_d, _ = complex_cm
-        c = conn_by_nickname(cm, "work-db")
-        assert c.source == str(conf_d / "10-work.conf")
+    def test_work_host_source_is_work_conf(self, complex_config):
+        loaded, _, conf_d, _ = complex_config
+        c = _by_id(loaded, "work-db")
+        assert str(c.source) == str(conf_d / "10-work.conf")
 
-    def test_multi_host_block_both_have_same_source(self, complex_cm):
-        cm, _, conf_d, _ = complex_cm
-        src_db = conn_by_nickname(cm, "work-db").source
-        src_app = conn_by_nickname(cm, "work-app").source
+    def test_multi_host_block_both_have_same_source(self, complex_config):
+        loaded, _, conf_d, _ = complex_config
+        src_db = str(_by_id(loaded, "work-db").source)
+        src_app = str(_by_id(loaded, "work-app").source)
         expected = str(conf_d / "10-work.conf")
         assert src_db == expected
         assert src_app == expected
 
-    def test_personal_source_is_personal_conf(self, complex_cm):
-        cm, _, conf_d, _ = complex_cm
-        c = conn_by_nickname(cm, "personal-dev")
-        assert c.source == str(conf_d / "20-personal.conf")
+    def test_personal_source_is_personal_conf(self, complex_config):
+        loaded, _, conf_d, _ = complex_config
+        c = _by_id(loaded, "personal-dev")
+        assert str(c.source) == str(conf_d / "20-personal.conf")
 
 
 # ===========================================================================
@@ -305,8 +309,8 @@ class TestSourceTracking:
 # ===========================================================================
 
 class TestIncludeOrdering:
-    def test_conf_d_files_sorted_alphabetically(self, complex_cm):
-        cm, main_cfg, conf_d, _ = complex_cm
+    def test_conf_d_files_sorted_alphabetically(self, complex_config):
+        loaded, main_cfg, conf_d, _ = complex_config
         files = resolve_ssh_config_files(str(main_cfg))
         # Main file comes first
         assert files[0] == str(main_cfg)
@@ -314,14 +318,14 @@ class TestIncludeOrdering:
         conf_d_files = [f for f in files if str(conf_d) in f]
         assert conf_d_files == sorted(conf_d_files)
 
-    def test_include_at_top_resolves_all_fragments(self, complex_cm):
-        cm, main_cfg, conf_d, _ = complex_cm
+    def test_include_at_top_resolves_all_fragments(self, complex_config):
+        loaded, main_cfg, conf_d, _ = complex_config
         files = resolve_ssh_config_files(str(main_cfg))
         for name in CONF_D_FILES:
             assert str(conf_d / name) in files
 
-    def test_no_duplicate_files_in_resolution(self, complex_cm):
-        cm, main_cfg, *_ = complex_cm
+    def test_no_duplicate_files_in_resolution(self, complex_config):
+        loaded, main_cfg, *_ = complex_config
         files = resolve_ssh_config_files(str(main_cfg))
         assert len(files) == len(set(files)), "resolve_ssh_config_files returned duplicates"
 
@@ -331,24 +335,24 @@ class TestIncludeOrdering:
 # ===========================================================================
 
 class TestMultiHostBlock:
-    def test_work_db_and_work_app_share_hostname(self, complex_cm):
-        cm, *_ = complex_cm
-        db = conn_by_nickname(cm, "work-db")
-        app = conn_by_nickname(cm, "work-app")
-        assert db.hostname == "192.168.1.100"
-        assert app.hostname == "192.168.1.100"
+    def test_work_db_and_work_app_share_hostname(self, complex_config):
+        loaded, *_ = complex_config
+        db = _by_id(loaded, "work-db")
+        app = _by_id(loaded, "work-app")
+        assert _field(db, "hostname") == "192.168.1.100"
+        assert _field(app, "hostname") == "192.168.1.100"
 
-    def test_work_db_and_work_app_share_port(self, complex_cm):
-        cm, *_ = complex_cm
-        db = conn_by_nickname(cm, "work-db")
-        app = conn_by_nickname(cm, "work-app")
-        assert db.port == 2222
-        assert app.port == 2222
+    def test_work_db_and_work_app_share_port(self, complex_config):
+        loaded, *_ = complex_config
+        db = _by_id(loaded, "work-db")
+        app = _by_id(loaded, "work-app")
+        assert _field(db, "port") == 2222
+        assert _field(app, "port") == 2222
 
-    def test_multi_host_block_independent_connection_objects(self, complex_cm):
-        cm, *_ = complex_cm
-        db = conn_by_nickname(cm, "work-db")
-        app = conn_by_nickname(cm, "work-app")
+    def test_multi_host_block_independent_connection_objects(self, complex_config):
+        loaded, *_ = complex_config
+        db = _by_id(loaded, "work-db")
+        app = _by_id(loaded, "work-app")
         assert db is not app
 
 
@@ -357,39 +361,39 @@ class TestMultiHostBlock:
 # ===========================================================================
 
 class TestPortForwarding:
-    def test_multiple_localforward_rules_parsed(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "work-db")
-        local_rules = [r for r in c.forwarding_rules if r["type"] == "local"]
+    def test_multiple_localforward_rules_parsed(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "work-db")
+        local_rules = [r for r in _field(c, "forwarding_rules") if r["type"] == "local"]
         assert len(local_rules) == 2
 
-    def test_localforward_5432_correct_ports(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "work-db")
-        rule = next((r for r in c.forwarding_rules if r["listen_port"] == 5432), None)
+    def test_localforward_5432_correct_ports(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "work-db")
+        rule = next((r for r in _field(c, "forwarding_rules") if r["listen_port"] == 5432), None)
         assert rule is not None
         assert rule["remote_port"] == 5432
         assert rule["remote_host"] == "localhost"
 
-    def test_dynamicforward_plain_port(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "socks-proxy")
-        dyn = [r for r in c.forwarding_rules if r["type"] == "dynamic"]
+    def test_dynamicforward_plain_port(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "socks-proxy")
+        dyn = [r for r in _field(c, "forwarding_rules") if r["type"] == "dynamic"]
         assert len(dyn) == 1
         assert dyn[0]["listen_port"] == 1080
 
-    def test_dynamicforward_with_bind_address(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "socks-proxy-bind")
-        dyn = [r for r in c.forwarding_rules if r["type"] == "dynamic"]
+    def test_dynamicforward_with_bind_address(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "socks-proxy-bind")
+        dyn = [r for r in _field(c, "forwarding_rules") if r["type"] == "dynamic"]
         assert len(dyn) == 1
         assert dyn[0]["listen_port"] == 1081
         assert dyn[0]["listen_addr"] == "127.0.0.1"
 
-    def test_remoteforward_parsed(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "reverse-tunnel")
-        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
+    def test_remoteforward_parsed(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "reverse-tunnel")
+        remote = [r for r in _field(c, "forwarding_rules") if r["type"] == "remote"]
         assert len(remote) == 1
         assert remote[0]["listen_port"] == 2222
 
@@ -399,10 +403,10 @@ class TestPortForwarding:
 # ===========================================================================
 
 class TestProxyJump:
-    def test_proxyjump_single_hop_parsed(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "work-ci")
-        assert c.proxy_jump == ["bastion"]
+    def test_proxyjump_single_hop_parsed(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "work-ci")
+        assert _field(c, "proxy_jump") == ["bastion"]
 
     def test_proxyjump_multi_hop(self, tmp_path):
         main = tmp_path / "config"
@@ -411,11 +415,8 @@ class TestProxyJump:
             "    HostName target.example.com\n"
             "    ProxyJump jump1,jump2,jump3\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "multi-hop")
-        assert c.proxy_jump == ["jump1", "jump2", "jump3"]
+        c = _by_id(_load(main), "multi-hop")
+        assert _field(c, "proxy_jump") == ["jump1", "jump2", "jump3"]
 
 
 # ===========================================================================
@@ -423,21 +424,21 @@ class TestProxyJump:
 # ===========================================================================
 
 class TestAuthOptions:
-    def test_identityfile_expanded(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "bastion")
-        assert "~" not in c.keyfile, "IdentityFile ~ should be expanded"
+    def test_identityfile_expanded(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "bastion")
+        assert "~" not in _field(c, "keyfile"), "IdentityFile ~ should be expanded"
 
-    def test_certificatefile_parsed(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "personal-dev")
-        assert c.certificate != ""
-        assert "~" not in c.certificate
+    def test_certificatefile_parsed(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "personal-dev")
+        assert _field(c, "certificate") != ""
+        assert "~" not in _field(c, "certificate")
 
-    def test_forwardagent_yes_is_true(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "work-db")
-        assert c.forward_agent is True
+    def test_forwardagent_yes_is_true(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "work-db")
+        assert _field(c, "forward_agent") is True
 
     def test_preferred_authentications_order(self, tmp_path):
         main = tmp_path / "config"
@@ -446,13 +447,10 @@ class TestAuthOptions:
             "    HostName auth.example.com\n"
             "    PreferredAuthentications password,publickey\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "authtest")
-        # preferred_authentications lives in c.data, not as a direct attribute
-        assert c.data.get("preferred_authentications") == ["password", "publickey"]
-        assert c.auth_method == 1  # password comes first
+        c = _by_id(_load(main), "authtest")
+        # preferred_authentications lives in the parsed data, not as an attr
+        assert _field(c, "preferred_authentications") == ["password", "publickey"]
+        assert _field(c, "auth_method") == 1  # password comes first
 
 
 # ===========================================================================
@@ -460,15 +458,15 @@ class TestAuthOptions:
 # ===========================================================================
 
 class TestQuotedHost:
-    def test_quoted_host_nickname_stripped(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "quoted host")
+    def test_quoted_host_nickname_stripped(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "quoted host")
         assert c is not None
 
-    def test_quoted_host_hostname_correct(self, complex_cm):
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "quoted host")
-        assert c.hostname == "quoted.example.com"
+    def test_quoted_host_hostname_correct(self, complex_config):
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "quoted host")
+        assert _field(c, "hostname") == "quoted.example.com"
 
 
 # ===========================================================================
@@ -485,11 +483,9 @@ class TestRuleStorage:
             "Host normal\n"
             "    HostName normal.example.com\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        assert all(c.nickname != "*.example.com" for c in cm.connections)
-        assert any(r.get("host") == "*.example.com" for r in cm.rules)
+        loaded = _load(main)
+        assert all(c.id != "*.example.com" for c in loaded.connections)
+        assert any(r.get("host") == "*.example.com" for r in loaded.rules)
 
     def test_negated_host_stored_as_rule(self, tmp_path):
         main = tmp_path / "config"
@@ -497,11 +493,9 @@ class TestRuleStorage:
             "Host !blocked\n"
             "    User user\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        assert len(cm.connections) == 0
-        assert len(cm.rules) == 1
+        loaded = _load(main)
+        assert len(loaded.connections) == 0
+        assert len(loaded.rules) == 1
 
     def test_question_mark_wildcard_is_rule(self, tmp_path):
         main = tmp_path / "config"
@@ -509,11 +503,9 @@ class TestRuleStorage:
             "Host alias?\n"
             "    User user\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        assert len(cm.connections) == 0
-        assert any(r.get("host") == "alias?" for r in cm.rules)
+        loaded = _load(main)
+        assert len(loaded.connections) == 0
+        assert any(r.get("host") == "alias?" for r in loaded.rules)
 
 
 # ===========================================================================
@@ -521,20 +513,20 @@ class TestRuleStorage:
 # ===========================================================================
 
 class TestMatchBlock:
-    def test_match_block_not_in_connections(self, complex_cm):
-        cm, *_ = complex_cm
-        for c in cm.connections:
-            assert not c.nickname.lower().startswith("match ")
+    def test_match_block_not_in_connections(self, complex_config):
+        loaded, *_ = complex_config
+        for c in loaded.connections:
+            assert not c.id.lower().startswith("match ")
 
-    def test_match_block_raw_preserved(self, complex_cm):
-        cm, *_ = complex_cm
-        match_rules = [r for r in cm.rules if "raw" in r and "Match" in r["raw"]]
+    def test_match_block_raw_preserved(self, complex_config):
+        loaded, *_ = complex_config
+        match_rules = [r for r in loaded.rules if "raw" in r and "Match" in r["raw"]]
         assert len(match_rules) >= 1
         assert "IdentityFile" in match_rules[0]["raw"]
 
-    def test_match_block_source_tracked(self, complex_cm):
-        cm, _, conf_d, _ = complex_cm
-        match_rules = [r for r in cm.rules if "raw" in r and "Match" in r["raw"]]
+    def test_match_block_source_tracked(self, complex_config):
+        loaded, _, conf_d, _ = complex_config
+        match_rules = [r for r in loaded.rules if "raw" in r and "Match" in r["raw"]]
         expected = str(conf_d / "40-match.conf")
         assert match_rules[0]["source"] == expected
 
@@ -571,13 +563,10 @@ class TestEdgeCases:
             "\tHostName\ttab.example.com\n"
             "\tPort\t2222\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "tab-only")
+        c = _by_id(_load(main), "tab-only")
         assert c is not None, "tab-separated options must not discard the host"
-        assert c.hostname == "tab.example.com"
-        assert c.port == 2222
+        assert _field(c, "hostname") == "tab.example.com"
+        assert _field(c, "port") == 2222
 
     def test_tab_separated_kv_mixed_all_options_kept(self, tmp_path):
         """A block mixing tab and space separators must keep every option."""
@@ -587,13 +576,10 @@ class TestEdgeCases:
             "\tHostName\ttabmixed.example.com\n"  # tab
             "    Port 2222\n"                      # space
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "tab-mixed")
+        c = _by_id(_load(main), "tab-mixed")
         assert c is not None
-        assert c.port == 2222
-        assert c.hostname == "tabmixed.example.com"
+        assert _field(c, "port") == 2222
+        assert _field(c, "hostname") == "tabmixed.example.com"
 
     # -----------------------------------------------------------------------
     # ISSUE 2 – `=` separator
@@ -607,13 +593,10 @@ class TestEdgeCases:
             "    Port=2222\n"
             "    HostName=eq.example.com\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "eq-only")
+        c = _by_id(_load(main), "eq-only")
         assert c is not None, "`keyword=value` options must not discard the host"
-        assert c.hostname == "eq.example.com"
-        assert c.port == 2222
+        assert _field(c, "hostname") == "eq.example.com"
+        assert _field(c, "port") == 2222
 
     def test_equals_no_spaces_mixed_all_options_kept(self, tmp_path):
         """Mixed `=`/space block must keep every option."""
@@ -623,13 +606,10 @@ class TestEdgeCases:
             "    HostName=eqmixed.example.com\n"  # no-space =
             "    Port 2222\n"                       # space
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "eq-mixed")
+        c = _by_id(_load(main), "eq-mixed")
         assert c is not None
-        assert c.port == 2222
-        assert c.hostname == "eqmixed.example.com"
+        assert _field(c, "port") == 2222
+        assert _field(c, "hostname") == "eqmixed.example.com"
 
     def test_duplicate_option_first_value_wins(self, tmp_path):
         """
@@ -646,13 +626,10 @@ class TestEdgeCases:
             "    Port 22\n"
             "    Port 2222\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "dup")
+        c = _by_id(_load(main), "dup")
         assert c is not None
-        assert c.username == "firstuser", "first User must win"
-        assert c.port == 22, "first Port must win"
+        assert _field(c, "username") == "firstuser", "first User must win"
+        assert _field(c, "port") == 22, "first Port must win"
 
     def test_repeated_host_block_merges_first_wins(self, tmp_path):
         """
@@ -670,15 +647,12 @@ class TestEdgeCases:
             "    User seconduser\n"
             "    Port 2002\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        reps = [c for c in cm.connections if c.nickname == "repeated"]
+        reps = [c for c in _load(main).connections if c.id == "repeated"]
         assert len(reps) == 1, "repeated Host blocks must merge into one connection"
         c = reps[0]
-        assert c.hostname == "first.example.com"   # only block 1 set it
-        assert c.port == 2001                        # first Port wins
-        assert c.username == "seconduser"            # only block 2 authored User
+        assert _field(c, "hostname") == "first.example.com"   # only block 1 set it
+        assert _field(c, "port") == 2001                        # first Port wins
+        assert _field(c, "username") == "seconduser"            # only block 2 authored User
 
     def test_repeated_host_block_accumulates_identityfiles(self, tmp_path):
         """IdentityFile entries from repeated blocks accumulate (not first-wins)."""
@@ -690,12 +664,9 @@ class TestEdgeCases:
             "Host acc\n"
             "    IdentityFile ~/.ssh/key_b\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        reps = [c for c in cm.connections if c.nickname == "acc"]
+        reps = [c for c in _load(main).connections if c.id == "acc"]
         assert len(reps) == 1
-        ids = reps[0].identity_files
+        ids = _field(reps[0], "identity_files")
         assert any("key_a" in f for f in ids), "first block's key must survive"
         assert any("key_b" in f for f in ids), "second block's key must accumulate"
 
@@ -711,14 +682,11 @@ class TestEdgeCases:
         )
         main = tmp_path / "config"
         main.write_text("Include conf.d/*.conf\n")
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        reps = [c for c in cm.connections if c.nickname == "shared"]
+        reps = [c for c in _load(main).connections if c.id == "shared"]
         assert len(reps) == 1, "same nickname across includes must merge"
-        assert reps[0].hostname == "shared.example.com"
-        assert reps[0].port == 2200
-        assert reps[0].username == "mergeduser"
+        assert _field(reps[0], "hostname") == "shared.example.com"
+        assert _field(reps[0], "port") == 2200
+        assert _field(reps[0], "username") == "mergeduser"
 
     def test_equals_form_host_header_recognised(self, tmp_path):
         """
@@ -736,19 +704,17 @@ class TestEdgeCases:
             "    Port=2233\n"
             "    User =bob\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        first = conn_by_nickname(cm, "first")
-        second = conn_by_nickname(cm, "second")
+        loaded = _load(main)
+        first = _by_id(loaded, "first")
+        second = _by_id(loaded, "second")
         # The preceding host keeps its own values (not polluted by 'second').
         assert first is not None
-        assert first.port == 2222
-        assert first.hostname == "first.example.com"
+        assert _field(first, "port") == 2222
+        assert _field(first, "hostname") == "first.example.com"
         # The equals-form host exists with its own values.
         assert second is not None, "Host=second must be parsed as its own block"
-        assert second.port == 2233
-        assert second.username == "bob"
+        assert _field(second, "port") == 2233
+        assert _field(second, "username") == "bob"
 
     def test_equals_with_spaces_parsed(self, tmp_path):
         """
@@ -762,35 +728,33 @@ class TestEdgeCases:
             "    HostName spacedeq.example.com\n"
             "    Port = 2222\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "spaced-eq")
+        c = _by_id(_load(main), "spaced-eq")
         assert c is not None, "`Port = 2222` must parse, not discard the host"
-        assert c.hostname == "spacedeq.example.com"
-        assert c.port == 2222
+        assert _field(c, "hostname") == "spacedeq.example.com"
+        assert _field(c, "port") == 2222
 
     # -----------------------------------------------------------------------
     # ISSUE 3 – Multiple IdentityFile
     # -----------------------------------------------------------------------
 
-    def test_multiple_identityfile_all_preserved(self, complex_cm):
+    def test_multiple_identityfile_all_preserved(self, complex_config):
         """
         The spec states "all these identities will be tried in sequence".
         Every IdentityFile entry must be preserved (in identity_files); keyfile
         keeps the first as the primary entry.
         """
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "multi-key")
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "multi-key")
         assert c is not None
-        assert any("id_rsa" in f for f in c.identity_files), (
+        ids = _field(c, "identity_files")
+        assert any("id_rsa" in f for f in ids), (
             "first IdentityFile (id_rsa) must be preserved"
         )
-        assert any("id_ed25519" in f for f in c.identity_files), (
+        assert any("id_ed25519" in f for f in ids), (
             "second IdentityFile (id_ed25519) must be preserved"
         )
         # keyfile is the primary (first) entry.
-        assert "id_rsa" in c.keyfile
+        assert "id_rsa" in _field(c, "keyfile")
 
     # -----------------------------------------------------------------------
     # ISSUE 4 – Multiple CertificateFile
@@ -809,21 +773,18 @@ class TestEdgeCases:
             "    CertificateFile ~/.ssh/cert1-cert.pub\n"
             "    CertificateFile ~/.ssh/cert2-cert.pub\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "multi-cert")
+        c = _by_id(_load(main), "multi-cert")
         assert c is not None
-        assert any("cert1" in f for f in c.certificate_files), "cert1 must be preserved"
-        assert any("cert2" in f for f in c.certificate_files), "cert2 must be preserved"
-        assert "cert1" in c.certificate  # primary
+        certs = _field(c, "certificate_files")
+        assert any("cert1" in f for f in certs), "cert1 must be preserved"
+        assert any("cert2" in f for f in certs), "cert2 must be preserved"
+        assert "cert1" in _field(c, "certificate")  # primary
 
-    def test_multiple_identityfile_round_trip_preserved(self, tmp_path):
+    def test_multiple_identityfile_round_trip_preserved(self):
         """
         Writing a connection back to config must preserve every IdentityFile /
         CertificateFile entry (not collapse to the primary).
         """
-        cm = make_cm()
         data = {
             'nickname': 'multi',
             'hostname': 'multi.example.com',
@@ -833,15 +794,14 @@ class TestEdgeCases:
             'identity_files': ['/home/u/.ssh/id_rsa', '/home/u/.ssh/id_ed25519'],
             'certificate_files': ['/home/u/.ssh/a-cert.pub', '/home/u/.ssh/b-cert.pub'],
         }
-        entry = cm.format_ssh_config_entry(data)
+        entry = format_ssh_config_entry(data)
         assert entry.count('IdentityFile') == 2, entry
         assert '/home/u/.ssh/id_rsa' in entry
         assert '/home/u/.ssh/id_ed25519' in entry
         assert entry.count('CertificateFile') == 2, entry
 
-    def test_single_identityfile_write_unchanged(self, tmp_path):
+    def test_single_identityfile_write_unchanged(self):
         """A single IdentityFile must still be written exactly once (no regression)."""
-        cm = make_cm()
         data = {
             'nickname': 'single',
             'hostname': 'single.example.com',
@@ -849,7 +809,7 @@ class TestEdgeCases:
             'key_select_mode': 2,
             'keyfile': '/home/u/.ssh/id_rsa',
         }
-        entry = cm.format_ssh_config_entry(data)
+        entry = format_ssh_config_entry(data)
         assert entry.count('IdentityFile') == 1, entry
         assert '/home/u/.ssh/id_rsa' in entry
 
@@ -868,12 +828,9 @@ class TestEdgeCases:
             "    HostName fa.example.com\n"
             "    ForwardAgent /tmp/ssh-agent.sock\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "fa-path")
+        c = _by_id(_load(main), "fa-path")
         assert c is not None
-        assert c.forward_agent is True, "ForwardAgent /path must be truthy"
+        assert _field(c, "forward_agent") is True, "ForwardAgent /path must be truthy"
 
     def test_forwardagent_env_var_truthy(self, tmp_path):
         """
@@ -886,12 +843,9 @@ class TestEdgeCases:
             "    HostName fa.example.com\n"
             "    ForwardAgent $SSH_AUTH_SOCK\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "fa-env")
+        c = _by_id(_load(main), "fa-env")
         assert c is not None
-        assert c.forward_agent is True, "ForwardAgent $SSH_AUTH_SOCK must be truthy"
+        assert _field(c, "forward_agent") is True, "ForwardAgent $SSH_AUTH_SOCK must be truthy"
 
     def test_forwardagent_no_is_false(self, tmp_path):
         """ForwardAgent no must remain falsey."""
@@ -899,12 +853,9 @@ class TestEdgeCases:
         main.write_text(
             "Host fa-no\n    HostName fa.example.com\n    ForwardAgent no\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "fa-no")
+        c = _by_id(_load(main), "fa-no")
         assert c is not None
-        assert c.forward_agent is False
+        assert _field(c, "forward_agent") is False
 
     # -----------------------------------------------------------------------
     # ISSUE 6 – RemoteForward single-argument (SOCKS proxy mode)
@@ -922,12 +873,9 @@ class TestEdgeCases:
             "    HostName socks.example.com\n"
             "    RemoteForward 9999\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "socks-remote")
+        c = _by_id(_load(main), "socks-remote")
         assert c is not None
-        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
+        remote = [r for r in _field(c, "forwarding_rules") if r["type"] == "remote"]
         assert len(remote) == 1, (
             "RemoteForward 9999 (SOCKS mode) should produce a forwarding rule"
         )
@@ -942,12 +890,9 @@ class TestEdgeCases:
             "    HostName rfwd.example.com\n"
             "    RemoteForward 2222 localhost:22\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "rfwd")
+        c = _by_id(_load(main), "rfwd")
         assert c is not None
-        remote = [r for r in c.forwarding_rules if r["type"] == "remote"]
+        remote = [r for r in _field(c, "forwarding_rules") if r["type"] == "remote"]
         assert len(remote) == 1
         assert remote[0]["listen_port"] == 2222
 
@@ -957,12 +902,9 @@ class TestEdgeCases:
         main.write_text(
             "Host fa-yes\n    HostName fa.example.com\n    ForwardAgent yes\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "fa-yes")
+        c = _by_id(_load(main), "fa-yes")
         assert c is not None
-        assert c.forward_agent is True
+        assert _field(c, "forward_agent") is True
 
     # -----------------------------------------------------------------------
     # ISSUE 7 – ${VAR} environment variable expansion in option values
@@ -980,13 +922,11 @@ class TestEdgeCases:
             "    HostName env.example.com\n"
             "    IdentityFile ${HOME}/.ssh/id_rsa\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "env-key")
+        c = _by_id(_load(main), "env-key")
         assert c is not None
-        assert "${HOME}" not in c.keyfile, "${HOME} must be expanded"
-        assert c.keyfile == os.path.join(str(tmp_path), ".ssh", "id_rsa")
+        keyfile = _field(c, "keyfile")
+        assert "${HOME}" not in keyfile, "${HOME} must be expanded"
+        assert keyfile == os.path.join(str(tmp_path), ".ssh", "id_rsa")
 
     # -----------------------------------------------------------------------
     # Non-bugs confirmed against spec
@@ -1005,25 +945,23 @@ class TestEdgeCases:
             "Host real\n"
             "    HostName real.example.com\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        assert conn_by_nickname(cm, "ghost") is None
-        assert conn_by_nickname(cm, "real") is not None
+        loaded = _load(main)
+        assert _by_id(loaded, "ghost") is None
+        assert _by_id(loaded, "real") is not None
 
     # -----------------------------------------------------------------------
     # Other syntax edge cases
     # -----------------------------------------------------------------------
 
-    def test_host_block_without_trailing_newline_parsed(self, complex_cm):
+    def test_host_block_without_trailing_newline_parsed(self, complex_config):
         """
         The last host block in a file that has no trailing newline must still
-        be parsed (handled by the post-loop flush in load_ssh_config).
+        be parsed (handled by the loader's post-loop flush).
         """
-        cm, *_ = complex_cm
-        c = conn_by_nickname(cm, "no-trailing-newline")
+        loaded, *_ = complex_config
+        c = _by_id(loaded, "no-trailing-newline")
         assert c is not None
-        assert c.hostname == "ntnl.example.com"
+        assert _field(c, "hostname") == "ntnl.example.com"
 
     def test_case_insensitive_host_keyword(self, tmp_path):
         """
@@ -1036,13 +974,10 @@ class TestEdgeCases:
             "    HOSTNAME uppercase.example.com\n"
             "    PORT 2222\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "uppercase-host")
+        c = _by_id(_load(main), "uppercase-host")
         assert c is not None
-        assert c.hostname == "uppercase.example.com"
-        assert c.port == 2222
+        assert _field(c, "hostname") == "uppercase.example.com"
+        assert _field(c, "port") == 2222
 
     def test_include_with_multiple_patterns_on_one_line(self, tmp_path):
         """Include can list multiple space-separated glob patterns."""
@@ -1067,18 +1002,15 @@ class TestEdgeCases:
         main = tmp_path / "config"
         main.write_text(f'Include "{spaced_conf}"\n')
 
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "spaced-host")
+        c = _by_id(_load(main), "spaced-host")
         assert c is not None, "Host from Include with quoted/spaced path should be loaded"
 
     def test_include_inside_host_block_does_not_crash(self, tmp_path):
         """
         An Include directive that appears inside a Host block is non-standard.
         resolve_ssh_config_files will resolve it (it processes all Include
-        lines regardless of context), and load_ssh_config skips it during
-        option parsing.  The outer host options around it must still be parsed.
+        lines regardless of context), and the loader skips it during option
+        parsing.  The outer host options around it must still be parsed.
         """
         extra = tmp_path / "extra.conf"
         extra.write_text("Host extra-host\n    HostName extra.example.com\n")
@@ -1089,14 +1021,12 @@ class TestEdgeCases:
             f"    Include {extra}\n"
             f"    Port 2222\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        outer = conn_by_nickname(cm, "outer-host")
+        loaded = _load(main)
+        outer = _by_id(loaded, "outer-host")
         assert outer is not None
-        assert outer.port == 2222
+        assert _field(outer, "port") == 2222
         # The extra host from the included file should also appear
-        extra_c = conn_by_nickname(cm, "extra-host")
+        extra_c = _by_id(loaded, "extra-host")
         assert extra_c is not None
 
     def test_x11_forwarding_yes_parsed(self, tmp_path):
@@ -1106,12 +1036,9 @@ class TestEdgeCases:
             "    HostName x11.example.com\n"
             "    ForwardX11 yes\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "x11host")
+        c = _by_id(_load(main), "x11host")
         assert c is not None
-        assert c.x11_forwarding is True
+        assert _field(c, "x11_forwarding") is True
 
     def test_requesttty_force_parsed(self, tmp_path):
         main = tmp_path / "config"
@@ -1120,15 +1047,11 @@ class TestEdgeCases:
             "    HostName tty.example.com\n"
             "    RequestTTY force\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "ttyhost")
+        c = _by_id(_load(main), "ttyhost")
         assert c is not None
         # The normalized token is preserved (force != yes in ssh semantics)
-        # and hydrated as a real attribute.
-        assert c.data.get("request_tty") == "force"
-        assert c.request_tty == "force"
+        # and hydrated as a real data field.
+        assert _field(c, "request_tty") == "force"
 
     def test_serveraliveinterval_stored_as_extra(self, tmp_path):
         """
@@ -1142,12 +1065,9 @@ class TestEdgeCases:
             "    HostName live.example.com\n"
             "    ServerAliveInterval 60\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "livehost")
+        c = _by_id(_load(main), "livehost")
         assert c is not None
-        extra = c.extra_ssh_config
+        extra = _field(c, "extra_ssh_config")
         # Keys are lowercased; the original casing is NOT preserved
         assert "serveraliveinterval" in extra.lower()
         assert "60" in extra
@@ -1159,13 +1079,10 @@ class TestEdgeCases:
             "    HostName pwd.example.com\n"
             "    PubkeyAuthentication no\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "pwdhost")
+        c = _by_id(_load(main), "pwdhost")
         assert c is not None
-        assert c.auth_method == 1  # password
-        assert c.pubkey_auth_no is True
+        assert _field(c, "auth_method") == 1  # password
+        assert _field(c, "pubkey_auth_no") is True
 
     def test_localforward_with_ipv6_bind_address(self, tmp_path):
         """LocalForward with an IPv6 bind address should not crash."""
@@ -1175,12 +1092,9 @@ class TestEdgeCases:
             "    HostName ipv6.example.com\n"
             "    LocalForward [::1]:8080 localhost:80\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "ipv6fwd")
+        c = _by_id(_load(main), "ipv6fwd")
         assert c is not None
-        local = [r for r in c.forwarding_rules if r["type"] == "local"]
+        local = [r for r in _field(c, "forwarding_rules") if r["type"] == "local"]
         assert len(local) == 1
         assert local[0]["listen_port"] == 8080
 
@@ -1195,13 +1109,14 @@ class TestEdgeCases:
             "    HostName bad.example.com\n"
             "    Port notanumber\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
         # Must not raise
         try:
-            cm.load_ssh_config()
+            loaded = _load(main)
         except (ValueError, TypeError) as exc:
             pytest.fail(f"Parser raised {type(exc).__name__} on invalid Port value: {exc}")
+        c = _by_id(loaded, "badport")
+        assert c is not None
+        assert _field(c, "port") == 22  # falls back to the default
 
     # -----------------------------------------------------------------------
     # ISSUE 8 – %d / % token expansion in IdentityFile
@@ -1222,13 +1137,11 @@ class TestEdgeCases:
             "    HostName pct.example.com\n"
             "    IdentityFile %d/.ssh/id_rsa\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "pct-key")
+        c = _by_id(_load(main), "pct-key")
         assert c is not None
-        assert "%d" not in c.keyfile, "%d must be expanded to the home directory"
-        assert c.keyfile == os.path.join(str(tmp_path), ".ssh", "id_rsa")
+        keyfile = _field(c, "keyfile")
+        assert "%d" not in keyfile, "%d must be expanded to the home directory"
+        assert keyfile == os.path.join(str(tmp_path), ".ssh", "id_rsa")
 
     def test_identityfile_runtime_token_left_intact(self, tmp_path):
         """
@@ -1241,12 +1154,9 @@ class TestEdgeCases:
             "    HostName rt.example.com\n"
             "    IdentityFile ~/.ssh/id_%h\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "rt-key")
+        c = _by_id(_load(main), "rt-key")
         assert c is not None
-        assert c.keyfile.endswith("/.ssh/id_%h")
+        assert _field(c, "keyfile").endswith("/.ssh/id_%h")
 
     # -----------------------------------------------------------------------
     # ISSUE 9 – `IdentityFile none` handled as "no identity files"
@@ -1264,15 +1174,12 @@ class TestEdgeCases:
             "    HostName nokey.example.com\n"
             "    IdentityFile none\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
-        c = conn_by_nickname(cm, "no-key")
+        c = _by_id(_load(main), "no-key")
         assert c is not None
-        assert c.keyfile != "none", "'none' must not be stored as a key path"
-        assert c.keyfile == ""
-        assert c.identity_files == []
-        assert c.identity_file_none is True
+        assert _field(c, "keyfile") != "none", "'none' must not be stored as a key path"
+        assert _field(c, "keyfile") == ""
+        assert _field(c, "identity_files") == []
+        assert _field(c, "identity_file_none") is True
 
     # -----------------------------------------------------------------------
     # ISSUE 10 – % token expansion in Include paths
@@ -1298,12 +1205,10 @@ class TestEdgeCases:
             "Host anchor\n"
             "    HostName anchor.example.com\n"
         )
-        cm = make_cm()
-        cm.ssh_config_path = str(main)
-        cm.load_ssh_config()
+        loaded = _load(main)
 
-        assert conn_by_nickname(cm, "anchor") is not None
-        assert conn_by_nickname(cm, "pct-host") is not None, (
+        assert _by_id(loaded, "anchor") is not None
+        assert _by_id(loaded, "pct-host") is not None, (
             "Include %d/... must expand %d to the home directory so the "
             "included hosts load"
         )

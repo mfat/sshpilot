@@ -163,7 +163,7 @@ def _load_file_manager_module(monkeypatch):
     sys.modules.pop("sshpilot.ssh_config_utils", None)
     monkeypatch.setitem(sys.modules, "sshpilot.ssh_config_utils", ssh_config_stub)
 
-    # AsyncSFTPManager._connect_impl lazily does ``from ..config import Config`` and,
+    # The daemon-backed file-manager path lazily does ``from ..config import Config`` and,
     # when that Config exposes ``get_file_manager_config``, prefers it over the
     # ``ssh_config`` passed to the manager — so the app's default
     # sftp_keepalive_interval/sftp_connect_timeout would shadow the per-test values.
@@ -181,9 +181,7 @@ def _load_file_manager_module(monkeypatch):
 
     # Force a fresh import of the file-manager chain so it binds the stubbed
     # gi above, regardless of what a prior test imported (full-suite order).
-    for mod in ("sshpilot.file_manager_window",
-                "sshpilot.file_manager.openssh_backend",
-                "sshpilot.file_manager"):
+    for mod in ("sshpilot.file_manager_window", "sshpilot.file_manager"):
         sys.modules.pop(mod, None)
     module = importlib.import_module("sshpilot.file_manager_window")
     module._fake_ssh_config = ssh_config_stub

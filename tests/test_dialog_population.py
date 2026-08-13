@@ -3,10 +3,12 @@ Tests that a parsed SSH config correctly populates the connection dialog and
 that nothing is dropped when writing back.
 
 Two layers:
-  * Data-layer tests (always run): the parser fills the *structured* connection
-    fields the dialog reads, and routes unaccounted-for directives into
-    ``extra_ssh_config`` (the dialog's Advanced section) — and never duplicates
-    a modelled directive there.
+  * Data-layer tests (always run): the daemon loader fills the *structured*
+    connection fields the dialog reads (``SshConfigStore.load()`` records),
+    and routes unaccounted-for directives into ``extra_ssh_config`` (the
+    dialog's Advanced section) — and never duplicates a modelled directive
+    there. Round-trip rendering is pinned against
+    ``ssh_config_formatter.format_ssh_config_entry``.
   * A real-libadwaita integration test (skipped where ``gi`` is stubbed by the
     suite) that drives the actual dialog: load populates the widgets + Advanced
     tab, and save returns the full set with nothing skipped.
@@ -18,15 +20,16 @@ import pytest
 
 asyncio.set_event_loop(asyncio.new_event_loop())
 
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.core.connections.ssh_config_store import SshConfigStore
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
 
-def make_cm(path):
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.connections = []
-    cm.rules = []
-    cm.ssh_config_path = str(path)
-    return cm
+def load_record(tmp_path):
+    cfg = tmp_path / "config"
+    cfg.write_text(RICH_HOST)
+    store = SshConfigStore(cfg)
+    config = store.load()
+    return next(r for r in config.connections if r.id == "rich")
 
 
 RICH_HOST = """\
@@ -55,36 +58,29 @@ Host rich
 
 
 class TestParserPopulatesDialogData:
-    def _conn(self, tmp_path):
-        cfg = tmp_path / "config"
-        cfg.write_text(RICH_HOST)
-        cm = make_cm(cfg)
-        cm.load_ssh_config()
-        return next(c for c in cm.connections if c.nickname == "rich")
-
     def test_structured_fields_populated(self, tmp_path):
-        c = self._conn(tmp_path)
-        assert c.hostname == "rich.example.com"
-        assert c.username == "alice"
-        assert c.port == 2222
+        d = load_record(tmp_path).data
+        assert d["hostname"] == "rich.example.com"
+        assert d["username"] == "alice"
+        assert d["port"] == 2222
         # multi-value lists
-        assert len(c.identity_files) == 2
-        assert any("id_ed25519" in f for f in c.identity_files)
-        assert any("work_rsa" in f for f in c.identity_files)
-        assert len(c.certificate_files) == 2
+        assert len(d["identity_files"]) == 2
+        assert any("id_ed25519" in f for f in d["identity_files"])
+        assert any("work_rsa" in f for f in d["identity_files"])
+        assert len(d["certificate_files"]) == 2
         # scalars / behaviours
-        assert c.forward_agent is True
-        assert c.proxy_jump == ["bastion1", "bastion2"]
-        assert c.x11_forwarding is True
-        assert any(r["type"] == "local" and r["listen_port"] == 8080 for r in c.forwarding_rules)
-        assert c.identity_agent == "~/.ssh/agent.sock"
-        assert c.add_keys_to_agent == "confirm"
-        assert c.pkcs11_provider == "/usr/lib/opensc-pkcs11.so"
-        assert c.security_key_provider == "/usr/lib/sk-libfido2.so"
+        assert d["forward_agent"] is True
+        assert d["proxy_jump"] == ["bastion1", "bastion2"]
+        assert d["x11_forwarding"] is True
+        assert any(r["type"] == "local" and r["listen_port"] == 8080
+                   for r in d["forwarding_rules"])
+        assert d["identity_agent"] == "~/.ssh/agent.sock"
+        assert d["add_keys_to_agent"] == "confirm"
+        assert d["pkcs11_provider"] == "/usr/lib/opensc-pkcs11.so"
+        assert d["security_key_provider"] == "/usr/lib/sk-libfido2.so"
 
     def test_unaccounted_directives_go_to_advanced(self, tmp_path):
-        c = self._conn(tmp_path)
-        extra = (c.extra_ssh_config or "").lower()
+        extra = (load_record(tmp_path).data.get("extra_ssh_config") or "").lower()
         # Directives the dialog has no dedicated widget for → Advanced section.
         assert "ciphers" in extra
         assert "compression" in extra
@@ -92,8 +88,7 @@ class TestParserPopulatesDialogData:
         assert "sendenv" in extra
 
     def test_modelled_directives_not_duplicated_in_advanced(self, tmp_path):
-        c = self._conn(tmp_path)
-        extra = (c.extra_ssh_config or "").lower()
+        extra = (load_record(tmp_path).data.get("extra_ssh_config") or "").lower()
         for modelled in (
             "identityfile", "certificatefile", "hostname", "port ", "user ",
             "proxyjump", "forwardagent", "forwardx11", "localforward",
@@ -105,7 +100,6 @@ class TestParserPopulatesDialogData:
 
 class TestWriteNothingSkipped:
     def test_full_roundtrip_writes_everything(self, tmp_path):
-        cm = make_cm(tmp_path / "config")
         data = {
             "nickname": "rich", "hostname": "rich.example.com", "username": "alice",
             "port": 2222, "auth_method": 0, "key_select_mode": 1,
@@ -128,7 +122,7 @@ class TestWriteNothingSkipped:
             "security_key_provider": "/usr/lib/sk-libfido2.so",
             "extra_ssh_config": "Ciphers aes256-gcm@openssh.com\nCompression yes",
         }
-        entry = cm.format_ssh_config_entry(data)
+        entry = format_ssh_config_entry(data)
 
         # multi-value: ALL identity files / certificates written (the old bug
         # wrote only the first IdentityFile).
@@ -148,7 +142,6 @@ class TestWriteNothingSkipped:
         assert "Compression yes" in entry
 
     def test_writes_nonstandard_certificate_names_and_quotes_spaces(self, tmp_path):
-        cm = make_cm(tmp_path / "config")
         key_one = tmp_path / "alpha key"
         key_two = tmp_path / "bravo"
         cert_one = tmp_path / "signed one.pub"
@@ -163,7 +156,7 @@ class TestWriteNothingSkipped:
             "certificate_files": [str(cert_one), str(cert_two)],
         }
 
-        entry = cm.format_ssh_config_entry(data)
+        entry = format_ssh_config_entry(data)
 
         assert f'IdentityFile "{key_one}"' in entry
         assert f'CertificateFile "{cert_one}"' in entry
@@ -171,7 +164,6 @@ class TestWriteNothingSkipped:
         assert entry.count("CertificateFile ") == 2
 
     def test_legacy_single_certificate_falls_back_to_certificate_files(self, tmp_path):
-        cm = make_cm(tmp_path / "config")
         cert = tmp_path / "legacy custom name.pub"
         data = {
             "nickname": "legacy-cert",
@@ -182,7 +174,7 @@ class TestWriteNothingSkipped:
             "certificate": str(cert),
         }
 
-        entry = cm.format_ssh_config_entry(data)
+        entry = format_ssh_config_entry(data)
 
         assert f'CertificateFile "{cert}"' in entry
         assert entry.count("CertificateFile ") == 1
@@ -196,41 +188,40 @@ class TestWriteNothingSkipped:
             "    IdentityFile ~/.ssh/k2\n"
             "    IdentityFile ~/.ssh/k3\n"
         )
-        cm = make_cm(cfg)
-        cm.load_ssh_config()
-        c = next(x for x in cm.connections if x.nickname == "k3")
-        assert len(c.identity_files) == 3
-        entry = cm.format_ssh_config_entry({
+        store = SshConfigStore(cfg)
+        record = next(r for r in store.load().connections if r.id == "k3")
+        assert len(record.data["identity_files"]) == 3
+        entry = format_ssh_config_entry({
             "nickname": "k3", "hostname": "k3.example.com", "auth_method": 0,
-            "key_select_mode": 2, "identity_files": c.identity_files,
+            "key_select_mode": 2, "identity_files": record.data["identity_files"],
         })
         assert entry.count("IdentityFile ") == 3
 
     def test_update_preserves_extra_certificatefiles_when_dialog_sends_primary_only(self, tmp_path):
-        from sshpilot.connection_manager import Connection
+        """The store's update path folds the unedited certificate list forward
+        when the save payload only carries the new primary certificate."""
+        cfg = tmp_path / "config"
+        cfg.write_text(
+            "Host cert-edit\n    HostName cert-edit.example.com\n"
+            "    IdentityFile /h/.ssh/id_ed25519\n"
+            "    CertificateFile /h/.ssh/old-primary.pub\n"
+            "    CertificateFile /h/.ssh/nonstandard-extra.pub\n"
+        )
+        store = SshConfigStore(cfg)
+        store.load()
+        store.update(
+            "cert-edit",
+            {
+                "nickname": "cert-edit",
+                "hostname": "cert-edit.example.com",
+                "certificate": "/h/.ssh/new primary.pub",
+                "keyfile": "/h/.ssh/id_ed25519",
+            },
+            expected_generation=0,
+        )
 
-        cm = make_cm(tmp_path / "config")
-        conn = Connection({
-            "nickname": "cert-edit",
-            "hostname": "cert-edit.example.com",
-            "auth_method": 0,
-            "key_select_mode": 2,
-            "keyfile": "/h/.ssh/id_ed25519",
-            "identity_files": ["/h/.ssh/id_ed25519"],
-            "certificate": "/h/.ssh/old-primary.pub",
-            "certificate_files": [
-                "/h/.ssh/old-primary.pub",
-                "/h/.ssh/nonstandard-extra.pub",
-            ],
-        })
-        payload = {
-            "certificate": "/h/.ssh/new primary.pub",
-            "keyfile": "/h/.ssh/id_ed25519",
-        }
-
-        cm._preserve_multivalue_on_update(conn, payload)
-
-        assert payload["certificate_files"] == [
+        fresh = next(r for r in store.load().connections if r.id == "cert-edit")
+        assert fresh.data["certificate_files"] == [
             "/h/.ssh/new primary.pub",
             "/h/.ssh/nonstandard-extra.pub",
         ]

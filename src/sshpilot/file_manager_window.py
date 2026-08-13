@@ -23,6 +23,7 @@ import os
 import pathlib
 import posixpath
 import shutil
+import types
 import weakref
 from concurrent.futures import Future, CancelledError
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -56,8 +57,6 @@ from .file_manager import (
     _HAS_ALERT_DIALOG,
     _load_first_doc_path,
     _load_grant_for_host,
-    _sftp_path_exists,
-    stat_isdir,
 )
 
 import logging
@@ -94,6 +93,10 @@ class FileManagerWindow(Adw.Window):
         connection: Any = None,
         connection_manager: Any = None,
         ssh_config: Optional[Dict[str, Any]] = None,
+        daemon_client: Any = None,
+        bridge: Any = None,
+        connection_id: Any = None,
+        config: Any = None,
     ) -> None:
         super().__init__(application=application, title="")
         # Register this window in the global registry for cleanup
@@ -105,6 +108,10 @@ class FileManagerWindow(Adw.Window):
         self._connection = connection
         self._connection_manager = connection_manager
         self._ssh_config = dict(ssh_config) if ssh_config else None
+        self._daemon_client = daemon_client
+        self._bridge = bridge
+        self._connection_id = connection_id
+        self.config = config
         # Set default and minimum sizes following GNOME HIG
         self.set_default_size(1000, 640)
         # Set minimum size to ensure usability (GNOME HIG recommends minimum 360px width)
@@ -122,6 +129,9 @@ class FileManagerWindow(Adw.Window):
         self._password_dialog_shown = False
         self._password_retry_count = 0
         self._max_password_retries = 3
+        self._is_disposed: bool = False
+        self._manager = None
+        self._manager_signal_handlers: list = []
 
         # Use ToolbarView like other Adw.Window instances
         # Container skeleton (ToolbarView/ToastOverlay/Paned) lives in the
@@ -325,13 +335,18 @@ class FileManagerWindow(Adw.Window):
         self._clipboard_operation: Optional[str] = None
 
 
-        # Prime the left (local) pane with local home directory initially
-        try:
-            local_home = os.path.expanduser("~")
-            self._load_local(local_home)
-            self._left_pane.push_history(local_home)
-        except Exception as exc:
-            self._left_pane.show_toast(f"Failed to load local home: {exc}")
+        # Schedule initial local home directory load on the idle loop so widget
+        # instantiation in __init__ returns immediately without blocking on disk I/O.
+        def _deferred_load_local():
+            try:
+                local_home = os.path.expanduser("~")
+                self._load_local(local_home)
+                self._left_pane.push_history(local_home)
+            except Exception as exc:
+                self._left_pane.show_toast(f"Failed to load local home: {exc}")
+            return False
+
+        GLib.idle_add(_deferred_load_local, priority=GLib.PRIORITY_LOW)
 
         # Connect pane signals
         for pane in (self._left_pane, self._right_pane):
@@ -374,10 +389,6 @@ class FileManagerWindow(Adw.Window):
         # Check for saved password before attempting connection
         # This matches the logic in _connect_impl to ensure we find passwords
         if not initial_password and connection_manager is not None:
-            lookup_user = username
-            if connection is not None:
-                lookup_user = getattr(connection, "username", None) or username
-
             # Try multiple host identifiers to match storage logic
             lookup_hosts = []
             if connection is not None:
@@ -395,35 +406,12 @@ class FileManagerWindow(Adw.Window):
             if not lookup_hosts:
                 lookup_hosts = [host]
 
-            if connection is not None:
-                try:
-                    retrieved = connection_manager.get_connection_password(connection)
-                    if retrieved:
-                        initial_password = retrieved
-                except Exception:
-                    pass
-            if initial_password is None:
-                for lookup_host in lookup_hosts:
-                    try:
-                        retrieved = connection_manager.get_password(lookup_host, lookup_user)
-                        if retrieved:
-                            logger.debug(
-                                "Built-in file manager: Found password for %s@%s using identifier '%s'",
-                                lookup_user,
-                                lookup_host,
-                                lookup_host,
-                            )
-                            initial_password = retrieved
-                            break
-                    except Exception as exc:
-                        logger.debug(
-                            "Built-in file manager: Password lookup failed for %s@%s (identifier '%s'): %s",
-                            lookup_user,
-                            lookup_host,
-                            lookup_host,
-                            exc,
-                        )
 
+        daemon_client = self._daemon_client
+        bridge = self._bridge
+        connection_id = self._connection_id
+        if connection_id is None and connection is not None:
+            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
         self._manager = create_file_manager_backend(
             host,
             username,
@@ -432,20 +420,30 @@ class FileManagerWindow(Adw.Window):
             connection=connection,
             connection_manager=connection_manager,
             ssh_config=self._ssh_config,
+            daemon_client=daemon_client,
+            bridge=bridge,
+            connection_id=connection_id,
+            parent_widget=self,
+            config=self.config,
         )
 
-        # Connect signals with error handling
+        # Connect signals with error handling & track handlers for disconnect on teardown
+        self._manager_signal_handlers = []
         try:
-            self._manager.connect("connected", self._on_connected)
-            self._manager.connect("connection-error", self._on_connection_error)
-            # Stale saved password → askpass autofills once and fails; re-prompt.
-            self._manager.connect(
-                "authentication-required", self._on_authentication_required
-            )
-            self._manager.connect("progress", self._on_progress)
-            self._manager.connect("operation-error", self._on_operation_error)
-            self._manager.connect("directory-loaded", self._on_directory_loaded)
-            self._manager.connect("directory-counts", self._on_directory_counts)
+            for signal_name, handler in [
+                ("connected", self._on_connected),
+                ("connection-error", self._on_connection_error),
+                ("authentication-required", self._on_authentication_required),
+                ("progress", self._on_progress),
+                ("operation-error", self._on_operation_error),
+                ("directory-loaded", self._on_directory_loaded),
+                ("directory-counts", self._on_directory_counts),
+            ]:
+                try:
+                    handler_id = self._manager.connect(signal_name, handler)
+                    self._manager_signal_handlers.append((signal_name, handler_id))
+                except Exception as exc:
+                    logger.exception("Failed to connect file-manager signal %s: %s", signal_name, exc)
         except Exception as exc:
             logger.exception("Error connecting signals: %s", exc)
 
@@ -459,7 +457,7 @@ class FileManagerWindow(Adw.Window):
         try:
             target = (str(self._nickname).strip() if self._nickname else '') or host
             self._right_pane.show_connecting(f"Connecting to {target}…")
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             pass
 
         # Headless SFTP worker + askpass (rides a live ControlMaster if any).
@@ -558,8 +556,18 @@ class FileManagerWindow(Adw.Window):
 
     def _teardown_backend(self) -> None:
         """Close the current SFTP backend and reset auth/error state."""
-        manager = self._manager
+        manager = getattr(self, "_manager", None)
+        if isinstance(manager, (types.FunctionType, types.MethodType)):
+            manager = None
+        handlers = getattr(self, "_manager_signal_handlers", None)
+        self._manager_signal_handlers = []
         self._manager = None
+        if manager is not None and isinstance(handlers, (list, tuple)):
+            for signal_name, handler_id in handlers:
+                try:
+                    manager.disconnect(handler_id)
+                except Exception:
+                    pass
         if manager is not None:
             try:
                 manager.close()
@@ -872,7 +880,7 @@ class FileManagerWindow(Adw.Window):
         if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
             try:
                 self._progress_dialog.close()
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
             finally:
@@ -884,7 +892,7 @@ class FileManagerWindow(Adw.Window):
         if hasattr(self, '_progress_dialog') and self._progress_dialog is not None:
             try:
                 self._progress_dialog.update_progress(fraction, message)
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 # Dialog might be destroyed or invalid, ignore
                 pass
 
@@ -901,8 +909,18 @@ class FileManagerWindow(Adw.Window):
             self._left_pane.set_visible(True)
             toggle_button.set_tooltip_text(_("Hide Local Pane"))
 
-    def _on_connected(self, *_args) -> None:
+    def _on_connected(self, sender=None, *_args) -> None:
         """Handle successful connection and load directories."""
+        if getattr(self, "_is_disposed", False):
+            logger.debug("Ignoring late connected event after file manager teardown")
+            return
+        manager = getattr(self, "_manager", None)
+        if manager is None or callable(manager):
+            logger.debug("Ignoring late connected event after file manager teardown")
+            return
+        if sender is not None and not callable(sender) and sender is not manager:
+            logger.debug("Ignoring late connected event from stale backend")
+            return
         self._password_retry_count = 0
         self._password_dialog_shown = False
         self._show_progress(0.4, "Connected")
@@ -912,14 +930,24 @@ class FileManagerWindow(Adw.Window):
             pass
         for pane, pending in self._pending_paths.items():
             if pending:
-                self._manager.listdir(pending)
+                manager.listdir(pending)
 
 
-    def _on_progress(self, _manager, fraction: float, message: str) -> None:
+    def _on_progress(self, sender, fraction: float, message: str) -> None:
+        manager = getattr(self, "_manager", None)
+        if sender is not None and sender is not manager:
+            return
         self._show_progress(fraction, message)
 
-    def _on_operation_error(self, _manager, message: str) -> None:
+    def _on_operation_error(self, sender, message: str) -> None:
         """Handle operation error with toast."""
+        manager = getattr(self, "_manager", None)
+        if getattr(self, "_is_disposed", False) or manager is None:
+            logger.debug("Ignoring late operation-error event after file manager teardown")
+            return
+        if sender is not None and sender is not manager:
+            return
+        logger.warning("File manager operation error: %s", message)
         # Cancel any pending loading toast timeouts since operation failed
         for pane, timeout_id in self._loading_toast_timeouts.items():
             if timeout_id is not None:
@@ -928,7 +956,7 @@ class FileManagerWindow(Adw.Window):
                 # Dismiss any loading toast that might be showing
                 try:
                     pane.dismiss_toasts()
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     pass
         
         # A pane with a pending path means this error came from a directory
@@ -940,9 +968,15 @@ class FileManagerWindow(Adw.Window):
         if target is not None:
             failed_path = self._pending_paths[target]
             self._pending_paths[target] = None
+            logger.debug(
+                "File manager directory load error on %s path=%r: %s",
+                "right" if target is getattr(self, "_right_pane", None) else "left",
+                failed_path,
+                message,
+            )
             try:
                 target.dismiss_toasts()
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 pass
             target.show_load_error(failed_path, message)
             return
@@ -955,12 +989,19 @@ class FileManagerWindow(Adw.Window):
             toast = Adw.Toast.new(message)
             toast.set_priority(Adw.ToastPriority.HIGH)
             self._toast_overlay.add_toast(toast)
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Overlay might be destroyed or invalid, ignore
             pass
 
-    def _on_connection_error(self, _manager, message: str) -> None:
+    def _on_connection_error(self, sender, message: str) -> None:
         """Handle connection / authentication failure with toast or alert."""
+        manager = getattr(self, "_manager", None)
+        if getattr(self, "_is_disposed", False) or manager is None:
+            logger.debug("Ignoring late connection-error event after file manager teardown")
+            return
+        if sender is not None and sender is not manager:
+            return
+        logger.warning("File manager connection error: %s", message)
         def show_error():
             try:
                 self._clear_progress_toast()
@@ -978,7 +1019,7 @@ class FileManagerWindow(Adw.Window):
                         self._loading_toast_timeouts[self._right_pane] = None
                     try:
                         self._right_pane.dismiss_toasts()
-                    except (AttributeError, RuntimeError, GLib.GError):
+                    except (AttributeError, RuntimeError, GLib.Error):
                         pass
                     self._right_pane.show_load_error(
                         self._pending_paths.get(self._right_pane),
@@ -988,7 +1029,7 @@ class FileManagerWindow(Adw.Window):
                     toast = Adw.Toast.new(message or "Connection failed")
                     toast.set_priority(Adw.ToastPriority.HIGH)
                     self._toast_overlay.add_toast(toast)
-            except (AttributeError, RuntimeError, GLib.GError, TypeError) as exc:
+            except (AttributeError, RuntimeError, GLib.Error, TypeError) as exc:
                 # Overlay might be destroyed or invalid, ignore
                 logger.debug(f"Error showing connection error toast: {exc}")
             return False  # Don't repeat
@@ -997,15 +1038,26 @@ class FileManagerWindow(Adw.Window):
 
     def _cleanup_manager(self) -> None:
         """Close the file manager backend and clear UI state."""
+        self._is_disposed = True
         manager = getattr(self, "_manager", None)
+        if isinstance(manager, (types.FunctionType, types.MethodType)):
+            manager = None
+        handlers = getattr(self, "_manager_signal_handlers", None)
+        if manager is not None and isinstance(handlers, (list, tuple)):
+            for signal_name, handler_id in handlers:
+                try:
+                    manager.disconnect(handler_id)
+                except Exception:
+                    pass
+            self._manager_signal_handlers = []
+
         if manager is not None:
+            self._manager = None
             try:
                 logger.info("Cleaning up file manager backend resources")
                 manager.close()
             except Exception as exc:
                 logger.error(f"Error closing file manager backend: {exc}", exc_info=True)
-            finally:
-                self._manager = None
         self._clear_progress_toast()
         try:
             _file_manager_windows_registry.discard(self)
@@ -1025,8 +1077,14 @@ class FileManagerWindow(Adw.Window):
         self._cleanup_manager()
 
     def _on_directory_loaded(
-        self, _manager, path: str, entries: Iterable[FileEntry]
+        self, sender, path: str, entries: Iterable[FileEntry]
     ) -> None:
+        manager = getattr(self, "_manager", None)
+        if getattr(self, "_is_disposed", False) or manager is None:
+            logger.debug("Ignoring late directory-loaded event after file manager teardown")
+            return
+        if sender is not None and sender is not manager:
+            return
         entries_list = list(entries)  # Convert to list for logging and reuse
         logger.debug(f"_on_directory_loaded: path={path}, entries_count={len(entries_list)}")
         
@@ -1071,7 +1129,7 @@ class FileManagerWindow(Adw.Window):
         try:
             target.dismiss_toasts()
             logger.debug(f"_on_directory_loaded: dismissed loading toasts for target pane")
-        except (AttributeError, RuntimeError, GLib.GError):
+        except (AttributeError, RuntimeError, GLib.Error):
             # Method might not exist or overlay might be destroyed, ignore
             pass
         
@@ -1080,16 +1138,19 @@ class FileManagerWindow(Adw.Window):
             try:
                 target.show_toast("Directory refreshed", timeout=2)
                 logger.debug(f"_on_directory_loaded: showed refresh success toast for {('remote' if target._is_remote else 'local')} pane")
-            except (AttributeError, RuntimeError, GLib.GError):
+            except (AttributeError, RuntimeError, GLib.Error):
                 pass
             finally:
                 self._refreshing_panes.discard(target)
         
         logger.debug(f"_on_directory_loaded: completed directory load for {path}")
 
-    def _on_directory_counts(self, _manager, path: str, counts) -> None:
+    def _on_directory_counts(self, sender, path: str, counts) -> None:
         """Background folder item-counts arrived; forward to whichever pane is
         currently showing this path (the pane also guards on its current path)."""
+        manager = getattr(self, "_manager", None)
+        if sender is not None and sender is not manager:
+            return
         for pane in (self._left_pane, self._right_pane):
             if pane is None:
                 continue
@@ -1152,7 +1213,7 @@ class FileManagerWindow(Adw.Window):
                 try:
                     self._left_pane.show_toast("Directory reloadeds", timeout=2)
                     logger.debug(f"_load_local: showed refresh success toast for local pane")
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     pass
                 finally:
                     self._refreshing_panes.discard(self._left_pane)
@@ -1221,7 +1282,7 @@ class FileManagerWindow(Adw.Window):
                     try:
                         pane.show_toast("Loading directory…", timeout=-1)
                         logger.debug(f"Showing loading toast for pane at path: {path}")
-                    except (AttributeError, RuntimeError, GLib.GError):
+                    except (AttributeError, RuntimeError, GLib.Error):
                         pass
                 self._loading_toast_timeouts[pane] = None
                 return False  # Don't repeat
@@ -1230,7 +1291,7 @@ class FileManagerWindow(Adw.Window):
             timeout_id = GLib.timeout_add(500, show_loading_toast)
             self._loading_toast_timeouts[pane] = timeout_id
             
-            self._manager.listdir(path)
+            manager.listdir(path)
 
     def _restore_flatpak_folder(self) -> bool:
         """Open the local pane on a granted folder after window init.
@@ -1323,6 +1384,8 @@ class FileManagerWindow(Adw.Window):
             dialog.set_close_response("cancel")
 
             def _on_conflict_response(_dialog, response: str) -> None:
+                from sshpilot.core.transfers import OverwritePolicy, ui_conflict_response_to_policy
+
                 dialog.close()
 
                 if response == "cancel":
@@ -1334,8 +1397,9 @@ class FileManagerWindow(Adw.Window):
                     if hasattr(self, '_right_pane') and self._right_pane:
                         self._right_pane.show_toast("Connection lost. Please reconnect and try again.")
                     return
-                
-                elif response == "skip":
+
+                policy = ui_conflict_response_to_policy(response)
+                if policy is OverwritePolicy.SKIP:
                     # Only transfer files that don't conflict
                     non_conflicting = [item for item in files_to_transfer if item not in conflicts]
                     if non_conflicting:
@@ -1346,7 +1410,7 @@ class FileManagerWindow(Adw.Window):
                             self._left_pane.show_toast(f"Skipped existing file: {filename}")
                         else:
                             self._left_pane.show_toast(f"Skipped {conflict_count} existing files")
-                elif response == "replace":
+                elif policy is OverwritePolicy.OVERWRITE:
                     # Transfer all files, replacing existing ones
                     callback(files_to_transfer)
 
@@ -2426,6 +2490,20 @@ class FileManagerWindow(Adw.Window):
         if errors:
             self._left_pane.show_toast(errors[0])
 
+    @staticmethod
+    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
+        """True when *destination_path* is the source or lives inside it."""
+        source_norm = posixpath.normpath(source_path)
+        dest_norm = posixpath.normpath(destination_path)
+        if source_norm in {"", ".", "/"}:
+            return False
+        if dest_norm == source_norm:
+            return True
+        source_prefix = source_norm.rstrip("/")
+        if not source_prefix:
+            return False
+        return dest_norm.startswith(f"{source_prefix}/")
+
     def _perform_remote_clipboard_operation(
         self,
         entries: List[FileEntry],
@@ -2466,22 +2544,12 @@ class FileManagerWindow(Adw.Window):
         total_files = len(work_items)
 
         for source_path, destination_path, entry, is_dir in work_items:
-
-            def _impl(
-                src=source_path,
-                dest=destination_path,
-                copy_is_dir=is_dir,
-            ):
-                sftp = getattr(manager, "_sftp", None)
-                if sftp is None:
-                    raise RuntimeError("SFTP session is not connected")
-                self._ensure_remote_directory(sftp, posixpath.dirname(dest))
-                if copy_is_dir:
-                    self._copy_remote_directory(sftp, src, dest)
-                else:
-                    self._copy_remote_file(sftp, src, dest)
-
-            future = manager._submit(_impl)
+            future = manager.copy_remote(
+                source_path,
+                destination_path,
+                recursive=is_dir,
+                move=move,
+            )
             self._show_progress_dialog(
                 operation,
                 entry.name,
@@ -2495,8 +2563,6 @@ class FileManagerWindow(Adw.Window):
                 refresh_remote=self._right_pane,
                 highlight_name=entry.name,
             )
-            if move:
-                self._schedule_remote_move_cleanup(future, source_path, self._right_pane)
 
         if skipped:
             self._right_pane.show_toast(skipped[0])
@@ -2566,12 +2632,22 @@ class FileManagerWindow(Adw.Window):
         the file already exists on disk/remote regardless of whether this opens."""
         try:
             is_local = pane is self._left_pane
+            daemon_file_service = None
+            if not is_local:
+                manager = getattr(self, "_manager", None)
+                make_service = getattr(manager, "make_file_editor_service", None) if manager else None
+                if make_service is not None:
+                    try:
+                        daemon_file_service = make_service(path)
+                    except Exception:
+                        logger.debug("Could not build daemon file editor service", exc_info=True)
             editor = RemoteFileEditorWindow(
                 parent=self,
                 file_path=path,
                 file_name=name,
                 is_local=is_local,
                 sftp_manager=None if is_local else getattr(self, "_manager", None),
+                daemon_file_service=daemon_file_service,
                 file_manager_window=self,
             )
             editor.present()
@@ -2618,71 +2694,6 @@ class FileManagerWindow(Adw.Window):
             self._attach_refresh(cleanup_future, refresh_remote=target_pane)
 
         future.add_done_callback(_cleanup)
-
-    @staticmethod
-    def _ensure_remote_directory(sftp: Any, path: str) -> None:
-        if not path:
-            return
-        components = []
-        while path and path not in {"/", ""}:
-            components.append(path)
-            path = posixpath.dirname(path)
-        for component in reversed(components):
-            try:
-                sftp.mkdir(component)
-            except OSError:
-                continue
-
-    @staticmethod
-    def _remote_path_exists(sftp: Any, path: str) -> bool:
-        return _sftp_path_exists(sftp, path)
-
-    @staticmethod
-    def _is_remote_descendant(source_path: str, destination_path: str) -> bool:
-        source_norm = posixpath.normpath(source_path)
-        dest_norm = posixpath.normpath(destination_path)
-        if source_norm in {"", ".", "/"}:
-            return False
-        if dest_norm == source_norm:
-            return True
-        source_prefix = source_norm.rstrip("/")
-        if not source_prefix:
-            return False
-        return dest_norm.startswith(f"{source_prefix}/")
-
-    def _copy_remote_file(
-        self, sftp: Any, source_path: str, destination_path: str
-    ) -> None:
-        if self._remote_path_exists(sftp, destination_path):
-            raise FileExistsError(f"{posixpath.basename(destination_path)} already exists")
-
-        with sftp.open(source_path, "rb") as src_file, sftp.open(destination_path, "wb") as dst_file:
-            while True:
-                chunk = src_file.read(32768)
-                if not chunk:
-                    break
-                dst_file.write(chunk)
-
-    def _copy_remote_directory(
-        self, sftp: Any, source_path: str, destination_path: str
-    ) -> None:
-        if self._is_remote_descendant(source_path, destination_path):
-            raise ValueError(
-                f"Cannot paste '{posixpath.basename(posixpath.normpath(source_path))}' into itself"
-            )
-        if self._remote_path_exists(sftp, destination_path):
-            raise FileExistsError(
-                f"{posixpath.basename(posixpath.normpath(destination_path))} already exists"
-            )
-        sftp.mkdir(destination_path)
-
-        for entry in sftp.listdir_attr(source_path):
-            child_source = posixpath.join(source_path, entry.filename)
-            child_destination = posixpath.join(destination_path, entry.filename)
-            if stat_isdir(entry):
-                self._copy_remote_directory(sftp, child_source, child_destination)
-            else:
-                self._copy_remote_file(sftp, child_source, child_destination)
 
     def _on_progress_dialog_closed(self, dialog) -> None:
         """Drop our reference when the user dismisses the progress dialog."""
@@ -2816,7 +2827,7 @@ class FileManagerWindow(Adw.Window):
                         self._progress_dialog.update_progress(overall_progress, message)
                     else:
                         self._progress_dialog.update_progress(progress, message)
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     # Dialog may have been destroyed mid-emit.
                     pass
 
@@ -2825,7 +2836,7 @@ class FileManagerWindow(Adw.Window):
                     return
                 try:
                     GLib.idle_add(self._progress_dialog.on_bytes, transferred, total)
-                except (AttributeError, RuntimeError, GLib.GError):
+                except (AttributeError, RuntimeError, GLib.Error):
                     pass
 
             self._progress_handler_id = self._manager.connect("progress", _on_progress)
@@ -2927,7 +2938,7 @@ class FileManagerWindow(Adw.Window):
                             except CancelledError:
                                 # Future was cancelled, ignore
                                 pass
-                    except (AttributeError, RuntimeError, GLib.GError):
+                    except (AttributeError, RuntimeError, GLib.Error):
                         # Dialog may have been destroyed
                         pass
                 
@@ -2988,6 +2999,16 @@ def launch_file_manager_window(
     if app is None:
         raise RuntimeError("An application instance is required to show the window")
 
+    daemon_client = getattr(parent, "client", None) if parent is not None else None
+    bridge = getattr(parent, "client_bridge", None) if parent is not None else None
+    parent_config = getattr(parent, "config", None) if parent is not None else None
+    connection_id = None
+    if connection is not None:
+        try:
+            connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+        except Exception:
+            connection_id = None
+
     window = FileManagerWindow(
         application=app,
         host=host,
@@ -2998,6 +3019,10 @@ def launch_file_manager_window(
         connection=connection,
         connection_manager=connection_manager,
         ssh_config=ssh_config,
+        daemon_client=daemon_client,
+        bridge=bridge,
+        connection_id=connection_id,
+        config=parent_config,
     )
     if parent is not None and transient_for_parent:
         window.set_transient_for(parent)

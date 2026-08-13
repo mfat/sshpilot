@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .ssh_config_document import HostBlock, _split_config_option, _split_keyword
 
+SSH_UUID_MARKER = "# sshpilot:ConnectionUUID"
+
 # Directives the app owns end-to-end: parsed into typed Connection fields and
 # re-emitted from data by format_ssh_config_entry. Anything else in a Host
 # block is "unknown" — surfaced through extra_ssh_config for editing and
@@ -49,13 +51,15 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
             return f"[{host}]"
         return host
 
-    host = data.get('hostname') or data.get('host', '')
+    host = data.get('hostname')
+    if host is None:
+        host = data.get('host', '')
     nickname = data.get('nickname') or host
     primary_token = _quote_token(nickname)
     lines = [f"Host {primary_token}"]
 
     # Add basic connection info
-    if host and host != nickname:
+    if host != '' and host != nickname:
         lines.append(f"    HostName {host}")
     # Omit User when empty: a bare "User" line is a fatal ssh_config parse
     # error that makes ssh reject the ENTIRE file, and ssh defaults to the
@@ -82,6 +86,8 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # ForwardAgent also accepts a socket path / $ENV per ssh_config(5).
         forward_target = str(data.get('forward_agent_target') or '').strip()
         lines.append(f"    ForwardAgent {forward_target or 'yes'}")
+    elif data.get('forward_agent_explicit_no'):
+        lines.append("    ForwardAgent no")
 
     # Add IdentityFile/IdentitiesOnly per selection when auth is key-based
     keyfile = data.get('keyfile') or data.get('private_key')
@@ -120,14 +126,19 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
 
             if key_select_mode == 1:
                 lines.append("    IdentitiesOnly yes")
+        elif data.get('identity_file_none'):
+            lines.append("    IdentityFile none")
 
-            # Add certificate(s) if specified (exclude placeholder text)
-            certificate_files = _clean_list(
-                data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
-                'select certificate',
-            )
-            for cert in certificate_files:
-                lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
+        if key_select_mode != 1 and data.get('identities_only_explicit_no'):
+            lines.append("    IdentitiesOnly no")
+
+        # Add certificate(s) if specified (exclude placeholder text)
+        certificate_files = _clean_list(
+            data.get('certificate_files') or ([data.get('certificate')] if data.get('certificate') else []),
+            'select certificate',
+        )
+        for cert in certificate_files:
+            lines.append(f"    CertificateFile {_quote_if_spaced(cert)}")
 
         # Agent / hardware key sources — valid in both automatic and
         # specific-key modes (the key may come from an agent socket, a
@@ -144,8 +155,29 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         sk_provider = (data.get('security_key_provider') or '').strip()
         if sk_provider:
             lines.append(f"    SecurityKeyProvider {_quote_if_spaced(sk_provider)}")
-        # Include password-based fallback if a password is provided
-        if data.get('password'):
+        # Include password-based fallback only when a password is provided.
+        # A stale PreferredAuthentications (e.g. ``keyboard-interactive,password``
+        # left over from a previous password-auth save) must never keep ssh
+        # asking for a password after the switch to key-based auth, so login
+        # password methods are stripped here in key mode unless the payload
+        # still carries an explicit password fallback.
+        pref_raw = data.get('preferred_authentications')
+        if isinstance(pref_raw, (list, tuple)):
+            pref_list = [str(p).strip() for p in pref_raw if str(p).strip()]
+        elif isinstance(pref_raw, str):
+            pref_list = [p.strip() for p in pref_raw.split(',') if p.strip()]
+        else:
+            pref_list = []
+        if pref_list:
+            if not data.get('password'):
+                pref_list = [
+                    method for method in pref_list
+                    if method.lower() not in ('password', 'keyboard-interactive')
+                ]
+            custom_pref = ",".join(pref_list)
+            if custom_pref:
+                lines.append(f"    PreferredAuthentications {custom_pref}")
+        elif data.get('password'):
             lines.append(
                 "    PreferredAuthentications gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
             )
@@ -153,15 +185,25 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
         # Password-based authentication. Include keyboard-interactive so
         # PAM/2FA hosts (which often disable the raw "password" method)
         # still negotiate; order prefers kbd-int first.
-        lines.append(
-            "    PreferredAuthentications keyboard-interactive,password"
-        )
+        pref_raw = data.get('preferred_authentications')
+        if isinstance(pref_raw, (list, tuple)):
+            custom_pref = ",".join(str(p).strip() for p in pref_raw if str(p).strip())
+        else:
+            custom_pref = (pref_raw or '').strip()
+        if custom_pref:
+            lines.append(f"    PreferredAuthentications {custom_pref}")
+        else:
+            lines.append(
+                "    PreferredAuthentications keyboard-interactive,password"
+            )
         if data.get('pubkey_auth_no'):
             lines.append("    PubkeyAuthentication no")
 
     # Add X11 forwarding if enabled
     if data.get('x11_forwarding', False):
         lines.append("    ForwardX11 yes")
+    elif data.get('x11_forwarding_explicit_no'):
+        lines.append("    ForwardX11 no")
 
     # Add PreCommand (sshpilot-specific, stored as a comment)
     pre_cmd = (data.get('pre_command') or '').strip()
@@ -184,16 +226,13 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     else:
         tty_token = ''
 
-    # Add RemoteCommand and RequestTTY if specified (ensure shell stays active)
+    # Preserve RemoteCommand without inventing TTY policy. RequestTTY changes
+    # command semantics and is emitted only when the user authored it.
     remote_cmd = (data.get('remote_command') or '').strip()
     if remote_cmd:
-        # Ensure we keep an interactive shell after the command
-        remote_cmd_aug = remote_cmd if 'exec $SHELL' in remote_cmd else f"{remote_cmd} ; exec $SHELL -l"
-        # Write RemoteCommand first, then RequestTTY (order for readability).
-        # The interactive shell needs a TTY, so default to yes — but an
-        # explicitly authored token still wins.
-        lines.append(f"    RemoteCommand {remote_cmd_aug}")
-        lines.append(f"    RequestTTY {tty_token or 'yes'}")
+        lines.append(f"    RemoteCommand {remote_cmd}")
+        if tty_token:
+            lines.append(f"    RequestTTY {tty_token}")
     elif tty_token:
         lines.append(f"    RequestTTY {tty_token}")
 
@@ -287,8 +326,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
     header, managed_body = formatted[0] + '\n', [ln + '\n' for ln in formatted[1:]]
 
     has_extra_key = 'extra_ssh_config' in new_data
-    # (normalized (key, value), authored line) — match on the former, emit
-    # the latter so casing/spelling is never rewritten.
     remaining_extras: List[Tuple[Tuple[str, str], str]] = []
     for line in str(new_data.get('extra_ssh_config') or '').splitlines():
         stripped_extra = line.strip()
@@ -306,9 +343,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
             managed_inserted = True
 
     for raw in old_block.lines[1:]:
-        # A block that was the file's last, with no trailing newline, has a
-        # final raw line missing its '\n'. Managed/extra lines get appended
-        # after it, so without this it glues onto (and corrupts) that line.
         if raw and not raw.endswith('\n'):
             raw += '\n'
         stripped = raw.strip()
@@ -318,6 +352,9 @@ def merged_block_lines(old_block: Optional[HostBlock],
         if stripped.startswith('#'):
             if stripped.startswith('# sshpilot:PreCommand '):
                 _insert_managed()  # re-emitted from data
+            elif stripped.startswith(SSH_UUID_MARKER):
+                # Ignore legacy ConnectionUUID comments safely on edit (do not re-emit)
+                continue
             else:
                 out_body.append(raw)
             continue
@@ -325,8 +362,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
         if key in MANAGED_HOST_OPTIONS:
             _insert_managed()
             continue
-        # Unknown directive: keep the authored line when the payload still
-        # carries it (or carries no extras at all).
         if not has_extra_key:
             out_body.append(raw)
             continue
@@ -336,7 +371,6 @@ def merged_block_lines(old_block: Optional[HostBlock],
         if match is not None:
             remaining_extras.remove(match)
             out_body.append(raw)
-        # else: removed in the editor — drop it
 
     _insert_managed()
     out_body.extend(f"    {authored}\n" for _entry, authored in remaining_extras)

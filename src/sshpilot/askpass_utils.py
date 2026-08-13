@@ -19,6 +19,7 @@ from .secret_storage import (
     normalize_key_path_for_storage as _normalize_key_path_for_storage,
     key_path_lookup_candidates as _get_key_path_lookup_candidates,
 )
+from .logging_support import sanitize_log_text
 
 # libsecret / keyring are imported lazily (and only for a diagnostic log line
 # here) — the real passphrase lookups delegate to secret_storage. Keeping these
@@ -79,7 +80,6 @@ _ASKPASS_LOG_IO_LOCK = threading.Lock()
 
 def _extract_key_path(prompt: str) -> str:
     """Extract key path from an SSH passphrase prompt string."""
-    import re
     patterns = [
         r'passphrase.*for\s+key\s+["\']([^"\']*)["\']',
         r'passphrase.*for\s+["\']([^"\']*)["\']',
@@ -97,39 +97,9 @@ def _extract_key_path(prompt: str) -> str:
     return ""
 
 
-# Prompt classification for askpass (password vs passphrase vs OTP vs presence).
-# Only the last non-empty line is matched so scrollback like
-# "Permission denied (publickey,password)." cannot false-positive.
-#
-# OpenSSH FIDO presence usually goes to the TTY via notify_start() when stderr
-# is a tty — askpass is only used with SSH_ASKPASS_PROMPT=none (no tty / agent).
-_PRESENCE_MARKERS = (
-    'confirm user presence',
-    'tap your security key',
-    'tap secure token',
-    'touch your yubikey',
-    'touch your security key',
-    'touch your authenticator',
-    'touch the authenticator',
-)
-_HOSTKEY_MARKERS = (
-    '(yes/no',
-    'continue connecting',
-    "please type 'yes'",
-)
-# Word-boundary match: bare substrings would misfire on hostnames/usernames
-# ("user@alpine's password:" contains 'pin', "scotp1" contains 'otp').
-#
-# OTP/MFA markers shared with the "…password" exemption below so prompts like
-# "one time password" / "TOTP password" are never treated as login passwords
-# (which would autofill the stored SSH password into an MFA challenge).
-_OTP_MFA_MARKER_RE = re.compile(
-    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|one[-\s]?time)\b'
-)
-_TYPED_INTERACTIVE_RE = re.compile(
-    r'\b(?:pin|otp|totp|mfa|2fa|two[-\s]?factor|'
-    r'verification code|one[-\s]?time|authentication code)\b'
-)
+# Prompt classification lives in ``sshpilot.core.interaction``. Historical
+# marker constants below are retained only as documentation of the prior
+# inline implementation; ``classify_prompt`` delegates to core.
 
 
 def classify_prompt(text: str) -> "str | None":
@@ -139,33 +109,14 @@ def classify_prompt(text: str) -> "str | None":
     no typed secret), ``'hostkey'`` (yes/no host-key confirmation),
     ``'interactive'`` (OTP/PIN — a typed secret), or ``None`` when the text
     does not look like a prompt.
+
+    Delegates to :func:`sshpilot.core.interaction.classify_prompt` (GTK-free
+    policy). Compatibility shim — prefer importing from ``sshpilot.core.interaction``.
     """
-    lines = [line.strip() for line in (text or '').splitlines() if line.strip()]
-    if not lines:
-        return None
-    last = lines[-1].lower()
-    if any(marker in last for marker in _PRESENCE_MARKERS):
-        return 'presence'
-    if any(marker in last for marker in _HOSTKEY_MARKERS):
-        return 'hostkey'
-    # PIN / OTP may omit a trailing colon ("Enter PIN for authenticator").
-    if _TYPED_INTERACTIVE_RE.search(last) and (
-            last.endswith(':') or last.startswith('enter ') or ' for ' in last):
-        if 'passphrase' in last:
-            return 'passphrase'
-        # "…'s password:" for a host that legitimately contains an OTP/PIN
-        # word is still a login password — but "one-time password",
-        # "one time password", "TOTP password", etc. are MFA challenges.
-        if 'password' in last and not _OTP_MFA_MARKER_RE.search(last):
-            return 'password'
-        return 'interactive'
-    if last.endswith(':'):
-        if 'passphrase' in last:
-            return 'passphrase'
-        # "Password:" but also PAM's "Password for user@host:".
-        if 'password' in last:
-            return 'password'
-    return None
+    from sshpilot.core.interaction import classify_prompt as _core_classify
+
+    kind = _core_classify(text)
+    return kind.value if kind is not None else None
 
 
 # One-shot in-memory passwords for the askpass helper (main process only).
@@ -323,6 +274,23 @@ def get_askpass_log_path() -> str:
     return _ASKPASS_LOG_PATH
 
 
+def append_askpass_log(message: str) -> None:
+    """Append one line to the shared askpass log (GTK-free).
+
+    Used by the classic askpass helper and the daemon interaction broker so the
+    Help → Log Viewer Askpass category and the in-app log forwarder see the
+    same trail. Never write secrets here.
+    """
+
+    try:
+        safe_message = sanitize_log_text(message)
+        with _ASKPASS_LOG_IO_LOCK:
+            with open(get_askpass_log_path(), "a", encoding="utf-8") as handle:
+                handle.write(f"{safe_message}\n")
+    except Exception:
+        pass
+
+
 def read_new_askpass_log_lines(include_existing: bool = False) -> List[str]:
     """Read newly appended askpass log lines.
 
@@ -379,7 +347,10 @@ def forward_askpass_log_to_logger(log, include_existing: bool = False) -> None:
         return
 
     for line in lines:
-        log.info(f"ASKPASS: {line}")
+        # Broker/helper call sites historically include this label. Keep one
+        # stable prefix in the file and when forwarding, never duplicate it.
+        display = line if line.startswith("ASKPASS:") else f"ASKPASS: {line}"
+        log.info("%s", sanitize_log_text(display))
 
 
 def _askpass_log_forwarder_loop() -> None:
@@ -1157,14 +1128,8 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     or prompts for OTP/PIN. Returns the secret (or ``\"\"`` / ``\"yes\"`` for
     notify/confirm), or None on cancel/failure.
     """
-    log_path = get_askpass_log_path()
-
     def _log(msg: str) -> None:
-        try:
-            with open(log_path, "a") as f:
-                f.write(f"{msg}\n")
-        except Exception:
-            pass
+        append_askpass_log(msg)
 
     _log(
         f"ASKPASS: keyring {'available' if _keyring_available() else 'unavailable'}, "
@@ -1173,10 +1138,34 @@ def handle_askpass_cli(prompt: str) -> "str | None":
     hint = (os.environ.get("SSH_ASKPASS_PROMPT") or "").strip().lower()
     _log(f"ASKPASS called with prompt: {prompt!r} hint={hint!r}")
 
+    # Core interaction policy drives classification / headless refusal.
+    from sshpilot.core.interaction import (
+        PromptKind,
+        build_request_from_prompt,
+        decide_headless,
+    )
+
+    interaction_request = build_request_from_prompt(
+        prompt,
+        hostname=(os.environ.get("SSHPILOT_PASSWORD_HOSTS") or "").split(",")[0].strip(),
+        username=(os.environ.get("SSHPILOT_PASSWORD_USER") or "").strip(),
+        ssh_askpass_prompt=hint,
+    )
+    if (os.environ.get("SSHPILOT_ASKPASS_NO_UI") or "").strip() == "1":
+        response = decide_headless(interaction_request)
+        if response.secret:
+            return response.secret
+        _log(f"ASKPASS: NO_UI policy → {response.outcome.value}")
+        return None
+
     # Background/passive spawns (e.g. the autocomplete history fetch) set
     # AUTOFILL_ONLY: answer silently from stored secrets, never show UI.
     if (os.environ.get("SSHPILOT_ASKPASS_AUTOFILL_ONLY") or "").strip() == "1":
-        only_kind = classify_prompt(prompt)
+        only_kind = (
+            interaction_request.kind.value
+            if interaction_request.kind is not PromptKind.UNKNOWN
+            else classify_prompt(prompt)
+        )
         lowered = prompt.lower()
         if _looks_like_login_password(prompt, only_kind):
             value = _resolve_askpass_password(_log)
@@ -1207,7 +1196,11 @@ def handle_askpass_cli(prompt: str) -> "str | None":
         _log("ASKPASS: SSH_ASKPASS_PROMPT=confirm (yes/no)")
         return _handle_confirm_prompt(prompt, _log)
 
-    kind = classify_prompt(prompt)
+    kind = (
+        interaction_request.kind.value
+        if interaction_request.kind is not PromptKind.UNKNOWN
+        else classify_prompt(prompt)
+    )
     if kind == 'presence':
         _log("ASKPASS: presence prompt (classifier); reminder UI")
         return _handle_presence_prompt(prompt, _log)
@@ -1539,6 +1532,7 @@ def get_ssh_env_with_askpass(
     password_user: "str | None" = None,
     password_hosts: "List[str] | None" = None,
     session_password: "str | None" = None,
+    session_passphrase: "str | None" = None,
 ) -> dict:
     """Get SSH environment with askpass for passphrase and/or password handling.
 
@@ -1586,6 +1580,11 @@ def get_ssh_env_with_askpass(
     env.pop("SSHPILOT_SESSION_PASSWORD_FILE", None)
     if session_password:
         env.update(stage_session_password(session_password))
+    env.pop("SSHPILOT_SESSION_PASSPHRASE_FILE", None)
+    if session_passphrase:
+        path = _stage_session_password_file(session_passphrase)
+        if path:
+            env["SSHPILOT_SESSION_PASSPHRASE_FILE"] = path
     return env
 
 def get_ssh_env_with_askpass_for_password(host: str, username: str) -> dict:
@@ -1692,4 +1691,3 @@ def get_scp_ssh_options() -> list:
         "-o", "KbdInteractiveAuthentication=no",
         "-o", "IdentitiesOnly=yes",
     ]
-

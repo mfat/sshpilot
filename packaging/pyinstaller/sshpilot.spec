@@ -166,6 +166,10 @@ if gi_site_packages.exists():
 
 hiddenimports = collect_submodules("gi")
 hiddenimports += ["gi._gi_cairo", "gi.repository.cairo", "cairo"]
+# The single frozen executable also dispatches the GTK-free daemon entrypoint
+# via ``--daemon`` from run.py. Keep that branch and its static imports in the
+# bundle even though normal application startup does not execute it.
+hiddenimports += ["sshpilot.daemon.cli"]
 # Force the stock PyInstaller GI hooks to run (hook-gi.repository.GtkSource
 # from pyinstaller#3893, etc.). GtkSource is imported behind try/except in app
 # code, so analysis may miss it without an explicit hiddenimport. The hook

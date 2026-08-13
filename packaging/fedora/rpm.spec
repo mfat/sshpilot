@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.7.2}
+Version:        %{?version}%{!?version:5.8.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -76,7 +76,7 @@ an alternative to Putty, Termius and Mobaxterm.
 
 # Meson installs the launcher, the Python package, the compiled GResource, the
 # desktop entry and AppStream metainfo (merged from the .in templates), the icon
-# and sshpilot-agent. Nothing is replayed by hand here.
+# and sshpilot-agent / sshpilot-daemon. Nothing is replayed by hand here.
 %build
 # Keep the payload out of %%{python3_sitelib}. That path carries the Python minor
 # version (…/python3.14/site-packages), so a noarch RPM built once and installed
@@ -132,6 +132,7 @@ an alternative to Putty, Termius and Mobaxterm.
 %doc README*
 %{_bindir}/sshpilot
 %{_bindir}/sshpilot-agent
+%{_bindir}/sshpilot-daemon
 %{_datadir}/%{name}/
 %{_datadir}/io.github.mfat.sshpilot/
 %{_datadir}/applications/io.github.mfat.sshpilot.desktop
@@ -143,6 +144,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Aug 13 2026 mFat <newmfat@gmail.com> - 5.8.0-1
+- Migrated the code base to a new daemon-based system
+- Introducing SSH Pilot API
+
 * Sat Jul 25 2026 mFat <newmfat@gmail.com> - 5.7.2-1
 - Introducing Omnisearch—a powerful, versatile pop-up search box accessible from anywhere by double-pressing the Shift key
 - Added a minimal sidebar mode that uses a narrow, icon-only strip to free up horizontal screen space

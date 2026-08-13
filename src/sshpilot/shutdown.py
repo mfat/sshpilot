@@ -86,7 +86,7 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
                 if hasattr(terminal, "is_connected") and not terminal.is_connected:
                     logger.debug("Terminal not connected; skipped disconnect")
                 else:
-                    _disconnect_terminal_safely(terminal)
+                    _disconnect_terminal_safely(terminal, window)
             finally:
                 _update_cleanup_progress(window, index, window._cleanup_total)
                 window._cleanup_index += 1
@@ -109,9 +109,17 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
             except Exception as e:
                 logger.debug(f"Final SSH cleanup failed: {e}")
             try:
-                # Drop any cached session-backend unlock token (e.g. BW_SESSION).
-                from .secret_storage import get_secret_manager
-                get_secret_manager().lock_all()
+                # Ask the daemon to drop any cached session-backend unlock token
+                # (e.g. BW_SESSION). The daemon owns the secret backends.
+                controller = getattr(window, 'secrets_controller', None)
+                if controller is not None:
+                    controller.lock()
+                else:
+                    client = getattr(window, 'client', None)
+                    if client is not None:
+                        from .api.capabilities import Capability
+                        if client.get_capabilities().supports(Capability.SECRETS_OPERATE):
+                            client.lock_secrets()
             except Exception as e:
                 logger.debug(f"Secret session lock on shutdown failed: {e}")
             window.active_terminals.clear()
@@ -248,10 +256,14 @@ def hide_reconnecting_message(window):
         logger.debug(f"Failed to hide reconnecting message: {e}")
 
 
-def _disconnect_terminal_safely(terminal):
+def _disconnect_terminal_safely(terminal, window=None):
     """Safely disconnect a terminal."""
 
     try:
+        if window is not None:
+            override = getattr(window, "_daemon_quit_close_policy", None)
+            if override is not None:
+                terminal._daemon_quit_close_policy = override
         if hasattr(terminal, "disconnect"):
             terminal.disconnect()
         elif hasattr(terminal, "close_connection"):

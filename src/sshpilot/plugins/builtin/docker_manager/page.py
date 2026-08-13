@@ -104,7 +104,6 @@ class DockerConsolePage(
         self._initial_host = initial_host
         self._initial_loaded = False
         # Nickname whose SSH ControlMaster we're currently keeping warm (if any).
-        self._mux_nick: Optional[str] = None
         self._selected_nick: Optional[str] = None
         # Auto-refresh paused (session-only) and container ids with an in-flight
         # lifecycle op (double-fire guard).
@@ -810,49 +809,9 @@ class DockerConsolePage(
             self._sudo_passwords.pop(nick, None)
             self._refresh_visible()
 
-    # --- SSH multiplexing (ControlMaster) ------------------------------
-    def _multiplex_enabled(self) -> bool:
-        # On by default — reuse one SSH connection for the chatty Docker polling.
-        return bool(self.ctx.settings.get("controlmaster", True))
-
-    def _acquire_multiplex(self, nick: Optional[str]) -> None:
-        """Keep a master warm for ``nick`` (idempotent per held nick)."""
-        if self._is_local(nick):
-            self._release_multiplex()
-            return
-        if not nick or not self._multiplex_enabled():
-            return
-        if self._mux_nick == nick:
-            return
-        self._release_multiplex()  # drop any previously-held host first
-        try:
-            self.ctx.acquire_multiplex(nick)
-            self._mux_nick = nick
-        except Exception:  # noqa: BLE001 — older core without the API; just skip
-            self._mux_nick = None
-
-    def _release_multiplex(self) -> None:
-        if not self._mux_nick:
-            return
-        try:
-            self.ctx.release_multiplex(self._mux_nick)
-        except Exception:  # noqa: BLE001
-            pass
-        self._mux_nick = None
-
-    def _set_multiplex_enabled(self, enabled: bool) -> None:
-        self.ctx.settings.set("controlmaster", bool(enabled))
-        if enabled:
-            self._acquire_multiplex(self._current_nickname())
-        else:
-            self._release_multiplex()
-        self._refresh_visible()
-
     def _open_settings(self) -> None:
         DockerConsoleSettingsDialog(
             self._window(),
-            reuse_ssh=self._multiplex_enabled(),
-            on_reuse_ssh_changed=self._set_multiplex_enabled,
             refresh_interval=self._refresh_interval(),
             on_refresh_interval_changed=self._on_refresh_interval_changed,
             log_tail=self._log_tail_setting(),
@@ -983,9 +942,6 @@ class DockerConsolePage(
         if not self._ensure_ssh_password(nick):
             self._show_ssh_auth_required()
             return
-        # Move the warm SSH master to the newly selected host.
-        self._acquire_multiplex(nick)
-
         load_gen = self._load_gen
 
         # Fresh status feed for this host; the first real stage is the SSH
@@ -1234,8 +1190,6 @@ class DockerConsolePage(
     # auto-refresh lifecycle
     # ================================================================
     def _on_map(self, *_a) -> None:
-        # Keep an SSH master warm for this host while the page is visible.
-        self._acquire_multiplex(self._current_nickname())
         # Do the full host load (runtime/sudo probe → pulse → refresh) exactly
         # once, on first map — the single load both open paths rely on. Later
         # maps just refresh the visible view.
@@ -1256,8 +1210,6 @@ class DockerConsolePage(
             self._refresh_source = None
         for img in self._pulse_widgets:
             self._pulse_stop(img)
-        # Let the master expire once the page is no longer shown.
-        self._release_multiplex()
 
     def _tick(self) -> bool:
         if self._is_shutting_down():

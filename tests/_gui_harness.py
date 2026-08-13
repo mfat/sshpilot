@@ -72,7 +72,7 @@ class GuiApp:
         self._saved_threadhook = None
 
     # -- lifecycle ---------------------------------------------------------
-    def boot(self):
+    def boot(self, application_id: str | None = None):
         Gio = self.Gio
         # The app installs process-wide exception hooks; remember the originals
         # so teardown can restore them for the rest of the (non-GUI) suite.
@@ -81,7 +81,12 @@ class GuiApp:
 
         from sshpilot.main import SshPilotApplication
 
-        self.app = SshPilotApplication(isolated=True)
+        # Unique application_id must be set at construction — set_application_id
+        # after Adw.Application.__init__ does not always rebind the D-Bus path.
+        self.app = SshPilotApplication(
+            isolated=True,
+            application_id=application_id or 'io.github.mfat.sshpilot',
+        )
         # NON_UNIQUE: don't hijack a running sshpilot over D-Bus and don't trip
         # single-instance behaviour inside the test process.
         self.app.set_flags(self.app.get_flags() | Gio.ApplicationFlags.NON_UNIQUE)
@@ -103,6 +108,7 @@ class GuiApp:
             tid = getattr(self.app, '_gc_timer_id', None)
             if tid:
                 self.GLib.source_remove(tid)
+                self.app._gc_timer_id = None
         except Exception:
             pass
         gc.enable()
@@ -116,6 +122,26 @@ class GuiApp:
             self.pump(200)
         except Exception:
             pass
+        # Fully quit so D-Bus exports are released before a second instance boots.
+        try:
+            if self.app is not None:
+                self.app.quit()
+                self.pump(300)
+        except Exception:
+            pass
+        try:
+            if self.app is not None:
+                # Hold a strong ref until unref; clear window first.
+                self.window = None
+                app = self.app
+                self.app = None
+                # Drop last Python refs; Gio releases the exported object.
+                del app
+                gc.collect()
+                self.pump(200)
+        except Exception:
+            self.app = None
+            self.window = None
 
     # -- main loop ---------------------------------------------------------
     def pump(self, ms=300):
@@ -170,6 +196,25 @@ class GuiApp:
     def reset(self):
         """Close all user tabs so each test starts from a clean window."""
         win = self.window
+        # Dismiss omni-search so content is re-docked into the welcome home
+        # bin; otherwise a prior test can leave home empty and flake later.
+        try:
+            omni = getattr(win, '_omni_search', None)
+            if omni is not None:
+                omni.dismiss(clear=True)
+        except Exception:
+            pass
+        # Leave Settings and close hosted Adw dialogs so a prior test cannot
+        # leak NavigationPage state or an AlertDialog into the next one.
+        try:
+            if hasattr(win, 'is_preferences_visible') and win.is_preferences_visible():
+                win.leave_preferences()
+        except Exception:
+            pass
+        try:
+            self._close_hosted_dialogs()
+        except Exception:
+            pass
         win._suppress_close_confirmation = True
         try:
             for p in list(win.tab_view.get_pages()):
@@ -180,7 +225,37 @@ class GuiApp:
                         pass
         finally:
             win._suppress_close_confirmation = False
+        try:
+            if hasattr(win, 'show_start_tab'):
+                win.show_start_tab()
+        except Exception:
+            pass
         self.pump(300)
+
+    def _close_hosted_dialogs(self):
+        """Force-close any mapped ``Adw.Dialog`` still hosted on the main window."""
+        Adw = self.Adw
+        win = self.window
+        if win is None:
+            return
+
+        def walk(widget):
+            yield widget
+            child = widget.get_first_child()
+            while child is not None:
+                yield from walk(child)
+                child = child.get_next_sibling()
+
+        for widget in list(walk(win)):
+            if isinstance(widget, Adw.Dialog) and widget.get_mapped():
+                try:
+                    widget.force_close()
+                except Exception:
+                    try:
+                        widget.close()
+                    except Exception:
+                        pass
+        self.pump(100)
 
 
 # The pytest fixtures (`gui`, `_gui_app_session`) live in tests/conftest.py, not

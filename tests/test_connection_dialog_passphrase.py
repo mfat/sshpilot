@@ -248,19 +248,18 @@ def test_filelisteditor_defers_passphrase_when_unlocked(monkeypatch):
 
 def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
-    import sshpilot.secret_storage as ss
     import sshpilot.secret_unlock_dialog as unlock_dialog
 
     calls = []
 
-    class Manager(DummyConnectionManager):
-        def store_connection_password(self, connection, password, username=None,
-                                      previous_connection=None):
-            calls.append(('password', connection['hostname'], username, password))
+    class Client:
+        def store_connection_password(self, request):
+            calls.append(('password', request.password))
             return True
 
+    class KeyManager:
         def store_key_passphrase(self, key_path, value):
-            calls.append((key_path, value))
+            calls.append((key_path, bytes(value)))
             return True
 
     class Spinner:
@@ -273,11 +272,6 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
         unlock_dialog,
         '_spinner_dialog',
         lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
-    )
-    monkeypatch.setattr(
-        ss.get_secret_manager(),
-        'selected_backend',
-        lambda: types.SimpleNamespace(name='bitwarden'),
     )
     monkeypatch.setattr(
         dialog_module.GLib,
@@ -298,16 +292,27 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     monkeypatch.setattr(dialog_module.threading, 'Thread', DeferredThread)
 
     dialog = ConnectionDialog.__new__(ConnectionDialog)
-    dialog.connection_manager = Manager()
+    dialog.parent_window = types.SimpleNamespace(
+        client=Client(),
+        client_bridge=object(),
+        key_manager=KeyManager(),
+        secrets_controller=types.SimpleNamespace(
+            load_state=lambda: types.SimpleNamespace(
+                selected_backend='bitwarden', needs_unlock=False, login_required=False
+            )
+        ),
+        _daemon_mode_active=lambda: True,
+    )
     dialog.key_editor = types.SimpleNamespace(
         pending_passphrase_operations=lambda: [('store', '/key', 'key-secret')])
+    dialog._save_mutation_result = types.SimpleNamespace(connection_id='conn-1')
     dialog._save_buttons = []
     emitted = []
     closed = []
 
-    def emit(signal, data):
-        emitted.append((signal, dict(data)))
-        data.pop('__save_completion')(True)
+    def emit(signal, data, metadata, secret_plan, completion):
+        emitted.append((signal, dict(data), dict(metadata), dict(secret_plan)))
+        completion(True)
 
     dialog.emit = emit
     dialog.close = lambda: closed.append(True)
@@ -317,24 +322,111 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
         'hostname': 'example.com',
         'nickname': 'example',
         'username': 'demo',
-        'password': 'host-secret',
-        'password_changed': True,
+        '__secret_plan': {
+            'password': 'host-secret',
+            'password_changed': True,
+            'passphrase_operations': [('store', '/key', 'key-secret')],
+        }
     }
-    dialog._store_secrets_then_save(data)
+    secret_plan = data.pop('__secret_plan')
+    dialog._store_secrets_then_save(data, {}, secret_plan)
 
     assert len(pending_threads) == 1
     assert pending_threads[0].daemon is True
     assert calls == []
     assert emitted[0][0] == 'connection-saved'
     assert emitted[0][1]['__secret_storage_done'] is True
+    assert '__secret_plan' not in emitted[0][1]
+    assert emitted[0][3]['password'] == 'host-secret'
     assert closed == []
 
     pending_threads[0].target()
 
-    assert calls == [
-        ('password', 'example.com', 'demo', 'host-secret'),
-        ('/key', 'key-secret'),
+    assert calls == [('password', 'host-secret'), ('/key', b'key-secret')]
+    assert closed == [True]
+
+
+def test_daemon_key_passphrase_save_uses_protected_key_manager(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    import sshpilot.secret_storage as ss
+    import sshpilot.secret_unlock_dialog as unlock_dialog
+
+    sentinel = "KEY_PASSPHRASE_SENTINEL_8F1C29"
+    received = []
+
+    class KeyManager:
+        def store_key_passphrase(self, key_path, secret):
+            received.append((key_path, bytes(secret)))
+            secret[:] = b"\0" * len(secret)
+            secret.clear()
+            return True
+
+    class Client:
+        def store_connection_password(self, _request):
+            return True
+
+    class Spinner:
+        def connect(self, _signal, callback):
+            self.callback = callback
+
+    spinner = Spinner()
+    monkeypatch.setattr(
+        unlock_dialog,
+        "_spinner_dialog",
+        lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
+    )
+    monkeypatch.setattr(
+        ss.get_secret_manager(),
+        "selected_backend",
+        lambda: types.SimpleNamespace(name="keyring"),
+    )
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: callback(*args),
+    )
+
+    class InlineThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", InlineThread)
+
+    parent = types.SimpleNamespace(
+        client=Client(),
+        client_bridge=object(),
+        key_manager=KeyManager(),
+        _daemon_mode_active=lambda: True,
+    )
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection_manager = DummyConnectionManager()
+    dialog._save_buttons = []
+    closed = []
+    errors = []
+    dialog.emit = (
+        lambda _signal, _data, _metadata, _secrets, completion: completion(True)
+    )
+    dialog.close = lambda: closed.append(True)
+    dialog.show_error = lambda message: errors.append(message)
+
+    dialog._store_secrets_then_save(
+        {"protocol": "ssh", "hostname": "example.test"},
+        {},
+        {
+            "passphrase_operations": [
+                ("store", "/home/user/.ssh/id", sentinel)
+            ]
+        },
+    )
+
+    assert received == [
+        ("/home/user/.ssh/id", sentinel.encode("utf-8"))
     ]
+    assert errors == []
     assert closed == [True]
 
 
@@ -342,12 +434,14 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     # A new connection saved with an empty password queues a delete; nothing
     # stored to delete is the desired end state, not a storage failure.
     import sshpilot.connection_dialog as dialog_module
-    import sshpilot.secret_storage as ss
     import sshpilot.secret_unlock_dialog as unlock_dialog
 
-    class Manager(DummyConnectionManager):
-        def delete_connection_passwords(self, connection, username=None):
-            return False  # nothing was stored
+    class Client:
+        def store_connection_password(self, _request):
+            return True
+
+        def delete_connection_password(self, _request):
+            return True
 
     class Spinner:
         def connect(self, signal, callback):
@@ -358,11 +452,6 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
         unlock_dialog,
         '_spinner_dialog',
         lambda *_args: (lambda _text: None, lambda: spinner.callback(), spinner),
-    )
-    monkeypatch.setattr(
-        ss.get_secret_manager(),
-        'selected_backend',
-        lambda: types.SimpleNamespace(name='bitwarden'),
     )
     monkeypatch.setattr(
         dialog_module.GLib,
@@ -380,13 +469,23 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     monkeypatch.setattr(dialog_module.threading, 'Thread', InlineThread)
 
     dialog = ConnectionDialog.__new__(ConnectionDialog)
-    dialog.connection_manager = Manager()
+    dialog.parent_window = types.SimpleNamespace(
+        client=Client(),
+        client_bridge=object(),
+        secrets_controller=types.SimpleNamespace(
+            load_state=lambda: types.SimpleNamespace(
+                selected_backend='bitwarden', needs_unlock=False, login_required=False
+            )
+        ),
+        _daemon_mode_active=lambda: True,
+    )
+    dialog._save_mutation_result = types.SimpleNamespace(connection_id='conn-1')
     dialog.key_editor = None
     dialog._save_buttons = []
     closed = []
     errors = []
 
-    dialog.emit = lambda signal, data: data.pop('__save_completion')(True)
+    dialog.emit = lambda signal, data, metadata, secrets, completion: completion(True)
     dialog.close = lambda: closed.append(True)
     dialog.show_error = lambda message: errors.append(message)
 
@@ -394,12 +493,38 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
         'hostname': 'example.com',
         'nickname': 'example',
         'username': 'demo',
-        'password': '',
-        'password_changed': True,
-    })
+    }, {}, {'password': '', 'password_changed': True})
 
     assert errors == []
     assert closed == [True]
+
+
+def test_no_secret_daemon_save_waits_for_explicit_async_claim():
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.connection_manager = DummyConnectionManager()
+    dialog._save_buttons = []
+    completions = []
+    closed = []
+    errors = []
+
+    def emit(_signal, _data, _metadata, _secrets, request):
+        request.claim()
+        completions.append(request)
+
+    dialog.emit = emit
+    dialog.close = lambda: closed.append(True)
+    dialog.show_error = lambda message: errors.append(message)
+
+    dialog._store_secrets_then_save(
+        {'nickname': 'demo', 'hostname': 'demo.example', 'username': 'alice'},
+        {}, {},
+    )
+
+    assert closed == []
+    assert len(completions) == 1
+    completions[0](False)
+    assert closed == []
+    assert len(errors) == 1
 
 
 def test_has_pending_passphrases_detects_cleared_entry():
@@ -419,13 +544,12 @@ def test_has_pending_passphrases_detects_cleared_entry():
 
 
 def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
-    import sshpilot.secret_storage as ss
-
     dialog = ConnectionDialog.__new__(ConnectionDialog)
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
-    sm = ss.get_secret_manager()
-
-    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: True)
+    state = types.SimpleNamespace(needs_unlock=True, login_required=False)
+    dialog.parent_window = types.SimpleNamespace(
+        secrets_controller=types.SimpleNamespace(load_state=lambda: state)
+    )
     assert dialog._needs_secret_unlock_before_save({'password': ''}) is True   # passphrase
     assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is True  # password
 
@@ -438,7 +562,7 @@ def test_save_gate_detects_pending_passphrase_when_locked(monkeypatch):
         {'password': '', 'password_changed': True}) is True
 
     # Unlocked -> never needs a prompt.
-    monkeypatch.setattr(sm, 'selected_needs_unlock', lambda: False)
+    state.needs_unlock = False
     dialog.key_editor = types.SimpleNamespace(has_pending_passphrases=lambda: True)
     assert dialog._needs_secret_unlock_before_save({'password': 'p'}) is False
 
@@ -462,3 +586,221 @@ def test_rule_editor_remote_to_local_resets_host_to_localhost():
     )
 
     assert remote_host_row.get_text() == "localhost"
+
+
+def test_daemon_editor_loads_password_from_protected_reveal(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def __init__(self):
+            self.reveal_id = None
+
+        def reveal_connection_password(self, connection_id):
+            self.reveal_id = connection_id
+            return bytearray(b"hunter2")
+
+    class Bridge:
+        pass
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),  # read-only projection, no secret access
+        client=client,
+        client_bridge=Bridge(),
+        _daemon_mode_active=lambda: True,
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(
+        nickname="web", username="root",
+    )
+    dialog.password_row = DummyEntry("")
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    dialog._load_password_async()
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.reveal_id == "web"
+    assert idle_calls
+    callback, (password,) = idle_calls[0]
+    callback(password)
+    assert dialog.password_row.get_text() == "hunter2"
+    assert dialog._password_saved is True
+    assert dialog._orig_password == "hunter2"
+
+
+def test_local_editor_loads_password_from_manager(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+
+    class Manager:
+        def get_connection_password(self, connection):
+            return "local-secret"
+
+    parent = types.SimpleNamespace(
+        connection_manager=Manager(),
+        client=None,
+        client_bridge=None,
+        _daemon_mode_active=lambda: False,
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(
+        nickname="web", username="root",
+    )
+    dialog.password_row = DummyEntry("")
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    dialog._load_password_async()
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (pw,) = idle_calls[0]
+    callback(pw)
+    assert dialog.password_row.get_text() == "local-secret"
+    assert dialog._orig_password == "local-secret"
+
+
+def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class DaemonClient:
+        def __init__(self):
+            self.reveal_key = None
+
+        def reveal_key_passphrase(self, key_path):
+            self.reveal_key = key_path
+            return bytearray(b"key-secret")
+
+    class Bridge:
+        pass
+
+    client = DaemonClient()
+    parent = types.SimpleNamespace(
+        connection_manager=object(),  # read-only projection, no secret access
+        client=client,
+        client_bridge=Bridge(),
+        _daemon_mode_active=lambda: True,
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    ed._load_passphrase_async(entry, row, norm)
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    assert client.reveal_key == norm
+    assert idle_calls
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "key-secret"
+    assert row._pass_initial == "key-secret"
+    assert row._pass_saved is True
+
+
+def test_local_editor_loads_passphrase_from_manager(monkeypatch):
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class Manager:
+        def get_key_passphrase(self, key_path):
+            return "local-key-secret"
+
+    parent = types.SimpleNamespace(
+        connection_manager=Manager(),
+        client=None,
+        client_bridge=None,
+        _daemon_mode_active=lambda: False,
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyEntry("")
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    idle_calls = []
+    pending_threads = []
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib,
+        "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+
+    ed._load_passphrase_async(entry, row, norm)
+
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "local-key-secret"
+    assert row._pass_initial == "local-key-secret"

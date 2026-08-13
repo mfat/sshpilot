@@ -4,6 +4,10 @@ Unified SSH connection builder that uses SSH config as primary source of truth.
 
 This module provides a single, consistent way to build SSH commands for all
 components (terminal, SCP, SFTP, ssh-copy-id) that matches default SSH behavior.
+
+GTK-free argv composition for explicit launch descriptions lives in
+``sshpilot.core.ssh.build_ssh_process_spec``. This module remains the runtime
+adapter that resolves askpass/secret backends for live Connection objects.
 """
 import os
 import logging
@@ -15,6 +19,21 @@ from .askpass_utils import (
     ensure_key_in_agent,
     lookup_passphrase,
 )
+from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
+from .platform_utils import get_config_dir
+
+
+def frontend_ssh_config_override(app_config: Optional[any]) -> Optional[str]:
+    """Return the isolated root config for DTO-based frontend command paths."""
+
+    try:
+        if app_config is not None and app_config.get_setting(
+            "ssh.use_isolated_config", False
+        ):
+            return os.path.join(get_config_dir(), "ssh_config")
+    except Exception:
+        pass
+    return None
 
 
 def _askpass_env_for_connection(
@@ -22,6 +41,7 @@ def _askpass_env_for_connection(
     *,
     require: str = "prefer",
     session_password: Optional[str] = None,
+    session_passphrase: Optional[str] = None,
 ) -> Dict[str, str]:
     """Build askpass env, advertising login-password host/user when known."""
     try:
@@ -56,6 +76,7 @@ def _askpass_env_for_connection(
         password_user=user or None,
         password_hosts=hosts or None,
         session_password=session_password,
+        session_passphrase=session_passphrase,
     )
 
 
@@ -168,6 +189,8 @@ def resolve_native_auth(
     connection: any,
     connection_manager: Optional[any] = None,
     app_config: Optional[any] = None,
+    *,
+    interaction_policy: str = "normal",
 ) -> NativeAuth:
     """Resolve the authentication environment + options for a connection.
 
@@ -187,7 +210,32 @@ def resolve_native_auth(
     * Askpass disabled / nothing saved → no askpass; SSH prompts on the TTY.
     * ``use_sshpass`` is never set (sshpass removed from the native path).
     """
-    auth_method = int(getattr(connection, 'auth_method', 0) or 0)
+    if interaction_policy not in {"normal", "none", "broker"}:
+        raise ValueError("unsupported SSH interaction policy")
+    if interaction_policy in {"none", "broker"}:
+        allowed = {
+            "PATH",
+            "HOME",
+            "USER",
+            "LOGNAME",
+            "LANG",
+            "SSH_AUTH_SOCK",
+        }
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in allowed or key.startswith("LC_")
+        }
+        env["TERM"] = "xterm-256color"
+        env["COLORTERM"] = "truecolor"
+        return NativeAuth(env=env, extra_opts=[], use_askpass=False)
+
+    raw_auth_method = getattr(connection, 'auth_method', None)
+    if raw_auth_method is None:
+        raw_auth_method = getattr(connection, 'authentication_method', 0)
+        raw_auth_method = getattr(raw_auth_method, 'value', raw_auth_method)
+        raw_auth_method = 1 if raw_auth_method == 'password' else 0
+    auth_method = int(raw_auth_method or 0)
     password_mode = (auth_method == 1)
 
     askpass_enabled = True
@@ -233,6 +281,8 @@ def resolve_native_auth(
     # passphrase probe and the agent preload). Probe is best-effort: on any
     # error, fall back to askpass-on (never regress the saved-passphrase autofill).
     candidates = getattr(connection, 'resolved_identity_files', None)
+    if not candidates:
+        candidates = getattr(connection, 'identity_files', None)
     if not candidates and hasattr(connection, 'collect_identity_file_candidates'):
         try:
             candidates = connection.collect_identity_file_candidates()
@@ -240,11 +290,21 @@ def resolve_native_auth(
             candidates = None
     candidates = list(candidates or [])
     probe_failed = False
+    passphrase_values = {}
     try:
-        passphrase_keys = [p for p in candidates if lookup_passphrase(p)]
+        passphrase_values = {
+            p: _get_stored_passphrase(
+                p, connection_manager, suppress_errors=False
+            )
+            for p in candidates
+        }
+        passphrase_keys = [p for p, value in passphrase_values.items() if value]
     except Exception:
         passphrase_keys, probe_failed = [], True
     has_stored_passphrase = bool(passphrase_keys) or probe_failed
+    session_passphrase = (
+        passphrase_values.get(passphrase_keys[0]) if passphrase_keys else None
+    )
     stored_password = _get_stored_password(connection, connection_manager)
 
     if has_stored_passphrase:
@@ -256,7 +316,9 @@ def resolve_native_auth(
                 and any(_load_key_into_agent(p, connection_manager)
                         for p in passphrase_keys)):
             env = _askpass_env_for_connection(
-                connection, session_password=stored_password,
+                connection,
+                session_password=stored_password,
+                session_passphrase=session_passphrase,
             )
             logger.debug(
                 "resolve_native_auth: combined auth -> agent key + askpass "
@@ -268,10 +330,15 @@ def resolve_native_auth(
             )
         if stored_password:
             env = _askpass_env_for_connection(
-                connection, session_password=stored_password,
+                connection,
+                session_password=stored_password,
+                session_passphrase=session_passphrase,
             )
         else:
-            env = get_ssh_env_with_askpass(require="prefer")
+            env = get_ssh_env_with_askpass(
+                require="prefer",
+                session_passphrase=session_passphrase,
+            )
         logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
         return NativeAuth(
             env=env, extra_opts=[], use_sshpass=False,
@@ -302,6 +369,7 @@ def build_native_command(
     command_type: str = 'ssh',
     remote_command: Optional[str] = None,
     extra_args: Optional[List[str]] = None,
+    config_file: Optional[str] = None,
 ) -> List[str]:
     """Build the plain native SSH-family command, with NO authentication applied.
 
@@ -315,12 +383,12 @@ def build_native_command(
     binary = {'scp': 'scp', 'sftp': 'sftp', 'ssh-copy-id': 'ssh-copy-id'}.get(command_type, 'ssh')
     cmd = [binary]
 
-    config_override = None
-    if hasattr(connection, '_resolve_config_override_path'):
+    config_override = config_file or frontend_ssh_config_override(app_config)
+    if config_override is None and hasattr(connection, '_resolve_config_override_path'):
         try:
             config_override = connection._resolve_config_override_path()
         except Exception:
-            config_override = None
+            pass
     if config_override:
         cmd.extend(['-F', config_override])
 
@@ -373,6 +441,9 @@ class ConnectionContext:
     extra_ssh_config: Optional[str] = None  # Extra SSH config options (from advanced tab)
     known_hosts_path: Optional[str] = None  # Custom known hosts file
     native_mode: bool = False  # Use native SSH mode (minimal command)
+    interaction_policy: str = "normal"
+    target_override: Optional[str] = None
+    force_tty: bool = False  # Force a remote TTY allocation (-t)
 
 
 def _get_ssh_config_value(
@@ -525,7 +596,9 @@ def _load_key_into_agent(key_path: str, connection_manager: Optional[any] = None
 
 def _get_stored_passphrase(
     key_path: str,
-    connection_manager: Optional[any] = None
+    connection_manager: Optional[any] = None,
+    *,
+    suppress_errors: bool = True,
 ) -> Optional[str]:
     """Get stored passphrase for key."""
     if not key_path:
@@ -534,12 +607,20 @@ def _get_stored_passphrase(
     # Try connection_manager first if available
     if connection_manager:
         try:
-            if hasattr(connection_manager, 'get_key_passphrase'):
-                result = connection_manager.get_key_passphrase(key_path)
+            getter = getattr(connection_manager, 'get_key_passphrase', None)
+            if getter is None:
+                getter = getattr(connection_manager, 'lookup_key_passphrase', None)
+            if callable(getter):
+                result = getter(key_path)
                 if result:
                     return result
+                if getattr(
+                    connection_manager, 'secret_lookup_authoritative', False
+                ):
+                    return None
         except Exception:
-            pass
+            if not suppress_errors:
+                raise
     
     # Fallback to direct lookup (works even without connection_manager)
     try:
@@ -547,7 +628,8 @@ def _get_stored_passphrase(
         if result:
             return result
     except Exception:
-        pass
+        if not suppress_errors:
+            raise
     
     return None
 
@@ -632,7 +714,9 @@ def _build_base_ssh_command(
     connection: any,
     config: Dict[str, Union[str, List[str]]],
     app_config: Optional[any] = None,
-    command_type: str = 'ssh'
+    command_type: str = 'ssh',
+    *,
+    config_file: Optional[str] = None,
 ) -> List[str]:
     """
     Build base SSH command from SSH config and connection settings.
@@ -646,6 +730,9 @@ def _build_base_ssh_command(
         cmd = ['ssh-copy-id']
     else:
         cmd = ['ssh']
+
+    if config_file:
+        cmd.extend(['-F', config_file])
 
     # ssh-copy-id is a shell script with a restricted option set (-i/-p/-o/-f/
     # -n/-s/-x): it rejects flags ssh/scp/sftp share (-v, -C, -A), its -i names
@@ -814,81 +901,116 @@ def build_ssh_connection(
     # that every caller (terminal, scp, ssh-copy-id) can use without rebuilding
     # the command or re-deriving the auth env.
     if ctx.native_mode:
-        base_cmd = ['ssh']
+        # Resolve auth first — env + extra_opts are runtime concerns owned by
+        # this adapter; argv composition is delegated to core.ssh.
+        from .core.ssh import (
+            AuthMethod,
+            HostKeyMode,
+            LaunchMode,
+            SSHLaunchRequest,
+            build_ssh_process_spec,
+        )
+
         config_override = None
         if hasattr(connection, '_resolve_config_override_path'):
             try:
                 config_override = connection._resolve_config_override_path()
             except Exception:
                 config_override = None
-        if config_override:
-            base_cmd.extend(['-F', config_override])
 
-        # App-level SSH settings. ssh_overrides carries the user's global SSH
-        # options (verbosity, ConnectTimeout, ServerAlive*, etc.); append verbatim.
         app_ssh_config = {}
+        overrides: List[str] = []
         if app_config:
             try:
                 app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
             except Exception:
                 app_ssh_config = {}
-            overrides = app_ssh_config.get('ssh_overrides', [])
-            if isinstance(overrides, (list, tuple)):
-                for entry in overrides:
-                    if entry:
-                        base_cmd.append(str(entry))
+            raw_overrides = app_ssh_config.get('ssh_overrides', [])
+            if isinstance(raw_overrides, (list, tuple)):
+                overrides = [str(entry) for entry in raw_overrides if entry]
 
-            # Default keepalive: when neither the user's app settings nor their
-            # ~/.ssh/config define ServerAliveInterval for this host, inject a
-            # sane default so a dead link (laptop sleep, VPN drop, cable pull)
-            # is detected instead of the connection lingering "green" forever.
-            # Honors docs/architecture.md: this is a runtime option that doesn't live in
-            # ~/.ssh/config, applied via -o like the rest of ssh_overrides, and
-            # any explicit user/per-host value wins.
-            _maybe_append_default_keepalive(base_cmd, overrides, app_ssh_config)
+        # Default keepalive injection into the overrides list (core builder
+        # appends ssh_overrides verbatim).
+        keepalive_cmd: List[str] = []
+        _maybe_append_default_keepalive(keepalive_cmd, overrides, app_ssh_config)
+        overrides = list(overrides) + keepalive_cmd
 
-        # File manager / SFTP / non-interactive transfers: one askpass cancel
-        # ends auth. Interactive terminals keep OpenSSH's default (3).
+        auth = resolve_native_auth(
+            connection,
+            connection_manager,
+            app_config,
+            interaction_policy=ctx.interaction_policy,
+        )
+
+        extra_options: List[str] = list(auth.extra_opts or [])
         if ctx.command_type in ('scp', 'ssh-copy-id', 'sftp'):
-            _append_single_password_prompt(base_cmd)
-
-        # Authentication is resolved by the single shared helper so the terminal,
-        # SCP, and ssh-copy-id all authenticate identically.
-        auth = resolve_native_auth(connection, connection_manager, app_config)
-
-        # BatchMode preference — never when askpass may need to answer a prompt
-        # (or a stored password / password method is in play).
-        if (bool(app_ssh_config.get('batch_mode', False))
-                and not auth.password_mode
-                and not auth.use_askpass
-                and not auth.password):
-            if 'BatchMode=yes' not in base_cmd:
-                base_cmd.extend(['-o', 'BatchMode=yes'])
-
-        base_cmd.extend(auth.extra_opts)
-        # Extra CLI flags (rare; before the host).
+            if not any('NumberOfPasswordPrompts' in str(e) for e in extra_options + overrides):
+                extra_options.extend(['-o', 'NumberOfPasswordPrompts=1'])
         if extra_args:
-            base_cmd.extend(extra_args)
-        env = auth.env
+            extra_options.extend(str(a) for a in extra_args if a)
 
-        native_target = host_label
-        if hasattr(connection, 'resolve_host_identifier'):
+        batch_mode = False
+        host_key_mode = None
+        if ctx.interaction_policy == "none":
+            batch_mode = True
+            host_key_mode = HostKeyMode.YES
+        elif (
+            bool(app_ssh_config.get('batch_mode', False))
+            and not auth.password_mode
+            and not auth.use_askpass
+            and not auth.password
+        ):
+            batch_mode = True
+
+        native_target = ctx.target_override or host_label
+        if ctx.target_override is None and hasattr(connection, 'resolve_host_identifier'):
             try:
                 resolved = connection.resolve_host_identifier()
                 if resolved:
                     native_target = resolved
             except Exception:
                 pass
-        base_cmd.append(native_target)
 
-        # A raw one-shot remote command (e.g. reading the remote working dir for
-        # follow-mode) is appended after the host. Interactive saved connections
-        # don't use this — their remote command lives in ~/.ssh/config.
-        if ctx.remote_command:
-            base_cmd.append(ctx.remote_command)
+        launch_mode = LaunchMode.INTERACTIVE
+        if ctx.command_type == 'scp':
+            launch_mode = LaunchMode.SCP
+        elif ctx.command_type == 'sftp':
+            launch_mode = LaunchMode.SFTP
+        elif ctx.command_type == 'ssh-copy-id':
+            launch_mode = LaunchMode.COPY_ID
+        if ctx.interaction_policy == "none":
+            launch_mode = LaunchMode.BATCH
+
+        # LaunchMode only tunes validation/options; it never picks the binary.
+        # scp transfers must exec scp (ssh would treat the first source path as
+        # the hostname). sftp deliberately keeps ssh: the daemon rides
+        # ``ssh -s <alias> sftp`` (subsystem request), and ssh-copy-id composes
+        # its own argv via _build_base_ssh_command.
+        executable = 'scp' if ctx.command_type == 'scp' else 'ssh'
+
+        req = SSHLaunchRequest(
+            destination=native_target,
+            executable=executable,
+            config_file=config_override,
+            ssh_overrides=overrides,
+            extra_options=extra_options,
+            batch_mode=batch_mode,
+            host_key_mode=host_key_mode,
+            remote_command=ctx.remote_command,
+            askpass_required=bool(auth.use_askpass),
+            env=dict(auth.env or {}),
+            auth_method=(
+                AuthMethod.PASSWORD if auth.password_mode else AuthMethod.PUBLIC_KEY
+            ),
+            launch_mode=launch_mode,
+            force_tty=bool(getattr(ctx, "force_tty", False)),
+        )
+        spec = build_ssh_process_spec(req)
+        env = dict(spec.env)
+        env.update(dict(auth.env or {}))
 
         return SSHConnectionCommand(
-            command=base_cmd,
+            command=list(spec.argv),
             env=env,
             use_sshpass=auth.use_sshpass,
             password=auth.password,

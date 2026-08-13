@@ -1,8 +1,9 @@
 """
 Terminal Widget for sshPilot
-Integrated VTE terminal with SSH connection handling using system SSH client
+Integrated VTE terminal for daemon-backed sessions and local shell presentation
 """
 
+from .api.connection_identity import connection_id_for
 import os
 import logging
 import signal
@@ -10,8 +11,6 @@ import time
 import re
 import gi
 from gettext import gettext as _
-import asyncio
-import threading
 import weakref
 import subprocess
 import shutil
@@ -25,14 +24,10 @@ from .terminal_backends import (
     PyXtermTerminalBackend,
     PyXtermBridgeBackend,
 )
-from .plugins.api import PluginContext, ProtocolError
-from .plugins.registry import protocol_registry
 
 gi.require_version('Gtk', '4.0')
-gi.require_version('Vte', '3.91')
-
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, GObject, GLib, Vte, Pango, Gdk, Gio, Adw
+from gi.repository import Gtk, GObject, GLib, Pango, Gdk, Gio, Adw
 
 logger = logging.getLogger(__name__)
 
@@ -40,76 +35,9 @@ logger = logging.getLogger(__name__)
 # ssh_process_manager.py (GTK-free). Re-exported here so existing
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
-from .terminal_color_utils import (
-    mix_rgba,
-    clone_rgba,
-    relative_luminance,
-    get_contrast_color,
-)
 from .terminal_search import TerminalSearch
 from .terminal_fullscreen import FullscreenController
-
-
-# Substrings (lowercased) in terminal output that mean an ssh attempt is failing.
-# Used to gate CONNECTING→CONNECTED promotion (never promote while one is present)
-# and to recover a precise failure reason at exit time.
-_SSH_FAILURE_MARKERS = (
-    'permission denied',
-    'connection refused',
-    'no route to host',
-    'network is unreachable',
-    'could not resolve',
-    'name or service not known',
-    'nodename nor servname',
-    'host key verification failed',
-    'connection timed out',
-    'operation timed out',
-    'too many authentication failures',
-    'connection reset',
-    'connection closed',
-    'broken pipe',
-    # telnet's connect failure ("telnet: Unable to connect to remote host")
-    'unable to connect',
-)
-
-# Positive login evidence — appears in ssh -v output or login banners once the
-# session is actually established.
-_SSH_SUCCESS_MARKERS = (
-    'authenticated to',
-    'entering interactive session',
-    'last login:',
-    'pseudo-terminal will',
-)
-
-# Line-start prefixes that are ssh's own chatter (not remote shell output). A
-# line that doesn't start with one of these is treated as real remote output.
-_SSH_NOISE_PREFIXES = (
-    'debug',
-    'ssh:',
-    'warning:',
-    'openssh',
-    'kex',
-    'channel ',
-    'authenticated',
-    'connecting to',
-    'pledge',
-    # telnet's pre-connect chatter ("Trying 10.0.0.5...")
-    'trying ',
-    # First line of ssh's host-key banner, drawn a moment before the
-    # "(yes/no/[fingerprint])?" question it belongs to.
-    'the authenticity of',
-)
-
-# The rest of ssh's host-key banner, which is drawn line by line while the user
-# has not answered anything yet. Matched anywhere in the line, not as a prefix:
-# the fingerprint line starts with the key type ("ED25519 key fingerprint is").
-_SSH_HOSTKEY_BANNER_MARKERS = (
-    'key fingerprint is',
-    'key is not known by any other names',
-    'known by the following other names',
-    # ...and the "<known_hosts file>:<line>: <name>" entries that banner lists.
-    'known_hosts:',
-)
+from .core.connection_evidence import classify_connection_evidence
 
 
 # Installed once per process. Inner padding for the terminal text so the
@@ -143,9 +71,9 @@ vte-terminal {
 
 
 class TerminalWidget(Gtk.Box):
-    """A terminal widget that uses VTE for display and system SSH client for connections"""
+    """A terminal widget for daemon sessions, local shells, and presentation."""
     __gtype_name__ = 'TerminalWidget'
-    
+
     # Signals
     __gsignals__ = {
         'connection-established': (GObject.SignalFlags.RUN_FIRST, None, ()),
@@ -153,7 +81,7 @@ class TerminalWidget(Gtk.Box):
         'connection-lost': (GObject.SignalFlags.RUN_FIRST, None, ()),
         'title-changed': (GObject.SignalFlags.RUN_FIRST, None, (str,)),
     }
-    
+
     def __init__(self, connection, config, connection_manager, group_color=None):
 
         # Initialize as a vertical Gtk.Box
@@ -175,7 +103,7 @@ class TerminalWidget(Gtk.Box):
         # is aggregated from all its terminals by
         # ``window._recompute_connection_state``. ``is_connected`` stays as the
         # boolean compat view (True only when CONNECTED).
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         self.connection_state = ConnectionState.UNKNOWN
         self.connection_state_reason = ''
         self._connect_grace_timer_id = None  # evidence poller: promotes CONNECTING→CONNECTED
@@ -183,6 +111,7 @@ class TerminalWidget(Gtk.Box):
         self._connect_failure_hint = ''  # failure line scraped while connecting
         self.session_id = str(id(self))  # Unique ID for this session
         self._is_quitting = False  # Flag to suppress signal handlers during quit
+        self._destroyed = False  # Flag to suppress VTE interactions during teardown
         self.last_error_message = None  # Store last SSH error for reporting
         self._last_error_detail = None  # Structured context for the Details dialog
         self._fallback_timer_id = None  # GLib timeout ID for spawn fallback
@@ -190,10 +119,10 @@ class TerminalWidget(Gtk.Box):
         # Job detection state
         self._job_status = "UNKNOWN"  # IDLE, RUNNING, PROMPT, UNKNOWN
         self._shell_pgid = None  # Store shell process group ID for shell-agnostic detection
-        
+
         # Current remote directory tracking (from window title)
         self._current_remote_directory = None  # Stores the current directory parsed from window title
-        
+
         # Backend system
         self._backend_name = "vte"
         self.backend = None
@@ -202,16 +131,30 @@ class TerminalWidget(Gtk.Box):
         # Fullscreen (state + window juggling) lives in a composed controller.
         self._fullscreen = FullscreenController(self)
 
+        # Daemon session support
+        self._daemon_mode = False
+        self._daemon_controller = None
+        self._daemon_tab_state = None
+        self._daemon_interaction_dialogs = None
+        self._daemon_commit_handler = None
+        self._daemon_size_handler = None
+        self._daemon_exit_handled = False
+        self._view_only_overlay = None
+        self._reconnect_handler = None
+        self._shell_output_seen = False
+        self._shell_output_seen_after_running = False
+        self._pending_shell_ready_feeds = []
+
         # Register with process manager
         process_manager.register_terminal(self)
-        
+
         # Connect to signals
         self.connect('destroy', self._on_destroy)
-        
-        # Connect to connection manager signals using GObject.GObject.connect directly
-        self._connection_updated_handler = GObject.GObject.connect(connection_manager, 'connection-updated', self._on_connection_updated_signal)
+
+        # Connect to connection manager signals using connect_after
+        self._connection_updated_handler = connection_manager.connect_after('connection-updated', self._on_connection_updated_signal)
         logger.debug("Connected to connection-updated signal")
-        
+
         # Create scrolled window for terminal
         self.scrolled_window = Gtk.ScrolledWindow()
         # Horizontal policy NEVER so VTE always reflows its column count to the
@@ -220,7 +163,7 @@ class TerminalWidget(Gtk.Box):
         # the scrollback buffer.
         self.scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.scrolled_window.set_overlay_scrolling(True)
-        
+
         # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
@@ -240,14 +183,13 @@ class TerminalWidget(Gtk.Box):
 
         # Create the backend before calling setup_terminal
         self.backend = self._create_backend()
-        self.vte = getattr(self.backend, 'vte', None)
-        self.terminal_widget = getattr(self.backend, 'widget', None)
+        self.terminal_widget = self.backend.widget
 
         # Search overlay lives in a composed object. Create it BEFORE
         # setup_terminal(): that call runs _install_shortcuts(), which attaches
         # the search key controller via self._search. Widget construction does
-        # not depend on the backend, and the key controller needs self.vte
-        # (set above), so this ordering is required for Ctrl+F/Ctrl+G/Esc to work.
+        # not depend on backend implementation details, so this ordering keeps
+        # Ctrl+F/Ctrl+G/Esc available for every emulator.
         self._search = TerminalSearch(self)
         self.search_revealer = self._search.search_revealer
 
@@ -257,7 +199,7 @@ class TerminalWidget(Gtk.Box):
             self.apply_theme()
         except Exception:
             pass
-        
+
         # Add terminal to scrolled window and to the box via an overlay with a connecting view
         if self.terminal_widget is not None:
             self.scrolled_window.set_child(self.terminal_widget)
@@ -286,14 +228,14 @@ class TerminalWidget(Gtk.Box):
 
         self.overlay.add_overlay(self.connecting_bg)
         self.overlay.add_overlay(self.connecting_box)
-        # Float search revealer over the terminal so toggling it does not
-        # change the terminal's allocated height (which would cause VTE to
-        # send a resize/SIGWINCH and make the content flicker).
-        self.overlay.add_overlay(self.search_revealer)
 
         self.terminal_stack = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.terminal_stack.set_hexpand(True)
         self.terminal_stack.set_vexpand(True)
+        # Search participates in normal layout so both terminal backends get a
+        # viewport that excludes the visible controls.  Keep it above the
+        # terminal overlay; reconnect and save banners remain below it.
+        self.terminal_stack.append(self.search_revealer)
         self.terminal_stack.append(self.overlay)
 
         # Set up drag and drop for SCP upload
@@ -502,21 +444,21 @@ class TerminalWidget(Gtk.Box):
         self._title_changed_handler = None
         self._termprops_changed_handler = None
         self._connect_backend_signals()
-        
+
         # Apply theme
         self.force_style_refresh()
-        
+
         # Set visibility of child widgets (GTK4 style)
         self.scrolled_window.set_visible(True)
         if self.terminal_widget is not None:
             self.terminal_widget.set_visible(True)
-        
+
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
-        
+
         # Setup fullscreen keyboard shortcut (F11)
         self._fullscreen.setup_shortcut()
-        
+
         logger.debug("Terminal widget initialized")
 
     # ── files panel (embedded file manager below the terminal) ──────────────
@@ -683,12 +625,20 @@ class TerminalWidget(Gtk.Box):
 
         logger.info(f"Switching terminal backend from {current_name} to {backend_name}")
 
+        # Daemon input/resize handlers belong to the old backend and must never
+        # survive an emulator switch.
+        daemon_io_was_installed = bool(
+            getattr(self, '_daemon_commit_handler', None) is not None
+            or getattr(self, '_daemon_size_handler', None) is not None
+        )
+        self._uninstall_daemon_backend_io()
+
         # Disconnect old backend signals
         self._disconnect_backend_signals()
 
         # Detach the shortcut/scroll/search controllers from the widget that is
-        # about to be destroyed. Do this *before* self.vte/terminal_widget are
-        # repointed, or controller_host() would resolve to the new widget. The
+        # about to be destroyed. Do this before terminal_widget is repointed,
+        # or controller_host() would resolve to the new widget. The
         # setup_terminal() call at the end reinstalls them on the new widget:
         # it runs _apply_pass_through_mode(), which reinstalls whenever
         # _shortcut_controller is None -- which is exactly what this clears.
@@ -710,7 +660,7 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Detached context menu popover before backend switch")
             except Exception as e:
                 logger.debug(f"Error detaching popover: {e}", exc_info=True)
-        
+
         # Remove gesture controller from old backend widget
         # Try all possible widget locations where gesture might be attached
         if hasattr(self, '_menu_gesture') and self._menu_gesture is not None:
@@ -719,9 +669,7 @@ class TerminalWidget(Gtk.Box):
                 widgets_to_check.append(self.backend.widget)
             if hasattr(self, 'terminal_widget') and self.terminal_widget:
                 widgets_to_check.append(self.terminal_widget)
-            if hasattr(self, 'vte') and self.vte:
-                widgets_to_check.append(self.vte)
-            
+
             for widget in widgets_to_check:
                 try:
                     if hasattr(widget, 'remove_controller'):
@@ -748,8 +696,7 @@ class TerminalWidget(Gtk.Box):
 
         # Create new backend
         self.backend = self._create_backend(backend_name)
-        self.vte = getattr(self.backend, 'vte', None)
-        self.terminal_widget = getattr(self.backend, 'widget', None)
+        self.terminal_widget = self.backend.widget
 
         # Add new widget to scrolled window
         if self.terminal_widget is not None:
@@ -760,6 +707,8 @@ class TerminalWidget(Gtk.Box):
 
         # Reconnect signals
         self._connect_backend_signals()
+        if daemon_io_was_installed:
+            self._install_daemon_backend_io()
 
         # Reapply theme and settings
         try:
@@ -918,89 +867,24 @@ class TerminalWidget(Gtk.Box):
             # Immediately hide banner and show connecting overlay
             self._set_disconnected_banner_visible(False)
             self._set_connecting_overlay_visible(True)
-            # Rebuild the SSH command with the latest preferences before reconnecting
-            def _prepare_and_connect():
-                prepared = False
-                try:
-                    prepared = self._refresh_connection_command()
-                except Exception as exc:
-                    logger.error(f"Failed to refresh SSH command before reconnect: {exc}")
-                    prepared = False
 
-                if not prepared:
+            reconnect_handler = getattr(self, '_reconnect_handler', None)
+            if callable(reconnect_handler):
+                if reconnect_handler(self) is False:
                     self._set_connecting_overlay_visible(False)
                     self._record_error_detail(_('Reconnect failed to start'))
-                    self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
-                    return False
+                    self._set_disconnected_banner_visible(
+                        True, _('Reconnect failed to start')
+                    )
+                return
 
-                if not self._connect_ssh():
-                    # Show banner again if failed to start reconnect
-                    self._set_connecting_overlay_visible(False)
-                    self._record_error_detail(_('Reconnect failed to start'))
-                    self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
-                return False
-
-            GLib.idle_add(_prepare_and_connect)
+            self._set_connecting_overlay_visible(False)
+            self._record_error_detail(_('Daemon reconnect handler is unavailable'))
+            self._set_disconnected_banner_visible(True, _('Reconnect failed to start'))
         except Exception:
             self._set_connecting_overlay_visible(False)
             self._record_error_detail(_('Reconnect failed'))
             self._set_disconnected_banner_visible(True, _('Reconnect failed'))
-
-    def _refresh_connection_command(self) -> bool:
-        """Refresh the prepared SSH command using current preferences."""
-
-        connection = getattr(self, 'connection', None)
-        if not connection:
-            logger.error('Reconnect requested without an active connection')
-            return False
-
-        if getattr(connection, 'protocol', 'ssh') != 'ssh':
-            # Plugin protocols rebuild their command statelessly in
-            # build_spawn(); there is no prepared SSH command to refresh.
-            return True
-
-        try:
-            if hasattr(connection, 'ssh_cmd'):
-                connection.ssh_cmd = []
-            # Drop the cached builder result so reconnect re-derives the command,
-            # environment, and auth (a stale askpass/agent decision must not leak).
-            if hasattr(connection, 'ssh_connection_cmd'):
-                connection.ssh_connection_cmd = None
-        except Exception as exc:
-            logger.debug(f"Unable to reset cached ssh_cmd before reconnect: {exc}")
-
-        # Native-only connection (connect() delegates to native_connect()).
-        connect_coro = None
-        try:
-            if hasattr(connection, 'native_connect'):
-                connect_coro = connection.native_connect()
-            elif hasattr(connection, 'connect'):
-                connect_coro = connection.connect()
-        except Exception as exc:
-            logger.error(f"Failed to build connection coroutine for reconnect: {exc}")
-            connect_coro = None
-
-        if connect_coro is None:
-            logger.error('Unable to refresh SSH command; missing connect coroutine')
-            return False
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        try:
-            if loop.is_running():
-                future = asyncio.run_coroutine_threadsafe(connect_coro, loop)
-                future.result()
-            else:
-                loop.run_until_complete(connect_coro)
-        except Exception as exc:
-            logger.error(f"Failed to refresh SSH command for reconnect: {exc}")
-            return False
-
-        return bool(getattr(connection, 'ssh_cmd', None))
 
     def _set_connecting_overlay_visible(self, visible: bool):
         try:
@@ -1011,336 +895,731 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
-    def _connect_ssh(self):
-        """Connect to SSH host"""
-        if not self.connection:
-            logger.error("No connection configured")
+    # Daemon terminal session support
+
+    @property
+    def is_daemon_backed(self):
+        """Whether this terminal is using daemon-backed SSH."""
+        return self._daemon_mode
+
+    @property
+    def daemon_tab_state(self):
+        """Current daemon terminal tab state."""
+        return self._daemon_tab_state
+
+    @property
+    def has_input_ownership(self):
+        """Whether this terminal has input ownership (daemon mode)."""
+        if not self._daemon_mode:
+            return True  # Local terminals always have input
+        return self._daemon_controller and self._daemon_controller.input_owner
+
+    def take_input_control(self):
+        """Claim input ownership for this daemon attachment when unowned."""
+        if not self._daemon_mode or not self._daemon_controller:
             return False
-            
-        # Ensure terminal backend is properly initialized
-        if not hasattr(self, 'backend') or self.backend is None:
-            logger.error("Terminal backend not initialized")
+        tab = self._daemon_controller.tab_state
+        if not tab.session_id or not tab.attachment_id:
             return False
-        
-        try:
-            # Connect in a separate thread to avoid blocking UI
-            thread = threading.Thread(target=self._connect_ssh_thread)
-            thread.daemon = True
-            thread.start()
-            
+        if tab.input_owner:
+            self._hide_view_only_indicator()
             return True
-            
-        except Exception as e:
-            logger.error(f"Failed to start SSH connection: {e}")
-            GLib.idle_add(self._on_connection_failed, str(e))
+        try:
+            from .api.models.terminal import ClaimTerminalInputRequest
+
+            client = self._daemon_controller._client
+            bridge = self._daemon_controller._bridge
+            request = ClaimTerminalInputRequest(
+                session_id=tab.session_id,
+                attachment_id=tab.attachment_id,
+            )
+
+            def _claimed(_value):
+                self._daemon_controller._tab_state.input_owner = True
+                self._hide_view_only_indicator()
+
+            def _failed(error):
+                logger.info(
+                    "Could not claim terminal input ownership code=%s",
+                    getattr(getattr(error, "code", None), "value", "denied"),
+                )
+                self._show_view_only_indicator()
+
+            bridge.submit(
+                lambda: client.claim_terminal_input(request),
+                on_success=_claimed,
+                on_error=_failed,
+            )
+            return True
+        except Exception as error:
+            logger.error("Failed to claim daemon input ownership: %s", error)
             return False
-    
-    def _connect_ssh_thread(self):
-        """SSH connection thread: directly spawn SSH and rely on its output for errors."""
+
+    def start_daemon_session(self, client, bridge, connection_id, remote_command=None, force_tty=False):
+        """Start daemon-backed SSH session instead of local spawn."""
+        # The daemon session runtime resolves the latest connection snapshot;
+        # an optional remote command (e.g. docker exec/logs) is carried through
+        # OpenSessionRequest so the SSH child runs it after the target host.
+        # force_tty forces a remote TTY allocation (-t) so interactive commands
+        # like `docker exec -it` get a PTY on the far side.
         try:
-            pre_cmd = ''
-            try:
-                pre_cmd = (getattr(self.connection, 'pre_command', '') or '').strip()
-                if not pre_cmd and hasattr(self.connection, 'data'):
-                    pre_cmd = (self.connection.data.get('pre_command') or '').strip()
-            except Exception:
-                pre_cmd = ''
-            if pre_cmd:
-                logger.info(f"Running pre-connection command: {pre_cmd}")
-                try:
-                    result = subprocess.run(
-                        pre_cmd,
-                        shell=True,
-                        timeout=30,
-                    )
-                    if result.returncode != 0:
-                        logger.warning(f"Pre-connection command exited with code {result.returncode}: {pre_cmd}")
-                except subprocess.TimeoutExpired:
-                    logger.warning(f"Pre-connection command timed out: {pre_cmd}")
-                except Exception as pre_exc:
-                    logger.warning(f"Pre-connection command failed: {pre_exc}")
+            from .daemon_interaction_dialogs import DaemonInteractionDialogs
+            from .terminal_session_controller import DaemonTerminalSessionController
 
-            # Preload this host's key(s) into ssh-agent before spawning ssh so a
-            # passphrased key locked in gnome-keyring gets unlocked and can sign
-            # (the agent is never disabled). Done here, on the connect worker
-            # thread, so the GLib main loop stays free and OUR askpass dialog can
-            # render for a not-stored passphrase. Best-effort; never blocks spawn.
-            # SSH-only: plugin protocols have no agent/keys.
-            if getattr(self.connection, 'protocol', 'ssh') == 'ssh':
-                try:
-                    preload = getattr(self.connection, '_preload_keys_into_agent', None)
-                    if callable(preload):
-                        preload(self.config)
-                except Exception as preload_exc:
-                    logger.debug(f"Key preload skipped/failed: {preload_exc}")
+            # Mark as daemon mode
+            self._daemon_mode = True
+            self._daemon_exit_handled = False
 
-            GLib.idle_add(self._setup_ssh_terminal)
+            # Create view ID
+            view_id = f"gtk-{self.session_id}"
+
+            # Create controller
+            self._daemon_controller = DaemonTerminalSessionController(
+                client=client,
+                bridge=bridge,
+                connection_id=connection_id,
+                view_id=view_id,
+                on_output=self._on_daemon_output,
+                on_continuity_lost=self._on_daemon_continuity_lost,
+                on_error=self._on_daemon_error,
+                on_state_changed=self._update_daemon_connection_state,
+            )
+
+            self._daemon_tab_state = self._daemon_controller.tab_state
+            self._daemon_interaction_dialogs = DaemonInteractionDialogs(
+                client,
+                bridge,
+                self,
+            )
+
+            # Set connecting state
+            self.connection_state = self.connection_state.__class__.CONNECTING
+            self.connection_state_reason = 'Opening daemon session...'
+            self._set_connecting_overlay_visible(True)
+
+            # Get terminal dimensions from the active backend (VTE or PyXterm).
+            dimensions = self._daemon_terminal_dimensions()
+
+            # Open session
+            self._daemon_controller.open(
+                connection_id, dimensions, remote_command=remote_command,
+                force_tty=bool(force_tty),
+            )
+
+            # Keystrokes + resize via the backend abstraction (not VTE-specific).
+            self._install_daemon_backend_io()
+
+            return True
+
         except Exception as e:
-            logger.error(f"SSH connection failed: {e}")
-            GLib.idle_add(self._on_connection_failed, str(e))
+            logger.error(f"Failed to start daemon session: {e}")
+            self._uninstall_daemon_backend_io()
+            self._daemon_mode = False
+            self._daemon_controller = None
+            self._daemon_tab_state = None
+            self._on_connection_failed(str(e))
+            return False
 
-    def _setup_ssh_terminal(self):
-        """Set up terminal with direct SSH command using ssh_connection_builder (called from main thread)"""
-        # Shutdown race guard: the connect worker schedules this via idle_add, so
-        # it can run after cleanup_all() marked this terminal quitting (or the
-        # window began closing). Spawning SSH now leaks a process past shutdown.
-        root = self.get_root() if hasattr(self, 'get_root') else None
-        if getattr(self, '_is_quitting', False) or getattr(root, '_is_quitting', False):
-            logger.debug("Terminal/window quitting, skipping SSH spawn")
-            return
+    def attach_daemon_session(
+        self,
+        client,
+        bridge,
+        session_id,
+        *,
+        connection_id=None,
+        from_sequence: int = 0,
+        request_input: bool = True,
+    ):
+        """Attach this view to an existing daemon session without opening a new one."""
         try:
-            # The spawn command comes from the connection's protocol backend
-            # (sshpilot.plugins). For SSH ("plugin zero") this is a pure
-            # indirection over the same prepared build_ssh_connection() result
-            # that Connection.native_connect()/connect() produced, so argv/env
-            # are identical to consuming connection.ssh_connection_cmd directly.
-            # The terminal handles only the runtime mechanics that cannot live
-            # in a pure command builder: askpass log forwarding (passphrase +
-            # login password from resolve_native_auth), terminal env tweaks,
-            # and the PTY/spawn.
-            # NOTE: self.backend is the *terminal* backend (VTE vs fallback);
-            # protocol backends are a different axis.
-            proto = getattr(self.connection, 'protocol', 'ssh')
-            protocol_backend = protocol_registry().get_or_none(proto)
-            working_dir = None
-            # Fail closed: a non-SSH connection whose backend isn't registered
-            # (plugin disabled / failed to load / API mismatch) must not silently
-            # fall back to an ssh invocation.
-            if (protocol_backend is None and proto != 'ssh'
-                    and getattr(self.connection, 'ssh_connection_cmd', None) is None):
-                GLib.idle_add(
-                    self._on_connection_failed,
-                    _("No backend for protocol '{}'. The plugin may be disabled, "
-                      "failed to load, or targets a different API version.").format(proto))
-                return
-            if protocol_backend is not None:
-                # Scope the spawn context to the plugin that registered the
-                # protocol so a backend's ctx.settings/secrets resolve to its
-                # own namespace. host=None: build_spawn must not use ui/events.
-                pid = protocol_registry().plugin_id_for(proto) or 'core'
-                plugin_ctx = PluginContext.for_spawn(
-                    plugin_id=pid,
-                    app_config=self.config,
-                    connection_manager=self.connection_manager,
-                    protocol_registry=protocol_registry(),
-                )
-                try:
-                    spec = protocol_backend.build_spawn(self.connection, plugin_ctx)
-                except ProtocolError as e:
-                    GLib.idle_add(self._on_connection_failed, str(e))
-                    return
-                ssh_cmd = list(spec.argv)
-                env = dict(spec.env)
-                working_dir = spec.working_directory
-                use_askpass = bool(spec.extras.get('use_askpass'))
-                use_sshpass = bool(spec.extras.get('use_sshpass'))
-                password_value = spec.extras.get('password')
-            elif (ssh_conn_cmd := getattr(self.connection, 'ssh_connection_cmd', None)) is not None:
-                # No backend registered (plugin system unavailable): consume the
-                # prepared command directly, exactly as before the plugin seam.
-                ssh_cmd = list(ssh_conn_cmd.command)
-                env = dict(ssh_conn_cmd.env)
-                use_askpass = bool(getattr(ssh_conn_cmd, 'use_askpass', False))
-                use_sshpass = bool(getattr(ssh_conn_cmd, 'use_sshpass', False))
-                password_value = ssh_conn_cmd.password
-            else:
-                # Fallback: a bare prepared command list from an older path, or a
-                # minimal ssh invocation as a last resort.
-                prepared = getattr(self.connection, 'ssh_cmd', None)
-                if isinstance(prepared, (list, tuple)) and prepared:
-                    ssh_cmd = list(prepared)
-                else:
-                    ssh_cmd = ['ssh']
-                env = os.environ.copy()
-                use_askpass = False
-                use_sshpass = False
-                password_value = None
+            from .daemon_interaction_dialogs import DaemonInteractionDialogs
+            from .terminal_session_controller import (
+                DaemonTerminalSessionController,
+                TerminalSessionState,
+            )
 
-            # Route identity/agent env injection through the selected identity provider
-            # (default: system ssh-agent), so all injection goes through one seam and
-            # honors the configured default. Idempotent over the inherited environment.
-            from .identity import get_identity_manager
-            env = get_identity_manager().apply_selected_to_env(env)
+            self._daemon_mode = True
+            self._daemon_exit_handled = False
+            view_id = f"gtk-{self.session_id}"
+            resolved_connection_id = connection_id
+            if resolved_connection_id is None and self._daemon_tab_state is not None:
+                resolved_connection_id = self._daemon_tab_state.connection_id
+            if resolved_connection_id is None:
 
-            # Remember whether a stored password was supplied this attempt, so an
-            # auth failure can say "saved password rejected" rather than a generic
-            # "authentication failed". Delivery is via askpass (not sshpass/PTY).
-            self._used_stored_password = bool(password_value)
-
-            logger.debug(f"SSH command from builder: {' '.join(ssh_cmd)}")
-
-            # Auth secrets (login password + key passphrase) are delivered by
-            # SSH_ASKPASS from resolve_native_auth — REQUIRE=prefer so MFA/OTP
-            # prompts declined by the helper appear on this terminal's TTY.
-            # Do not wrap with sshpass or arm PTY password autofill here.
-            if use_sshpass:
-                logger.debug(
-                    "Ignoring use_sshpass on terminal spawn; askpass owns password delivery"
+                resolved_connection_id = connection_id_for(
+                    self.connection
                 )
 
-            # Forward askpass helper log lines into our logger while connecting so
-            # passphrase/password-prompt activity is visible. Only new lines are
-            # forwarded (the log file persists for the whole session).
-            if use_askpass:
-                self._enable_askpass_log_forwarding(include_existing=False)
+            self._daemon_controller = DaemonTerminalSessionController(
+                client=client,
+                bridge=bridge,
+                connection_id=resolved_connection_id,
+                view_id=view_id,
+                on_output=self._on_daemon_output,
+                on_continuity_lost=self._on_daemon_continuity_lost,
+                on_error=self._on_daemon_error,
+                on_state_changed=self._update_daemon_connection_state,
+            )
+            self._daemon_tab_state = self._daemon_controller.tab_state
+            self._daemon_tab_state.session_id = session_id
+            self._daemon_tab_state.state = TerminalSessionState.DETACHED
+            self._daemon_interaction_dialogs = DaemonInteractionDialogs(
+                client,
+                bridge,
+                self,
+            )
+            self._daemon_interaction_dialogs.set_session(session_id)
+            self.connection_state = self.connection_state.__class__.CONNECTING
+            self.connection_state_reason = "Attaching to daemon session..."
+            self._set_connecting_overlay_visible(True)
+            self._install_daemon_backend_io()
+            self._daemon_controller.attach(
+                want_output=True,
+                request_input=request_input,
+                from_sequence=from_sequence,
+            )
+            return True
+        except Exception as error:
+            if getattr(getattr(error, "code", None), "value", None) == "session_already_closed":
+                logger.info("Discarding stale daemon session attachment")
+                self._uninstall_daemon_backend_io()
+                self._daemon_mode = False
+                self._daemon_controller = None
+                self._daemon_tab_state = None
+                return False
+            logger.error("Failed to attach daemon session: %s", error)
+            self._uninstall_daemon_backend_io()
+            self._daemon_mode = False
+            self._daemon_controller = None
+            self._daemon_tab_state = None
+            self._on_connection_failed(str(error))
+            return False
 
-            # Terminal-specific environment tweaks.
-            if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
-                env['TERM'] = 'xterm-256color'
-            env['SHELL'] = env.get('SHELL', '/bin/bash')
-            env['SSHPILOT_FLATPAK'] = '1'
-            # Add /app/bin to PATH for Flatpak compatibility
-            if os.path.exists('/app/bin'):
-                current_path = env.get('PATH', '')
-                if '/app/bin' not in current_path:
-                    env['PATH'] = f"/app/bin:{current_path}"
-
-            # Convert environment dict to list format expected by VTE
-            env_list = []
-            for key, value in env.items():
-                env_list.append(f"{key}={value}")
-            
-            # Log the command being executed for debugging
-            logger.debug(f"Spawning SSH command: {ssh_cmd}")
-            logger.debug(f"Environment PATH: {env.get('PATH', 'NOT_SET')}")
-            
-            # Create a new PTY for the terminal (VTE-specific, but backend may handle this)
-            # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
-            pty = None
-            if hasattr(self.backend, 'get_pty') and callable(self.backend.get_pty):
-                pty = self.backend.get_pty()
-            if pty is None and self.vte is not None:
-                try:
-                    pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
-                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
-                    # Get terminal size (rows, columns)
-                    try:
-                        rows = self.vte.get_row_count()
-                        cols = self.vte.get_column_count()
-                        # Only set size if we have valid dimensions (not default 80x24)
-                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
-                            pty.set_size(rows, cols)
-                            logger.debug(f"Set PTY size to {rows}x{cols} before spawn")
-                    except Exception as e:
-                        logger.debug(f"Could not set PTY size before spawn: {e}")
-                    # Associate PTY with Terminal so spawn_async uses it
-                    try:
-                        self.vte.set_pty(pty)
-                    except Exception as e:
-                        logger.debug(f"Could not set PTY on terminal: {e}")
-                except Exception:
-                    pass
-            
-            # Convert env_list to dict for backend
-            env_dict = {}
-            if env_list:
-                for env_item in env_list:
-                    if '=' in env_item:
-                        key, value = env_item.split('=', 1)
-                        env_dict[key] = value
-            
+    def _uninstall_daemon_backend_io(self) -> None:
+        """Drop previously installed daemon commit/size handlers (idempotent)."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            self._daemon_commit_handler = None
+            self._daemon_size_handler = None
+            return
+        for attr in ('_daemon_commit_handler', '_daemon_size_handler'):
+            handler = getattr(self, attr, None)
+            if handler is None:
+                continue
             try:
-                self.backend.spawn_async(
-                    argv=ssh_cmd,
-                    env=env_dict if env_dict else None,
-                    cwd=working_dir or os.path.expanduser('~') or '/',
-                    flags=0,
-                    child_setup=None,
-                    callback=self._on_spawn_complete,
-                    user_data=()
-                )
-            except GLib.Error as e:
-                logger.error(f"VTE spawn failed with GLib error: {e}")
-                # Check if it's a "No such file or directory" error for sshpass
-                if "sshpass" in str(e) and "No such file or directory" in str(e):
-                    logger.error("sshpass binary not found, falling back to askpass")
-                    # Fall back to askpass method
-                    self._fallback_to_askpass(ssh_cmd, env_list, working_dir)
-                else:
-                    self._on_connection_failed(str(e))
-                return
-            except Exception as e:
-                logger.error(f"VTE spawn failed with exception: {e}")
-                self._on_connection_failed(str(e))
-                return
-            
-            # Store the PTY for later cleanup
-            self.pty = pty
+                backend.disconnect(handler)
+            except Exception:
+                logger.debug("Failed to disconnect daemon backend handler", exc_info=True)
+            setattr(self, attr, None)
 
-            # Defer marking as connected until spawn completes
+    def _install_daemon_backend_io(self) -> None:
+        """Wire commit/resize through the terminal backend abstraction.
+
+        Idempotent: disconnects any previous handlers first so a second
+        attach/start on the same widget cannot stack VTE signal handlers
+        (which would duplicate each keystroke to the daemon).
+        """
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            return
+        self._uninstall_daemon_backend_io()
+        try:
+            connect_commit = getattr(backend, 'connect_commit', None)
+            if callable(connect_commit):
+                self._daemon_commit_handler = connect_commit(self._on_daemon_commit)
+        except Exception:
+            self._daemon_commit_handler = None
+            logger.debug("Failed to connect daemon commit handler", exc_info=True)
+        try:
+            connect_size = getattr(backend, 'connect_size_changed', None)
+            if callable(connect_size):
+                self._daemon_size_handler = connect_size(self._on_daemon_size_changed)
+        except Exception:
+            self._daemon_size_handler = None
+            logger.debug("Failed to connect daemon size handler", exc_info=True)
+
+    def _feed_display(self, data: bytes) -> None:
+        """Paint bytes on the active terminal display via the backend abstraction."""
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            raise RuntimeError("No terminal backend to feed display output")
+        backend.feed(data)
+
+    def _on_daemon_output(self, data):
+        """Handle daemon terminal output."""
+        try:
+            self._feed_display(data)
+
+            # First real output frame means the remote shell is rendering
+            # (banner/prompt), not merely attached.
+            if data and not self._shell_output_seen:
+                self._shell_output_seen = True
+                if not self._daemon_running_gate_active():
+                    self._flush_pending_shell_ready_feeds()
+
+            # Authoritative gate: flush only on output observed after the
+            # session reached RUNNING (authenticated). RUNNING fires at login,
+            # before the remote shell renders its banner — feeding on the
+            # transition double-echoes the command (the tty echoes the bytes,
+            # then the shell re-echoes them once it reads the buffer).
+            if self._daemon_running_gate_active():
+                if data and getattr(self._daemon_controller, "session_running", False):
+                    self._shell_output_seen_after_running = True
+                    self._flush_pending_shell_ready_feeds()
+
+            # Update connection state based on daemon session state
+            self._update_daemon_connection_state()
+
+        except Exception as e:
+            logger.error(f"Failed to feed daemon output to terminal: {e}")
+
+    def _on_daemon_continuity_lost(self):
+        """Handle daemon terminal continuity loss."""
+        try:
+            marker = b"\r\n[Earlier terminal output is no longer available]\r\n"
+            self._feed_display(marker)
+        except Exception as e:
+            logger.error(f"Failed to feed continuity loss marker: {e}")
+
+    def _on_daemon_error(self, error):
+        """Handle daemon terminal errors.
+
+        Binary terminal INPUT_ERROR frames and transient input/resize faults
+        must not tear down a live session — that race (attach/STARTING vs early
+        keystrokes) was failing connections with "The terminal input was rejected".
+        """
+        try:
+            from .api.errors import ErrorCode
+
+            code = getattr(error, "code", None)
+            if code in {
+                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
+                ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
+                ErrorCode.SESSION_INVALID_STATE,
+            }:
+                logger.info(
+                    "Transient daemon terminal I/O error (ignored for connection): %s",
+                    error,
+                )
+                return
+            if getattr(error, "retryable", False) and code in {
+                ErrorCode.SERVER_BUSY,
+                ErrorCode.OPERATION_TIMED_OUT,
+            }:
+                logger.info(
+                    "Retryable daemon terminal error (ignored for connection): %s",
+                    error,
+                )
+                return
+        except Exception:
+            pass
+        logger.error(f"Daemon terminal error: {error}")
+        self._on_connection_failed(str(error))
+
+    def _daemon_terminal_dimensions(self):
+        """Rows/cols from the active backend for daemon open/resize."""
+        from .api.models.terminal import TerminalDimensions
+
+        rows, columns = 24, 80
+        backend = getattr(self, 'backend', None)
+        if backend is not None:
             try:
-                self.apply_theme()
+                size = backend.get_size()
+                rows, columns = int(size[0]), int(size[1])
             except Exception:
                 pass
-            
-            # Apply theme after connection is established
-            self.apply_theme()
-            
-            # Focus the terminal
-            if self.backend:
-                self.backend.grab_focus()
+        return TerminalDimensions(
+            rows=max(1, min(1000, rows)),
+            columns=max(1, min(1000, columns)),
+        )
 
-            # Add fallback timer to hide spinner if spawn completion doesn't fire
-            self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-
-            logger.info(f"SSH terminal connected to {self.connection}")
-            
-        except Exception as e:
-            logger.error(f"Failed to setup SSH terminal: {e}")
-            self._on_connection_failed(str(e))
-    
-    def _fallback_to_askpass(self, ssh_cmd, env_list, working_dir=None):
-        """Fallback when sshpass fails - allow interactive prompting"""
-        try:
-            logger.info("Falling back to interactive password prompt")
-
-            # Remove sshpass from the command
-            if ssh_cmd and ssh_cmd[0] == 'sshpass':
-                ssh_cmd = ssh_cmd[3:]  # Remove sshpass, -f, and fifo_path
-
-            # Strip any askpass variables from the environment list, then force never
-            env_list = [e for e in env_list if not e.startswith('SSH_ASKPASS=') and not e.startswith('SSH_ASKPASS_REQUIRE=')]
-            env_list.append('SSH_ASKPASS_REQUIRE=never')
-
-            logger.debug(f"Fallback SSH command: {ssh_cmd}")
-
-            # Convert env_list to dict for backend
-            env_dict = {}
-            if env_list:
-                for env_item in env_list:
-                    if '=' in env_item:
-                        key, value = env_item.split('=', 1)
-                        env_dict[key] = value
-            
-            # Try spawning again without askpass
-            self.backend.spawn_async(
-                argv=ssh_cmd,
-                env=env_dict if env_dict else None,
-                cwd=working_dir or os.path.expanduser('~') or '/',
-                flags=0,
-                child_setup=None,
-                callback=self._on_spawn_complete,
-                user_data=()
-            )
-        except Exception as e:
-            logger.error(f"Fallback to interactive prompt failed: {e}")
-            self._on_connection_failed(str(e))
-
-    def _enable_askpass_log_forwarding(self, include_existing: bool = False) -> None:
-        """Start forwarding askpass log lines into the application logger."""
-
-        try:
-            from .askpass_utils import ensure_askpass_log_forwarder, forward_askpass_log_to_logger
-        except Exception as exc:
-            logger.debug(f"Unable to import askpass log forwarder: {exc}")
+    def _on_daemon_commit(self, terminal, text, size):
+        """Handle backend input commit for daemon terminals."""
+        if not self._daemon_controller or not self.has_input_ownership:
             return
 
-        ensure_askpass_log_forwarder()
-        forward_askpass_log_to_logger(logger, include_existing=include_existing)
+        try:
+            data = text.encode('utf-8') if isinstance(text, str) else text
+            self._daemon_controller.send_input(data)
+        except Exception as e:
+            logger.error(f"Failed to send input to daemon: {e}")
+
+    def _on_daemon_size_changed(self, terminal, char_width, char_height):
+        """Handle backend size change for daemon terminals."""
+        if not self._daemon_controller or not self.has_input_ownership:
+            return
+
+        try:
+            dimensions = self._daemon_terminal_dimensions()
+            self._daemon_controller.resize(dimensions)
+        except Exception as e:
+            logger.error(f"Failed to resize daemon terminal: {e}")
+
+    def _show_view_only_indicator(self):
+        """Show non-intrusive view-only indicator for daemon terminals."""
+        if self._view_only_overlay:
+            return  # Already shown
+
+        try:
+            from gi.repository import Gtk
+
+            # Create overlay banner
+            self._view_only_overlay = Gtk.InfoBar()
+            self._view_only_overlay.set_message_type(Gtk.MessageType.INFO)
+            self._view_only_overlay.set_show_close_button(False)
+
+            label = Gtk.Label(label="View only - another user controls this terminal")
+            self._view_only_overlay.add_child(label)
+
+            # Add to top of terminal
+            self.prepend(self._view_only_overlay)
+            self._view_only_overlay.set_visible(True)
+
+        except Exception as e:
+            logger.error(f"Failed to show view-only indicator: {e}")
+
+    def _hide_view_only_indicator(self):
+        """Hide view-only indicator."""
+        if self._view_only_overlay:
+            try:
+                self.remove(self._view_only_overlay)
+                self._view_only_overlay = None
+            except Exception as e:
+                logger.error(f"Failed to hide view-only indicator: {e}")
+
+    def feed_child_data(self, data):
+        """Feed bytes to the active input owner for this terminal.
+
+        Canonical widget-level input API. Daemon-backed SSH routes through
+        ``TerminalSessionController.send_input`` (never a local VTE child).
+        Local/legacy terminals feed the GTK-owned backend/VTE child.
+        """
+        if getattr(self, '_daemon_mode', False):
+            controller = getattr(self, '_daemon_controller', None)
+            if controller is not None:
+                if self.has_input_ownership:
+                    controller.send_input(data)
+                else:
+                    self._show_view_only_indicator()
+                return
+            # Daemon mode without a controller: refuse local child feed so a
+            # missing attachment cannot accidentally type into a stale PTY.
+            logger.debug("Daemon terminal has no controller; dropping feed")
+            return
+
+        # Local / legacy terminal — GTK owns the child process.
+        backend = getattr(self, 'backend', None)
+        if backend is None:
+            raise RuntimeError("No terminal backend for local input")
+        if not backend.supports_feature("local_process"):
+            from .terminal_backends import TerminalBackendCapabilityError
+            raise TerminalBackendCapabilityError(
+                "Active terminal backend does not support local process input"
+            )
+        backend.feed_child_data(data)
+
+    def _daemon_running_gate_active(self) -> bool:
+        """Whether the daemon RUNNING signal is authoritative for this tab."""
+        controller = getattr(self, "_daemon_controller", None)
+        if controller is None:
+            return False
+        return bool(getattr(controller, "session_events_subscribed", False))
+
+    def _flush_pending_shell_ready_feeds(self) -> None:
+        """Send queued shell-ready feeds once the shell is ready and owned."""
+        if not self.has_input_ownership:
+            return
+        pending, self._pending_shell_ready_feeds = (
+            self._pending_shell_ready_feeds,
+            [],
+        )
+        for feed in pending:
+            try:
+                self.feed_child_data(feed)
+            except Exception as e:
+                logger.error(f"Failed to flush shell-ready feed: {e}")
+
+    def feed_child_data_when_shell_ready(self, data):
+        """Feed bytes only once the remote shell is ready.
+
+        Authoritative path (the controller observes daemon session events):
+        defer automated feeds until output has been observed after the session
+        reached RUNNING — the daemon reports RUNNING once it has authenticated
+        (OpenSSH diagnostics / PTY evidence), which precedes the remote shell
+        rendering its banner. Feeding before that banner double-echoes the fed
+        command (the tty echoes the bytes, then the shell re-echoes them once
+        it reads the buffer). User keystrokes bypass this gate through
+        ``_on_daemon_commit``, so the password can still be typed while
+        automated feeds wait.
+
+        Fallback path (no RUNNING signal — e.g. a restored/detached attach
+        that does not subscribe to events): wait for the first rendered output
+        frame, as before. Non-daemon terminals feed immediately.
+        """
+        if not getattr(self, "_daemon_mode", False):
+            self.feed_child_data(data)
+            return
+        if self._daemon_running_gate_active():
+            if getattr(self, "_shell_output_seen_after_running", False):
+                self._flush_pending_shell_ready_feeds()
+                self.feed_child_data(data)
+                return
+            self._pending_shell_ready_feeds.append(data)
+            return
+        if getattr(self, "_shell_output_seen", False):
+            self.feed_child_data(data)
+            return
+        self._pending_shell_ready_feeds.append(data)
+
+    def _handle_daemon_close(self, is_quitting=False):
+        """Handle close policy for daemon terminals."""
+        try:
+            from .daemon_terminal_policy import resolve_tab_close_policy, TerminalClosePolicy
+
+            if is_quitting:
+                override = getattr(self, "_daemon_quit_close_policy", None)
+                if override is not None:
+                    policy = override
+                else:
+                    from .daemon_terminal_policy import resolve_app_close_policy
+                    policy = resolve_app_close_policy(self.config)
+            else:
+                policy = resolve_tab_close_policy(self.config)
+
+            if policy == TerminalClosePolicy.DETACH:
+                try:
+                    from .daemon_session_restore import DaemonSessionRestoreManager
+
+                    DaemonSessionRestoreManager(self.config).save_session_metadata(
+                        self._daemon_tab_state,
+                        tab_title=getattr(self.connection, "nickname", "Terminal"),
+                    )
+                except Exception:
+                    logger.debug("Failed to persist daemon restore metadata", exc_info=True)
+                self._daemon_controller.detach()
+                logger.debug(f"Detached from daemon session {self._daemon_tab_state.session_id}")
+            elif policy == TerminalClosePolicy.TERMINATE:
+                self._daemon_controller.close()
+                logger.debug(f"Terminated daemon session {self._daemon_tab_state.session_id}")
+            elif policy == TerminalClosePolicy.ASK and not is_quitting:
+                self._show_daemon_close_dialog()
+                return  # Dialog will handle the actual close
+            else:
+                # Default to detach during quit or if policy is unknown
+                self._daemon_controller.detach()
+                logger.debug(f"Detached from daemon session {self._daemon_tab_state.session_id}")
+
+            # Clean up daemon state
+            self._uninstall_daemon_backend_io()
+            self._daemon_mode = False
+            self._daemon_controller = None
+            self._daemon_tab_state = None
+            self._hide_view_only_indicator()
+
+            # Update connection state
+            self.is_connected = False
+
+        except Exception as e:
+            logger.error(f"Failed to handle daemon close: {e}")
+
+    def _show_daemon_close_dialog(self):
+        """Show close policy dialog for daemon terminals."""
+        try:
+            from gi.repository import Adw
+
+            root = self.get_root() if hasattr(self, 'get_root') else None
+            if not root:
+                # Fall back to detach if no parent window
+                self._daemon_controller.detach()
+                return
+
+            dialog = Adw.AlertDialog.new(
+                "Close Terminal Session",
+                "What should happen to the remote terminal session?"
+            )
+
+            dialog.add_response("detach", "Detach")
+            dialog.add_response("terminate", "Terminate")
+            dialog.add_response("cancel", "Cancel")
+
+            dialog.set_response_appearance("terminate", Adw.ResponseAppearance.DESTRUCTIVE)
+            dialog.set_response_appearance("detach", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("detach")
+            dialog.set_close_response("cancel")
+
+            dialog.connect("response", self._on_daemon_close_dialog_response)
+            dialog.present(root)
+
+        except Exception as e:
+            logger.error(f"Failed to show daemon close dialog: {e}")
+            # Fall back to detach on error
+            self._daemon_controller.detach()
+
+    def _on_daemon_close_dialog_response(self, dialog, response):
+        """Handle daemon close dialog response."""
+        try:
+            if response == "detach":
+                self._daemon_controller.detach()
+                logger.debug(f"User chose to detach from daemon session {self._daemon_tab_state.session_id}")
+            elif response == "terminate":
+                self._daemon_controller.close()
+                logger.debug(f"User chose to terminate daemon session {self._daemon_tab_state.session_id}")
+            elif response == "cancel":
+                return  # Don't close
+
+            # Clean up daemon state if we proceeded with close
+            if response != "cancel":
+                self._uninstall_daemon_backend_io()
+                self._daemon_mode = False
+                self._daemon_controller = None
+                self._daemon_tab_state = None
+                self._hide_view_only_indicator()
+
+                # Update connection state
+                self.is_connected = False
+
+                # Emit connection-lost signal to close the tab
+                self.emit('connection-lost')
+
+        except Exception as e:
+            logger.error(f"Failed to handle daemon close dialog response: {e}")
+
+    def _update_daemon_connection_state(self):
+        """Update connection state based on daemon session state."""
+        if not self._daemon_controller:
+            return
+
+        # A state notification may carry the RUNNING transition (or granted
+        # input ownership) — retry flushing any feeds deferred by
+        # ``feed_child_data_when_shell_ready``. Only when the active gate has
+        # already cleared: the authoritative gate clears on output observed
+        # after RUNNING (never on the RUNNING transition itself, which
+        # precedes the banner and would double-echo the feed).
+        if self._pending_shell_ready_feeds:
+            ready = (
+                getattr(self, "_shell_output_seen_after_running", False)
+                if self._daemon_running_gate_active()
+                else getattr(self, "_shell_output_seen", False)
+            )
+            if ready:
+                GLib.idle_add(self._flush_pending_shell_ready_feeds)
+
+        try:
+            from .terminal_session_controller import TerminalSessionState
+
+            daemon_state = self._daemon_controller.state
+            old_connected = self.is_connected
+            tab = self._daemon_controller.tab_state
+            dialogs = getattr(self, "_daemon_interaction_dialogs", None)
+            if (
+                dialogs is not None
+                and tab.session_id is not None
+                and getattr(dialogs, "_session_id", None) != tab.session_id
+            ):
+                dialogs.set_session(tab.session_id)
+
+            if daemon_state == TerminalSessionState.ACTIVE:
+                self.is_connected = True
+                self.connection_state = self.connection_state.__class__.CONNECTED
+                self.connection_state_reason = 'Connected'
+                self._set_connecting_overlay_visible(False)
+
+                # Check input ownership and show/hide view-only indicator
+                if not self.has_input_ownership:
+                    self._show_view_only_indicator()
+                else:
+                    self._hide_view_only_indicator()
+
+                # Emit connection-established if newly connected
+                if not old_connected:
+                    GLib.idle_add(self.emit, 'connection-established')
+
+            elif daemon_state in {TerminalSessionState.OPENING, TerminalSessionState.ATTACHING, TerminalSessionState.REPLAYING}:
+                self.connection_state = self.connection_state.__class__.CONNECTING
+                self.connection_state_reason = f'Daemon: {daemon_state.value}'
+                self._set_connecting_overlay_visible(True)
+
+            elif daemon_state in {TerminalSessionState.FAILED, TerminalSessionState.CLOSED}:
+                self.is_connected = False
+                self.connection_state = self.connection_state.__class__.DISCONNECTED
+                self.connection_state_reason = f'Daemon: {daemon_state.value}'
+                self._set_connecting_overlay_visible(False)
+
+                # Emit connection-lost if was connected
+                if old_connected:
+                    GLib.idle_add(self.emit, 'connection-lost')
+
+                if daemon_state == TerminalSessionState.CLOSED:
+                    # The daemon session ended underneath the tab (remote
+                    # reboot, killed connection, or the user typing exit).
+                    self._handle_daemon_session_exit(old_connected)
+
+            elif daemon_state == TerminalSessionState.DETACHED:
+                # Keep connected state but update reason
+                self.connection_state_reason = 'Detached'
+
+        except Exception as e:
+            logger.error(f"Failed to update daemon connection state: {e}")
+
+    def _handle_daemon_session_exit(self, was_connected):
+        """React to a daemon-initiated session end (reboot, dropped link, exit).
+
+        Mirrors the legacy child-exit handling: a clean exit (the user typed
+        exit) closes the tab; any other exit shows the reconnect banner.
+        Runs at most once per daemon session.
+        """
+        if getattr(self, '_daemon_exit_handled', False):
+            return
+        self._daemon_exit_handled = True
+
+        try:
+            exit_info = getattr(self._daemon_controller, 'exit_info', None)
+            exit_code = getattr(exit_info, 'exit_code', None) if exit_info else None
+            signal = getattr(exit_info, 'signal', None) if exit_info else None
+
+            if exit_info is not None and exit_code == 0 and not signal:
+                # Clean exit: close the tab (mirrors _handle_child_exit_cleanup).
+                root = self.get_root() if hasattr(self, 'get_root') else None
+                if root and hasattr(root, 'tab_view'):
+                    # Safe lookup: this terminal may be embedded in a
+                    # split-view pane (not in the main tab_view).
+                    if hasattr(root, '_page_for_child'):
+                        page = root._page_for_child(self)
+                    else:
+                        page = root.tab_view.get_page(self)
+                    if page:
+                        try:
+                            setattr(root, '_suppress_close_confirmation', True)
+                            root.tab_view.close_page(page)
+                        finally:
+                            try:
+                                setattr(root, '_suppress_close_confirmation', False)
+                            except Exception:
+                                pass
+                return
+
+            # Unexpected end (remote reboot, killed connection, ...): show the
+            # reconnect banner, classified the same way as the legacy path.
+            exit_state, exit_reason = self._classify_exit(exit_code, was_connected, '')
+            self.connection_state = exit_state
+            self.connection_state_reason = exit_reason or 'Session ended'
+            banner_text = self.last_error_message or exit_reason
+            if not banner_text:
+                if exit_code:
+                    banner_text = _('SSH exited with status {code}').format(code=exit_code)
+                elif signal:
+                    banner_text = _('Session terminated by signal {sig}').format(sig=signal)
+                else:
+                    banner_text = _('Session ended.')
+            self._record_error_detail(exit_reason or banner_text, exit_code=exit_code)
+            self._set_disconnected_banner_visible(True, banner_text)
+        except Exception as e:
+            logger.error(f"Failed to handle daemon session exit: {e}")
 
     def _on_spawn_complete(self, terminal_or_widget, pid_or_error=None, error=None, user_data=None):
         """Called when terminal spawn is complete
-        
+
         Handles both VTE callback signature (terminal, pid, error, user_data)
         and backend callback signature (widget, exception).
         """
@@ -1352,7 +1631,7 @@ class TerminalWidget(Gtk.Box):
             pid = pid_or_error
         else:
             pid = pid_or_error
-        
+
         # For backend callbacks, we might not get a pid
         if pid is None and hasattr(self.backend, 'get_child_pid'):
             try:
@@ -1373,7 +1652,7 @@ class TerminalWidget(Gtk.Box):
             self._fallback_timer_id = None
 
         logger.debug(f"Flatpak debug: _on_spawn_complete called with pid={pid}, error={error}, user_data={user_data}")
-        
+
         if error:
             logger.error(f"Terminal spawn failed: {error}")
             # Ensure theme is applied before showing error so bg doesn't flash white
@@ -1397,11 +1676,11 @@ class TerminalWidget(Gtk.Box):
             # Get and store process group ID
             self.process_pgid = os.getpgid(pid)
             logger.debug(f"Process group ID: {self.process_pgid}")
-            
+
             # Store shell PGID for job detection (this is the shell's process group)
             self._shell_pgid = self.process_pgid
             logger.debug(f"Shell PGID stored for job detection: {self._shell_pgid}")
-            
+
             # Store process info for cleanup
             with process_manager.lock:
                 # Determine command type based on connection type
@@ -1415,20 +1694,20 @@ class TerminalWidget(Gtk.Box):
                     'command': command_type,
                     'pgid': self.process_pgid
                 }
-            
+
             # Grab focus and apply theme
             if self.backend:
                 self.backend.grab_focus()
             self.apply_theme()
 
-            # The ssh process spawned — but that only means the subprocess
-            # started, NOT that it authenticated or reached the host. Enter
+            # The child process spawned — that only means the session process
+            # started, not that it authenticated or reached a remote host. Enter
             # CONNECTING and promote to CONNECTED only on real login evidence
             # (remote termprops via _on_termprops_changed) or, failing that, if
             # the process is still alive after a short grace period. A fast
             # failure (auth/refused/unreachable) exits first and is classified
             # as FAILED, so the indicator never flashes green on a dead link.
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             is_remote = (
                 hasattr(self, 'connection') and self.connection
                 and getattr(self.connection, 'hostname', None) != 'localhost'
@@ -1461,7 +1740,7 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Error in spawn complete: {e}")
             self._on_connection_failed(str(e))
-    
+
     def _fallback_hide_spinner(self):
         """Fallback for the Flatpak case where the spawn-complete callback never
         fires. Promotes only on real evidence — never merely because the process
@@ -1481,7 +1760,7 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Fallback timer triggered after connection failure; ignoring")
             return False
 
-        from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
         if self.connection_state == ConnectionState.CONNECTED:
             return False
 
@@ -1506,59 +1785,12 @@ class TerminalWidget(Gtk.Box):
         the old "process is alive" heuristic — a socket stuck in the TCP connect
         phase is alive but produces no remote output, so it stays 'pending'.
         """
-        text = (self._scrape_recent_terminal_text(4000) or '').lower()
-        if not text:
-            return 'pending'
-
-        # A visible ssh failure means the attempt is dying — never promote.
-        for marker in _SSH_FAILURE_MARKERS:
-            if marker in text:
-                # Remember the matching line so the exit reason is precise even
-                # if the final bytes aren't in the buffer when ssh exits.
-                for line in text.splitlines():
-                    if marker in line:
-                        self._connect_failure_hint = line.strip()
-                        break
-                return 'failed'
-
-        # Explicit positive evidence (ssh -v progress / login banner).
-        if any(marker in text for marker in _SSH_SUCCESS_MARKERS):
-            return 'connected'
-
-        # Auth prompts (password, passphrase, OTP/PIN, FIDO touch, host-key
-        # yes/no) are drawn *before* the session is authenticated — the local
-        # client prints the passphrase one before a single packet goes out. The
-        # same classifier the PTY autofill uses decides what is a prompt, so
-        # connect gating and askpass can't drift apart.
-        from .askpass_utils import classify_prompt
-
-        # Waiting on the trailing prompt: nobody has logged in yet, whatever
-        # came before it. This also covers multi-line prompts whose first line
-        # ("The authenticity of host … can't be established.") reads like
-        # remote output on its own.
-        if classify_prompt(text) is not None:
-            return 'pending'
-
-        # Any line that isn't ssh's own chatter is remote output (a shell prompt
-        # or MOTD) — strong evidence the session is live. A prompt that is no
-        # longer the trailing line (ssh printed after it) is still not evidence.
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            if stripped.startswith(_SSH_NOISE_PREFIXES):
-                continue
-            if any(marker in stripped for marker in _SSH_HOSTKEY_BANNER_MARKERS):
-                continue
-            # The user's own echoed answer to the host-key question, when the
-            # terminal puts it on its own line.
-            if stripped in ('yes', 'no'):
-                continue
-            if classify_prompt(stripped) is not None:
-                continue
-            return 'connected'
-
-        return 'pending'
+        evidence = classify_connection_evidence(
+            self._scrape_recent_terminal_text(4000) or ''
+        )
+        if evidence.failure_reason:
+            self._connect_failure_hint = evidence.failure_reason
+        return evidence.verdict
 
     def _start_connect_grace(self):
         """Start the evidence poller that promotes CONNECTING→CONNECTED once the
@@ -1598,7 +1830,7 @@ class TerminalWidget(Gtk.Box):
 
     def _on_connect_grace_elapsed(self):
         # Repeating timer: return True to keep polling, False to stop.
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         if getattr(self, '_is_quitting', False) or self.connection_state != ConnectionState.CONNECTING:
             self._connect_grace_timer_id = None
             return False
@@ -1636,7 +1868,7 @@ class TerminalWidget(Gtk.Box):
     def _mark_connected(self):
         """Promote a CONNECTING session to CONNECTED (idempotent). Called only on
         real evidence: termprops, or remote output seen by the evidence poller."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         if self.connection_state == ConnectionState.CONNECTED:
             return
         self._cancel_connect_grace()
@@ -1684,9 +1916,8 @@ class TerminalWidget(Gtk.Box):
         """Queue a one-shot fill for ssh's password prompt (``classify_prompt``).
 
         Call before spawn (or before ``_install_pty_autofill``). Residual prompts
-        such as 2FA stay in the terminal for the user. Safe to call from SCP /
-        ssh-copy-id paths that spawn on a TerminalWidget without going through
-        ``_setup_ssh_terminal``.
+        such as 2FA stay in the terminal for the user. This is presentation
+        support for one-shot command UIs; it does not own remote transport.
         """
         from .askpass_utils import classify_prompt
 
@@ -1705,31 +1936,35 @@ class TerminalWidget(Gtk.Box):
         encrypted PTY exactly as if typed, never on a command line. Fills come
         from the ``_pty_autofills`` queue of ``(matcher, response)`` entries
         (matcher: substring or callable over the scraped tail) and/or the legacy
-        single-slot ``_pty_autofill`` tuple; no-op when neither is set."""
+        single-slot ``_pty_autofill`` tuple; no-op when neither is set.
+
+        Ownership: local/legacy GTK-owned terminals only. Daemon-backed SSH
+        authenticates via interaction dialogs and must not scrape/autofill into
+        a nonexistent local child (or replay after reattach).
+        """
+        if getattr(self, '_daemon_mode', False):
+            logger.debug("Skipping PTY autofill on daemon-backed terminal")
+            self._pty_autofill = None
+            self._pty_autofills = None
+            return
         autofill = getattr(self, '_pty_autofill', None)
         if (not getattr(self, '_pty_autofills', None)
                 and (not autofill or not autofill[0])):
             return
         self._pty_autofill_done = False
-        vte = getattr(self, 'vte', None)
-        if vte is None:
-            # No Vte.Terminal (embedded PyXterm backend): drive the same one-shot
-            # watcher from the backend's PTY output stream instead of VTE's
-            # 'contents-changed' signal. get_content()/feed_child() work there too.
-            backend = getattr(self, 'backend', None)
-            if backend is not None and hasattr(backend, 'add_output_hook'):
-                try:
-                    backend.add_output_hook(self._pty_autofill_tick)
-                    self._pty_autofill_timeout_id = GLib.timeout_add_seconds(
-                        30, self._cancel_pty_autofill)
-                except Exception:
-                    logger.debug("Could not arm PTY auto-fill via backend", exc_info=True)
+        backend = getattr(self, "backend", None)
+        if backend is None:
             return
         try:
-            self._pty_autofill_handler = vte.connect(
-                'contents-changed', self._on_pty_autofill_changed)
+            if hasattr(backend, "add_output_hook"):
+                backend.add_output_hook(self._pty_autofill_tick)
+                self._pty_autofill_handler = None
+            else:
+                self._pty_autofill_handler = backend.connect_content_changed(
+                    self._on_pty_autofill_changed
+                )
         except Exception:
-            logger.debug("Could not connect PTY auto-fill watcher", exc_info=True)
+            logger.debug("Could not arm PTY auto-fill via backend", exc_info=True)
             return
         # Safety: give up after 30s so we never linger or leak the handler if the
         # prompt never shows (e.g. cached sudo credentials, wrong command).
@@ -1737,6 +1972,10 @@ class TerminalWidget(Gtk.Box):
             30, self._cancel_pty_autofill)
 
     def _on_pty_autofill_changed(self, _vte):
+        if getattr(self, '_daemon_mode', False):
+            # Daemon SSH must not deliver autofill through a local child feed.
+            self._cancel_pty_autofill()
+            return False
         fills = getattr(self, '_pty_autofills', None) or []
         legacy = (None if getattr(self, '_pty_autofill_done', True)
                   else getattr(self, '_pty_autofill', None))
@@ -1766,11 +2005,9 @@ class TerminalWidget(Gtk.Box):
         if response is None:
             return False
         try:
+            # Never log ``response`` — it is a secret.
             data = (response + '\n').encode('utf-8')
-            if getattr(self, 'backend', None) is not None and hasattr(self.backend, 'feed_child'):
-                self.backend.feed_child(data)
-            elif getattr(self, 'vte', None) is not None:
-                self.vte.feed_child(data)
+            self.feed_child_data(data)
         except Exception:
             logger.debug("PTY auto-fill feed failed", exc_info=True)
         if not fills and (getattr(self, '_pty_autofill_done', True)
@@ -1786,9 +2023,7 @@ class TerminalWidget(Gtk.Box):
         handler_id = getattr(self, '_pty_autofill_handler', None)
         if handler_id:
             try:
-                vte = getattr(self, 'vte', None)
-                if vte is not None:
-                    vte.disconnect(handler_id)
+                self.backend.disconnect(handler_id)
             except Exception:
                 pass
             self._pty_autofill_handler = None
@@ -1818,7 +2053,7 @@ class TerminalWidget(Gtk.Box):
         instant real remote output appears, instead of waiting for the 1 s poller.
         Uses the same evidence matcher as the poller, so ssh's own local-side
         chatter never falsely promotes; failures are left to the poller/child-exit."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         if self.connection_state != ConnectionState.CONNECTING:
             return
         if self._scan_connect_evidence() == 'connected':
@@ -1842,7 +2077,7 @@ class TerminalWidget(Gtk.Box):
         # A non-empty remote title is login evidence — promote a CONNECTING remote
         # session, mirroring VTE's termprops path.
         try:
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             if self.connection_state == ConnectionState.CONNECTING and not self._is_local_terminal():
                 self._mark_connected()
         except Exception:
@@ -1852,7 +2087,7 @@ class TerminalWidget(Gtk.Box):
         """Map an ssh exit into (ConnectionState, reason) from the exit code and
         the captured error text. Distinguishes auth/unreachable failures from a
         clean disconnect or a dropped-after-connected session."""
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         # Include any failure line the connect-evidence poller captured, so the
         # precise reason survives even if ssh's final output isn't in the buffer
         # by the time the child-exit handler scrapes it.
@@ -1910,179 +2145,25 @@ class TerminalWidget(Gtk.Box):
 
 
     def apply_theme(self, theme_name=None):
-        """Apply terminal theme and font settings
+        """Delegate theme rendering entirely to the active emulator backend."""
+        if self.backend is None:
+            raise RuntimeError("No terminal backend available for theme application")
+        self.backend.apply_theme(theme_name)
 
-        Args:
-            theme_name (str, optional): Name of the theme to apply. If None, uses the saved theme.
-        """
-        try:
-            if theme_name is None and self.config:
-                # Get the saved theme from config
-                theme_name = self.config.get_setting('terminal.theme', 'default')
-                
-            # Get the theme profile from config
-            if self.config:
-                profile = self.config.get_terminal_profile(theme_name)
-            else:
-                # Fallback default theme
-                profile = {
-                    'foreground': '#000000',  # Black text
-                    'background': '#FFFFFF',  # White background
-                    'font': 'Monospace 12',
-                    'cursor_color': '#000000',
-                    'highlight_background': '#4A90E2',
-                    'highlight_foreground': '#FFFFFF',
-                    'palette': [
-                        '#000000', '#CC0000', '#4E9A06', '#C4A000',
-                        '#3465A4', '#75507B', '#06989A', '#D3D7CF',
-                        '#555753', '#EF2929', '#8AE234', '#FCE94F',
-                        '#729FCF', '#AD7FA8', '#34E2E2', '#EEEEEC'
-                    ]
-                }
-            
-            # Set colors
-            fg_color = Gdk.RGBA()
-            fg_color.parse(profile['foreground'])
+    def grab_terminal_focus(self) -> None:
+        """Focus the active emulator without exposing its implementation."""
+        if self.backend is not None:
+            self.backend.grab_focus()
 
-            bg_color = Gdk.RGBA()
-            bg_color.parse(profile['background'])
+    def queue_terminal_draw(self) -> None:
+        """Request an emulator redraw through the backend."""
+        if self.backend is not None:
+            self.backend.queue_draw()
 
-            cursor_color_value = profile.get('cursor_color')
-            cursor_color = Gdk.RGBA()
-            if not (cursor_color_value and cursor_color.parse(cursor_color_value)):
-                cursor_color = get_contrast_color(bg_color)
-
-            highlight_bg_value = profile.get('highlight_background')
-            highlight_fg_value = profile.get('highlight_foreground')
-            highlight_bg = Gdk.RGBA()
-            highlight_fg = Gdk.RGBA()
-
-            if not (highlight_bg_value and highlight_bg.parse(highlight_bg_value)):
-                highlight_bg.parse('#4A90E2')
-
-            if not (highlight_fg_value and highlight_fg.parse(highlight_fg_value)):
-                highlight_fg = get_contrast_color(highlight_bg)
-
-            override_rgba = self._get_group_color_rgba()
-            use_group_color = False
-
-            try:
-                use_group_color = bool(
-                    self.config.get_setting('ui.use_group_color_in_terminal', False)
-                )
-            except Exception:
-                use_group_color = False
-
-            if use_group_color and override_rgba is not None:
-                bg_color = clone_rgba(override_rgba)  # Use exact group color
-                fg_color = get_contrast_color(bg_color)
-
-                contrast_for_bg = get_contrast_color(bg_color)
-                mix_ratio = 0.35 if relative_luminance(bg_color) < 0.5 else 0.25
-                highlight_bg = mix_rgba(bg_color, contrast_for_bg, mix_ratio)
-                highlight_bg.alpha = 1.0
-                highlight_fg = get_contrast_color(highlight_bg)
-                cursor_color = clone_rgba(fg_color)
-
-
-            # Prepare palette colors (16 ANSI colors)
-            palette_colors = None
-            if profile.get('palette'):
-                palette_colors = []
-                for color_hex in profile['palette']:
-                    color = Gdk.RGBA()
-                    if color.parse(color_hex):
-                        palette_colors.append(color)
-                    else:
-                        logger.warning(f"Failed to parse palette color: {color_hex}")
-                        # Use a fallback color
-                        fallback = Gdk.RGBA()
-                        fallback.parse('#000000')
-                        palette_colors.append(fallback)
-                
-                # Ensure we have exactly 16 colors
-                while len(palette_colors) < 16:
-                    fallback = Gdk.RGBA()
-                    fallback.parse('#000000')
-                    palette_colors.append(fallback)
-                palette_colors = palette_colors[:16]  # Limit to 16 colors
-            
-            # Apply colors to terminal (VTE-specific, but backend.apply_theme should handle this)
-            # For VTE backend, apply directly; for other backends, use apply_theme
-            if self.vte is not None:
-                self.vte.set_colors(fg_color, bg_color, palette_colors)
-                self.vte.set_color_cursor(cursor_color)
-                self.vte.set_color_highlight(highlight_bg)
-                self.vte.set_color_highlight_foreground(highlight_fg)
-            elif self.backend:
-                # For non-VTE backends, use apply_theme which should handle colors
-                self.backend.apply_theme(theme_name)
-
-            self._applied_background_color = clone_rgba(bg_color)
-            self._applied_cursor_color = clone_rgba(cursor_color)
-            self._applied_highlight_bg = clone_rgba(highlight_bg)
-            self._applied_highlight_fg = clone_rgba(highlight_fg)
-
-            # Also color the container background to prevent white flash before VTE paints
-            try:
-                rgba = bg_color
-                # For Gtk4, setting the widget style via CSS provider
-                # Track provider on display to avoid accumulation and conflicts
-                display = Gdk.Display.get_default()
-                if display:
-                    # Remove previous terminal background provider if it exists
-                    if hasattr(display, '_terminal_bg_provider'):
-                        try:
-                            Gtk.StyleContext.remove_provider_for_display(
-                                display, display._terminal_bg_provider
-                            )
-                        except Exception:
-                            pass
-                    
-                    # Create new provider with very specific selector to avoid affecting other widgets
-                    # Target TerminalWidget + scrolled child + VTE or PyXterm WebView.
-                    provider = Gtk.CssProvider()
-                    css = (
-                        f"terminalwidget.terminal-bg, "
-                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg, "
-                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg > vte-terminal.terminal-bg, "
-                        f"terminalwidget.terminal-bg > scrolledwindow.terminal-bg > *.terminal-bg "
-                        f"{{ background-color: rgba({int(rgba.red*255)}, {int(rgba.green*255)}, "
-                        f"{int(rgba.blue*255)}, {rgba.alpha}); }}"
-                    )
-                    provider.load_from_data(css.encode('utf-8'))
-                    Gtk.StyleContext.add_provider_for_display(
-                        display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-                    )
-                    # Store provider reference for cleanup
-                    display._terminal_bg_provider = provider
-                
-                # Add CSS class to terminal widgets only
-                if hasattr(self, 'add_css_class'):
-                    self.add_css_class('terminal-bg')
-                if hasattr(self.scrolled_window, 'add_css_class'):
-                    self.scrolled_window.add_css_class('terminal-bg')
-                if hasattr(self.vte, 'add_css_class'):
-                    self.vte.add_css_class('terminal-bg')
-                backend_widget = getattr(getattr(self, 'backend', None), 'widget', None)
-                if backend_widget is not None and hasattr(backend_widget, 'add_css_class'):
-                    backend_widget.add_css_class('terminal-bg')
-            except Exception as e:
-                logger.debug(f"Failed to set container background: {e}")
-            
-            # Set font
-            font_desc = Pango.FontDescription.from_string(profile['font'])
-            if self.backend:
-                self.backend.set_font(font_desc)
-            
-            # Force a redraw
-            if self.backend:
-                self.backend.queue_draw()
-            
-            logger.debug(f"Applied terminal theme: {theme_name or 'default'}")
-            
-        except Exception as e:
-            logger.error(f"Failed to apply terminal theme: {e}")
+    def show_terminal(self) -> None:
+        """Show the active emulator through the backend."""
+        if self.backend is not None:
+            self.backend.show()
 
     def _get_group_color_rgba(self) -> Optional[Gdk.RGBA]:
         color_value = getattr(self, 'group_color', None)
@@ -2098,42 +2179,6 @@ class TerminalWidget(Gtk.Box):
             logger.debug("Failed to parse group color '%s'", color_value, exc_info=True)
         return None
 
-    def _apply_cursor_and_selection_colors(self):
-        try:
-            cursor_color = getattr(self, '_applied_cursor_color', None)
-            background_color = getattr(self, '_applied_background_color', None)
-
-            if cursor_color is None and background_color is not None:
-                cursor_color = get_contrast_color(background_color)
-            elif cursor_color is None:
-                cursor_color = Gdk.RGBA()
-                cursor_color.parse('#000000')
-
-            if hasattr(self.vte, 'set_color_cursor') and cursor_color is not None:
-                self.vte.set_color_cursor(cursor_color)
-                logger.debug("Applied cursor color")
-
-            highlight_bg = getattr(self, '_applied_highlight_bg', None)
-            highlight_fg = getattr(self, '_applied_highlight_fg', None)
-
-            if highlight_bg is None:
-                highlight_bg = Gdk.RGBA()
-                highlight_bg.parse('#4A90E2')
-
-            if highlight_fg is None:
-                highlight_fg = get_contrast_color(highlight_bg)
-
-            if hasattr(self.vte, 'set_color_highlight'):
-                self.vte.set_color_highlight(highlight_bg)
-                logger.debug("Applied selection highlight color")
-
-            if hasattr(self.vte, 'set_color_highlight_foreground'):
-                self.vte.set_color_highlight_foreground(highlight_fg)
-                logger.debug("Applied selection highlight foreground color")
-
-        except Exception as e:
-            logger.warning(f"Could not apply terminal highlight or cursor colors: {e}")
-
     def set_group_color(self, color_value, force: bool = False):
         normalized = color_value or None
         if not force and normalized == getattr(self, 'group_color', None):
@@ -2144,225 +2189,51 @@ class TerminalWidget(Gtk.Box):
             self.apply_theme()
         except Exception:
             logger.debug("Failed to reapply theme after group color update", exc_info=True)
-            
+
     def force_style_refresh(self):
         """Force a style refresh of the terminal widget."""
         self.apply_theme()
-    
+
     def setup_terminal(self):
-        """Initialize the VTE terminal with appropriate settings."""
-        logger.info("Setting up terminal...")
-        
+        """Configure the active terminal through the backend contract."""
+        if self.backend is None:
+            raise RuntimeError("No terminal backend available for configuration")
+        font_desc = Pango.FontDescription()
+        font_desc.set_family("Monospace")
+        font_desc.set_size(12 * Pango.SCALE)
+        self.backend.set_font(font_desc)
+        encoding = "UTF-8"
         try:
-            # Set terminal font
-            font_desc = Pango.FontDescription()
-            font_desc.set_family("Monospace")
-            font_desc.set_size(12 * Pango.SCALE)  # Slightly larger default font
-            if self.backend:
-                self.backend.set_font(font_desc)
-            
-            # Do not force a light default; theme will define colors
-            self.apply_theme()
-            
-            # Set VTE-specific properties (only if using VTE backend)
-            if self.vte is not None:
-                # Set cursor properties
-                try:
-                    self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-                    self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
-                except Exception as e:
-                    logger.warning(f"Could not set cursor properties: {e}")
-                
-                # Set scrollback lines
-                try:
-                    self.vte.set_scrollback_lines(10000)
-                except Exception as e:
-                    logger.warning(f"Could not set scrollback lines: {e}")
-
-                # Scroll behavior: snap to the prompt when the user types, but
-                # don't yank the view to the bottom on background output while
-                # the user is scrolled up reading scrollback.
-                try:
-                    if hasattr(self.vte, 'set_scroll_on_keystroke'):
-                        self.vte.set_scroll_on_keystroke(True)
-                    if hasattr(self.vte, 'set_scroll_on_output'):
-                        self.vte.set_scroll_on_output(False)
-                except Exception as e:
-                    logger.warning(f"Could not set scroll behavior: {e}")
-
-                # Set word char exceptions (for double-click selection)
-                try:
-                    # Try the newer API first (VTE 0.60+)
-                    if hasattr(self.vte, 'set_word_char_exceptions'):
-                        self.vte.set_word_char_exceptions("@-./_~")
-                        logger.debug("Set word char exceptions using VTE 0.60+ API")
-                    # Fall back to the older API if needed
-                    elif hasattr(self.vte, 'set_word_char_options'):
-                        self.vte.set_word_char_options("@-./_~")
-                        logger.debug("Set word char exceptions using older VTE API")
-                except Exception as e:
-                    logger.warning(f"Could not set word char options: {e}")
-                
-                self._apply_cursor_and_selection_colors()
-                
-                # Enable mouse reporting if available
-                try:
-                    if hasattr(self.vte, 'set_mouse_autohide'):
-                        self.vte.set_mouse_autohide(True)
-                        logger.debug("Enabled mouse autohide")
-                except Exception as e:
-                    logger.warning(f"Could not set mouse autohide: {e}")
-                    
-                encoding_value = 'UTF-8'
-                try:
-                    encoding_value = self.config.get_setting('terminal.encoding', 'UTF-8')
-                except Exception:
-                    encoding_value = 'UTF-8'
-                self._apply_terminal_encoding(encoding_value, update_config_on_fallback=True)
-                    
-                # Enable bold text
-                try:
-                    if hasattr(self.vte, 'set_allow_bold'):
-                        self.vte.set_allow_bold(True)
-                        logger.debug("Enabled bold text")
-                except Exception as e:
-                    logger.warning(f"Could not enable bold text: {e}")
-
-                # Enable OSC 8 hyperlink support (links emitted by apps via escape sequences)
-                self._hovered_hyperlink_uri = None
-                try:
-                    if hasattr(self.vte, 'set_allow_hyperlink'):
-                        self.vte.set_allow_hyperlink(True)
-                        logger.debug("Enabled OSC 8 hyperlink support")
-                except Exception as e:
-                    logger.warning(f"Could not enable OSC 8 hyperlink support: {e}")
-
-                # Register URL regex so VTE underlines plain-text URLs on hover.
-                # PCRE2_MULTILINE (0x00000400) is required by VTE's match_add_regex.
-                self._url_regex_tag = -1
-                try:
-                    PCRE2_MULTILINE = 0x00000400
-                    _url_pattern = (
-                        r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
-                        r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]'
-                    )
-                    _url_regex = Vte.Regex.new_for_match(
-                        _url_pattern, len(_url_pattern), PCRE2_MULTILINE
-                    )
-                    self._url_regex_tag = self.vte.match_add_regex(_url_regex, 0)
-                    self.vte.match_set_cursor_name(self._url_regex_tag, "pointer")
-                    logger.debug(f"Registered URL regex, tag={self._url_regex_tag}")
-                except Exception as e:
-                    logger.warning(f"Could not register URL regex: {e}")
-
-                # Motion controller – tracks which URL cell the cursor is over,
-                # and re-grabs focus on enter so VTE's native hover detection
-                # (cursor shape, underline) stays active after other UI elements
-                # have taken focus.
-                try:
-                    _motion_ctrl = Gtk.EventControllerMotion()
-                    _motion_ctrl.connect('motion', self._on_vte_motion)
-                    _motion_ctrl.connect('enter', self._on_vte_pointer_enter)
-                    self.vte.add_controller(_motion_ctrl)
-                    self._url_motion_controller = _motion_ctrl
-                except Exception as e:
-                    logger.warning(f"Could not add URL motion controller: {e}")
-
-                # Nudge VTE to re-evaluate match highlighting whenever new content
-                # arrives (e.g. after a paste).  queue_draw() alone won't update
-                # VTE's internal m_match_hilite, but it ensures the underline
-                # drawn by our manual cursor management below is repainted.
-                try:
-                    self.vte.connect('contents-changed', lambda t: t.queue_draw())
-                except Exception as e:
-                    logger.warning(f"Could not connect contents-changed: {e}")
-
-                # Copy-on-select: when enabled in preferences, mirror the
-                # selection into the clipboard automatically.
-                try:
-                    self.vte.connect('selection-changed', self._on_selection_changed)
-                except Exception as e:
-                    logger.warning(f"Could not connect selection-changed: {e}")
-
-                # Key controller – tracks Ctrl state for Ctrl+click URL opening.
-                # Reading it from the click event is unreliable; a dedicated key
-                # controller is more robust.
-                # Show the terminal
-                try:
-                    self.vte.show()
-                except Exception as e:
-                    logger.warning(f"Could not show terminal: {e}")
-                
-            logger.info("Terminal setup complete")
-            
-        except Exception as e:
-            logger.error(f"Error in setup_terminal: {e}", exc_info=True)
-            raise
-        
-        # Install terminal shortcuts and custom context menu
+            encoding = self.config.get_setting("terminal.encoding", "UTF-8")
+        except Exception:
+            pass
+        self.backend.configure({"encoding": encoding, "scrollback_lines": 10000})
+        self.backend.apply_theme()
+        # VTE owns hover highlighting and cursor changes for both its
+        # registered regex and OSC 8 hyperlinks.  Python only looks a URI up
+        # for an explicit click or context-menu action.
+        self.backend.setup_link_handling(
+            self._on_vte_motion,
+            self._on_vte_pointer_enter,
+            self._on_selection_changed,
+        )
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
 
     def _on_vte_pointer_enter(self, controller, x, y):
-        """Called when the pointer enters the VTE widget area.
-
-        Cursor shape is managed explicitly in _on_vte_motion via set_cursor(),
-        so VTE does not need keyboard focus for hover detection.  VTE's own
-        EventControllerMotion fires for the widget under the pointer regardless
-        of focus — just like GNOME Terminal, which underlines URLs even without
-        focus.
-
-        Previously this called grab_focus() to restore VTE's native cursor-
-        shape mechanism, but that triggered a focus-in event which cleared
-        VTE's internal m_match_hilite hover state, breaking URL underlines
-        after paste.  Now that cursor shape is driven from Python (set_cursor),
-        the grab_focus is not needed here.
-        """
+        """Compatibility no-op; VTE owns pointer-enter link handling."""
 
     def _vte_uri_at(self, x: float, y: float) -> Optional[str]:
-        """Return the URI at widget coordinates, or None.
+        """Return the URI at widget coordinates through the backend.
 
-        Prefer OSC 8 hyperlinks over regex matches (same precedence as GNOME
-        Terminal). Uses the coordinate APIs from
-        https://api.pygobject.gnome.org/Vte-3.91/class-Terminal.html —
-        ``check_hyperlink_at`` / ``check_match_at`` (since 0.70), with
-        ``match_check`` as a fallback for older VTE.
+        Full one-shot lookup (OSC 8 + plain-text regex) — used by the
+        Ctrl+click and context-menu gestures only.
         """
-        if self.vte is None:
+        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
             return None
-
-        # OSC 8 explicit hyperlinks
-        if hasattr(self.vte, 'check_hyperlink_at'):
-            try:
-                uri = self.vte.check_hyperlink_at(x, y)
-                if uri:
-                    return uri
-            except Exception:
-                pass
-
-        # Plain-text regex matches registered via match_add_regex
-        if hasattr(self.vte, 'check_match_at'):
-            try:
-                result = self.vte.check_match_at(x, y)
-                if result:
-                    candidate = result[0] if isinstance(result, (tuple, list)) else result
-                    if candidate:
-                        return candidate
-            except Exception as e:
-                logger.debug(f"check_match_at error: {e}")
-        elif hasattr(self.vte, 'match_check'):
-            try:
-                char_width = self.vte.get_char_width()
-                char_height = self.vte.get_char_height()
-                if char_width > 0 and char_height > 0:
-                    result = self.vte.match_check(int(x / char_width), int(y / char_height))
-                    if result:
-                        candidate = result[0] if isinstance(result, (tuple, list)) else result
-                        if candidate:
-                            return candidate
-            except Exception as e:
-                logger.debug(f"match_check error: {e}")
-        return None
+        if not self.backend.supports_feature("hyperlinks"):
+            return None
+        return self.backend.hyperlink_at(x, y)
 
     @staticmethod
     def _click_has_link_modifier(state) -> bool:
@@ -2377,40 +2248,11 @@ class TerminalWidget(Gtk.Box):
         return bool(state & Gdk.ModifierType.CONTROL_MASK)
 
     def _on_vte_motion(self, controller, x, y):
-        """Detect URL under the mouse cursor (both OSC 8 links and plain-text regexes)."""
-        if self.vte is None:
-            return
-        try:
-            uri = self._vte_uri_at(x, y)
-            event = controller.get_current_event()
-
-            # Only update when we have a definitive answer; never clear via a
-            # missing event (the cursor may still be on the same link)
-            if uri or event:
-                self._hovered_hyperlink_uri = uri or None
-
-            # VTE's internal hover state (underline + cursor shape) is only
-            # updated when VTE processes its own GDK events.  After a paste the
-            # mouse may not have moved, so VTE never runs that path and the
-            # visual feedback is missing even though match_check() works fine.
-            # Manually driving the widget cursor here gives us an independent
-            # fallback that doesn't depend on VTE's internal bookkeeping.
-            try:
-                if uri:
-                    self.vte.set_cursor(Gdk.Cursor.new_from_name("pointer", None))
-                elif event:
-                    # set_cursor(None) would inherit the parent's default arrow;
-                    # restore VTE's own I-beam explicitly so terminal text shows
-                    # the text cursor like other terminals.
-                    self.vte.set_cursor(Gdk.Cursor.new_from_name("text", None))
-            except Exception:
-                pass
-        except Exception as e:
-            logger.debug(f"URL hover error: {e}")
+        """Compatibility no-op: never query VTE screen coordinates on motion."""
 
     def _on_open_link_activated(self, action, param):
         """Open the hyperlink that was under the cursor when the context menu was triggered."""
-        uri = getattr(self, '_context_menu_hyperlink_uri', None) or getattr(self, '_hovered_hyperlink_uri', None)
+        uri = getattr(self, '_context_menu_hyperlink_uri', None)
         if uri:
             try:
                 Gio.AppInfo.launch_default_for_uri(uri, None)
@@ -2420,7 +2262,7 @@ class TerminalWidget(Gtk.Box):
 
     def _on_copy_link_activated(self, action, param):
         """Copy the hyperlink to the clipboard."""
-        uri = getattr(self, '_context_menu_hyperlink_uri', None) or getattr(self, '_hovered_hyperlink_uri', None)
+        uri = getattr(self, '_context_menu_hyperlink_uri', None)
         if uri:
             try:
                 display = Gdk.Display.get_default()
@@ -2438,8 +2280,8 @@ class TerminalWidget(Gtk.Box):
         write_contents_sync. Only the in-memory scrollback is available; lines
         scrolled past the scrollback limit are gone.
         """
-        if self.vte is None:
-            logger.warning("Save Output is only available with the VTE backend")
+        if not self.backend.supports_feature("save_output"):
+            logger.warning("Save Output is not supported by the active backend")
             return
 
         # Default file name from the connection nickname when available.
@@ -2460,7 +2302,7 @@ class TerminalWidget(Gtk.Box):
             stream = None
             try:
                 stream = gfile.replace(None, False, Gio.FileCreateFlags.NONE, None)
-                self.vte.write_contents_sync(stream, Vte.WriteFlags.DEFAULT, None)
+                self.backend.save_contents(stream)
             except GLib.Error as exc:
                 logger.error("Failed to save terminal output: %s", exc)
             except Exception as exc:  # pragma: no cover - defensive
@@ -2486,18 +2328,11 @@ class TerminalWidget(Gtk.Box):
             return self._supported_encodings
 
         encodings = []
-        try:
-            for item in self.vte.get_encodings() or []:
-                code = None
-                if isinstance(item, (list, tuple)):
-                    if item:
-                        code = item[0]
-                elif isinstance(item, str):
-                    code = item
-                if code and code not in encodings:
-                    encodings.append(code)
-        except Exception as exc:  # pragma: no cover - depends on VTE runtime
-            logger.debug("Unable to query VTE encodings: %s", exc)
+        if self.backend.supports_feature("encoding"):
+            try:
+                encodings = self.backend.get_supported_encodings()
+            except Exception as exc:
+                logger.debug("Unable to query backend encodings: %s", exc)
 
         if 'UTF-8' in encodings:
             encodings.insert(0, encodings.pop(encodings.index('UTF-8')))
@@ -2523,7 +2358,7 @@ class TerminalWidget(Gtk.Box):
                     requested,
                 )
             return False
-        
+
         # For VTE backend, validate encoding against VTE's supported list
         supported = self._get_supported_encodings()
         fallback = supported[0] if supported else 'UTF-8'
@@ -2550,12 +2385,8 @@ class TerminalWidget(Gtk.Box):
         update_needed = update_config_on_fallback and target != requested
 
         try:
-            if self.vte is not None:
-                self.vte.set_encoding(target)
-                logger.debug("Set terminal encoding to %s", target)
-            else:
-                # Encoding setting is VTE-specific; other backends handle encoding differently
-                logger.debug("Encoding setting skipped for non-VTE backend")
+            self.backend.set_encoding(target)
+            logger.debug("Set terminal encoding to %s", target)
         except Exception as exc:
             logger.warning("Could not set terminal encoding to %s: %s", target, exc)
             return False
@@ -2602,8 +2433,6 @@ class TerminalWidget(Gtk.Box):
                 if getter is not None:
                     return bool(getter())
                 return True
-            if self.vte is not None:
-                return bool(self.vte.get_has_selection())
         except Exception:
             pass
         return False
@@ -2619,81 +2448,51 @@ class TerminalWidget(Gtk.Box):
         try:
             # Hide connecting overlay immediately for local shell
             self._set_connecting_overlay_visible(False)
-            
+
             # Set up the terminal for local shell
             self.setup_terminal()
-            
+
             # Set initial title for local terminal
             self.emit('title-changed', 'Local Terminal')
-            
+
             # Try agent-based approach first (fixes job control in Flatpak)
             if is_flatpak() and self._try_agent_based_shell():
                 logger.info("Using agent-based local shell (with job control fix)")
                 return
-            
+
             # Fall back to direct spawn (legacy approach)
             logger.info("Using direct spawn for local shell (fallback)")
             self._setup_local_shell_direct()
-            
+
         except Exception as e:
             logger.error(f"Failed to setup local shell: {e}")
             self.emit('connection-failed', str(e))
-    
+
     def _get_terminal_size(self) -> tuple[int, int]:
-        """
-        Get the terminal size in columns and rows.
-        Tries to get the actual allocated size from the terminal widget.
-        
-        Returns:
-            Tuple of (cols, rows)
-        """
-        cols = 80
-        rows = 24
-        
+        """Return ``(columns, rows)`` from the active backend."""
         try:
-            if getattr(self, 'vte', None) is not None:
-                # Try to get size from VTE
-                vte_cols = self.vte.get_column_count()
-                vte_rows = self.vte.get_row_count()
-                
-                # Use VTE's reported size if it's reasonable (not the default 80x24)
-                # VTE will return the actual size once the terminal is allocated
-                if vte_cols >= 80 and vte_rows >= 24:
-                    cols = vte_cols
-                    rows = vte_rows
-                    logger.debug(f"Got terminal size from VTE: {cols}x{rows}")
-            elif getattr(self, 'backend', None) is not None:
-                # Some backends may expose a widget with geometry hints
-                widget = getattr(self.backend, 'widget', None)
-                if widget and hasattr(widget, 'get_width_chars') and hasattr(widget, 'get_height_rows'):
-                    widget_cols = widget.get_width_chars()
-                    widget_rows = widget.get_height_rows()
-                    if widget_cols and widget_cols > 0:
-                        cols = widget_cols
-                    if widget_rows and widget_rows > 0:
-                        rows = widget_rows
-        except Exception as e:
-            logger.debug(f"Failed to determine terminal size from backend: {e}")
-        
-        return (cols, rows)
-    
+            rows, columns = self.backend.get_size()
+            return int(columns), int(rows)
+        except Exception:
+            return 80, 24
+
     def _try_agent_based_shell(self) -> bool:
         """
         Try to set up local shell using the agent (Ptyxis-style).
         This fixes job control issues in Flatpak.
-        
+
         Returns:
             True if successful, False otherwise
         """
         try:
             from .agent_client import AgentClient
-            
+
             # Create agent client
             client = AgentClient()
-            
+
             # Get terminal size - try to get actual allocated size
             cols, rows = self._get_terminal_size()
-            
+
             # If we still have default size (80x24), defer spawn until terminal is allocated
             if cols == 80 and rows == 24:
                 logger.debug("Terminal not allocated yet, deferring agent spawn until size is available")
@@ -2706,16 +2505,13 @@ class TerminalWidget(Gtk.Box):
                     widget_to_connect = self.terminal_widget
                 elif getattr(self, 'scrolled_window', None) is not None:
                     widget_to_connect = self.scrolled_window
-                elif getattr(self, 'vte', None) is not None:
-                    # Fallback to VTE widget itself
-                    widget_to_connect = self.vte
-                
+
                 if widget_to_connect is not None:
                     def on_size_changed(widget, param_spec):
                         # Only spawn once - check if pending client exists
                         if not hasattr(self, '_pending_agent_client'):
                             return
-                        
+
                         # Check if widget has been allocated (has non-zero dimensions)
                         # Use get_width()/get_height() instead of deprecated get_allocated_width()/get_allocated_height()
                         # (deprecated since GTK 4.12)
@@ -2723,7 +2519,7 @@ class TerminalWidget(Gtk.Box):
                         try:
                             allocated_width = widget.get_width()
                             allocated_height = widget.get_height()
-                            
+
                             # Widget must have been allocated (non-zero size)
                             widget_allocated = allocated_width > 0 and allocated_height > 0
                             if not widget_allocated:
@@ -2733,17 +2529,17 @@ class TerminalWidget(Gtk.Box):
                             logger.debug(f"Could not check widget allocation: {e}")
                             # If we can't get allocated size, fall back to VTE size check
                             widget_allocated = True  # Assume allocated if we can't check
-                        
+
                         # Check if we now have a reasonable size from VTE
                         # If widget is allocated, spawn even if size is still 80x24 (might be actual size)
                         cols, rows = self._get_terminal_size()
                         logger.debug(f"Size check: widget_allocated={widget_allocated}, cols={cols}, rows={rows}")
-                        
+
                         # Spawn if widget is allocated (even if size is 80x24, it might be the actual size)
                         if widget_allocated and cols >= 80 and rows >= 24:
                             client = self._pending_agent_client
                             delattr(self, '_pending_agent_client')
-                            
+
                             # Disconnect both handlers to prevent duplicate calls
                             if hasattr(self, '_pending_size_handlers'):
                                 for handler_id in self._pending_size_handlers:
@@ -2755,10 +2551,10 @@ class TerminalWidget(Gtk.Box):
                             else:
                                 # Fallback to disconnect_by_func if handlers not stored
                                 widget.disconnect_by_func(on_size_changed)
-                            
+
                             logger.debug(f"Terminal allocated, spawning agent with size {cols}x{rows}")
                             self._spawn_agent_shell(client, cols, rows)
-                    
+
                     try:
                         # Use notify signals for GTK4 compatibility
                         # Connect to both width and height to catch allocation
@@ -2768,13 +2564,13 @@ class TerminalWidget(Gtk.Box):
                         if not hasattr(self, '_pending_size_handlers'):
                             self._pending_size_handlers = []
                         self._pending_size_handlers = [handler1, handler2]
-                        
+
                         # Add a fallback timeout in case signals don't fire
                         # This ensures we spawn even if allocation detection fails
                         def fallback_spawn():
                             if hasattr(self, '_pending_agent_client'):
                                 logger.debug("Fallback: Checking terminal size after timeout")
-                                
+
                                 # Check if widget is allocated
                                 # Use get_width()/get_height() instead of deprecated get_allocated_width()/get_allocated_height()
                                 # (deprecated since GTK 4.12)
@@ -2788,15 +2584,15 @@ class TerminalWidget(Gtk.Box):
                                 except Exception as e:
                                     logger.debug(f"Fallback: Could not check widget allocation: {e}")
                                     widget_allocated = True  # Assume allocated if we can't check
-                                
+
                                 cols, rows = self._get_terminal_size()
                                 logger.debug(f"Fallback: VTE size={cols}x{rows}")
-                                
+
                                 # Spawn with current size (even if still 80x24 or widget not fully allocated)
                                 # It's better to have a terminal than none at all
                                 client = self._pending_agent_client
                                 delattr(self, '_pending_agent_client')
-                                
+
                                 # Disconnect handlers if they're still connected
                                 if hasattr(self, '_pending_size_handlers') and widget_to_connect:
                                     for handler_id in self._pending_size_handlers:
@@ -2805,11 +2601,11 @@ class TerminalWidget(Gtk.Box):
                                         except Exception:
                                             pass
                                     delattr(self, '_pending_size_handlers')
-                                
+
                                 logger.info(f"Fallback: Spawning agent with size {cols}x{rows} (widget_allocated={widget_allocated})")
                                 self._spawn_agent_shell(client, cols, rows)
                             return False  # Don't repeat
-                        
+
                         # Set timeout to check after 500ms
                         GLib.timeout_add(500, fallback_spawn)
                         logger.debug("Connected to notify signals and set fallback timeout")
@@ -2823,36 +2619,36 @@ class TerminalWidget(Gtk.Box):
                     # For non-VTE backends or if we can't find a widget to connect,
                     # spawn immediately with current size
                     logger.debug("No widget available for size notification, spawning immediately")
-            
+
             # Spawn immediately if we have a reasonable size
             return self._spawn_agent_shell(client, cols, rows)
-            
+
         except ImportError as e:
             logger.warning(f"Agent client not available: {e}")
             return False
         except Exception as e:
             logger.warning(f"Failed to setup agent-based shell: {e}")
             return False
-    
+
     def _spawn_agent_shell(self, client, cols: int, rows: int) -> bool:
         """
         Actually spawn the agent shell with the given size.
-        
+
         Args:
             client: AgentClient instance
             cols: Terminal columns
             rows: Terminal rows
-            
+
         Returns:
             True if successful, False otherwise
         """
         try:
             # Working directory
             cwd = os.path.expanduser('~')
-            
+
             # Check if verbose mode is enabled
             verbose = logger.getEffectiveLevel() <= logging.DEBUG
-            
+
             # Build agent command
             command = client.build_agent_command(
                 rows=rows,
@@ -2860,13 +2656,13 @@ class TerminalWidget(Gtk.Box):
                 cwd=cwd,
                 verbose=verbose
             )
-            
+
             if not command:
                 logger.warning("Could not build agent command, falling back to direct spawn")
                 return False
-            
+
             logger.info(f"Launching agent-based shell via flatpak-spawn with size {cols}x{rows}...")
-            
+
             # Environment for agent. Route env injection through the selected identity
             # provider so child processes (e.g. ssh run from this shell) reach the
             # user's ssh-agent via the same seam as SSH connections.
@@ -2875,10 +2671,10 @@ class TerminalWidget(Gtk.Box):
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'
-            
+
             # Convert to list for VTE
             env_list = [f"{k}={v}" for k, v in env.items()]
-            
+
             # Convert env_list to dict for backend
             env_dict = {}
             if env_list:
@@ -2886,7 +2682,7 @@ class TerminalWidget(Gtk.Box):
                     if '=' in env_item:
                         key, value = env_item.split('=', 1)
                         env_dict[key] = value
-            
+
             # Spawn the agent via backend
             # Agent code is embedded in the command via base64 encoding
             self.backend.spawn_async(
@@ -2898,20 +2694,17 @@ class TerminalWidget(Gtk.Box):
                 callback=self._on_agent_spawn_complete,
                 user_data=None
             )
-            
+
             # Add fallback timer
             self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
-            
+
             return True
         except Exception as e:
             logger.error(f"Failed to spawn agent shell: {e}")
             return False
-    
+
     def _setup_local_shell_direct(self):
-        """
-        Set up local shell using direct spawn (legacy approach).
-        This is the fallback when agent is not available.
-        """
+        """Set up a local shell when the optional local agent is unavailable."""
         # Route env injection through the selected identity provider (one seam for all
         # SSH_AUTH_SOCK injection); idempotent over the inherited environment.
         from .identity import get_identity_manager
@@ -2957,11 +2750,11 @@ class TerminalWidget(Gtk.Box):
                 shell = pwd.getpwuid(os.getuid()).pw_shell
             except (KeyError, AttributeError):
                 shell = None
-            
+
             # Fall back to environment variable if passwd lookup failed
             if not shell:
                 shell = env.get('SHELL')
-            
+
             # Final fallback
             if not shell:
                 shell = '/bin/bash'
@@ -2971,7 +2764,7 @@ class TerminalWidget(Gtk.Box):
         # Set TERM to a proper value only if missing or set to "dumb"
         if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
             env['TERM'] = 'xterm-256color'
-        
+
         # Ensure essential environment variables are set from passwd database
         # This ensures shells like zsh can properly load user configuration
         try:
@@ -3014,39 +2807,7 @@ class TerminalWidget(Gtk.Box):
                 if '=' in env_item:
                     key, value = env_item.split('=', 1)
                     env_dict[key] = value
-        
-        # Create and configure PTY before spawning (for local terminals)
-        # According to VTE docs, we should set PTY size before spawning to avoid SIGWINCH
-        if self.vte is not None:
-            try:
-                # Check if PTY is already set
-                existing_pty = None
-                try:
-                    existing_pty = self.vte.get_pty()
-                except Exception:
-                    pass
-                
-                # Create new PTY if not already set
-                if existing_pty is None:
-                    pty = Vte.Pty.new_sync(Vte.PtyFlags.DEFAULT)
-                    # Set PTY size before spawning to avoid child process receiving SIGWINCH
-                    try:
-                        rows = self.vte.get_row_count()
-                        cols = self.vte.get_column_count()
-                        # Only set size if we have valid dimensions (not default 80x24)
-                        if rows > 0 and cols > 0 and (rows != 24 or cols != 80):
-                            pty.set_size(rows, cols)
-                            logger.debug(f"Set PTY size to {rows}x{cols} before local terminal spawn")
-                    except Exception as e:
-                        logger.debug(f"Could not set PTY size before spawn: {e}")
-                    # Associate PTY with Terminal so spawn_async uses it
-                    try:
-                        self.vte.set_pty(pty)
-                    except Exception as e:
-                        logger.debug(f"Could not set PTY on terminal: {e}")
-            except Exception as e:
-                logger.debug(f"Could not create/set PTY for local terminal: {e}")
-        
+
         self.backend.spawn_async(
             argv=command,
             env=env_dict if env_dict else None,
@@ -3061,23 +2822,23 @@ class TerminalWidget(Gtk.Box):
         self._fallback_timer_id = GLib.timeout_add_seconds(5, self._fallback_hide_spinner)
 
         logger.info("Local shell terminal setup initiated (direct spawn)")
-    
+
     def _on_agent_spawn_complete(self, terminal, pid, error, user_data):
         """Callback when agent spawn completes"""
         if error:
             logger.error(f"Agent spawn failed: {error}")
             self.emit('connection-failed', str(error))
             return
-        
+
         logger.info(f"Agent spawned successfully (PID: {pid})")
-        
+
         # Hide the connecting overlay
         if self._fallback_timer_id:
             GLib.source_remove(self._fallback_timer_id)
             self._fallback_timer_id = None
-        
+
         self._set_connecting_overlay_visible(False)
-        
+
         # Store PID for cleanup
         self.process_pid = pid
 
@@ -3186,24 +2947,53 @@ class TerminalWidget(Gtk.Box):
             # on Escape. VTE is a normal widget where autohide works, so leave it.
             self._menu_popover = Gtk.PopoverMenu.new_from_model(self._menu_model)
             self._menu_popover.set_has_arrow(True)
-            if self.vte is not None:
-                parent_widget = self.vte
-            else:
-                parent_widget = self.scrolled_window or (
-                    self.backend.widget if self.backend else self.terminal_widget
-                )
-            if parent_widget:
-                self._menu_popover.set_parent(parent_widget)
+            parent_widget = self.backend.widget if self.backend else self.terminal_widget
             self._menu_parent_widget = parent_widget
 
-            self._menu_needs_manual_dismiss = self.vte is None
+            def _prepare_context_menu(x=None, y=None):
+                """Snapshot the URI at the actual invocation coordinates."""
+                uri = self._vte_uri_at(x, y) if x is not None and y is not None else None
+                self._context_menu_hyperlink_uri = uri
+                has_link = bool(uri)
+                in_menu = getattr(self, '_link_section_in_menu', False)
+                if has_link and not in_menu:
+                    self._menu_model.insert_section(0, None, self._link_menu)
+                    self._link_section_in_menu = True
+                elif not has_link and in_menu:
+                    self._menu_model.remove(0)
+                    self._link_section_in_menu = False
+
+            self._native_vte_context_menu = False
+            if self.backend.supports_feature("native_context_menu"):
+                def _on_native_context_menu(showing):
+                    if showing:
+                        coordinates = getattr(
+                            self, '_pending_context_menu_coordinates', None)
+                        if coordinates is None:
+                            # Keyboard invocation has no meaningful mouse cell.
+                            _prepare_context_menu()
+                        else:
+                            _prepare_context_menu(*coordinates)
+                    else:
+                        self._pending_context_menu_coordinates = None
+                self._native_vte_context_menu = self.backend.setup_native_context_menu(
+                    self._menu_popover, _on_native_context_menu)
+
+            # VTE parents, positions, presents and unparents native context
+            # menus itself. Only the legacy/WebView popover is application-owned.
+            if not self._native_vte_context_menu and parent_widget:
+                self._menu_popover.set_parent(parent_widget)
+
+            self._menu_needs_manual_dismiss = not self.backend.supports_feature("hyperlinks")
             if self._menu_needs_manual_dismiss:
                 self._menu_popover.set_autohide(False)
                 self._install_manual_menu_dismissal(parent_widget)
 
-            # Right-click gesture to open the context menu (BUBBLE phase is fine for right-click)
+            # Capture records coordinates before VTE handles the event; it
+            # claims only the paste-on-right-click policy case.
             gesture = Gtk.GestureClick()
             gesture.set_button(0)
+            gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             def _on_pressed(gest, n_press, x, y):
                 try:
                     btn = 0
@@ -3219,6 +3009,11 @@ class TerminalWidget(Gtk.Box):
                     if btn not in (Gdk.BUTTON_SECONDARY, 3):
                         logger.debug(f"Not a right-click button: {btn}")
                         return
+                    if getattr(self, '_native_vte_context_menu', False):
+                        # EventContext coordinates are not exposed by the GI
+                        # binding. Record only plain Python numbers; VTE still
+                        # owns recognition, placement and popup lifecycle.
+                        self._pending_context_menu_coordinates = (float(x), float(y))
                     # Paste-on-right-click: when enabled, a plain right-click
                     # pastes the clipboard; Shift+right-click still opens the menu.
                     try:
@@ -3234,6 +3029,7 @@ class TerminalWidget(Gtk.Box):
                     except Exception:
                         shift_held = False
                     if paste_on_rc and not shift_held:
+                        self._pending_context_menu_coordinates = None
                         gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         try:
                             if self.backend:
@@ -3241,6 +3037,11 @@ class TerminalWidget(Gtk.Box):
                         except Exception:
                             pass
                         self.paste_text()
+                        return
+                    # VTE 0.76+ owns recognition, placement and popup lifecycle.
+                    # This gesture exists on that path solely to preserve the
+                    # paste-on-right-click preference above.
+                    if getattr(self, '_native_vte_context_menu', False):
                         return
                     # Stop event propagation to prevent other context menus
                     gest.set_state(Gtk.EventSequenceState.CLAIMED)
@@ -3254,16 +3055,7 @@ class TerminalWidget(Gtk.Box):
                     # under the cursor.  Insert/remove from the live model so
                     # the items are completely absent (not just greyed out).
                     try:
-                        uri = getattr(self, '_hovered_hyperlink_uri', None)
-                        self._context_menu_hyperlink_uri = uri
-                        has_link = bool(uri)
-                        in_menu = getattr(self, '_link_section_in_menu', False)
-                        if has_link and not in_menu:
-                            self._menu_model.insert_section(0, None, self._link_menu)
-                            self._link_section_in_menu = True
-                        elif not has_link and in_menu:
-                            self._menu_model.remove(0)
-                            self._link_section_in_menu = False
+                        _prepare_context_menu(x, y)
                     except Exception:
                         pass
                     # Position popover near the click. The gesture is on the backend
@@ -3301,9 +3093,6 @@ class TerminalWidget(Gtk.Box):
             if self.backend and self.backend.widget:
                 self._register_menu_controller(self.backend.widget, gesture)
                 logger.debug(f"Added context menu gesture to backend widget: {type(self.backend).__name__}")
-            elif self.vte is not None:
-                self._register_menu_controller(self.vte, gesture)
-                logger.debug("Added context menu gesture to VTE widget")
             elif self.terminal_widget is not None:
                 self._register_menu_controller(self.terminal_widget, gesture)
                 logger.debug("Added context menu gesture to terminal widget")
@@ -3313,13 +3102,15 @@ class TerminalWidget(Gtk.Box):
             # GDK_CONTROL_MASK). Must use CAPTURE so it runs before VTE's
             # text-selection handler; we only claim when the modifier is held
             # AND a URL is under the cursor.
-            if self.vte is not None:
+            if self.backend.supports_feature("hyperlinks"):
                 url_gesture = Gtk.GestureClick()
                 url_gesture.set_button(Gdk.BUTTON_PRIMARY)
                 url_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 def _on_url_click(gest, n_press, x, y):
                     try:
                         if n_press != 1:
+                            return
+                        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
                             return
                         # Plain click must reach VTE for cursor placement /
                         # selection — only Ctrl+click (Cmd+click on macOS)
@@ -3341,7 +3132,7 @@ class TerminalWidget(Gtk.Box):
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
                 url_gesture.connect('pressed', _on_url_click)
-                self._register_menu_controller(self.vte, url_gesture)
+                self._register_menu_controller(self.backend.widget, url_gesture)
                 self._url_click_gesture = url_gesture
                 logger.debug("Added CAPTURE-phase Ctrl+click URL gesture to VTE widget")
 
@@ -3393,11 +3184,18 @@ class TerminalWidget(Gtk.Box):
                 popover.popdown()
             except Exception:
                 pass
-            try:
-                popover.set_parent(None)
-            except Exception:
-                pass
+            if getattr(self, '_native_vte_context_menu', False):
+                try:
+                    self.backend.clear_native_context_menu()
+                except Exception:
+                    pass
+            else:
+                try:
+                    popover.set_parent(None)
+                except Exception:
+                    pass
             self._menu_popover = None
+        self._native_vte_context_menu = False
 
     def _install_manual_menu_dismissal(self, focus_widget):
         """Dismiss the non-autohide WebView context menu on focus-out and Escape.
@@ -3477,26 +3275,16 @@ class TerminalWidget(Gtk.Box):
                         if had_selection:
                             self._show_toast(_("Copied to clipboard"))
                         return result
-                    elif self.vte is not None:
-                        if not self.vte.get_has_selection():
-                            return False
-                        result = _schedule_vte_action(self.vte.copy_clipboard_format, Vte.Format.TEXT)
-                        self._show_toast(_("Copied to clipboard"))
-                        return result
                     return False
 
                 def _cb_paste(widget, *args):
                     if self.backend:
                         return _schedule_vte_action(self.backend.paste_clipboard)
-                    elif self.vte is not None:
-                        return _schedule_vte_action(self.vte.paste_clipboard)
                     return False
 
                 def _cb_select_all(widget, *args):
                     if self.backend:
                         return _schedule_vte_action(self.backend.select_all)
-                    elif self.vte is not None:
-                        return _schedule_vte_action(self.vte.select_all)
                     return False
 
                 if is_macos():
@@ -3602,7 +3390,7 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Failed to install search key controller", exc_info=True)
         else:
             logger.warning("Search key controller not installed: _search missing at shortcut setup")
-    
+
     def _setup_mouse_wheel_zoom(self):
         """Set up mouse wheel zoom functionality with Cmd+MouseWheel."""
         if getattr(self, '_scroll_controller', None) is not None:
@@ -3637,7 +3425,7 @@ class TerminalWidget(Gtk.Box):
                 except Exception as e:
                     logger.debug(f"Error in mouse wheel zoom: {e}")
                 return False  # Don't consume the event if modifier not pressed
-            
+
             scroll_controller.connect('scroll', _on_scroll)
             host = self.controller_host()
             if host is not None:
@@ -3655,7 +3443,9 @@ class TerminalWidget(Gtk.Box):
         Attach and detach must agree on the target, or a teardown silently leaves
         the controller on the widget it was added to.
         """
-        return self.vte if self.vte is not None else self.terminal_widget
+        return getattr(self, 'terminal_widget', None) or getattr(
+            getattr(self, 'backend', None), 'widget', None
+        )
 
     def _remove_custom_shortcut_controllers(self):
         """Detach any custom shortcut or scroll controllers from the terminal widget."""
@@ -3712,36 +3502,24 @@ class TerminalWidget(Gtk.Box):
 
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation
-    
+
     def reconnect(self):
         """Reconnect the terminal with updated connection settings"""
         logger.info("Reconnecting terminal with updated settings...")
-        was_connected = self.is_connected
-        
-        # Disconnect if currently connected
-        if was_connected:
-            self.disconnect()
-        
-        # Reconnect after a short delay to allow disconnection to complete
-        def _reconnect():
-            if self._connect_ssh():
-                logger.info("Terminal reconnected with updated settings")
-                # Ensure theme is applied after reconnection
-                self.apply_theme()
-                return True
-            else:
-                logger.error("Failed to reconnect terminal with updated settings")
-                return False
-        
-        GLib.timeout_add(500, _reconnect)  # 500ms delay before reconnecting
-    
+        reconnect_handler = getattr(self, '_reconnect_handler', None)
+        if callable(reconnect_handler):
+            return reconnect_handler(self)
+
+        logger.error('Daemon reconnect handler is unavailable')
+        return False
+
     def _on_connection_updated_signal(self, sender, connection):
         """Signal handler for connection-updated signal"""
         self._on_connection_updated(connection)
-        
+
     def _on_connection_updated(self, connection):
         """Called when connection settings are updated
-        
+
         Note: We don't automatically reconnect here to prevent infinite loops.
         The main window will handle the reconnection flow after user confirmation.
         """
@@ -3760,33 +3538,15 @@ class TerminalWidget(Gtk.Box):
                 return self.process_pid
             except (ProcessLookupError, OSError):
                 pass
-        
-        # Fall back to getting from PTY or VTE helpers
-        try:
-            # Prefer PID recorded at spawn complete
-            if getattr(self, 'process_pid', None):
-                return self.process_pid
-            pty = None
-            if self.backend:
-                pty = self.backend.get_pty()
-            if pty is None and self.vte is not None:
-                try:
-                    pty = self.vte.get_pty()
-                except Exception:
-                    pass
-            if pty and hasattr(pty, 'get_pid'):
-                pid = pty.get_pid()
-                if pid:
-                    self.process_pid = pid
-                    return pid
-        except Exception as e:
-            logger.error(f"Error getting terminal PID: {e}")
-        
+
         return None
-        
+
     def _on_destroy(self, widget):
         """Handle widget destruction"""
         logger.debug(f"Terminal widget {self.session_id} being destroyed")
+        # Suppress any in-flight VTE interactions (motion/enter callbacks still
+        # queued on the motion controller) before the screen state is released.
+        self._destroyed = True
 
         # Disconnect backend signal handlers first to prevent callbacks on destroyed objects
         if hasattr(self, 'backend') and self.backend is not None:
@@ -3794,20 +3554,7 @@ class TerminalWidget(Gtk.Box):
                 self._disconnect_backend_signals()
             except Exception as e:
                 logger.error(f"Error disconnecting backend signals: {e}")
-        elif hasattr(self, 'vte') and self.vte:
-            try:
-                if hasattr(self, '_child_exited_handler'):
-                    self.vte.disconnect(self._child_exited_handler)
-                    logger.debug("Disconnected child-exited signal handler")
-                if hasattr(self, '_title_changed_handler'):
-                    self.vte.disconnect(self._title_changed_handler)
-                    logger.debug("Disconnected title-changed signal handler")
-                if hasattr(self, '_termprops_changed_handler') and self._termprops_changed_handler is not None:
-                    self.vte.disconnect(self._termprops_changed_handler)
-                    logger.debug("Disconnected termprops-changed signal handler")
-            except Exception as e:
-                logger.error(f"Error disconnecting VTE signals: {e}")
-        
+
         # Disconnect from connection manager signals
         if hasattr(self, '_connection_updated_handler') and hasattr(self.connection_manager, 'disconnect'):
             try:
@@ -3815,7 +3562,7 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Disconnected from connection manager signals")
             except Exception as e:
                 logger.error(f"Error disconnecting from connection manager: {e}")
-        
+
         # Disconnect the terminal
         self.disconnect()
 
@@ -3853,7 +3600,7 @@ class TerminalWidget(Gtk.Box):
             with process_manager.lock:
                 if pid in process_manager.processes:
                     pgid = process_manager.processes[pid].get('pgid')
-            
+
             # Fall back to getting PGID from system
             if not pgid:
                 try:
@@ -3861,7 +3608,7 @@ class TerminalWidget(Gtk.Box):
                 except ProcessLookupError:
                     logger.debug(f"Process {pid} already terminated")
                     return True
-            
+
             # First try a clean termination
             try:
                 if pgid:
@@ -3911,7 +3658,7 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.error(f"Error terminating process {pid}: {e}")
             return False
-    
+
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
         # Guard UI emissions when the root window is quitting. Computed up front
@@ -3919,13 +3666,22 @@ class TerminalWidget(Gtk.Box):
         # already False (e.g. pressing Reconnect after a failed connection), in
         # which case the block below is skipped but the finally clause still
         # references is_quitting.
-        root = self.get_root() if hasattr(self, 'get_root') else None
+        root = None
+        try:
+            if hasattr(self, 'get_root'):
+                root = self.get_root()
+        except RuntimeError:
+            pass
         # Prefer this terminal's own flag: cleanup_all() sets terminal._is_quitting
         # directly, and by the time it runs the window may already be unrooted
         # (get_root() → None), which would otherwise miss the quit fast-path.
         is_quitting = bool(getattr(self, '_is_quitting', False)) or bool(
             getattr(root, '_is_quitting', False)
         )
+
+        # Handle daemon mode close policy
+        if self._daemon_mode and self._daemon_controller:
+            return self._handle_daemon_close(is_quitting)
 
         if self.is_connected:
             logger.debug(f"Disconnecting SSH session {self.session_id}...")
@@ -3936,7 +3692,7 @@ class TerminalWidget(Gtk.Box):
                 self.connection.is_connected = False
                 if hasattr(self, 'connection_manager') and self.connection_manager:
                     GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
-        
+
         try:
             # Try to get the terminal's child PID (with timeout protection)
             pid = None
@@ -3944,18 +3700,18 @@ class TerminalWidget(Gtk.Box):
                 pid = self._get_terminal_pid()
             except Exception as e:
                 logger.debug(f"Error getting terminal PID during disconnect: {e}")
-            
+
             # Collect all PIDs that need to be cleaned up
             pids_to_clean = set()
-            
+
             # Add the main process PID if available
             if pid:
                 pids_to_clean.add(pid)
-            
+
             # Add the process group ID if available
             if hasattr(self, 'process_pgid') and self.process_pgid:
                 pids_to_clean.add(self.process_pgid)
-            
+
             # Add any PIDs from the process manager (with lock timeout)
             try:
                 with process_manager.lock:
@@ -3966,7 +3722,7 @@ class TerminalWidget(Gtk.Box):
                                 pids_to_clean.add(proc_info['pgid'])
             except Exception as e:
                 logger.debug(f"Error accessing process manager during disconnect: {e}")
-            
+
             # Clean up all collected PIDs (with error handling for each).
             # During quit the process manager's cleanup_all() has already
             # SIGKILLed these same PIDs, so re-running the SIGTERM-then-poll
@@ -3979,7 +3735,7 @@ class TerminalWidget(Gtk.Box):
                             self._cleanup_process(cleanup_pid)
                         except Exception as e:
                             logger.debug(f"Error cleaning up PID {cleanup_pid}: {e}")
-            
+
             # Clean up PTY if it exists
             if hasattr(self, 'pty') and self.pty:
                 try:
@@ -3988,18 +3744,7 @@ class TerminalWidget(Gtk.Box):
                     logger.error(f"Error closing PTY: {e}")
                 finally:
                     self.pty = None
-            
-            # Clean up sshpass temporary directory if it exists
-            if hasattr(self, '_sshpass_tmpdir') and self._sshpass_tmpdir:
-                try:
-                    import shutil
-                    shutil.rmtree(self._sshpass_tmpdir, ignore_errors=True)
-                    logger.debug(f"Cleaned up sshpass tmpdir: {self._sshpass_tmpdir}")
-                except Exception as e:
-                    logger.debug(f"Error cleaning up sshpass tmpdir: {e}")
-                finally:
-                    self._sshpass_tmpdir = None
-            
+
             # Clean up from process manager (only if not quitting)
             if not getattr(self, '_is_quitting', False):
                 try:
@@ -4011,23 +3756,23 @@ class TerminalWidget(Gtk.Box):
                                 del process_manager.processes[proc_pid]
                 except Exception as e:
                     logger.debug(f"Error cleaning up from process manager: {e}")
-            
+
             # Do not hard-reset here; keep current theme/colors
-            
+
             logger.debug(f"Cleaned up {len(pids_to_clean)} processes for session {self.session_id}")
-            
+
         except Exception as e:
             logger.error(f"Error during disconnect: {e}")
         finally:
             # Clean up references
             self.process_pid = None
             self.process_pgid = None
-            
+
             # Only emit connection-lost signal if not quitting
             if not is_quitting:
                 self.emit('connection-lost')
             logger.debug(f"SSH session {self.session_id} disconnected")
-    
+
     def _on_connection_failed(self, error_message):
         """Handle connection failure (called from main thread)"""
         logger.error(f"Connection failed: {error_message}")
@@ -4046,8 +3791,6 @@ class TerminalWidget(Gtk.Box):
             error_msg = f"\r\n\x1b[31m{error_message}\x1b[0m\r\n"
             if self.backend:
                 self.backend.feed(error_msg.encode('utf-8'))
-            elif self.vte is not None:
-                self.vte.feed(error_msg.encode('utf-8'))
 
             self.is_connected = False
 
@@ -4061,13 +3804,21 @@ class TerminalWidget(Gtk.Box):
 
             # Mark the connection FAILED so the sidebar reflects it (classify the
             # message into a concise reason where we can).
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
             _state, _reason = self._classify_exit(255, False)
             self.connection_state = ConnectionState.FAILED
             self.connection_state_reason = _reason or error_message
-            if hasattr(self, 'connection_manager') and self.connection_manager and self.connection \
-                    and getattr(self.connection, 'hostname', None) != 'localhost':
-                self.connection_manager.update_connection_state(
+            update_connection_state = getattr(
+                getattr(self, 'connection_manager', None),
+                'update_connection_state',
+                None,
+            )
+            if (
+                callable(update_connection_state)
+                and self.connection
+                and getattr(self.connection, 'hostname', None) != 'localhost'
+            ):
+                update_connection_state(
                     self.connection, ConnectionState.FAILED, self.connection_state_reason
                 )
 
@@ -4096,7 +3847,7 @@ class TerminalWidget(Gtk.Box):
             return
 
         logger.debug(f"Terminal child exited with status: {status}")
-        
+
         # Defer the heavy work to avoid blocking the signal handler
         # This prevents potential deadlocks with the UI thread
         def _handle_exit_cleanup():
@@ -4105,10 +3856,10 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.error(f"Error in exit cleanup: {e}")
             return False  # Don't repeat
-        
+
         # Schedule cleanup on the main thread
         GLib.idle_add(_handle_exit_cleanup)
-    
+
     def _handle_child_exit_cleanup(self, status):
         """Handle the actual cleanup work for child process exit (called from main thread)"""
         logger.debug(f"Starting exit cleanup for status {status}")
@@ -4117,22 +3868,22 @@ class TerminalWidget(Gtk.Box):
         try:
             # Skip getting PID since process is already dead - just clear our tracking
             logger.debug("Clearing process tracking for dead process")
-            
+
             # Clear our stored PID first to prevent any attempts to interact with dead process
             old_pid = getattr(self, 'process_pid', None)
             self.process_pid = None
-            
+
             # Clean up process manager tracking
             with process_manager.lock:
                 if old_pid and old_pid in process_manager.processes:
                     logger.debug(f"Removing dead process {old_pid} from tracking")
                     del process_manager.processes[old_pid]
-                
+
                 # Remove this terminal from tracking
                 if self in process_manager.terminals:
                     logger.debug(f"Removing terminal {id(self)} from tracking")
                     process_manager.terminals.remove(self)
-            
+
             logger.debug("Process tracking cleanup completed")
         except Exception as e:
             logger.error(f"Error cleaning up exited process tracking: {e}")
@@ -4140,7 +3891,7 @@ class TerminalWidget(Gtk.Box):
         # Capture whether the session was ever confirmed connected (before we
         # reset state below) and stop any pending promotion — the process is
         # gone, so it must never be promoted to CONNECTED after this.
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
         was_connected = (self.connection_state == ConnectionState.CONNECTED)
         self._cancel_connect_grace()
 
@@ -4172,7 +3923,7 @@ class TerminalWidget(Gtk.Box):
                         self.connection_manager.update_connection_state,
                         self.connection, ConnectionState.DISCONNECTED, '',
                     )
-                
+
                 root = self.get_root()
                 if root and hasattr(root, 'tab_view'):
                     # Safe lookup: this terminal may be embedded in a split-view
@@ -4204,7 +3955,7 @@ class TerminalWidget(Gtk.Box):
                     return
         except Exception:
             pass
-        
+
         # Non-zero or unknown exit: classify into FAILED (auth/unreachable/…) vs
         # DISCONNECTED (a previously-live session that dropped or ended).
         logger.debug("Updating connection status after process exit")
@@ -4250,14 +4001,14 @@ class TerminalWidget(Gtk.Box):
             except Exception as e:
                 logger.error(f"Error in final exit cleanup: {e}")
             return False
-        
+
         # Schedule final cleanup on next idle cycle
         GLib.idle_add(_finalize_exit_cleanup)
 
     def on_title_changed(self, terminal):
         """
         Handle terminal title change (fallback for older VTE versions).
-        
+
         Note: This uses the deprecated get_window_title() method. On VTE 0.78+,
         title changes are handled via _on_termprops_changed() using TERMPROP_XTERM_TITLE.
         This handler is kept for backward compatibility.
@@ -4269,16 +4020,18 @@ class TerminalWidget(Gtk.Box):
                 # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
                 # The remote shell emits OSC escape sequences to set the window title
                 # Common formats: "user@host: /path/to/dir", "/path/to/dir", "user@host:/path/to/dir"
-                remote_dir = self._parse_directory_from_title(title)
+                remote_dir = None
+                if not getattr(self, '_native_cwd_available', False):
+                    remote_dir = self._parse_directory_from_title(title)
                 if remote_dir:
                     self._current_remote_directory = remote_dir
                     logger.debug(f"Parsed remote directory from window title (deprecated API): {remote_dir}")
-                
+
                 self.emit('title-changed', title)
         except Exception as e:
             # get_window_title() might not be available in newer VTE versions
             logger.debug(f"get_window_title() failed (may be deprecated): {e}")
-        
+
         # If terminal is connected and a title update occurs (often when prompt is ready),
         # ensure the reconnect banner is hidden
         try:
@@ -4286,28 +4039,28 @@ class TerminalWidget(Gtk.Box):
                 self._set_disconnected_banner_visible(False)
         except Exception:
             pass
-    
+
     def _parse_directory_from_title(self, title: str) -> Optional[str]:
         """
         Parse the current directory from the terminal window title.
-        
+
         Common title formats:
         - "/path/to/dir"
         - "user@host: /path/to/dir"
         - "user@host:/path/to/dir"
         - "SSH: user@host: /path/to/dir"
         - "user@host: ~/projects"
-        
+
         Returns:
             The directory path if found, None otherwise.
         """
         if not title:
             return None
-        
+
         try:
             # Remove common prefixes
             title = title.strip()
-            
+
             # Try to find a path after ":" (common format: user@host: /path)
             if ':' in title:
                 # Split by ':' and look for parts that look like paths
@@ -4317,11 +4070,11 @@ class TerminalWidget(Gtk.Box):
                     if part.startswith('/') or part.startswith('~'):
                         # Found something that looks like a path
                         return part
-            
+
             # If title starts with '/' or '~', it might be just the path
             if title.startswith('/') or title.startswith('~'):
                 return title
-            
+
             # Try to extract path patterns
             # Look for paths that start with / or ~
             import re
@@ -4330,16 +4083,16 @@ class TerminalWidget(Gtk.Box):
             match = re.search(path_pattern, title)
             if match:
                 return match.group(1).strip()
-            
+
             return None
         except Exception as e:
             logger.debug(f"Failed to parse directory from title '{title}': {e}")
             return None
-    
+
     def get_current_remote_directory(self) -> Optional[str]:
         """
         Get the current remote directory parsed from the window title.
-        
+
         Returns:
             Current remote directory path, or None if not available.
         """
@@ -4355,8 +4108,6 @@ class TerminalWidget(Gtk.Box):
                 return
             if self.backend and self.backend.get_has_selection():
                 self.backend.copy_clipboard()
-            elif self.vte is not None and self.vte.get_has_selection():
-                self.vte.copy_clipboard_format(Vte.Format.TEXT)
         except Exception:
             logger.debug("copy-on-select failed", exc_info=True)
 
@@ -4367,24 +4118,16 @@ class TerminalWidget(Gtk.Box):
             self.backend.copy_clipboard()
             if had_selection:
                 self._show_toast(_("Copied to clipboard"))
-        elif self.vte is not None:
-            if self.vte.get_has_selection():
-                self.vte.copy_clipboard_format(Vte.Format.TEXT)
-                self._show_toast(_("Copied to clipboard"))
 
     def paste_text(self):
         """Paste text from clipboard"""
         if self.backend:
             self.backend.paste_clipboard()
-        elif self.vte is not None:
-            self.vte.paste_clipboard()
 
     def select_all(self):
         """Select all text in terminal"""
         if self.backend:
             self.backend.select_all()
-        elif self.vte is not None:
-            self.vte.select_all()
 
     def zoom_in(self):
         """Zoom in the terminal font"""
@@ -4461,98 +4204,53 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             return False
 
-    def _on_termprops_changed(self, terminal, ids, user_data=None):
-        """Handle terminal properties changes for job detection (local terminals only) and window title tracking"""
-        # This method should only be called if the signal was successfully connected
-        # (i.e., on VTE 0.78+), but add a safety check anyway
-        if self._termprops_changed_handler is None:
-            logger.debug("termprops-changed handler called but signal was not connected")
+    def _on_termprops_changed(self, _widget, event, user_data=None):
+        """Handle backend-neutral title and shell lifecycle properties."""
+        if not event:
             return
-            
         try:
-            # Check which properties changed - ids should be a list of VteTerminalProp values
-            if not ids:
-                return
-                
-            # Convert ids to a set for efficient lookup if it's not already
-            changed_props = set(ids) if hasattr(ids, '__iter__') else {ids}
+            from .connection_model import ConnectionState
+            if (self.connection_state == ConnectionState.CONNECTING
+                    and not self._is_local_terminal()):
+                self._mark_connected()
+        except Exception:
+            pass
 
-            # Login evidence: a remote terminal emitting termprops (title/cwd via
-            # the remote shell's OSC sequences) means the session reached the
-            # shell. Promote a pending CONNECTING session to CONNECTED here so we
-            # confirm on real activity rather than just the process spawning.
+        cwd_uri = event.get("cwd_uri")
+        if cwd_uri:
             try:
-                from .connection_manager import ConnectionState
-                if self.connection_state == ConnectionState.CONNECTING \
-                        and not self._is_local_terminal():
-                    self._mark_connected()
+                from urllib.parse import unquote, urlparse
+                parsed = urlparse(cwd_uri)
+                if parsed.scheme == "file" and parsed.path:
+                    self._current_remote_directory = unquote(parsed.path)
+                    self._native_cwd_available = True
             except Exception:
-                pass
+                logger.debug("Could not parse VTE current-directory URI", exc_info=True)
 
-            # Check for window title changes (TERMPROP_XTERM_TITLE) - works for both local and remote terminals
-            # This replaces the deprecated get_window_title() method (VTE 0.78+)
-            # TERMPROP_XTERM_TITLE is a Vte.PropertyType.STRING termprop that stores the xterm window title
-            # as set by OSC 0 and OSC 2 escape sequences. It's a string constant 'xterm.title'.
-            # Note: This termprop is NOT settable via termprop OSC (read-only).
-            # Note: We check for title on any termprops change since checking the specific property ID
-            # requires matching string names to integer IDs, which is complex. The operation is lightweight.
-            if hasattr(Vte, 'TERMPROP_XTERM_TITLE'):
-                try:
-                    # Get the title using the modern termprops API
-                    # Use get_termprop_string() with TERMPROP_XTERM_TITLE instead of deprecated get_window_title()
-                    # Signature: get_termprop_string(prop: str) -> tuple[str | None, int]
-                    # Returns: (title_string_or_none, size)
-                    title, size = terminal.get_termprop_string(Vte.TERMPROP_XTERM_TITLE)
-                    if title:
-                        # Parse directory from window title (Method 3: VTE Terminal Widget Approach)
-                        # The remote shell emits OSC 0 or OSC 2 escape sequences to set the window title
-                        remote_dir = self._parse_directory_from_title(title)
-                        if remote_dir:
-                            self._current_remote_directory = remote_dir
-                            logger.debug(f"Parsed remote directory from TERMPROP_XTERM_TITLE: {remote_dir}")
-                        
-                        # Emit title-changed signal for compatibility
-                        self.emit('title-changed', title)
-                except Exception as e:
-                    logger.debug(f"Failed to get window title from TERMPROP_XTERM_TITLE: {e}")
-            
-            # Job detection is only enabled for local terminals
-            if not self._is_local_terminal():
-                return
-            
-            # Check if job finished (also gives exit status)
-            # These constants are only available in VTE 0.78+
-            if hasattr(Vte, 'TERMPROP_SHELL_POSTEXEC') and Vte.TERMPROP_SHELL_POSTEXEC in changed_props:
-                ok, code = terminal.get_termprop_uint(Vte.TERMPROP_SHELL_POSTEXEC)
-                if ok:
-                    self._job_status = "IDLE"
-                    logger.debug(f"Local terminal job finished with exit code: {code}")
-                    return
-            
-            # Check if job is running
-            if hasattr(Vte, 'TERMPROP_SHELL_PREEXEC') and Vte.TERMPROP_SHELL_PREEXEC in changed_props:
-                ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PREEXEC)
-                if ok:
-                    self._job_status = "RUNNING"
-                    logger.debug("Local terminal job is running")
-                    return
-            
-            # Check if prompt is visible
-            if hasattr(Vte, 'TERMPROP_SHELL_PRECMD') and Vte.TERMPROP_SHELL_PRECMD in changed_props:
-                ok, _ = terminal.get_termprop_value(Vte.TERMPROP_SHELL_PRECMD)
-                if ok:
-                    self._job_status = "PROMPT"
-                    logger.debug("Local terminal prompt is visible")
-                    return
-                
-        except Exception as e:
-            logger.debug(f"Error in termprops changed handler: {e}")
+        title = event.get("title")
+        if title:
+            # OSC 7 is authoritative; title parsing remains a fallback for
+            # shells which do not report a current-directory URI.
+            if not getattr(self, '_native_cwd_available', False):
+                remote_dir = self._parse_directory_from_title(title)
+                if remote_dir:
+                    self._current_remote_directory = remote_dir
+            self.emit("title-changed", title)
+        if not self._is_local_terminal():
+            return
+        if "postexec" in event:
+            self._job_status = "IDLE"
+            logger.debug("Local terminal job finished with exit code: %s", event["postexec"])
+        elif "preexec" in event:
+            self._job_status = "RUNNING"
+        elif "precmd" in event:
+            self._job_status = "PROMPT"
 
     def is_terminal_idle(self):
         """
         Check if the terminal is idle (no active job running).
         Only works for local terminals.
-        
+
         Returns:
             bool: True if terminal is idle, False if job is running or unknown.
                   For SSH terminals, always returns False.
@@ -4561,17 +4259,17 @@ class TerminalWidget(Gtk.Box):
         if not self._is_local_terminal():
             logger.debug("Job detection not available for SSH terminals")
             return False
-            
+
         try:
             # First try VTE termprops method (shell-specific)
             if self._job_status in ["IDLE", "PROMPT"]:
                 return True
             elif self._job_status == "RUNNING":
                 return False
-            
+
             # Fall back to shell-agnostic PTY method
             return self._is_terminal_idle_pty()
-            
+
         except Exception as e:
             logger.debug(f"Error checking terminal idle state: {e}")
             return False
@@ -4580,45 +4278,40 @@ class TerminalWidget(Gtk.Box):
         """
         Shell-agnostic check using PTY FD and POSIX job control.
         Only works for local terminals.
-        
+
         Returns:
             bool: True if terminal is idle (at prompt), False if job is running
         """
         # Only enable job detection for local terminals
         if not self._is_local_terminal():
             return False
-            
+
         try:
             # Works for any backend that exposes a real PTY (VTE or the embedded
-            # PyXterm bridge), so it is no longer gated on self.vte.
+            # PyXterm bridge), so it is no longer gated on the VTE widget.
             pty = None
             if self.backend and hasattr(self.backend, 'get_pty'):
                 pty = self.backend.get_pty()
-            if pty is None and getattr(self, 'vte', None) is not None:
-                try:
-                    pty = self.vte.get_pty()
-                except Exception:
-                    pass
             if not pty:
                 return False
-                
+
             fd = pty.get_fd()
             if fd < 0:
                 return False
-            
+
             # Get foreground process group
             fg_pgid = os.tcgetpgrp(fd)
-            
+
             # If we have stored shell PGID, compare with foreground PGID
             if self._shell_pgid is not None:
                 idle = (fg_pgid == self._shell_pgid)
                 logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, shell_pgid={self._shell_pgid}, idle={idle}")
                 return idle
-            
+
             # If no shell PGID stored, assume idle (conservative approach)
             logger.debug(f"Local terminal PTY job detection: fg_pgid={fg_pgid}, no shell_pgid stored, assuming idle")
             return True
-            
+
         except Exception as e:
             logger.debug(f"Error in PTY job detection: {e}")
             return False
@@ -4627,7 +4320,7 @@ class TerminalWidget(Gtk.Box):
         """
         Get the current job status of the terminal.
         Only works for local terminals.
-        
+
         Returns:
             str: Current status - "IDLE", "RUNNING", "PROMPT", "UNKNOWN", or "SSH_TERMINAL"
         """
@@ -4650,10 +4343,10 @@ class TerminalWidget(Gtk.Box):
             drop_target.connect("drop", self._on_file_drop)
             drop_target.connect("enter", self._on_drop_enter)
             drop_target.connect("leave", self._on_drop_leave)
-            
+
             # Add drop target to the overlay (works for VTE backend)
             self.overlay.add_controller(drop_target)
-            
+
             # Also add to backend widget for PyXterm (WebView)
             if self.backend and hasattr(self.backend, 'widget'):
                 backend_widget = self.backend.widget
@@ -4666,30 +4359,30 @@ class TerminalWidget(Gtk.Box):
                     backend_drop_target.connect("leave", self._on_drop_leave)
                     backend_widget.add_controller(backend_drop_target)
                     logger.debug("Drag and drop support added to backend widget (PyXterm)")
-            
+
             logger.debug("Drag and drop support added to terminal")
         except Exception as e:
             logger.error(f"Failed to set up drag and drop: {e}", exc_info=True)
-    
+
     def _on_drop_enter(self, drop_target, x, y):
         """Handle drag enter event - show visual feedback."""
         try:
             # Check if we have a valid connection
             if not self.connection or not self.is_connected:
                 return Gdk.DragAction.NONE
-            
+
             # Only accept drops if we have a remote connection (not local shell)
             if self._is_local_terminal():
                 return Gdk.DragAction.NONE
-            
+
             return Gdk.DragAction.COPY
         except Exception as e:
             logger.debug(f"Error in drop enter: {e}", exc_info=True)
             return Gdk.DragAction.NONE
-    
+
     def _on_drop_leave(self, drop_target):
         """Handle drag leave event."""
-    
+
     def _on_file_drop(self, drop_target, value, x, y):
         """Handle file drop event - initiate SCP upload."""
         try:
@@ -4697,15 +4390,15 @@ class TerminalWidget(Gtk.Box):
             if not self.connection or not self.is_connected:
                 logger.debug("Drop rejected: no active connection")
                 return False
-            
+
             # Only accept drops for remote connections (not local shell)
             if self._is_local_terminal():
                 logger.debug("Drop rejected: local terminal")
                 return False
-            
+
             # Extract file paths from the drop value
             file_paths = []
-            
+
             # Handle GObject.Value wrapper (GTK4 may wrap the value)
             if isinstance(value, GObject.Value):
                 # Try different methods to extract the actual value
@@ -4719,7 +4412,7 @@ class TerminalWidget(Gtk.Box):
                         continue
                 if extracted is not None:
                     value = extracted
-            
+
             # Handle Gdk.FileList (standard format for filesystem drops in GTK4)
             if isinstance(value, Gdk.FileList):
                 files = value.get_files()
@@ -4748,144 +4441,38 @@ class TerminalWidget(Gtk.Box):
                         file_paths.append(path)
                 except Exception:
                     pass
-            
+
             if not file_paths:
                 logger.debug("Drop rejected: no valid file paths extracted from value type: %s", type(value))
                 return False
-            
-            # Get MainWindow instance to call SCP upload
-            root = self.get_root()
-            if not root or not hasattr(root, '_start_scp_transfer'):
-                logger.debug("Drop rejected: MainWindow not found")
-                return False
-            
-            # Get current directory from the active terminal session
-            # Method 3: Use VTE window-title-changed approach (primary method)
-            # The remote shell emits OSC escape sequences that set the window title with the directory
-            destination = self.get_current_remote_directory()
-            
-            # Fallback: If we don't have directory from window title, use the terminal-based method
-            if not destination:
-                logger.debug("Directory not available from window title, falling back to terminal-based method")
-                try:
-                    import time
-                    import random
-                    import subprocess
-                    
-                    # Generate unique temp file name using timestamp and random number
-                    temp_filename = f"/tmp/sshpilot_pwd_{int(time.time())}_{random.randint(1000, 9999)}.txt"
-                    
-                    # Send pwd command to active terminal session to write current directory to temp file
-                    # Use $$ to get shell PID for uniqueness, or use the generated filename
-                    pwd_cmd = f"pwd > {temp_filename}\n"
-                    
-                    logger.debug(f"Sending pwd command to terminal: {pwd_cmd!r}")
-                    
-                    # Send command to terminal backend
-                    if hasattr(self, 'backend') and self.backend and hasattr(self.backend, 'feed_child'):
-                        self.backend.feed_child(pwd_cmd.encode('utf-8'))
-                    elif hasattr(self, 'vte') and self.vte:
-                        self.vte.feed_child(pwd_cmd.encode('utf-8'))
-                    else:
-                        logger.warning("No terminal backend available to send pwd command")
-                        raise Exception("Terminal backend not available")
-                    
-                    # Wait a moment for the command to execute
-                    time.sleep(0.5)
-                    
-                    # Now read the temp file via SSH using ssh_connection_builder
-                    from .ssh_connection_builder import build_ssh_connection, ConnectionContext
-                    
-                    # Build SSH connection command using ssh_connection_builder
-                    ctx = ConnectionContext(
-                        connection=self.connection,
-                        connection_manager=self.connection_manager,
-                        config=self.config,
-                        command_type='ssh',
-                        extra_args=[],
-                        port_forwarding_rules=None,
-                        remote_command=f"cat {temp_filename}",
-                        local_command=None,
-                        extra_ssh_config=None,
-                        known_hosts_path=None,
-                        native_mode=True,
-                    )
 
-                    ssh_conn_cmd = build_ssh_connection(ctx)
-                    ssh_cmd = ssh_conn_cmd.command
-                    env = ssh_conn_cmd.env.copy()
-                    
-                    logger.debug(f"Reading pwd from temp file: {' '.join(ssh_cmd)}")
-                    result = subprocess.run(
-                        ssh_cmd,
-                        env=env,
-                        text=True,
-                        capture_output=True,
-                        timeout=5,
-                    )
-                    
-                    # Clean up temp file (best effort) - build cleanup command
-                    try:
-                        cleanup_ctx = ConnectionContext(
-                            connection=self.connection,
-                            connection_manager=self.connection_manager,
-                            config=self.config,
-                            command_type='ssh',
-                            extra_args=[],
-                            port_forwarding_rules=None,
-                            remote_command=f"rm -f {temp_filename}",
-                            local_command=None,
-                            extra_ssh_config=None,
-                            known_hosts_path=None,
-                            native_mode=True,
-                        )
-                        cleanup_cmd_obj = build_ssh_connection(cleanup_ctx)
-                        cleanup_cmd = cleanup_cmd_obj.command
-                        subprocess.run(cleanup_cmd, env=cleanup_cmd_obj.env, timeout=2, capture_output=True)
-                    except Exception:
-                        pass  # Ignore cleanup errors
-                    
-                    logger.debug(f"pwd file read result: returncode={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
-                    
-                    if result.returncode == 0:
-                        if result.stdout:
-                            remote_dir = result.stdout.strip()
-                            if remote_dir:
-                                destination = remote_dir
-                                logger.info(f"Remote current directory: {destination}")
-                            else:
-                                logger.warning("pwd file was empty")
-                        else:
-                            logger.warning("pwd file read succeeded but stdout is empty")
-                    else:
-                        logger.warning(f"Failed to read pwd file: returncode={result.returncode}, stderr={result.stderr}")
-                except Exception as e:
-                    logger.error(f"Failed to get remote current directory: {e}", exc_info=True)
-            
-            # Fallback to home directory if we couldn't get current directory
+            root = self.get_root()
+            scp_controller = getattr(root, "scp_controller", None) if root else None
+            start_scp = getattr(scp_controller, "start_scp_transfer", None)
+            if not callable(start_scp):
+                logger.debug("Drop rejected: daemon SCP controller unavailable")
+                return False
+            destination = self.get_current_remote_directory()
             if not destination:
-                destination = "~"
-                logger.warning("Could not determine remote current directory, using home directory (~)")
-            
-            # Initiate SCP upload
-            logger.info(f"Initiating SCP upload for {len(file_paths)} file(s) to {destination}")
-            root._start_scp_transfer(
+                logger.debug("Drop rejected: remote directory is unavailable")
+                return False
+            start_scp(
                 self.connection,
                 file_paths,
                 destination,
-                direction='upload'
+                direction="upload",
             )
-            
+
             return True
         except Exception as e:
             logger.error(f"Error handling file drop: {e}", exc_info=True)
             return False
-    
+
     def has_active_job(self):
         """
         Check if the terminal has an active job running.
         Only works for local terminals.
-        
+
         Returns:
             bool: True if job is running, False if idle or unknown.
                   For SSH terminals, always returns False.

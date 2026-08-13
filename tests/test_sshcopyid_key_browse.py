@@ -1,31 +1,29 @@
-"""Tests for resolving a browsed public-key file into an SSHKey.
+"""Tests for daemon-only public-key selection in the deployment UI."""
 
-ssh-copy-id installs the *public* key (``-i <pub>``), so a file chosen via the
-browse dialog must yield an SSHKey whose ``public_path`` is exactly that file,
-regardless of extension.
-"""
-import os
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
-from sshpilot.sshcopyid_window import _ssh_key_from_public_path
+from sshpilot import sshcopyid_window as win_mod
 
 
-def test_pub_file_uses_exact_public_path():
-    path = "/home/alice/keys/server.pub"
-    key = _ssh_key_from_public_path(path)
-    assert key.public_path == path
-    assert key.private_path == "/home/alice/keys/server"  # .pub stripped
+def test_browsed_public_key_is_not_added_as_a_local_fallback():
+    window = SimpleNamespace(
+        _closed=False,
+        _existing_keys_cache=[],
+        _error=MagicMock(),
+        _revert_dropdown_selection=MagicMock(),
+    )
+
+    win_mod.SshCopyIdWindow._add_browsed_public_key(
+        window, "/home/alice/keys/server.pub"
+    )
+
+    assert window._existing_keys_cache == []
+    window._error.assert_called_once()
+    window._revert_dropdown_selection.assert_called_once()
 
 
-def test_non_pub_file_keeps_exact_public_path():
-    """A chosen file without a .pub suffix still becomes the public_path verbatim."""
-    path = "/home/alice/keys/id_custom"
-    key = _ssh_key_from_public_path(path)
-    assert key.public_path == path
-    assert key.private_path == path
-
-
-def test_dropdown_label_matches_private_basename():
-    key = _ssh_key_from_public_path("/tmp/elsewhere/work.pub")
-    # The sidebar/dropdown label uses basename(private_path) for both discovered
-    # and browsed keys, so it stays consistent.
-    assert os.path.basename(key.private_path) == "work"
+def test_daemon_key_selection_uses_an_opaque_key_id():
+    key = SimpleNamespace(key_id="key:daemon-1", name="server")
+    assert key.key_id == "key:daemon-1"
+    assert not hasattr(key, "private_path")

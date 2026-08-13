@@ -78,20 +78,10 @@ def test_dismiss_hides_banner():
     assert hidden == [True]
 
 
-def test_restore_focus_prefers_backend_then_vte_then_self():
-    # backend present → backend.grab_focus
+def test_restore_focus_uses_terminal_widget_public_api():
     grabbed = []
     fc = _fc()
-    fc.t = SimpleNamespace(backend=SimpleNamespace(grab_focus=lambda: grabbed.append("backend")),
-                           vte=SimpleNamespace(grab_focus=lambda: grabbed.append("vte")),
-                           grab_focus=lambda: grabbed.append("self"))
-    assert fc._restore_focus() is False
-    assert grabbed == ["backend"]
+    fc.t = SimpleNamespace(grab_terminal_focus=lambda: grabbed.append("terminal"))
 
-    # no backend → vte.grab_focus
-    grabbed.clear()
-    fc.t = SimpleNamespace(backend=None,
-                           vte=SimpleNamespace(grab_focus=lambda: grabbed.append("vte")),
-                           grab_focus=lambda: grabbed.append("self"))
-    fc._restore_focus()
-    assert grabbed == ["vte"]
+    assert fc._restore_focus() is False
+    assert grabbed == ["terminal"]

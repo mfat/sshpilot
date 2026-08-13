@@ -1,65 +1,39 @@
-import os
-import sys
-import asyncio
-import subprocess
 
-# gi.repository / Secret stubs come from tests/conftest.py; redefining them
-# here would clobber other tests' expectations (see #985).
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
-# Ensure the project package is importable
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from sshpilot.connection_manager import Connection, ConnectionManager
+def _load(tmp_path, text: str):
+    path = tmp_path / "config"
+    path.write_text(text, encoding="utf-8")
+    return load_ssh_configuration(path, isolated=False)
 
 
 def test_host_token_used_when_hostname_missing(tmp_path):
     """Entries without HostName should fall back to the Host token for the hostname."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    result = _load(tmp_path, "Host example.com\n    User testuser\n")
 
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.connections = []
-
-    config_path = tmp_path / 'config'
-    config_path.write_text('Host example.com\n    User testuser\n')
-    manager.ssh_config_path = str(config_path)
-
-    manager.load_ssh_config()
-
-    assert len(manager.connections) == 1
-    conn = manager.connections[0]
-    assert conn.nickname == 'example.com'
-    assert conn.data['hostname'] == ''
-    assert conn.data['host'] == 'example.com'
-    assert conn.hostname == ''
-    assert conn.host == 'example.com'
+    assert len(result.connections) == 1
+    record = result.connections[0]
+    assert record.nickname == "example.com"
+    assert record.data["hostname"] == ""
+    assert record.data["host"] == "example.com"
 
 
 def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
     """Multiple labels without HostName produce separate entries without aliases."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    cfg = "Host primary alias1 alias2\n    User testuser\n"
+    result = _load(tmp_path, cfg)
 
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.connections = []
+    assert sorted(c.nickname for c in result.connections) == ['alias1', 'alias2', 'primary']
+    for record in result.connections:
+        assert record.data["hostname"] == ""
+        assert record.data["host"] == record.nickname
+        assert "aliases" not in record.data
 
-    cfg = """Host primary alias1 alias2
-    User testuser
-"""
-    config_path = tmp_path / 'config'
-    config_path.write_text(cfg)
-    manager.ssh_config_path = str(config_path)
+    primary = next(c for c in result.connections if c.nickname == "primary")
 
-    manager.load_ssh_config()
-
-    assert sorted(c.nickname for c in manager.connections) == ['alias1', 'alias2', 'primary']
-    for c in manager.connections:
-        assert c.data['hostname'] == ''
-        assert c.hostname == ''
-        assert c.host == c.nickname
-        assert not hasattr(c, 'aliases')
-
-    primary = next(c for c in manager.connections if c.nickname == 'primary')
-
-    entry = manager.format_ssh_config_entry(primary.data)
+    entry = format_ssh_config_entry(dict(primary.data))
     assert 'HostName' not in entry
     assert entry.splitlines()[0] == 'Host primary'
     assert 'alias1' not in entry and 'alias2' not in entry
@@ -67,139 +41,11 @@ def test_multiple_labels_without_hostname_have_no_aliases(tmp_path):
 
 def test_alias_labels_with_hostname(tmp_path):
     """Alias groups with HostName create independent entries for each label."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    cfg = "Host app1 app2\n    HostName 192.168.1.50\n    User testuser\n"
+    result = _load(tmp_path, cfg)
 
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.connections = []
-
-    cfg = """Host app1 app2
-    HostName 192.168.1.50
-    User testuser
-"""
-    config_path = tmp_path / 'config'
-    config_path.write_text(cfg)
-    manager.ssh_config_path = str(config_path)
-
-    manager.load_ssh_config()
-
-    assert sorted(c.nickname for c in manager.connections) == ['app1', 'app2']
-    for c in manager.connections:
-        assert c.data['hostname'] == '192.168.1.50'
-        assert c.hostname == '192.168.1.50'
-        assert c.username == 'testuser'
-        assert c.aliases == []
-
-
-def test_connect_command_preserves_empty_hostname(tmp_path):
-    """Connecting should use the alias for SSH while keeping hostname empty."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.connections = []
-
-    cfg = """Host example.com\n    User testuser\n"""
-    config_path = tmp_path / 'config'
-    config_path.write_text(cfg)
-    manager.ssh_config_path = str(config_path)
-
-    manager.load_ssh_config()
-
-    assert len(manager.connections) == 1
-    conn = manager.connections[0]
-    assert conn.hostname == ''
-    assert conn.host == 'example.com'
-
-    asyncio.get_event_loop().run_until_complete(conn.connect())
-
-    # Hostname remains empty but ssh command targets the alias
-    assert conn.hostname == ''
-    assert any(part.endswith('example.com') for part in conn.ssh_cmd)
-
-
-def test_isolated_config_used_for_effective_resolution(tmp_path, monkeypatch):
-    """Isolated configs should be passed to ssh -G via -F while preserving hostname."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-    config_dir = tmp_path / 'isolated'
-    config_dir.mkdir()
-    config_path = config_dir / 'ssh_config'
-    config_path.write_text(
-        "Host alias\n    HostName 10.0.0.5\n    User tester\n"
-    )
-
-    connection = Connection(
-        {
-            'nickname': 'alias',
-            'host': 'alias',
-            'hostname': '10.0.0.5',
-            'username': 'tester',
-            'source': str(config_path),
-        }
-    )
-    connection.isolated_mode = True
-
-    calls = []
-
-    class DummyResult:
-        def __init__(self, stdout: str):
-            self.stdout = stdout
-            self.stderr = ''
-
-    def fake_run(cmd, capture_output, text, check):
-        calls.append(cmd)
-        return DummyResult('hostname 10.0.0.5\nuser tester\n')
-
-    monkeypatch.setattr(subprocess, 'run', fake_run)
-
-    loop = asyncio.get_event_loop()
-    assert loop.run_until_complete(connection.connect())
-
-    # Native connect builds the minimal `ssh -F <isolated config> … alias`; ssh
-    # itself resolves HostName/User from that config (there is no separate
-    # `ssh -G` subprocess during connect).
-    cmd = connection.ssh_cmd
-    assert '-F' in cmd
-    assert cmd[cmd.index('-F') + 1] == os.path.abspath(str(config_path))
-    assert cmd[-1].endswith('alias')
-    assert connection.hostname == '10.0.0.5'
-
-
-def test_native_connect_force_tty_adds_pty_flag(tmp_path, monkeypatch):
-    """force_tty makes native_connect request a remote PTY (ssh -t), placed
-    before the host, so an interactive remote command (e.g. docker exec -it) gets
-    a terminal. Without it (default) no -t is added — captured run_command stays
-    TTY-free."""
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-    config_dir = tmp_path / 'iso'
-    config_dir.mkdir()
-    config_path = config_dir / 'ssh_config'
-    config_path.write_text("Host alias\n    HostName 10.0.0.5\n    User tester\n")
-
-    class DummyResult:
-        stdout = ''
-        stderr = ''
-
-    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: DummyResult())
-
-    def _conn():
-        c = Connection({'nickname': 'alias', 'host': 'alias', 'hostname': '10.0.0.5',
-                        'username': 'tester', 'source': str(config_path)})
-        c.isolated_mode = True
-        return c
-
-    loop = asyncio.get_event_loop()
-    remote = "docker exec -it web /bin/bash"
-
-    c1 = _conn()
-    loop.run_until_complete(c1.native_connect(remote_command=remote, force_tty=True))
-    cmd1 = c1.ssh_cmd
-    assert '-t' in cmd1
-    assert cmd1.index('-t') < cmd1.index('alias')  # PTY flag before the host
-    assert cmd1[-1] == remote                       # command after the host
-
-    c2 = _conn()
-    loop.run_until_complete(c2.native_connect(remote_command=remote, force_tty=False))
-    assert '-t' not in c2.ssh_cmd
-    assert c2.ssh_cmd[-1] == remote
-
+    assert sorted(c.nickname for c in result.connections) == ['app1', 'app2']
+    for record in result.connections:
+        assert record.data["hostname"] == "192.168.1.50"
+        assert record.data["username"] == "testuser"
+        assert record.data["aliases"] == []

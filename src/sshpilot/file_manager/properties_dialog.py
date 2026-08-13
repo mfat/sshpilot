@@ -214,55 +214,11 @@ class PropertiesDialog(Adw.Window):
         return f"{user} : {group}"
 
     @staticmethod
-    def _lookup_name_in_passwd(content: str, uid: int) -> Optional[str]:
-        target = str(int(uid))
-        for line in content.splitlines():
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(":")
-            if len(parts) >= 3 and parts[2] == target:
-                return parts[0]
-        return None
-
-    @staticmethod
-    def _lookup_name_in_group(content: str, gid: int) -> Optional[str]:
-        target = str(int(gid))
-        for line in content.splitlines():
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split(":")
-            if len(parts) >= 3 and parts[2] == target:
-                return parts[0]
-        return None
-
-    @staticmethod
-    def _read_remote_text(sftp, path: str) -> Optional[str]:
-        try:
-            with sftp.open(path, "r") as fh:
-                data = fh.read()
-        except Exception:
-            return None
-        if isinstance(data, bytes):
-            return data.decode("utf-8", errors="replace")
-        return data
-
-    @classmethod
-    def _format_remote_owner(cls, sftp, uid, gid) -> str:
-        """Resolve owner/group from the remote host, not the local passwd database."""
+    def _format_remote_owner(uid, gid) -> str:
+        """Format remote uid/gid numerically until a daemon name-resolution op exists."""
         if uid is None or gid is None:
             return "—"
-        user, group = str(uid), str(gid)
-        passwd_text = cls._read_remote_text(sftp, "/etc/passwd")
-        if passwd_text:
-            name = cls._lookup_name_in_passwd(passwd_text, int(uid))
-            if name:
-                user = name
-        group_text = cls._read_remote_text(sftp, "/etc/group")
-        if group_text:
-            name = cls._lookup_name_in_group(group_text, int(gid))
-            if name:
-                group = name
-        return f"{user} : {group}"
+        return f"{int(uid)} : {int(gid)}"
 
     def _create_created_row(self) -> Gtk.Widget:
         """Create the created date row (if available)."""
@@ -310,96 +266,50 @@ class PropertiesDialog(Adw.Window):
             except Exception:
                 perms_text = "—"
         else:
-            # For remote files, try to get permissions from SFTP asynchronously
-            # Start with a placeholder, will be updated when stat completes
+            # For remote files, fetch typed daemon metadata (mode, uid/gid,
+            # mtime) asynchronously; the manager owns all remote I/O.
             perms_text = "Loading…"
-            
-            logger.debug(f"PropertiesDialog: Checking SFTP manager for remote file permissions")
-            logger.debug(f"PropertiesDialog: _sftp_manager={self._sftp_manager}")
-            
-            if self._sftp_manager:
-                has_sftp = hasattr(self._sftp_manager, '_sftp')
-                logger.debug(f"PropertiesDialog: hasattr(_sftp_manager, '_sftp')={has_sftp}")
-                if has_sftp:
-                    sftp_client = getattr(self._sftp_manager, '_sftp', None)
-                    logger.debug(f"PropertiesDialog: _sftp_manager._sftp={sftp_client}")
-                
-                if has_sftp and sftp_client:
-                    # Build the full remote path
-                    if self._current_path.endswith('/'):
-                        remote_path = self._current_path + self._entry.name
-                    else:
-                        remote_path = posixpath.join(self._current_path, self._entry.name)
-                    
-                    logger.debug(f"PropertiesDialog: Fetching permissions for remote path: {remote_path}")
-                    
-                    # Get file attributes from SFTP asynchronously
-                    def _get_attr():
-                        assert self._sftp_manager._sftp is not None
-                        sftp = self._sftp_manager._sftp
-                        logger.debug(
-                            "PropertiesDialog: Background thread calling stat(%s)",
-                            remote_path,
-                        )
-                        attr = sftp.stat(remote_path)
-                        logger.debug(
-                            "PropertiesDialog: stat() returned: %s, st_mode=%s",
-                            attr,
-                            getattr(attr, "st_mode", None),
-                        )
-                        uid = getattr(attr, "st_uid", None)
-                        gid = getattr(attr, "st_gid", None)
-                        owner_text = (
-                            self._format_remote_owner(sftp, uid, gid)
-                            if uid is not None and gid is not None
-                            else None
-                        )
-                        return attr, owner_text
-                    
-                    def _update_permissions(future):
-                        owner_text = None
-                        modified_text = None
-                        try:
-                            attr, owner_text = future.result()
-                            if attr and hasattr(attr, 'st_mode') and attr.st_mode:
-                                mode = attr.st_mode
-                                new_text = f"{_mode_to_str(mode)} ({_mode_to_octal(mode)})"
-                            else:
-                                new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
-                            mtime = getattr(attr, 'st_mtime', None)
-                            if mtime:
-                                modified_text = _human_time(mtime)
-                        except Exception as e:
-                            logger.debug(f"Failed to get remote file attributes: {e}", exc_info=True)
+
+            if self._sftp_manager is not None and hasattr(self._sftp_manager, "stat"):
+                remote_path = self._remote_path()
+                logger.debug("PropertiesDialog: Fetching remote metadata for %s", remote_path)
+                future = self._sftp_manager.stat(remote_path)
+
+                def _update_from_entry(future) -> None:
+                    owner_text = None
+                    modified_text = None
+                    try:
+                        entry = future.result()
+                    except Exception as exc:
+                        logger.debug("Failed to get remote file attributes: %s", exc)
+                        entry = None
+                    if entry is not None:
+                        if entry.mode:
+                            new_text = f"{_mode_to_str(entry.mode, entry.file_type)} ({_mode_to_octal(entry.mode)})"
+                        else:
                             new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
-
-                        def _apply():
-                            self._update_permissions_row(new_text)
-                            if owner_text is not None and hasattr(self, '_owner_row'):
-                                self._owner_row.set_subtitle(owner_text)
-                            elif hasattr(self, '_owner_row') and self._owner_row.get_subtitle() == "Loading…":
-                                self._owner_row.set_subtitle("—")
-                            if modified_text is not None and hasattr(self, '_modified_row'):
-                                self._modified_row.set_subtitle(modified_text)
-                            return GLib.SOURCE_REMOVE
-
-                        GLib.idle_add(_apply)
-                    
-                    # Submit stat operation to background thread
-                    logger.debug(f"PropertiesDialog: Submitting stat operation to background thread")
-                    future = self._sftp_manager._submit(_get_attr)
-                    future.add_done_callback(_update_permissions)
-                    logger.debug(f"PropertiesDialog: Future submitted, callback added")
-                else:
-                    logger.debug(f"PropertiesDialog: No SFTP client available")
-                    # No SFTP manager available, show simplified permissions
-                    if self._entry.is_dir:
-                        perms_text = "Create and Delete Files"
+                        if entry.uid is not None and entry.gid is not None:
+                            owner_text = self._format_remote_owner(entry.uid, entry.gid)
+                        if entry.modified_at is not None:
+                            modified_text = _human_time(entry.modified_at.timestamp())
                     else:
-                        perms_text = "Read and Write"
+                        new_text = "Create and Delete Files" if self._entry.is_dir else "Read and Write"
+
+                    def _apply():
+                        self._update_permissions_row(new_text)
+                        if owner_text is not None and hasattr(self, "_owner_row"):
+                            self._owner_row.set_subtitle(owner_text)
+                        elif hasattr(self, "_owner_row") and self._owner_row.get_subtitle() == "Loading…":
+                            self._owner_row.set_subtitle("—")
+                        if modified_text is not None and hasattr(self, "_modified_row"):
+                            self._modified_row.set_subtitle(modified_text)
+                        return GLib.SOURCE_REMOVE
+
+                    GLib.idle_add(_apply)
+
+                future.add_done_callback(_update_from_entry)
             else:
-                logger.debug(f"PropertiesDialog: No SFTP manager available")
-                # No SFTP manager available, show simplified permissions
+                logger.debug("PropertiesDialog: No SFTP manager available")
                 if self._entry.is_dir:
                     perms_text = "Create and Delete Files"
                 else:

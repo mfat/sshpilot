@@ -11,6 +11,7 @@ pure per-type default seeding, which routes through fake rows.
 """
 
 from sshpilot.connection_dialog import ConnectionDialog
+from sshpilot.connection_dialog import SSHConfigAdvancedTab
 from sshpilot.connection_dialog_port_forwarding import (
     ConnectionDialogPortForwardingMixin,
 )
@@ -39,6 +40,139 @@ def test_moved_methods_are_owned_by_the_mixin():
             getattr(ConnectionDialog, name).__module__
             == "sshpilot.connection_dialog_port_forwarding"
         )
+
+
+class _Switch:
+    def __init__(self, active=False):
+        self.active = active
+
+    def get_active(self):
+        return self.active
+
+    def set_active(self, active):
+        self.active = active
+
+
+class _AdvancedState:
+    def __init__(self, *entries):
+        self.entries = list(entries)
+        self.set_calls = []
+        self.remove_calls = []
+
+    def get_option(self, keyword):
+        wanted = keyword.lower()
+        for key, value in self.entries:
+            if key.lower() == wanted:
+                return value
+        return None
+
+    def set_option(self, keyword, value):
+        self.set_calls.append((keyword, value))
+        wanted = keyword.lower()
+        self.entries = [(k, v) for k, v in self.entries if k.lower() != wanted]
+        self.entries.append((keyword, value))
+
+    def remove_option(self, keyword, value=None):
+        self.remove_calls.append((keyword, value))
+        wanted = keyword.lower()
+        wanted_value = value.lower() if value is not None else None
+        self.entries = [
+            (k, v)
+            for k, v in self.entries
+            if not (
+                k.lower() == wanted
+                and (wanted_value is None or v.lower() == wanted_value)
+            )
+        ]
+
+
+def _session_type_dialog(advanced, active=False):
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog._session_type_syncing = False
+    dialog.advanced_tab = advanced
+    dialog.port_forwarding_only_row = _Switch(active)
+    return dialog
+
+
+def test_session_type_helpers_are_case_insensitive_and_deduplicate():
+    advanced = SSHConfigAdvancedTab.__new__(SSHConfigAdvancedTab)
+    advanced.entries = [
+        ("Compression", "yes"),
+        ("sessiontype", "default"),
+        ("SessionType", "none"),
+    ]
+    advanced.get_config_entries = lambda: list(advanced.entries)
+    advanced.set_config_entries = lambda entries: setattr(advanced, "entries", list(entries))
+
+    assert advanced.get_option("SESSIONTYPE") == "default"
+
+    advanced.set_option("SessionType", "none")
+    assert advanced.entries == [("Compression", "yes"), ("SessionType", "none")]
+
+    advanced.remove_option("sessionTYPE", "NONE")
+    assert advanced.entries == [("Compression", "yes")]
+
+
+def test_existing_session_type_none_turns_forwarding_only_on():
+    dialog = _session_type_dialog(_AdvancedState(("sessiontype", "NONE")))
+
+    dialog._sync_session_type_toggle_from_advanced()
+
+    assert dialog.port_forwarding_only_row.get_active() is True
+
+
+def test_forwarding_only_on_writes_one_session_type_none():
+    advanced = _AdvancedState(("Compression", "yes"), ("sessiontype", "default"))
+    dialog = _session_type_dialog(advanced, active=True)
+
+    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
+
+    assert advanced.entries == [("Compression", "yes"), ("SessionType", "none")]
+    assert advanced.set_calls == [("SessionType", "none")]
+
+
+def test_forwarding_only_off_removes_session_type_none():
+    advanced = _AdvancedState(("SessionType", "none"))
+    dialog = _session_type_dialog(advanced, active=False)
+
+    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
+
+    assert advanced.entries == []
+    assert advanced.remove_calls == [("SessionType", "none")]
+
+
+def test_manual_advanced_session_type_none_turns_forwarding_only_on():
+    advanced = _AdvancedState(("SessionType", "default"))
+    dialog = _session_type_dialog(advanced)
+
+    advanced.entries[0] = ("SessionType", "none")
+    dialog._sync_session_type_toggle_from_advanced()
+
+    assert dialog.port_forwarding_only_row.get_active() is True
+
+
+def test_non_none_advanced_session_type_turns_forwarding_only_off_and_survives():
+    advanced = _AdvancedState(("SessionType", "subsystem"))
+    dialog = _session_type_dialog(advanced, active=True)
+
+    dialog._sync_session_type_toggle_from_advanced()
+    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
+
+    assert dialog.port_forwarding_only_row.get_active() is False
+    assert advanced.entries == [("SessionType", "subsystem")]
+    assert advanced.remove_calls == []
+
+
+def test_forwarding_only_round_trip_preserves_session_type_none():
+    advanced = _AdvancedState()
+    dialog = _session_type_dialog(advanced)
+
+    dialog.port_forwarding_only_row.set_active(True)
+    dialog._on_session_type_toggle_changed(dialog.port_forwarding_only_row)
+    dialog._sync_session_type_toggle_from_advanced()
+
+    assert advanced.entries == [("SessionType", "none")]
+    assert dialog.port_forwarding_only_row.get_active() is True
 
 
 def _dialog():

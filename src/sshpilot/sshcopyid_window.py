@@ -1,123 +1,18 @@
 import logging
-import os
-import shutil
+import threading
 from gettext import gettext as _
-from typing import Callable, Optional, Tuple
 
-import gi
-from gi.repository import Adw, GLib, Gio, Gtk
+from gi.repository import Adw, GLib, Gtk
 
-try:
-    gi.require_version('Vte', '3.91')
-    from gi.repository import Vte
-except Exception:
-    Vte = None
 
-from .command_progress_dialog import (
-    build_progress_status_row,
-    build_terminal_disclosure,
-    normalize_child_exit_status as _normalize_child_exit_status,
-    read_terminal_text as _read_ssh_copyid_terminal_text,
-    terminal_awaiting_input as _terminal_awaiting_input,
-    wrap_dialog_terminal,
-)
-from .config import Config
-from .key_manager import SSHKey
-from .platform_utils import get_ssh_dir
-from .terminal import TerminalWidget
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
 )
 from .shortcut_utils import install_esc_to_close
-from .ssh_utils import ensure_writable_ssh_home
 
 logger = logging.getLogger(__name__)
-
-_COPYID_FAILURE_MARKERS = (
-    'permission denied',
-    'authentication failed',
-    'connection refused',
-    'operation not permitted',
-    'no such file or directory',
-    'host key verification failed',
-    'failed to install',
-    'failed to copy',
-)
-
-# ssh-copy-id prints these (unlocalized) on a successful run; failure markers
-# can also appear in successful runs (e.g. a mistyped password the user
-# retried), so a success marker outranks them when the exit code is zero.
-_COPYID_SUCCESS_MARKERS = (
-    'number of key(s) added',
-    'all keys were skipped because they already exist',
-)
-
-
-def _terminal_indicates_copy_failure(text: str) -> bool:
-    lowered = (text or '').lower()
-    return any(marker in lowered for marker in _COPYID_FAILURE_MARKERS)
-
-
-def _terminal_indicates_copy_success(text: str) -> bool:
-    lowered = (text or '').lower()
-    return any(marker in lowered for marker in _COPYID_SUCCESS_MARKERS)
-
-
-def _copyid_run_succeeded(exit_code: int, content: str) -> bool:
-    if exit_code != 0:
-        return False
-    if _terminal_indicates_copy_success(content):
-        return True
-    return not _terminal_indicates_copy_failure(content)
-
-
-def _wrap_sshcopyid_terminal(term_widget: TerminalWidget) -> Gtk.Widget:
-    """Thin wrapper so tests can monkeypatch the dialog terminal card."""
-    return wrap_dialog_terminal(term_widget)
-
-
-def _build_terminal_disclosure(
-    terminal_card: Gtk.Widget,
-    on_expanded_changed: Callable[[bool], None],
-) -> Tuple[Gtk.Widget, Callable[[bool], None], Callable[[], bool]]:
-    """Thin wrapper so tests can monkeypatch the terminal disclosure."""
-    return build_terminal_disclosure(terminal_card, on_expanded_changed)
-
-
-def _build_copy_progress_row(
-    pub_name: str,
-    target: str,
-) -> Tuple[
-    Gtk.Widget,
-    Callable[[], bool],
-    Callable[[], None],
-    Callable[[], None],
-    Callable[[], None],
-]:
-    """Thin wrapper: key-copy status strings over the shared progress row."""
-    key_name = pub_name or _('selected')
-    return build_progress_status_row(
-        _('Copying key {name} to {target}').format(name=key_name, target=target),
-        _('Copied key {name} to {target}').format(name=key_name, target=target),
-        _('Failed to copy key {name} to {target}').format(
-            name=key_name, target=target,
-        ),
-    )
-
-
-def _ssh_key_from_public_path(path: str) -> SSHKey:
-    """Build an SSHKey for a user-chosen public key file.
-
-    ssh-copy-id only needs the public key (``-i <pub>``), so we set
-    ``public_path`` to exactly the chosen file regardless of extension. The
-    private path is the conventional sibling (the ``.pub`` suffix stripped) and
-    is only used for the dropdown label, mirroring discovered keys.
-    """
-    priv = path[:-4] if path.endswith('.pub') else path
-    key = SSHKey(priv)
-    key.public_path = path
-    return key
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/sshcopyid_window.ui")
@@ -160,6 +55,16 @@ class SshCopyIdWindow(Adw.Window):
         self._conn = connection
         self._km = key_manager
         self._cm = connection_manager
+
+        # Async-operation guards: no background work may start new work after
+        # the window closes, and repeated clicks are ignored while running.
+        self._closed = False
+        self._loading_keys = False
+        self._generating = False
+        try:
+            self.connect("close-request", self._on_close_request)
+        except Exception:
+            logger.debug("SshCopyIdWindow: close-request hook unavailable", exc_info=True)
 
         # Static chrome (header Cancel/OK, keychain illustration) lives in the
         # template; the server picker, key mode, and generator form are built
@@ -313,25 +218,11 @@ class SshCopyIdWindow(Adw.Window):
                 
                 passphrase_group.add(self.row_pass_toggle)
                 
-                # Passphrase entries (outside revealer)
-                self.pass1 = Gtk.PasswordEntry()
-                self.pass1.set_property("placeholder-text", "Passphrase")
-                self.pass1.set_can_focus(True)  # Make it focusable for tab navigation
-                self.pass2 = Gtk.PasswordEntry()
-                self.pass2.set_property("placeholder-text", "Confirm passphrase")
-                self.pass2.set_can_focus(True)  # Make it focusable for tab navigation
-                
-                # Create a box for passphrase entries
+                # Native ssh-keygen prompts through the daemon's protected
+                # interaction dialog after generation starts. No secret is
+                # collected into the ordinary generation request.
                 self.pass_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-                self.pass_box.set_margin_start(12)
-                self.pass_box.set_margin_end(12)
-                self.pass_box.set_margin_top(6)
-                self.pass_box.set_margin_bottom(6)
-                self.pass_box.append(self.pass1)
-                self.pass_box.append(self.pass2)
                 self.pass_box.set_visible(False)
-                
-                passphrase_group.add(self.pass_box)
                 
                 content.append(passphrase_group)
                 logger.info("SshCopyIdWindow: Passphrase toggle created successfully")
@@ -396,7 +287,10 @@ class SshCopyIdWindow(Adw.Window):
             self._server_label.set_label(nick)
             self._server_label.set_visible(bool(nick))
             self._server_row.set_subtitle(f"{user}@{host}" if user and host else host)
-        self.btn_ok.set_sensitive(conn is not None)
+        # Central sensitivity: an in-flight key load/generate keeps OK off even
+        # when a server is chosen (fixes the constructor ordering bug where the
+        # initial load disabled OK and _set_server re-enabled it).
+        self._update_ok_sensitivity()
 
     def _on_mode_toggled(self, *_):
         # Reveal generator only when "Generate new key" is selected
@@ -412,6 +306,7 @@ class SshCopyIdWindow(Adw.Window):
         if not generate_active:
             self.row_pass_toggle.set_active(False)
             self.pass_box.set_visible(False)
+        self._update_ok_sensitivity()
     
     def _on_key_type_changed(self, *_):
         # Update key name placeholder when key type changes
@@ -428,22 +323,86 @@ class SshCopyIdWindow(Adw.Window):
         self.pass_box.set_visible(self.row_pass_toggle.get_active())
 
     def _reload_existing_keys(self):
-        logger.info("SshCopyIdWindow: Reloading existing keys")
-        logger.debug("SshCopyIdWindow: Calling key_manager.discover_keys()")
+        """Start a background key listing; never block the GTK thread."""
+        if self._loading_keys or self._closed:
+            return
+        self._loading_keys = True
+        self._set_key_loading_state(True)
+        km = self._km
         try:
-            keys = self._km.discover_keys()
-            logger.info(f"SshCopyIdWindow: Discovered {len(keys)} keys")
-            self._existing_keys_cache = list(keys)
-            names = [os.path.basename(k.private_path) for k in keys] or [_("No keys found")]
-            self._last_real_selection = 0
-            self._rebuild_existing_dropdown(names, 0)
-            logger.info(f"SshCopyIdWindow: Dropdown populated with {len(names)} key item(s)")
-        except Exception as e:
-            logger.error(f"SshCopyIdWindow: Failed to load existing keys: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
-            self._existing_keys_cache = []
-            self._last_real_selection = 0
-            self._rebuild_existing_dropdown([_("Error loading keys")], 0)
+            thread = threading.Thread(
+                target=self._load_keys_worker,
+                args=(km,),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.error("SshCopyIdWindow: Could not start key loading: %s", type(exc).__name__)
+            self._loading_keys = False
+            self._set_key_loading_state(False)
+
+    def _load_keys_worker(self, km):
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            keys = km.discover_keys() or []
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            GLib.idle_add(self._on_keys_load_failed, exc)
+            return
+        GLib.idle_add(self._on_keys_loaded, keys)
+
+    def _on_keys_loaded(self, keys):
+        # Reset the raw flag first, then bail out when closed: never touch
+        # widgets or start new work from a callback after the window is gone.
+        # The cache is committed before controls are re-enabled so OK
+        # sensitivity reflects the freshly loaded key list.
+        self._loading_keys = False
+        if self._closed:
+            return
+        logger.info("SshCopyIdWindow: Discovered %d keys", len(keys))
+        self._existing_keys_cache = list(keys)
+        self._last_real_selection = 0
+        names = [k.name for k in keys] or [_("No keys found")]
+        self._rebuild_existing_dropdown(names, 0)
+        self._set_key_loading_state(False)
+
+    def _on_keys_load_failed(self, exc):
+        self._loading_keys = False
+        if self._closed:
+            return
+        logger.error("SshCopyIdWindow: Failed to load existing keys: %s", type(exc).__name__)
+        self._existing_keys_cache = []
+        self._last_real_selection = 0
+        self._rebuild_existing_dropdown([_("Error loading keys")], 0)
+        self._set_key_loading_state(False)
+        self._error(_("Key Loading Failed"), _("Could not load the local keys."))
+
+    def _set_key_loading_state(self, loading):
+        """Disable/re-enable the existing-key controls while listing keys."""
+        try:
+            self.dropdown_existing.set_sensitive(not loading)
+            self._update_ok_sensitivity()
+        except Exception:
+            pass
+
+    def _update_ok_sensitivity(self):
+        """Single source of truth for OK-button sensitivity.
+
+        OK is enabled only when a server is selected, no key operation is
+        running, and the active mode has a usable selection: existing-key mode
+        needs at least one real key in the cache; generation mode needs the
+        form (its validity is checked on click).
+        """
+        try:
+            if self._conn is None or self._loading_keys or self._generating:
+                self.btn_ok.set_sensitive(False)
+                return
+            if self.radio_existing.get_active():
+                has_real = bool(getattr(self, "_existing_keys_cache", None))
+                self.btn_ok.set_sensitive(has_real)
+            else:
+                self.btn_ok.set_sensitive(True)
+        except Exception:
+            pass
 
     def _rebuild_existing_dropdown(self, names, select_index):
         """Set the dropdown model to *names* plus a trailing Browse item.
@@ -476,6 +435,8 @@ class SshCopyIdWindow(Adw.Window):
 
     def _open_key_file_chooser(self):
         """Portal-aware native file chooser for selecting a public key."""
+        if self._closed:
+            return
         try:
             dlg = Gtk.FileChooserNative(
                 title=_("Select Public Key"),
@@ -483,12 +444,6 @@ class SshCopyIdWindow(Adw.Window):
                 transient_for=self,
                 modal=True,
             )
-            try:
-                ssh_dir = get_ssh_dir()
-                if os.path.isdir(ssh_dir):
-                    dlg.set_current_folder(Gio.File.new_for_path(ssh_dir))
-            except Exception:
-                pass
             try:
                 pub_filter = Gtk.FileFilter()
                 pub_filter.set_name(_("SSH Public Keys"))
@@ -510,6 +465,9 @@ class SshCopyIdWindow(Adw.Window):
 
     def _on_key_file_response(self, dlg, response):
         try:
+            # A response after closure must not update the key cache.
+            if self._closed:
+                return
             path = None
             if response == Gtk.ResponseType.ACCEPT:
                 gfile = dlg.get_file()
@@ -537,27 +495,24 @@ class SshCopyIdWindow(Adw.Window):
         (plus the Browse item) so selection indices always line up, even when the
         list previously held only a placeholder ("No keys found").
         """
+        if self._closed:
+            return
         cache = list(getattr(self, "_existing_keys_cache", None) or [])
 
         # De-dupe: if this exact public key is already listed, just select it.
         for i, key in enumerate(cache):
             if getattr(key, "public_path", None) == path:
                 self._last_real_selection = i
-                self._rebuild_existing_dropdown(
-                    [os.path.basename(k.private_path) for k in cache], i
-                )
+                self._rebuild_existing_dropdown([k.name for k in cache], i)
                 self.radio_existing.set_active(True)
+                self._update_ok_sensitivity()
                 return
 
-        cache.append(_ssh_key_from_public_path(path))
-        self._existing_keys_cache = cache
-        new_idx = len(cache) - 1
-        self._last_real_selection = new_idx
-        self._rebuild_existing_dropdown(
-            [os.path.basename(k.private_path) for k in cache], new_idx
+        self._error(
+            _("Public Key Selection"),
+            _("Choose a key discovered by the background service."),
         )
-        # Browsing implies copying an existing key.
-        self.radio_existing.set_active(True)
+        self._revert_dropdown_selection()
 
     def _info(self, title, body):
         try:
@@ -580,13 +535,27 @@ class SshCopyIdWindow(Adw.Window):
         except Exception:
             logger.error("%s: %s | %s", title, body, detail)
 
+    def _on_close_request(self, *_args):
+        self._closed = True
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
+        return False
+
     def _on_close_clicked(self, *_):
         logger.info("SshCopyIdWindow: Close button clicked")
+        self._closed = True
         self.close()
 
     # ---------- OK (main action) ----------
     def _on_ok_clicked(self, *_):
         logger.info("SshCopyIdWindow: OK button clicked")
+        # Nothing to do after close, while a listing runs, or while a
+        # generation is already in flight (OK is also disabled then, but a
+        # re-entrant activation must never start a second worker).
+        if self._closed or self._loading_keys or self._generating:
+            return
         logger.debug("SshCopyIdWindow: Starting main action processing")
         
         # Log current UI state
@@ -631,9 +600,7 @@ class SshCopyIdWindow(Adw.Window):
                 raise RuntimeError("Please select a key to copy")
             
             ssh_key = keys[idx]
-            logger.info(f"SshCopyIdWindow: Selected key: {ssh_key.private_path}")
-            logger.debug(f"SshCopyIdWindow: Selected key details - private_path='{ssh_key.private_path}', "
-                       f"public_path='{ssh_key.public_path}', exists={os.path.exists(ssh_key.private_path)}")
+            logger.info("SshCopyIdWindow: Selected key: %s", ssh_key.name)
             
             # Launch your existing terminal ssh-copy-id flow
             logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
@@ -643,754 +610,323 @@ class SshCopyIdWindow(Adw.Window):
             logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
             self.close()
         except Exception as e:
-            logger.error(f"SshCopyIdWindow: Copy existing failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
+            logger.error("SshCopyIdWindow: Copy existing failed: %s", type(e).__name__)
             self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
 
     # ---------- Mode: generate ----------
     def _do_generate_and_copy(self):
-        logger.info("SshCopyIdWindow: Starting generate and copy operation")
-        logger.debug("SshCopyIdWindow: Processing key generation request")
-        
+        """Validate the form, then run generation off the GTK thread.
+
+        A second click while generation is running is ignored, and nothing
+        starts after the window closes (defense in depth: ``_on_ok_clicked``
+        also guards closed/loading/generating). Passphrases are collected later
+        by the daemon interaction dialog and never enter this worker request.
+        """
+        if self._closed or self._generating:
+            return
         try:
             key_name = (self.row_key_name.get_text() or "").strip()
-            logger.info(f"SshCopyIdWindow: Key name: '{key_name}'")
-            logger.debug(f"SshCopyIdWindow: Raw key name from UI: '{self.row_key_name.get_text()}'")
-            
             if not key_name:
-                logger.debug("SshCopyIdWindow: Empty key name provided")
-                raise ValueError("Enter a key file name (e.g. id_ed25519)")
+                raise ValueError(_("Enter a key file name (e.g. id_ed25519)"))
             if "/" in key_name or key_name.startswith("."):
-                logger.debug(f"SshCopyIdWindow: Invalid key name '{key_name}' - contains '/' or starts with '.'")
-                raise ValueError("Key file name must not contain '/' or start with '.'")
+                raise ValueError(_("Key file name must not contain '/' or start with '.'"))
 
-            # Key type
             type_selection = self.type_dropdown.get_selected()
             kt = "ed25519" if type_selection == 0 else "rsa"
-            logger.info(f"SshCopyIdWindow: Key type: {kt}")
-            logger.debug(f"SshCopyIdWindow: Type selection index: {type_selection}, resolved to: {kt}")
 
-            passphrase = None
-            passphrase_enabled = self.row_pass_toggle.get_active()
-            logger.debug(f"SshCopyIdWindow: Passphrase toggle state: {passphrase_enabled}")
-            
-            if passphrase_enabled:
-                p1 = self.pass1.get_text() or ""
-                p2 = self.pass2.get_text() or ""
-                logger.debug(f"SshCopyIdWindow: Passphrase lengths - p1: {len(p1)}, p2: {len(p2)}")
-                if p1 != p2:
-                    logger.debug("SshCopyIdWindow: Passphrases do not match")
-                    raise ValueError("Passphrases do not match")
-                passphrase = p1
-                logger.info("SshCopyIdWindow: Passphrase enabled")
-                logger.debug("SshCopyIdWindow: Passphrase validation successful")
+            encrypted = bool(self.row_pass_toggle.get_active())
+        except ValueError as exc:
+            self._error(_("Key Generation Failed"), str(exc))
+            return
 
-            logger.info(f"SshCopyIdWindow: Calling key_manager.generate_key with name='{key_name}', type='{kt}'")
-            logger.debug(f"SshCopyIdWindow: Key generation parameters - name='{key_name}', type='{kt}', "
-                       f"size={3072 if kt == 'rsa' else 0}, passphrase={'<set>' if passphrase else 'None'}")
-            
-            new_key = self._km.generate_key(
-                key_name=key_name,
-                key_type=kt,
-                key_size=3072 if kt == "rsa" else 0,
-                comment=None,
-                passphrase=passphrase,
+        logger.info("SshCopyIdWindow: Starting generate and copy operation")
+        self._generating = True
+        self._set_generating_state(True)
+        interaction_scope_id = None
+        if encrypted:
+            from .api.models import SessionId
+            from .daemon_interaction_dialogs import DaemonInteractionDialogs
+            from .runtime_identity import new_operation_id
+
+            interaction_scope_id = SessionId(
+                f"key-{new_operation_id()}"
             )
-            
-            if not new_key:
-                logger.debug("SshCopyIdWindow: Key generation returned None")
-                raise RuntimeError("Key generation failed. See logs for details.")
+            dialogs = DaemonInteractionDialogs(
+                self._parent.client,
+                self._parent.client_bridge,
+                self,
+            )
+            dialogs.set_session(interaction_scope_id)
+            self._key_generation_interactions = dialogs
 
-            logger.info(f"SshCopyIdWindow: Key generated successfully: {new_key.private_path}")
-            logger.debug(f"SshCopyIdWindow: Generated key details - private_path='{new_key.private_path}', "
-                       f"public_path='{new_key.public_path}'")
-            
-            # Ensure the key files are properly written and accessible
-            import time
-            logger.debug("SshCopyIdWindow: Waiting 0.5s for files to be written")
-            time.sleep(0.5)  # Small delay to ensure files are written
-            
-            # Verify the key files exist and are accessible
-            private_exists = os.path.exists(new_key.private_path)
-            public_exists = os.path.exists(new_key.public_path)
-            logger.debug(f"SshCopyIdWindow: File existence check - private: {private_exists}, public: {public_exists}")
-            
-            if not private_exists:
-                logger.debug(f"SshCopyIdWindow: Private key file missing: {new_key.private_path}")
-                raise RuntimeError(f"Private key file not found: {new_key.private_path}")
-            if not public_exists:
-                logger.debug(f"SshCopyIdWindow: Public key file missing: {new_key.public_path}")
-                raise RuntimeError(f"Public key file not found: {new_key.public_path}")
-            
-            logger.info(f"SshCopyIdWindow: Key files verified, starting ssh-copy-id")
-            logger.debug("SshCopyIdWindow: All key files verified successfully")
-            
-            # Run your terminal ssh-copy-id flow
-            logger.debug("SshCopyIdWindow: Calling _show_ssh_copy_id_terminal_using_main_widget()")
+        request = {
+            "key_name": key_name,
+            "key_type": kt,
+            "key_size": 3072 if kt == "rsa" else 0,
+            "comment": None,
+            "encrypted": encrypted,
+            "interaction_scope_id": interaction_scope_id,
+        }
+        try:
+            thread = threading.Thread(
+                target=self._generate_worker,
+                args=(self._km, self._parent, self._conn, request),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as exc:
+            logger.error(
+                "SshCopyIdWindow: Could not start generation: %s", type(exc).__name__
+            )
+            self._generating = False
+            dialogs = getattr(self, "_key_generation_interactions", None)
+            if dialogs is not None:
+                dialogs.close()
+                self._key_generation_interactions = None
+            self._set_generating_state(False)
+            self._error(
+                _("Key Generation Failed"),
+                _("Could not start key generation."),
+            )
+
+    def _generate_worker(self, km, parent, conn, request):
+        """Daemon/client call off the GTK thread; result delivered via idle."""
+        try:
+            new_key = km.generate_key(**request)
+        except SshPilotError as exc:
+            if exc.code == ErrorCode.MUTATION_AMBIGUOUS:
+                GLib.idle_add(self._on_key_mutation_ambiguous, exc)
+            else:
+                GLib.idle_add(self._on_key_generation_failed, exc)
+            return
+        except BaseException as exc:  # noqa: BLE001 - marshalled to the GTK thread
+            GLib.idle_add(self._on_key_generation_failed, exc)
+            return
+        if new_key is None:
+            GLib.idle_add(
+                self._on_key_generation_failed,
+                RuntimeError("Key generation returned no result"),
+            )
+            return
+        GLib.idle_add(self._on_key_generated, new_key, conn)
+
+    def _on_key_generated(self, new_key, conn):
+        self._generating = False
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
+        if self._closed:
+            return
+        self._set_generating_state(False)
+        logger.info("SshCopyIdWindow: Key generated successfully")
+        # The daemon result is authoritative; no local file checks or delays.
+        try:
             force_enabled = self.force_toggle.get_active()
-            logger.debug(f"SshCopyIdWindow: Force option enabled: {force_enabled}")
-            self._parent._show_ssh_copy_id_terminal_using_main_widget(self._conn, new_key, force_enabled)
-            logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
-            self.close()
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(
+                conn, new_key, force_enabled
+            )
+        except Exception as exc:
+            logger.error(
+                "SshCopyIdWindow: Could not start ssh-copy-id: %s", type(exc).__name__
+            )
+            self._error(
+                _("Key Generation Failed"),
+                _("The key was generated, but copying it to the server could not start."),
+            )
+            return
+        logger.debug("SshCopyIdWindow: Terminal window launched, closing dialog")
+        self.close()
 
-        except Exception as e:
-            logger.error(f"SshCopyIdWindow: Generate and copy failed: {e}")
-            logger.debug(f"SshCopyIdWindow: Exception details: {type(e).__name__}: {e!s}")
+    def _on_key_mutation_ambiguous(self, exc):
+        self._generating = False
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
+        if self._closed:
+            return
+        self._set_generating_state(False)
+        logger.warning(
+            "SshCopyIdWindow: Key generation outcome unknown: %s", type(exc).__name__
+        )
+        self._info(
+            _("Key May Have Been Generated"),
+            _(
+                "The connection was lost while generating the key. The key may "
+                "have been created. Check the key list; generation was not retried."
+            ),
+        )
+        # Reload once; do not automatically resubmit the mutation.
+        self._reload_existing_keys()
+
+    def _on_key_generation_failed(self, exc):
+        self._generating = False
+        dialogs = getattr(self, "_key_generation_interactions", None)
+        if dialogs is not None:
+            dialogs.close()
+            self._key_generation_interactions = None
+        if self._closed:
+            return
+        self._set_generating_state(False)
+        logger.error(
+            "SshCopyIdWindow: Generate failed: %s", type(exc).__name__
+        )
+        if isinstance(exc, FileExistsError):
+            message = _("A key with that name already exists.")
+        elif isinstance(exc, ValueError):
+            message = str(exc) or _("The key name is invalid.")
+        else:
+            message = _("Could not generate the SSH key.")
+        self._error(_("Key Generation Failed"), message)
+
+    def _set_generating_state(self, generating):
+        """Disable/re-enable the form while a generation is running."""
+        try:
+            self.row_key_name.set_sensitive(not generating)
+            self.type_dropdown.set_sensitive(not generating)
+            self.row_pass_toggle.set_sensitive(
+                not generating and self.radio_generate.get_active()
+            )
+            self.pass_box.set_sensitive(
+                not generating and self.radio_generate.get_active()
+            )
+            self.force_toggle.set_sensitive(not generating)
+            # Mode switches and server re-selection are frozen mid-generation.
+            self.radio_existing.set_sensitive(not generating)
+            self.radio_generate.set_sensitive(not generating)
+            self._server_row.set_sensitive(not generating)
+            self._update_ok_sensitivity()
+        except Exception:
+            pass
+
 
 
 class SshCopyIdRunner:
-    """Run ssh-copy-id in an embedded terminal window for a connection.
-
-    Collaborator of MainWindow (terminal_manager-style): borrows config,
-    connection_manager and _error_dialog from ``self.window``.
-    """
+    """GTK adapter for the daemon-owned public-key deployment operation."""
 
     def __init__(self, window):
         self.window = window
-
-    @staticmethod
-    def _find_ssh_copy_id_helper(binary_name: str) -> Optional[str]:
-        """Return the preferred path for a helper used by ssh-copy-id."""
-        flatpak_path = f"/app/bin/{binary_name}"
-        if os.path.exists(flatpak_path) and os.access(flatpak_path, os.X_OK):
-            return flatpak_path
-        return shutil.which(binary_name)
-
-    def _preflight(self, connection, ssh_key) -> Optional[Tuple[str, str]]:
-        """Validate local prerequisites before opening the ssh-copy-id terminal."""
-        if self._find_ssh_copy_id_helper('ssh-copy-id') is None:
-            return (
-                _('ssh-copy-id is not installed'),
-                _('Install ssh-copy-id, then try copying the public key again.'),
-            )
-
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        if not host_value:
-            return (
-                _('Connection host is missing'),
-                _('Set a host name or SSH config alias for this connection before copying a key.'),
-            )
-
-        try:
-            port = getattr(connection, 'port', 22)
-            if port not in (None, ''):
-                port_num = int(port)
-                if port_num <= 0 or port_num > 65535:
-                    raise ValueError
-        except (TypeError, ValueError):
-            return (
-                _('Invalid SSH port'),
-                _('Set the connection port to a number between 1 and 65535.'),
-            )
-
-        public_path = getattr(ssh_key, 'public_path', '') or ''
-        if not public_path:
-            return (
-                _('Public key is missing'),
-                _('Select or generate a key with a public key file before copying it to the server.'),
-            )
-
-        expanded_public_path = os.path.expanduser(public_path)
-        if not os.path.isfile(expanded_public_path):
-            return (
-                _('Public key file not found'),
-                _('The selected public key file does not exist: {}').format(expanded_public_path),
-            )
-        if not os.access(expanded_public_path, os.R_OK):
-            return (
-                _('Public key file is not readable'),
-                _('sshPilot cannot read the selected public key file: {}').format(expanded_public_path),
-            )
-
-        try:
-            env = os.environ.copy()
-            ensure_writable_ssh_home(env)
-        except Exception as exc:
-            logger.error('ssh-copy-id preflight failed while preparing SSH home: %s', exc)
-            return (
-                _('Could not prepare SSH environment'),
-                _('sshPilot could not prepare a writable SSH home for ssh-copy-id: {}').format(exc),
-            )
-
-        try:
-            auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-            username = getattr(connection, 'username', '')
-            manager = getattr(self.window, 'connection_manager', None)
-            has_saved_password = bool(manager.get_password(host_value, username)) if manager else False
-            # Password delivery is via askpass (REQUIRE=force); graphical prompts.
-            if auth_method == 1 and has_saved_password:
-                logger.debug(
-                    'ssh-copy-id preflight: password-method with saved password '
-                    '(askpass will autofill; MFA via askpass)',
-                )
-        except Exception as exc:
-            logger.debug('ssh-copy-id preflight skipped optional auth-helper check: %s', exc)
-
-        return None
+        self._operation_id = None
+        self._poll_id = None
+        self._interaction_dialogs = None
 
     def run(self, connection, ssh_key, force=False):
-        """Show an Adw window with embedded terminal running ssh-copy-id."""
-        logger.info("Main window: Starting ssh-copy-id terminal window creation")
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        logger.debug(
-            "Main window: Connection details - host: %s, username: %s, port: %s",
-            host_value,
-            getattr(connection, 'username', 'unknown'),
-            getattr(connection, 'port', 22),
-        )
-        logger.debug(
-            "Main window: SSH key details - private_path: %s, public_path: %s",
-            getattr(ssh_key, 'private_path', 'unknown'),
-            getattr(ssh_key, 'public_path', 'unknown'),
-        )
-
-        try:
-            preflight_error = self._preflight(connection, ssh_key)
-            if preflight_error:
-                heading, body = preflight_error
-                self.window._error_dialog(_("SSH Key Copy Error"), heading, body)
-                return
-
-            target = (
-                f"{connection.username}@{host_value}"
-                if getattr(connection, 'username', '')
-                else host_value
-            )
-            pub_name = os.path.basename(getattr(ssh_key, 'public_path', '') or '')
-            logger.debug("Main window: Target: %s, public key name: %s", target, pub_name)
-
-            dlg = Adw.Dialog.new()
-            dlg.set_title(_('ssh-copy-id'))
-            # Track the content's natural size so the dialog grows/shrinks
-            # with the terminal revealer animation.
-            dlg.set_follows_content_size(True)
-
-            toolbar = Adw.ToolbarView()
-            dlg.set_child(toolbar)
-
-            header = Adw.HeaderBar()
-            header.set_show_end_title_buttons(False)
-            header.set_title_widget(Gtk.Label(label=_('ssh-copy-id')))
-
-            copyid_exit_state = {
-                'finished': False,
-                'handler_id': None,
-                'prompt_poll_id': None,
-            }
-
-            def _stop_prompt_poller() -> None:
-                poll_id = copyid_exit_state.get('prompt_poll_id')
-                if poll_id is None:
-                    return
-                copyid_exit_state['prompt_poll_id'] = None
-                try:
-                    GLib.source_remove(poll_id)
-                except Exception:
-                    pass
-
-            def _on_dialog_closed(*_args):
-                # Closing the dialog (Cancel/Close button or Esc) kills the
-                # child below, which still fires child-exited; mark the run
-                # finished first so cancellation isn't reported as a failure.
-                copyid_exit_state['finished'] = True
-                _stop_prompt_poller()
-                stop_copy_spinner()
-                try:
-                    if hasattr(term_widget, 'disconnect'):
-                        term_widget.disconnect()
-                except Exception:
-                    pass
-
-            dlg.connect('closed', _on_dialog_closed)
-
-            def _close_window(*_args):
-                dlg.close()
-
-            cancel_btn = Gtk.Button(label=_('Cancel'))
-            cancel_btn.connect('clicked', _close_window)
-            header.pack_start(cancel_btn)
-
-            close_btn = Gtk.Button(label=_('Close'))
-            close_btn.add_css_class('suggested-action')
-            close_btn.connect('clicked', _close_window)
-            header.pack_end(close_btn)
-
-            toolbar.add_top_bar(header)
-
-            content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-            content_box.set_hexpand(True)
-            content_box.set_vexpand(True)
-            # Constant natural width so toggling the terminal only changes
-            # height; VTE reflows its columns to whatever width it gets.
-            content_box.set_size_request(560, -1)
-            content_box.set_margin_top(12)
-            content_box.set_margin_bottom(12)
-            content_box.set_margin_start(12)
-            content_box.set_margin_end(12)
-
-            (
-                progress_row,
-                start_copy_spinner,
-                stop_copy_spinner,
-                mark_copy_success,
-                mark_copy_failure,
-            ) = _build_copy_progress_row(pub_name, target)
-            content_box.append(progress_row)
-
-            term_widget = TerminalWidget(
-                connection,
-                self.window.config,
-                self.window.connection_manager,
-            )
-            try:
-                term_widget._set_connecting_overlay_visible(False)
-                setattr(term_widget, '_suppress_disconnect_banner', True)
-                setattr(term_widget, '_suppress_connection_exit_handling', True)
-                term_widget._set_disconnected_banner_visible(False)
-            except Exception:
-                pass
-            terminal_card = _wrap_sshcopyid_terminal(term_widget)
-            # VTE's natural height is tiny; give the expanded card a real one.
-            terminal_card.set_size_request(-1, 260)
-
-            def _focus_terminal_input() -> bool:
-                try:
-                    if hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.grab_focus()
-                    else:
-                        term_widget.grab_focus()
-                except Exception:
-                    pass
-                return False
-
-            def _on_terminal_expanded_changed(expanded: bool) -> None:
-                if not expanded:
-                    return
-                # First expansion (manual or auto) ends prompt watching.
-                _stop_prompt_poller()
-                if not copyid_exit_state['finished']:
-                    GLib.idle_add(_focus_terminal_input)
-
-            (
-                terminal_disclosure,
-                set_terminal_expanded,
-                terminal_is_expanded,
-            ) = _build_terminal_disclosure(terminal_card, _on_terminal_expanded_changed)
-            content_box.append(terminal_disclosure)
-
-            toolbar.set_content(content_box)
-
-            from .ssh_connection_builder import (
-                apply_forced_askpass_env,
-                resolve_native_auth,
-            )
-
-            auth = resolve_native_auth(
-                connection,
-                getattr(self.window, 'connection_manager', None),
-                getattr(self.window, 'config', None),
-            )
-
-            known_hosts_path = None
-            manager = getattr(self.window, 'connection_manager', None)
-            if manager is not None:
-                known_hosts_path = getattr(manager, 'known_hosts_path', None)
-
-            argv = self._build_argv(
-                connection,
-                ssh_key,
-                force,
-                known_hosts_path=known_hosts_path,
-                auth=auth,
-            )
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            logger.info("Starting ssh-copy-id: %s", ' '.join(argv))
-            logger.debug("Main window: Shell-quoted command: %s", cmdline)
-
-            def _feed_colored_line(text: str, color: str):
-                colors = {
-                    'red': '\x1b[31m',
-                    'green': '\x1b[32m',
-                    'yellow': '\x1b[33m',
-                    'blue': '\x1b[34m',
-                }
-                prefix = colors.get(color, '')
-                try:
-                    if hasattr(term_widget, 'backend') and term_widget.backend:
-                        term_widget.backend.feed(
-                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
-                        )
-                    elif hasattr(term_widget, 'vte') and term_widget.vte:
-                        term_widget.vte.feed(
-                            ("\r\n" + prefix + text + "\x1b[0m\r\n").encode('utf-8')
-                        )
-                except Exception:
-                    pass
-
-            _feed_colored_line(_('Running ssh-copy-id…'), 'yellow')
-
-            # REQUIRE=force: graphical askpass for passphrase/password/MFA even
-            # though ssh-copy-id runs inside a VTE (which has a real TTY).
-            env = apply_forced_askpass_env(
-                auth.env,
-                connection,
-                session_password=getattr(auth, 'password', None),
-            )
-            if auth.extra_opts:
-                argv[-1:-1] = auth.extra_opts
-            logger.debug(
-                "Main window: ssh-copy-id auth (askpass force, resolver_askpass=%s)",
-                auth.use_askpass,
-            )
-
-            ensure_writable_ssh_home(env)
-
-            if os.path.exists('/app/bin'):
-                current_path = env.get('PATH', '')
-                if '/app/bin' not in current_path:
-                    env['PATH'] = f"/app/bin:{current_path}"
-
-            cmdline = ' '.join([GLib.shell_quote(a) for a in argv])
-            envv = [f"{k}={v}" for k, v in env.items()]
-            env_dict = {}
-            for env_item in envv:
-                if '=' in env_item:
-                    key, value = env_item.split('=', 1)
-                    env_dict[key] = value
-
-            try:
-                if hasattr(term_widget, 'backend') and term_widget.backend:
-                    term_widget.backend.spawn_async(
-                        argv=['bash', '-lc', cmdline],
-                        env=env_dict if env_dict else None,
-                        cwd=os.path.expanduser('~') or '/',
-                        flags=0,
-                        child_setup=None,
-                        callback=None,
-                        user_data=None,
-                    )
-                elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    term_widget.vte.spawn_async(
-                        Vte.PtyFlags.DEFAULT,
-                        os.path.expanduser('~') or '/',
-                        ['bash', '-lc', cmdline],
-                        envv,
-                        GLib.SpawnFlags.DEFAULT,
-                        None,
-                        None,
-                        -1,
-                        None,
-                        None,
-                    )
-                logger.debug("Main window: ssh-copy-id process spawned successfully")
-                try:
-                    term_widget._install_pty_autofill()
-                except Exception:
-                    logger.debug("ssh-copy-id: could not arm PTY auto-fill", exc_info=True)
-
-                def _disconnect_copyid_exit_handler() -> None:
-                    handler_id = copyid_exit_state.get('handler_id')
-                    if handler_id is None:
-                        return
-                    try:
-                        if hasattr(term_widget, 'backend') and term_widget.backend:
-                            term_widget.backend.disconnect(handler_id)
-                        elif hasattr(term_widget, 'vte') and term_widget.vte:
-                            term_widget.vte.disconnect(handler_id)
-                    except Exception:
-                        pass
-                    copyid_exit_state['handler_id'] = None
-
-                def _finish_ssh_copy_id(status) -> bool:
-                    if copyid_exit_state['finished']:
-                        return False
-                    copyid_exit_state['finished'] = True
-                    _stop_prompt_poller()
-                    _disconnect_copyid_exit_handler()
-
-                    exit_code = _normalize_child_exit_status(status)
-                    content = _read_ssh_copyid_terminal_text(term_widget)
-                    content_failed = _terminal_indicates_copy_failure(content)
-                    content_succeeded = _terminal_indicates_copy_success(content)
-                    ok = _copyid_run_succeeded(exit_code, content)
-
-                    logger.info(
-                        "ssh-copy-id exited with status: %s, normalized exit_code: %s, "
-                        "content_failure=%s, content_success=%s, ok=%s",
-                        status,
-                        exit_code,
-                        content_failed,
-                        content_succeeded,
-                        ok,
-                    )
-
-                    error_details = None
-                    if not ok:
-                        content_lower = content.lower()
-                        if 'permission denied' in content_lower:
-                            error_details = (
-                                'Permission denied - check user credentials '
-                                'and server permissions'
-                            )
-                        elif 'connection refused' in content_lower:
-                            error_details = (
-                                'Connection refused - check server address '
-                                'and SSH service'
-                            )
-                        elif 'authentication failed' in content_lower:
-                            error_details = (
-                                'Authentication failed - check username and password/key'
-                            )
-                        elif 'no such file or directory' in content_lower:
-                            error_details = (
-                                'File not found - check if SSH directory exists on server'
-                            )
-                        elif 'operation not permitted' in content_lower:
-                            error_details = (
-                                'Operation not permitted - check server permissions'
-                            )
-                        else:
-                            lines = [
-                                line for line in content.strip().split('\n') if line
-                            ]
-                            if lines:
-                                error_details = f"Error details: {lines[-1]}"
-
-                    if ok:
-                        mark_copy_success()
-                        _feed_colored_line(_('Public key was installed successfully.'), 'green')
-                    else:
-                        mark_copy_failure()
-                        _feed_colored_line(_('Failed to install the public key.'), 'red')
-                        if error_details:
-                            _feed_colored_line(error_details, 'red')
-                        # Reveal the error output behind the alert dialog.
-                        set_terminal_expanded(True)
-
-                    if ok:
-                        # The progress row and terminal already show success;
-                        # an alert on top would be redundant.
-                        return False
-
-                    heading = _('Error')
-                    body = _(
-                        'Failed to copy the public key. '
-                        'Check logs for details.'
-                    )
-                    if hasattr(Adw, 'AlertDialog'):
-                        msg = Adw.AlertDialog(heading=heading, body=body)
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present(dlg)
-                    else:
-                        msg = Adw.MessageDialog(
-                            transient_for=self.window,
-                            modal=True,
-                            heading=heading,
-                            body=body,
-                        )
-                        msg.add_response('ok', _('OK'))
-                        msg.set_default_response('ok')
-                        msg.set_close_response('ok')
-                        msg.present()
-                    return False
-
-                def _on_copyid_exited(widget, status):
-                    GLib.idle_add(_finish_ssh_copy_id, status)
-
-                if hasattr(term_widget, 'backend') and term_widget.backend:
-                    copyid_exit_state['handler_id'] = (
-                        term_widget.backend.connect_child_exited(_on_copyid_exited)
-                    )
-                elif hasattr(term_widget, 'vte') and term_widget.vte:
-                    copyid_exit_state['handler_id'] = term_widget.vte.connect(
-                        'child-exited', _on_copyid_exited,
-                    )
-
-                def _poll_for_prompt() -> bool:
-                    if copyid_exit_state['finished'] or terminal_is_expanded():
-                        copyid_exit_state['prompt_poll_id'] = None
-                        return GLib.SOURCE_REMOVE
-                    content = _read_ssh_copyid_terminal_text(term_widget)
-                    if _terminal_awaiting_input(content):
-                        copyid_exit_state['prompt_poll_id'] = None
-                        set_terminal_expanded(True)
-                        return GLib.SOURCE_REMOVE
-                    return GLib.SOURCE_CONTINUE
-
-                copyid_exit_state['prompt_poll_id'] = GLib.timeout_add(
-                    400, _poll_for_prompt,
-                )
-            except Exception as e:
-                logger.error('Failed to spawn ssh-copy-id in TerminalWidget: %s', e)
-                dlg.close()
-                self.window._error_dialog(
-                    _("SSH Key Copy Error"),
-                    _("Failed to copy SSH key to server."),
-                    (
-                        f"Terminal error: {e!s}\n\nPlease check:\n"
-                        "• Network connectivity\n"
-                        "• SSH server configuration\n"
-                        "• User permissions"
-                    ),
-                )
-                return
-
-            dlg.present(self.window)
-            GLib.idle_add(start_copy_spinner)
-            logger.debug("Main window: ssh-copy-id dialog presented successfully")
-        except Exception as e:
-            logger.error('VTE ssh-copy-id window failed: %s', e)
+        client = getattr(self.window, "client", None)
+        key_id = getattr(ssh_key, "key_id", None)
+        if client is None or not key_id:
             self.window._error_dialog(
                 _("SSH Key Copy Error"),
-                _("Failed to create ssh-copy-id terminal window."),
-                (
-                    f"Error: {e!s}\n\nThis could be due to:\n"
-                    "• Missing VTE terminal widget\n"
-                    "• Display/GTK issues\n"
-                    "• System resource limitations"
-                ),
+                _("The background service is required to deploy a key."),
+                _("Reconnect to the sshPilot daemon and try again."),
             )
-
-
-    def _build_argv(
-        self,
-        connection,
-        ssh_key,
-        force: bool = False,
-        known_hosts_path: Optional[str] = None,
-        auth=None,
-    ):
-        """Construct argv for ssh-copy-id honoring saved UI auth preferences.
-
-        When ``auth`` (a resolved ``NativeAuth``) is supplied, the
-        PreferredAuthentications choice is driven off it (single shared auth
-        decision) instead of recomputing saved-password state here.
-        """
-        logger.info(f"Building ssh-copy-id argv for key: {getattr(ssh_key, 'public_path', 'unknown')}")
-        logger.debug(f"Main window: Building ssh-copy-id command arguments")
-        logger.debug(f"Main window: Connection object: {type(connection)}")
-        logger.debug(f"Main window: SSH key object: {type(ssh_key)}")
-        logger.debug(f"Main window: Force option: {force}")
-        logger.info(f"Key object attributes: private_path={getattr(ssh_key, 'private_path', 'unknown')}, public_path={getattr(ssh_key, 'public_path', 'unknown')}")
-        host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-        
-        # Verify the public key file exists
-        logger.debug(f"Main window: Checking if public key file exists: {ssh_key.public_path}")
-        if not os.path.exists(ssh_key.public_path):
-            logger.error(f"Public key file does not exist: {ssh_key.public_path}")
-            logger.debug(f"Main window: Public key file missing: {ssh_key.public_path}")
-            raise RuntimeError(f"Public key file not found: {ssh_key.public_path}")
-        
-        logger.debug(f"Main window: Public key file verified: {ssh_key.public_path}")
-
-        # Shared command prefix via the single option builder (same one the SCP
-        # paths use): app-level -o options, strict-host policy, port and
-        # ClearAllForwardings. The builder skips flags ssh-copy-id can't take
-        # (-v/-C/-A/BatchMode) and never injects IdentityFile for it, so the
-        # operation authenticates with the key being copied.
-        from .ssh_connection_builder import _build_base_ssh_command
-        from .ssh_config_utils import get_effective_ssh_config
-
+            return
+        # Attach the interaction presenter before starting the operation so a
+        # password/passphrase/host-key/FIDO prompt during deployment is never
+        # missed. It starts unbound (ignoring every interaction); once the
+        # daemon returns the OperationSummary it binds to the operation ID —
+        # the one public scope the deployment worker scopes its interactions
+        # to — and set_session() reconciles any prompt already created.
+        dialogs = None
+        bridge = getattr(self.window, "client_bridge", None)
+        if bridge is not None:
+            from .daemon_interaction_dialogs import DaemonInteractionDialogs
+            dialogs = DaemonInteractionDialogs(client, bridge, self.window)
         try:
-            effective_config = get_effective_ssh_config(host_value) if host_value else {}
+            from .api.connection_identity import connection_id_for
+            from .api.models.identity import DeployKeyRequest
+            from .api.models.keys import KeyStoreScope
+            summary = client.deploy_key(
+                DeployKeyRequest(
+                    connection_id=connection_id_for(connection),
+                    key_id=key_id,
+                    scope=KeyStoreScope.DEFAULT,
+                    force=bool(force),
+                )
+            )
+        except SshPilotError as exc:
+            if dialogs is not None:
+                dialogs.close()
+            self.window._error_dialog(
+                _("SSH Key Copy Error"),
+                _("Could not start public-key deployment."),
+                _(str(exc.message)),
+            )
+            return
         except Exception:
-            effective_config = {}
-        app_cfg = getattr(self.window, 'config', None)
-        if app_cfg is None:
-            app_cfg = Config()
-        argv = _build_base_ssh_command(connection, effective_config, app_cfg, 'ssh-copy-id')
+            if dialogs is not None:
+                dialogs.close()
+            logger.error("Could not start daemon key deployment", exc_info=True)
+            self.window._error_dialog(
+                _("SSH Key Copy Error"),
+                _("Could not start public-key deployment."),
+                _("Reconnect to the sshPilot daemon and try again."),
+            )
+            return
+        if dialogs is not None:
+            from .api.models.common import SessionId
+            dialogs.set_session(SessionId(str(summary.operation_id)))
+        self._interaction_dialogs = dialogs
+        self._operation_id = summary.operation_id
+        self._poll_operation()
 
-        # Add force option if enabled
-        if force:
-            argv.append('-f')
-            logger.debug("Main window: Added force option (-f) to ssh-copy-id")
-
-        argv.extend(['-i', ssh_key.public_path])
-        logger.debug(f"Main window: Base command: {argv}")
-
-        if known_hosts_path:
-            argv += ['-o', f'UserKnownHostsFile={known_hosts_path}']
-
-        # Derive auth prefs. Prefer the resolved NativeAuth (single shared auth
-        # decision); fall back to recomputing from the connection when not given.
-        logger.debug("Main window: Determining authentication preferences")
-        key_mode = 0
-        keyfile = getattr(connection, 'keyfile', '') or ''
-        logger.debug(f"Main window: Connection keyfile: '{keyfile}'")
-
-        if auth is not None:
-            prefer_password = bool(getattr(auth, 'password_mode', False))
-            # Key-based + stored password (askpass delivers both; MFA via force).
-            combined_auth = bool(getattr(auth, 'password', None)) and not prefer_password
-        else:
-            try:
-                auth_method = int(getattr(connection, 'auth_method', 0) or 0)
-            except Exception as e2:
-                logger.debug(f"Main window: Error getting auth method from connection object: {e2}")
-                auth_method = 0
-            prefer_password = (auth_method == 1)
-            has_saved_password = bool(self.window.connection_manager.get_password(host_value, connection.username))
-            combined_auth = (auth_method == 0 and has_saved_password)
-
+    def _poll_operation(self):
+        if self._operation_id is None:
+            return False
+        client = getattr(self.window, "client", None)
+        if client is None:
+            self._operation_id = None
+            self._dispose_interaction_dialogs()
+            return False
         try:
-            # key_select_mode is saved in ssh config, our connection object should have it post-load
-            key_mode = int(getattr(connection, 'key_select_mode', 0) or 0)
-            logger.debug(f"Main window: Key select mode: {key_mode}")
-        except Exception as e:
-            logger.debug(f"Main window: Error getting key select mode: {e}")
-            key_mode = 0
-
-        # Validate keyfile path
-        try:
-            keyfile_ok = bool(keyfile) and os.path.isfile(keyfile)
-            logger.debug(f"Main window: Keyfile validation - keyfile='{keyfile}', exists={keyfile_ok}")
-        except Exception as e:
-            logger.debug(f"Main window: Error validating keyfile: {e}")
-            keyfile_ok = False
-
-        # Priority: if UI selected a specific key and it exists, use it; otherwise fall back to password prefs/try-all
-        logger.debug(f"Main window: Applying authentication options - key_mode={key_mode}, keyfile_ok={keyfile_ok}, prefer_password={prefer_password}, combined_auth={combined_auth}")
-        
-        # For ssh-copy-id, we should NOT add IdentityFile options because:
-        # 1. ssh-copy-id should use the same key for authentication that it's copying
-        # 2. The -i parameter already specifies which key to copy
-        # 3. Adding IdentityFile would cause ssh-copy-id to use a different key for auth
-        
-        if key_mode == 1 and keyfile_ok:
-            # Don't add IdentityFile for ssh-copy-id - it should use the key being copied
-            logger.debug(f"Main window: Skipping IdentityFile for ssh-copy-id - using key being copied for authentication")
-        else:
-            # Apply authentication preferences
-            if prefer_password:
-                argv += ['-o', 'PreferredAuthentications=keyboard-interactive,password']
-                if getattr(connection, 'pubkey_auth_no', False):
-                    argv += ['-o', 'PubkeyAuthentication=no']
-                    logger.debug(
-                        "Main window: Added password authentication options - "
-                        "PubkeyAuthentication=no, PreferredAuthentications="
-                        "keyboard-interactive,password"
+            summary = client.get_operation(self._operation_id)
+            if summary.state.value in {"succeeded", "failed", "cancelled"}:
+                self._operation_id = None
+                self._poll_id = None
+                # The operation's interaction scope is done: release the
+                # presenter so it never claims unrelated interactions again.
+                self._dispose_interaction_dialogs()
+                if summary.state.value == "succeeded":
+                    self.window._info_dialog(
+                        _("SSH Key Copy"),
+                        _("The public key was installed on the server."),
+                    )
+                elif summary.state.value == "cancelled":
+                    self.window._info_dialog(
+                        _("SSH Key Copy"),
+                        _("Public-key deployment was cancelled."),
                     )
                 else:
-                    logger.debug(
-                        "Main window: Added password authentication option - "
-                        "PreferredAuthentications=keyboard-interactive,password"
+                    self.window._error_dialog(
+                        _("SSH Key Copy Error"),
+                        _("Public-key deployment failed."),
+                        summary.message,
                     )
-            elif combined_auth:
-                argv += [
-                    '-o',
-                    'PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password'
-                ]
-                logger.debug(
-                    "Main window: Added combined authentication options - "
-                    "PreferredAuthentications=gssapi-with-mic,hostbased,publickey,keyboard-interactive,password"
-                )
-        
-        # Target
-        target = f"{connection.username}@{host_value}" if getattr(connection, 'username', '') else host_value
-        argv.append(target)
-        logger.debug(f"Main window: Added target: {target}")
-        logger.debug(f"Main window: Final argv: {argv}")
-        return argv
+                return False
+        except Exception:
+            logger.debug("Daemon deployment status unavailable", exc_info=True)
+        self._poll_id = GLib.timeout_add(250, self._poll_operation)
+        return False
 
+    def _dispose_interaction_dialogs(self):
+        """Close and detach the presenter; never claim interactions after teardown."""
+        if self._interaction_dialogs is not None:
+            self._interaction_dialogs.close()
+            self._interaction_dialogs = None
+
+    def cancel(self):
+        operation_id = self._operation_id
+        client = getattr(self.window, "client", None)
+        if operation_id is not None and client is not None:
+            try:
+                client.cancel_operation(operation_id)
+            except Exception:
+                logger.debug("Daemon deployment cancellation failed", exc_info=True)
+        self._operation_id = None
+        self._dispose_interaction_dialogs()
+        if self._poll_id is not None:
+            try:
+                GLib.source_remove(self._poll_id)
+            except Exception:
+                pass
+            self._poll_id = None

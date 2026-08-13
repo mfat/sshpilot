@@ -19,7 +19,7 @@ from .dnd_payload import (
     set_internal_drag_icon,
 )
 from .platform_utils import is_macos
-from .connection_manager import Connection
+from .connection_model import Connection
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
@@ -1468,6 +1468,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         config,
         file_manager_callback=None,
         effective_warning_callback=None,
+        status_resolver=None,
         display_group_id: Optional[str] = None,
         in_tag_section: bool = False,
     ):
@@ -1481,6 +1482,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         _apply_sidebar_row_style(self, config, in_tag_section=in_tag_section)
         self._file_manager_callback = file_manager_callback
         self._effective_warning_callback = effective_warning_callback
+        self._status_resolver = status_resolver
         self._tint_provider = None
         self._color_badge_provider = None
         self._color_dot_provider = None
@@ -1904,6 +1906,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         connections_payload: List[Dict[str, Optional[int | str]]] = []
         selection_order = 0
+        source_group_ids = set()
 
         if window and hasattr(window, "connection_list"):
             try:
@@ -1926,6 +1929,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                     continue
 
                 seen_nicknames.add(nickname)
+                display_group_id = getattr(row, "_group_id", None)
+                source_group_ids.add(display_group_id)
 
                 row_index = None
                 try:
@@ -1938,8 +1943,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 connections_payload.append(
                     {
                         "nickname": nickname,
+                        "display_group_id": display_group_id,
                         "index": row_index,
-                        "order": selection_order,
+                        "visual_order": selection_order,
                     }
                 )
                 selection_order += 1
@@ -1956,15 +1962,16 @@ class ConnectionRow(Gtk.ListBoxRow):
             connections_payload.append(
                 {
                     "nickname": self.connection.nickname,
+                    "display_group_id": getattr(self, "_group_id", None),
                     "index": row_index,
-                    "order": 0,
+                    "visual_order": 0,
                 }
             )
 
         connections_payload.sort(
             key=lambda item: (
                 item.get("index") is None,
-                item.get("index") if isinstance(item.get("index"), int) else item.get("order", 0),
+                item.get("index") if isinstance(item.get("index"), int) else item.get("visual_order", 0),
             )
         )
 
@@ -1973,13 +1980,19 @@ class ConnectionRow(Gtk.ListBoxRow):
             nickname = item.get("nickname")
             if isinstance(nickname, str) and nickname not in ordered_nicknames:
                 ordered_nicknames.append(nickname)
-            item.pop("order", None)
 
+        source_group_ids = {
+            item.get("display_group_id") for item in connections_payload
+        }
         data = {
             "type": "connection",
             "connection_nickname": ordered_nicknames[0] if ordered_nicknames else self.connection.nickname,
             "connection_nicknames": ordered_nicknames,
             "connections": connections_payload,
+            "source_group_id": (
+                next(iter(source_group_ids)) if len(source_group_ids) == 1 else None
+            ),
+            "source_group_coherent": len(source_group_ids) == 1,
         }
 
         if window:
@@ -2131,24 +2144,14 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Render the status icon from the connection's authoritative state.
 
         This is render-only: it never computes or writes back connection state.
-        Aggregation across multiple terminals lives in the reporting layer
-        (``window._recompute_connection_state``) which sets the state via
-        ``ConnectionManager.update_connection_state``.
+        Daemon mode reads the session-derived runtime projection; legacy mode
+        reads the mutable connection model maintained by ``ConnectionManager``.
         """
         try:
             from sshpilot import icon_utils
-            from .connection_manager import ConnectionState
+            from .connection_model import ConnectionState
 
-            try:
-                state = self.connection.get_status()
-            except Exception:
-                # Older/foreign connection objects without the status API: if we
-                # can't tell, stay neutral (UNKNOWN) rather than alarming in red.
-                state = (
-                    ConnectionState.CONNECTED
-                    if getattr(self.connection, "is_connected", False)
-                    else ConnectionState.UNKNOWN
-                )
+            state, reason = self._resolve_status()
 
             host_value = _get_connection_host(self.connection) or _get_connection_alias(self.connection)
 
@@ -2184,11 +2187,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             elif state == ConnectionState.FAILED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-none-symbolic")
                 self.status_icon.add_css_class("conn-status-down")
-                reason = ''
-                try:
-                    reason = self.connection.get_status_reason() or ''
-                except Exception:
-                    reason = ''
                 self.status_icon.set_tooltip_text(
                     _("Connection failed: {reason}").format(reason=reason) if reason
                     else _("Connection failed")
@@ -2209,11 +2207,30 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._refresh_compact_status()
 
     def _is_online(self) -> bool:
-        from .connection_manager import ConnectionState
+        from .connection_model import ConnectionState
+        state, _reason = self._resolve_status()
+        return state == ConnectionState.CONNECTED
+
+    def _resolve_status(self):
+        """Resolve daemon runtime projection first, then legacy object state."""
+        from .connection_model import ConnectionState
+
+        resolver = getattr(self, '_status_resolver', None)
+        if callable(resolver):
+            runtime = resolver(self.connection)
+            if runtime is not None and runtime.state is not ConnectionState.UNKNOWN:
+                return runtime.state, runtime.reason
         try:
-            return self.connection.get_status() == ConnectionState.CONNECTED
+            state = self.connection.get_status()
+            reason = self.connection.get_status_reason() or ''
+            return state, reason
         except Exception:
-            return bool(getattr(self.connection, 'is_connected', False))
+            state = (
+                ConnectionState.CONNECTED
+                if getattr(self.connection, 'is_connected', False)
+                else ConnectionState.UNKNOWN
+            )
+            return state, ''
 
     def _refresh_compact_status(self) -> None:
         """Restyle the compact avatar/icon for the current connection state and
@@ -2411,6 +2428,7 @@ def setup_connection_list_dnd(window):
     window._drop_group_parent_id = None
     window._drop_group_index = None
     window._drop_group_tree_target_set = False
+    window._drop_group_generation = None
     window._drop_placeholder_row = None
     window._ungrouped_area_row = None
     window._ungrouped_area_visible = False
@@ -2694,10 +2712,18 @@ def _group_reorder_position_from_y(row, y, listbox=None) -> str:
         return "above"
 
 
+def _sidebar_projection_generation(window) -> Optional[int]:
+    """Generation of the authoritative projection backing the group sidebar."""
+    connection_manager = getattr(window, "connection_manager", None)
+    snapshot = getattr(connection_manager, "snapshot", lambda: None)()
+    return getattr(snapshot, "generation", None)
+
+
 def _set_group_tree_drop_target(window, parent_id, index: int) -> None:
     window._drop_group_parent_id = parent_id
     window._drop_group_index = index
     window._drop_group_tree_target_set = True
+    window._drop_group_generation = _sidebar_projection_generation(window)
 
 
 def _tree_target_insert_before(manager, group_id: str) -> tuple:
@@ -3134,6 +3160,7 @@ def _clear_drop_indicator(window):
         window._drop_group_parent_id = None
         window._drop_group_index = None
         window._drop_group_tree_target_set = False
+        window._drop_group_generation = None
     except Exception as e:
         logger.error(f"Error clearing drop indicator: {e}")
         _remove_drop_placeholder(window)
@@ -3142,6 +3169,7 @@ def _clear_drop_indicator(window):
         window._drop_group_parent_id = None
         window._drop_group_index = None
         window._drop_group_tree_target_set = False
+        window._drop_group_generation = None
 
 
 def _sidebar_allows_inplace_dnd(window) -> bool:
@@ -3195,15 +3223,31 @@ def _listbox_reposition_row(listbox, row, insert_index: int) -> None:
     listbox.insert(row, insert_index)
 
 
+def _group_connection_key(window, reference):
+    """Return the group-storage identity with legacy-test compatibility."""
+    resolver = getattr(window.group_manager, "connection_key", None)
+    if callable(resolver):
+        return resolver(reference)
+    return getattr(reference, "id", None) or getattr(
+        reference,
+        "nickname",
+        reference,
+    )
+
+
 def _detach_connection_member_rows(window, nickname: str, *, except_group_id=None) -> None:
     """Remove ``nickname`` from every group's tracked member rows."""
+    target_key = _group_connection_key(window, nickname)
     for group_row in _iter_host_group_rows(window):
         if except_group_id is not None and group_row.group_id == except_group_id:
             continue
         members = getattr(group_row, "_member_rows", None) or []
         group_row._member_rows = [
             row for row in members
-            if getattr(getattr(row, "connection", None), "nickname", None) != nickname
+            if _group_connection_key(
+                window,
+                getattr(row, "connection", None),
+            ) != target_key
         ]
 
 
@@ -3369,13 +3413,18 @@ def _apply_root_group_order(window) -> bool:
 def _groups_needing_member_resync(window, nicknames: List[str]) -> set:
     """Return group ids whose member rows may be stale after a connection move."""
     needed = set()
-    nick_set = set(nicknames)
+    nick_set = {
+        window.group_manager.connection_key(reference)
+        for reference in nicknames
+    }
     for group_row in _iter_host_group_rows(window):
         group_id = group_row.group_id
         group = window.group_manager.groups.get(group_id, {})
         group_nicks = set(group.get("connections", []))
         member_nicks = {
-            getattr(getattr(row, "connection", None), "nickname", None)
+            window.group_manager.connection_key(
+                getattr(row, "connection", None)
+            )
             for row in (getattr(group_row, "_member_rows", None) or [])
         }
         if group_nicks & nick_set or member_nicks & nick_set:
@@ -3429,6 +3478,114 @@ def _apply_group_dnd_in_place(
     return _apply_root_group_order(window)
 
 
+def _show_sidebar_dnd_error(window, error):
+    show_error = getattr(window, "show_error", None)
+    if callable(show_error):
+        show_error(str(error))
+    else:
+        logger.error("Sidebar DnD failed: %s", error)
+
+
+def _submit_group_dnd_place(window, group_id, parent_id, index,
+                            expected_generation=None):
+    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
+
+    request = PlaceGroupRequest(
+        group_id=GroupId(group_id),
+        parent_id=GroupId(parent_id) if parent_id else None,
+        index=index,
+        expected_generation=expected_generation,
+    )
+    operation = lambda: window.client.place_group(request)
+    controller = getattr(window.group_manager, "controller", None)
+    if controller is not None:
+        try:
+            controller.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=lambda error: _show_sidebar_dnd_error(window, error),
+            )
+            return True
+        except Exception as error:
+            _show_sidebar_dnd_error(window, error)
+            return False
+    try:
+        operation()
+        return True
+    except Exception as error:
+        _show_sidebar_dnd_error(window, error)
+        return False
+
+
+def _submit_connection_dnd_tag(window, request):
+    operation = lambda: window.client.add_tag_to_connections(request)
+    controller = getattr(window.group_manager, "controller", None)
+    if controller is not None:
+        try:
+            controller.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=lambda error: _show_sidebar_dnd_error(window, error),
+            )
+            return True
+        except Exception as error:
+            _show_sidebar_dnd_error(window, error)
+            return False
+    try:
+        operation()
+        return True
+    except Exception as error:
+        _show_sidebar_dnd_error(window, error)
+        return False
+
+
+def _submit_connection_dnd_move(
+    window,
+    connection_nicknames,
+    *,
+    source_group_id=None,
+    target_group_id=None,
+    target_connection_id=None,
+    position=None,
+    mode="exclusive",
+):
+    from sshpilot.api.models.connection_store import ConnectionPlacementMode, MoveConnectionsRequest
+
+    nicknames = list(connection_nicknames)
+    if not nicknames:
+        return False
+    snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
+    generation = getattr(snapshot, "generation", None)
+    request = MoveConnectionsRequest(
+        connection_ids=tuple(nicknames),
+        source_group_id=source_group_id,
+        target_group_id=target_group_id,
+        target_connection_id=target_connection_id,
+        position=position,
+        expected_generation=generation,
+        mode=ConnectionPlacementMode(mode),
+    )
+    operation = lambda: window.client.move_connections(request)
+    controller = getattr(window.group_manager, "controller", None)
+    if controller is not None:
+        try:
+            controller.run(
+                operation,
+                on_success=lambda _result: None,
+                on_error=lambda error: _show_sidebar_dnd_error(window, error),
+            )
+            return True
+        except Exception as error:
+            _show_sidebar_dnd_error(window, error)
+            return False
+    try:
+        operation()
+        return True
+    except Exception as error:
+        _show_sidebar_dnd_error(window, error)
+        return False
+
+
 def _on_connection_list_drop(window, target, value, x, y):
     try:
         # Capture what motion last highlighted before clearing it, so the drop
@@ -3440,6 +3597,7 @@ def _on_connection_list_drop(window, target, value, x, y):
         drop_parent_id = getattr(window, "_drop_group_parent_id", None)
         drop_index = getattr(window, "_drop_group_index", None)
         drop_tree_target_set = getattr(window, "_drop_group_tree_target_set", False)
+        drop_generation = getattr(window, "_drop_group_generation", None)
         _clear_drop_indicator(window)
         _hide_ungrouped_area(window)
         _stop_connection_autoscroll(window)
@@ -3463,6 +3621,13 @@ def _on_connection_list_drop(window, target, value, x, y):
 
         if drop_type == "connection":
             connection_nicknames: List[str] = []
+            source_group_id = value.get("source_group_id")
+            if value.get("source_group_coherent") is False:
+                _show_sidebar_dnd_error(
+                    window,
+                    ValueError("Selected connections must share one displayed group"),
+                )
+                return False
 
             payload = value.get("connections")
             if isinstance(payload, list):
@@ -3497,15 +3662,21 @@ def _on_connection_list_drop(window, target, value, x, y):
                 position = indicator_pos if indicator_pos in ("above", "below") else "below"
 
                 if not target_row:
-                    for nickname in connection_nicknames:
-                        window.group_manager.move_connection(nickname, None)
-                        changes_made = True
-                    connection_nicknames_applied = list(connection_nicknames)
+                    _submit_connection_dnd_move(
+                        window,
+                        connection_nicknames,
+                        source_group_id=source_group_id,
+                        target_group_id=None,
+                    )
+                    return True
                 elif getattr(target_row, "ungrouped_area", False) or indicator_pos == "ungrouped":
-                    for nickname in connection_nicknames:
-                        window.group_manager.move_connection(nickname, None)
-                        changes_made = True
-                    connection_nicknames_applied = list(connection_nicknames)
+                    _submit_connection_dnd_move(
+                        window,
+                        connection_nicknames,
+                        source_group_id=source_group_id,
+                        target_group_id=None,
+                    )
+                    return True
                 else:
                     if getattr(target_row, "is_tag_group", False):
                         # Dropping onto a tag group adds the tag to the dragged
@@ -3514,57 +3685,41 @@ def _on_connection_list_drop(window, target, value, x, y):
                         if target_row.group_info.get("untagged"):
                             # The Untagged section is not a tag to apply.
                             return False
-                        from .tag_groups import add_tag_to_list
-                        tag_name = str(target_row.group_info.get("name", ""))
-                        cfg = getattr(window, "config", None)
-                        if not tag_name or cfg is None:
+                        tag_name = str(target_row.group_info.get("name", "")).strip()
+                        if not tag_name or getattr(window, "client", None) is None:
                             return False
-                        for nickname in connection_nicknames:
-                            tags, changed = add_tag_to_list(
-                                cfg.get_connection_tags(nickname), tag_name
-                            )
-                            if changed:
-                                cfg.set_connection_tags(nickname, tags)
-                                changes_made = True
-                        if changes_made:
-                            tag_drop = True
+                        from sshpilot.api.models.connection_store import AddTagToConnectionsRequest
+                        snapshot = getattr(window.connection_manager, "snapshot", lambda: None)()
+                        request = AddTagToConnectionsRequest(
+                            connection_ids=tuple(connection_nicknames),
+                            tag=tag_name,
+                            expected_generation=getattr(snapshot, "generation", None),
+                        )
+                        _submit_connection_dnd_tag(window, request)
+                        tag_drop = True
+                        return True
                     elif hasattr(target_row, "group_id"):
                         target_group_id = target_row.group_id
-
+                        first_connection = None
                         if position == "above":
-                            first_connection = None
-                            child = window.connection_list.get_first_child()
-                            while child:
-                                if hasattr(child, 'connection'):
-                                    connection_group = window.group_manager.get_connection_group(child.connection.nickname)
-                                    if connection_group == target_group_id:
-                                        first_connection = child.connection.nickname
-                                        break
-                                child = child.get_next_sibling()
-
-                            if first_connection:
-                                for nickname in connection_nicknames:
-                                    current_group_id = window.group_manager.get_connection_group(nickname)
-                                    if current_group_id != target_group_id:
-                                        window.group_manager.move_connection(nickname, target_group_id)
-                                        changes_made = True
-                                    window.group_manager.reorder_connection_in_group(
-                                        nickname, first_connection, "above"
-                                    )
-                                    first_connection = nickname
-                                    changes_made = True
-                            else:
-                                for nickname in connection_nicknames:
-                                    if window.group_manager.get_connection_group(nickname) != target_group_id:
-                                        window.group_manager.move_connection(nickname, target_group_id)
-                                        changes_made = True
-                        else:
-                            for nickname in connection_nicknames:
-                                if window.group_manager.get_connection_group(nickname) != target_group_id:
-                                    window.group_manager.move_connection(nickname, target_group_id)
-                                    changes_made = True
-                        if changes_made:
-                            connection_nicknames_applied = list(connection_nicknames)
+                            group_info = window.group_manager.groups.get(target_group_id, {})
+                            members = list(group_info.get("connections", []))
+                            if members:
+                                first_connection = members[0]
+                        _submit_connection_dnd_move(
+                            window,
+                            connection_nicknames,
+                            source_group_id=source_group_id,
+                            target_group_id=target_group_id,
+                            target_connection_id=first_connection,
+                            position="above" if first_connection else None,
+                            mode=(
+                                "preserve"
+                                if source_group_id == target_group_id
+                                else "exclusive"
+                            ),
+                        )
+                        return True
                     else:
                         # Member rows under virtual tag groups are not drop
                         # targets (a drop here would move the connection into
@@ -3575,36 +3730,21 @@ def _on_connection_list_drop(window, target, value, x, y):
                         target_connection = getattr(target_row, "connection", None)
                         if target_connection:
                             reference_nickname = target_connection.nickname
-                            target_group_id = window.group_manager.get_connection_group(reference_nickname)
-
-                            for nickname in connection_nicknames:
-                                current_group_id = window.group_manager.get_connection_group(nickname)
-                                if current_group_id != target_group_id:
-                                    window.group_manager.move_connection(nickname, target_group_id)
-                                    changes_made = True
-
-                            if position == "above":
-                                reference = reference_nickname
-                                for nickname in reversed(connection_nicknames):
-                                    if nickname == reference:
-                                        continue
-                                    window.group_manager.reorder_connection_in_group(
-                                        nickname, reference, "above"
-                                    )
-                                    reference = nickname
-                                    changes_made = True
-                            else:
-                                reference = reference_nickname
-                                for nickname in connection_nicknames:
-                                    if nickname == reference:
-                                        continue
-                                    window.group_manager.reorder_connection_in_group(
-                                        nickname, reference, "below"
-                                    )
-                                    reference = nickname
-                                    changes_made = True
-                            if changes_made:
-                                connection_nicknames_applied = list(connection_nicknames)
+                            target_group_id = getattr(target_row, "_group_id", None)
+                            _submit_connection_dnd_move(
+                                window,
+                                connection_nicknames,
+                                source_group_id=source_group_id,
+                                target_group_id=target_group_id,
+                                target_connection_id=reference_nickname,
+                                position=position,
+                                mode=(
+                                    "preserve"
+                                    if source_group_id == target_group_id
+                                    else "exclusive"
+                                ),
+                            )
+                            return True
 
         elif drop_type == "group":
             group_id = value.get("group_id")
@@ -3632,31 +3772,33 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 if (source_group
                                         and source_group.get("parent_id") == target_group_id):
                                     pass
+                                elif drop_tree_target_set:
+                                    # The nest preview captured (parent, index,
+                                    # generation) at motion time. Submit exactly
+                                    # that tuple so the request describes the
+                                    # projection the user saw, even if the
+                                    # authoritative store advanced meanwhile.
+                                    if _submit_group_dnd_place(
+                                        window, group_id, drop_parent_id,
+                                        drop_index,
+                                        expected_generation=drop_generation,
+                                    ):
+                                        return True
                                 else:
                                     parent_id, index = _tree_target_nest_into(
                                         manager, target_group_id
                                     )
-                                    old_parent = (
-                                        source_group.get("parent_id")
-                                        if source_group else None
-                                    )
-                                    if manager.place_group(group_id, parent_id, index):
-                                        changes_made = True
-                                        group_nested = True
-                                        group_reparented = old_parent != parent_id
+                                    if _submit_group_dnd_place(
+                                        window, group_id, parent_id, index,
+                                        expected_generation=_sidebar_projection_generation(window),
+                                    ):
+                                        return True
                             elif drop_tree_target_set:
-                                old_parent = (
-                                    source_group.get("parent_id")
-                                    if source_group else None
-                                )
-                                if manager.place_group(
-                                    group_id, drop_parent_id, drop_index
+                                if _submit_group_dnd_place(
+                                    window, group_id, drop_parent_id, drop_index,
+                                    expected_generation=drop_generation,
                                 ):
-                                    changes_made = True
-                                    if old_parent != drop_parent_id:
-                                        group_reparented = True
-                                    else:
-                                        group_id_applied = group_id
+                                    return True
                             elif indicator_pos in ("above", "below"):
                                 if indicator_pos == "above":
                                     parent_id, index = _tree_target_insert_before(
@@ -3666,16 +3808,11 @@ def _on_connection_list_drop(window, target, value, x, y):
                                     parent_id, index = _tree_target_insert_after(
                                         manager, target_group_id
                                     )
-                                old_parent = (
-                                    source_group.get("parent_id")
-                                    if source_group else None
-                                )
-                                if manager.place_group(group_id, parent_id, index):
-                                    changes_made = True
-                                    if old_parent != parent_id:
-                                        group_reparented = True
-                                    else:
-                                        group_id_applied = group_id
+                                if _submit_group_dnd_place(
+                                    window, group_id, parent_id, index,
+                                    expected_generation=_sidebar_projection_generation(window),
+                                ):
+                                    return True
                         else:
                             logger.warning(f"Target group '{target_group_id}' does not exist")
 
@@ -3980,7 +4117,9 @@ def _build_sidebar_header(window, sidebar_box):
             tag_map = {}
             for conn in window.connection_manager.get_connections():
                 try:
-                    tag_map[conn.nickname] = window.config.get_connection_tags(conn.nickname)
+                    tag_map[conn.nickname] = list(
+                        window.connection_manager.get_metadata(conn.nickname).get("tags", [])
+                    )
                 except Exception:
                     pass
             tags_section = Gio.Menu()
@@ -4218,7 +4357,7 @@ def _attach_connection_list_context_menu(window):
 
                 def _has_wol_mac(c):
                     try:
-                        meta = window.config.get_connection_meta(c.nickname) if c else {}
+                        meta = window.connection_manager.get_metadata(c.nickname) if c else {}
                         return bool((meta or {}).get('wol_mac', '').strip())
                     except Exception:
                         return False
@@ -4257,7 +4396,8 @@ def _attach_connection_list_context_menu(window):
                 try:
                     pin_targets = selected_conns if multi else ([conn] if conn else [])
                     all_pinned = bool(pin_targets) and all(
-                        window.config.is_pinned(c.nickname) for c in pin_targets
+                        window.connection_manager.get_metadata(c.nickname).get("pinned", False)
+                        for c in pin_targets
                     )
                     if all_pinned:
                         menu.add_section(
@@ -4581,7 +4721,7 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
     window.scp_button.add_css_class('flat')
     _expand_toolbar_button(window.scp_button)
-    window.scp_button.set_tooltip_text(_('Transfer files with scp'))
+    window.scp_button.set_tooltip_text(_('Legacy: Transfer files with scp'))
     window.scp_button.set_sensitive(False)
     window.scp_button.connect('clicked', window.on_scp_button_clicked)
     window.connection_toolbar.append(window.scp_button)

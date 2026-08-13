@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import codecs
 import logging
 import os
+import time
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 import gi
@@ -11,13 +13,66 @@ import gi
 gi.require_version("Gtk", "4.0")
 
 from gi.repository import GObject, Gtk
+from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_color
 
 
 logger = logging.getLogger(__name__)
 
+
+def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> Optional[str]:
+    """Fetch remote shell history through the existing daemon command route.
+
+    This is composition glue for the generic autocomplete provider.  The
+    provider itself knows nothing about SSH, clients, or process launching.
+    Failures deliberately return no history; there is no frontend transport
+    fallback.
+    """
+    client = getattr(root, "client", None)
+    if client is None:
+        return None
+    try:
+        from .api.models.broadcast import (
+            BroadcastCommandRequest,
+            BroadcastExecutionPolicy,
+        )
+        from .api.models.interactions import ExecutionInteractionMode
+
+        daemon_connection = next(
+            item
+            for item in client.list_connections()
+            if getattr(item, "nickname", None)
+            == getattr(connection, "nickname", None)
+        )
+        request = BroadcastCommandRequest(
+            (daemon_connection.id,),
+            "cat .bash_history .zsh_history 2>/dev/null | tail -c 262144",
+            BroadcastExecutionPolicy(
+                concurrency_limit=1,
+                timeout_seconds=timeout,
+                interaction_mode=ExecutionInteractionMode.AUTOFILL_ONLY,
+            ),
+        )
+        summary = client.start_broadcast_command(request)
+        deadline = time.monotonic() + timeout
+        terminal_states = {"succeeded", "failed", "cancelled"}
+        while summary.operation.state.value not in terminal_states:
+            if time.monotonic() >= deadline:
+                client.cancel_broadcast_command(summary.operation.operation_id)
+                return None
+            time.sleep(0.05)
+            summary = client.get_broadcast_command(summary.operation.operation_id)
+        target = summary.targets[0]
+        return target.stdout if target.exit_code == 0 else None
+    except Exception:  # noqa: BLE001 — best-effort background suggestion
+        return None
+
 # CSS absolute units: 1pt = 1/72in, 1px = 1/96in → 1pt = 96/72 px.
 # Pango/VTE and the Preferences font preview use points; xterm.js fontSize is CSS px.
 _PT_TO_CSS_PX = 96.0 / 72.0
+
+
+class TerminalBackendCapabilityError(RuntimeError):
+    """Raised when an operation is not provided by the active emulator."""
 
 
 def pango_points_to_xterm_px(points: float, scale: float = 1.0) -> int:
@@ -43,6 +98,9 @@ class BaseTerminalBackend(Protocol):
 
     def apply_theme(self, theme_name: Optional[str] = None) -> None:
         """Apply the current theme to the terminal widget."""
+
+    def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
+        """Apply emulator configuration without exposing implementation APIs."""
 
     def grab_focus(self) -> None:
         """Give keyboard focus to the terminal widget."""
@@ -95,6 +153,67 @@ class BaseTerminalBackend(Protocol):
     def feed(self, data: bytes) -> None:
         """Feed raw data to the terminal display."""
 
+    def get_size(self) -> tuple:
+        """Return ``(rows, cols)`` for the visible terminal, if known."""
+        return (24, 80)
+
+    def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Connect to user input (keystrokes / paste) destined for the child.
+
+        The callback receives ``(widget, text, byte_length)``.
+        """
+
+    def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Connect to terminal size changes.
+
+        Callback arguments are backend-defined notification details. Callers
+        needing rows/columns must use :meth:`get_size`.
+        """
+
+    def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Connect a notification emitted after displayed content changes."""
+
+    def setup_link_handling(
+        self, motion_callback: Callable, enter_callback: Callable,
+        selection_callback: Callable, hover_callback: Optional[Callable] = None,
+    ) -> None:
+        """Install hyperlink interaction callbacks when supported."""
+
+    def setup_native_context_menu(self, menu: Any, callback: Callable) -> bool:
+        """Let the emulator own context-menu presentation when supported."""
+
+    def clear_native_context_menu(self) -> None:
+        """Release a native context menu previously given to the emulator."""
+
+    def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        """Return a hyperlink at widget coordinates, if supported.
+
+        Full point lookup (OSC 8 + plain-text regex); intended only for
+        one-shot user actions such as Ctrl+click and context menus.
+        """
+
+    def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
+        """Return the plain-text regex match at widget coordinates, if any.
+
+        Deliberately excludes OSC 8 hyperlinks. Coordinate lookup is reserved
+        for explicit user actions, never pointer motion.
+        """
+
+    def set_pointer_over_link(self, over_link: bool) -> None:
+        """Update pointer feedback for a hyperlink, if supported."""
+
+    def save_contents(self, stream: Any) -> None:
+        """Write retained terminal output to ``stream``."""
+
+    def get_supported_encodings(self) -> list[str]:
+        """Return encodings supported by this emulator."""
+
+    def set_encoding(self, encoding: str) -> None:
+        """Set the terminal encoding."""
+
+    def set_search_highlight(self, active: bool) -> None:
+        """Enable search highlighting or restore selection colors."""
+
     def search_set_regex(self, regex: Optional[Any]) -> None:
         """Configure the search regex for the backend, if supported."""
 
@@ -138,7 +257,14 @@ class BaseTerminalBackend(Protocol):
         """Ensure the backend widget is visible."""
 
     def feed_child(self, data: bytes) -> None:
-        """Feed raw bytes to the child process input if supported."""
+        """Feed raw bytes to the child process input if supported.
+
+        Deprecated alias: prefer ``feed_child_data``. Kept for call-site
+        compatibility during the daemon terminal migration.
+        """
+
+    def feed_child_data(self, data: bytes) -> None:
+        """Canonical backend input API — feed raw bytes to the child process."""
 
     def get_content(self, max_chars: Optional[int] = None) -> Optional[str]:
         """Return the terminal contents if the backend can provide it."""
@@ -161,8 +287,21 @@ class VTETerminalBackend:
         self.vte = Vte.Terminal()
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
+        self._background_provider = None
+        self._css_class = f"terminal-bg-{id(self)}"
+        self._selection_background = None
+        self._selection_foreground = None
+        self._destroyed = False
+        self._link_match_tag: Optional[int] = None
+        self._selection_handler: Optional[int] = None
+        self._native_context_handler: Optional[int] = None
+        self._native_context_callback: Optional[Callable[[bool], None]] = None
+        self._initialized = False
 
     def initialize(self) -> None:
+        if self._initialized:
+            return
+        self._initialized = True
         self.vte.set_hexpand(True)
         self.vte.set_vexpand(True)
 
@@ -222,28 +361,127 @@ class VTETerminalBackend:
             except Exception:
                 logger.debug("Failed to enable mouse autohide", exc_info=True)
 
-        try:
-            self.vte.set_encoding("UTF-8")
-        except Exception:
-            logger.debug("Failed to set encoding", exc_info=True)
-
-        try:
-            if hasattr(self.vte, "set_allow_bold"):
-                self.vte.set_allow_bold(True)
-        except Exception:
-            logger.debug("Failed to enable bold text", exc_info=True)
+        # VTE is a UTF-8 terminal.  Its old encoding and allow-bold knobs are
+        # deprecated and are deliberately not part of the VTE backend.
 
         try:
             self.vte.show()
         except Exception:
             logger.debug("Failed to show VTE widget", exc_info=True)
 
+    def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
+        """Apply VTE settings best-effort across supported VTE versions."""
+        settings = settings or {}
+        operations = (
+            ("cursor blink", lambda: self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)),
+            ("cursor shape", lambda: self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)),
+            ("scrollback", lambda: self.vte.set_scrollback_lines(int(settings.get("scrollback_lines", 10000)))),
+            ("scroll on keystroke", lambda: self.vte.set_scroll_on_keystroke(True)),
+            ("scroll on output", lambda: self.vte.set_scroll_on_output(False)),
+            ("mouse autohide", lambda: self.vte.set_mouse_autohide(True)),
+            ("OSC 8 hyperlinks", lambda: self.vte.set_allow_hyperlink(True)),
+            ("fallback scrolling", lambda: self.vte.set_enable_fallback_scrolling(True)),
+            ("visibility", lambda: self.vte.show()),
+        )
+        for name, operation in operations:
+            try:
+                operation()
+            except Exception:
+                logger.debug("Could not configure optional VTE %s", name, exc_info=True)
+        try:
+            if hasattr(self.vte, "set_word_char_exceptions"):
+                self.vte.set_word_char_exceptions("@-./_~")
+            elif hasattr(self.vte, "set_word_char_options"):
+                self.vte.set_word_char_options("@-./_~")
+        except Exception:
+            logger.debug("Could not configure VTE word selection", exc_info=True)
+
+    def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
+        """Register VTE-native URL matching and selection observation once."""
+        if getattr(self, "_link_match_tag", None) is None:
+            try:
+                pattern = (r'(?:https?|ftp)://[^\s\t\n\r<>"{}|\\^`\[\]]'
+                           r'*[^\s\t\n\r<>"{}|\\^`\[\].,;:!?]')
+                regex = Vte.Regex.new_for_match(pattern, len(pattern), 0x00000400)
+                self._link_match_tag = self.vte.match_add_regex(regex, 0)
+                self.vte.match_set_cursor_name(self._link_match_tag, "pointer")
+            except Exception:
+                logger.debug("VTE plain-text hyperlink matching unavailable", exc_info=True)
+        if getattr(self, "_selection_handler", None) is None:
+            try:
+                self._selection_handler = self.vte.connect(
+                    "selection-changed", selection_callback)
+            except Exception:
+                logger.debug("VTE selection signal unavailable", exc_info=True)
+
+    def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        """Full point lookup for one-shot queries (Ctrl+click).
+
+        The motion path must not use this: ``check_hyperlink_at`` dereferences
+        VTE screen state on every call and segfaulted from the motion handler
+        in #1104. OSC 8 hover arrives via the native
+        ``hyperlink-hover-uri-changed`` signal instead.
+        """
+        if getattr(self, "_destroyed", False):
+            return None
+        if hasattr(self.vte, "check_hyperlink_at"):
+            uri = self.vte.check_hyperlink_at(x, y)
+            if uri:
+                return uri
+        return self.plain_text_link_at(x, y)
+
+    def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
+        """Return a registered regex match for a one-shot user action."""
+        if getattr(self, "_destroyed", False):
+            return None
+        if hasattr(self.vte, "check_match_at"):
+            result = self.vte.check_match_at(x, y)
+        elif hasattr(self.vte, "match_check"):
+            width, height = self.vte.get_char_width(), self.vte.get_char_height()
+            result = self.vte.match_check(int(x / width), int(y / height)) if width and height else None
+        else:
+            result = None
+        return result[0] if isinstance(result, tuple) else result
+
+    def set_pointer_over_link(self, over_link: bool) -> None:
+        """VTE owns match and OSC 8 cursor feedback."""
+
+    def save_contents(self, stream: Any) -> None:
+        self.vte.write_contents_sync(stream, Vte.WriteFlags.DEFAULT, None)
+
+    def get_supported_encodings(self) -> list[str]:
+        return ["UTF-8"]
+
+    def set_encoding(self, encoding: str) -> None:
+        if encoding.upper().replace("_", "-") != "UTF-8":
+            raise TerminalBackendCapabilityError("VTE supports UTF-8 only")
+
     def destroy(self) -> None:
+        self._destroyed = True
+        self.clear_native_context_menu()
         try:
             if self._termprops_handler is not None:
                 self.vte.disconnect(self._termprops_handler)  # type: ignore[arg-type]
         except Exception:
             pass
+        try:
+            if getattr(self, "_selection_handler", None) is not None:
+                self.vte.disconnect(self._selection_handler)
+            if getattr(self, "_native_context_handler", None) is not None:
+                self.vte.disconnect(self._native_context_handler)
+        except Exception:
+            pass
+        self._remove_background_provider()
+
+    def _remove_background_provider(self) -> None:
+        provider = getattr(self, "_background_provider", None)
+        display = Gdk.Display.get_default()
+        if provider is not None and display is not None:
+            try:
+                Gtk.StyleContext.remove_provider_for_display(display, provider)
+            except Exception:
+                logger.debug("Failed to remove VTE background provider", exc_info=True)
+        self._background_provider = None
 
     # ------------------------------------------------------------------
     # Lifecycle helpers
@@ -315,10 +553,13 @@ class VTETerminalBackend:
 
             if use_group_color and override_rgba is not None:
                 bg_color = self._clone_rgba(override_rgba)  # Use exact group color
-                fg_color = self._get_contrast_color(bg_color)
-                highlight_bg = self._clone_rgba(override_rgba)
-                highlight_fg = self._get_contrast_color(highlight_bg)
-                cursor_color = self._clone_rgba(highlight_fg)
+                fg_color = get_contrast_color(bg_color)
+                contrast = get_contrast_color(bg_color)
+                ratio = 0.35 if relative_luminance(bg_color) < 0.5 else 0.25
+                highlight_bg = mix_rgba(bg_color, contrast, ratio)
+                highlight_bg.alpha = 1.0
+                highlight_fg = get_contrast_color(highlight_bg)
+                cursor_color = self._clone_rgba(fg_color)
 
             palette_colors = None
             if profile.get("palette"):
@@ -342,12 +583,24 @@ class VTETerminalBackend:
             self.vte.set_color_cursor(cursor_color)
             self.vte.set_color_highlight(highlight_bg)
             self.vte.set_color_highlight_foreground(highlight_fg)
+            self._selection_background = self._clone_rgba(highlight_bg)
+            self._selection_foreground = self._clone_rgba(highlight_fg)
+
+            # Preserve Adwaita's original card paint at the rounded edge.  The
+            # terminal background belongs only to the content widgets; putting
+            # it on TerminalWidget hides the radius, while putting it on the
+            # card changes the antialiased fringe and makes the curve harsher.
+            if hasattr(owner.scrolled_window, "add_css_class"):
+                owner.scrolled_window.add_css_class(self._css_class)
+            if hasattr(self.vte, "add_css_class"):
+                self.vte.add_css_class(self._css_class)
 
             try:
                 rgba = bg_color
+                self._remove_background_provider()
                 provider = Gtk.CssProvider()
                 css = (
-                    f".terminal-bg {{ background-color: rgba({int(rgba.red * 255)},"
+                    f".{self._css_class} {{ background-color: rgba({int(rgba.red * 255)},"
                     f" {int(rgba.green * 255)}, {int(rgba.blue * 255)}, {rgba.alpha}); }}"
                 )
                 provider.load_from_data(css.encode("utf-8"))
@@ -356,12 +609,7 @@ class VTETerminalBackend:
                     Gtk.StyleContext.add_provider_for_display(
                         display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
                     )
-                if hasattr(owner, "add_css_class"):
-                    owner.add_css_class("terminal-bg")
-                if hasattr(owner.scrolled_window, "add_css_class"):
-                    owner.scrolled_window.add_css_class("terminal-bg")
-                if hasattr(self.vte, "add_css_class"):
-                    self.vte.add_css_class("terminal-bg")
+                    self._background_provider = provider
             except Exception:
                 logger.debug("Failed to set container background", exc_info=True)
 
@@ -429,32 +677,182 @@ class VTETerminalBackend:
             env_list = [f"{key}={value}" for key, value in env.items()]
         cwd = cwd or None
         pty_flags = Vte.PtyFlags(flags) if flags else Vte.PtyFlags.DEFAULT
-        self.vte.spawn_async(
+
+        def spawn_complete(
+            terminal: Any,
+            pid: int,
+            error: Optional[Exception],
+            *_ignored: Any,
+        ) -> None:
+            # Keep the backend callback contract independent of the GI
+            # binding's callback-user-data layout.  In particular, VTE 0.76
+            # exposes an extra child_setup_data slot in this method.
+            if callback is not None:
+                callback(terminal, pid, error, user_data)
+
+        # Terminal.spawn_async() is the terminal-aware convenience API: it
+        # creates, sizes and attaches the PTY before spawning the child.
+        spawn_args = (
             pty_flags,
             cwd,
             list(argv),
             env_list,
             GLib.SpawnFlags.DEFAULT,
-            child_setup,
-            user_data,
-            -1,
-            None,
-            callback,
-            (),
         )
+        try:
+            # Current PyGObject bindings expose the nullable arguments by
+            # name.  Keywords also avoid a VTE 0.76 marshalling issue where
+            # positional None values are assigned to the wrong GI slot.
+            self.vte.spawn_async(
+                pty_flags=spawn_args[0],
+                working_directory=spawn_args[1],
+                argv=spawn_args[2],
+                envv=spawn_args[3],
+                spawn_flags=spawn_args[4],
+                child_setup=child_setup,
+                timeout=-1,
+                cancellable=None,
+                callback=spawn_complete,
+                user_data=user_data,
+            )
+        except TypeError as exc:
+            logger.debug(
+                "VTE modern spawn_async signature unavailable; "
+                "retrying legacy GI signature: %s",
+                exc,
+            )
+            # Older VTE/PyGObject bindings expose child_setup_data explicitly
+            # between child_setup and timeout.  The callback closure above
+            # deliberately owns SSH Pilot's user_data.  Passing the native
+            # slot as well keeps the call aligned with the underlying C API,
+            # but callback delivery never depends on GI preserving it.
+            self.vte.spawn_async(
+                *spawn_args,
+                child_setup,
+                None,
+                -1,
+                None,
+                spawn_complete,
+                user_data,
+            )
 
     def connect_child_exited(self, callback: Callable[[Gtk.Widget, int], None]) -> Any:
         return self.vte.connect("child-exited", callback)
 
     def connect_title_changed(self, callback: Callable[[Gtk.Widget, str], None]) -> Any:
+        # VTE 0.78+ reports titles through XTERM_TITLE termprops.  Keep the
+        # deprecated signal only as the legacy 0.70--0.76 fallback.
+        if hasattr(Vte, "PropertyId") and hasattr(
+                self.vte, "get_termprop_string_by_id"):
+            return None
         return self.vte.connect("window-title-changed", callback)
 
     def connect_termprops_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """Snapshot modern termprops and defer delivery outside VTE's signal.
+
+        The changed values and modern getter arguments are numeric
+        ``PropertyId`` members. VTE restricts synchronous work in this signal,
+        hence the idle delivery of the plain Python snapshot.
+        """
         try:
-            self._termprops_handler = self.vte.connect("termprops-changed", callback)
+            def _on_changed(terminal, ids, _user_data=None):
+                changed = set(ids) if ids and hasattr(ids, "__iter__") else {ids}
+                event: dict[str, Any] = {}
+                property_id = Vte.PropertyId
+                if property_id.XTERM_TITLE in changed:
+                    try:
+                        value, _length = terminal.get_termprop_string_by_id(
+                            property_id.XTERM_TITLE)
+                        if value is not None:
+                            event["title"] = value
+                    except Exception:
+                        pass
+                if property_id.CURRENT_DIRECTORY_URI in changed:
+                    try:
+                        if hasattr(terminal, "ref_termprop_uri_by_id"):
+                            value = terminal.ref_termprop_uri_by_id(
+                                property_id.CURRENT_DIRECTORY_URI)
+                        else:
+                            value = terminal.get_termprop_value_by_id(
+                                property_id.CURRENT_DIRECTORY_URI)
+                            if (isinstance(value, tuple) and len(value) == 2
+                                    and isinstance(value[0], bool)):
+                                value = value[1] if value[0] else None
+                            if hasattr(value, "get_boxed"):
+                                value = value.get_boxed()
+                        if value is not None:
+                            event["cwd_uri"] = (
+                                value.to_string()
+                                if hasattr(value, "to_string") else str(value))
+                    except Exception:
+                        pass
+                if property_id.SHELL_PREEXEC in changed:
+                    event["preexec"] = True
+                if property_id.SHELL_PRECMD in changed:
+                    event["precmd"] = True
+                if property_id.SHELL_POSTEXEC in changed:
+                    try:
+                        ok, value = terminal.get_termprop_uint_by_id(
+                            property_id.SHELL_POSTEXEC)
+                        if ok:
+                            event["postexec"] = value
+                    except Exception:
+                        pass
+                if event:
+                    GLib.idle_add(callback, self.widget, event)
+
+            self._termprops_handler = self.vte.connect("termprops-changed", _on_changed)
         except Exception:
-            self._termprops_handler = None
+            # VTE 0.70--0.76 exposes OSC 7 through this legacy property/signal.
+            try:
+                def _on_legacy_cwd(terminal, *_args):
+                    uri = terminal.get_current_directory_uri()
+                    if uri:
+                        GLib.idle_add(callback, self.widget, {"cwd_uri": uri})
+                self._termprops_handler = self.vte.connect(
+                    "current-directory-uri-changed", _on_legacy_cwd)
+            except Exception:
+                self._termprops_handler = None
         return self._termprops_handler
+
+    def setup_native_context_menu(self, menu: Any, callback: Callable) -> bool:
+        """Install VTE 0.76+'s native context-menu lifecycle.
+
+        ``EventContext.get_coordinates()`` only exposes a boolean through the
+        Python binding.  The owner records mouse coordinates in a capture-phase
+        GTK gesture instead; this callback reports show/dismiss lifecycle only.
+        """
+        if not (hasattr(self.vte, "set_context_menu")
+                and hasattr(Vte, "EventContext")):
+            return False
+        try:
+            self.vte.set_context_menu(menu)
+            self._native_context_callback = callback
+            if getattr(self, "_native_context_handler", None) is None:
+                def _on_setup(_terminal, context):
+                    # VTE emits a final setup-context-menu with None after the
+                    # menu is dismissed. Never dereference that sentinel.
+                    current_callback = getattr(
+                        self, "_native_context_callback", None)
+                    if current_callback is not None:
+                        current_callback(context is not None)
+                self._native_context_handler = self.vte.connect(
+                    "setup-context-menu", _on_setup)
+            return True
+        except Exception:
+            logger.debug("VTE native context menu unavailable", exc_info=True)
+            return False
+
+    def clear_native_context_menu(self) -> None:
+        """Release SSH Pilot state for the native VTE context menu.
+
+        Do not call ``set_context_menu(None)`` here.  VTE 0.76's GTK4
+        implementation dereferences the replacement menu while disconnecting
+        handlers from an existing menu, so passing NULL emits GLib criticals.
+        VTE owns the configured menu reference and releases it when the
+        terminal is replaced or disposed.
+        """
+        self._native_context_callback = None
 
     def disconnect(self, handler_id: Any) -> None:
         try:
@@ -503,7 +901,28 @@ class VTETerminalBackend:
     def feed(self, data: bytes) -> None:
         self.vte.feed(data)
 
+    def get_size(self) -> tuple:
+        try:
+            rows = int(self.vte.get_row_count() or 24)
+            cols = int(self.vte.get_column_count() or 80)
+        except Exception:
+            rows, cols = 24, 80
+        return (max(1, rows), max(1, cols))
+
+    def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
+        return self.vte.connect("commit", callback)
+
+    def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        return self.vte.connect("char-size-changed", callback)
+
+    def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        return self.vte.connect("contents-changed", callback)
+
     def feed_child(self, data: bytes) -> None:
+        # Deprecated alias — prefer feed_child_data.
+        self.feed_child_data(data)
+
+    def feed_child_data(self, data: bytes) -> None:
         try:
             self.vte.feed_child(data)
         except Exception:
@@ -558,7 +977,15 @@ class VTETerminalBackend:
         pattern = term if regex else _re.escape(term)
         if not case_sensitive and not pattern.startswith("(?i)"):
             pattern = "(?i)" + pattern
-        self.vte.search_set_regex(Vte.Regex.new_for_search(pattern, -1, 0), 0)
+        # VTE's regex wrapper expects PCRE2 compile flags here.  In particular,
+        # search_set_regex() checks for PCRE2_MULTILINE (0x400); GLib's
+        # RegexCompileFlags.MULTILINE value (0x2) is not interchangeable.
+        self.vte.search_set_regex(
+            Vte.Regex.new_for_search(
+                pattern, -1, 0x00000400
+            ),
+            0,
+        )
         if hasattr(self.vte, "search_set_wrap_around"):
             self.vte.search_set_wrap_around(True)
 
@@ -569,14 +996,26 @@ class VTETerminalBackend:
         return self.vte.search_find_previous()
 
     def clear_search_decorations(self) -> None:
-        # VTE highlight colors are restored by TerminalWidget on overlay hide.
-        return None
+        self.set_search_highlight(False)
+
+    def set_search_highlight(self, active: bool) -> None:
+        try:
+            if active:
+                background, foreground = Gdk.RGBA(), Gdk.RGBA()
+                background.parse("#F5A623")
+                foreground.parse("#000000")
+            else:
+                background = self._selection_background
+                foreground = self._selection_foreground
+            if background is not None and hasattr(self.vte, "set_color_highlight"):
+                self.vte.set_color_highlight(background)
+            if foreground is not None and hasattr(self.vte, "set_color_highlight_foreground"):
+                self.vte.set_color_highlight_foreground(foreground)
+        except Exception:
+            logger.debug("Could not update VTE search highlight", exc_info=True)
 
     def get_child_pid(self) -> Optional[int]:
-        try:
-            return self.vte.get_current_process_id()
-        except Exception:
-            return None
+        return getattr(self.owner, "process_pid", None)
 
     def get_child_pgid(self) -> Optional[int]:
         pid = self.get_child_pid()
@@ -589,11 +1028,31 @@ class VTETerminalBackend:
 
     def supports_feature(self, feature: str) -> bool:
         supported = {
-            "search",
-            "font-scaling",
+            "terminal_search",
+            "dynamic_font",
             "clipboard",
-            "termprops",
+            "local_process",
+            "content_extraction",
+            "pty_access",
+            "daemon_input",
+            "daemon_resize",
+            "save_output",
+            # Compatibility spellings.
+            "search", "font-scaling",
         }
+        if feature == "hyperlinks":
+            return bool(
+                hasattr(self.vte, "add_controller")
+                and (hasattr(self.vte, "check_hyperlink_at")
+                     or hasattr(self.vte, "check_match_at")
+                     or hasattr(self.vte, "match_check"))
+            )
+        if feature == "native_context_menu":
+            return bool(hasattr(self.vte, "set_context_menu")
+                        and hasattr(Vte, "EventContext"))
+        if feature == "termprops":
+            return bool(hasattr(Vte, "PropertyId")
+                        and hasattr(self.vte, "get_termprop_string_by_id"))
         return feature in supported
 
     def get_pty(self) -> Optional[Any]:
@@ -710,6 +1169,38 @@ class PyXtermTerminalBackend:
             return
         self.widget.set_hexpand(True)
         self.widget.set_vexpand(True)
+
+    def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
+        """PyXterm presentation is configured by theme/font JS updates."""
+        return None
+
+    def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        """PyXtermBridgeBackend uses output hooks instead of a widget signal."""
+        return None
+
+    def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
+        """xterm.js handles links in its WebLinks addon."""
+        return None
+
+    def hyperlink_at(self, x: float, y: float) -> Optional[str]:
+        return None
+
+    def plain_text_link_at(self, x: float, y: float) -> Optional[str]:
+        """xterm.js handles links in its WebLinks addon."""
+        return None
+
+    def set_pointer_over_link(self, over_link: bool) -> None:
+        return None
+
+    def save_contents(self, stream: Any) -> None:
+        raise TerminalBackendCapabilityError("PyXterm does not support saving retained output")
+
+    def get_supported_encodings(self) -> list[str]:
+        return []
+
+    def set_encoding(self, encoding: str) -> None:
+        """PyXterm encoding is applied to the PTY command when it is spawned."""
+        return None
 
     def destroy(self) -> None:
         # Embedded backend: nothing server-side to tear down. Subclasses
@@ -1214,6 +1705,10 @@ class PyXtermTerminalBackend:
         return
 
     def feed_child(self, data: bytes) -> None:
+        # Deprecated alias — prefer feed_child_data.
+        self.feed_child_data(data)
+
+    def feed_child_data(self, data: bytes) -> None:
         """Feed raw bytes to the child process input over the pyxtermjs WebSocket."""
         if not self.available:
             return
@@ -1317,6 +1812,11 @@ class PyXtermTerminalBackend:
             "}})();"
         )
 
+    def set_search_highlight(self, active: bool) -> None:
+        """xterm.js search decoration colors are configured by the addon theme."""
+        if not active:
+            self.clear_search_decorations()
+
     def _search_options_dict(self, *, forward: bool = True) -> dict:
         opts = {
             "caseSensitive": bool(self._current_search_case_sensitive),
@@ -1365,7 +1865,10 @@ class PyXtermTerminalBackend:
             return None
 
     def supports_feature(self, feature: str) -> bool:
-        return False
+        return feature in {
+            "search", "font-scaling", "terminal_search", "dynamic_font",
+            "clipboard", "content_extraction", "daemon_input", "daemon_resize",
+        }
 
     def get_pty(self) -> Optional[Any]:
         return None
@@ -1416,6 +1919,11 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         self._fc_pending = 0
         self._fc_paused = False
         self._fc_safety_id = None
+        self._commit_cb: Optional[Callable[..., None]] = None
+        self._size_changed_cb: Optional[Callable[..., None]] = None
+        # Daemon frames have arbitrary boundaries.  Keep decoder state across
+        # feed() calls so a split UTF-8 code point is never replaced.
+        self._daemon_decoder = codecs.getincrementaldecoder("utf-8")("replace")
         super().__init__(owner)
         # WebKit2 (GTK3) lacks the UCM script-message bridge this backend needs.
         if getattr(self, "WebKit", None) is None:
@@ -1564,13 +2072,29 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 except Exception:  # noqa: BLE001
                     logger.debug("handle_search_results raised", exc_info=True)
         elif kind == "input":
+            data = payload.get("data", "")
             if self._bridge is not None:
-                self._bridge.write(payload.get("data", ""))
-            self._feed_autocomplete(payload.get("data", ""))
+                self._bridge.write(data)
+            elif self._commit_cb is not None:
+                # Daemon (or other no-local-PTY) mode: surface keystrokes via the
+                # same commit callback VTE uses, so TerminalWidget stays backend-agnostic.
+                try:
+                    text = data if isinstance(data, str) else data.decode("utf-8", "replace")
+                    self._commit_cb(self.widget, text, len(text))
+                except Exception:  # noqa: BLE001
+                    logger.debug("commit callback raised", exc_info=True)
+            self._feed_autocomplete(data if isinstance(data, str) else "")
         elif kind == "resize":
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
             if self._bridge is not None:
                 self._bridge.resize(*self._last_size)
+            elif self._size_changed_cb is not None:
+                try:
+                    # VTE passes char pixel size; we only need the signal — callers
+                    # read rows/cols via get_size().
+                    self._size_changed_cb(self.widget, 0, 0)
+                except Exception:  # noqa: BLE001
+                    logger.debug("size-changed callback raised", exc_info=True)
         elif kind == "title":
             # xterm.js OSC 0/2 title change — parity with VTE's window title +
             # termprops-based CONNECTING→CONNECTED promotion.
@@ -1615,7 +2139,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if self._autocompleter is None:
             from .autocomplete import (
                 Autocompleter, CommandBlockProvider, RemoteHistoryProvider,
-                SessionProvider, ShellHistoryProvider, fetch_remote_history,
+                SessionProvider, ShellHistoryProvider,
             )
             root = store = None
             try:
@@ -1632,7 +2156,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 is_ssh = conn is not None and not self.owner._is_local_terminal()
             except Exception:  # noqa: BLE001
                 is_ssh = False
-            # Remote history is opt-in: it opens a second SSH connection to the host.
+            # Remote history is opt-in and uses the existing daemon command operation.
             remote_on = False
             try:
                 remote_on = bool(self.owner.config.get_setting(
@@ -1643,10 +2167,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 key = str(getattr(conn, "nickname", "") or getattr(conn, "hostname", "")
                           or getattr(conn, "host", ""))
                 if key:
-                    cm = getattr(root, "connection_manager", None)
-                    config = getattr(self.owner, "config", None)
                     providers.insert(1, RemoteHistoryProvider(
-                        key, lambda: fetch_remote_history(conn, cm, config)))
+                        key,
+                        lambda: _fetch_remote_history_via_daemon(root, conn),
+                    ))
             self._autocompleter = Autocompleter(providers, session=session)
         return self._autocompleter
 
@@ -1702,8 +2226,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         # it. Output produced before the page is ready is buffered and flushed on
         # the "ready" message, so the prompt appears the instant the terminal paints.
         self._do_spawn()
-        # Warm the autocomplete providers (remote history is an SSH round-trip)
-        # so suggestions exist by the first keystroke, not one line later.
+        # Warm the autocomplete providers (remote history is a daemon command
+        # operation) so suggestions exist by the first keystroke, not one line later.
         try:
             config = getattr(self.owner, "config", None)
             if config is not None and config.get_setting("terminal.autocomplete", True):
@@ -1870,6 +2394,40 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             return self._recent_output[-max_chars:]
         return self._recent_output
 
+    def feed(self, data: bytes) -> None:
+        """Paint display-only bytes (daemon PTY output — no local child).
+
+        Local shells use ``_on_pty_output`` from the in-process bridge; daemon
+        SSH delivers the same stream via ``TerminalWidget._on_daemon_output`` →
+        here. Reuse the preready / write path so the prompt is not dropped when
+        ``vte`` is None.
+        """
+        if not data:
+            return
+        if isinstance(data, bytes):
+            decoder = getattr(self, "_daemon_decoder", None)
+            if decoder is None:  # also supports lightweight backend test doubles
+                import codecs
+                decoder = codecs.getincrementaldecoder("utf-8")("replace")
+                self._daemon_decoder = decoder
+            text = decoder.decode(data, final=False)
+        else:
+            text = str(data)
+        if text:
+            self._on_pty_output(text)
+
+    def get_size(self) -> tuple:
+        rows, cols = self._last_size
+        return (max(1, int(rows)), max(1, int(cols)))
+
+    def connect_commit(self, callback: Callable[..., None]) -> Optional[Any]:
+        self._commit_cb = callback
+        return "pyxterm_bridge_commit"
+
+    def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
+        self._size_changed_cb = callback
+        return "pyxterm_bridge_size_changed"
+
     # ---- PTY-backed capabilities (real ssh child, unlike the server path) -----
 
     def get_pty(self) -> Optional[Any]:
@@ -1879,6 +2437,10 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         return self._real_child_pid
 
     def feed_child(self, data: bytes) -> None:
+        # Deprecated alias — prefer feed_child_data.
+        self.feed_child_data(data)
+
+    def feed_child_data(self, data: bytes) -> None:
         # Direct to the PTY (keystrokes/broadcast) — no JS round-trip.
         if self._bridge is not None:
             self._bridge.write(data)
@@ -1905,6 +2467,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if handler_id == "pyxterm_bridge_child_exited":
             self._child_exited_cb = None
             return
+        if handler_id == "pyxterm_bridge_commit":
+            self._commit_cb = None
+            return
+        if handler_id == "pyxterm_bridge_size_changed":
+            self._size_changed_cb = None
+            return
         super().disconnect(handler_id)
 
     def destroy(self) -> None:
@@ -1928,6 +2496,8 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             super().destroy()
 
     def supports_feature(self, feature: str) -> bool:
-        return feature in ("pty",)
-
-
+        return feature in {
+            "pty", "pty_access", "local_process", "terminal_search",
+            "dynamic_font", "clipboard", "content_extraction", "daemon_input",
+            "daemon_resize", "search", "font-scaling",
+        }

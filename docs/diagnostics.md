@@ -9,9 +9,17 @@ sshPilot writes rotating logs under the state directory
 | File | Contents |
 | --- | --- |
 | `sshpilot.log` | All messages (rotating, 10 MB × 5) |
-| `app.log` | Application messages |
-| `ssh.log` | SSH / connection / terminal messages |
+| `app.log` | Frontend application subset |
+| `ssh.log` | Frontend SSH / connection / terminal subset |
+| `daemon.log` | Daemon process messages; never shared for rotation with frontend files |
+| `sshpilot-askpass.log` | GTK-free helper/broker trace, sanitized before append |
 | `crash.log` | Fatal-signal tracebacks, captured automatically. The previous run's crash is kept as `crash.log.previous` and offered on next launch and via **Help ▸ Report a Problem**. |
+
+The askpass trace uses synchronized append semantics because the helper and
+daemon broker can write it concurrently. It does not use Python's ordinary
+rotating handler; safe bounded rotation for this special multi-process file is
+remaining retention debt. Redaction is applied before every append and before
+any forwarding or export.
 
 ## From the app
 
@@ -20,9 +28,18 @@ up in **Help ▸ View Logs** (filter by *Warning*/*Error*, or pick the **Crash**
 read the last crash report). From there you can **Copy** a bug-report bundle (logs + crash
 report) or **Export Diagnostics…**.
 
-**Help ▸ Export Diagnostics…** saves a single ZIP (logs + system info + a *redacted*
-`config.json`) that you can attach to a bug report — secrets are stripped and your saved
-connections / SSH config are not included.
+**Help ▸ Export Diagnostics…** saves a single ZIP (sanitized log text + system
+info + a *redacted* `config.json`) that you can attach to a bug report. The
+bundle includes frontend, daemon, askpass, and crash logs when present, while
+saved connections, SSH config, known_hosts, terminal buffers, and key material
+are excluded. Local raw logs may still contain hostnames, usernames, and paths;
+review them before sharing.
+
+The frontend master log is `sshpilot.log`; it is not a chronological merge of
+the independent frontend and daemon processes. In explicit `--verbose` mode,
+new daemon records are also forwarded into the frontend console/master stream
+using a `daemon.forwarded.*` logger namespace, while the Log Viewer continues
+to read `daemon.log` directly.
 
 ## Command-line flags
 

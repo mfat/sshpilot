@@ -1,7 +1,25 @@
 """Bitwarden CLI setup: detect/install ``bw``, sign in, and unlock.
 
-Downloads the official native CLI binary (see bitwarden.com/help/cli), then runs
-``bw config server``, GUI ``bw login``, and ``bw unlock --passwordenv BW_PASSWORD``.
+All lifecycle operations (status, server configuration, login, unlock, sync,
+lock, logout) are daemon-owned and are driven exclusively through the
+daemon-backed :class:`SecretBackendsController`. This module never calls
+``get_secret_manager()``, never obtains a Bitwarden backend, never invokes
+``bw`` for lifecycle work and never reads or writes ``secrets.*`` configuration
+directly.
+
+What stays frontend-owned (deliberately narrow presentation):
+
+- the optional Bitwarden CLI **installation/download** flow
+  (``detect_install_plan`` / ``run_install`` / ``download_and_install_bw_binary``
+  and the associated dialogs), which runs in this process by design;
+- the GTK dialogs (progress spinner, message dialogs, the sign-in wizard pages,
+  the server picker, the ready/locked/signed-out notices).
+
+Secrets never travel through the wizard: master passwords, two-step codes, API
+client secrets and auth-challenge client secrets are collected by the daemon
+through protected interactions and presented app-wide by the secrets interaction
+presenter. The wizard only collects non-secret inputs (method, email, 2FA
+method, API client id, SSO organization identifier).
 """
 
 from __future__ import annotations
@@ -55,7 +73,7 @@ class InstallPlan:
 
 @dataclass
 class BitwardenStatus:
-    """Snapshot of Bitwarden CLI readiness."""
+    """Snapshot of Bitwarden CLI readiness (presentation only)."""
 
     cli_installed: bool = False
     needs_login: bool = True
@@ -280,11 +298,36 @@ def invalidate_bitwarden_status_cache() -> None:
     _bw_status_cache = None
 
 
-def probe_bitwarden_status(bw=None, *, force_refresh: bool = False) -> BitwardenStatus:
-    """Check CLI presence, sign-in, and unlock state (may spawn ``bw login --check``).
+def _resolve_controller(window):
+    """The daemon-backed secrets controller reachable from ``window``, or ``None``.
 
-    Results are cached briefly for UI refresh paths (Preferences). When the vault
-    is already unlocked in-process, no login probe is spawned.
+    Prefers the window's own ``secrets_controller``, then unwraps dialogs/owned
+    windows, and finally consults the widget root. Returns ``None`` when no daemon
+    controller is reachable — GTK then owns nothing and must not fall back to
+    ``secret_storage``.
+    """
+    controller = getattr(window, "secrets_controller", None)
+    if controller is not None:
+        return controller
+    owner = getattr(window, "parent_window", None)
+    if owner is not None:
+        controller = getattr(owner, "secrets_controller", None)
+        if controller is not None:
+            return controller
+    try:
+        root = window.get_root()
+    except Exception:
+        return None
+    return getattr(root, "secrets_controller", None)
+
+
+def probe_bitwarden_status(controller=None, *, force_refresh: bool = False) -> BitwardenStatus:
+    """Check CLI presence locally and query the daemon for sign-in/unlock state.
+
+    Results are cached briefly for UI refresh paths (Preferences). The daemon
+    owns all backend state: this only adapts the daemon's ``BitwardenStatus``
+    (needs_login / unlocked) into the presentation dataclass, combining it with
+    the local CLI-presence check used by the install presentation.
     """
     global _bw_status_cache
     now = time.monotonic()
@@ -298,24 +341,19 @@ def probe_bitwarden_status(bw=None, *, force_refresh: bool = False) -> Bitwarden
     installed = is_bw_installed(force_refresh=force_refresh)
     if not installed:
         status = BitwardenStatus()
+    elif controller is None:
+        status = BitwardenStatus(cli_installed=True, needs_login=True, unlocked=False)
     else:
-        if bw is None:
-            bw = _bitwarden_backend()
-        if bw is None:
-            status = BitwardenStatus(cli_installed=True, needs_login=True, unlocked=False)
-        elif _safe(lambda: bw.is_unlocked(), default=False):
-            status = BitwardenStatus(cli_installed=True, needs_login=False, unlocked=True)
-        else:
-            def _needs_login():
-                if force_refresh:
-                    return bw.needs_login(force_refresh=True)
-                return bw.needs_login()
-
+        try:
+            api_status = controller.bitwarden_status(force_refresh=force_refresh)
             status = BitwardenStatus(
                 cli_installed=True,
-                needs_login=_safe(_needs_login, default=True),
-                unlocked=False,
+                needs_login=bool(getattr(api_status, "needs_login", True)),
+                unlocked=bool(getattr(api_status, "unlocked", False)),
             )
+        except Exception:
+            logger.debug("Bitwarden daemon status probe failed", exc_info=True)
+            status = BitwardenStatus(cli_installed=True, needs_login=True, unlocked=False)
     _bw_status_cache = (status, now)
     return status
 
@@ -396,23 +434,6 @@ def _message_dialog(
     for rid, label in responses:
         dlg.add_response(rid, label)
     return dlg
-
-
-def _bitwarden_backend():
-    from .secret_storage import get_secret_manager
-
-    try:
-        return get_secret_manager().get_backend("bitwarden")
-    except Exception:
-        logger.debug("Could not resolve the bitwarden backend", exc_info=True)
-        return None
-
-
-def _safe(fn, default=False):
-    try:
-        return bool(fn())
-    except Exception:
-        return default
 
 
 def _terminal_host_candidates(window):
@@ -659,21 +680,9 @@ def _offer_install(window, plan: InstallPlan, on_done: Callable[[bool], None]):
     dlg.present()
 
 
-def _configure_server(bw, server_url: str) -> bool:
-    url = (server_url or "").strip().rstrip("/")
-    if not url:
-        return True
-    try:
-        result = bw._run(["config", "server", url])
-        return result.returncode == 0
-    except Exception as exc:
-        logger.debug("bw config server failed: %s", exc)
-        return False
-
-
-def _server_preset_from_config() -> int:
+def _server_preset_from_config(controller) -> int:
     """0 = US cloud, 1 = EU cloud, 2 = self-hosted/custom."""
-    url = _server_url_from_config()
+    url = _server_url_from_controller(controller)
     if not url:
         return 0
     if url.rstrip("/") == BW_EU_SERVER:
@@ -681,13 +690,15 @@ def _server_preset_from_config() -> int:
     return 2
 
 
-def _server_url_from_config() -> str:
+def _server_url_from_controller(controller) -> str:
+    """The daemon-staged Bitwarden server URL (read-only presentation)."""
     try:
-        from .config import Config
-
-        return str(Config().get_setting("secrets.bitwarden.server", "") or "").strip()
+        configuration = controller.configuration()
+        if configuration is not None:
+            return str(getattr(configuration, "bitwarden_server", "") or "").strip()
     except Exception:
-        return ""
+        pass
+    return ""
 
 
 def _format_bitwarden_login_error(detail: str) -> str:
@@ -710,8 +721,12 @@ def _format_bitwarden_login_error(detail: str) -> str:
     return text or _("Sign-in failed.")
 
 
-def _prompt_server_url(window, on_chosen: Callable[[str], None]):
-    """Bitwarden server selection before sign-in (US / EU / self-hosted)."""
+def _prompt_server_url(window, controller, on_chosen: Callable[[str], None]):
+    """Bitwarden server selection before sign-in (US / EU / self-hosted).
+
+    The chosen URL is applied by the daemon (``bitwarden_configure_server``);
+    this dialog only reports the selection back.
+    """
     parent = _modal_parent(window)
     dlg = Adw.MessageDialog(
         transient_for=parent_window(parent), modal=True,
@@ -729,11 +744,11 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
     model.append(_("Bitwarden Cloud (EU)"))
     model.append(_("Self-hosted / Vaultwarden"))
     dropdown = Gtk.DropDown(model=model)
-    dropdown.set_selected(_server_preset_from_config())
+    dropdown.set_selected(_server_preset_from_config(controller))
     entry = Gtk.Entry()
     entry.set_placeholder_text("https://vault.example.com")
-    saved = _server_url_from_config()
-    preset = _server_preset_from_config()
+    saved = _server_url_from_controller(controller)
+    preset = _server_preset_from_config(controller)
     entry.set_text(saved if preset == 2 else "")
     entry.set_visible(preset == 2)
     entry.set_hexpand(True)
@@ -763,20 +778,6 @@ def _prompt_server_url(window, on_chosen: Callable[[str], None]):
             url = (entry.get_text() or "").strip()
         else:
             url = ""
-        if url:
-            try:
-                from .config import Config
-
-                Config().set_setting("secrets.bitwarden.server", url)
-            except Exception:
-                pass
-        elif selected == 0:
-            try:
-                from .config import Config
-
-                Config().set_setting("secrets.bitwarden.server", "")
-            except Exception:
-                pass
         on_chosen(url)
 
     dlg.connect("response", _respond)
@@ -789,9 +790,6 @@ def _modal_parent(window):
     Prefer the initiating window when it is visible, so dialogs stack above it;
     ``resolve_app_modal_parent`` always picks MainWindow. Fall back to the app
     modal parent only when the initiator is missing or not visible.
-
-    Settings is an ``Adw.NavigationPage`` inside MainWindow; ``parent_window()``
-    unwraps it to MainWindow, which is the correct modal owner.
     """
     try:
         from .window import present_for_modal_dialog, resolve_app_modal_parent
@@ -851,9 +849,7 @@ def _signin_page(
     Mirrors a single ``bw login`` CLI prompt. ``rows`` is ``[(label, widget), …]``.
     ``on_next(close_page)`` runs on Continue and owns advancing — it must call
     ``close_page()`` before showing a spinner or the next page. ``on_back`` and
-    ``on_cancel`` take no arguments. Every path closes the dialog explicitly, so
-    this behaves correctly whether or not ``Adw.MessageDialog`` auto-closes on
-    response.
+    ``on_cancel`` take no arguments. Every path closes the dialog explicitly.
     """
     dlg = Adw.MessageDialog(
         transient_for=parent_window(parent), modal=True, heading=heading, body=body,
@@ -909,12 +905,13 @@ def _signin_page(
             pass
 
 
-def _login_wizard(window, bw, on_done: Callable[[bool], None]):
-    """Sequential graphical sign-in that mirrors the ``bw login`` CLI prompts.
+def _login_wizard(window, controller, on_done: Callable[[bool], None]):
+    """Sequential graphical sign-in driven through the daemon controller.
 
-    One field per page, in CLI order: method → (email → master password →
-    two-step method + code) / (client id → client secret) / (SSO). Back navigates
-    to the previous page; each ``bw login`` attempt runs off the GTK main thread.
+    Only non-secret inputs are collected here (method, email, 2FA method, API
+    client id, SSO organization identifier); the daemon collects the master
+    password, two-step codes, API client secrets and auth-challenge client
+    secrets through protected interactions presented app-wide.
     """
     parent = _modal_parent(window)
     data = {}
@@ -924,7 +921,7 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
 
     def _finish_ok():
         invalidate_bitwarden_status_cache()
-        _unlock_then_ready(parent, bw, on_done)
+        _ensure_unlocked_then_ready(parent, controller, on_done)
 
     def _spinner(message=None):
         return progress_dialog(parent, _("Bitwarden"), message or _("Signing in…"))
@@ -970,7 +967,7 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
             if not email:
                 _email_page(error=_("Enter your email address."))
                 return
-            _password_page()
+            _attempt_login()
 
         _signin_page(
             parent,
@@ -980,48 +977,13 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
             on_next=_next, on_back=_method_page, on_cancel=_cancel, error=error,
         )
 
-    def _password_page(error=""):
-        password = Gtk.PasswordEntry(show_peek_icon=True)
-        password.set_text(data.get("password", ""))
-        challenge = Gtk.PasswordEntry(show_peek_icon=True)
-        challenge.set_text(data.get("auth_challenge", ""))
-
-        def _remember():
-            data["password"] = password.get_text() or ""
-            data["auth_challenge"] = (challenge.get_text() or "").strip()
-
-        def _back():
-            _remember()
-            _email_page()
-
-        def _next(close_page):
-            _remember()
-            close_page()
-            if not data["password"]:
-                _password_page(error=_("Enter your master password."))
-                return
-            _attempt_login()
-
-        _signin_page(
-            parent,
-            heading=_("Sign in to Bitwarden"),
-            body=_("Enter your master password."),
-            rows=[
-                (_("Master password"), password),
-                (_("API client secret (auth challenge, optional)"), challenge),
-            ],
-            on_next=_next, on_back=_back, on_cancel=_cancel, error=error,
-            next_label=_("Sign in"),
-        )
-
-    def _twofa_page(error="", info=""):
+    def _twofa_method_page(error="", info=""):
         model = Gtk.StringList()
         model.append(_("Authenticator app"))
         model.append(_("Email"))
         model.append(_("YubiKey"))
         dropdown = Gtk.DropDown(model=model)
         dropdown.set_selected(data.get("twofa_idx", 0))
-        code = Gtk.Entry()
 
         def _next(close_page):
             idx = dropdown.get_selected()
@@ -1031,64 +993,46 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
                 if 0 <= idx < len(_BW_TWOFAMETHOD_VALUES)
                 else "0"
             )
-            entered = (code.get_text() or "").strip()
             close_page()
-            # Email 2FA: signing in with no code dispatches the verification email.
-            if method == "1" and not entered:
-                _attempt_login(method, None, email_pending=True)
-                return
-            if not entered:
-                _twofa_page(error=_("Enter your authentication code."))
-                return
-            _attempt_login(method, entered)
+            _attempt_login(twofa_method=method)
 
         _signin_page(
             parent,
             heading=_("Two-step login"),
-            body=info or _("Enter your two-step login code."),
-            rows=[
-                (_("Two-step login method"), dropdown),
-                (_("Authentication code"), code),
-            ],
-            on_next=_next, on_back=_password_page, on_cancel=_cancel, error=error,
-            next_label=_("Sign in"),
+            body=info or _(
+                "Choose your two-step login method. The verification code is "
+                "requested securely by the daemon."
+            ),
+            rows=[(_("Two-step login method"), dropdown)],
+            on_next=_next, on_back=_email_page, on_cancel=_cancel, error=error,
+            next_label=_("Continue"),
         )
 
-    def _attempt_login(twofa_method=None, twofa_code=None, email_pending=False):
+    def _attempt_login(twofa_method=None):
         _set_status, close = _spinner()
 
         def worker():
             try:
-                ok, detail, needs_2fa = bw.login_with_password(
-                    data["email"], data.get("password", ""),
-                    twofa_method=twofa_method, twofa_code=twofa_code,
-                    auth_client_secret=data.get("auth_challenge") or None,
+                api_status = controller.bitwarden_login(
+                    data.get("email", ""), twofa_method=twofa_method,
                 )
+                ok = bool(getattr(api_status, "logged_in", False))
+                detail = str(getattr(api_status, "message", "") or "")
+                needs_2fa = bool(getattr(api_status, "twofa_required", False))
             except Exception as exc:
-                logger.debug("Bitwarden GUI login failed", exc_info=True)
+                logger.debug("Bitwarden daemon login failed", exc_info=True)
                 ok, detail, needs_2fa = False, str(exc), False
-
-            # bw's login-session output is unreliable (especially with 2FA), so a
-            # successful ``bw login`` can still leave the vault locked. Mirror the CLI's
-            # "log in and unlock in one step" using the master password we already have,
-            # instead of falling through to a second, redundant unlock prompt.
-            if ok and data.get("password") and not _safe(bw.is_unlocked):
-                _safe(lambda: bw.unlock(data.get("password", "")))
 
             def done():
                 close()
                 if ok:
                     _finish_ok()
-                elif email_pending:
-                    _twofa_page(info=_(
-                        "Verification code sent to your email. Enter it and sign in again."
-                    ))
-                elif needs_2fa:
-                    _twofa_page()
-                elif twofa_method:
-                    _twofa_page(error=_format_bitwarden_login_error(detail))
+                elif needs_2fa and not twofa_method:
+                    _twofa_method_page()
+                elif needs_2fa and twofa_method:
+                    _twofa_method_page(error=_format_bitwarden_login_error(detail))
                 else:
-                    _password_page(error=_format_bitwarden_login_error(detail))
+                    _email_page(error=_format_bitwarden_login_error(detail))
                 return False
 
             GLib.idle_add(done)
@@ -1107,40 +1051,15 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
             if not client_id:
                 _apikey_id_page(error=_("Enter your API key client ID."))
                 return
-            _apikey_secret_page()
-
-        _signin_page(
-            parent,
-            heading=_("Sign in with API key"),
-            body=_("Enter your personal API key client ID."),
-            rows=[(_("Client ID"), entry)],
-            on_next=_next, on_back=_method_page, on_cancel=_cancel, error=error,
-        )
-
-    def _apikey_secret_page(error=""):
-        entry = Gtk.PasswordEntry(show_peek_icon=True)
-        entry.set_text(data.get("client_secret", ""))
-
-        def _back():
-            data["client_secret"] = entry.get_text() or ""
-            _apikey_id_page()
-
-        def _next(close_page):
-            secret = (entry.get_text() or "").strip()
-            data["client_secret"] = secret
-            close_page()
-            if not secret:
-                _apikey_secret_page(error=_("Enter your API key client secret."))
-                return
             _attempt_apikey()
 
         _signin_page(
             parent,
             heading=_("Sign in with API key"),
-            body=_("Enter your personal API key client secret."),
-            rows=[(_("Client secret"), entry)],
-            on_next=_next, on_back=_back, on_cancel=_cancel, error=error,
-            next_label=_("Sign in"),
+            body=_("Enter your personal API key client ID. The client secret is "
+                   "requested securely by the daemon."),
+            rows=[(_("Client ID"), entry)],
+            on_next=_next, on_back=_method_page, on_cancel=_cancel, error=error,
         )
 
     def _attempt_apikey():
@@ -1148,9 +1067,9 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
 
         def worker():
             try:
-                ok, detail = bw.login_with_api_key(
-                    data.get("client_id", ""), data.get("client_secret", ""),
-                )
+                api_status = controller.bitwarden_api_key_login(data.get("client_id", ""))
+                ok = bool(getattr(api_status, "logged_in", False))
+                detail = str(getattr(api_status, "message", "") or "")
             except Exception as exc:
                 logger.debug("Bitwarden API key login failed", exc_info=True)
                 ok, detail = False, str(exc)
@@ -1160,7 +1079,7 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
                 if ok:
                     _finish_ok()
                 else:
-                    _apikey_secret_page(error=_format_bitwarden_login_error(detail))
+                    _apikey_id_page(error=_format_bitwarden_login_error(detail))
                 return False
 
             GLib.idle_add(done)
@@ -1192,14 +1111,17 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
 
         def worker():
             try:
-                ok, detail = bw.login_with_sso(data.get("sso_id") or None)
+                api_status = controller.bitwarden_sso_login(data.get("sso_id") or None)
+                ok = bool(getattr(api_status, "logged_in", False))
+                detail = str(getattr(api_status, "message", "") or "")
                 if ok:
                     for _ in range(150):
-                        if not _safe(
-                            lambda: bw.needs_login(force_refresh=True),
-                            default=True,
-                        ):
-                            break
+                        try:
+                            probe = controller.bitwarden_status(force_refresh=True)
+                            if not getattr(probe, "needs_login", True):
+                                break
+                        except Exception:
+                            pass
                         time.sleep(2)
                     else:
                         ok = False
@@ -1226,52 +1148,80 @@ def _login_wizard(window, bw, on_done: Callable[[bool], None]):
     _method_page()
 
 
-def _prompt_gui_login(window, bw, on_done: Callable[[bool], None]):
-    """Configure the server if needed, then run the sequential sign-in wizard."""
+def _prompt_gui_login(window, controller, on_done: Callable[[bool], None]):
+    """Configure the server if needed (daemon-side), then run the sign-in wizard."""
     def _after_server(url: str):
         if url is None:
             on_done(False)  # user cancelled the server prompt
             return
         if not url:
-            _login_wizard(window, bw, on_done)
+            _login_wizard(window, controller, on_done)
             return
-        # ``bw config server`` spawns a Node process — run it off the GTK main thread.
         _set_status, close = progress_dialog(
             window, _("Bitwarden"), _("Configuring server…"),
         )
 
         def worker():
-            ok = _configure_server(bw, url)
-            GLib.idle_add(lambda: (_after_configure(ok), False)[1])
+            ok = False
+            detail = ""
+            try:
+                api_status = controller.bitwarden_configure_server(url)
+                detail = str(getattr(api_status, "message", "") or "")
+                ok = not bool(detail)
+            except Exception as exc:
+                logger.debug("Bitwarden server configuration failed", exc_info=True)
+                detail = str(exc)
+            GLib.idle_add(lambda: (_after_configure(ok, detail), False)[1])
 
-        def _after_configure(ok):
+        def _after_configure(ok, detail=""):
             close()
             if not ok:
                 _show_error(
                     window,
                     _("Server configuration failed"),
-                    _("Could not set the Bitwarden server URL. Check the address and try again."),
+                    detail or _(
+                        "Could not set the Bitwarden server URL. Check the address and try again."
+                    ),
                     on_closed=lambda: on_done(False),
                 )
                 return
-            _login_wizard(window, bw, on_done)
+            _login_wizard(window, controller, on_done)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    _prompt_server_url(window, _after_server)
+    _prompt_server_url(window, controller, _after_server)
 
 
-def _unlock_then_ready(window, bw, on_ready: Callable[[bool], None]):
-    if _safe(bw.is_unlocked):
-        on_ready(True)
+def _ensure_unlocked_then_ready(parent, controller, on_ready: Callable[[bool], None]):
+    """Ensure the vault is unlocked after a successful sign-in, then finish.
+
+    The daemon's ``bitwarden_login`` mirrors the CLI's "log in and unlock in one
+    step"; when the vault is still locked (rare), unlock through the daemon.
+    """
+    def worker():
+        unlocked = False
+        try:
+            api_status = controller.bitwarden_status(force_refresh=True)
+            unlocked = bool(getattr(api_status, "unlocked", False))
+        except Exception:
+            unlocked = False
+        if not unlocked:
+            try:
+                api_status = controller.bitwarden_unlock()
+                unlocked = bool(getattr(api_status, "unlocked", False))
+            except Exception:
+                logger.debug("Bitwarden unlock after login failed", exc_info=True)
+                unlocked = False
+        GLib.idle_add(lambda: (on_ready(bool(unlocked)), False)[1])
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _unlock_then_ready(window, controller, on_ready: Callable[[bool], None]):
+    if controller is None:
+        on_ready(False)
         return
-    from .secret_unlock_dialog import prompt_unlock
-
-    # Same stacking rules as the rest of Bitwarden setup: prefer the initiating
-    # window (Preferences) so the unlock prompt is not buried behind Settings.
-    prompt_unlock(
-        _modal_parent(window), backend=bw, on_done=lambda ok: on_ready(bool(ok)),
-    )
+    _ensure_unlocked_then_ready(_modal_parent(window), controller, on_ready)
 
 
 def _show_ready_dialog(window, on_done: Callable[[bool], None]):
@@ -1287,7 +1237,7 @@ def _show_ready_dialog(window, on_done: Callable[[bool], None]):
     dlg.present()
 
 
-def _show_locked_dialog(window, bw, on_done: Callable[[bool], None]):
+def _show_locked_dialog(window, controller, on_done: Callable[[bool], None]):
     dlg = _message_dialog(
         window,
         _("Vault locked"),
@@ -1299,7 +1249,7 @@ def _show_locked_dialog(window, bw, on_done: Callable[[bool], None]):
 
     def _respond(_d, resp):
         if resp == "unlock":
-            _unlock_then_ready(window, bw, on_done)
+            _unlock_then_ready(window, controller, on_done)
         else:
             on_done(False)
 
@@ -1331,12 +1281,16 @@ def ensure_bitwarden_ready(
     *,
     install_if_missing: bool = True,
 ):
-    """Ensure ``bw`` is installed, signed in, and unlocked; then ``on_ready(bool)``."""
-    bw = _bitwarden_backend()
-    if bw is None:
+    """Ensure ``bw`` is installed, signed in, and unlocked; then ``on_ready(bool)``.
+
+    All lifecycle work is routed through the daemon-backed secrets controller;
+    only CLI-presence detection and the install dialogs run in this process.
+    """
+    controller = _resolve_controller(window)
+    if controller is None:
         _message_dialog(
             window, _("Bitwarden unavailable"),
-            _("Could not initialize the Bitwarden backend."),
+            _("The secret-backend daemon service is not available."),
         ).present()
         on_ready(False)
         return
@@ -1352,7 +1306,7 @@ def ensure_bitwarden_ready(
     )
 
     def probe():
-        status = probe_bitwarden_status(bw)
+        status = probe_bitwarden_status(controller)
         GLib.idle_add(lambda: (_after_probe(status), False)[1])
 
     def _after_probe(status):
@@ -1377,13 +1331,14 @@ def ensure_bitwarden_ready(
         if not installed:
             on_ready(False)
             return
-        _continue_signin(_safe(lambda: bw.needs_login(), default=True))
+        status = probe_bitwarden_status(controller, force_refresh=True)
+        _continue_signin(status.needs_login)
 
     def _continue_signin(needs_login):
         if not needs_login:
-            _unlock_then_ready(window, bw, on_ready)
+            _unlock_then_ready(window, controller, on_ready)
             return
-        _prompt_gui_login(window, bw, on_ready)
+        _prompt_gui_login(window, controller, on_ready)
 
     threading.Thread(target=probe, daemon=True).start()
 
@@ -1400,17 +1355,17 @@ def run_bitwarden_setup(
     is already fully ready instead of silently succeeding.
     """
     cb = on_done or (lambda _ok: None)
-    if not interactive:
-        ensure_bitwarden_ready(window, cb, install_if_missing=True)
-        return
-
-    bw = _bitwarden_backend()
-    if bw is None:
+    controller = _resolve_controller(window)
+    if controller is None:
         _message_dialog(
             window, _("Bitwarden unavailable"),
-            _("Could not initialize the Bitwarden backend."),
+            _("The secret-backend daemon service is not available."),
         ).present()
         cb(False)
+        return
+
+    if not interactive:
+        ensure_bitwarden_ready(window, cb, install_if_missing=True)
         return
 
     cancelled = {"v": False}
@@ -1424,7 +1379,7 @@ def run_bitwarden_setup(
     )
 
     def worker():
-        status = probe_bitwarden_status(bw)
+        status = probe_bitwarden_status(controller)
         GLib.idle_add(lambda: (_after_check(status), False)[1])
 
     def _confirm(ok):
@@ -1442,7 +1397,7 @@ def run_bitwarden_setup(
             _show_ready_dialog(window, cb)
             return
         if status.cli_installed and not status.needs_login and not status.unlocked:
-            _show_locked_dialog(window, bw, _confirm)
+            _show_locked_dialog(window, controller, _confirm)
             return
         if status.cli_installed and status.needs_login:
             def _cont(ok):

@@ -10,6 +10,7 @@ from gi.repository import Gtk, Adw, Gdk, GLib
 
 from gettext import gettext as _
 
+from .api.errors import SshPilotError
 from .platform_utils import is_macos
 from . import icon_utils
 
@@ -31,6 +32,16 @@ class WelcomePage(Gtk.Overlay):
         _ensure_css()
         self.window = window
         self.connection_manager = window.connection_manager
+        self.client = window.client
+        self.client_bridge = getattr(window, 'client_bridge', None)
+        self._client_selection_pending = bool(
+            getattr(window, '_api_client_selection_pending', False)
+        )
+        self._recent_request = None
+        self._recent_generation = 0
+        self._event_refresh_source = None
+        self._event_refresh_follow_up = False
+        self._closed = False
         self.config = window.config
         self.set_hexpand(True)
         self.set_vexpand(True)
@@ -295,17 +306,125 @@ class WelcomePage(Gtk.Overlay):
         box = getattr(self, '_recent_box', None)
         if box is None:
             return
+        WelcomePage._clear_box(box)
+
+        previous = getattr(self, '_recent_request', None)
+        if previous is not None:
+            previous.cancel()
+            self._recent_request = None
+
+        if getattr(self, '_client_selection_pending', False):
+            WelcomePage._append_recent_message(
+                box,
+                _('Loading recent connections…'),
+            )
+            return
+
+        client = getattr(self, 'client', None)
+        if client is None:
+            WelcomePage._append_recent_message(
+                box,
+                WelcomePage._recent_read_error_message(),
+                warning=True,
+            )
+            return
+
+        bridge = getattr(self, 'client_bridge', None)
+        if bridge is not None:
+            self._recent_generation = getattr(self, '_recent_generation', 0) + 1
+            generation = self._recent_generation
+            WelcomePage._append_recent_message(
+                box,
+                _('Loading recent connections…'),
+            )
+            self._recent_request = bridge.submit(
+                client.list_connections,
+                on_success=lambda connections: self._finish_recent_read(
+                    generation,
+                    connections,
+                ),
+                on_error=lambda error: self._fail_recent_read(generation, error),
+            )
+            return
+
+        # Read presentation data through the frontend-neutral client boundary.
+        # Activation remains on the existing terminal path in this milestone.
+        read_error = False
+        try:
+            connections = client.list_connections()
+        except SshPilotError as error:
+            # Do not render or log the public message/details here. The stable
+            # code is sufficient correlation without backend or connection data.
+            logger.warning(
+                "Welcome connection listing failed with API error code=%s",
+                error.code.value,
+            )
+            connections = []
+            read_error = True
+        WelcomePage._render_recent_connections(self, connections, read_error)
+
+    def _finish_recent_read(self, generation, connections):
+        if (
+            getattr(self, '_closed', False)
+            or generation != getattr(self, '_recent_generation', 0)
+        ):
+            return
+        self._recent_request = None
+        WelcomePage._render_recent_connections(self, connections, False)
+        if getattr(self, '_event_refresh_follow_up', False):
+            self._event_refresh_follow_up = False
+            self.schedule_connection_refresh()
+
+    def _fail_recent_read(self, generation, error):
+        if (
+            getattr(self, '_closed', False)
+            or generation != getattr(self, '_recent_generation', 0)
+        ):
+            return
+        self._recent_request = None
+        self._event_refresh_follow_up = False
+        if isinstance(error, SshPilotError):
+            logger.warning(
+                "Welcome daemon connection listing failed with API error code=%s",
+                error.code.value,
+            )
+        else:
+            logger.error(
+                "Welcome daemon connection listing failed unexpectedly type=%s",
+                type(error).__name__,
+            )
+        WelcomePage._render_recent_connections(self, [], True)
+
+    @staticmethod
+    def _clear_box(box):
         child = box.get_first_child()
         while child:
             nxt = child.get_next_sibling()
             box.remove(child)
             child = nxt
 
-        connections = list(getattr(self.connection_manager, 'connections', []) or [])
+    @staticmethod
+    def _append_recent_message(box, message, *, warning=False):
+        empty = Gtk.Label(label=message)
+        empty.add_css_class('dim-label')
+        if warning:
+            empty.add_css_class('warning')
+        empty.set_wrap(True)
+        empty.set_justify(Gtk.Justification.CENTER)
+        empty.set_halign(Gtk.Align.CENTER)
+        empty.set_hexpand(True)
+        empty.set_margin_top(8)
+        box.append(empty)
+
+    def _render_recent_connections(self, connections, read_error):
+        box = getattr(self, '_recent_box', None)
+        if box is None or getattr(self, '_closed', False):
+            return
+        WelcomePage._clear_box(box)
 
         def _last_used(conn):
             try:
-                return self.config.get_connection_meta(conn.nickname).get('last_used', 0) or 0
+                return self.window.connection_manager.get_metadata(conn.nickname).get('last_used', 0) or 0
             except Exception:
                 return 0
 
@@ -316,23 +435,102 @@ class WelcomePage(Gtk.Overlay):
         ][:4]
 
         if not recent:
-            empty = Gtk.Label(label=self._empty_recent_message(bool(connections)))
-            empty.add_css_class('dim-label')
-            empty.set_wrap(True)
-            empty.set_justify(Gtk.Justification.CENTER)
-            empty.set_halign(Gtk.Align.CENTER)
-            empty.set_hexpand(True)
-            empty.set_margin_top(8)
-            box.append(empty)
+            message = (
+                self._recent_read_error_message()
+                if read_error
+                else self._empty_recent_message(bool(connections))
+            )
+            WelcomePage._append_recent_message(
+                box,
+                message,
+                warning=read_error,
+            )
             return
 
         rows = [
             self._min_row(
-                getattr(conn, 'nickname', ''), self._conn_target(conn),
-                lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
+                conn.nickname, conn.display_target,
+                lambda _b, c=conn: self._connect_connection_summary(c))
             for conn in recent
         ]
         box.append(self._min_section(_('Recent'), rows))
+
+    def set_client(self, client, *, bridge=None):
+        """Install the selected application client and refresh through it."""
+
+        self.client = client
+        self.client_bridge = bridge
+        self._client_selection_pending = False
+        self.refresh_recent()
+
+    def schedule_connection_refresh(self):
+        """Coalesce connection events into bounded asynchronous snapshots."""
+
+        if getattr(self, '_closed', False):
+            return
+        if getattr(self, '_recent_request', None) is not None:
+            self._event_refresh_follow_up = True
+            return
+        if getattr(self, '_event_refresh_source', None) is not None:
+            return
+        self._event_refresh_source = GLib.idle_add(
+            self._run_scheduled_connection_refresh
+        )
+
+    def _run_scheduled_connection_refresh(self):
+        self._event_refresh_source = None
+        if getattr(self, '_closed', False):
+            return False
+        if getattr(self, '_recent_request', None) is not None:
+            self._event_refresh_follow_up = True
+            return False
+        self._populate_recent_box()
+        return False
+
+    def mark_connection_data_unavailable(self):
+        """Stop trusting daemon-backed data after continuity is lost."""
+
+        if getattr(self, '_closed', False):
+            return
+        source = getattr(self, '_event_refresh_source', None)
+        self._event_refresh_source = None
+        if source is not None:
+            try:
+                GLib.source_remove(source)
+            except Exception:
+                pass
+        request = getattr(self, '_recent_request', None)
+        self._recent_request = None
+        if request is not None:
+            request.cancel()
+        self._recent_generation += 1
+        self._event_refresh_follow_up = False
+        WelcomePage._render_recent_connections(self, [], True)
+
+    def close(self):
+        """Suppress late worker delivery after the containing window closes."""
+
+        self._closed = True
+        self._recent_generation += 1
+        source = getattr(self, "_event_refresh_source", None)
+        self._event_refresh_source = None
+        if source is not None:
+            try:
+                GLib.source_remove(source)
+            except Exception:
+                pass
+        self._event_refresh_follow_up = False
+        request = getattr(self, "_recent_request", None)
+        self._recent_request = None
+        if request is not None:
+            request.cancel()
+
+    def _connect_connection_summary(self, summary):
+        """Resolve a clicked DTO only when entering the legacy terminal path."""
+
+        connection = self.connection_manager.find_connection_by_nickname(summary.nickname)
+        if connection is not None:
+            self.window.terminal_manager.connect_to_host(connection)
 
     @staticmethod
     def _empty_recent_message(has_connection_rows: bool) -> str:
@@ -342,6 +540,12 @@ class WelcomePage(Gtk.Overlay):
                 'Double click a host to connect or press + to create a new connection'
             )
         return _('Press + to create a new connection')
+
+    @staticmethod
+    def _recent_read_error_message() -> str:
+        """Safe, non-blocking fallback when the API cannot load connections."""
+
+        return _('Recent connections are temporarily unavailable')
 
     def _populate_pinned_box(self):
         """Fill the Pinned section (rows, styled like Recent) below the list."""
@@ -355,7 +559,15 @@ class WelcomePage(Gtk.Overlay):
             child = nxt
 
         conn_map = {c.nickname: c for c in self.connection_manager.connections}
-        pinned = [conn_map[n] for n in self.config.get_pinned_nicknames() if n in conn_map][:4]
+        pinned = [
+            conn_map[n]
+            for n in (
+                item.connection_id
+                for item in self.window.connection_manager.metadata
+                if item.values.get("pinned")
+            )
+            if n in conn_map
+        ][:4]
         if pinned:
             rows = []
             for conn in pinned:
@@ -526,8 +738,8 @@ class WelcomePage(Gtk.Overlay):
         """Auto-unpin a connection when it is deleted from the inventory."""
         try:
             nickname = getattr(connection, 'nickname', None)
-            if nickname and self.config.is_pinned(nickname):
-                self.config.unpin_connection(nickname)
+            if nickname and self.window.connection_manager.get_metadata(nickname).get("pinned"):
+                self.window.client.update_connection_metadata(nickname, {"pinned": False})
                 self.refresh_pinned()
         except Exception:
             pass

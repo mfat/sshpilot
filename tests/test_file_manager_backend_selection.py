@@ -1,18 +1,26 @@
-"""The file-manager backend factory builds the OpenSSH backend (the only one)."""
+"""The file-manager factory enforces daemon ownership."""
+
+import pytest
 
 from tests._fm_harness import _load_file_manager_module
 
 
-def test_factory_returns_openssh_backend(monkeypatch):
+def test_factory_rejects_missing_daemon_backend(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "core_service")
     _load_file_manager_module(monkeypatch)
     import sshpilot.file_manager as fm
-    from sshpilot.file_manager.openssh_backend import OpenSSHSFTPManager
+    with pytest.raises(RuntimeError, match="daemon SFTP service is required"):
+        fm.create_file_manager_backend("host", "user", 22)
 
-    backend = fm.create_file_manager_backend("host", "user", 22)
-    try:
-        assert isinstance(backend, OpenSSHSFTPManager)
-    finally:
-        backend.close()
+
+def test_remote_clipboard_uses_public_daemon_operation(monkeypatch):
+    module = _load_file_manager_module(monkeypatch)
+    source = module.__file__
+    text = open(source, encoding="utf-8").read()
+    assert "manager.copy_remote(" in text
+    assert "manager._submit(" not in text
+    assert "sftp.listdir_attr" not in text
+    assert "sftp.open(" not in text
 
 
 def test_config_has_no_backend_key():

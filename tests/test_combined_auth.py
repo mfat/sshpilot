@@ -523,124 +523,9 @@ class TestResolverDecision:
 class TestCombinedAuthPreloadHandoff:
     KEY = "/home/u/.ssh/id_ed25519"
 
-    def test_preload_uses_identities_discovered_by_resolver_when_cache_empty(self, monkeypatch):
-        """Fresh non-terminal callers can resolve identities without caching them.
-
-        The combined-auth branch then disables askpass and relies on agent
-        preload, so preload must use the same identity candidate set the resolver
-        used even when ``resolved_identity_files`` starts empty.
-        """
-        from sshpilot import askpass_utils
-        from sshpilot.connection_manager import Connection
-
-        conn = Connection({
-            "host": "combo.example",
-            "hostname": "combo.example",
-            "username": USERNAME,
-            "auth_method": 0,
-        })
-        conn.resolved_identity_files = []
-        monkeypatch.setattr(
-            conn,
-            "collect_identity_file_candidates",
-            lambda: [self.KEY],
-        )
-        monkeypatch.setattr(
-            ssh_connection_builder,
-            "lookup_passphrase",
-            lambda path: PASSPHRASE if path == self.KEY else "",
-        )
-        # The resolver loads the key into the agent to commit to combined auth;
-        # let that succeed so the decision is the combined path.
-        monkeypatch.setattr(
-            ssh_connection_builder, "ensure_key_in_agent",
-            lambda path, *, force=False, lifetime=0: True,
-        )
-
-        auth = resolve_native_auth(conn, _make_cm(PASSWORD))
-        assert auth.use_sshpass is False
-        assert auth.password == PASSWORD
-        assert auth.use_askpass is True
-
-        added = []
-        monkeypatch.setattr(
-            askpass_utils,
-            "lookup_passphrase",
-            lambda path: PASSPHRASE if path == self.KEY else "",
-        )
-        monkeypatch.setattr(
-            askpass_utils,
-            "ensure_key_in_agent",
-            lambda path, *, force=False, lifetime=0: added.append((path, force, lifetime)) or True,
-        )
-
-        conn._preload_keys_into_agent(SimpleNamespace(get_setting=lambda _k, default=None: default))
-
-        assert added == [(self.KEY, True, 0)]
-
-    def test_scp_auto_identity_mode_preloads_resolver_discovered_key(self, monkeypatch):
-        """SCP automatic-key mode must preload config identities before sshpass.
-
-        Specific-key SCP already prepares ``profile.keyfile_expanded``. Automatic
-        mode has no explicit profile keyfile, so it must preload the identities
-        discovered by the shared resolver before taking the combined-auth path.
-        """
-        from sshpilot import scp_window
-
-        monkeypatch.setattr(
-            ssh_connection_builder,
-            "lookup_passphrase",
-            lambda path: PASSPHRASE if path == self.KEY else "",
-        )
-
-        class _Config:
-            def get_ssh_config(self):
-                return {}
-
-            def get_setting(self, _key, default=None):
-                return default
-
-        class _Manager:
-            known_hosts_path = None
-
-            def __init__(self):
-                self.prepare_calls = []
-
-            def get_password(self, *_):
-                return PASSWORD
-
-            def get_key_passphrase(self, path):
-                return PASSPHRASE if path == TestCombinedAuthPreloadHandoff.KEY else None
-
-            def prepare_key_for_connection(self, path):
-                self.prepare_calls.append(path)
-                return True
-
-        manager = _Manager()
-        controller = scp_window.ScpWindowController.__new__(scp_window.ScpWindowController)
-        controller.window = SimpleNamespace(connection_manager=manager, config=_Config())
-        controller._scp_auth = None
-
-        connection = SimpleNamespace(
-            hostname="combo.example",
-            host="combo.example",
-            username=USERNAME,
-            port=22,
-            auth_method=0,
-            keyfile="",
-            key_select_mode=0,
-            resolved_identity_files=[],
-            collect_identity_file_candidates=lambda: [self.KEY],
-        )
-
-        controller._build_scp_argv(
-            connection,
-            ["local.txt"],
-            "/remote/path",
-            direction="upload",
-        )
-
-        assert manager.prepare_calls == [self.KEY]
+    # The resolver/identity-candidate handoff assertion now lives in
+    # tests/daemon/test_connection_launch_provider.py (provider-level flow); the
+    # retired Connection._preload_keys_into_agent is not exercised here.
 
     def test_failed_agent_load_falls_back_to_askpass_for_pubkey_only(self, monkeypatch):
         """A failed agent load must not strand saved-passphrase key auth.
@@ -684,6 +569,7 @@ class TestCombinedAuthPreloadHandoff:
 # ---------------------------------------------------------------------------
 
 @requires_ssh_tools
+@pytest.mark.integration
 class TestCombinedAuthConnection:
     def _drive(self, monkeypatch, combined_server, agent, *, passphrase_stored, password_stored):
         """Resolve auth for an encrypted-key connection, then connect supplying

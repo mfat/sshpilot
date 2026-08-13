@@ -1,194 +1,189 @@
-# key_manager.py
+# key_manager.py — GObject adapter over the daemon-backed ``SshPilotClient``.
+#
+# M1 ownership: the daemon owns key discovery, generation, and public-key
+# reads. This module performs no filesystem access — no key-directory scanning,
+# no ``ssh-keygen``, no ``.pub`` reads — and keeps a compatibility ``SSHKey``
+# DTO so the existing ssh-copy-id / authorized-keys UIs keep working against
+# the daemon's summaries.
 from __future__ import annotations
 
-import os
-import subprocess
 import logging
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import List, Optional
 
 from gi.repository import GObject
 
-from .platform_utils import get_ssh_dir
-from .key_utils import _SKIPPED_FILENAMES as _SHARED_SKIPPED_FILENAMES, _is_private_key
+from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models import SessionId
+from sshpilot.api.models.keys import KeyStoreScope, KeySummary
+from sshpilot.gtk.key_controller import KeyController
 
 logger = logging.getLogger(__name__)
 
 
 class SSHKey:
+    """Lightweight compatibility DTO projected from a daemon ``KeySummary``.
+
+    Paths are daemon-provided compatibility metadata for the M7 ssh-copy-id
+    subprocess adapter; the frontend never derives, scans, or reads these
+    files. ``key_id`` is the opaque daemon identifier used for API calls.
     """
-    Lightweight representation of a generated/known SSH key.
-    """
-    def __init__(self, private_path: str):
+
+    __slots__ = (
+        "key_id",
+        "name",
+        "private_path",
+        "public_path",
+        "public_key_available",
+    )
+
+    def __init__(
+        self,
+        private_path: str,
+        *,
+        key_id: Optional[str] = None,
+        name: Optional[str] = None,
+        public_path: Optional[str] = None,
+        public_key_available: bool = False,
+    ):
         self.private_path = private_path
-        self.public_path = f"{private_path}.pub"
+        self.public_path = (
+            public_path if public_path is not None else f"{private_path}.pub"
+        )
+        self.name = name if name is not None else (
+            Path(private_path).name if private_path else ""
+        )
+        self.key_id = key_id
+        self.public_key_available = public_key_available
 
     def __str__(self) -> str:
-        return os.path.basename(self.private_path)
+        return self.name
+
+    @classmethod
+    def from_summary(cls, summary: KeySummary) -> "SSHKey":
+        return cls(
+            summary.private_path,
+            key_id=summary.key_id,
+            name=summary.name,
+            public_path=summary.public_path,
+            public_key_available=summary.public_key_available,
+        )
 
 
 class KeyManager(GObject.Object):
+    """GObject-facing key manager; domain work happens in the daemon.
+
+    Never instantiates ``core.keys.KeyService`` and never touches the file
+    system. All operations are routed through ``KeyController`` over the
+    injected ``SshPilotClient``; there is no local fallback.
     """
-    Unified SSH key generation (single method) + discovery helper.
-    Uses system `ssh-keygen` for portability and OpenSSH-compatible output.
-    """
-    _SKIPPED_FILENAMES = _SHARED_SKIPPED_FILENAMES
 
     __gsignals__ = {
-        # Emitted after a key is generated successfully
         "key-generated": (GObject.SignalFlags.RUN_LAST, None, (object,)),
     }
 
-    def __init__(self, ssh_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        client,
+        scope: KeyStoreScope = KeyStoreScope.DEFAULT,
+    ):
+        if isinstance(client, (str, bytes, Path)) or hasattr(client, "__fspath__"):
+            raise TypeError(
+                "KeyManager no longer accepts a key-directory path; "
+                "pass a daemon-backed SshPilotClient instead"
+            )
         super().__init__()
-        self.ssh_dir = Path(ssh_dir or get_ssh_dir())
-        if not self.ssh_dir.exists():
-            self.ssh_dir.mkdir(parents=True, exist_ok=True)
-            try:
-                os.chmod(self.ssh_dir, 0o700)
-            except Exception:
-                pass
-        self._key_validation_cache: Dict[str, bool] = {}
-
-    def _is_private_key(self, file_path: Path) -> bool:
-        """Return True if the path looks like a private SSH key."""
-        return _is_private_key(
-            file_path,
-            cache=self._key_validation_cache,
-            skipped_filenames=self._SKIPPED_FILENAMES,
-        )
-
-    # ---------------- Public API ----------------
+        self._controller = KeyController(client, scope)
+        self._scope = scope
 
     def discover_keys(self) -> List[SSHKey]:
-        """Discover known SSH keys within the configured SSH directory."""
-        keys: List[SSHKey] = []
-        seen: set[str] = set()
-        fallback_to_pub = False
-        try:
-            ssh_dir = self.ssh_dir or Path(get_ssh_dir())
-            if not ssh_dir.exists():
-                return keys
-            # Recursively walk SSH directory for private keys that have a matching .pub
-            for file_path in ssh_dir.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                name = file_path.name
-                if name.endswith(".pub"):
-                    continue
-                # skip very common non-key files
-                if name in self._SKIPPED_FILENAMES:
-                    continue
-                if fallback_to_pub:
-                    pub = file_path.with_suffix(file_path.suffix + ".pub")
-                    if pub.exists():
-                        key_path = str(file_path)
-                        if key_path not in seen:
-                            keys.append(SSHKey(key_path))
-                            seen.add(key_path)
-                    continue
+        key_list = self._controller.list_keys()
+        return [SSHKey.from_summary(summary) for summary in key_list.keys]
 
-                try:
-                    if self._is_private_key(file_path):
-                        key_path = str(file_path)
-                        if key_path not in seen:
-                            keys.append(SSHKey(key_path))
-                            seen.add(key_path)
-                except FileNotFoundError:
-                    fallback_to_pub = True
-                    logger.debug(
-                        "ssh-keygen not available; falling back to public-key discovery for %s",
-                        file_path,
-                    )
-                    pub = file_path.with_suffix(file_path.suffix + ".pub")
-                    if pub.exists():
-                        key_path = str(file_path)
-                        if key_path not in seen:
-                            keys.append(SSHKey(key_path))
-                            seen.add(key_path)
-        except Exception as e:
-            logger.error("Failed to discover SSH keys: %s", e)
-        return keys
+    def read_public_key(self, key: SSHKey) -> str:
+        """Return the public-key text for a daemon-discovered ``SSHKey``.
+
+        The daemon resolves the opaque ``key_id``; no local ``.pub`` read.
+        """
+        result = self._controller.read_public_key(key.key_id)
+        return result.text
+
+    def delete_key(self, key: SSHKey) -> bool:
+        """Delete a daemon-discovered key by its opaque daemon identity."""
+        if not key.key_id:
+            return False
+        try:
+            result = self._controller.delete_key(key.key_id)
+        except SshPilotError as exc:
+            raise self._map_error(exc) from exc
+        return result.deleted
 
     def generate_key(
         self,
         key_name: str,
         key_type: str = "ed25519",
-        key_size: int = 3072,          # used only when key_type == "rsa"
+        key_size: int = 0,
         comment: Optional[str] = None,
-        passphrase: Optional[str] = None,
+        encrypted: bool = False,
+        interaction_scope_id: Optional[SessionId] = None,
     ) -> Optional[SSHKey]:
+        """Generate a key via the daemon; emit ``key-generated`` on success.
+
+        Compatibility: RSA callers that omit ``key_size`` (the historical
+        adapter default) get 3072, matching the old local ``KeyService``
+        contract. Ed25519 always uses size 0.
         """
-        Single, unified generator using `ssh-keygen`.
-        - key_type: "ed25519" (default) or "rsa"
-        - key_size: used only for RSA (min 1024)
-        - passphrase: optional; empty means unencrypted key
-        Returns SSHKey or None on failure.
-        """
+        if key_type == "rsa" and not key_size:
+            key_size = 3072
         try:
-            # validate filename
-            if not key_name or key_name.strip() == "":
-                raise ValueError("Key file name is required.")
-            if "/" in key_name or key_name.startswith("."):
-                raise ValueError("Key file name must not contain '/' or start with '.'.")
-
-            key_path = self.ssh_dir / key_name
-            if key_path.exists():
-                # Suggest alternative names
-                base_name = key_name
-                counter = 1
-                while (self.ssh_dir / f"{base_name}_{counter}").exists():
-                    counter += 1
-                suggestion = f"{base_name}_{counter}"
-                
-                raise FileExistsError(f"A key named '{key_name}' already exists. Try '{suggestion}' instead.")
-
-            kt = (key_type or "").lower().strip()
-            if kt not in ("ed25519", "rsa"):
-                raise ValueError(f"Unsupported key type: {key_type}")
-
-            cmd = ["ssh-keygen", "-t", kt]
-            if kt == "rsa":
-                size = int(key_size) if key_size else 3072
-                if size < 1024:
-                    raise ValueError("RSA key size must be >= 1024 bits.")
-                cmd += ["-b", str(size)]
-
-            if not comment:
-                try:
-                    user = os.getenv("USER") or "user"
-                    host = os.uname().nodename
-                    comment = f"{user}@{host}"
-                except Exception:
-                    comment = "generated-by-sshpilot"
-            cmd += ["-C", comment]
-
-            cmd += ["-f", str(key_path)]
-            cmd += ["-N", passphrase or ""]  # empty => no passphrase
-
-            logger.debug("Running ssh-keygen: %s", " ".join(cmd))
-            completed = subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-            if completed.returncode != 0:
-                # Surface stderr as the UI message
-                stderr = completed.stderr.strip() or "ssh-keygen failed"
-                raise RuntimeError(stderr)
-
-            # Ensure sane permissions (best effort)
-            try:
-                os.chmod(key_path, 0o600)
-                pub_path = f"{key_path}.pub"
-                if os.path.exists(pub_path):
-                    os.chmod(pub_path, 0o644)
-            except Exception as perm_err:
-                logger.warning("Failed setting permissions on key files: %s", perm_err)
-
-            key = SSHKey(str(key_path))
+            result = self._controller.generate_key(
+                name=key_name,
+                key_type=key_type,
+                key_size=key_size,
+                comment=comment or "",
+                encrypted=encrypted,
+                interaction_scope_id=interaction_scope_id,
+            )
+        except SshPilotError as exc:
+            if exc.code == ErrorCode.MUTATION_AMBIGUOUS:
+                # Structured ambiguity: the mutation may have completed. The
+                # caller decides how to recover (reload, no automatic retry).
+                raise
+            raise self._map_error(exc) from exc
+        key = SSHKey.from_summary(result.key)
+        try:
             self.emit("key-generated", key)
-            logger.info("Generated SSH key at %s", key_path)
-            return key
+        except Exception:
+            # Fire-and-forget notification; never fail generation on a signal
+            # callback issue (matches Config/ConnectionManager emit usage).
+            logger.debug("key-generated signal emit failed", exc_info=True)
+        logger.info("SSH key generated")
+        return key
 
-        except Exception as e:
-            logger.error("Key generation failed: %s", e, exc_info=True)
-            # Re-raise the exception so the UI can handle it properly
-            raise
+    def verify_key_passphrase(
+        self,
+        key_path: str,
+        secret: bytearray,
+    ) -> bool:
+        """Verify through the daemon's protected interaction channel."""
+        return self._controller.verify_key_passphrase(key_path, secret)
+
+    def store_key_passphrase(
+        self,
+        key_path: str,
+        secret: bytearray,
+    ) -> bool:
+        """Store through the daemon's protected interaction channel."""
+        return self._controller.store_key_passphrase(key_path, secret)
+
+    @staticmethod
+    def _map_error(exc: SshPilotError) -> BaseException:
+        """Preserve historical exception types for GTK callers / tests.
+
+        Never includes paths, passphrases, or subprocess command lines.
+        """
+        if exc.code == ErrorCode.KEY_ALREADY_EXISTS:
+            return FileExistsError(exc.message)
+        if exc.code == ErrorCode.VALIDATION_FAILED:
+            return ValueError(exc.message)
+        return RuntimeError(exc.message)

@@ -23,7 +23,6 @@ _DIALOG_METHODS = (
     "show_export_dialog",
     "show_import_dialog",
     "_show_import_mode_dialog",
-    "_perform_import",
 )
 
 

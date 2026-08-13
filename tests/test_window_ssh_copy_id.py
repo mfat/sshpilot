@@ -1,400 +1,200 @@
-import importlib
-import sys
-import types
+"""Daemon-backed public-key deployment runner (``SshCopyIdRunner``).
+
+Deployment is a typed daemon operation: the runner submits a
+``DeployKeyRequest`` to ``SshPilotClient.deploy_key``, then polls the
+operation summary until it reaches a terminal state. GTK only presents the
+outcome; it never launches ``ssh-copy-id`` itself.
+"""
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from datetime import datetime, timezone
+
+import pytest
+
+pytest.importorskip("gi")
+
+from sshpilot import sshcopyid_window as win_mod
+from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models.operations import (
+    OperationKind,
+    OperationState,
+    OperationSummary,
+)
 
 
-sys.modules.setdefault("cairo", types.ModuleType("cairo"))
+def _summary(state="running", operation_id="op:1", message=""):
+    return OperationSummary(
+        operation_id=operation_id,
+        kind=OperationKind.KEY_DEPLOYMENT,
+        state=OperationState(state),
+        message=message,
+        created_at=datetime.fromtimestamp(0, tz=timezone.utc),
+    )
 
 
-def test_ssh_copy_id_saved_passphrase_uses_askpass(monkeypatch, tmp_path):
-    # ssh-copy-id resolves auth via resolve_native_auth, then upgrades to
-    # REQUIRE=force so prompts stay on the graphical askpass (VTE has a TTY).
-    window_mod = importlib.import_module("sshpilot.window")
-    askpass_mod = importlib.import_module("sshpilot.askpass_utils")
-    scb = importlib.import_module("sshpilot.ssh_connection_builder")
-    # The ssh-copy-id runner now lives in sshcopyid_window; patch its symbols.
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+def _window():
+    window = MagicMock()
+    window.client = MagicMock()
+    window.client.deploy_key.return_value = _summary()
+    window.client.get_operation.return_value = _summary()
+    return window
 
-    class DummyWidget:
-        def __init__(self, *args, **kwargs):
-            self.children = []
 
-        def append(self, child):
-            self.children.append(child)
-            return None
+def _connection():
+    return SimpleNamespace(nickname="HostAlias")
 
-        def connect(self, *args, **kwargs):
-            return None
 
-        def __getattr__(self, name):
-            def _method(*args, **kwargs):
-                return None
+def _key():
+    return SimpleNamespace(key_id="key:daemon-1")
 
-            return _method
 
-    class DummyVte:
-        def __init__(self):
-            self.spawn_env = None
-            self.spawn_args = None
+def _runner(window):
+    return win_mod.SshCopyIdRunner(window)
 
-        def feed(self, *args, **kwargs):
-            return None
 
-        def spawn_async(self, *args):
-            self.spawn_args = args
-            if len(args) > 3:
-                self.spawn_env = args[3]
-            return None
-
-        def connect(self, *args, **kwargs):
-            return None
-
-        def get_text_range(self, *args, **kwargs):
-            return ("",)
-
-    class DummyTerminalWidget:
-        last_instance = None
-
-        def __init__(self, connection, config, manager):
-            self.connection = connection
-            self.config = config
-            self.connection_manager = manager
-            self.vte = DummyVte()
-            DummyTerminalWidget.last_instance = self
-
-        def _set_connecting_overlay_visible(self, *args, **kwargs):
-            return None
-
-        def _set_disconnected_banner_visible(self, *args, **kwargs):
-            return None
-
-        def set_hexpand(self, *args, **kwargs):
-            return None
-
-        def set_vexpand(self, *args, **kwargs):
-            return None
-
-        def disconnect(self, *args, **kwargs):
-            return None
-
-    class DummyConfig:
-        def get_ssh_config(self):
-            return {}
-
-    class DummyManager:
-        known_hosts_path = None
-        identity_agent_disabled = False
-
-        def get_password(self, *args, **kwargs):
-            return None
-
-        def get_key_passphrase(self, *args, **kwargs):
-            return "cached-secret"
-
-        def store_key_passphrase(self, *args, **kwargs):
-            return None
-
-    forced_env = {
-        "SSH_ASKPASS": "/tmp/helper",
-        "SSH_ASKPASS_REQUIRE": "force",
-        "DISPLAY": ":1",
-    }
-    prefer_env = {
-        "SSH_ASKPASS": "/tmp/helper",
-        "SSH_ASKPASS_REQUIRE": "prefer",
-        "DISPLAY": ":1",
-    }
-
-    monkeypatch.setattr(runner_mod, "TerminalWidget", DummyTerminalWidget)
+def _capture_timeout(monkeypatch):
+    callbacks = []
     monkeypatch.setattr(
-        runner_mod,
-        "_build_copy_progress_row",
-        lambda *_args, **_kwargs: (
-            DummyWidget(),
-            lambda: False,
-            lambda: None,
-            lambda: None,
-            lambda: None,
-        ),
+        win_mod.GLib, "timeout_add", lambda ms, fn, *args: callbacks.append((ms, fn, args)) or 1
     )
-    monkeypatch.setattr(
-        runner_mod,
-        "_wrap_sshcopyid_terminal",
-        lambda *_args, **_kwargs: DummyWidget(),
+    return callbacks
+
+
+def test_runner_requires_daemon_client():
+    window = MagicMock()
+    deploy_key = window.client.deploy_key
+    window.client = None
+    runner = _runner(window)
+
+    runner.run(_connection(), _key(), force=True)
+
+    window._error_dialog.assert_called_once()
+    deploy_key.assert_not_called()
+
+
+def test_runner_requires_daemon_key_id():
+    window = MagicMock()
+    runner = _runner(window)
+
+    runner.run(_connection(), SimpleNamespace(key_id=None))
+
+    window._error_dialog.assert_called_once()
+    window.client.deploy_key.assert_not_called()
+
+
+def test_runner_submits_typed_deployment_request():
+    window = _window()
+    runner = _runner(window)
+
+    runner.run(_connection(), _key(), force=True)
+
+    window.client.deploy_key.assert_called_once()
+    request = window.client.deploy_key.call_args[0][0]
+    assert request.connection_id == "HostAlias"
+    assert request.key_id == "key:daemon-1"
+    assert request.force is True
+    assert request.scope.value == "default"
+
+
+def test_runner_polls_operation_until_terminal(monkeypatch):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:9")
+    window.client.get_operation.return_value = _summary(state="succeeded", operation_id="op:9")
+    callbacks = _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    window.client.get_operation.assert_called_once_with("op:9")
+    assert callbacks == []
+    window._info_dialog.assert_called_once()
+    window._error_dialog.assert_not_called()
+
+
+def test_runner_reports_deployment_failure(monkeypatch):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:5")
+    window.client.get_operation.return_value = _summary(
+        state="failed", operation_id="op:5", message="Authentication failed"
     )
-    monkeypatch.setattr(
-        runner_mod,
-        "_build_terminal_disclosure",
-        lambda *_args, **_kwargs: (
-            DummyWidget(),
-            lambda _expanded: None,
-            lambda: False,
-        ),
+    callbacks = _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    window._error_dialog.assert_called_once()
+    window._info_dialog.assert_not_called()
+    assert callbacks == []
+
+
+def test_runner_reports_cancellation(monkeypatch):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:5")
+    window.client.get_operation.return_value = _summary(
+        state="cancelled", operation_id="op:5"
     )
-    monkeypatch.setattr(
-        runner_mod,
-        "Adw",
-        types.SimpleNamespace(
-            ActionRow=DummyWidget,
-            AlertDialog=DummyWidget,
-            Dialog=types.SimpleNamespace(new=lambda: DummyWidget()),
-            PreferencesGroup=DummyWidget,
-            ToolbarView=DummyWidget,
-            HeaderBar=DummyWidget,
-            MessageDialog=DummyWidget,
-            WindowTitle=types.SimpleNamespace(new=lambda *args, **kwargs: DummyWidget()),
-        ),
-        raising=False,
+    callbacks = _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+
+    window._info_dialog.assert_called_once()
+    window._error_dialog.assert_not_called()
+    assert callbacks == []
+
+
+def test_runner_start_failure_shows_error():
+    window = _window()
+    window.client.deploy_key.side_effect = SshPilotError(
+        ErrorCode.UNSUPPORTED_CAPABILITY, "ssh-copy-id is unavailable"
     )
-    monkeypatch.setattr(
-        runner_mod,
-        "Gtk",
-        types.SimpleNamespace(
-            Box=DummyWidget,
-            Label=DummyWidget,
-            Button=DummyWidget,
-            Align=types.SimpleNamespace(START=0, END=1, CENTER=3),
-            Fixed=DummyWidget,
-            Orientation=types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1),
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        runner_mod,
-        "GLib",
-        types.SimpleNamespace(
-            shell_quote=lambda value: value,
-            SpawnFlags=types.SimpleNamespace(DEFAULT=0),
-            idle_add=lambda func, *args, **kwargs: func(*args, **kwargs) or 1,
-            timeout_add=lambda *args, **kwargs: 1,
-            source_remove=lambda *_args: None,
-            SOURCE_REMOVE=False,
-            SOURCE_CONTINUE=True,
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        runner_mod,
-        "Vte",
-        types.SimpleNamespace(PtyFlags=types.SimpleNamespace(DEFAULT=0)),
-        raising=False,
-    )
-    monkeypatch.setattr(runner_mod, "Config", DummyConfig, raising=False)
-    monkeypatch.setattr(runner_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
-    monkeypatch.setattr(
-        runner_mod.shutil,
-        "which",
-        lambda name: "/usr/bin/ssh-copy-id" if name == "ssh-copy-id" else None,
-    )
+    runner = _runner(window)
 
-    monkeypatch.setattr(
-        askpass_mod,
-        "get_ssh_env_with_forced_askpass",
-        lambda: forced_env.copy(),
-        raising=False,
-    )
-    monkeypatch.setattr(
-        askpass_mod,
-        "get_ssh_env_with_askpass",
-        lambda: prefer_env.copy(),
-        raising=False,
-    )
-    monkeypatch.setattr(askpass_mod, "lookup_passphrase", lambda *_: "", raising=False)
+    runner.run(_connection(), _key())
 
-    # resolve_native_auth decides the auth: saved passphrase -> askpass(prefer);
-    # ssh-copy-id then upgrades REQUIRE to force.
-    monkeypatch.setattr(scb, "lookup_passphrase", lambda *_: "pp", raising=False)
-
-    def _askpass(require="prefer", **_kwargs):
-        return (forced_env if require == "force" else prefer_env).copy()
-
-    monkeypatch.setattr(scb, "get_ssh_env_with_askpass", _askpass, raising=False)
-    monkeypatch.setattr(
-        scb,
-        "_askpass_env_for_connection",
-        lambda *_a, require="prefer", **_k: _askpass(require),
-        raising=False,
-    )
-
-    private_path = tmp_path / "id_test"
-    private_path.write_text("private")
-    public_path = private_path.with_suffix(private_path.suffix + ".pub")
-    public_path.write_text("public")
-
-    ssh_key = types.SimpleNamespace(
-        private_path=str(private_path),
-        public_path=str(public_path),
-    )
-
-    connection = types.SimpleNamespace(
-        username="demo",
-        hostname="example.com",
-        host="",
-        port=22,
-        auth_method=0,
-        key_passphrase="",
-        keyfile=str(private_path),
-        key_select_mode=0,
-        identity_agent_disabled=True,
-        pubkey_auth_no=False,
-        resolved_identity_files=[str(private_path)],
-    )
-
-    manager = DummyManager()
-
-    window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
-    window_instance.connection_manager = manager
-    window_instance.config = DummyConfig()
-    window_instance.sshcopyid_runner = runner_mod.SshCopyIdRunner(window_instance)
-
-    window_instance._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
-
-    spawned_env = DummyTerminalWidget.last_instance.vte.spawn_env
-    assert spawned_env is not None
-    assert "SSH_ASKPASS=/tmp/helper" in spawned_env
-    assert "SSH_ASKPASS_REQUIRE=force" in spawned_env
+    window._error_dialog.assert_called_once()
+    window.client.get_operation.assert_not_called()
 
 
-def test_ssh_copy_id_preflight_blocks_missing_binary(monkeypatch, tmp_path):
-    window_mod = importlib.import_module("sshpilot.window")
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    monkeypatch.setattr(window_mod.shutil, "which", lambda name: None)
-    monkeypatch.setattr(window_mod.os.path, "exists", lambda path: False)
-
-    private_path = tmp_path / "id_test"
-    private_path.write_text("private")
-    public_path = private_path.with_suffix(private_path.suffix + ".pub")
-    public_path.write_text("public")
-
-    ssh_key = types.SimpleNamespace(
-        private_path=str(private_path),
-        public_path=str(public_path),
-    )
-    connection = types.SimpleNamespace(
-        username="demo",
-        hostname="example.com",
-        host="",
-        port=22,
-        auth_method=0,
-    )
-
-    errors = []
-    window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
-    window_instance._error_dialog = lambda *args: errors.append(args)
-    window_instance.sshcopyid_runner = runner_mod.SshCopyIdRunner(window_instance)
-
-    window_instance._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
-
-    assert errors
-    assert errors[0][0] == "SSH Key Copy Error"
-    assert "ssh-copy-id" in errors[0][1]
-
-
-def test_ssh_copy_id_preflight_rejects_unreadable_public_key(monkeypatch, tmp_path):
-    window_mod = importlib.import_module("sshpilot.window")
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    monkeypatch.setattr(
-        window_mod.shutil,
-        "which",
-        lambda name: "/usr/bin/ssh-copy-id" if name == "ssh-copy-id" else None,
-    )
-    monkeypatch.setattr(runner_mod, "ensure_writable_ssh_home", lambda env: None, raising=False)
-
-    public_path = tmp_path / "id_test.pub"
-    public_path.write_text("public")
-    monkeypatch.setattr(window_mod.os, "access", lambda path, mode: False)
-
-    ssh_key = types.SimpleNamespace(public_path=str(public_path))
-    connection = types.SimpleNamespace(
-        username="demo",
-        hostname="example.com",
-        host="",
-        port=22,
-        auth_method=0,
-    )
-
-    window_instance = window_mod.MainWindow.__new__(window_mod.MainWindow)
-    runner = runner_mod.SshCopyIdRunner(window_instance)
-    result = runner._preflight(connection, ssh_key)
-
-    assert result is not None
-    assert result[0] == "Public key file is not readable"
-
-
-def test_copyid_verdict_password_retry_is_success():
-    # A mistyped-then-corrected password leaves "Permission denied" on screen,
-    # but ssh-copy-id's own success message outranks the failure markers.
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    content = (
-        "demo@example.com's password: \n"
-        "Permission denied, please try again.\n"
-        "demo@example.com's password: \n"
-        "Number of key(s) added: 1\n"
-    )
-    assert runner_mod._copyid_run_succeeded(0, content)
-
-
-def test_copyid_verdict_already_installed_is_success():
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    content = (
-        "WARNING: All keys were skipped because they already exist "
-        "on the remote system.\n"
-    )
-    assert runner_mod._copyid_run_succeeded(0, content)
-
-
-def test_copyid_verdict_failure_markers_veto_zero_exit():
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    content = "demo@example.com: Permission denied (publickey,password).\n"
-    assert not runner_mod._copyid_run_succeeded(0, content)
-
-
-def test_copyid_verdict_nonzero_exit_is_failure():
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    assert not runner_mod._copyid_run_succeeded(1, "Number of key(s) added: 1\n")
-    assert not runner_mod._copyid_run_succeeded(255, "")
-
-
-def test_copyid_verdict_clean_zero_exit_is_success():
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    assert runner_mod._copyid_run_succeeded(0, "")
-
-
-def test_terminal_awaiting_input_detects_prompts():
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
-
-    positives = [
-        "demo@example.com's password: ",
-        "Password:",
-        "Enter passphrase for key '/home/u/.ssh/id_ed25519':",
-        "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
-        "Verification code:",
-        "Enter PIN for authenticator:",
-        # Prompt as the last line after earlier output.
-        "Running ssh-copy-id\nINFO: attempting to log in\ndemo@host's password: ",
+def test_runner_continues_polling_while_running(monkeypatch):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:3")
+    window.client.get_operation.side_effect = [
+        _summary(state="running", operation_id="op:3"),
+        _summary(state="succeeded", operation_id="op:3"),
     ]
-    for text in positives:
-        assert runner_mod._terminal_awaiting_input(text), text
+    callbacks = _capture_timeout(monkeypatch)
+    runner = _runner(window)
+
+    runner.run(_connection(), _key())
+    scheduled = callbacks[:]
+    assert scheduled
+    assert scheduled[0][0] == 250
+
+    # The second poll observes the terminal state and stops rescheduling.
+    callbacks.clear()
+    scheduled[0][1](*scheduled[0][2])
+    assert callbacks == []
+    window._info_dialog.assert_called_once()
 
 
-def test_terminal_awaiting_input_ignores_non_prompts():
-    runner_mod = importlib.import_module("sshpilot.sshcopyid_window")
+def test_runner_cancel_stops_polling(monkeypatch):
+    window = _window()
+    window.client.deploy_key.return_value = _summary(operation_id="op:7")
+    window.client.get_operation.return_value = _summary(state="running", operation_id="op:7")
+    callbacks = _capture_timeout(monkeypatch)
+    runner = _runner(window)
+    runner.run(_connection(), _key())
 
-    negatives = [
-        "",
-        "Running ssh-copy-id…",
-        "Number of key(s) added: 1",
-        "demo@example.com: Permission denied (publickey,password).",
-        "INFO: attempting to log in with the new key(s)",
-        # Prompt no longer the last line once later output arrives.
-        "demo@host's password: \nNumber of key(s) added: 1",
-    ]
-    for text in negatives:
-        assert not runner_mod._terminal_awaiting_input(text), text
+    source_removed = []
+    monkeypatch.setattr(
+        win_mod.GLib, "source_remove", lambda handle: source_removed.append(handle)
+    )
+    poll_id = callbacks[0]
+    runner._poll_id = poll_id
+    runner.cancel()
+
+    window.client.cancel_operation.assert_called_once_with("op:7")
+    assert source_removed == [poll_id]
+    assert runner._operation_id is None

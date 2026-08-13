@@ -11,7 +11,6 @@ from sshpilot.autocomplete import (
     RemoteHistoryProvider,
     SessionProvider,
     ShellHistoryProvider,
-    fetch_remote_history,
 )
 
 
@@ -208,28 +207,6 @@ def test_prefetch_warms_remote_provider():
     ac.prefetch()
     _wait_for_cache("host4")
     assert [s.text for s in ac.suggest("git")] == ["git status"]
-
-
-def test_fetch_remote_history_runs_prepared_command(monkeypatch):
-    from types import SimpleNamespace
-    import sshpilot.ssh_connection_builder as scb
-
-    monkeypatch.setattr(scb, "build_ssh_connection", lambda ctx: SimpleNamespace(
-        command=["sh", "-c", "printf 'ls\\ncd /tmp\\n'"],
-        env={}, use_sshpass=False, password=None))
-    assert fetch_remote_history(object()) == "ls\ncd /tmp\n"
-
-
-def test_fetch_remote_history_failure_returns_none(monkeypatch):
-    from types import SimpleNamespace
-    import sshpilot.ssh_connection_builder as scb
-
-    monkeypatch.setattr(scb, "build_ssh_connection", lambda ctx: SimpleNamespace(
-        command=["sh", "-c", "exit 1"], env={}, use_sshpass=False, password=None))
-    assert fetch_remote_history(object()) is None
-    monkeypatch.setattr(scb, "build_ssh_connection",
-                        lambda ctx: (_ for _ in ()).throw(RuntimeError("no ssh")))
-    assert fetch_remote_history(object()) is None
 
 
 # -------------------------------------------------------------- Autocompleter

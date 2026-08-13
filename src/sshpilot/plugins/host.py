@@ -29,104 +29,29 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from sshpilot.core.plugins import (
+    ALL_EVENTS,
+    ConnectionInfo,
+    EventBus,
+    Events,
+    SessionInfo,
+)
+
 logger = logging.getLogger(__name__)
 
-
-class Events:
-    """Stable event-name constants. Plugins subscribe via ``ctx.events``."""
-
-    APP_STARTED = "app_started"
-    APP_SHUTDOWN = "app_shutdown"
-    CONNECTION_CREATED = "connection_created"
-    CONNECTION_UPDATED = "connection_updated"
-    CONNECTION_DELETED = "connection_deleted"
-    SESSION_OPENED = "session_opened"
-    SESSION_CLOSED = "session_closed"
-
-
-ALL_EVENTS = frozenset({
-    Events.APP_STARTED,
-    Events.APP_SHUTDOWN,
-    Events.CONNECTION_CREATED,
-    Events.CONNECTION_UPDATED,
-    Events.CONNECTION_DELETED,
-    Events.SESSION_OPENED,
-    Events.SESSION_CLOSED,
-})
+# Re-export core event contracts for compatibility.
+__all__ = [
+    "ALL_EVENTS",
+    "ConnectionInfo",
+    "EventBus",
+    "Events",
+    "PluginHost",
+    "SessionInfo",
+    "UiHost",
+]
 
 
-@dataclass(frozen=True)
-class ConnectionInfo:
-    """Read-only snapshot of a connection handed to plugins in events and
-    returned from ``ctx.add_connection``. Decoupled from the internal
-    ``Connection`` class, which is private and may change."""
-
-    nickname: str
-    host: str
-    username: str
-    protocol: str
-    port: int
-
-    @classmethod
-    def from_connection(cls, conn: Any) -> "ConnectionInfo":
-        return cls(
-            nickname=getattr(conn, "nickname", "") or "",
-            host=(getattr(conn, "hostname", "") or getattr(conn, "host", "") or ""),
-            username=getattr(conn, "username", "") or "",
-            protocol=getattr(conn, "protocol", "ssh") or "ssh",
-            port=int(getattr(conn, "port", 22) or 22),
-        )
-
-
-@dataclass(frozen=True)
-class SessionInfo:
-    """Read-only snapshot of an open terminal session (one tab)."""
-
-    connection: ConnectionInfo
-    session_id: str
-
-
-class EventBus:
-    """Synchronous, main-thread event dispatcher with per-callback isolation."""
-
-    def __init__(self) -> None:
-        # event name -> list of (plugin_id, callback)
-        self._subs: Dict[str, List[Tuple[str, Callable[[Any], None]]]] = {}
-
-    def subscribe(self, event: str, callback: Callable[[Any], None],
-                  *, plugin_id: str) -> None:
-        if event not in ALL_EVENTS:
-            raise ValueError(f"Unknown event {event!r}; valid events: "
-                             f"{sorted(ALL_EVENTS)}")
-        if not callable(callback):
-            raise TypeError("callback must be callable")
-        self._subs.setdefault(event, []).append((plugin_id, callback))
-
-    def unsubscribe(self, event: str, callback: Callable[[Any], None],
-                    *, plugin_id: str) -> None:
-        subs = self._subs.get(event)
-        if not subs:
-            return
-        self._subs[event] = [
-            (pid, cb) for (pid, cb) in subs
-            if not (pid == plugin_id and cb == callback)
-        ]
-
-    def unsubscribe_plugin(self, plugin_id: str) -> None:
-        """Drop every subscription owned by a plugin (used on deactivate)."""
-        for event in list(self._subs):
-            self._subs[event] = [
-                (pid, cb) for (pid, cb) in self._subs[event] if pid != plugin_id
-            ]
-
-    def emit(self, event: str, payload: Any) -> None:
-        # Iterate a copy so a callback that (un)subscribes mid-dispatch is safe.
-        for plugin_id, callback in list(self._subs.get(event, ())):
-            try:
-                callback(payload)
-            except Exception:
-                logger.exception(
-                    "Plugin %r callback for event %r failed", plugin_id, event)
+# Events / ConnectionInfo / SessionInfo / EventBus / ALL_EVENTS imported from core.
 
 
 @dataclass
@@ -404,10 +329,12 @@ class PluginHost:
         self._cm_handlers: List[int] = []
         # id(terminal) -> SessionInfo; also the reconnect-dedupe set.
         self._terminal_sessions: Dict[int, SessionInfo] = {}
-        # session_id (str) -> weakref to the live terminal widget, for
-        # ctx.read_terminal / ctx.send_terminal. Weak so a closed tab's widget
-        # can be collected even if a plugin held the id.
+        # session_id (str) -> weakref to the live terminal widget for
+        # presentation/event compatibility. Plugin session operations use the
+        # daemon client below, not this bookkeeping.
         self._terminal_widgets: Dict[str, Any] = {}
+        # Attachment handles are daemon resources, not a session registry.
+        self._plugin_attachments: Dict[str, Any] = {}
 
     # --- binding ------------------------------------------------------
     def bind_window(self, window) -> None:
@@ -416,6 +343,19 @@ class PluginHost:
         self._window = window
         self.ui.bind_window(window)
         self._connect_cm_signals()
+
+    def daemon_client(self) -> Optional[Any]:
+        """The live daemon ``SshPilotClient`` once the main window is bound, or
+        None before the window/client exist.
+
+        Read-only observation facades (e.g. ``ctx.identities``) use this to
+        reach daemon-owned state through the typed API; they never fall back
+        to a frontend process route.
+        """
+        window = self._window
+        if window is None:
+            return None
+        return getattr(window, "client", None)
 
     def _connect_cm_signals(self) -> None:
         cm = self._cm
@@ -444,31 +384,51 @@ class PluginHost:
         self.events.emit(Events.CONNECTION_DELETED, ConnectionInfo.from_connection(conn))
 
     # --- session event dispatch (called from terminal_manager) --------
+    @staticmethod
+    def _daemon_session_id(terminal) -> Optional[str]:
+        """Return the daemon session identity carried by a terminal tab."""
+        tab_state = getattr(terminal, "daemon_tab_state", None)
+        if tab_state is None:
+            tab_state = getattr(terminal, "_daemon_tab_state", None)
+        if tab_state is None:
+            controller = getattr(terminal, "_daemon_controller", None)
+            tab_state = getattr(controller, "tab_state", None)
+        session_id = getattr(tab_state, "session_id", None)
+        return str(session_id) if session_id is not None else None
+
     def dispatch_session_opened(self, terminal) -> None:
         key = id(terminal)
         if key in self._terminal_sessions:
             return  # reconnect of an already-tracked terminal; not a new session
+        session_id = self._daemon_session_id(terminal)
+        if session_id is None:
+            logger.debug("Ignoring session_opened without a daemon session id")
+            return
         info = SessionInfo(
             ConnectionInfo.from_connection(getattr(terminal, "connection", None)),
-            str(key),
+            session_id,
         )
         self._terminal_sessions[key] = info
         import weakref
         try:
-            self._terminal_widgets[str(key)] = weakref.ref(terminal)
+            self._terminal_widgets[session_id] = weakref.ref(terminal)
         except TypeError:
-            self._terminal_widgets[str(key)] = lambda t=terminal: t
+            self._terminal_widgets[session_id] = lambda t=terminal: t
         self.events.emit(Events.SESSION_OPENED, info)
 
     def dispatch_session_closed(self, terminal) -> None:
         key = id(terminal)
-        self._terminal_widgets.pop(str(key), None)
         info = self._terminal_sessions.pop(key, None)
         if info is None:
+            session_id = self._daemon_session_id(terminal)
+            if session_id is None:
+                logger.debug("Ignoring session_closed without a daemon session id")
+                return
             info = SessionInfo(
                 ConnectionInfo.from_connection(getattr(terminal, "connection", None)),
-                str(key),
+                session_id,
             )
+        self._terminal_widgets.pop(info.session_id, None)
         self.events.emit(Events.SESSION_CLOSED, info)
 
     # --- app lifecycle (called from main.py) --------------------------
@@ -514,17 +474,15 @@ class PluginHost:
             self.ui.notify(f"No connection named {nickname!r}")
             return False
         try:
-            import copy
-            # Transient clone so the saved connection's cached command/state is
-            # not polluted and the one-off command runs in its own tab. The clone
-            # re-prepares via the native builder with the remote command appended
-            # on the CLI (same path as ctx.run_command) — no new SSH/auth path.
-            clone = copy.copy(conn)
-            clone.ssh_cmd = []
-            clone.ssh_connection_cmd = None
-            clone.ssh_env = {}
+            # The daemon terminal route re-resolves the latest connection
+            # snapshot and only needs the durable connection identity; the
+            # frozen ConnectionSummary DTO is passed straight through (same as
+            # open_connection). The one-off command runs in its own tab via
+            # force_new=True and the remote_command argument — no local SSH
+            # clone/state mutation (those legacy fields no longer exist on the
+            # presentation DTO and were never used by the daemon route).
             self._window.terminal_manager.connect_to_host(
-                clone, force_new=True,
+                conn, force_new=True,
                 remote_command=str(remote_command), tab_title=title,
                 force_tty=True,  # a command in a terminal tab always wants a PTY
                 pty_prompt=pty_prompt, pty_response=pty_response,
@@ -642,71 +600,129 @@ class PluginHost:
         return out
 
     def delete_key(self, private_path: str) -> bool:
-        """Delete a key pair, but only if it lives inside the KeyManager's key
-        directory (guards against deleting arbitrary files)."""
-        import os
+        """Delete a daemon-discovered key matching the legacy path argument."""
         window = self._window
         km = getattr(window, "key_manager", None) if window is not None else None
         if km is None or not private_path:
             return False
-        key_dir = getattr(km, "key_dir", None) or getattr(km, "ssh_dir", None)
-        if not key_dir:
+        try:
+            keys = km.discover_keys()
+            key = next(
+                (
+                    item
+                    for item in keys or []
+                    if str(getattr(item, "private_path", "")) == str(private_path)
+                ),
+                None,
+            )
+            return bool(key is not None and km.delete_key(key))
+        except Exception:
+            logger.exception("delete_key failed")
             return False
-        key_dir = os.path.realpath(str(key_dir))
-        target = os.path.realpath(str(private_path))
-        if target != key_dir and not target.startswith(key_dir + os.sep):
-            logger.warning("delete_key refused outside key dir: %r", private_path)
-            return False
-        ok = False
-        for path in (target, f"{target}.pub"):
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-                    ok = True
-            except OSError:
-                logger.exception("delete_key failed for %r", path)
-        return ok
 
     # --- terminals / sessions -----------------------------------------
     def list_sessions(self) -> List[SessionInfo]:
-        """Snapshot of currently open terminal sessions."""
-        return list(self._terminal_sessions.values())
+        """Project the daemon's authoritative session snapshot."""
+        client = self.daemon_client()
+        if client is None:
+            return []
+        connections = {item.id: item for item in client.list_connections()}
+        result = []
+        for session in client.list_sessions():
+            connection = connections.get(session.connection_id)
+            if connection is None:
+                continue
+            result.append(
+                SessionInfo(
+                    ConnectionInfo(
+                        nickname=connection.nickname,
+                        host=connection.hostname or connection.host,
+                        username=connection.username,
+                        protocol=connection.protocol,
+                        port=connection.port,
+                    ),
+                    str(session.id),
+                )
+            )
+        return result
 
-    def _terminal_for(self, session_id: str):
-        ref = self._terminal_widgets.get(str(session_id))
-        return ref() if ref is not None else None
+    def _attachment_for(self, session_id: str, *, request_input: bool):
+        client = self.daemon_client()
+        if client is None:
+            return None
+        cached = self._plugin_attachments.get(str(session_id))
+        if cached is not None:
+            if not request_input or cached.attachment.input_owner:
+                return cached
+            # A read-only attachment cannot be upgraded in place. Ask the
+            # daemon for an input-owner attachment through its normal rules.
+            self._plugin_attachments.pop(str(session_id), None)
+        from sshpilot.api.models.sessions import AttachSessionRequest
+
+        attached = client.attach_session(
+            AttachSessionRequest(
+                session_id=str(session_id),
+                request_input=request_input,
+                want_terminal_output=False,
+            )
+        )
+        self._plugin_attachments[str(session_id)] = attached
+        return attached
 
     def read_terminal(self, session_id: str,
                       max_chars: Optional[int] = None) -> Optional[str]:
-        """Read a session terminal's text via the backend's get_content (which
-        already handles the VTE feed/get_text_format gotcha)."""
-        term = self._terminal_for(session_id)
-        if term is None:
+        """Read daemon terminal replay as a bounded text projection."""
+        client = self.daemon_client()
+        attached = self._attachment_for(session_id, request_input=False)
+        if client is None or attached is None:
             return None
-        backend = getattr(term, "backend", None)
+        from sshpilot.api.models.terminal import ReplayRequest
+        import threading
+
+        chunks = []
+        done = threading.Event()
+
+        def receive(output):
+            if output.replay:
+                chunks.append(output.data)
+            if output.eof:
+                done.set()
+
         try:
-            if backend is not None and hasattr(backend, "get_content"):
-                return backend.get_content(max_chars)
+            subscription = client.subscribe_terminal(session_id, receive)
+            try:
+                client.replay_terminal(
+                    ReplayRequest(
+                        session_id=str(session_id),
+                        attachment_id=attached.attachment.id,
+                        max_bytes=16 * 1024 * 1024,
+                    )
+                )
+                done.wait(2.0)
+            finally:
+                subscription.close()
+            text = b"".join(chunks).decode("utf-8", "replace")
+            return text[-max_chars:] if max_chars is not None else text
         except Exception:
             logger.exception("read_terminal failed")
         return None
 
     def send_terminal(self, session_id: str, text: str) -> bool:
-        """Feed input to a session terminal (on the UI thread)."""
-        term = self._terminal_for(session_id)
-        if term is None or text is None:
+        """Send input through the daemon terminal ownership mechanism."""
+        client = self.daemon_client()
+        attached = self._attachment_for(session_id, request_input=True)
+        if client is None or attached is None or text is None:
             return False
-        data = text.encode("utf-8")
-
-        def _feed():
-            backend = getattr(term, "backend", None)
-            if backend is not None and hasattr(backend, "feed_child"):
-                backend.feed_child(data)
-            elif getattr(term, "vte", None) is not None:
-                term.vte.feed_child(data)
-
         try:
-            self.run_on_ui_thread(_feed)
+            from sshpilot.api.models.terminal import TerminalInput
+
+            client.send_terminal_input(
+                TerminalInput(
+                    session_id=str(session_id),
+                    attachment_id=attached.attachment.id,
+                    data=text.encode("utf-8"),
+                )
+            )
             return True
         except Exception:
             logger.exception("send_terminal failed")

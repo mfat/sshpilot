@@ -106,7 +106,16 @@ def saved_connection_block(connection_manager, connection, *,
     try:
         # Every concrete stanza for the alias (ssh merges repeated Host blocks),
         # not just the first — otherwise later directives read as global additions.
-        lines = connection_manager.collect_host_block_lines(nickname)
+        collector = getattr(connection_manager, 'collect_host_block_lines', None)
+        if callable(collector):
+            lines = collector(nickname)
+        else:
+            from .ssh_config_utils import collect_host_block_lines
+
+            root_config = getattr(
+                connection, '_resolve_config_override_path', lambda: None
+            )()
+            lines = collect_host_block_lines(nickname, root_config)
         if lines:
             return '\n'.join(lines)
     except Exception:
@@ -118,7 +127,11 @@ def saved_connection_block(connection_manager, connection, *,
         if fallback_data is not None
         else connection_config_data(connection)
     )
-    return connection_manager.format_ssh_config_entry(data)
+    formatter = getattr(connection_manager, 'format_ssh_config_entry', None)
+    if callable(formatter):
+        return formatter(data)
+    from .ssh_config_formatter import format_ssh_config_entry
+    return format_ssh_config_entry(data)
 
 
 def _compute(host: str, own_block: str, root_config: Optional[str],
@@ -294,7 +307,7 @@ class EffectiveConfigDialog(Adw.Window):
         if button.get_active():
             button.set_label(_("Show differences only"))
             button.set_tooltip_text(
-                _("Return to the summary of settings changed by global config"))
+                _("Return to the summary of settings that differ"))
         else:
             button.set_label(_("Show full configuration"))
             button.set_tooltip_text(
@@ -350,8 +363,9 @@ class EffectiveConfigDialog(Adw.Window):
     def _render_summary(self):
         if not self._changes:
             self._placeholder(_(
-                "No differences — your global SSH configuration does not change "
-                "this host. Choose “Show full configuration” to inspect every setting."
+                "No differences — what this connection's Host block resolves to "
+                "matches what SSH will actually use. Choose “Show full "
+                "configuration” to inspect every setting."
             ))
             return
 
@@ -361,11 +375,11 @@ class EffectiveConfigDialog(Adw.Window):
         content.set_margin_start(18)
         content.set_margin_end(18)
         content.append(self._label(_(
-            "Your global SSH configuration changes what this connection actually "
-            "uses. SSH applies the effective values shown below."
+            "What this connection's Host block resolves to differs from what "
+            "SSH will actually use. SSH applies the effective values shown below."
         ), "body"))
         content.append(self._label(
-            _("Settings changed by global config"), "heading"))
+            _("Settings that differ"), "heading"))
 
         listbox = Gtk.ListBox()
         listbox.set_selection_mode(Gtk.SelectionMode.NONE)
@@ -386,7 +400,7 @@ class EffectiveConfigDialog(Adw.Window):
             box.set_margin_end(12)
             box.append(self._label(
                 _friendly_key(str(change.get('key') or '')), "title-4"))
-            box.append(self._label(_("You set:"), "body"))
+            box.append(self._label(_("Connection resolves to:"), "body"))
             box.append(self._value_label(yours))
             box.append(self._label(_("SSH uses:"), "body"))
             box.append(self._value_label(effective))
@@ -406,17 +420,31 @@ class EffectiveConfigDialog(Adw.Window):
 
     def _render_full_comparison(self):
         rows = _diff_rows(self._own_lines, self._full_lines, full_mode=True)
+        # Highlight only the differences the summary reports. Both columns are
+        # ssh -G resolutions (compiled defaults included on the left, the
+        # system-wide config on the right), so untouched defaults like a
+        # distro's gssapiauthentication can differ between columns without
+        # being a difference in the user's own configuration.
+        changed_keys = {str(c.get('key') or '') for c in self._changes}
+
+        def _line_key(line: str) -> str:
+            return line.split(None, 1)[0].lower() if line else ''
+
         grid = Gtk.Grid(column_homogeneous=True, column_spacing=18, row_spacing=3)
         grid.set_margin_top(12)
         grid.set_margin_bottom(12)
         grid.set_margin_start(12)
         grid.set_margin_end(12)
-        grid.attach(self._heading(_("Host block")), 0, 0, 1, 1)
-        grid.attach(self._heading(_("Effective (SSH)")), 1, 0, 1, 1)
+        grid.attach(self._heading(_("Connection resolves to")), 0, 0, 1, 1)
+        grid.attach(self._heading(_("SSH will use")), 1, 0, 1, 1)
 
         for r, (left, right, kind) in enumerate(rows, start=1):
-            left_color = _COLOR_REMOVED if kind in ('delete', 'replace') else None
-            right_color = _COLOR_ADDED if kind in ('insert', 'replace') else None
+            reported = (_line_key(left) in changed_keys
+                        or _line_key(right) in changed_keys)
+            left_color = (_COLOR_REMOVED
+                          if reported and kind in ('delete', 'replace') else None)
+            right_color = (_COLOR_ADDED
+                           if reported and kind in ('insert', 'replace') else None)
             grid.attach(self._cell(left, left_color), 0, r, 1, 1)
             grid.attach(self._cell(right, right_color), 1, r, 1, 1)
 

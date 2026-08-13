@@ -2,9 +2,10 @@
 
 A thin wrapper that runs Docker/Podman **CLI** commands on a host over the app's
 single native SSH path (``ctx.run_command``) and parses the JSON the CLI emits
-with ``--format '{{json .}}'``. No docker SDK and no extra dependencies — the CLI
-gives structured data via stdlib :mod:`json`, works for both ``docker`` and
-``podman``, and reuses the host's real ``~/.ssh/config`` / auth.
+with ``--format '{{json .}}'``-style templates. No docker SDK and no extra
+dependencies — the CLI gives structured data via stdlib :mod:`json`, works for
+both ``docker`` and ``podman``, and reuses the host's real ``~/.ssh/config`` /
+auth.
 
 This module is deliberately free of GTK and of any direct sshpilot imports: it
 takes an injected ``run_command`` callable, so it is unit-testable offline with a
@@ -29,6 +30,17 @@ RunCommand = Callable[..., Any]
 # "0.0.0.0:8080->80/tcp" / ":::8080->80/tcp" / "8080->80/tcp". The greedy
 # optional prefix swallows any host address, IPv6 included.
 _PUBLISHED_PORT_RE = re.compile(r"(?:.*:)?(\d+)->(\d+)/tcp\s*$")
+
+# Slim `docker ps` template: only the fields the Containers tab renders
+# (ID, Names, Image, Status, Ports). The full `{{json .}}` form forces the
+# docker daemon to assemble per-container network data that is several
+# seconds slower on hosts with a slow embedded-DNS resolver (e.g. public
+# upstream servers timing out). `.State` is intentionally omitted: it is not
+# a documented ``ps`` template field (the UI falls back to ``.Status``).
+_PS_FORMAT = (
+    '{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},'
+    '"Status":{{json .Status}},"Ports":{{json .Ports}}}'
+)
 
 
 def parse_published_ports(ports: str) -> List[Tuple[int, int, str]]:
@@ -238,7 +250,7 @@ class DockerClient:
     # -- queries ------------------------------------------------------
     def ps(self, all: bool = True) -> List[dict]:
         flag = "-a " if all else ""
-        return self._exec_json(f"ps {flag}--format '{{{{json .}}}}'")
+        return self._exec_json(f"ps {flag}--format '{_PS_FORMAT}'")
 
     def stats(self) -> List[dict]:
         return self._exec_json("stats --no-stream --format '{{json .}}'")

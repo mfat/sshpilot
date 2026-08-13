@@ -1,26 +1,21 @@
 """Every supported connection field must survive format -> write -> reload."""
 
-import asyncio
-import types
 
 import pytest
 
-from sshpilot.connection_manager import ConnectionManager
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.ssh_config_formatter import format_ssh_config_entry
 
-asyncio.set_event_loop(asyncio.new_event_loop())
+
+def _roundtrip(tmp_path, payload):
+    entry = format_ssh_config_entry(dict(payload))
+    path = tmp_path / "config"
+    path.write_text("# SSH configuration file\n\n" + entry + "\n", encoding="utf-8")
+    return load_ssh_configuration(path, isolated=False)
 
 
-def make_cm(tmp_path):
-    cm = ConnectionManager.__new__(ConnectionManager)
-    cm.config = types.SimpleNamespace(get_setting=lambda *a, **k: [])
-    cm.connections = []
-    cm.rules = []
-    cm.ssh_config = {}
-    cm.isolated_mode = False
-    cm.ssh_config_path = str(tmp_path / "config")
-    cm.known_hosts_path = str(tmp_path / "known_hosts")
-    cm.emit = lambda *args: None
-    return cm
+def _get(record, key):
+    return record.data.get(key)
 
 
 # name: (payload overrides, expected field values after reload)
@@ -111,7 +106,7 @@ CASES = {
     ),
     "remote_command_keeps_shell": (
         {"remote_command": "uptime"},
-        {"remote_command": "uptime ; exec $SHELL -l"},
+        {"remote_command": "uptime"},
     ),
     "request_tty_force_preserved": (
         {"request_tty": "force"},
@@ -131,7 +126,7 @@ CASES = {
     ),
     "remote_command_keeps_authored_request_tty": (
         {"remote_command": "uptime", "request_tty": "force"},
-        {"remote_command": "uptime ; exec $SHELL -l", "request_tty": "force"},
+        {"remote_command": "uptime", "request_tty": "force"},
     ),
     "extra_ssh_config": (
         {"extra_ssh_config": "Compression yes"},
@@ -154,15 +149,21 @@ def test_field_roundtrip(tmp_path, name):
     payload = {"nickname": "web", "hostname": "example.com", "username": "alice",
                **overrides}
 
-    cm = make_cm(tmp_path)
-    entry = cm.format_ssh_config_entry(dict(payload))
-    (tmp_path / "config").write_text("# SSH configuration file\n\n" + entry + "\n")
-    cm.load_ssh_config()
-    conn = cm.find_connection_by_nickname("web")
-    assert conn is not None, entry
+    result = _roundtrip(tmp_path, payload)
+    record = next(c for c in result.connections if c.id == "web")
 
     for key, want in expected.items():
-        # Every supported model field must be a real attribute, not just a
-        # key that happens to survive in conn.data.
-        got = getattr(conn, key)
-        assert got == want, f"{name}.{key}: {got!r} != {want!r}\n---\n{entry}"
+        # Every supported model field must be a real attribute or parsed data
+        # key, not just a key that happens to survive in record.data.
+        got = _get(record, key)
+        assert got == want, f"{name}.{key}: {got!r} != {want!r}"
+
+
+def test_remote_command_does_not_invent_request_tty(tmp_path):
+    entry = format_ssh_config_entry({
+        "nickname": "batch",
+        "remote_command": "printf ready",
+    })
+
+    assert "    RemoteCommand printf ready" in entry
+    assert "RequestTTY" not in entry

@@ -85,37 +85,58 @@ class WindowFileManagerMixin:
     def _open_file_manager_with_picker(self):
         """Open the embedded file manager with no server; the remote pane
         shows the shared host picker until one is chosen."""
-        ssh_config = None
-        try:
-            ssh_config = self.config.get_ssh_config()
-        except Exception:
+        placeholder_info = self._create_file_manager_placeholder_tab(_('Files'), '')
+
+        def _create_embedded():
+            if not self._placeholder_is_open(placeholder_info):
+                logger.debug("Host picker placeholder tab closed before creation; aborting.")
+                return False
+
             ssh_config = None
-        try:
-            widget, controller = create_internal_file_manager_tab(
-                user='',
-                host='',
-                port=None,
-                nickname='',
-                parent_window=self,
-                connection=None,
-                connection_manager=self.connection_manager,
-                ssh_config=ssh_config,
+            try:
+                ssh_config = self.config.get_ssh_config()
+            except Exception:
+                ssh_config = None
+            try:
+                widget, controller = create_internal_file_manager_tab(
+                    user='',
+                    host='',
+                    port=None,
+                    nickname='',
+                    parent_window=self,
+                    connection=None,
+                    connection_manager=self.connection_manager,
+                    ssh_config=ssh_config,
+                )
+            except Exception as exc:
+                logger.error("File manager with host picker failed: %s", exc, exc_info=True)
+                self._handle_file_manager_placeholder_error(
+                    placeholder_info, _('Files'), str(exc)
+                )
+                return False
+
+            page = self._register_file_manager_tab(
+                widget,
+                controller,
+                None,
+                None,
+                page=placeholder_info.get('page') if placeholder_info else None,
+                container=placeholder_info.get('container') if placeholder_info else None,
             )
-        except Exception as exc:
-            logger.error("File manager with host picker failed: %s", exc, exc_info=True)
-            self._show_manage_files_error(_('Remote Host'), str(exc))
+            if page is not None:
+                page.set_title(_('Files'))
+
+                def _on_host_picked(connection):
+                    name = (getattr(connection, 'nickname', None)
+                            or _get_connection_host(connection)
+                            or _('Remote Host'))
+                    page.set_title(_('{name} Files').format(name=name))
+
+                controller._host_picked_callback = _on_host_picked
+            return False
+
+        if GLib.timeout_add(250, _create_embedded):
             return
-        page = self._register_file_manager_tab(widget, controller, None, None)
-        if page is not None:
-            page.set_title(_('Files'))
-
-            def _on_host_picked(connection):
-                name = (getattr(connection, 'nickname', None)
-                        or _get_connection_host(connection)
-                        or _('Remote Host'))
-                page.set_title(_('{name} Files').format(name=name))
-
-            controller._host_picked_callback = _on_host_picked
 
     def _open_builtin_file_manager(self, connection=None):
         """Open the embedded SFTP manager, bypassing the external preference."""
@@ -664,6 +685,9 @@ class WindowFileManagerMixin:
             placeholder_info = self._create_file_manager_placeholder_tab(nickname, host_value)
 
             def _create_embedded_file_manager():
+                if not self._placeholder_is_open(placeholder_info):
+                    logger.debug("Placeholder tab closed before embedded file manager creation; aborting.")
+                    return False
                 try:
                     widget, controller = create_internal_file_manager_tab(
                         user=str(username or ''),
@@ -693,7 +717,7 @@ class WindowFileManagerMixin:
                     )
                 return False
 
-            if GLib.idle_add(_create_embedded_file_manager, priority=GLib.PRIORITY_DEFAULT_IDLE):
+            if GLib.timeout_add(250, _create_embedded_file_manager):
                 return
             # If idle_add failed, fall back to immediate creation using the placeholder
             fallback_placeholder = placeholder_info
@@ -747,6 +771,32 @@ class WindowFileManagerMixin:
             logger.error(f"Failed to start file manager process for {nickname}: {message}")
             self._show_manage_files_error(str(nickname), message)
 
+    def _placeholder_is_open(self, placeholder_info: Optional[dict]) -> bool:
+        """Return True if the placeholder page is still attached to tab_view.
+
+        Fails closed (returns False) if placeholder_info is missing, tab_view is
+        unavailable, or any error occurs while inspecting the page model.
+        """
+        if not placeholder_info:
+            return False
+        page = placeholder_info.get('page')
+        if page is None:
+            return False
+        if not hasattr(self, 'tab_view') or self.tab_view is None:
+            return False
+
+        try:
+            pages = self.tab_view.get_pages()
+            if pages is None:
+                return False
+            if hasattr(pages, 'get_n_items') and hasattr(pages, 'get_item'):
+                n_items = pages.get_n_items()
+                return any(pages.get_item(i) is page for i in range(n_items))
+            return any(item is page for item in pages)
+        except Exception as exc:
+            logger.debug("Unable to verify placeholder page status; aborting creation: %s", exc)
+            return False
+
     def _track_internal_file_manager_window(self, window, *, widget=None):
         """Keep a reference to in-app file manager controllers to prevent GC."""
 
@@ -781,6 +831,12 @@ class WindowFileManagerMixin:
         container.set_hexpand(True)
         container.set_vexpand(True)
 
+        stack = Gtk.Stack()
+        stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        stack.set_transition_duration(200)
+        stack.set_hexpand(True)
+        stack.set_vexpand(True)
+
         inner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         inner_box.set_halign(Gtk.Align.CENTER)
         inner_box.set_valign(Gtk.Align.CENTER)
@@ -805,7 +861,9 @@ class WindowFileManagerMixin:
             pass
         inner_box.append(status_label)
 
-        container.append(inner_box)
+        stack.add_named(inner_box, "placeholder")
+        stack.set_visible_child_name("placeholder")
+        container.append(stack)
 
         page = self.tab_view.append(container)
         page.set_title(page_title)
@@ -821,6 +879,7 @@ class WindowFileManagerMixin:
         return {
             'page': page,
             'container': container,
+            'stack': stack,
             'spinner': spinner,
             'label': status_label,
             'inner_box': inner_box,
@@ -860,6 +919,21 @@ class WindowFileManagerMixin:
             return False
 
         try:
+            widget.set_hexpand(True)
+            widget.set_vexpand(True)
+        except Exception:  # pragma: no cover - optional sizing
+            pass
+
+        first_child = container.get_first_child()
+        if isinstance(first_child, Gtk.Stack):
+            try:
+                first_child.add_named(widget, "content")
+                first_child.set_visible_child_name("content")
+                return True
+            except Exception as exc:  # pragma: no cover - defensive stack transition
+                logger.debug('Failed stack transition to content: %s', exc)
+
+        try:
             while child := container.get_first_child():
                 container.remove(child)
         except Exception as exc:  # pragma: no cover - defensive cleanup
@@ -871,12 +945,6 @@ class WindowFileManagerMixin:
         except Exception as exc:  # pragma: no cover - defensive append
             logger.debug('Failed to attach embedded file manager to placeholder: %s', exc)
             return False
-
-        try:
-            widget.set_hexpand(True)
-            widget.set_vexpand(True)
-        except Exception:  # pragma: no cover - optional sizing
-            pass
 
         return True
 
