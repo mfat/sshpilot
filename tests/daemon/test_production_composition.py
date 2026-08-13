@@ -10,6 +10,7 @@ developer's real config.
 from __future__ import annotations
 
 import json
+import logging
 
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.core.connections.repository import ConnectionRepository
@@ -125,6 +126,72 @@ def test_production_composition_migrates_legacy_state(tmp_path, monkeypatch):
     legacy = json.loads((get_config_dir() / "config.json").read_text(encoding="utf-8"))
     assert legacy["connections"]["non_ssh"][0]["id"] == "telnet-box"
     assert "connection_groups" in legacy
+
+
+def test_production_composition_survives_unsafe_legacy_metadata(
+    tmp_path, monkeypatch, caplog
+):
+    ssh_dir = tmp_path / "ssh"
+    xdg_config_dir = tmp_path / "config"
+    monkeypatch.setenv("SSHPILOT_SSH_DIR", str(ssh_dir))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config_dir))
+
+    ssh_dir.mkdir(parents=True)
+    (ssh_dir / "config").write_text(
+        "Host web\n    HostName web.example\n", encoding="utf-8"
+    )
+    config_dir = xdg_config_dir / "sshpilot"
+    config_dir.mkdir(parents=True)
+    legacy_path = config_dir / "config.json"
+    legacy_path.write_text(
+        json.dumps(
+            {"connections_meta": {"old-host": {"password": "secret"}}}
+        ),
+        encoding="utf-8",
+    )
+    legacy_before = legacy_path.read_bytes()
+
+    from sshpilot.daemon import cli
+
+    with caplog.at_level(logging.WARNING):
+        services = cli._production_core_services()
+
+    repository = services.connections._repository
+    assert [connection.id for connection in repository.snapshot().connections] == [
+        "web"
+    ]
+    assert not (config_dir / "connections.json").exists()
+    assert legacy_path.read_bytes() == legacy_before
+    assert "Failed to load auxiliary connection state" in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_production_composition_survives_legacy_group_parent_cycle(
+    tmp_path, monkeypatch, caplog
+):
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir(parents=True)
+    (ssh_dir / "config").write_text(
+        "Host web\n    HostName web.example\n", encoding="utf-8"
+    )
+    config_json = {
+        "connection_groups": {
+            "groups": {
+                "a": {"name": "A", "parent_id": "b", "connections": []},
+                "b": {"name": "B", "parent_id": "a", "connections": []},
+            }
+        }
+    }
+
+    with caplog.at_level(logging.WARNING):
+        services = _compose(tmp_path, monkeypatch, config_json=config_json)
+
+    repository = services.connections._repository
+    assert [connection.id for connection in repository.snapshot().connections] == [
+        "web"
+    ]
+    assert not (get_config_dir() / "connections.json").exists()
+    assert "reason=ValueError" in caplog.text
 
 
 def test_production_composition_does_not_load_plugins_or_legacy_managers(
