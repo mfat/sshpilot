@@ -1,3 +1,11 @@
+sshpilot (5.8.0-1) unstable; urgency=medium
+
+  * Release v5.8.0.
+  * Migrated the code base to a new daemon-based system
+  * Introducing SSH Pilot API
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 13 Aug 2026 09:41:26 +0000
+
 sshpilot (5.7.2-1) unstable; urgency=medium
 
   * Release v5.7.2.
