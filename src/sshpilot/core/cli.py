@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Headless proof consumer for ``sshpilot.core``.
 
 Exercises GTK-free core services without importing ``gi``.
