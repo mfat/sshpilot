@@ -461,19 +461,21 @@ class ConnectionRepository:
     def _load_state_locked(self) -> None:
         """Load authoritative SSH state and best-effort auxiliary state."""
         ssh_config = self._ssh_store.load()
-        canonical_state_present = self._state_path.exists()
         try:
             file_state, migrated = self._read_state()
             if migrated:
                 file_state = self._reconcile_legacy_state(ssh_config, file_state)
             self._publish_state_locked(ssh_config, file_state, migrated=migrated)
         except Exception as exc:
-            if not canonical_state_present:
-                raise
+            failure_reason = (
+                exc.diagnostic_category
+                if isinstance(exc, CoreError)
+                else type(exc).__name__
+            )
             logger.warning(
                 "Failed to load auxiliary connection state; continuing with "
-                "SSH configuration only: %s",
-                exc,
+                "SSH configuration only (reason=%s)",
+                failure_reason,
             )
             self._publish_state_locked(
                 ssh_config,

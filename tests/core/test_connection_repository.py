@@ -108,7 +108,9 @@ def test_legacy_migration_reconciles_deleted_connections_and_preserves_order(tmp
     assert repo._legacy_migration_result.dangling_parent_links_removed == 1
 
 
-def test_legacy_migration_failure_does_not_create_canonical_state(tmp_path):
+def test_legacy_migration_failure_is_nonfatal_and_preserves_legacy_state(
+    tmp_path, caplog
+):
     repo, root, state, legacy = _repo(
         tmp_path, "Host web\n    HostName web.example\n"
     )
@@ -123,13 +125,78 @@ def test_legacy_migration_failure_does_not_create_canonical_state(tmp_path):
         encoding="utf-8",
     )
     before = legacy.read_bytes()
-    with pytest.raises(CoreError):
-        ConnectionRepository(
+    with caplog.at_level(logging.WARNING):
+        repo = ConnectionRepository(
             ssh_store=SshConfigStore(root),
             state_path=state,
             legacy_config_path=legacy,
             isolated=False,
         )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert not state.exists()
+    assert legacy.read_bytes() == before
+    assert "Failed to load auxiliary connection state" in caplog.text
+    assert "secret" not in caplog.text
+
+
+def test_legacy_references_cannot_veto_completely_changed_ssh_config(tmp_path):
+    repo, root, state, legacy = _repo(
+        tmp_path,
+        "Host X\n    HostName x.example\n\n"
+        "Host Y\n    HostName y.example\n\n"
+        "Host Z\n    HostName z.example\n",
+    )
+    del repo
+    state.unlink()
+    legacy.write_text(
+        json.dumps(
+            {
+                "connection_groups": {
+                    "groups": {
+                        "prod": {
+                            "id": "prod",
+                            "name": "Production",
+                            "connections": ["A", "B"],
+                        }
+                    },
+                    "connections": {"A": "prod"},
+                    "root_connections": ["C"],
+                },
+                "connections_meta": {"A": {"pinned": True}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+
+    assert [record.id for record in repo.snapshot().connections] == ["X", "Y", "Z"]
+
+
+def test_malformed_legacy_state_is_nonfatal_and_does_not_create_canonical_state(
+    tmp_path,
+):
+    repo, root, state, legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    del repo
+    state.unlink()
+    legacy.write_bytes(b"{not-json")
+    before = legacy.read_bytes()
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
     assert not state.exists()
     assert legacy.read_bytes() == before
 
@@ -277,7 +344,7 @@ def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path)
     assert state.read_bytes() == before
 
 
-def test_legacy_parent_cycle_aborts_without_canonical_file(tmp_path):
+def test_legacy_parent_cycle_is_nonfatal_without_canonical_file(tmp_path):
     _, root, state, legacy = _repo(tmp_path, "Host web\n    HostName web.example\n")
     state.unlink()
     legacy.write_text(
@@ -293,14 +360,16 @@ def test_legacy_parent_cycle_aborts_without_canonical_file(tmp_path):
         ),
         encoding="utf-8",
     )
-    with pytest.raises(ValueError):
-        ConnectionRepository(
-            ssh_store=SshConfigStore(root),
-            state_path=state,
-            legacy_config_path=legacy,
-            isolated=False,
-        )
+    before = legacy.read_bytes()
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
     assert not state.exists()
+    assert legacy.read_bytes() == before
 
 
 def test_loads_ssh_connections_in_order(tmp_path):
