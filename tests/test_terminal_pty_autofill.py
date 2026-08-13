@@ -201,7 +201,56 @@ def _daemon_terminal():
     terminal._daemon_mode = True
     terminal._daemon_controller = Mock(input_owner=True)
     terminal.backend = Mock()
+    terminal._shell_output_seen = False
+    terminal._pending_shell_ready_feeds = []
     return terminal
+
+
+def test_daemon_terminal_shell_ready_feed_is_deferred_until_output():
+    terminal = _daemon_terminal()
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._daemon_controller.send_input.assert_not_called()
+    assert terminal._pending_shell_ready_feeds == [b"curl -s ifconfig.me\n"]
+
+
+def test_daemon_terminal_shell_ready_feed_flushes_on_first_output_frame():
+    terminal = _daemon_terminal()
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._on_daemon_output(b"BusyBox v1.36.1\n")
+    terminal._daemon_controller.send_input.assert_called_once_with(
+        b"curl -s ifconfig.me\n"
+    )
+    assert terminal._pending_shell_ready_feeds == []
+    assert terminal._shell_output_seen is True
+
+
+def test_daemon_terminal_shell_ready_feed_after_output_feeds_immediately():
+    terminal = _daemon_terminal()
+    terminal._on_daemon_output(b"root@host:~# ")
+    terminal._daemon_controller.send_input.reset_mock()
+    terminal.feed_child_data_when_shell_ready(b"uptime\n")
+    terminal._daemon_controller.send_input.assert_called_once_with(b"uptime\n")
+    assert terminal._pending_shell_ready_feeds == []
+
+
+def test_command_blocks_feed_routes_real_widget_through_shell_ready_gate():
+    terminal = _daemon_terminal()
+    command_blocks.CommandBlocksPanel._feed_interactive_when_connected(
+        terminal, "curl -s ifconfig.me", insert_only=False
+    )
+    terminal._daemon_controller.send_input.assert_not_called()
+    assert terminal._pending_shell_ready_feeds == [b"curl -s ifconfig.me\n"]
+
+
+def test_command_blocks_feed_real_widget_waits_for_banner_before_send_input():
+    terminal = _daemon_terminal()
+    command_blocks.CommandBlocksPanel._feed_interactive_when_connected(
+        terminal, "curl -s ifconfig.me", insert_only=False
+    )
+    terminal._on_daemon_output(b"BusyBox v1.36.1\nroot@host:~# ")
+    terminal._daemon_controller.send_input.assert_called_once_with(
+        b"curl -s ifconfig.me\n"
+    )
 
 
 def test_command_blocks_active_terminal_routes_daemon_input_through_widget():

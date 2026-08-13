@@ -141,6 +141,8 @@ class TerminalWidget(Gtk.Box):
         self._daemon_exit_handled = False
         self._view_only_overlay = None
         self._reconnect_handler = None
+        self._shell_output_seen = False
+        self._pending_shell_ready_feeds = []
 
         # Register with process manager
         process_manager.register_terminal(self)
@@ -1147,6 +1149,23 @@ class TerminalWidget(Gtk.Box):
         try:
             self._feed_display(data)
 
+            # First real output frame means the remote shell is rendering
+            # (banner/prompt), not merely attached. Flush any feeds queued by
+            # ``feed_child_data_when_shell_ready`` now that the shell is live.
+            if data and not self._shell_output_seen:
+                self._shell_output_seen = True
+                pending, self._pending_shell_ready_feeds = (
+                    self._pending_shell_ready_feeds,
+                    [],
+                )
+                for feed in pending:
+                    try:
+                        self.feed_child_data(feed)
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to flush shell-ready feed: {e}"
+                        )
+
             # Update connection state based on daemon session state
             self._update_daemon_connection_state()
 
@@ -1298,6 +1317,27 @@ class TerminalWidget(Gtk.Box):
                 "Active terminal backend does not support local process input"
             )
         backend.feed_child_data(data)
+
+    def feed_child_data_when_shell_ready(self, data):
+        """Feed bytes only once the remote shell has produced output.
+
+        The daemon session reports ACTIVE (and emits ``connection-established``)
+        as soon as the attach completes — before the remote shell banner has
+        rendered. Feeding at that point double-echoes the pasted command (the
+        tty echoes the paste, then the shell re-echoes it once it reads the
+        buffer). This mirrors the v5.7.2 legacy path, which only promoted to
+        CONNECTED on real login evidence (MOTD/shell prompt) before feeding.
+
+        Bytes are flushed on the first output frame received after attachment;
+        an already-rendered shell (or non-daemon terminal) feeds immediately.
+        """
+        if getattr(self, '_shell_output_seen', False):
+            self.feed_child_data(data)
+            return
+        if getattr(self, '_daemon_mode', False):
+            self._pending_shell_ready_feeds.append(data)
+            return
+        self.feed_child_data(data)
 
     def _handle_daemon_close(self, is_quitting=False):
         """Handle close policy for daemon terminals."""

@@ -1967,6 +1967,16 @@ class CommandBlocksPanel(Gtk.Box):
             if insert_only
             else (command_text + "\n").encode("utf-8")
         )
+        # Real TerminalWidgets feed only once the remote shell has produced
+        # output (banner/prompt) — the daemon reports ACTIVE before the banner
+        # renders, and feeding then double-echoes the command. Test doubles
+        # (Mock) keep the legacy connection-established gate.
+        shell_ready = getattr(
+            type(terminal), "feed_child_data_when_shell_ready", None
+        )
+        if shell_ready is not None:
+            terminal.feed_child_data_when_shell_ready(data)
+            return
         if getattr(terminal, "is_connected", False):
             terminal.feed_child_data(data)
             return
