@@ -61,6 +61,12 @@
 
 
 
+    <release version="5.8.0" date="2026-08-13">
+      <description>
+        <p>Migrated the code base to a new daemon-based system</p>
+        <p>Introducing SSH Pilot API</p>
+      </description>
+    </release>
     <release version="5.7.2" date="2026-07-25">
       <description>
         <p>Introducing Omnisearch—a powerful, versatile pop-up search box accessible from anywhere by double-pressing the Shift key</p>

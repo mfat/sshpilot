@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.7.2}
+Version:        %{?version}%{!?version:5.8.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -144,6 +144,10 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Aug 13 2026 mFat <newmfat@gmail.com> - 5.8.0-1
+- Migrated the code base to a new daemon-based system
+- Introducing SSH Pilot API
+
 * Sat Jul 25 2026 mFat <newmfat@gmail.com> - 5.7.2-1
 - Introducing Omnisearch—a powerful, versatile pop-up search box accessible from anywhere by double-pressing the Shift key
 - Added a minimal sidebar mode that uses a narrow, icon-only strip to free up horizontal screen space
