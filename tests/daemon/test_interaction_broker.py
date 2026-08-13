@@ -267,6 +267,63 @@ def test_prepare_launch_brokers_interactions_without_saved_secret(
     )
 
 
+def test_prepare_launch_forwards_remote_command_to_builder_when_present(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
+    seen = {}
+
+    def _builder(connection_id, **kwargs):
+        seen["connection_id"] = connection_id
+        seen["kwargs"] = kwargs
+        return (("/usr/bin/ssh", "example"), {"PATH": os.environ.get("PATH", "")})
+
+    _argv, _environment = broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+            remote_command="docker exec -it web sh",
+            force_tty=True,
+        ),
+        _builder,
+    )
+    assert seen["connection_id"] == CONNECTION_ID
+    assert seen["kwargs"]["interaction_policy"] == "normal"
+    assert seen["kwargs"]["remote_command"] == "docker exec -it web sh"
+    assert seen["kwargs"]["force_tty"] is True
+
+
+def test_prepare_launch_omits_remote_command_when_absent(
+    broker: InteractionBroker,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(broker, "_effective_ssh_config", lambda _argv, _environment=None: {})
+    seen = {}
+
+    def _builder(connection_id, **kwargs):
+        seen["kwargs"] = kwargs
+        return (("/usr/bin/ssh", "example"), {"PATH": os.environ.get("PATH", "")})
+
+    broker.prepare_launch(
+        SessionLaunchSpec(
+            session_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            protocol="ssh",
+            hostname="example.test",
+            username="alice",
+            port=22,
+        ),
+        _builder,
+    )
+    assert "remote_command" not in seen["kwargs"]
+    assert "force_tty" not in seen["kwargs"]
+
+
 def test_headless_launch_preserves_normal_environment_and_replaces_askpass(
     broker: InteractionBroker,
     monkeypatch,

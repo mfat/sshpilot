@@ -436,6 +436,7 @@ class DaemonConnectionLaunchProvider:
         extra_args: Optional[List[str]] = None,
         remote_command: Optional[str] = None,
         target_override: Optional[str] = None,
+        force_tty: bool = False,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
@@ -456,6 +457,7 @@ class DaemonConnectionLaunchProvider:
             native_mode=True,
             interaction_policy=interaction_policy,
             target_override=target_override,
+            force_tty=force_tty,
         )
         prepared = build_ssh_connection(ctx)
         connection._preload_keys_into_agent(app_config, credential_lookup=manager)
@@ -503,6 +505,8 @@ class DaemonConnectionLaunchProvider:
         connection_id: ConnectionId,
         *,
         interaction_policy: str = "none",
+        remote_command: Optional[str] = None,
+        force_tty: bool = False,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         record = self._resolve(connection_id)
         connection = HeadlessConnectionView(record)
@@ -515,6 +519,8 @@ class DaemonConnectionLaunchProvider:
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
+            remote_command=remote_command,
+            force_tty=force_tty,
         )
 
     def prepare_scp_launch(

@@ -86,6 +86,23 @@ def test_session_request_and_result_codecs_round_trip_strictly():
     ) == result
 
 
+def test_open_session_request_codec_round_trips_remote_command():
+    request = OpenSessionRequest(
+        connection_id=ConnectionId("test"),
+        remote_command="docker exec -it web sh",
+        force_tty=True,
+    )
+    encoded = open_session_request_to_wire(request)
+    assert encoded["remote_command"] == "docker exec -it web sh"
+    assert encoded["force_tty"] is True
+    decoded = open_session_request_from_wire(encoded)
+    assert decoded == request
+    # absent field decodes as None
+    plain = open_session_request_from_wire({"connection_id": "test"})
+    assert plain.remote_command is None
+    assert plain.force_tty is False
+
+
 def test_session_summary_codec_round_trip_includes_safe_failure_and_exit():
     summary = replace(
         _summary(SessionState.FAILED),

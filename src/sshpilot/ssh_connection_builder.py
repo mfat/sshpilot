@@ -443,6 +443,7 @@ class ConnectionContext:
     native_mode: bool = False  # Use native SSH mode (minimal command)
     interaction_policy: str = "normal"
     target_override: Optional[str] = None
+    force_tty: bool = False  # Force a remote TTY allocation (-t)
 
 
 def _get_ssh_config_value(
@@ -1002,6 +1003,7 @@ def build_ssh_connection(
                 AuthMethod.PASSWORD if auth.password_mode else AuthMethod.PUBLIC_KEY
             ),
             launch_mode=launch_mode,
+            force_tty=bool(getattr(ctx, "force_tty", False)),
         )
         spec = build_ssh_process_spec(req)
         env = dict(spec.env)

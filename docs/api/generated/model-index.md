@@ -2392,13 +2392,17 @@ Synthetic representation:
 | --- | --- | ---: | --- | ---: |
 | `connection_id` | `ConnectionId` | Yes | — | No |
 | `dimensions` | `TerminalDimensions | None` | No | `null` | No |
+| `remote_command` | `str | None` | No | `null` | No |
+| `force_tty` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
 ```json
 {
   "connection_id": "production",
-  "dimensions": null
+  "dimensions": null,
+  "force_tty": false,
+  "remote_command": null
 }
 ```
 

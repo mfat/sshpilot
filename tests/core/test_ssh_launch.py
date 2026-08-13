@@ -122,6 +122,26 @@ def test_local_command_and_contradictions():
         )
 
 
+def test_force_tty_adds_dash_t_before_destination():
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="demo",
+            remote_command="docker exec -it web sh",
+            force_tty=True,
+        )
+    )
+    assert spec.argv == ("ssh", "-t", "demo", "docker exec -it web sh")
+
+    plain = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="demo",
+            remote_command="docker exec -it web sh",
+            force_tty=False,
+        )
+    )
+    assert plain.argv == ("ssh", "demo", "docker exec -it web sh")
+
+
 def test_gi_blocked_import():
     import subprocess
     import sys

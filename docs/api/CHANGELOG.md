@@ -5,6 +5,17 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.31`; `PROTOCOL_VERSION` stays
+  `1.0`. Added optional `force_tty` to open-session requests. When set, the
+  daemon forces a remote TTY allocation (`ssh -t`) so interactive remote
+  commands such as `docker exec -it <container> sh` receive a PTY on the far
+  side instead of failing with "stdin is not a terminal".
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.30`; `PROTOCOL_VERSION` stays
+  `1.0`. Added optional `remote_command` to open-session requests so daemon
+  terminal sessions can run a command inside a connection (for example
+  `docker exec -it <container> sh` or `docker logs -f <container>`) instead
+  of only a plain interactive shell; advertised as the new
+  `sessions.command` capability.
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.29`; `PROTOCOL_VERSION` stays
   `1.0`. Added an additive broadcast execution interaction mode so passive
   remote-history autocomplete can use stored authentication without

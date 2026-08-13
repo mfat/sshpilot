@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.31",
+  "api_implementation_version": "0.30",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3724,8 +3724,7 @@
     "OpenSessionRequest": [
       "connection_id",
       "dimensions",
-      "remote_command",
-      "force_tty"
+      "remote_command"
     ],
     "OpenSftpRequest": [
       "connection_id"

@@ -265,7 +265,9 @@ class TestConnectionManager:
     def delete_plugin_secret(self, plugin_id, key):
         return self.plugin_secrets.pop((plugin_id, key), None) is not None
 
-    def prepare_terminal_launch(self, connection_id, *, interaction_policy="none"):
+    def prepare_terminal_launch(
+        self, connection_id, *, interaction_policy="none", remote_command=None, force_tty=False
+    ):
         connection = self.get_record(connection_id)
         if connection is None:
             return None
@@ -330,6 +332,8 @@ class TestConnectionManager:
         executable = shutil.which(argv[0], path=env.get("PATH"))
         if executable:
             argv[0] = executable
+        if remote_command:
+            argv.append(remote_command)
         return tuple(argv), env
 
 

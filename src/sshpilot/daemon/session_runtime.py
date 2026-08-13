@@ -92,6 +92,8 @@ class SessionLaunchSpec:
     username: str
     port: int
     dimensions: Optional[TerminalDimensions] = None
+    remote_command: Optional[str] = None
+    force_tty: bool = False
 
 
 class SessionProcessHandle(Protocol):
@@ -507,6 +509,8 @@ class SessionRuntime:
                 connection,
                 session_id,
                 request.dimensions,
+                request.remote_command,
+                request.force_tty,
             ),
             startup_scheduled=True,
             replay=TerminalReplayBuffer(self._replay_bytes),
@@ -1086,6 +1090,8 @@ class SessionRuntime:
                     username=spec.username,
                     port=spec.port,
                     dimensions=request.dimensions,
+                    remote_command=spec.remote_command,
+                    force_tty=spec.force_tty,
                 )
                 return
             handle = record.process_handle
@@ -1759,6 +1765,8 @@ class SessionRuntime:
         connection: ConnectionDetails,
         session_id: SessionId,
         dimensions: Optional[TerminalDimensions],
+        remote_command: Optional[str] = None,
+        force_tty: bool = False,
     ) -> SessionLaunchSpec:
         return SessionLaunchSpec(
             session_id=session_id,
@@ -1768,6 +1776,8 @@ class SessionRuntime:
             username=connection.username,
             port=connection.port,
             dimensions=dimensions,
+            remote_command=remote_command,
+            force_tty=force_tty,
         )
 
     def _require_accepting_commands_locked(self) -> None:

@@ -207,6 +207,8 @@ class DaemonTerminalSessionController:
         self,
         connection_id: ConnectionId,
         dimensions: Optional[TerminalDimensions] = None,
+        remote_command: Optional[str] = None,
+        force_tty: bool = False,
     ) -> None:
         """Start opening a new session. Async operation."""
         if self._closed:
@@ -224,6 +226,8 @@ class DaemonTerminalSessionController:
                 OpenSessionRequest(
                     connection_id=connection_id,
                     dimensions=dimensions,
+                    remote_command=remote_command,
+                    force_tty=force_tty,
                 )
             ),
             on_success=self._on_session_opened,

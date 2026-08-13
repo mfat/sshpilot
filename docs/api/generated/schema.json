@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.29",
+  "api_implementation_version": "0.31",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1070,6 +1070,7 @@
       "sessions.read",
       "sessions.write",
       "sessions.events",
+      "sessions.command",
       "terminal",
       "terminal.attach",
       "terminal.output",
@@ -4466,6 +4467,20 @@
           "required": false,
           "sensitive": false,
           "type": "TerminalDimensions | None"
+        },
+        {
+          "default": null,
+          "name": "remote_command",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        },
+        {
+          "default": false,
+          "name": "force_tty",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"

@@ -216,6 +216,42 @@ def test_prepare_and_start_split_keeps_runner_work_out_of_prepare(runtime_parts)
     assert len(runner.specs) == 1
 
 
+def test_open_session_carries_remote_command_into_launch_spec(runtime_parts):
+    runtime, core, runner = runtime_parts
+    connection_id = core.list_connections()[0].id
+    prepared = runtime.prepare_open_session(
+        OpenSessionRequest(
+            connection_id=connection_id,
+            remote_command="docker exec -it web sh",
+            force_tty=True,
+        ),
+        client_id=ClientId("client:a"),
+    )
+
+    runtime.start_session(prepared.id)
+
+    assert len(runner.specs) == 1
+    assert runner.specs[0].remote_command == "docker exec -it web sh"
+    assert runner.specs[0].force_tty is True
+
+    # Without a command the spec carries None (plain interactive shell).
+    repo = make_test_repository()
+    core2 = ConnectionApplicationService(repo, client_name="runtime-test")
+    runner2 = ControlledRunner()
+    runtime2 = SessionRuntime(core2, runner=runner2)
+    try:
+        prepared2 = runtime2.prepare_open_session(
+            OpenSessionRequest(connection_id=core2.list_connections()[0].id),
+            client_id=ClientId("client:a"),
+        )
+        runtime2.start_session(prepared2.id)
+        assert runner2.specs[0].remote_command is None
+        assert runner2.specs[0].force_tty is False
+    finally:
+        runtime2.shutdown()
+        core2.close()
+
+
 def test_prepare_and_finish_close_keep_runner_work_out_of_prepare(runtime_parts):
     runtime, core, runner = runtime_parts
     session = runtime.open_session(

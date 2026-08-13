@@ -56,6 +56,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 <!-- api-daemon-runtime-capability: connections.split -->
 <!-- api-daemon-runtime-capability: sessions.read -->
 <!-- api-daemon-runtime-capability: sessions.write -->
+<!-- api-daemon-runtime-capability: sessions.command -->
 <!-- api-daemon-runtime-capability: sessions.events -->
 <!-- api-daemon-runtime-capability: terminal.output -->
 <!-- api-daemon-runtime-capability: terminal.input -->
@@ -99,6 +100,7 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `connections.write` | Create, duplicate, update, and delete saved connections | `InProcessClient` and daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | `ConnectionRepository` / `ConnectionApplicationService` on daemon; compatibility adapter for in-process clients | v1 |
 | `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented; in-process unsupported | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
 | `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented; in-process unsupported | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
+| `sessions.command` | Open a session that runs an explicit remote command inside the connection (for example `docker exec -it <container> sh` or `docker logs -f <container>`) instead of a plain interactive shell | Daemon: Implemented; in-process unsupported | `open_session` with `remote_command` | Session lifecycle events | `SessionRuntime`, `DaemonConnectionLaunchProvider` (argv `ssh <alias> <remote_command>`) | v1 / API 0.30 |
 | `sessions.events` | Receive daemon session lifecycle events | Daemon: Implemented | `subscribe_events` | `session.created`, `session.state_changed`, `session.exited`, `session.closed` | Existing bounded event multiplexing | v1 / API 0.6 |
 | `terminal` | Legacy broad terminal identifier | Deprecated and never advertised | None | None | Replaced by narrow capabilities | v1 |
 | `terminal.attach` | Legacy attach identifier | Deprecated and never advertised | None | None | Attachment remains under `sessions.write` | v1 |
@@ -190,6 +192,18 @@ are capped at 100 and are not persisted across restart.
 Daemon-only and contract-tested for lifecycle control and logical attachment
 bookkeeping. PTY bytes and typed interaction behaviour remain separately
 negotiated through their narrow terminal/interaction capabilities.
+
+<!-- api-capability: sessions.command -->
+## `sessions.command`
+
+Daemon-only capability for opening a session that runs an explicit remote
+command inside the connection instead of a plain interactive shell. The
+daemon builds the canonical `<ssh> <alias> <remote_command>` argv (for
+example `docker exec -it <container> sh` or `docker logs -f <container>`)
+through `DaemonConnectionLaunchProvider` and the session process runner.
+Interactive commands require `force_tty=True` on the open request so the
+daemon adds `-t` and the far side gets a PTY. Granted alongside
+`sessions.write` when the daemon is built with terminal frames.
 
 <!-- api-capability: sessions.events -->
 ## `sessions.events`

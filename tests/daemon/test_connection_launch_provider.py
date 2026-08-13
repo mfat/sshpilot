@@ -115,6 +115,28 @@ def test_local_command_injected_only_when_present(provider):
     assert "PermitLocalCommand=yes" in command
 
 
+def test_terminal_launch_appends_remote_command_after_host(provider):
+    prov, _records = provider
+    command, _environment = prov.prepare_terminal_launch(
+        "web", interaction_policy="none",
+        remote_command="docker exec -it web sh",
+        force_tty=True,
+    )
+    # canonical shape: <ssh-binary> ... -t web docker exec -it web sh
+    assert command[-1] == "docker exec -it web sh"
+    assert command[-2] == "web"
+    assert command[-3] == "-t"
+
+
+def test_terminal_launch_without_remote_command_has_host_last(provider):
+    prov, _records = provider
+    command, _environment = prov.prepare_terminal_launch(
+        "web", interaction_policy="none"
+    )
+    assert command[-1] == "web"
+    assert "-t" not in command
+
+
 def test_production_settings_view_is_not_called_as_a_function(provider, monkeypatch):
     class SettingsView:
         def get_setting(self, _key, default=None):

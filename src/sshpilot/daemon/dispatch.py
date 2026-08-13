@@ -2925,6 +2925,7 @@ class RequestDispatcher:
                     Capability.TERMINAL_INPUT,
                     Capability.TERMINAL_RESIZE,
                     Capability.TERMINAL_REPLAY,
+                    Capability.SESSIONS_COMMAND,
                 }
             )
         if secret_frames:

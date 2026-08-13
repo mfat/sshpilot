@@ -2873,6 +2873,8 @@ def open_session_request_to_wire(request: OpenSessionRequest) -> Dict[str, Any]:
             if request.dimensions is not None
             else None
         ),
+        "remote_command": request.remote_command,
+        "force_tty": request.force_tty,
     }
 
 
@@ -2880,7 +2882,7 @@ def open_session_request_from_wire(value: Any) -> OpenSessionRequest:
     data = _strict_fields(
         value,
         required={"connection_id"},
-        optional={"dimensions"},
+        optional={"dimensions", "remote_command", "force_tty"},
         context="open session request",
     )
     return OpenSessionRequest(
@@ -2890,6 +2892,12 @@ def open_session_request_from_wire(value: Any) -> OpenSessionRequest:
             if data.get("dimensions") is not None
             else None
         ),
+        remote_command=(
+            _text(data["remote_command"], "remote command", allow_empty=False)
+            if data.get("remote_command") is not None
+            else None
+        ),
+        force_tty=bool(data.get("force_tty", False)),
     )
 
 

@@ -264,9 +264,14 @@ class InteractionBroker:
         inserted.
         """
 
+        kwargs = {"interaction_policy": "normal"}
+        if spec.remote_command is not None:
+            kwargs["remote_command"] = spec.remote_command
+        if spec.force_tty:
+            kwargs["force_tty"] = True
         argv_value, environment_value = launch_builder(
             spec.connection_id,
-            interaction_policy="normal",
+            **kwargs,
         )
         argv = tuple(argv_value)
         # Keep the normal OpenSSH child environment.  Replace only SSH Pilot's

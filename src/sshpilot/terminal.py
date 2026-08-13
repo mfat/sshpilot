@@ -954,7 +954,11 @@ class TerminalWidget(Gtk.Box):
 
     def start_daemon_session(self, client, bridge, connection_id, remote_command=None, force_tty=False):
         """Start daemon-backed SSH session instead of local spawn."""
-        del remote_command, force_tty  # daemon resolves latest connection snapshot
+        # The daemon session runtime resolves the latest connection snapshot;
+        # an optional remote command (e.g. docker exec/logs) is carried through
+        # OpenSessionRequest so the SSH child runs it after the target host.
+        # force_tty forces a remote TTY allocation (-t) so interactive commands
+        # like `docker exec -it` get a PTY on the far side.
         try:
             from .daemon_interaction_dialogs import DaemonInteractionDialogs
             from .terminal_session_controller import DaemonTerminalSessionController
@@ -994,7 +998,10 @@ class TerminalWidget(Gtk.Box):
             dimensions = self._daemon_terminal_dimensions()
 
             # Open session
-            self._daemon_controller.open(connection_id, dimensions)
+            self._daemon_controller.open(
+                connection_id, dimensions, remote_command=remote_command,
+                force_tty=bool(force_tty),
+            )
 
             # Keystrokes + resize via the backend abstraction (not VTE-specific).
             self._install_daemon_backend_io()

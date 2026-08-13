@@ -179,6 +179,8 @@ class ConnectionApplicationService:
         connection_id: ConnectionId,
         *,
         interaction_policy: str = "none",
+        remote_command: Optional[str] = None,
+        force_tty: bool = False,
     ) -> tuple:
         self._assert_command_thread()
         result = self._provider_call(
@@ -186,6 +188,8 @@ class ConnectionApplicationService:
             "prepare_terminal_launch",
             connection_id,
             interaction_policy=interaction_policy,
+            remote_command=remote_command,
+            force_tty=force_tty,
         )
         if result is None:
             raise SshPilotError(

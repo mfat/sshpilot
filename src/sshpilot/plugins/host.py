@@ -474,17 +474,15 @@ class PluginHost:
             self.ui.notify(f"No connection named {nickname!r}")
             return False
         try:
-            import copy
-            # Transient clone so the saved connection's cached command/state is
-            # not polluted and the one-off command runs in its own tab. The clone
-            # re-prepares via the native builder with the remote command appended
-            # on the CLI (same path as ctx.run_command) — no new SSH/auth path.
-            clone = copy.copy(conn)
-            clone.ssh_cmd = []
-            clone.ssh_connection_cmd = None
-            clone.ssh_env = {}
+            # The daemon terminal route re-resolves the latest connection
+            # snapshot and only needs the durable connection identity; the
+            # frozen ConnectionSummary DTO is passed straight through (same as
+            # open_connection). The one-off command runs in its own tab via
+            # force_new=True and the remote_command argument — no local SSH
+            # clone/state mutation (those legacy fields no longer exist on the
+            # presentation DTO and were never used by the daemon route).
             self._window.terminal_manager.connect_to_host(
-                clone, force_new=True,
+                conn, force_new=True,
                 remote_command=str(remote_command), tab_title=title,
                 force_tty=True,  # a command in a terminal tab always wants a PTY
                 pty_prompt=pty_prompt, pty_response=pty_response,

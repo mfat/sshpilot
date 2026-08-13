@@ -81,6 +81,7 @@ class SSHLaunchRequest:
     extra_options: List[str] = field(default_factory=list)
     ssh_overrides: List[str] = field(default_factory=list)
     launch_mode: LaunchMode = LaunchMode.INTERACTIVE
+    force_tty: bool = False
     cwd: Optional[Path] = None
 
 
@@ -184,6 +185,9 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
     for opt in req.extra_options or []:
         if opt:
             argv.append(str(opt))
+
+    if req.force_tty:
+        argv.append("-t")
 
     dest = req.destination.strip()
     argv.append(dest)

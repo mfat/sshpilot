@@ -17,6 +17,7 @@ from sshpilot.api.version import PROTOCOL_VERSION
 REQUIRED_CAPS = {
     Capability.SESSIONS_READ,
     Capability.SESSIONS_WRITE,
+    Capability.SESSIONS_COMMAND,
     Capability.SESSIONS_EVENTS,
     Capability.TERMINAL_OUTPUT,
     Capability.TERMINAL_INPUT,

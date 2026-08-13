@@ -12,7 +12,7 @@ from gi.repository import Gtk, Adw, Pango  # noqa: E402
 
 from .client import parse_published_ports  # noqa: E402
 from .dialogs import (
-    ContainerDetailsDialog, CreateContainerDialog, prompt_shell_options,
+    ContainerDetailsDialog, CreateContainerDialog,
 )  # noqa: E402
 from . import widgets as w  # noqa: E402
 
@@ -523,16 +523,11 @@ class ContainersTabMixin:
         if client is None or not nick:
             return
 
-        def do_open(user: Optional[str], workdir: Optional[str]) -> None:
-            ok = self._open_command_terminal(
-                nick,
-                client.exec_shell_command(cid, user=user, workdir=workdir),
-                title=f"sh: {name}",
-            )
-            if not ok:
-                self._toast("Could not open shell")
-
-        prompt_shell_options(self._window(), name, do_open)
+        ok = self._open_command_terminal(
+            nick, client.exec_shell_command(cid), title=f"sh: {name}"
+        )
+        if not ok:
+            self._toast("Could not open shell")
 
     def _follow_logs(self, cid: str, name: str) -> None:
         client = self._client()

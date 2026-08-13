@@ -168,9 +168,11 @@ class FakeMenuSection:
 class FakeTerminalManager:
     def __init__(self):
         self.opened = []
+        self.calls = []
 
-    def connect_to_host(self, conn):
+    def connect_to_host(self, conn, **kwargs):
         self.opened.append(conn)
+        self.calls.append((conn, kwargs))
 
 
 class FakeKeyManager:
@@ -454,6 +456,27 @@ def test_open_connection_resolution():
     # unknown → False + toast, no crash
     assert host.open_connection("nope") is False
     assert window.toast_overlay.toasts  # notified
+
+
+def test_open_command_terminal_accepts_frozen_connection_summary():
+    from sshpilot.api.models.common import ConnectionId
+    from sshpilot.api.models.connections import ConnectionSummary
+
+    host, cm, window = _host_with_window()
+    cm.connections.append(ConnectionSummary(
+        id=ConnectionId("box1"), nickname="box1", host="example.test",
+        hostname="example.test", username="user", port=22,
+    ))
+    # The presentation DTO is frozen; the daemon route only needs the durable
+    # identity + nickname, so a one-off command must not try to mutate it.
+    assert host.open_command_terminal("box1", "docker ps", title="t") is True
+    conn, kwargs = window.terminal_manager.calls[-1]
+    assert conn is cm.connections[0]
+    assert kwargs["remote_command"] == "docker ps"
+    assert kwargs["tab_title"] == "t"
+    assert kwargs["force_new"] is True
+    # unknown → False + toast, no crash
+    assert host.open_command_terminal("nope", "echo hi") is False
 
 
 def test_plugin_session_view_projects_daemon_snapshot_replay_and_input():

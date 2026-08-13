@@ -30,11 +30,17 @@ class SessionState(str, Enum):
 class OpenSessionRequest:
     connection_id: ConnectionId
     dimensions: Optional[TerminalDimensions] = None
+    remote_command: Optional[str] = None
+    force_tty: bool = False
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
         if self.dimensions is not None and type(self.dimensions) is not TerminalDimensions:
             raise TypeError("initial terminal dimensions must be TerminalDimensions or None")
+        if self.remote_command is not None and not str(self.remote_command).strip():
+            raise ValueError("remote command must be a non-empty string or None")
+        if type(self.force_tty) is not bool:
+            raise TypeError("force tty must be a boolean")
 
 
 @dataclass(frozen=True)

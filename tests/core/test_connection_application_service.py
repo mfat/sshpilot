@@ -458,7 +458,9 @@ def test_update_failure_logs_core_diagnostics_and_keeps_safe_api_error(caplog):
 
 def test_launch_provider_delegation():
     class LaunchProvider:
-        def prepare_terminal_launch(self, connection_id, *, interaction_policy="none"):
+        def prepare_terminal_launch(
+            self, connection_id, *, interaction_policy="none", remote_command=None, force_tty=False
+        ):
             return ("ssh", ["-p", "22", "web@example.com"])
 
     repo = FakeRepository([_record()])

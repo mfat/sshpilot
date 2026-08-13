@@ -9,8 +9,17 @@ Stability: **stable**.
 
 ## Request / response
 
-* `OpenSessionRequest(connection_id, dimensions?)` → `SessionSummary`
+* `OpenSessionRequest(connection_id, dimensions?, remote_command?, force_tty?)` → `SessionSummary`
 * Summary fields: `id`, `connection_id`, `state`, timestamps, `failure`, `exit_info`
+* `remote_command` (optional): when set, the daemon runs `<ssh> <alias> <remote_command>`
+  inside the connection instead of a plain interactive shell. This is how
+  container shells (`docker exec -it <container> sh`) and container logs
+  (`docker logs -f <container>`) are opened. Requires the `sessions.command`
+  capability.
+* `force_tty` (optional, default `False`): when `True` the daemon adds `-t` to
+  the SSH argv so a remote PTY is allocated. Interactive remote commands such
+  as `docker exec -it <container> sh` need this, otherwise OpenSSH runs the
+  command with no remote terminal and docker rejects the TTY request.
 
 ## Events
 

@@ -56,7 +56,7 @@ Session lifecycle methods are daemon-only; `InProcessClient` returns
 | `generate_key` | Daemon only | `keys.write` |
 | `list_sessions` | Daemon only | `sessions.read` |
 | `get_session` | Daemon only | `sessions.read` |
-| `open_session` | Daemon only | `sessions.write` |
+| `open_session` | Daemon only | `sessions.write` (+ `sessions.command` when a `remote_command` is supplied) |
 | `attach_session` | Daemon only | `sessions.write` |
 | `detach_session` | Daemon only | `sessions.write` |
 | `close_session` | Daemon only | `sessions.write` |
@@ -1356,13 +1356,19 @@ Requests bounded closure of one runtime forward.
 ## `open_session`
 
 - **Status / introduced:** Daemon-only / Protocol v1, API 0.6.
-- **Capability / purpose:** `sessions.write`; allocate a daemon-owned session
+- **Capability / purpose:** `sessions.write` (plus `sessions.command` when a
+  `remote_command` is supplied); allocate a daemon-owned session
   record and initiate the configured process runner.
-- **Parameters / return:** `OpenSessionRequest(connection_id)`; returns the
-  immutable `starting` `SessionSummary` as soon as the startup command is
-  accepted by the bounded executor. The response does not wait for PTY
-  allocation, OpenSSH launch, host-key/password/passphrase interaction,
-  network negotiation, or `running`.
+- **Parameters / return:** `OpenSessionRequest(connection_id, remote_command?, force_tty?)`;
+  returns the immutable `starting` `SessionSummary` as soon as the startup
+  command is accepted by the bounded executor. The response does not wait for
+  PTY allocation, OpenSSH launch, host-key/password/passphrase interaction,
+  network negotiation, or `running`. When `remote_command` is set the daemon
+  runs `<ssh> <alias> <remote_command>` inside the connection instead of a
+  plain interactive shell (for example `docker exec -it <container> sh` or
+  `docker logs -f <container>`). When `force_tty` is set the daemon adds `-t`
+  so OpenSSH allocates a remote PTY, which interactive commands such as
+  `docker exec -it` require.
 - **Errors:** Missing connection, unsupported protocol, daemon shutdown, or
   transport errors. `server_busy` means the bounded worker admission failed;
   the prepared record is marked `failed` and no misleading `starting` summary

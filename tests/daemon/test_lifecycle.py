@@ -50,6 +50,7 @@ def test_start_connect_disconnect_and_clean_stop(daemon_factory):
             Capability.CONNECTIONS_SPLIT,
             Capability.SESSIONS_READ,
             Capability.SESSIONS_WRITE,
+            Capability.SESSIONS_COMMAND,
             Capability.SESSIONS_EVENTS,
             Capability.TERMINAL_OUTPUT,
             Capability.TERMINAL_INPUT,

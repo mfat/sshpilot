@@ -24,6 +24,7 @@ class Capability(str, Enum):
     SESSIONS_READ = "sessions.read"
     SESSIONS_WRITE = "sessions.write"
     SESSIONS_EVENTS = "sessions.events"
+    SESSIONS_COMMAND = "sessions.command"
     TERMINAL = "terminal"
     TERMINAL_ATTACH = "terminal.attach"
     TERMINAL_OUTPUT = "terminal.output"

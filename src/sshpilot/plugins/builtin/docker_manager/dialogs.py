@@ -8,7 +8,6 @@ Kept separate from page.py to avoid bloating it. Dialogs:
   compose file).
 * ``CreateContainerDialog`` — a form to create + run a container.
 * ``DockerConsoleSettingsDialog`` — plugin settings (SSH reuse, polling, logs).
-* ``prompt_shell_options`` — optional user/workdir before ``docker exec``.
 * ``prompt_text`` — a tiny one-line input dialog (e.g. the image to pull).
 """
 
@@ -488,36 +487,6 @@ class DockerConsoleSettingsDialog(_DialogBase):
         body.append(logs)
         scroller.set_child(body)
         self._toolbar.set_content(scroller)
-
-
-def prompt_shell_options(
-        parent: Optional[Gtk.Window],
-        container_name: str,
-        on_open: Callable[[Optional[str], Optional[str]], None]) -> None:
-    """Optional user/workdir before ``docker exec`` into a container."""
-    dialog = w.build_alert(
-        f"Shell: {container_name}",
-        _("Optional user and working directory for the container shell."),
-    )
-    box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    user = Gtk.Entry(placeholder_text=_("User (optional, e.g. root or 1000:1000)"))
-    workdir = Gtk.Entry(placeholder_text=_("Working directory (optional)"))
-    box.append(user)
-    box.append(workdir)
-    dialog.set_extra_child(box)
-    dialog.add_response("cancel", _("Cancel"))
-    dialog.add_response("ok", _("Open"))
-    dialog.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
-    dialog.set_default_response("ok")
-    dialog.set_close_response("cancel")
-
-    def _resp(_d, response):
-        if response == "ok":
-            on_open(user.get_text().strip() or None,
-                    workdir.get_text().strip() or None)
-
-    dialog.connect("response", _resp)
-    w.present_alert(dialog, parent)
 
 
 def prompt_text(parent: Optional[Gtk.Window], heading: str, body: str,

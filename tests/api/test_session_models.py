@@ -41,6 +41,25 @@ def test_session_model_requires_opaque_identifiers():
     assert request.connection_id == "test"
 
 
+def test_open_session_request_carries_optional_remote_command():
+    base = OpenSessionRequest(connection_id=ConnectionId("test"))
+    assert base.remote_command is None
+    assert base.force_tty is False
+
+    with_command = OpenSessionRequest(
+        connection_id=ConnectionId("test"),
+        remote_command="docker exec -it web sh",
+        force_tty=True,
+    )
+    assert with_command.remote_command == "docker exec -it web sh"
+    assert with_command.force_tty is True
+
+    with pytest.raises(ValueError):
+        OpenSessionRequest(connection_id=ConnectionId("test"), remote_command="   ")
+    with pytest.raises(TypeError):
+        OpenSessionRequest(connection_id=ConnectionId("test"), force_tty="yes")
+
+
 def test_session_model_rejects_invalid_nested_values():
     summary = SessionSummary(
         id=SessionId("session-1"),
