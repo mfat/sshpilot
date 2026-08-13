@@ -592,13 +592,12 @@ class ConnectionRepository:
             groups=groups_blob,
         )
 
-        existing_ids = {record.id for record in connections}
         metadata: Dict[str, Dict[str, Any]] = {}
         for cid, values in file_state.metadata.items():
-            if cid in existing_ids:
-                metadata[cid] = validate_safe_metadata(values)
-            elif not migrated:
-                raise ValueError("canonical metadata refers to an unknown connection")
+            # Metadata is auxiliary decoration.  Keep validated entries for
+            # currently unavailable SSH aliases so a later reappearance can
+            # restore the decoration without having to rewrite the sidecar.
+            metadata[cid] = validate_safe_metadata(values)
 
         non_ssh_generations: Dict[str, int] = {}
         ssh_generations = {
@@ -669,9 +668,6 @@ class ConnectionRepository:
             )
 
         connections = tuple(_summary(r) for r in records)
-        # No filtering: referential integrity is enforced strictly by the
-        # snapshot constructor, so a dangling membership or root id fails the
-        # whole load instead of being silently discarded.
         groups = tuple(
             GroupSummary(
                 id=group.id,
@@ -679,11 +675,24 @@ class ConnectionRepository:
                 parent_id=group.parent_id,
                 order=group.order,
                 color=group.color,
-                connection_ids=tuple(group.connection_ids),
+                connection_ids=tuple(
+                    cid
+                    for cid in group.connection_ids
+                    if cid in connection_set
+                ),
             )
             for group in service.list_groups()
         )
-        root = tuple(service.root_order())
+        grouped_ids = {
+            cid
+            for group in groups
+            for cid in group.connection_ids
+        }
+        root = tuple(
+            cid
+            for cid in service.root_order()
+            if cid in connection_set and cid not in grouped_ids
+        )
         metadata_summaries = tuple(
             ConnectionMetadataSummary(
                 connection_id=ConnectionId(cid),

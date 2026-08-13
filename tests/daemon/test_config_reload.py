@@ -24,7 +24,7 @@ def _wait_until(predicate, timeout=2.0):
     return bool(predicate())
 
 
-def _build_server(tmp_path, monkeypatch, ssh_text):
+def _build_server(tmp_path, monkeypatch, ssh_text, *, state_payload=None):
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir(mode=0o700, exist_ok=True)
     root = ssh_dir / "config"
@@ -32,9 +32,12 @@ def _build_server(tmp_path, monkeypatch, ssh_text):
     os.chmod(root, 0o600)
     config_path = tmp_path / "config.json"
     config_path.write_text(json.dumps({"config_version": 3}), encoding="utf-8")
+    state_path = tmp_path / "connections.json"
+    if state_payload is not None:
+        state_path.write_text(json.dumps(state_payload), encoding="utf-8")
     repository = ConnectionRepository(
         ssh_store=SshConfigStore(root),
-        state_path=tmp_path / "connections.json",
+        state_path=state_path,
         legacy_config_path=config_path,
         isolated=False,
     )
@@ -307,6 +310,67 @@ def test_external_delete_reaches_multiple_clients(tmp_path, monkeypatch):
         subscription_b.unsubscribe()
         client_a.close()
         client_b.close()
+        server.shutdown()
+        assert server.wait_stopped(timeout=2)
+
+
+def test_external_delete_preserves_and_restores_sidecar_decorations(
+    tmp_path,
+    monkeypatch,
+):
+    sidecar = {
+        "version": 1,
+        "non_ssh_connections": [],
+        "groups": {
+            "groups": {
+                "prod": {
+                    "id": "prod",
+                    "name": "Production",
+                    "connection_ids": ["Beta"],
+                }
+            },
+            "root_connections": ["Alpha"],
+        },
+        "metadata": {"Beta": {"pinned": True}},
+    }
+    server, repository, root = _build_server(
+        tmp_path,
+        monkeypatch,
+        _connection_block("Alpha") + "\n" + _connection_block("Beta"),
+        state_payload=sidecar,
+    )
+    client = DaemonClient(socket_path=server.socket_path)
+    state_path = tmp_path / "connections.json"
+    before = state_path.read_bytes()
+    try:
+        assert repository.snapshot().groups[0].connection_ids == ("Beta",)
+        assert repository.snapshot().metadata[0].connection_id == "Beta"
+
+        root.write_text(_connection_block("Alpha"), encoding="utf-8")
+        assert _wait_until(
+            lambda: [item.nickname for item in client.list_connections()] == [
+                "Alpha"
+            ]
+        )
+        assert repository.snapshot().groups[0].connection_ids == ()
+        assert repository.snapshot().metadata == ()
+        assert state_path.read_bytes() == before
+
+        root.write_text(
+            _connection_block("Alpha") + "\n" + _connection_block("Beta"),
+            encoding="utf-8",
+        )
+        assert _wait_until(
+            lambda: [item.nickname for item in client.list_connections()]
+            == ["Alpha", "Beta"]
+        )
+        assert repository.snapshot().groups[0].connection_ids == ("Beta",)
+        assert repository.snapshot().metadata[0].connection_id == "Beta"
+        assert state_path.read_bytes() == before
+        # The daemon remains usable after the external reloads.
+        assert client.list_sessions() == []
+    finally:
+        client.close()
         server.shutdown()
         assert server.wait_stopped(timeout=2)
 
