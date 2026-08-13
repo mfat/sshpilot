@@ -36,30 +36,26 @@ def test_command_text_does_not_infer_interactive_execution():
     )
 
 
-def test_one_shot_multiselect_uses_one_daemon_submission():
+def test_multiselect_always_routes_through_terminal_session_route():
     panel = object.__new__(CommandBlocksPanel)
     panel._submit_connections = Mock()
     panel._run_interactive_connections = Mock()
     connections = [Mock(), Mock()]
-    panel._dispatch_to_target(
-        "uptime", execution_mode=EXECUTION_MODE_ONE_SHOT, connections=connections
-    )
-    panel._submit_connections.assert_called_once_with(connections, "uptime", None)
-    panel._run_interactive_connections.assert_not_called()
-
-
-def test_interactive_multiselect_uses_terminal_session_path_only():
-    panel = object.__new__(CommandBlocksPanel)
-    panel._submit_connections = Mock()
-    panel._run_interactive_connections = Mock()
-    connections = [Mock(), Mock()]
-    panel._dispatch_to_target(
-        "journalctl -f",
-        execution_mode=EXECUTION_MODE_INTERACTIVE_TERMINAL,
-        connections=connections,
-    )
+    panel._dispatch_to_target("uptime", connections=connections)
     panel._run_interactive_connections.assert_called_once_with(
-        connections, "journalctl -f", None
+        connections, "uptime", None
+    )
+    panel._submit_connections.assert_not_called()
+
+
+def test_single_connection_uses_terminal_session_route():
+    panel = object.__new__(CommandBlocksPanel)
+    panel._submit_connections = Mock()
+    panel._run_interactive_connections = Mock()
+    connection = Mock()
+    panel._dispatch_to_target("uptime", connection=connection)
+    panel._run_interactive_connections.assert_called_once_with(
+        [connection], "uptime", None
     )
     panel._submit_connections.assert_not_called()
 
@@ -102,7 +98,58 @@ def test_delayed_interactive_target_preserves_insert_only_after_connection():
     terminal.feed_child_data.assert_called_once_with(b"vim file")
 
 
-def test_custom_command_dialog_exposes_explicit_interactive_choice():
+def test_single_connection_reuses_existing_terminal_without_opening_new():
+    panel = object.__new__(CommandBlocksPanel)
+    panel.store = Mock()
+    panel.store._config.get_setting.return_value = False
+    existing = Mock(is_connected=True)
+    connection = Mock()
+    panel.window = Mock(
+        active_terminals={connection: existing},
+        connection_to_terminals={connection: [existing]},
+    )
+    panel.window._page_for_child.return_value = Mock()
+    manager = Mock()
+    panel.window.terminal_manager = manager
+    panel._feed_interactive_when_connected = Mock()
+
+    panel._run_interactive_connections([connection], "uptime", "cmd1")
+
+    panel.window.terminal_manager.connect_to_host.assert_not_called()
+    panel._feed_interactive_when_connected.assert_called_once_with(
+        existing, "uptime", insert_only=False
+    )
+    panel.window.tab_view.set_selected_page.assert_called_once_with(
+        panel.window._page_for_child.return_value
+    )
+    panel.store.record_use.assert_called_once_with("cmd1")
+
+
+def test_single_connection_opens_new_terminal_when_none_is_open():
+    panel = object.__new__(CommandBlocksPanel)
+    panel.store = Mock()
+    panel.store._config.get_setting.return_value = False
+    connection = Mock()
+    new_terminal = Mock(is_connected=True)
+    panel.window = Mock(active_terminals={}, connection_to_terminals={})
+    manager = Mock()
+    panel.window.terminal_manager = manager
+
+    def _connect(conn, force_new):
+        panel.window.active_terminals[conn] = new_terminal
+
+    manager.connect_to_host.side_effect = _connect
+    panel._feed_interactive_when_connected = Mock()
+
+    panel._run_interactive_connections([connection], "uptime", "cmd1")
+
+    manager.connect_to_host.assert_called_once_with(connection, force_new=True)
+    panel._feed_interactive_when_connected.assert_called_once_with(
+        new_terminal, "uptime", insert_only=False
+    )
+
+
+def test_custom_command_dialog_routes_through_terminal_session():
     from sshpilot import command_blocks
 
     panel = object.__new__(CommandBlocksPanel)
@@ -111,12 +158,9 @@ def test_custom_command_dialog_exposes_explicit_interactive_choice():
     dialog = Mock()
     entry = Mock()
     entry.get_text.return_value = "top"
-    interactive = Mock()
-    interactive.get_active.return_value = True
 
     with (
         patch.object(command_blocks.Adw, "AlertDialog", return_value=dialog),
-        patch.object(command_blocks.Adw, "SwitchRow", return_value=interactive),
         patch.object(command_blocks.Gtk, "Entry", return_value=entry),
         patch.object(command_blocks.Gtk, "Box", return_value=Mock()),
     ):
@@ -127,7 +171,6 @@ def test_custom_command_dialog_exposes_explicit_interactive_choice():
     panel._dispatch_to_target.assert_called_once_with(
         "top",
         None,
-        execution_mode=EXECUTION_MODE_INTERACTIVE_TERMINAL,
         connection="host",
         group=None,
         connections=None,

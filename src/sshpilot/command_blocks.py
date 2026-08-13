@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 from gettext import gettext as _
-from .api.connection_identity import connection_id_for
 
 EXECUTION_MODE_ONE_SHOT = "one_shot"
 EXECUTION_MODE_INTERACTIVE_TERMINAL = "interactive_terminal"
@@ -1795,7 +1794,6 @@ class CommandBlocksPanel(Gtk.Box):
                 lambda d, filled: self._dispatch_to_target(
                     filled,
                     cmd.get("id"),
-                    execution_mode=_execution_mode(cmd),
                     connection=connection,
                     group=group,
                     connections=connections,
@@ -1806,7 +1804,6 @@ class CommandBlocksPanel(Gtk.Box):
             self._dispatch_to_target(
                 cmd.get("command", ""),
                 cmd.get("id"),
-                execution_mode=_execution_mode(cmd),
                 connection=connection,
                 group=group,
                 connections=connections,
@@ -1817,7 +1814,6 @@ class CommandBlocksPanel(Gtk.Box):
         command_text: str,
         cmd_id=None,
         *,
-        execution_mode=EXECUTION_MODE_ONE_SHOT,
         connection=None,
         group=None,
         connections=None,
@@ -1831,10 +1827,7 @@ class CommandBlocksPanel(Gtk.Box):
             selected = self._group_connections(group)
         if not selected:
             return
-        if execution_mode == EXECUTION_MODE_INTERACTIVE_TERMINAL:
-            self._run_interactive_connections(selected, command_text, cmd_id)
-        else:
-            self._submit_connections(selected, command_text, cmd_id)
+        self._run_interactive_connections(selected, command_text, cmd_id)
 
     def _show_custom_command_dialog(self, *, connection=None, group=None, connections=None) -> None:
         dlg = Adw.AlertDialog(
@@ -1845,11 +1838,6 @@ class CommandBlocksPanel(Gtk.Box):
         entry.set_activates_default(True)
         custom_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         custom_box.append(entry)
-        interactive = Adw.SwitchRow(
-            title=_("Interactive Terminal"),
-            subtitle=_("Use a PTY for interactive or streaming commands"),
-        )
-        custom_box.append(interactive)
         dlg.set_extra_child(custom_box)
         dlg.add_response("cancel", _("Cancel"))
         dlg.add_response("run", _("Run"))
@@ -1863,11 +1851,6 @@ class CommandBlocksPanel(Gtk.Box):
                     self._dispatch_to_target(
                         text,
                         None,
-                        execution_mode=(
-                            EXECUTION_MODE_INTERACTIVE_TERMINAL
-                            if interactive.get_active()
-                            else EXECUTION_MODE_ONE_SHOT
-                        ),
                         connection=connection,
                         group=group,
                         connections=connections,
@@ -1898,7 +1881,6 @@ class CommandBlocksPanel(Gtk.Box):
                 lambda d, filled: self._dispatch_to_target(
                     filled,
                     cmd.get("id"),
-                    execution_mode=_execution_mode(cmd),
                     connection=connection,
                 ),
             )
@@ -1907,7 +1889,6 @@ class CommandBlocksPanel(Gtk.Box):
             self._dispatch_to_target(
                 cmd.get("command", ""),
                 cmd.get("id"),
-                execution_mode=_execution_mode(cmd),
                 connection=connection,
             )
 
@@ -1927,6 +1908,15 @@ class CommandBlocksPanel(Gtk.Box):
                 return
             active = getattr(self.window, "active_terminals", {})
             connection = connections[0]
+            existing = self._existing_terminal_for_connection(connection)
+            if existing is not None:
+                self._select_terminal_page(existing)
+                self._feed_interactive_when_connected(
+                    existing, command_text, insert_only=insert_only
+                )
+                if cmd_id:
+                    self.store.record_use(cmd_id)
+                return
             manager.connect_to_host(connection, force_new=True)
             terminal = active.get(connection)
             if terminal is not None:
@@ -1948,6 +1938,26 @@ class CommandBlocksPanel(Gtk.Box):
         if cmd_id:
             self.store.record_use(cmd_id)
 
+    def _existing_terminal_for_connection(self, connection):
+        """Return an open terminal for ``connection`` that still has a tab page."""
+        window = self.window
+        active = getattr(window, "active_terminals", {})
+        terminal = active.get(connection)
+        if terminal is not None and window._page_for_child(terminal) is not None:
+            return terminal
+        for terminal in reversed(window.connection_to_terminals.get(connection) or []):
+            if window._page_for_child(terminal) is not None:
+                return terminal
+        return None
+
+    def _select_terminal_page(self, terminal) -> None:
+        window = self.window
+        page = window._page_for_child(terminal)
+        if page is None:
+            return
+        window.show_tab_view()
+        window.tab_view.set_selected_page(page)
+
     @staticmethod
     def _feed_interactive_when_connected(
         terminal, command_text: str, *, insert_only: bool
@@ -1967,40 +1977,6 @@ class CommandBlocksPanel(Gtk.Box):
             widget.feed_child_data(data)
 
         handler_id[0] = terminal.connect("connection-established", connected)
-
-    def _submit_connections(
-        self, connections: list, command_text: str, cmd_id: str | None = None
-    ) -> None:
-        """Start one daemon broadcast for all selected saved connections."""
-        from .api.models.broadcast import BroadcastCommandRequest
-
-        try:
-            connection_ids = tuple(
-                dict.fromkeys(connection_id_for(connection) for connection in connections)
-            )
-            request = BroadcastCommandRequest(connection_ids, command_text.strip())
-        except (TypeError, ValueError):
-            self._show_toast(_("This connection cannot run daemon commands"), timeout=3)
-            return
-        client = getattr(self.window, "client", None)
-        bridge = getattr(self.window, "client_bridge", None)
-        if client is None or bridge is None:
-            self._show_toast(_("Broadcast command capability unavailable"), timeout=3)
-            return
-
-        def accepted(_summary):
-            self._show_toast(
-                _("Command queued for {} connections").format(len(connection_ids)),
-                timeout=3,
-            )
-            if cmd_id:
-                self.store.record_use(cmd_id)
-
-        bridge.submit(
-            lambda: client.start_broadcast_command(request),
-            on_success=accepted,
-            on_error=lambda _error: self._show_toast(_("Command could not be started"), timeout=3),
-        )
 
     # ------------------------------------------------------------------
     # Run for group
@@ -2103,7 +2079,6 @@ class CommandBlocksPanel(Gtk.Box):
                 lambda d, filled: self._dispatch_to_target(
                     filled,
                     cmd.get("id"),
-                    execution_mode=_execution_mode(cmd),
                     group=group,
                 ),
             )
@@ -2112,14 +2087,8 @@ class CommandBlocksPanel(Gtk.Box):
             self._dispatch_to_target(
                 cmd.get("command", ""),
                 cmd.get("id"),
-                execution_mode=_execution_mode(cmd),
                 group=group,
             )
-
-    def _feed_group(self, group: dict, command_text: str, cmd_id: str | None = None) -> None:
-        connections = self._group_connections(group)
-        if connections:
-            self._submit_connections(connections, command_text, cmd_id)
 
     def _group_connections(self, group: dict) -> list:
         cm = getattr(self.window, "connection_manager", None)

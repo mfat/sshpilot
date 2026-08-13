@@ -13,9 +13,6 @@ pytestmark = pytest.mark.skipif(command_blocks is None, reason="GTK stubs unavai
 def _panel_with_recorders(group_connections=None):
     panel = command_blocks.CommandBlocksPanel.__new__(command_blocks.CommandBlocksPanel)
     calls = []
-    panel._submit_connections = lambda conns, text, cmd_id=None: calls.append(
-        ("one_shot", list(conns), text, cmd_id)
-    )
     panel._run_interactive_connections = lambda conns, text, cmd_id=None: calls.append(
         ("interactive", list(conns), text, cmd_id)
     )
@@ -23,41 +20,29 @@ def _panel_with_recorders(group_connections=None):
     return panel, calls
 
 
-def test_multiple_connections_submit_one_daemon_operation():
+def test_multiple_connections_open_terminal_session():
     panel, calls = _panel_with_recorders()
     c1, c2 = object(), object()
     panel._dispatch_to_target("uptime", "cmd1", connections=[c1, c2])
-    assert calls == [("one_shot", [c1, c2], "uptime", "cmd1")]
+    assert calls == [("interactive", [c1, c2], "uptime", "cmd1")]
 
 
-def test_single_connection_uses_same_one_shot_service():
+def test_single_connection_uses_terminal_session_service():
     panel, calls = _panel_with_recorders()
     connection = object()
     panel._dispatch_to_target("uptime", "cmd1", connection=connection)
-    assert calls == [("one_shot", [connection], "uptime", "cmd1")]
+    assert calls == [("interactive", [connection], "uptime", "cmd1")]
 
 
-def test_group_resolves_once_then_submits_one_daemon_operation():
+def test_group_resolves_once_then_opens_terminal_session():
     c1, c2 = object(), object()
     panel, calls = _panel_with_recorders([c1, c2])
     panel._dispatch_to_target("uptime", None, group={"name": "prod"})
-    assert calls == [("one_shot", [c1, c2], "uptime", None)]
-
-
-def test_explicit_interactive_mode_uses_terminal_session_route():
-    panel, calls = _panel_with_recorders()
-    c1, c2 = object(), object()
-    panel._dispatch_to_target(
-        "journalctl -f",
-        "cmd-live",
-        execution_mode=command_blocks.EXECUTION_MODE_INTERACTIVE_TERMINAL,
-        connections=[c1, c2],
-    )
-    assert calls == [("interactive", [c1, c2], "journalctl -f", "cmd-live")]
+    assert calls == [("interactive", [c1, c2], "uptime", None)]
 
 
 def test_empty_connections_falls_through_to_connection():
     panel, calls = _panel_with_recorders()
     connection = object()
     panel._dispatch_to_target("uptime", None, connections=[], connection=connection)
-    assert calls == [("one_shot", [connection], "uptime", None)]
+    assert calls == [("interactive", [connection], "uptime", None)]
