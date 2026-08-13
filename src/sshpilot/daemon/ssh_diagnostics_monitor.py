@@ -16,6 +16,7 @@ and per-session bookkeeping live in ``ssh_readiness.SshReadinessManager``.
 from __future__ import annotations
 
 import ctypes
+import errno
 import os
 import queue
 import selectors
@@ -24,15 +25,32 @@ import struct
 import threading
 from typing import Callable, Dict, Optional
 
-_INOTIFY_LIBC = ctypes.CDLL(None, use_errno=True)
-for _name, _restype, _argtypes in (
-    ("inotify_init1", ctypes.c_int, [ctypes.c_int]),
-    ("inotify_add_watch", ctypes.c_int, [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]),
-    ("inotify_rm_watch", ctypes.c_int, [ctypes.c_int, ctypes.c_int]),
-):
-    _fn = getattr(_INOTIFY_LIBC, _name)
-    _fn.restype = _restype
-    _fn.argtypes = _argtypes
+# On non-Linux platforms (macOS, …) the process libc has no inotify symbols.
+# Resolve them with getattr(None) fallbacks so importing this module never
+# fails there; inotify_available() below then reports the honest degradation.
+try:
+    _INOTIFY_LIBC = ctypes.CDLL(None, use_errno=True)
+except OSError:
+    _INOTIFY_LIBC = None
+
+_INOTIFY_FUNCTIONS_READY = False
+if _INOTIFY_LIBC is not None:
+    _INOTIFY_FUNCTIONS: list = []
+    for _name, _restype, _argtypes in (
+        ("inotify_init1", ctypes.c_int, [ctypes.c_int]),
+        ("inotify_add_watch", ctypes.c_int, [ctypes.c_int, ctypes.c_char_p, ctypes.c_uint32]),
+        ("inotify_rm_watch", ctypes.c_int, [ctypes.c_int, ctypes.c_int]),
+    ):
+        _fn = getattr(_INOTIFY_LIBC, _name, None)
+        if _fn is None:
+            _INOTIFY_FUNCTIONS = []
+            break
+        _fn.restype = _restype
+        _fn.argtypes = _argtypes
+        _INOTIFY_FUNCTIONS.append(_fn)
+    if _INOTIFY_FUNCTIONS:
+        _INOTIFY_FUNCTIONS_READY = True
+    del _INOTIFY_FUNCTIONS, _name, _restype, _argtypes, _fn
 
 IN_NONBLOCK = getattr(os, "O_NONBLOCK", 0x800)
 IN_CLOEXEC = getattr(os, "O_CLOEXEC", 0x80000)
@@ -49,6 +67,10 @@ _READ_CHUNK = 64 * 1024
 
 
 def _inotify_init() -> int:
+    if not _INOTIFY_FUNCTIONS_READY:
+        raise OSError(
+            getattr(errno, "ENOSYS", 38), "inotify is unavailable on this platform"
+        )
     fd = _INOTIFY_LIBC.inotify_init1(IN_NONBLOCK | IN_CLOEXEC)
     if fd < 0:
         raise OSError(ctypes.get_errno(), "inotify_init1 failed")
@@ -57,7 +79,7 @@ def _inotify_init() -> int:
 
 def inotify_available() -> bool:
     """Return whether an inotify descriptor can be created on this platform."""
-    if not hasattr(_INOTIFY_LIBC, "inotify_init1"):
+    if not _INOTIFY_FUNCTIONS_READY:
         return False
     try:
         fd = _inotify_init()
