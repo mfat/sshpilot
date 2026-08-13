@@ -80,6 +80,54 @@ host-key pin described in [interaction broker](interaction-broker.md):
 
 No command or environment is logged or exposed.
 
+## Session readiness
+
+`RUNNING` means the SSH session has authenticated, not merely that a process
+was spawned or a PTY attached. The daemon gates the `starting -> running`
+transition on authoritative local evidence so clients and frontends never
+observe a usable session before login:
+
+- **OpenSSH diagnostics (primary).** The daemon instruments its owned SSH
+  terminal launches with a private `-v -E <file>` pair; the verbose stream is
+  written to a per-session diagnostic file and never shown in the user
+  terminal. A dedicated inotify monitor observes the file and feeds appended
+  bytes to `SshDiagnosticParser`, which emits a decisive verdict:
+  `AUTHENTICATED` (`Authenticated to <target> ... using "<method>".`) or
+  `MUX_SESSION_OPENED` (ControlMaster `master session id: <int>`), or a
+  `FAILED` detail. Files live under
+  `$XDG_RUNTIME_DIR/sshpilot/diagnostics/<instance>/` (0700 directories, 0600
+  files, no symlinks, no `/tmp` escape).
+- **PTY connection evidence (fallback).** The existing connection-evidence
+  classifier remains the fallback when diagnostics are unavailable or stay
+  pending past the readiness grace deadline. A late diagnostic verdict can
+  never change a session's fate once the fallback is taken.
+
+`SshReadinessManager` owns leases and capability: `prepare_launch` creates the
+diagnostic file before OpenSSH execs and installs the watch,
+`subscribe`/`is_engaged` wire the runtime to verdicts, `finish` releases the
+lease idempotently, and `close` tears the monitor down. A cached per-executable
+capability probe (`ssh -G -F /dev/null -E <probe> localhost` — no network,
+invalidated by `ssh -V`) decides whether instrumentation is safe for the
+resolved executable. Launch eligibility skips user-visible verbosity (`-v`),
+user-supplied `-E` (never overwritten), and non-terminal operations such as
+SCP/SFTP. Diagnostics apply only to daemon-owned terminal sessions launched
+through `server._prepare_session_launch`.
+
+Any unavailable prerequisite — no runtime directory, no inotify, a failed
+probe, a Flatpak sandbox, or a non-Linux platform — disables diagnostics for
+that launch and the PTY-evidence path is used instead. This is a daemon-owned
+degradation, never a silent return to a frontend or legacy path.
+
+The runtime records `readiness_engaged`, `diagnostic_primary`/`pty_fallback`,
+`authenticated`, `diagnostic_failure_detail`, and `diagnostic_result` per
+session. While a diagnostic-primary session waits for `RUNNING`, live output
+is deferred (`deferred_live_output`) and flushed once the session reaches
+`RUNNING`, so the banner is delivered only after login. On readiness grace
+expiry the runtime transitions to `pty_fallback`; a diagnostic failure moves
+the session to `FAILED` with the detail surfaced. The readiness manager is
+closed on daemon shutdown. Nothing here touches the public API, and the
+diagnostic stream carries OpenSSH debug logging only — never secrets.
+
 ## Attachments
 
 Attachments are logical set membership, not byte streams. The authoritative
