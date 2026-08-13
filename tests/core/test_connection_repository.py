@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -431,11 +432,128 @@ def test_no_partial_state_when_ssh_config_unreadable(tmp_path):
     assert repo.snapshot().generation == before.generation
 
 
-def test_malformed_state_file_is_an_error(tmp_path):
+def test_malformed_canonical_state_does_not_block_ssh_startup(tmp_path, caplog):
+    root = tmp_path / "ssh_config"
+    root.write_text("Host web\n    HostName web.example\n")
     state = tmp_path / "connections.json"
-    _write_state(state, {"version": 99, "non_ssh_connections": []})
-    with pytest.raises(CoreError):
-        _repo(tmp_path)
+    state.write_bytes(b"{not-json")
+    before = state.read_bytes()
+    with caplog.at_level(logging.WARNING):
+        repo, _root, _state, _legacy = _repo(tmp_path)
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert state.read_bytes() == before
+    assert "Failed to load auxiliary connection state" in caplog.text
+
+
+def test_unsupported_canonical_state_does_not_block_ssh_startup(tmp_path):
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 99,
+            "non_ssh_connections": [],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    before = state.read_bytes()
+    repo, _root, _state, _legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert state.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "groups",
+    [
+        {
+            "g1": {
+                "id": "g1",
+                "name": "G1",
+                "parent_id": "missing",
+            }
+        },
+        {
+            "g1": {
+                "id": "g1",
+                "name": "G1",
+                "parent_id": "g2",
+            },
+            "g2": {
+                "id": "g2",
+                "name": "G2",
+                "parent_id": "g1",
+            },
+        },
+    ],
+    ids=["unknown-parent", "parent-cycle"],
+)
+def test_inconsistent_canonical_groups_do_not_block_ssh_startup(
+    tmp_path, groups
+):
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 1,
+            "non_ssh_connections": [],
+            "groups": {"groups": groups, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    before = state.read_bytes()
+    repo, _root, _state, _legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert repo.snapshot().groups == ()
+    assert state.read_bytes() == before
+
+
+def test_dormant_root_order_survives_unrelated_sidecar_writes(tmp_path):
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 1,
+            "non_ssh_connections": [],
+            "groups": {
+                "groups": {},
+                "root_connections": ["A", "MISSING", "B"],
+            },
+            "metadata": {},
+        },
+    )
+    repo, root, _state, _legacy = _repo(
+        tmp_path,
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+    assert repo.snapshot().root_connection_ids == ("A", "B")
+
+    repo.update_connection_metadata("A", {"pinned": True})
+    assert json.loads(state.read_text())["groups"]["root_connections"] == [
+        "A",
+        "MISSING",
+        "B",
+    ]
+
+    group = repo.create_group("Production")
+    repo.rename_group(group.id, "Production Servers")
+    repo.set_group_color(group.id, "#ff0000")
+    assert json.loads(state.read_text())["groups"]["root_connections"] == [
+        "A",
+        "MISSING",
+        "B",
+    ]
+
+    root.write_text(
+        "Host A\n    HostName a.example\n\n"
+        "Host MISSING\n    HostName missing.example\n\n"
+        "Host B\n    HostName b.example\n"
+    )
+    assert repo.reload().root_connection_ids == ("A", "MISSING", "B")
 
 
 # ---------------------------------------------------------------------------
@@ -464,26 +582,6 @@ def test_snapshot_filters_unknown_group_membership(tmp_path):
     assert json.loads(state.read_text())["groups"]["groups"]["g1"][
         "connection_ids"
     ] == ["ghost"]
-
-
-def test_snapshot_rejects_unknown_group_parent(tmp_path):
-    state = tmp_path / "connections.json"
-    _write_state(
-        state,
-        {
-            "version": 1,
-            "non_ssh_connections": [],
-            "groups": {
-                "groups": {
-                    "g1": {"id": "g1", "name": "G1", "parent_id": "ghost"}
-                },
-                "root_connections": [],
-            },
-            "metadata": {},
-        },
-    )
-    with pytest.raises((CoreError, ValueError)):
-        _repo(tmp_path)
 
 
 # ---------------------------------------------------------------------------

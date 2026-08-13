@@ -13,8 +13,9 @@ state. It composes:
 
 The repository publishes immutable :class:`ConnectionStoreSnapshot` objects
 and fires ``RepositoryChange`` callbacks after every committed change,
-outside its lock. No partial state ever becomes visible: the initial load and
-every reload build a fully validated candidate before publishing.
+outside its lock. The authoritative SSH configuration is always loaded first;
+invalid auxiliary state degrades to an empty decoration projection without
+rewriting the sidecar.
 """
 
 from __future__ import annotations
@@ -209,6 +210,7 @@ class ConnectionRepository:
         self._pending_changes = []
         self._service = ConnectionService(autosave=False)
         self._metadata: Dict[str, Dict[str, Any]] = {}
+        self._persisted_root_order: Tuple[str, ...] = ()
         self._non_ssh_generations: Dict[str, int] = {}
         self._generation = 0
         self._migrated_legacy = False
@@ -457,17 +459,27 @@ class ConnectionRepository:
         return read_legacy_connection_state(self._legacy_config_path), True
 
     def _load_state_locked(self) -> None:
-        """Load SSH config + connections.json into validated in-memory state.
-
-        Raises (leaving the previous state untouched) when any participating
-        source is unreadable, malformed, or inconsistent. A missing dedicated
-        file migrates defaults or legacy values.
-        """
+        """Load authoritative SSH state and best-effort auxiliary state."""
         ssh_config = self._ssh_store.load()
-        file_state, migrated = self._read_state()
-        if migrated:
-            file_state = self._reconcile_legacy_state(ssh_config, file_state)
-        self._publish_state_locked(ssh_config, file_state, migrated=migrated)
+        canonical_state_present = self._state_path.exists()
+        try:
+            file_state, migrated = self._read_state()
+            if migrated:
+                file_state = self._reconcile_legacy_state(ssh_config, file_state)
+            self._publish_state_locked(ssh_config, file_state, migrated=migrated)
+        except Exception as exc:
+            if not canonical_state_present:
+                raise
+            logger.warning(
+                "Failed to load auxiliary connection state; continuing with "
+                "SSH configuration only: %s",
+                exc,
+            )
+            self._publish_state_locked(
+                ssh_config,
+                ConnectionFileState(),
+                migrated=False,
+            )
 
     def _reconcile_legacy_state(
         self,
@@ -615,6 +627,7 @@ class ConnectionRepository:
 
         self._service = service
         self._metadata = metadata
+        self._persisted_root_order = tuple(file_state.root_connections)
         self._non_ssh_generations = non_ssh_generations
         self._migrated_legacy = migrated or self._migrated_legacy
 
@@ -715,6 +728,7 @@ class ConnectionRepository:
         )
 
     def _build_file_state_locked(self) -> ConnectionFileState:
+        self._sync_persisted_root_order_locked()
         groups = tuple(
             GroupFileState(
                 id=g.id,
@@ -735,9 +749,29 @@ class ConnectionRepository:
             version=1,
             non_ssh_connections=non_ssh,
             groups=groups,
-            root_connections=tuple(self._service.root_order()),
+            root_connections=self._persisted_root_order,
             metadata=thaw_safe_metadata(self._metadata),
         )
+
+    def _sync_persisted_root_order_locked(self) -> None:
+        """Apply current root membership while retaining dormant sidecar ids."""
+        current_ids = {
+            record.id for record in self._service.ordered_records()
+        }
+        current_root = [
+            cid for cid in self._service.root_order() if cid in current_ids
+        ]
+        current_root_ids = set(current_root)
+        merged: List[str] = []
+        next_root = 0
+        for cid in self._persisted_root_order:
+            if cid in current_root_ids:
+                merged.append(current_root[next_root])
+                next_root += 1
+            elif cid not in current_ids:
+                merged.append(cid)
+        merged.extend(current_root[next_root:])
+        self._persisted_root_order = tuple(merged)
 
     # ------------------------------------------------------------------
     # Transactional CRUD
@@ -1262,6 +1296,10 @@ class ConnectionRepository:
             return
         if old_id in self._metadata:
             self._metadata[new_id] = self._metadata.pop(old_id)
+        self._persisted_root_order = tuple(
+            new_id if cid == old_id else cid
+            for cid in self._persisted_root_order
+        )
 
     # ------------------------------------------------------------------
     # Group operations
