@@ -53,6 +53,11 @@ class ConnectionRecord:
     # when the host is the alias itself). No UUID fields are produced.
     host: str = ""
     aliases: tuple = ()
+    # Literal parser evidence used only by the identity prototype. These are
+    # not serialized as public connection fields and do not become SSH IDs.
+    raw_port: Optional[str] = None
+    raw_username: Optional[str] = None
+    raw_identity_files: tuple = ()
 
     def normalized_nickname(self) -> str:
         return (self.nickname or "").strip()
@@ -78,6 +83,9 @@ class ConnectionRecord:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any], *, connection_id: Optional[str] = None) -> "ConnectionRecord":
         raw = dict(data or {})
+        raw_port = raw.pop("__identity_raw_port", None)
+        raw_username = raw.pop("__identity_raw_username", None)
+        raw_identity_files = raw.pop("__identity_raw_identity_files", ())
         raw.pop("uuid", None)
         nick = str(raw.get("nickname") or raw.get("id") or raw.get("host") or "").strip()
         cid = connection_id or str(raw.get("id") or nick).strip()
@@ -112,6 +120,13 @@ class ConnectionRecord:
             generation=generation,
             host=str(raw.get("host") or nick or cid).strip(),
             aliases=aliases,
+            raw_port=(str(raw_port) if raw_port is not None else None),
+            raw_username=(str(raw_username) if raw_username is not None else None),
+            raw_identity_files=(
+                tuple(str(value) for value in raw_identity_files)
+                if isinstance(raw_identity_files, (tuple, list))
+                else ()
+            ),
         )
 
     def with_updates(self, updates: Mapping[str, Any]) -> "ConnectionRecord":

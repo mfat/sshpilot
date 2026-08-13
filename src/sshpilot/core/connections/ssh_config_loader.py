@@ -380,8 +380,11 @@ def _parse_host_config(
 
     identity_files: List[str] = []
     identity_suppressed = False
+    raw_identity_files: List[str] = []
     for entry in _as_list(config.get("identityfile")):
         unwrapped = _unwrap_ssh_value(entry)
+        if unwrapped:
+            raw_identity_files.append(str(unwrapped))
         if isinstance(unwrapped, str) and unwrapped.strip().lower() == "none":
             identity_suppressed = True
             continue
@@ -407,6 +410,16 @@ def _parse_host_config(
         "certificate": certificate_files[0] if certificate_files else "",
         "certificate_files": certificate_files,
         "forwarding_rules": _parse_forwarding_rules_from_config(config),
+        # Literal values are private evidence for the identity prototype.
+        # They are consumed by ConnectionRecord.from_dict and never emitted
+        # as public connection data or written back to SSH config.
+        "__identity_raw_port": (
+            _unwrap_ssh_value(config["port"]) if "port" in config else None
+        ),
+        "__identity_raw_username": (
+            _unwrap_ssh_value(config["user"]) if "user" in config else None
+        ),
+        "__identity_raw_identity_files": raw_identity_files,
     }
     if has_explicit_hostname:
         parsed["aliases"] = []
