@@ -55,6 +55,7 @@ from sshpilot.api.models.terminal import (
 )
 from sshpilot.api.session_identity import new_session_id
 from sshpilot.core.connection_evidence import classify_connection_evidence
+from sshpilot.core.ssh_diagnostics import SshDiagnosticResult, SshDiagnosticState
 from sshpilot.logging_support import log_context
 
 from .terminal_stream import (
@@ -333,6 +334,15 @@ class _SessionRecord:
     # Output produced before RUNNING by the legacy blocking auth gate. The
     # event-driven connection-evidence gate streams STARTING output directly.
     deferred_live_output: List[TerminalOutput] = field(default_factory=list)
+    # OpenSSH diagnostics readiness (see SshReadinessManager). When engaged,
+    # the private ``-v -E`` stream is the authoritative readiness source and
+    # PTY connection evidence is demoted to a fallback.
+    readiness_engaged: bool = False
+    diagnostic_primary: bool = False
+    pty_fallback: bool = False
+    authenticated: bool = False
+    diagnostic_failure_detail: Optional[str] = None
+    diagnostic_result: Optional[SshDiagnosticResult] = None
 
 
 _ALLOWED_TRANSITIONS = {
@@ -386,6 +396,7 @@ class SessionRuntime:
         max_retained_closed_sessions: int = DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
         replay_bytes: int = DEFAULT_SESSION_REPLAY_BYTES,
         global_replay_bytes: int = DEFAULT_GLOBAL_REPLAY_BYTES,
+        readiness_manager: Optional[Any] = None,
     ) -> None:
         if close_grace_seconds < 0 or shutdown_timeout_seconds < 0:
             raise ValueError("session close timeouts must not be negative")
@@ -411,6 +422,7 @@ class SessionRuntime:
         self._authenticated_callback: Optional[Callable[[SessionId], None]] = None
         self._auth_gate_timeout_seconds = 60.0
         self._connection_evidence_gate = False
+        self._readiness_manager = readiness_manager
         self._lock = threading.RLock()
         self._publisher = EventPublisher()
         self._records: Dict[SessionId, _SessionRecord] = {}
@@ -594,6 +606,13 @@ class SessionRuntime:
             if spec is None:
                 raise RuntimeError("starting session has no launch specification")
         try:
+            readiness = self._readiness_manager
+            if readiness is not None:
+                readiness.subscribe(
+                    session_id,
+                    self._on_ssh_diagnostic_result,
+                    self._on_ssh_grace_expired,
+                )
             if getattr(self._runner, "terminal_capable", False):
                 handle = self._runner.start(
                     spec,
@@ -622,10 +641,23 @@ class SessionRuntime:
             )
         else:
             authenticated = True
+            readiness = self._readiness_manager
+            with self._lock:
+                if (
+                    readiness is not None
+                    and readiness.is_engaged(session_id)
+                ):
+                    record.readiness_engaged = True
+                    record.diagnostic_primary = True
             evidence_gated = bool(
                 self._connection_evidence_gate and record.terminal_capable
             )
-            gate = None if evidence_gated else self._auth_gate
+            diagnostic_gated = bool(record.diagnostic_primary)
+            gate = (
+                None
+                if (evidence_gated or diagnostic_gated)
+                else self._auth_gate
+            )
             if gate is not None:
                 authenticated = bool(
                     gate(
@@ -654,21 +686,63 @@ class SessionRuntime:
             events: List[CoreEvent] = []
             deferred_outputs: List[TerminalOutput] = []
             deferred_callbacks: Tuple[Callable[[TerminalOutput], None], ...] = ()
+            diagnostic_failed = False
             with self._lock:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
                     record.started_at = self._clock()
-                    if (
-                        not evidence_gated
-                        or self._connection_evidence_locked(record).verdict
-                        == "connected"
-                    ):
+                    promote = False
+                    if diagnostic_gated:
+                        result = record.diagnostic_result
+                        if (
+                            result is not None
+                            and result.state is SshDiagnosticState.FAILED
+                        ):
+                            if record.diagnostic_failure_detail is None:
+                                record.diagnostic_failure_detail = result.detail
+                            record.failure = SessionFailure(
+                                code=self._startup_failure_code(
+                                    session_id
+                                ).value,
+                                message=(
+                                    result.detail
+                                    or "The session did not complete authentication"
+                                ),
+                            )
+                            events.append(
+                                self._transition_locked(
+                                    record, SessionState.FAILED
+                                )
+                            )
+                            diagnostic_failed = True
+                        elif (
+                            result is not None
+                            and result.state
+                            in {
+                                SshDiagnosticState.AUTHENTICATED,
+                                SshDiagnosticState.MUX_SESSION_OPENED,
+                            }
+                        ):
+                            record.authenticated = True
+                            promote = True
+                        else:
+                            promote = False
+                    elif evidence_gated:
+                        promote = (
+                            self._connection_evidence_locked(record).verdict
+                            == "connected"
+                        )
+                    else:
+                        promote = True
+                    if promote:
                         events.append(
                             self._transition_locked(record, SessionState.RUNNING)
                         )
                         deferred_outputs = list(record.deferred_live_output)
                         record.deferred_live_output.clear()
-                        deferred_callbacks = tuple(self._terminal_callbacks.values())
+                        deferred_callbacks = tuple(
+                            self._terminal_callbacks.values()
+                        )
                     terminate_after_start = False
                 elif record.state is SessionState.CLOSING:
                     record.process_handle = handle
@@ -683,11 +757,142 @@ class SessionRuntime:
                         callback(output)
                     except Exception:
                         continue
+            if diagnostic_failed:
+                self._finish_readiness(session_id)
+                self._terminate_handle(
+                    handle,
+                    deadline=self._monotonic() + self._close_grace_seconds,
+                )
+                return
             if terminate_after_start:
                 self._terminate_handle(
                     handle,
                     deadline=self._monotonic() + self._close_grace_seconds,
                 )
+
+    def _on_ssh_diagnostic_result(
+        self,
+        session_id: SessionId,
+        result: SshDiagnosticResult,
+    ) -> None:
+        """Handle a decisive OpenSSH diagnostics verdict (monitor thread).
+
+        AUTHENTICATED / MUX_SESSION_OPENED promote a STARTING session to
+        RUNNING; a trusted FAILED detail fails it.  Either outcome finishes
+        the diagnostics lease.  A decisive result that races the process
+        handle is parked on the record and applied once the handle is stored.
+        """
+        if result.state is SshDiagnosticState.PENDING:
+            return
+        events: List[CoreEvent] = []
+        finish = False
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None or record.state in {
+                SessionState.EXITED,
+                SessionState.CLOSED,
+            }:
+                return
+            if result.state is SshDiagnosticState.FAILED:
+                if record.diagnostic_failure_detail is None:
+                    record.diagnostic_failure_detail = result.detail
+                if (
+                    record.state is SessionState.STARTING
+                    and record.diagnostic_primary
+                    and not record.pty_fallback
+                ):
+                    record.failure = SessionFailure(
+                        code=self._startup_failure_code(session_id).value,
+                        message=(
+                            result.detail
+                            or "The session did not complete authentication"
+                        ),
+                    )
+                    events.append(
+                        self._transition_locked(record, SessionState.FAILED)
+                    )
+                else:
+                    record.diagnostic_result = result
+                finish = True
+            elif result.state in {
+                SshDiagnosticState.AUTHENTICATED,
+                SshDiagnosticState.MUX_SESSION_OPENED,
+            }:
+                record.authenticated = True
+                finish = True
+                if record.state is SessionState.STARTING and not record.pty_fallback:
+                    if record.process_handle is None:
+                        record.diagnostic_result = result
+                    elif record.diagnostic_primary:
+                        events.append(
+                            self._transition_locked(record, SessionState.RUNNING)
+                        )
+        if finish:
+            self._finish_readiness(session_id)
+        self._publish(events)
+        if events and self._authenticated_callback is not None:
+            self._authenticated_callback(session_id)
+        if events:
+            self._flush_deferred_output(session_id)
+
+    def _on_ssh_grace_expired(self, session_id: SessionId) -> None:
+        """Fall back to PTY connection evidence when diagnostics stay pending.
+
+        Runs on the readiness grace timer thread.  The session keeps running
+        under the PTY classifier; a late diagnostic verdict can no longer
+        change its fate.
+        """
+        events: List[CoreEvent] = []
+        flush = False
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None or record.state is not SessionState.STARTING:
+                return
+            record.pty_fallback = True
+            if (
+                record.diagnostic_primary
+                and record.process_handle is not None
+            ):
+                if (
+                    self._connection_evidence_locked(record).verdict
+                    == "connected"
+                ):
+                    events.append(
+                        self._transition_locked(record, SessionState.RUNNING)
+                    )
+                    flush = True
+        self._finish_readiness(session_id)
+        self._publish(events)
+        if events and self._authenticated_callback is not None:
+            self._authenticated_callback(session_id)
+        if flush:
+            self._flush_deferred_output(session_id)
+
+    def _finish_readiness(self, session_id: SessionId) -> None:
+        """Idempotently release the session's OpenSSH diagnostics lease."""
+        readiness = self._readiness_manager
+        if readiness is None:
+            return
+        try:
+            readiness.finish(session_id)
+        except Exception:
+            logger.debug("readiness finish failed for %r", session_id, exc_info=True)
+
+    def _flush_deferred_output(self, session_id: SessionId) -> None:
+        """Deliver output buffered while a session waited for RUNNING."""
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None or record.state is not SessionState.RUNNING:
+                return
+            deferred = list(record.deferred_live_output)
+            record.deferred_live_output.clear()
+            callbacks = tuple(self._terminal_callbacks.values())
+        for output in deferred:
+            for callback in callbacks:
+                try:
+                    callback(output)
+                except Exception:
+                    continue
 
     @staticmethod
     def _handle_is_alive(handle: SessionProcessHandle) -> bool:
@@ -750,6 +955,7 @@ class SessionRuntime:
             record.terminal_capable = False
             record.failure = SessionFailure(code=code.value, message=message)
             event = self._transition_locked(record, SessionState.FAILED)
+        self._finish_readiness(session_id)
         self._publish((event,))
 
     def attach_session(
@@ -1373,12 +1579,14 @@ class SessionRuntime:
                 else:
                     events = []
             self._publish(events)
+            self._finish_readiness(session_id)
             return
         self._terminate_record(
             record,
             deadline=deadline,
             raise_on_failure=raise_on_failure,
         )
+        self._finish_readiness(session_id)
 
     def _terminate_record(
         self,
@@ -1465,6 +1673,7 @@ class SessionRuntime:
             if record.terminal_capable and not record.pty_eof:
                 return
             events.extend(self._final_exit_events_locked(record))
+        self._finish_readiness(session_id)
         self._publish(events)
 
     def _terminal_output(self, session_id: SessionId, data: bytes) -> None:
@@ -1483,6 +1692,15 @@ class SessionRuntime:
                 data=data,
             )
             if (
+                record.state is SessionState.STARTING
+                and record.diagnostic_primary
+                and not record.pty_fallback
+            ):
+                if record.process_handle is None:
+                    record.deferred_live_output.append(output)
+                    return
+                callbacks = tuple(self._terminal_callbacks.values())
+            elif (
                 record.state is SessionState.STARTING
                 and self._connection_evidence_gate
             ):
@@ -1562,6 +1780,8 @@ class SessionRuntime:
                 callback(output)
             except Exception:
                 continue
+        if events:
+            self._finish_readiness(session_id)
         self._publish(events)
 
     def _final_exit_events_locked(
@@ -1574,15 +1794,23 @@ class SessionRuntime:
         exit_info = record.exit_info or SessionExitInfo(reason="process_exit")
         if (
             record.state is SessionState.STARTING
-            and self._connection_evidence_gate
+            and (self._connection_evidence_gate or record.diagnostic_primary)
         ):
             evidence = self._connection_evidence_locked(record)
-            if evidence.verdict == "failed" or exit_info.exit_code not in {None, 0}:
+            failure_reason: Optional[str] = None
+            if record.diagnostic_failure_detail:
+                failure_reason = record.diagnostic_failure_detail
+            elif evidence.verdict == "failed" or exit_info.exit_code not in {
+                None,
+                0,
+            }:
+                failure_reason = evidence.failure_reason
+            if failure_reason is not None:
                 failure_code = self._startup_failure_code(record.session_id)
                 record.failure = SessionFailure(
                     code=failure_code.value,
                     message=(
-                        evidence.failure_reason
+                        failure_reason
                         or (
                             "The session authentication was cancelled"
                             if failure_code is ErrorCode.OPERATION_CANCELLED
@@ -1628,6 +1856,7 @@ class SessionRuntime:
             record.deferred_live_output.clear()
             record.failure = SessionFailure(code=code.value, message=message)
             event = self._transition_locked(record, SessionState.FAILED)
+        self._finish_readiness(record.session_id)
         self._publish((event,))
 
     def _transition_locked(

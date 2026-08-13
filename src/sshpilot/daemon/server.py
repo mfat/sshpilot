@@ -126,6 +126,7 @@ DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
 DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
+DEFAULT_SSH_READINESS_GRACE_SECONDS = 30.0
 _FORWARDED_EVENT_TYPES = frozenset(
     {
         EventType.CONNECTION_CREATED,
@@ -251,6 +252,7 @@ class DaemonServer:
         service_mode: bool = False,
         packaged: bool = False,
         drain_timeout_seconds: float = 5.0,
+        ssh_readiness_grace_seconds: float = DEFAULT_SSH_READINESS_GRACE_SECONDS,
     ) -> None:
         if (
             type(client_event_queue_limit) is not int
@@ -280,6 +282,8 @@ class DaemonServer:
             raise ValueError("configuration reload debounce must not be negative")
         if configuration_poll_interval <= 0:
             raise ValueError("configuration poll interval must be positive")
+        if ssh_readiness_grace_seconds <= 0:
+            raise ValueError("ssh readiness grace seconds must be positive")
         self.socket_path = resolve_socket_path(socket_path)
         self.client_event_queue_limit = client_event_queue_limit
         self.max_client_outbound_bytes = max_client_outbound_bytes
@@ -289,6 +293,7 @@ class DaemonServer:
         self.session_command_workers = session_command_workers
         self.session_command_queue_limit = session_command_queue_limit
         self.session_shutdown_timeout = float(session_shutdown_timeout)
+        self.ssh_readiness_grace_seconds = float(ssh_readiness_grace_seconds)
         self._configuration_watcher_factory = configuration_watcher_factory
         self.configuration_reload_debounce = float(
             configuration_reload_debounce
@@ -527,6 +532,7 @@ class DaemonServer:
         selector = selectors.DefaultSelector()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         gate_terminal_evidence = False
+        self._readiness_manager: Optional[Any] = None
         try:
             old_umask = os.umask(0o177)
             try:
@@ -598,17 +604,27 @@ class DaemonServer:
                             launch_builder,
                         )
                     )
+                    self._readiness_manager = self._build_readiness_manager()
                     self._session_runtime = SessionRuntime(
                         self._connection_service,
                         runner=runner,
+                        readiness_manager=self._readiness_manager,
                     )
                     gate_terminal_evidence = True
                 else:
                     self._session_runtime = SessionRuntime(self._connection_service)
             else:
+                self._readiness_manager = self._build_readiness_manager()
                 self._session_runtime = self._session_runtime_factory(
                     self._connection_service
                 )
+                if (
+                    self._readiness_manager is not None
+                    and isinstance(self._session_runtime, SessionRuntime)
+                ):
+                    self._session_runtime._readiness_manager = (
+                        self._readiness_manager
+                    )
             self._interaction_broker = (
                 self._interaction_broker_factory(self._session_runtime)
                 if self._interaction_broker_factory is not None
@@ -808,6 +824,23 @@ class DaemonServer:
             )
             self._configuration_reload.start()
 
+    def _build_readiness_manager(self) -> Optional[Any]:
+        """Construct the OpenSSH diagnostics readiness owner for this instance.
+
+        ``None`` when the daemon lacks a private runtime directory (the
+        session runtime then relies on the PTY connection-evidence path).
+        """
+        from .ssh_readiness import SshReadinessManager
+
+        try:
+            return SshReadinessManager(
+                instance_id=self._instance_id,
+                grace_seconds=self.ssh_readiness_grace_seconds,
+            )
+        except (OSError, ValueError, RuntimeError):
+            logger.debug("ssh readiness is unavailable", exc_info=True)
+            return None
+
     def _prepare_session_launch(
         self,
         spec: Any,
@@ -821,7 +854,17 @@ class DaemonServer:
                 connection_id=spec.connection_id,
                 session_id=spec.session_id,
             )
-        return broker.prepare_launch(spec, launch_builder)
+        argv, environment = broker.prepare_launch(spec, launch_builder)
+        readiness = self._readiness_manager
+        if readiness is not None:
+            diagnostics_path = readiness.prepare_launch(
+                spec.session_id, argv, environment
+            )
+            if diagnostics_path is not None:
+                from .ssh_readiness import insert_ssh_diagnostics_options
+
+                argv = insert_ssh_diagnostics_options(argv, diagnostics_path)
+        return argv, environment
 
     def _prepare_sftp_launch(
         self,
@@ -2132,6 +2175,16 @@ class DaemonServer:
             if runtime_thread.is_alive():
                 logger.error("Session runtime shutdown exceeded its time bound")
         self._session_executor = None
+        readiness = self._readiness_manager
+        self._readiness_manager = None
+        if readiness is not None:
+            try:
+                readiness.close()
+            except Exception as error:
+                logger.error(
+                    "SSH readiness shutdown failed type=%s",
+                    type(error).__name__,
+                )
         while True:
             try:
                 self._completion_queue.get_nowait()
