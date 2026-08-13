@@ -106,7 +106,7 @@ class SshDiagnosticParser:
             return None
         self._buffer.extend(data)
         while b"\n" in self._buffer:
-            line, _, rest = self._buffer.partition(b"\n")
+            line = self._buffer.partition(b"\n")[0]
             del self._buffer[: len(line) + 1]
             if self._latched is not None:
                 break

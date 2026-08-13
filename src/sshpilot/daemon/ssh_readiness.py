@@ -51,6 +51,16 @@ DEFAULT_VERSION_TIMEOUT_SECONDS = 2.0
 
 _SESSION_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,96}$")
 _VISIBLE_VERBOSITY_RE = re.compile(r"^-v+$")
+# Short OpenSSH options that consume a separate argument token.  Only the
+# option portion of the command line (everything before the destination) is
+# ever scanned, so a ``-v`` inside a remote command stays out of scope.
+_SSH_VALUE_OPTIONS = frozenset(
+    {
+        "-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-j",
+        "-J", "-K", "-L", "-l", "-m", "-O", "-o", "-P", "-p", "-Q",
+        "-R", "-S", "-W", "-w", "-x",
+    }
+)
 _ASKPASS_ENV_KEYS = (
     "SSH_ASKPASS",
     "SSH_ASKPASS_REQUIRE",
@@ -70,14 +80,31 @@ def launch_eligible_for_diagnostics(argv: Sequence[str]) -> bool:
     binaries, a user-supplied ``-E`` (never overwrite it), and any user-
     requested verbosity (``-v``/``-vv``/``-vvv``) exclude the launch; in the
     verbosity case the PTY stream already carries the verbose evidence.
+
+    Only the option portion before the destination is inspected: a ``-v`` or
+    ``-E`` belonging to the remote command (``ssh host some-command -v``) is
+    not user OpenSSH verbosity and must not disqualify the instrumentation.
+    Options that take a separate argument are skipped so their values are not
+    mistaken for the destination.
     """
     if not argv:
         return False
     if os.path.basename(str(argv[0])) not in {"ssh", "ssh.exe"}:
         return False
-    for token in argv:
-        if str(token).startswith("-E") or _VISIBLE_VERBOSITY_RE.match(str(token)):
+    tokens = [str(token) for token in argv[1:]]
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if not token.startswith("-") or token == "-":
+            # First non-option token is the destination; the remote command
+            # follows it and is out of scope.
+            break
+        if token.startswith("-E") or _VISIBLE_VERBOSITY_RE.match(token):
             return False
+        if token in _SSH_VALUE_OPTIONS:
+            index += 2
+            continue
+        index += 1
     return True
 
 
@@ -272,8 +299,12 @@ class SshReadinessManager:
 
         Eligible when the launch is a canonical ``ssh`` invocation, the
         executable capability probe succeeds, and the secure storage + event
-        monitor are available.  The file is created and the watch installed
-        *before* the caller hands the argv to the process runner.
+        monitor are available.  Ordering is strict: the file is created, the
+        watch is installed *and acknowledged*, and only then is the session
+        marked engaged (which arms the grace timer).  OpenSSH execs after the
+        returned path is inserted into argv, so the first write is always
+        watched.  Any failure degrades this one launch to the PTY evidence
+        path (``None``) — never a session startup error.
         """
         if not self.available or not launch_eligible_for_diagnostics(argv):
             return None
@@ -292,15 +323,18 @@ class SshReadinessManager:
             logger.debug("diagnostics file creation failed for %r", session_id)
             return None
         os.close(fd)
+        # The record must exist before the watch can deliver, so the monitor
+        # thread never races a brand-new session; engagement is still deferred
+        # until the watch is acknowledged below.
         with self._lock:
+            if self._closed:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                return None
             record = self._sessions.get(session_id)
             if record is None:
-                if self._closed:
-                    try:
-                        path.unlink()
-                    except OSError:
-                        pass
-                    return None
                 record = _SessionDiagnostics(
                     session_id=session_id,
                     path=Path(),
@@ -310,18 +344,56 @@ class SshReadinessManager:
                 )
                 self._sessions[session_id] = record
             record.path = path
-            record.engaged = True
             key = ("diag", session_id)
             record.monitor_key = key
-            record.timer = threading.Timer(
-                self._grace_seconds,
-                self._fire_grace_expired,
-                args=(session_id,),
-            )
-            record.timer.daemon = True
-            record.timer.start()
         assert self._monitor is not None
-        self._monitor.register(key, str(path), self._file_reader(session_id))
+        try:
+            registered = self._monitor.register(
+                key, str(path), self._file_reader(session_id)
+            )
+        except (RuntimeError, OSError):
+            registered = False
+        if not registered:
+            # No watch: this launch stays on the PTY evidence path.  Release
+            # the owned file and the placeholder record; nothing was engaged.
+            with self._lock:
+                if self._sessions.get(session_id) is record:
+                    self._sessions.pop(session_id, None)
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            logger.debug("diagnostics registration failed for %r", session_id)
+            return None
+        with self._lock:
+            if self._closed:
+                try:
+                    self._monitor.unregister(key, unlink_path=str(path))
+                except RuntimeError:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                return None
+            record = self._sessions.get(session_id)
+            if record is None or record.finished:
+                try:
+                    self._monitor.unregister(key, unlink_path=str(path))
+                except RuntimeError:
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                return None
+            record.engaged = True
+            if not record.decisive:
+                record.timer = threading.Timer(
+                    self._grace_seconds,
+                    self._fire_grace_expired,
+                    args=(session_id,),
+                )
+                record.timer.daemon = True
+                record.timer.start()
         return str(path)
 
     def is_engaged(self, session_id: object) -> bool:

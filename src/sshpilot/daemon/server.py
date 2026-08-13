@@ -118,6 +118,9 @@ from .runtime_cleanup import (
 )
 from .session_runtime import SessionRuntime
 from .sftp_runtime import SftpServiceRuntime, SubprocessSftpProcessRunner
+from .ssh_readiness import (
+    DEFAULT_READINESS_GRACE_SECONDS as DEFAULT_SSH_READINESS_GRACE_SECONDS,
+)
 from .transfer_runtime import TransferRuntime
 
 logger = logging.getLogger(__name__)
@@ -126,7 +129,6 @@ DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
 DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
-DEFAULT_SSH_READINESS_GRACE_SECONDS = 30.0
 _FORWARDED_EVENT_TYPES = frozenset(
     {
         EventType.CONNECTION_CREATED,
