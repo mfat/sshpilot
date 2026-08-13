@@ -54,6 +54,7 @@ class DaemonTerminalTabState:
     input_owner: bool = False
     state: TerminalSessionState = TerminalSessionState.IDLE
     exit_info: Optional[SessionExitInfo] = None
+    session_running: bool = False
 
 
 class TerminalSessionController(Protocol):
@@ -107,6 +108,16 @@ class TerminalSessionController(Protocol):
     @property
     def state(self) -> TerminalSessionState:
         """Current session state."""
+        ...
+
+    @property
+    def session_running(self) -> bool:
+        """Whether the daemon session has reached RUNNING (authenticated)."""
+        ...
+
+    @property
+    def session_events_subscribed(self) -> bool:
+        """Whether daemon session state events are being observed."""
         ...
 
     @property
@@ -179,6 +190,7 @@ class DaemonTerminalSessionController:
         self._closed = False
         self._opening_session_id: Optional[SessionId] = None
         self._event_subscription = None
+        self._session_events_subscribed = False
         self._restoring_existing = False
         self._attach_from_sequence = 0
         self._replay_catchup_target: Optional[int] = None
@@ -192,6 +204,21 @@ class DaemonTerminalSessionController:
     def state(self) -> TerminalSessionState:
         """Current session state."""
         return self._tab_state.state
+
+    @property
+    def session_running(self) -> bool:
+        """Whether the daemon session has reached RUNNING (authenticated)."""
+        return self._tab_state.session_running
+
+    @property
+    def session_events_subscribed(self) -> bool:
+        """Whether daemon session state events are being observed.
+
+        When True, ``session_running`` is authoritative; when False (e.g. a
+        restored/detached attach without an event subscription) callers must
+        fall back to local evidence such as terminal output.
+        """
+        return self._session_events_subscribed
 
     @property
     def input_owner(self) -> bool:
@@ -417,6 +444,7 @@ class DaemonTerminalSessionController:
             return
 
         self._tab_state.session_id = summary.id
+        self._tab_state.session_running = state is SessionState.RUNNING
         self._opening_session_id = None
         self._subscribe_session_events(summary.id)
 
@@ -449,6 +477,7 @@ class DaemonTerminalSessionController:
             if event.type is EventType.SESSION_STATE_CHANGED:
                 state = getattr(payload, "state", None)
                 if state not in {
+                    SessionState.RUNNING,
                     SessionState.FAILED,
                     SessionState.EXITED,
                     SessionState.CLOSED,
@@ -476,12 +505,14 @@ class DaemonTerminalSessionController:
 
         try:
             self._event_subscription = subscribe(_on_event)
+            self._session_events_subscribed = self._event_subscription is not None
         except SshPilotError:
             pass
 
     def _unsubscribe_events(self) -> None:
         subscription = self._event_subscription
         self._event_subscription = None
+        self._session_events_subscribed = False
         if subscription is None:
             return
         unsubscribe = getattr(subscription, "unsubscribe", None)
@@ -506,6 +537,11 @@ class DaemonTerminalSessionController:
                 self._notify_state_changed()
             return
         state = getattr(summary, "state", None)
+        if state is SessionState.RUNNING:
+            if not self._tab_state.session_running:
+                self._tab_state.session_running = True
+                self._notify_state_changed()
+            return
         if state is SessionState.FAILED:
             self._tab_state.state = TerminalSessionState.FAILED
             failure = getattr(summary, "failure", None)

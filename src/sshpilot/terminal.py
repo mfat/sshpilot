@@ -142,6 +142,7 @@ class TerminalWidget(Gtk.Box):
         self._view_only_overlay = None
         self._reconnect_handler = None
         self._shell_output_seen = False
+        self._shell_output_seen_after_running = False
         self._pending_shell_ready_feeds = []
 
         # Register with process manager
@@ -1150,21 +1151,21 @@ class TerminalWidget(Gtk.Box):
             self._feed_display(data)
 
             # First real output frame means the remote shell is rendering
-            # (banner/prompt), not merely attached. Flush any feeds queued by
-            # ``feed_child_data_when_shell_ready`` now that the shell is live.
+            # (banner/prompt), not merely attached.
             if data and not self._shell_output_seen:
                 self._shell_output_seen = True
-                pending, self._pending_shell_ready_feeds = (
-                    self._pending_shell_ready_feeds,
-                    [],
-                )
-                for feed in pending:
-                    try:
-                        self.feed_child_data(feed)
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to flush shell-ready feed: {e}"
-                        )
+                if not self._daemon_running_gate_active():
+                    self._flush_pending_shell_ready_feeds()
+
+            # Authoritative gate: flush only on output observed after the
+            # session reached RUNNING (authenticated). RUNNING fires at login,
+            # before the remote shell renders its banner — feeding on the
+            # transition double-echoes the command (the tty echoes the bytes,
+            # then the shell re-echoes them once it reads the buffer).
+            if self._daemon_running_gate_active():
+                if data and getattr(self._daemon_controller, "session_running", False):
+                    self._shell_output_seen_after_running = True
+                    self._flush_pending_shell_ready_feeds()
 
             # Update connection state based on daemon session state
             self._update_daemon_connection_state()
@@ -1318,26 +1319,58 @@ class TerminalWidget(Gtk.Box):
             )
         backend.feed_child_data(data)
 
+    def _daemon_running_gate_active(self) -> bool:
+        """Whether the daemon RUNNING signal is authoritative for this tab."""
+        controller = getattr(self, "_daemon_controller", None)
+        if controller is None:
+            return False
+        return bool(getattr(controller, "session_events_subscribed", False))
+
+    def _flush_pending_shell_ready_feeds(self) -> None:
+        """Send queued shell-ready feeds once the shell is ready and owned."""
+        if not self.has_input_ownership:
+            return
+        pending, self._pending_shell_ready_feeds = (
+            self._pending_shell_ready_feeds,
+            [],
+        )
+        for feed in pending:
+            try:
+                self.feed_child_data(feed)
+            except Exception as e:
+                logger.error(f"Failed to flush shell-ready feed: {e}")
+
     def feed_child_data_when_shell_ready(self, data):
-        """Feed bytes only once the remote shell has produced output.
+        """Feed bytes only once the remote shell is ready.
 
-        The daemon session reports ACTIVE (and emits ``connection-established``)
-        as soon as the attach completes — before the remote shell banner has
-        rendered. Feeding at that point double-echoes the pasted command (the
-        tty echoes the paste, then the shell re-echoes it once it reads the
-        buffer). This mirrors the v5.7.2 legacy path, which only promoted to
-        CONNECTED on real login evidence (MOTD/shell prompt) before feeding.
+        Authoritative path (the controller observes daemon session events):
+        defer automated feeds until output has been observed after the session
+        reached RUNNING — the daemon reports RUNNING once it has authenticated
+        (OpenSSH diagnostics / PTY evidence), which precedes the remote shell
+        rendering its banner. Feeding before that banner double-echoes the fed
+        command (the tty echoes the bytes, then the shell re-echoes them once
+        it reads the buffer). User keystrokes bypass this gate through
+        ``_on_daemon_commit``, so the password can still be typed while
+        automated feeds wait.
 
-        Bytes are flushed on the first output frame received after attachment;
-        an already-rendered shell (or non-daemon terminal) feeds immediately.
+        Fallback path (no RUNNING signal — e.g. a restored/detached attach
+        that does not subscribe to events): wait for the first rendered output
+        frame, as before. Non-daemon terminals feed immediately.
         """
-        if getattr(self, '_shell_output_seen', False):
+        if not getattr(self, "_daemon_mode", False):
             self.feed_child_data(data)
             return
-        if getattr(self, '_daemon_mode', False):
+        if self._daemon_running_gate_active():
+            if getattr(self, "_shell_output_seen_after_running", False):
+                self._flush_pending_shell_ready_feeds()
+                self.feed_child_data(data)
+                return
             self._pending_shell_ready_feeds.append(data)
             return
-        self.feed_child_data(data)
+        if getattr(self, "_shell_output_seen", False):
+            self.feed_child_data(data)
+            return
+        self._pending_shell_ready_feeds.append(data)
 
     def _handle_daemon_close(self, is_quitting=False):
         """Handle close policy for daemon terminals."""
@@ -1456,6 +1489,21 @@ class TerminalWidget(Gtk.Box):
         """Update connection state based on daemon session state."""
         if not self._daemon_controller:
             return
+
+        # A state notification may carry the RUNNING transition (or granted
+        # input ownership) — retry flushing any feeds deferred by
+        # ``feed_child_data_when_shell_ready``. Only when the active gate has
+        # already cleared: the authoritative gate clears on output observed
+        # after RUNNING (never on the RUNNING transition itself, which
+        # precedes the banner and would double-echo the feed).
+        if self._pending_shell_ready_feeds:
+            ready = (
+                getattr(self, "_shell_output_seen_after_running", False)
+                if self._daemon_running_gate_active()
+                else getattr(self, "_shell_output_seen", False)
+            )
+            if ready:
+                GLib.idle_add(self._flush_pending_shell_ready_feeds)
 
         try:
             from .terminal_session_controller import TerminalSessionState

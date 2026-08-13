@@ -196,13 +196,19 @@ def test_feed_child_data_daemon_with_ownership_uses_controller():
     assert controller.sent == [b"typed\n"]
 
 
-def _daemon_terminal():
+def _daemon_terminal(*, subscribed=False, running=False):
     terminal = TerminalWidget.__new__(TerminalWidget)
     terminal._daemon_mode = True
-    terminal._daemon_controller = Mock(input_owner=True)
+    terminal._daemon_controller = Mock(
+        input_owner=True,
+        session_events_subscribed=subscribed,
+        session_running=running,
+    )
     terminal.backend = Mock()
     terminal._shell_output_seen = False
+    terminal._shell_output_seen_after_running = False
     terminal._pending_shell_ready_feeds = []
+    terminal.is_connected = False
     return terminal
 
 
@@ -230,6 +236,54 @@ def test_daemon_terminal_shell_ready_feed_after_output_feeds_immediately():
     terminal._daemon_controller.send_input.reset_mock()
     terminal.feed_child_data_when_shell_ready(b"uptime\n")
     terminal._daemon_controller.send_input.assert_called_once_with(b"uptime\n")
+    assert terminal._pending_shell_ready_feeds == []
+
+
+def test_daemon_terminal_shell_ready_running_gate_defers_before_running():
+    terminal = _daemon_terminal(subscribed=True)
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._daemon_controller.send_input.assert_not_called()
+    assert terminal._pending_shell_ready_feeds == [b"curl -s ifconfig.me\n"]
+
+
+def test_daemon_terminal_shell_ready_running_gate_defers_after_auth_before_banner():
+    terminal = _daemon_terminal(subscribed=True, running=True)
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._daemon_controller.send_input.assert_not_called()
+    assert terminal._pending_shell_ready_feeds == [b"curl -s ifconfig.me\n"]
+
+
+def test_daemon_terminal_shell_ready_running_gate_feeds_when_output_seen_after_running():
+    terminal = _daemon_terminal(subscribed=True, running=True)
+    terminal._shell_output_seen_after_running = True
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._daemon_controller.send_input.assert_called_once_with(
+        b"curl -s ifconfig.me\n"
+    )
+    assert terminal._pending_shell_ready_feeds == []
+
+
+def test_daemon_terminal_shell_ready_running_gate_ignores_password_prompt_output():
+    terminal = _daemon_terminal(subscribed=True)
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._on_daemon_output(b"user@host's password: ")
+    terminal._daemon_controller.send_input.assert_not_called()
+    assert terminal._shell_output_seen is True
+    assert terminal._shell_output_seen_after_running is False
+    assert terminal._pending_shell_ready_feeds == [b"curl -s ifconfig.me\n"]
+
+
+def test_daemon_terminal_shell_ready_running_gate_flushes_on_output_after_running():
+    terminal = _daemon_terminal(subscribed=True)
+    terminal.feed_child_data_when_shell_ready(b"curl -s ifconfig.me\n")
+    terminal._on_daemon_output(b"user@host's password: ")
+    terminal._daemon_controller.send_input.assert_not_called()
+    terminal._daemon_controller.session_running = True
+    terminal._on_daemon_output(b"BusyBox v1.37.0\nroot@GoogleWifi:~# ")
+    terminal._daemon_controller.send_input.assert_called_once_with(
+        b"curl -s ifconfig.me\n"
+    )
+    assert terminal._shell_output_seen_after_running is True
     assert terminal._pending_shell_ready_feeds == []
 
 

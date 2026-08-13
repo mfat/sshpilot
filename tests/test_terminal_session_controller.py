@@ -617,13 +617,33 @@ def test_session_state_changed_non_terminal_ignored(active_session):
     summary = SessionSummary(
         id=controller.tab_state.session_id,
         connection_id=ConnectionId("test-connection"),
-        state=SessionState.RUNNING,
+        state=SessionState.STARTING,
     )
 
     on_event(_session_event(EventType.SESSION_STATE_CHANGED, summary, controller.tab_state.session_id))
 
     assert controller.state == TerminalSessionState.ACTIVE
+    assert controller.session_running is False
     on_state_changed.assert_not_called()
+
+
+def test_session_state_changed_running_observed(active_session):
+    """RUNNING is surfaced so automated feeds can wait for authentication."""
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import SessionState, SessionSummary
+
+    controller, on_event, on_state_changed = active_session
+    summary = SessionSummary(
+        id=controller.tab_state.session_id,
+        connection_id=ConnectionId("test-connection"),
+        state=SessionState.RUNNING,
+    )
+
+    on_event(_session_event(EventType.SESSION_STATE_CHANGED, summary, controller.tab_state.session_id))
+
+    assert controller.session_running is True
+    assert controller.state == TerminalSessionState.ACTIVE
+    on_state_changed.assert_called_once()
 
 
 def test_session_closed_event_with_wrong_payload_ignored(active_session):
