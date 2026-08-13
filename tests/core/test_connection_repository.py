@@ -556,6 +556,31 @@ def test_dormant_root_order_survives_unrelated_sidecar_writes(tmp_path):
     assert repo.reload().root_connection_ids == ("A", "MISSING", "B")
 
 
+def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
+    tmp_path,
+):
+    repo, root, state, _legacy = _repo(
+        tmp_path,
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+
+    root.write_text("Host B\n    HostName b.example\n")
+    assert repo.reload().root_connection_ids == ("B",)
+    assert json.loads(state.read_text())["groups"]["root_connections"] == [
+        "A",
+        "B",
+    ]
+
+    root.write_text(
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+    repo.reload()
+    repo.delete_connection("A")
+    assert json.loads(state.read_text())["groups"]["root_connections"] == ["B"]
+
+
 # ---------------------------------------------------------------------------
 # Snapshot validation
 # ---------------------------------------------------------------------------

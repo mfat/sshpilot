@@ -397,6 +397,18 @@ def test_delete_grouped_connection_survives_reload(tmp_path):
     assert snap.groups[0].connection_ids == ()
 
 
+def test_managed_delete_removes_persisted_root_reference(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+
+    repo.delete_connection("A")
+
+    assert json.loads(state.read_text())["groups"]["root_connections"] == ["B"]
+
+
 def test_non_ssh_update_stale_generation_rejected(tmp_path):
     _write_state(
         tmp_path / "connections.json",

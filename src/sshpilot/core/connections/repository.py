@@ -1228,6 +1228,7 @@ class ConnectionRepository:
                 else:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
+                self._remove_persisted_root_id_locked(connection_id)
                 self._metadata.pop(connection_id, None)
                 self._persist_state_file_locked()
                 self._record_post_write_locked(disk_before, self._state_path)
@@ -1289,6 +1290,12 @@ class ConnectionRepository:
 
     def _persist_state_file_locked(self) -> None:
         write_connection_state(self._state_path, self._build_file_state_locked())
+
+    def _remove_persisted_root_id_locked(self, connection_id: str) -> None:
+        """Forget a root reference removed by an explicit managed delete."""
+        self._persisted_root_order = tuple(
+            cid for cid in self._persisted_root_order if cid != connection_id
+        )
 
     def _migrate_metadata_on_rename(self, old_id: str, new_id: str) -> None:
         """Move metadata to the new id (in-memory; the caller persists once)."""
