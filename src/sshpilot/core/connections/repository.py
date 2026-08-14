@@ -89,6 +89,20 @@ from .state_file import write_connection_state as write_connection_state
 logger = logging.getLogger(__name__)
 
 
+def _display_name_for_record(
+    record: ConnectionRecord, identity: Any = None
+) -> str:
+    """Return the safe public label for an SSH or protocol-local record."""
+    if identity is not None:
+        return identity.display_name
+    value = record.data.get("display_name") if isinstance(record.data, Mapping) else None
+    if type(value) is str:
+        normalized = value.strip()
+        if normalized and len(normalized) <= MAX_DISPLAY_NAME_LENGTH:
+            return normalized
+    return record.nickname
+
+
 @dataclass(frozen=True)
 class RepositoryChange:
     """Committed repository change: full before/after snapshots."""
@@ -207,7 +221,13 @@ class ConnectionRepositoryProtocol(Protocol):
         self, connection_id: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]: ...
 
-    def set_display_name(self, connection_id: str, display_name: str) -> ConnectionRecord: ...
+    def set_display_name(
+        self,
+        connection_id: str,
+        display_name: str,
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord: ...
 
     def ssh_alias_for(self, connection_id: str) -> str: ...
 
@@ -644,7 +664,7 @@ class ConnectionRepository:
         for record in service.ordered_records():
             if record.protocol != "ssh":
                 non_ssh_generations[record.id] = self._non_ssh_generations.get(
-                    record.id, 0
+                    record.id, record.generation
                 )
             else:
                 record.generation = ssh_generations.get(record.id, 0)
@@ -704,6 +724,7 @@ class ConnectionRepository:
                 protocol=record.protocol or "ssh",
                 health=ConnectionHealth.UNKNOWN,
                 groups=groups,
+                display_name=_display_name_for_record(record),
             )
 
         connections = tuple(_summary(r) for r in records)
@@ -790,7 +811,7 @@ class ConnectionRepository:
         )
         summaries = []
         for record in records:
-            identity = active.get(record.id)
+            identity = active.get(record.id) if record.protocol == "ssh" else None
             public = record.id
             try:
                 record_port = int(record.port)
@@ -812,7 +833,7 @@ class ConnectionRepository:
                     protocol=record.protocol or "ssh",
                     health=ConnectionHealth.UNKNOWN,
                     groups=groups_for_record,
-                    display_name=(identity.display_name if identity is not None else record.nickname),
+                    display_name=_display_name_for_record(record, identity),
                 )
             )
         metadata = tuple(
@@ -1579,6 +1600,7 @@ class ConnectionRepository:
                     )
                     payload["id"] = nickname
                     payload["nickname"] = nickname
+                    payload["generation"] = 1
                     created = self._service.create(payload)
                     self._non_ssh_generations[created.id] = 1
                 # Root order / membership / metadata always live in
@@ -1668,14 +1690,17 @@ class ConnectionRepository:
                     nickname = new_nick or connection_id
                     payload["id"] = nickname
                     payload["nickname"] = nickname
+                    current_generation = self._non_ssh_generations.get(
+                        connection_id, existing.generation
+                    )
+                    next_generation = current_generation + 1
+                    payload["generation"] = next_generation
                     updated = self._service.update(connection_id, payload)
                     if new_nick and new_nick != connection_id:
-                        gen = self._non_ssh_generations.pop(connection_id, 0)
-                        self._non_ssh_generations[new_nick] = gen + 1
+                        self._non_ssh_generations.pop(connection_id, None)
+                        self._non_ssh_generations[new_nick] = next_generation
                     else:
-                        self._non_ssh_generations[connection_id] = (
-                            self._non_ssh_generations.get(connection_id, 0) + 1
-                        )
+                        self._non_ssh_generations[connection_id] = next_generation
                 if protocol != "ssh":
                     self._migrate_metadata_on_rename(connection_id, updated.id)
                     self._persist_state_file_locked()
@@ -2054,7 +2079,13 @@ class ConnectionRepository:
             self._commit(before)
             return thaw_safe_metadata(self._metadata.get(connection_id, {}))
 
-    def set_display_name(self, connection_id: str, display_name: str) -> ConnectionRecord:
+    def set_display_name(
+        self,
+        connection_id: str,
+        display_name: str,
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord:
         """Persist an app-owned name without changing SSH configuration."""
         if (
             type(display_name) is not str
@@ -2064,6 +2095,40 @@ class ConnectionRepository:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "A display name is required")
         with self._mutation_scope():
             before = self._begin()
+            record = self._service.get(connection_id)
+            if record is None:
+                raise CoreError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The connection does not exist",
+                )
+            if record.protocol != "ssh":
+                current_generation = self._non_ssh_generations.get(
+                    record.id, record.generation
+                )
+                if (
+                    expected_generation is not None
+                    and expected_generation != current_generation
+                ):
+                    raise CoreError(
+                        ErrorCode.STALE_CONNECTION_STATE,
+                        "The connection changed during the display name operation",
+                    )
+                normalized = display_name.strip()
+                if _display_name_for_record(record) == normalized:
+                    return record
+                next_generation = current_generation + 1
+                updated = self._service.update(
+                    record.id,
+                    {"display_name": normalized, "generation": next_generation},
+                )
+                self._non_ssh_generations[updated.id] = next_generation
+                try:
+                    self._persist_state_file_locked()
+                except Exception:
+                    self._resync_from_files()
+                    raise
+                self._commit(before)
+                return updated
             previous = self._identity_state
             internal = self._set_display_name_locked(connection_id, display_name)
             if self._identity_state == previous:

@@ -222,27 +222,41 @@ def test_missing_legacy_config_yields_defaults(tmp_path):
     assert state.metadata == {}
 
 
-def test_migration_rejects_secret_like_metadata_keys(tmp_path):
+def test_migration_skips_secret_like_metadata_entries(tmp_path):
     config = _legacy_config(
         tmp_path,
         connections_meta={
             "switch": {"api_password": "hunter2", "tags": ["network"]},
         },
     )
-    with pytest.raises(CoreError) as excinfo:
-        read_legacy_connection_state(config)
-    assert excinfo.value.diagnostic_category == "invalid_metadata"
+    state = read_legacy_connection_state(config)
+    assert state.metadata == {}
 
 
-def test_migration_rejects_unusable_metadata_entries(tmp_path):
+def test_migration_skips_unusable_metadata_entries(tmp_path):
     config = _legacy_config(
         tmp_path,
         connections_meta={
             "switch": {"tags": [1, 2, 3], "bad": {"nested": float("nan")}},
         },
     )
-    with pytest.raises(CoreError):
-        read_legacy_connection_state(config)
+    state = read_legacy_connection_state(config)
+    assert state.metadata == {}
+
+
+def test_migration_skips_invalid_metadata_entries_independently(tmp_path):
+    config = _legacy_config(
+        tmp_path,
+        connections_meta={
+            "switch": {"tags": ["network"]},
+            "bad-secret": {"api_password": "not persisted"},
+            "bad-shape": {"value": float("nan")},
+        },
+    )
+    before = config.read_bytes()
+    state = read_legacy_connection_state(config)
+    assert state.metadata == {"switch": {"tags": ("network",)}}
+    assert config.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------

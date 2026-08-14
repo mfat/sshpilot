@@ -933,9 +933,16 @@ class ConnectionApplicationService:
         if display_only:
             try:
                 previous_display_name = self._record_to_summary(record).display_name
-                updated = self._repository.set_display_name(
-                    connection_id, request.display_name
-                )
+                if request.expected_generation is None:
+                    updated = self._repository.set_display_name(
+                        connection_id, request.display_name
+                    )
+                else:
+                    updated = self._repository.set_display_name(
+                        connection_id,
+                        request.display_name,
+                        expected_generation=request.expected_generation,
+                    )
             except CoreError as error:
                 raise _map_core_error(error) from error
             summary = self._record_to_summary(updated)

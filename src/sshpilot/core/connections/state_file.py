@@ -34,15 +34,6 @@ from ..errors import CoreError, ErrorCode
 _MAX_STATE_BYTES = 16 * 1024 * 1024
 _MAX_IDENTITY_INTENT_BYTES = 32 * 1024 * 1024
 _STATE_VERSION = 1
-_SECRET_KEY_FRAGMENTS = (
-    "password",
-    "passphrase",
-    "secret",
-    "token",
-    "credential",
-    "cookie",
-    "private_key",
-)
 
 if TYPE_CHECKING:
     from .identity_reconciliation import ConnectionIdentityProjection
@@ -107,11 +98,6 @@ def _refuse_symlink(path: os.PathLike) -> None:
             diagnostic_category="unsafe_file",
             diagnostic_reason="unsafe state-file target",
         )
-
-
-def _looks_like_secret_key(key: str) -> bool:
-    lowered = str(key).lower()
-    return any(fragment in lowered for fragment in _SECRET_KEY_FRAGMENTS)
 
 
 def _sanitize_legacy_metadata(meta: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
@@ -597,10 +583,11 @@ def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
                 continue
             try:
                 sanitized = _sanitize_legacy_metadata(meta)
-            except (TypeError, ValueError) as exc:
-                raise _state_rejected(
-                    "invalid_metadata", "legacy metadata is unsafe or invalid"
-                ) from exc
+            except (TypeError, ValueError):
+                # Legacy metadata is auxiliary and entries are independent.
+                # Keep valid decorations migratable without weakening the
+                # shared safe-metadata validator or copying unsafe values.
+                continue
             if sanitized is not None:
                 metadata[str(cid)] = sanitized
 

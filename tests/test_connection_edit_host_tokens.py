@@ -1,9 +1,10 @@
 """Regression test for issue #953.
 
-After renaming a connection, the in-memory record must reflect the rewritten
-``Host`` alias. A duplicate's parsed Host line (e.g. ``"orig (Copy)"``) must
-never survive the rename as a stale, paren-containing native target.
+Structured edits reject a shared multi-token Host declaration rather than
+silently rewriting or dropping one of its aliases.
 """
+
+import pytest
 
 from sshpilot.core.connections.repository import ConnectionRepository
 from sshpilot.core.connections.ssh_config_store import SshConfigStore
@@ -29,21 +30,18 @@ def test_rename_refreshes_stale_host_alias(tmp_path):
     # record that must be cleaned up by the rename, not survive as a target.
     assert repo.get_editor_record("orig") is not None
 
-    updated = repo.update_connection(
-        "orig",
-        {
-            "nickname": "cleanname",
-            "hostname": "5.6.7.8",
-            "username": "u",
-            "protocol": "ssh",
-        },
-    )
+    from sshpilot.core.errors import CoreError, ErrorCode
 
-    assert updated.id == "cleanname"
-    assert updated.data.get("host") == "cleanname"
-    assert updated.nickname == "cleanname"
-    # No stale host tokens survive the rename.
-    data = updated.data
-    assert "__host_tokens" not in data
-    assert "(" not in data.get("host", "")
-    assert repo.get_editor_record("orig") is None
+    before = (tmp_path / "config").read_bytes()
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection(
+            "orig",
+            {
+                "nickname": "cleanname",
+                "hostname": "5.6.7.8",
+                "username": "u",
+                "protocol": "ssh",
+            },
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert (tmp_path / "config").read_bytes() == before

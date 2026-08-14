@@ -160,9 +160,9 @@ def test_production_composition_survives_unsafe_legacy_metadata(
     assert [connection.id for connection in repository.snapshot().connections] == [
         "web"
     ]
-    assert not (config_dir / "connections.json").exists()
+    assert (config_dir / "connections.json").exists()
     assert legacy_path.read_bytes() == legacy_before
-    assert "Failed to load auxiliary connection state" in caplog.text
+    assert repository.snapshot().metadata == ()
     assert "secret" not in caplog.text
 
 

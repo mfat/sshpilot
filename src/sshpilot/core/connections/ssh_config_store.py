@@ -97,7 +97,9 @@ def _atomic_write_text(
     - Flushes and ``fsync``s the temporary file, then the parent directory.
     - When *expected_bytes* is supplied, the target's current bytes must
       equal it immediately before replacement or a stale-state error is
-      raised (closes the read→write TOCTOU window).
+      raised. This narrows and detects most read→write races; it cannot close
+      the final interval before ``os.replace()`` without stronger locking or
+      kernel primitives.
     - All public errors are generic (no paths, no OS text, no contents).
     """
     if type(text) is not str:
@@ -590,6 +592,7 @@ class SshConfigStore:
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
+        self._ensure_unique_managed_declaration(connection_id, allow_shared=False)
         payload = dict(data)
         payload.pop("uuid", None)
         payload.pop("source", None)
@@ -632,6 +635,7 @@ class SshConfigStore:
         self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
+        self._ensure_unique_managed_declaration(connection_id, allow_shared=True)
         source = _source_of(record)
         if not source:
             raise _store_error("The connection has no recorded source file")
@@ -698,6 +702,9 @@ class SshConfigStore:
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
+        self._ensure_unique_managed_declaration(
+            original_host_token, allow_shared=True
+        )
         source = _source_of(record)
         if not source:
             raise _store_error("The connection has no recorded source file")
@@ -799,6 +806,27 @@ class SshConfigStore:
                 return record
         raise _not_found_error()
 
+    def _ensure_unique_managed_declaration(
+        self, connection_id: str, *, allow_shared: bool
+    ) -> None:
+        """Reject structured edits without unique Host declaration ownership."""
+        occurrences = []
+        for cfg_file in _resolve_config_files(self._root_path):
+            doc = SSHConfigDocument.parse_file(str(cfg_file))
+            for node in doc.nodes:
+                if isinstance(node, HostBlock) and connection_id in node.tokens:
+                    occurrences.append(node)
+        if len(occurrences) > 1:
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection is defined by multiple Host declarations",
+            )
+        if occurrences and not allow_shared and len(occurrences[0].tokens) > 1:
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection shares a Host declaration with other aliases",
+            )
+
     # -- writes ------------------------------------------------------------
 
     def _append_new_block(
@@ -872,6 +900,7 @@ class SshConfigStore:
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
+        self._ensure_unique_managed_declaration(connection_id, allow_shared=False)
 
         payload = dict(data)
         payload.pop("uuid", None)
@@ -929,6 +958,7 @@ class SshConfigStore:
         self._refuse_symlinked_root()
         config = self.load()
         record = self._find(config, connection_id)
+        self._ensure_unique_managed_declaration(connection_id, allow_shared=True)
         source = _source_of(record)
         if not source:
             raise _store_error("The connection has no recorded source file")
@@ -1012,6 +1042,9 @@ class SshConfigStore:
         config = self.load()
         record = self._find(config, connection_id)
         self._check_stale(connection_id, expected_generation)
+        self._ensure_unique_managed_declaration(
+            original_host_token, allow_shared=True
+        )
         source = _source_of(record)
         if not source:
             raise _store_error("The connection has no recorded source file")

@@ -160,7 +160,7 @@ def test_legacy_migration_reconciles_deleted_connections_and_preserves_order(tmp
     assert repo._legacy_migration_result.dangling_parent_links_removed == 1
 
 
-def test_legacy_migration_failure_is_nonfatal_and_preserves_legacy_state(
+def test_invalid_legacy_metadata_is_skipped_and_migration_succeeds(
     tmp_path, caplog
 ):
     repo, root, state, legacy = _repo(
@@ -171,7 +171,26 @@ def test_legacy_migration_failure_is_nonfatal_and_preserves_legacy_state(
     legacy.write_text(
         json.dumps(
             {
-                "connections_meta": {"deleted": {"password": "secret"}},
+                "connections": {
+                    "non_ssh": [
+                        {"nickname": "serial", "protocol": "serial", "hostname": "ttyS0"}
+                    ]
+                },
+                "connection_groups": {
+                    "groups": {
+                        "ops": {
+                            "id": "ops",
+                            "name": "Operations",
+                            "connections": ["web"],
+                        }
+                    },
+                    "connections": {"web": "ops"},
+                    "root_connections": ["serial"],
+                },
+                "connections_meta": {
+                    "web": {"pinned": True},
+                    "deleted": {"password": "secret"},
+                },
             }
         ),
         encoding="utf-8",
@@ -184,10 +203,14 @@ def test_legacy_migration_failure_is_nonfatal_and_preserves_legacy_state(
             legacy_config_path=legacy,
             isolated=False,
         )
-    assert [record.id for record in repo.snapshot().connections] == ["web"]
-    assert not state.exists()
+    snapshot = repo.snapshot()
+    assert [record.id for record in snapshot.connections] == ["web", "serial"]
+    assert snapshot.groups[0].connection_ids == ("web",)
+    assert snapshot.root_connection_ids == ("serial",)
+    assert snapshot.metadata[0].connection_id == "web"
+    assert state.exists()
     assert legacy.read_bytes() == before
-    assert "Failed to load auxiliary connection state" in caplog.text
+    assert repo._identity_state_unavailable is False
     assert "secret" not in caplog.text
 
 

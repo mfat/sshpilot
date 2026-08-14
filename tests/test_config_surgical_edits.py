@@ -119,17 +119,22 @@ def test_rename_replaces_only_the_target_block(tmp_path):
 
 
 def test_repeated_blocks_for_same_host_collapse_on_edit(tmp_path):
-    """Duplicate 'Host web' stanzas merge into one rewritten block on edit —
-    mirrors ssh's merge semantics for repeated Host blocks."""
+    """Repeated concrete Host declarations are not structured-editable."""
     doubled = ROOT + "\nHost web\n    Port 2222\n"
     store = _store(tmp_path, doubled)
-    store.update(
-        "web",
-        {"nickname": "web", "hostname": "example.com", "username": "bob",
-         "protocol": "ssh"},
-        expected_generation=0,
-    )
-    assert _text(tmp_path).count("Host web\n") == 1
+    before = _text(tmp_path)
+    import pytest
+    from sshpilot.core.errors import CoreError, ErrorCode
+
+    with pytest.raises(CoreError) as exc:
+        store.update(
+            "web",
+            {"nickname": "web", "hostname": "example.com", "username": "bob",
+             "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert _text(tmp_path) == before
 
 
 def test_edit_included_host_leaves_root_untouched(tmp_path):

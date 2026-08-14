@@ -16,10 +16,14 @@ import conftest  # noqa: F401  (installs the GI stub)
 from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
+from sshpilot.core.connection_application_service import (  # noqa: E402
+    ConnectionApplicationService,
+)
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
 from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
 from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
+from sshpilot.api.models.connections import UpdateConnectionRequest  # noqa: E402
 
 
 def _repo(tmp_path, ssh_text: str = ""):
@@ -202,6 +206,29 @@ def test_ssh_rename_stale_editor_rejected(tmp_path):
     assert [c.id for c in snap.connections] == ["web"]
 
 
+def test_repeated_host_update_is_rejected_without_repository_side_effects(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host foo\n    HostName first.example\n\n"
+        "Host foo bar\n    User deploy\n",
+    )
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+    events = []
+    repo.add_listener(events.append)
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection(
+            "foo",
+            {"nickname": "foo", "hostname": "changed.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert root.read_bytes() == before_root
+    assert state.read_bytes() == before_state
+    assert not state.with_name(state.name + ".pending").exists()
+    assert events == []
+
+
 def test_ssh_delete_removes_block_and_metadata(tmp_path):
     repo, root, state = _repo(
         tmp_path,
@@ -274,6 +301,108 @@ def test_non_ssh_create_persists_to_state_file(tmp_path):
     assert "tel" not in root.read_text() if root.exists() else True
     snap = repo.snapshot()
     assert [c.id for c in snap.connections] == ["tel"]
+
+
+def test_non_ssh_display_name_is_record_owned_and_survives_restart(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    created = repo.create_connection(
+        {
+            "nickname": "router1",
+            "protocol": "telnet",
+            "hostname": "192.0.2.10",
+            "display_name": "Office Router",
+        }
+    )
+    assert created.id == "router1"
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+    assert read_identity_state_v2(state).identities == ()
+    assert not root.exists()
+
+    restarted, _root, _state = _repo(tmp_path)
+    summary = restarted.snapshot().connections[0]
+    assert summary.id == "router1"
+    assert summary.display_name == "Office Router"
+
+
+def test_non_ssh_display_name_update_is_persisted_once_and_noop_is_quiet(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    repo.create_connection(
+        {"nickname": "router1", "protocol": "telnet", "hostname": "192.0.2.10"}
+    )
+    events = []
+    repo.add_listener(events.append)
+    before_bytes = state.read_bytes()
+    before_generation = repo.snapshot().generation
+
+    updated = repo.set_display_name("router1", "Office Router")
+    assert updated.data["display_name"] == "Office Router"
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+    assert repo.snapshot().generation == before_generation + 1
+    assert len(events) == 1
+    assert root.exists() is False
+
+    after_bytes = state.read_bytes()
+    event_count = len(events)
+    generation = repo.snapshot().generation
+    repo.set_display_name("router1", "Office Router")
+    assert state.read_bytes() == after_bytes
+    assert len(events) == event_count
+    assert repo.snapshot().generation == generation
+    assert after_bytes != before_bytes
+
+
+def test_application_display_name_update_supports_non_ssh_connection(tmp_path):
+    repo, _root, _state = _repo(tmp_path)
+    repo.create_connection(
+        {"nickname": "router1", "protocol": "telnet", "hostname": "192.0.2.10"}
+    )
+    application = ConnectionApplicationService(repo, client_name="test")
+    result = application.update_connection(
+        "router1", UpdateConnectionRequest(display_name="Office Router")
+    )
+    assert result.connection_id == "router1"
+    assert result.display_name == "Office Router"
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+
+
+def test_non_ssh_update_and_rename_preserve_display_name(tmp_path):
+    repo, _root, state = _repo(tmp_path)
+    repo.create_connection(
+        {
+            "nickname": "router1",
+            "protocol": "telnet",
+            "hostname": "192.0.2.10",
+            "display_name": "Office Router",
+        }
+    )
+    repo.update_connection(
+        "router1",
+        {"nickname": "router2", "protocol": "telnet", "hostname": "192.0.2.11"},
+        expected_generation=1,
+    )
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+    assert _state(state)["non_ssh_connections"][0]["display_name"] == "Office Router"
+
+
+def test_invalid_non_ssh_display_name_falls_back_to_nickname(tmp_path):
+    _write_state(
+        tmp_path / "connections.json",
+        {
+            "version": 1,
+            "non_ssh_connections": [
+                {
+                    "nickname": "router1",
+                    "protocol": "telnet",
+                    "hostname": "192.0.2.10",
+                    "display_name": ["not text"],
+                }
+            ],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    repo, _root, _state_path = _repo(tmp_path)
+    assert repo.snapshot().connections[0].display_name == "router1"
 
 
 def test_non_ssh_update_and_rename(tmp_path):

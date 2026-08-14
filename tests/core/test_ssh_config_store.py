@@ -127,6 +127,96 @@ def test_rename_rewrites_the_host_alias(tmp_path):
     assert _ids(result.config) == ["web2"]
 
 
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_repeated_host_declaration_rejects_managed_mutation(tmp_path, operation):
+    root = _write(
+        tmp_path / "config",
+        "Host foo\n    HostName first.example\n    # first comment\n\n"
+        "Host foo\n    User deploy\n    # second comment\n",
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        if operation == "update":
+            store.update(
+                "foo",
+                {"nickname": "foo", "hostname": "changed.example"},
+                expected_generation=0,
+            )
+        else:
+            store.delete("foo")
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert root.read_bytes() == before
+
+
+def test_repeated_host_declaration_rejects_prepared_update(tmp_path):
+    root = _write(
+        tmp_path / "config",
+        "Host foo\n    HostName first.example\n\n"
+        "Host foo bar\n    User deploy\n",
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        store.prepare_update(
+            "foo",
+            {"nickname": "foo", "hostname": "changed.example"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert root.read_bytes() == before
+    assert "Host foo bar" in root.read_text()
+
+
+def test_repeated_host_declaration_rejects_split(tmp_path):
+    root = _write(
+        tmp_path / "config",
+        "Host foo\n    HostName first.example\n\n"
+        "Host foo\n    User deploy\n",
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        store.split(
+            "foo",
+            "foo",
+            {"nickname": "foo-copy", "hostname": "copy.example"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert root.read_bytes() == before
+
+
+def test_repeated_hosts_in_includes_reject_managed_mutation(tmp_path):
+    root = _write(tmp_path / "config", "Include fragments/*.conf\n")
+    fragments = root.parent / "fragments"
+    fragments.mkdir()
+    first = _write(fragments / "one.conf", "Host foo\n    HostName one.example\n")
+    second = _write(fragments / "two.conf", "Host foo\n    HostName two.example\n")
+    store = _store(root)
+    before = (root.read_bytes(), first.read_bytes(), second.read_bytes())
+    with pytest.raises(CoreError) as exc:
+        store.update(
+            "foo", {"nickname": "foo", "hostname": "new.example"}, expected_generation=0
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert (root.read_bytes(), first.read_bytes(), second.read_bytes()) == before
+
+
+def test_duplicate_does_not_rewrite_repeated_host_declarations(tmp_path):
+    root = _write(
+        tmp_path / "config",
+        "Host foo\n    HostName first.example\n\n"
+        "Host foo\n    User deploy\n",
+    )
+    store = _store(root)
+    result = store.duplicate("foo")
+    assert result.connection_id == "foo-Copy"
+    text = root.read_text()
+    assert text.count("Host foo\n") == 2
+    assert "Host foo-Copy" in text
+
+
 def test_duplicate_creates_a_new_block(tmp_path):
     root = _write(
         tmp_path / "config",

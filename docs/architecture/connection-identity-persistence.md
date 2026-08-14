@@ -131,6 +131,12 @@ Corrupt or unsupported v2 is preserved; SSH remains readable/launchable where
 possible, while UUID-owned mutations are degraded rather than applied to an
 invented empty registry.
 
+Legacy `connections_meta` entries are validated independently. An unsafe or
+malformed auxiliary entry is omitted from migration while valid groups, root
+order, non-SSH records, and other valid metadata continue through the same
+migration. The legacy source file is never rewritten, and the safe-metadata
+validator is not weakened or used to sanitize an unsafe value into acceptance.
+
 ## Managed SSH transactions and recovery
 
 Managed create/update/delete/duplicate/split uses the prepared SSH mutation
@@ -204,6 +210,19 @@ values and does not use SSH Host-token validation. A DisplayName update writes
 only the sidecar, preserves UUID/groups/metadata/credentials, and leaves SSH
 config bytes unchanged. Editing the technical `nickname`/Host alias remains a
 separate prepared SSH mutation with explicit UUID continuity.
+
+SSH DisplayName is owned by the internal SSH UUID. Non-SSH/plugin DisplayName
+is stored in that protocol-local connection record; plugin connections never
+receive SSH UUID identities. Both are projected through the same safe fallback
+to the public alias when stored plugin data is invalid.
+
+Managed per-connection SSH mutations require unambiguous concrete declaration
+ownership. If an alias occurs in multiple reachable `Host` declarations, or
+if an ordinary update would edit one token in a shared multi-token declaration,
+the mutation fails with `MUTATION_AMBIGUOUS` before any file or sidecar write.
+Users can use the raw editor or first make declaration ownership unambiguous.
+Safe token-removal operations such as deleting or explicitly splitting one
+token from a unique multi-token declaration preserve the unrelated aliases.
 
 The editor captures the authoritative values loaded when it opens and sends
 only changed fields. A Name-only save therefore sends a DisplayName-only
