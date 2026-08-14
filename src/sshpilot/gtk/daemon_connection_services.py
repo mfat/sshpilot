@@ -13,6 +13,7 @@ from sshpilot.api.connection_identity import connection_id_for
 from sshpilot.api.models import (
     CreateConnectionRequest,
     EDITABLE_CONFIG_FIELDS,
+    UNSET,
     StoreConnectionPasswordRequest,
     UpdateConnectionRequest,
 )
@@ -94,6 +95,7 @@ class DaemonConnectionServices:
             username=str(values.get("username", "") or ""),
             port=int(values.get("port", 22) or 22),
             protocol=protocol,
+            display_name=str(values.get("display_name", "") or ""),
             config_patch=self._config_patch(values) if protocol == "ssh" else {},
             plugin_data=self._plugin_data(values) if protocol != "ssh" else {},
         )
@@ -124,6 +126,7 @@ class DaemonConnectionServices:
             ),
             username=values.get("username", getattr(connection, "username", "")),
             port=int(values.get("port", getattr(connection, "port", 22)) or 22),
+            display_name=(values["display_name"] if "display_name" in values else UNSET),
             config_patch=self._config_patch(values) if protocol == "ssh" else {},
             plugin_data=self._plugin_data(values) if protocol != "ssh" else {},
         )

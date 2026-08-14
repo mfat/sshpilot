@@ -100,7 +100,12 @@ def _expand_ssh_tokens(value: str) -> str:
 # Include resolution (headless; unreadable files are fatal)
 # ---------------------------------------------------------------------------
 
-def _resolve_config_files(root_path: Path, *, max_depth: int = _MAX_INCLUDE_DEPTH) -> List[Path]:
+def _resolve_config_files(
+    root_path: Path,
+    *,
+    max_depth: int = _MAX_INCLUDE_DEPTH,
+    content_overrides: Optional[Mapping[Path, bytes]] = None,
+) -> List[Path]:
     """Resolve *root_path* and its recursive Includes into ordered files.
 
     Missing exact includes are tolerated (ssh treats them as empty). Any file
@@ -113,11 +118,21 @@ def _resolve_config_files(root_path: Path, *, max_depth: int = _MAX_INCLUDE_DEPT
     unreadable = []
 
     _MISSING = object()
+    overrides = {
+        Path(path).resolve(): bytes(content)
+        for path, content in (content_overrides or {}).items()
+    }
 
     def _read_lines(path: Path):
+        override = overrides.get(path.resolve())
+        if override is not None:
+            try:
+                return override.decode("utf-8").splitlines(keepends=True)
+            except UnicodeDecodeError:
+                unreadable.append(path)
+                return None
         try:
-            with open(path, encoding="utf-8") as handle:
-                return handle.readlines()
+            return path.read_text(encoding="utf-8").splitlines(keepends=True)
         except FileNotFoundError:
             return _MISSING  # missing include -> tolerated, treated as empty
         except (OSError, UnicodeError):
@@ -529,12 +544,20 @@ def _parse_host_config(
 # Document loading
 # ---------------------------------------------------------------------------
 
-def _compute_revision(files: List[Path]) -> str:
+def _compute_revision(
+    files: List[Path], content_overrides: Optional[Mapping[Path, bytes]] = None
+) -> str:
     """Deterministic SHA-256 over each file's path-relative identity + bytes."""
     hasher = hashlib.sha256()
+    overrides = {
+        Path(key).resolve(): bytes(value)
+        for key, value in (content_overrides or {}).items()
+    }
     for path in files:
         try:
-            data = path.read_bytes()
+            data = overrides.get(path.resolve())
+            if data is None:
+                data = path.read_bytes()
         except OSError as exc:
             raise _config_error("SSH configuration could not be read completely") from exc
         rel = os.path.relpath(path)
@@ -567,7 +590,9 @@ def _host_option_values(block: HostBlock, key: str) -> List[str]:
     return values
 
 
-def _static_identity_evidence(files: List[Path]) -> Dict[str, Dict[str, str]]:
+def _static_identity_evidence(
+    files: List[Path], content_overrides: Optional[Mapping[Path, bytes]] = None
+) -> Dict[str, Dict[str, str]]:
     """Conservatively classify evidence the legacy loader cannot prove.
 
     This is intentionally a small safety analysis, not an OpenSSH evaluator.
@@ -589,9 +614,18 @@ def _static_identity_evidence(files: List[Path]) -> Dict[str, Dict[str, str]]:
         if global_reason is None or priority[reason] > priority[global_reason]:
             global_reason = reason
 
+    overrides = {
+        Path(key).resolve(): bytes(value)
+        for key, value in (content_overrides or {}).items()
+    }
     for cfg_file in files:
         try:
-            doc = SSHConfigDocument.parse_file(cfg_file)
+            raw = overrides.get(cfg_file.resolve())
+            doc = (
+                SSHConfigDocument.parse_text(raw.decode("utf-8"), path=str(cfg_file))
+                if raw is not None
+                else SSHConfigDocument.parse_file(cfg_file)
+            )
         except (OSError, UnicodeDecodeError):
             mark_global_reason("include_semantics")
             continue
@@ -700,6 +734,7 @@ def load_ssh_configuration(
     root_path: Path,
     *,
     isolated: bool,
+    _content_overrides: Optional[Mapping[Path, bytes]] = None,
 ) -> LoadedSshConfiguration:
     """Load the complete SSH configuration rooted at *root_path*.
 
@@ -710,7 +745,7 @@ def load_ssh_configuration(
     """
     root = Path(root_path)
     try:
-        files = _resolve_config_files(root)
+        files = _resolve_config_files(root, content_overrides=_content_overrides)
     except CoreError:
         raise
     except OSError as exc:
@@ -808,7 +843,15 @@ def load_ssh_configuration(
 
     for cfg_file in files:
         try:
-            doc = SSHConfigDocument.parse_file(cfg_file)
+            raw = {
+                Path(key).resolve(): bytes(value)
+                for key, value in (_content_overrides or {}).items()
+            }.get(cfg_file.resolve())
+            doc = (
+                SSHConfigDocument.parse_text(raw.decode("utf-8"), path=str(cfg_file))
+                if raw is not None
+                else SSHConfigDocument.parse_file(cfg_file)
+            )
         except (OSError, UnicodeDecodeError) as exc:
             raise _config_error("SSH configuration could not be read completely") from exc
 
@@ -846,7 +889,7 @@ def load_ssh_configuration(
         if pending_tokens and pending_config:
             flush_block(pending_tokens, pending_config, cfg_file)
 
-    static_evidence = _static_identity_evidence(files)
+    static_evidence = _static_identity_evidence(files, _content_overrides)
     for token in connection_order:
         values = static_evidence.get(token, {})
         connections[token].update(
@@ -885,5 +928,5 @@ def load_ssh_configuration(
         connections=records,
         rules=tuple(rules),
         source_paths=frozenset(files),
-        root_revision=_compute_revision(files),
+        root_revision=_compute_revision(files, _content_overrides),
     )

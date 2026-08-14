@@ -12,8 +12,10 @@ from sshpilot.core.connections.identity_state_v2 import ConnectionReference
 from sshpilot.core.connections.identity_state_v2 import ReferenceKind
 from sshpilot.core.connections.repository import ConnectionRepository
 from sshpilot.core.connections.ssh_config_store import SshConfigStore
+from sshpilot.core.errors import CoreError, ErrorCode
 from sshpilot.core.connections.state_file import (
     identity_transaction_intent_path,
+    read_pending_identity_transaction,
     read_identity_state_v2,
 )
 
@@ -247,6 +249,131 @@ def test_managed_create_allocates_new_uuid_for_duplicate_destination(tmp_path):
     assert {item.projection.alias for item in identities} == {"prod", "copy"}
     assert len({item.uuid for item in identities}) == 2
     assert original in {item.uuid for item in identities}
+
+
+def test_managed_create_persists_the_uuid_from_the_pending_target(tmp_path):
+    repo, _root, state = _repo(tmp_path, "Host prod\n    HostName server.example\n")
+    planned = {}
+    original_commit = repo._ssh_store.commit_prepared
+
+    def capture(prepared):
+        intent = read_pending_identity_transaction(
+            identity_transaction_intent_path(state)
+        )
+        planned[prepared.connection_id] = next(
+            item.uuid for item in intent.target_state.identities
+            if item.projection.alias == prepared.connection_id
+        )
+        return original_commit(prepared)
+
+    repo._ssh_store.commit_prepared = capture
+    try:
+        repo.create_connection(
+            {"nickname": "copy", "hostname": "server.example", "protocol": "ssh"}
+        )
+    finally:
+        repo._ssh_store.commit_prepared = original_commit
+    state_after = read_identity_state_v2(state)
+    assert next(
+        item.uuid for item in state_after.identities
+        if item.projection.alias == "copy"
+    ) == planned["copy"]
+
+
+def test_duplicate_target_contains_copied_group_before_intent(tmp_path):
+    repo, _root, state = _repo(tmp_path, "Host prod\n    HostName server.example\n")
+    group = repo.create_group("Production")
+    repo.copy_connection_to_group("prod", group.id)
+    captured = {}
+    original_commit = repo._ssh_store.commit_prepared
+
+    def capture(prepared):
+        intent = read_pending_identity_transaction(
+            identity_transaction_intent_path(state)
+        )
+        captured["target"] = intent.target_state
+        return original_commit(prepared)
+
+    repo._ssh_store.commit_prepared = capture
+    try:
+        repo.duplicate_connection("prod")
+    finally:
+        repo._ssh_store.commit_prepared = original_commit
+    target = captured["target"]
+    duplicate = next(
+        item for item in target.identities
+        if item.projection.alias == "prod-Copy"
+    )
+    assert ConnectionReference(ReferenceKind.SSH_UUID, duplicate.uuid) in next(
+        item for item in target.groups if item.id == group.id
+    ).members
+
+
+def test_display_name_noop_does_not_rewrite_sidecar(tmp_path):
+    repo, _root, state = _repo(tmp_path, "Host prod\n    HostName server.example\n")
+    before = state.stat()
+    generation = read_identity_state_v2(state).sidecar_generation
+    repo.set_display_name("prod", "prod")
+    after = state.stat()
+    assert read_identity_state_v2(state).sidecar_generation == generation
+    assert after.st_ino == before.st_ino
+    assert after.st_mtime_ns == before.st_mtime_ns
+
+
+def test_corrupt_pending_intent_drops_previously_trusted_identity(tmp_path):
+    repo, root, state = _repo(
+        tmp_path, "Host prod\n    HostName server.example\n"
+    )
+    repo.set_display_name("prod", "Production")
+    pending = identity_transaction_intent_path(state)
+    pending.write_text("{broken", encoding="utf-8")
+    restarted, _root, _state = _repo(tmp_path, root.read_text())
+    assert restarted.snapshot().connections[0].display_name == "prod"
+    with pytest.raises(CoreError) as exc:
+        restarted.set_display_name("prod", "Should not write")
+    assert exc.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
+    assert pending.read_text(encoding="utf-8") == "{broken"
+
+
+def test_ambiguous_alias_rejects_identity_mutations_but_remains_visible(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host old-a\n    HostName server.example\n    User deploy\n\n"
+        "Host old-b\n    HostName server.example\n    User deploy\n",
+    )
+    root.write_text(
+        "Host new-a\n    HostName server.example\n    User deploy\n\n"
+        "Host new-b\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    repo.reload()
+    assert {item.id for item in repo.snapshot().connections} == {"new-a", "new-b"}
+    with pytest.raises(CoreError) as exc:
+        repo.set_display_name("new-a", "No ownership")
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection_metadata("new-b", {"pinned": True})
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    persisted = read_identity_state_v2(state)
+    assert persisted.pending_ambiguities
+
+
+def test_dangling_pending_intent_symlink_enters_degraded_state(tmp_path):
+    repo, _root, state = _repo(
+        tmp_path, "Host prod\n    HostName server.example\n"
+    )
+    intent_path = identity_transaction_intent_path(state)
+    intent_path.symlink_to(tmp_path / "missing-intent")
+
+    restarted, _root, _state = _repo(
+        tmp_path, "Host prod\n    HostName server.example\n"
+    )
+
+    assert restarted.snapshot().connections[0].id == "prod"
+    assert intent_path.is_symlink()
+    with pytest.raises(CoreError) as exc_info:
+        restarted.set_display_name("prod", "Unavailable")
+    assert exc_info.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
 
 
 def test_groups_and_metadata_follow_uuid_across_external_alias_rename(tmp_path):

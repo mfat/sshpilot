@@ -6736,6 +6736,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             EDITABLE_CONFIG_FIELDS,
             ForwardingRule,
             forwarding_rule_to_dict,
+            UNSET,
         )
         from .api.models import CreateConnectionRequest, UpdateConnectionRequest
 
@@ -6778,6 +6779,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             complete_save(False)
             return
 
+        delta_available = '__changed_fields' in connection_data
+        changed_fields = set(connection_data.pop('__changed_fields', ()) or ())
+
         def _build_config_patch():
             import re
             patch = {}
@@ -6786,6 +6790,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if key in ("nickname", "hostname", "username", "port", "protocol"):
                     continue
                 if key not in connection_data:
+                    continue
+                if changed_fields and key not in changed_fields:
                     continue
 
                 if key == "forwarding_rules":
@@ -6818,6 +6824,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         try:
             if dialog.is_editing:
+                if delta_available and not changed_fields:
+                    complete_save(True)
+                    return
                 connection_id = getattr(dialog, '_saved_connection_id', None)
                 if not connection_id:
                     connection_id = connection_id_for(dialog.connection)
@@ -6863,11 +6872,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     operation = lambda: self.client.split_connection(split_req)
                 else:
                     request = UpdateConnectionRequest(
-                        nickname=connection_data.get('nickname'),
-                        hostname=connection_data.get('hostname'),
-                        username=connection_data.get('username'),
-                        port=connection_data.get('port'),
-                        display_name=connection_data.get('display_name'),
+                        nickname=(connection_data.get('nickname')
+                                  if (not delta_available or 'nickname' in changed_fields)
+                                  else UNSET),
+                        hostname=(connection_data.get('hostname')
+                                  if (not delta_available or 'hostname' in changed_fields)
+                                  else UNSET),
+                        username=(connection_data.get('username')
+                                  if (not delta_available or 'username' in changed_fields)
+                                  else UNSET),
+                        port=(connection_data.get('port')
+                              if (not delta_available or 'port' in changed_fields)
+                              else UNSET),
+                        display_name=(connection_data.get('display_name')
+                                      if (not delta_available or 'display_name' in changed_fields)
+                                      else UNSET),
                         config_patch=config_patch,
                         expected_generation=current_generation,
                     )

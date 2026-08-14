@@ -292,6 +292,11 @@ class PreparedSshMutation:
         store._refuse_symlinked_root()
         if not store._revision_matches(self.base_revision):
             raise _stale_error()
+        # Re-evaluate the exact target source tree immediately before the
+        # replacement.  This catches dependencies introduced only by the
+        # prepared Include graph (which are absent from the base revision).
+        if store.preview_prepared(self).root_revision != self.target_revision:
+            raise _stale_error()
         _atomic_write_text(
             self.target_path,
             self.target_text,
@@ -457,16 +462,15 @@ class SshConfigStore:
         )
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        target_bytes = text.encode("utf-8")
-        target_revision = self._revision_for_root_bytes(target_bytes)
-        return PreparedSshMutation(
+        prepared = PreparedSshMutation(
             operation="replace_text",
             base_revision=expected_revision,
-            target_revision=target_revision,
+            target_revision="",
             target_path=self._root_path,
             expected_bytes=expected_bytes,
             target_text=text,
         )
+        return self._with_target_revision(prepared)
 
     def commit_prepared(self, prepared: PreparedSshMutation) -> SshConfigMutationResult:
         """Commit a prepared mutation and reload authoritative projections."""
@@ -487,57 +491,41 @@ class SshConfigStore:
         )
 
     def preview_prepared(self, prepared: PreparedSshMutation) -> LoadedSshConfiguration:
-        """Load a prepared config from an isolated temporary source tree.
+        """Load a prepared config through the authoritative loader overlay.
 
-        Preparation remains side-effect free for the real SSH tree.  The
-        temporary tree is only used to obtain the same authoritative loader
-        projections that a committed mutation will produce.
+        The overlay keeps the real source paths and resolves the target
+        Include graph against the real filesystem.  This is important for
+        absolute/parent-relative includes and for detecting dependencies that
+        exist only in the proposed target document.
         """
         if type(prepared) is not PreparedSshMutation:
             raise TypeError("a PreparedSshMutation is required")
-        source = self.load()
-        root = self._root_path.resolve()
-        common = root.parent
-        with tempfile.TemporaryDirectory(prefix="sshpilot-preview-") as temp:
-            temp_root = Path(temp) / root.relative_to(common)
-            for raw_path in source.source_paths:
-                original = Path(raw_path).resolve()
-                try:
-                    relative = original.relative_to(common)
-                except ValueError as exc:
-                    raise _store_error("The prepared SSH configuration could not be previewed") from exc
-                destination = Path(temp) / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(original, destination)
-            target = Path(temp) / prepared.target_path.resolve().relative_to(common)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(prepared.target_text.encode("utf-8"))
-            loaded = load_ssh_configuration(temp_root, isolated=self._isolated)
+        return self._overlay_generations(
+            load_ssh_configuration(
+                self._root_path,
+                isolated=self._isolated,
+                _content_overrides={
+                    self._root_path.resolve(): prepared.target_text.encode("utf-8")
+                    if prepared.target_path.resolve() == self._root_path.resolve()
+                    else self._root_path.read_bytes(),
+                    prepared.target_path.resolve(): prepared.target_text.encode("utf-8"),
+                },
+            )
+        )
 
-            # Preview loading deliberately happens in a private source tree,
-            # but provenance is part of the persisted identity projection.
-            # Restore daemon-owned source paths to the paths the committed
-            # mutation will actually expose; otherwise an intent written
-            # before commit can never compare equal to the target sidecar
-            # after a crash between sidecar replacement and intent cleanup.
-            preview_root = Path(temp)
-
-            def actual_path(value: Any) -> Any:
-                if not isinstance(value, str) or not value:
-                    return value
-                candidate = Path(value)
-                try:
-                    return str(common / candidate.resolve().relative_to(preview_root))
-                except ValueError:
-                    return value
-
-            for record in loaded.connections:
-                record.source = actual_path(record.source)
-                if isinstance(record.data, dict):
-                    for key in ("source", "source_config_path", "config_root"):
-                        if key in record.data:
-                            record.data[key] = actual_path(record.data[key])
-            return loaded
+    def _with_target_revision(self, prepared: PreparedSshMutation) -> PreparedSshMutation:
+        """Fill a prepared mutation's revision from its target Include graph."""
+        preview = self.preview_prepared(prepared)
+        return PreparedSshMutation(
+            operation=prepared.operation,
+            base_revision=prepared.base_revision,
+            target_revision=preview.root_revision,
+            target_path=prepared.target_path,
+            expected_bytes=prepared.expected_bytes,
+            target_text=prepared.target_text,
+            connection_id=prepared.connection_id,
+            remove_connection_id=prepared.remove_connection_id,
+        )
 
     def _prepare_document_replacement(
         self,
@@ -552,16 +540,17 @@ class SshConfigStore:
     ) -> PreparedSshMutation:
         if not self._revision_matches(expected_revision):
             raise _stale_error()
-        return PreparedSshMutation(
+        provisional = PreparedSshMutation(
             operation=operation,
             base_revision=expected_revision,
-            target_revision=self._revision_for_path_bytes(target, target_text.encode("utf-8")),
+            target_revision="",
             target_path=target,
             expected_bytes=expected_bytes,
             target_text=target_text,
             connection_id=connection_id,
             remove_connection_id=remove_connection_id,
         )
+        return self._with_target_revision(provisional)
 
     def prepare_create(self, data: Mapping[str, Any]) -> PreparedSshMutation:
         """Prepare a new Host block without touching the SSH config."""

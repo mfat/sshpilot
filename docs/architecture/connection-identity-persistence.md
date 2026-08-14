@@ -53,6 +53,13 @@ for the current observed revision while `last_reconciled_ssh_revision` remains
 the last fully reconciled revision. A later complete revision recomputes the
 result; stale ambiguity is never reused.
 
+If recovery is `REQUIRES_RECONCILIATION`, `STALE_INTENT`, `DEFERRED`, or the
+pending intent is corrupt, the repository drops any previously trusted in-
+memory UUID state, preserves the sidecar and intent, publishes SSH aliases
+without UUID-owned decorations, and disables identity-owned mutations until a
+complete safe recovery/reconciliation is available. A valid SSH configuration
+remains launchable.
+
 ## v2 sidecar
 
 The canonical sidecar is strict and UUID-owned:
@@ -137,6 +144,22 @@ prepare exact SSH bytes and target loader projection (no writes)
   -> clear pending intent and publish snapshot
 ```
 
+After the intent is durable, its `target_state` is the single authoritative
+sidecar result for that managed operation. The post-commit path verifies the
+actual loader revision and projection semantics, then writes exactly that
+target; it does not run a second UUID allocation/reconciliation pass. New
+UUIDs are therefore allocated once, and successful completion, TARGET recovery,
+and restart all use the same UUIDs. Duplicate group placement is included in
+the target before the intent is written, and one managed transaction advances
+`sidecar_generation` exactly once.
+
+Prepared evaluation uses an in-memory content overlay with the normal loader
+and the target Include graph. Includes may resolve to absolute or parent-
+relative files outside the root directory. The target revision includes every
+file reachable from the proposed graph; a newly introduced dependency is
+rechecked immediately before commit so a race cannot commit an unvalidated
+target.
+
 The pending intent is a complete target snapshot, not a replayable journal. It
 uses `normal` for a fully reconciled target and `pending_ambiguity` when SSH
 Pilot committed a target SSH revision whose UUID ownership remains frozen.
@@ -177,6 +200,12 @@ values and does not use SSH Host-token validation. A DisplayName update writes
 only the sidecar, preserves UUID/groups/metadata/credentials, and leaves SSH
 config bytes unchanged. Editing the technical `nickname`/Host alias remains a
 separate prepared SSH mutation with explicit UUID continuity.
+
+The editor captures the authoritative values loaded when it opens and sends
+only changed fields. A Name-only save therefore sends a DisplayName-only
+request: it performs no SSH prepare/commit/write, does not alter SSH bytes,
+inode, mode, or timestamps, and does not increment the sidecar generation for
+a semantic no-op.
 
 Frontend connection objects continue using alias IDs for selection and daemon
 requests. Sidebar, search, chooser, tabs, session restoration, and connection

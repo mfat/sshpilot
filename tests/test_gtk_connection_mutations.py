@@ -947,6 +947,33 @@ def test_daemon_editor_save_blocked_before_snapshot_arrives():
     assert window.client.updated == []
 
 
+def test_name_only_daemon_edit_sends_no_ssh_fields():
+    """A Name edit must use the sidecar-only backend mutation path."""
+    from sshpilot.api.models.connections import UNSET
+
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        display_name="Production Server",
+        __changed_fields=("display_name",),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    operation, _success, _failure = window.client_bridge.calls[0]
+    operation()
+
+    request = window.client.updated[0][1]
+    assert request.nickname is UNSET
+    assert request.hostname is UNSET
+    assert request.username is UNSET
+    assert request.port is UNSET
+    assert request.config_patch == {}
+    assert request.display_name == "Production Server"
+
+
 def test_daemon_editor_success_sends_loaded_generation_in_update():
     window = _MutationWindow()
     window.client.editor = SimpleNamespace(generation=7, nickname="demo")

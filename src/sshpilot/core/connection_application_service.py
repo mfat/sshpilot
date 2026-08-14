@@ -932,6 +932,7 @@ class ConnectionApplicationService:
         )
         if display_only:
             try:
+                previous_display_name = self._record_to_summary(record).display_name
                 updated = self._repository.set_display_name(
                     connection_id, request.display_name
                 )
@@ -942,8 +943,12 @@ class ConnectionApplicationService:
                 connection_id=updated.id,
                 nickname=updated.nickname,
                 generation=updated.generation,
-                changed=True,
-                changed_fields=("display_name",),
+                changed=previous_display_name != request.display_name.strip(),
+                changed_fields=(
+                    ("display_name",)
+                    if previous_display_name != request.display_name.strip()
+                    else ()
+                ),
                 display_name=summary.display_name,
             )
         before_data = dict(record.data or {})

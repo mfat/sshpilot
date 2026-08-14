@@ -231,6 +231,57 @@ def test_edit_of_included_fragment_writes_back_to_the_fragment(tmp_path):
     assert "alpha2.example.com" not in root.read_text()
 
 
+def test_prepared_preview_supports_absolute_include_outside_root_parent(tmp_path):
+    root = _write(tmp_path / "ssh" / "config", "Include "
+                  + (tmp_path / "outside" / "hosts.conf").as_posix() + "\n")
+    outside = tmp_path / "outside" / "hosts.conf"
+    outside.parent.mkdir()
+    outside.write_text("Host external\n    HostName old.example\n")
+    store = _store(root)
+    prepared = store.prepare_update(
+        "external",
+        {"nickname": "external", "hostname": "new.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    assert [item.id for item in store.preview_prepared(prepared).connections] == [
+        "external"
+    ]
+    result = store.commit_prepared(prepared)
+    assert prepared.target_revision == result.config.root_revision
+    assert "HostName new.example" in outside.read_text()
+
+
+def test_raw_prepared_revision_uses_target_include_graph(tmp_path):
+    root = _write(tmp_path / "config", "Host local\n    HostName local.example\n")
+    extra = tmp_path / "extra.conf"
+    extra.write_text("Host extra\n    HostName extra.example\n")
+    store = _store(root)
+    prepared = store.prepare_replace_text(
+        f"Include {extra}\n\n" + root.read_text(),
+        store.load().root_revision,
+    )
+    preview = store.preview_prepared(prepared)
+    assert {item.id for item in preview.connections} == {"local", "extra"}
+    result = store.commit_prepared(prepared)
+    assert prepared.target_revision == result.config.root_revision
+
+
+def test_new_include_dependency_race_rejects_prepared_commit(tmp_path):
+    root = _write(tmp_path / "config", "Host local\n    HostName local.example\n")
+    extra = tmp_path / "extra.conf"
+    extra.write_text("Host extra\n    HostName extra.example\n")
+    store = _store(root)
+    prepared = store.prepare_replace_text(
+        f"Include {extra}\n\n" + root.read_text(),
+        store.load().root_revision,
+    )
+    extra.write_text("Host extra\n    HostName changed.example\n")
+    with pytest.raises(CoreError) as exc:
+        store.commit_prepared(prepared)
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert "Include" not in root.read_text()
+
+
 def test_edit_preserves_match_and_wildcard_blocks(tmp_path):
     root = _write(
         tmp_path / "config",
