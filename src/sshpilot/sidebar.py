@@ -1526,7 +1526,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._info_box = info_box
 
         self.nickname_label = Gtk.Label()
-        self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
+        label = getattr(connection, "display_name", None) or connection.nickname
+        self.nickname_label.set_markup(f"<b>{label}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
         self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.nickname_label.set_valign(Gtk.Align.CENTER)  # Center vertically when host label is hidden
@@ -1538,7 +1539,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.nickname_label.set_width_chars(10)  # Minimum width
         self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
-        self.nickname_label.set_tooltip_text(connection.nickname)
+        self.nickname_label.set_tooltip_text(
+            f"{label} ({connection.ssh_alias})" if getattr(connection, "ssh_alias", "") and label != connection.ssh_alias else label
+        )
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
@@ -1942,6 +1945,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
                 connections_payload.append(
                     {
+                        "id": getattr(connection_obj, "id", None) or nickname,
                         "nickname": nickname,
                         "display_group_id": display_group_id,
                         "index": row_index,
@@ -1961,6 +1965,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
             connections_payload.append(
                 {
+                    "id": getattr(self.connection, "id", None) or self.connection.nickname,
                     "nickname": self.connection.nickname,
                     "display_group_id": getattr(self, "_group_id", None),
                     "index": row_index,
@@ -1977,7 +1982,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         ordered_nicknames: List[str] = []
         for item in connections_payload:
-            nickname = item.get("nickname")
+            nickname = item.get("id") or item.get("nickname")
             if isinstance(nickname, str) and nickname not in ordered_nicknames:
                 ordered_nicknames.append(nickname)
 
@@ -1986,7 +1991,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         }
         data = {
             "type": "connection",
-            "connection_nickname": ordered_nicknames[0] if ordered_nicknames else self.connection.nickname,
+            "connection_id": ordered_nicknames[0] if ordered_nicknames else getattr(self.connection, "id", None) or self.connection.nickname,
+            "connection_nickname": self.connection.nickname,
             "connection_nicknames": ordered_nicknames,
             "connections": connections_payload,
             "source_group_id": (
@@ -2012,7 +2018,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 if hasattr(window, "_dragged_group_id"):
                     delattr(window, "_dragged_group_id")
                 if not hasattr(window, "_dragged_connections"):
-                    window._dragged_connections = [self.connection.nickname]
+                    window._dragged_connections = [
+                        getattr(self.connection, "id", None) or self.connection.nickname
+                    ]
                 window._drag_in_progress = True
                 if hasattr(window, "begin_sidebar_drag_expand"):
                     window.begin_sidebar_drag_expand()
@@ -2354,8 +2362,11 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
-            self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
-            self.nickname_label.set_tooltip_text(self.connection.nickname)
+            label = getattr(self.connection, "display_name", None) or self.connection.nickname
+            self.nickname_label.set_markup(f"<b>{label}</b>")
+            self.nickname_label.set_tooltip_text(
+                f"{label} ({self.connection.ssh_alias})" if getattr(self.connection, "ssh_alias", "") and label != self.connection.ssh_alias else label
+            )
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
             self._apply_host_label_text(include_port=True)
@@ -3633,7 +3644,7 @@ def _on_connection_list_drop(window, target, value, x, y):
             if isinstance(payload, list):
                 for item in payload:
                     if isinstance(item, dict):
-                        nickname = item.get("nickname")
+                        nickname = item.get("id") or item.get("nickname")
                         if isinstance(nickname, str) and nickname not in connection_nicknames:
                             connection_nicknames.append(nickname)
 
@@ -3645,7 +3656,7 @@ def _on_connection_list_drop(window, target, value, x, y):
                             connection_nicknames.append(nickname)
 
             if not connection_nicknames:
-                nickname = value.get("connection_nickname")
+                nickname = value.get("connection_id") or value.get("connection_nickname")
                 if isinstance(nickname, str):
                     connection_nicknames.append(nickname)
 
@@ -3729,7 +3740,10 @@ def _on_connection_list_drop(window, target, value, x, y):
                             return False
                         target_connection = getattr(target_row, "connection", None)
                         if target_connection:
-                            reference_nickname = target_connection.nickname
+                            reference_nickname = (
+                                getattr(target_connection, "id", None)
+                                or target_connection.nickname
+                            )
                             target_group_id = getattr(target_row, "_group_id", None)
                             _submit_connection_dnd_move(
                                 window,
@@ -3851,7 +3865,9 @@ def _get_target_group_at_position(window, x, y):
             return row.group_id
         elif row and hasattr(row, "connection"):
             connection = row.connection
-            return window.group_manager.get_connection_group(connection.nickname)
+            return window.group_manager.get_connection_group(
+                getattr(connection, "id", None) or connection.nickname
+            )
         return None
     except Exception:
         return None
@@ -4117,8 +4133,8 @@ def _build_sidebar_header(window, sidebar_box):
             tag_map = {}
             for conn in window.connection_manager.get_connections():
                 try:
-                    tag_map[conn.nickname] = list(
-                        window.connection_manager.get_metadata(conn.nickname).get("tags", [])
+                    tag_map[conn.id] = list(
+                        window.connection_manager.get_metadata(conn.id).get("tags", [])
                     )
                 except Exception:
                     pass
@@ -4357,7 +4373,7 @@ def _attach_connection_list_context_menu(window):
 
                 def _has_wol_mac(c):
                     try:
-                        meta = window.connection_manager.get_metadata(c.nickname) if c else {}
+                        meta = window.connection_manager.get_metadata(c.id) if c else {}
                         return bool((meta or {}).get('wol_mac', '').strip())
                     except Exception:
                         return False
@@ -4379,7 +4395,7 @@ def _attach_connection_list_context_menu(window):
 
                 def _conn_groups(c):
                     try:
-                        return window.group_manager.get_connection_groups(c.nickname) if c else []
+                        return window.group_manager.get_connection_groups(c.id) if c else []
                     except Exception:
                         return []
 
@@ -4396,7 +4412,7 @@ def _attach_connection_list_context_menu(window):
                 try:
                     pin_targets = selected_conns if multi else ([conn] if conn else [])
                     all_pinned = bool(pin_targets) and all(
-                        window.connection_manager.get_metadata(c.nickname).get("pinned", False)
+                        window.connection_manager.get_metadata(c.id).get("pinned", False)
                         for c in pin_targets
                     )
                     if all_pinned:

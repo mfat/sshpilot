@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.33",
+  "api_implementation_version": "0.32",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3285,7 +3285,6 @@
       "groups",
       "ssh_alias",
       "display_name",
-      "identity_status",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -3313,7 +3312,6 @@
       "groups",
       "ssh_alias",
       "display_name",
-      "identity_status",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -3377,8 +3375,7 @@
       "health",
       "groups",
       "ssh_alias",
-      "display_name",
-      "identity_status"
+      "display_name"
     ],
     "ConnectionValidationError": [
       "field",

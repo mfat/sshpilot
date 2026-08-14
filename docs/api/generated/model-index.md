@@ -505,6 +505,9 @@ Synthetic representation:
 | `protocol` | `str` | No | `ssh` | No |
 | `health` | `ConnectionHealth` | No | `unknown` | No |
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
+| `ssh_alias` | `str` | No | `` | No |
+| `display_name` | `str` | No | `` | No |
+| `identity_status` | `str` | No | `resolved` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -520,6 +523,7 @@ Synthetic representation:
   "aliases": [],
   "authentication_method": "key",
   "certificate_configured": false,
+  "display_name": "",
   "forwarding_rule_count": 0,
   "groups": [],
   "health": "unknown",
@@ -527,10 +531,12 @@ Synthetic representation:
   "hostname": "example.invalid",
   "id": "production",
   "identity_configured": false,
+  "identity_status": "resolved",
   "nickname": "example",
   "port": 22,
   "protocol": "ssh",
   "proxy_jump": [],
+  "ssh_alias": "",
   "username": "user",
   "x11_forwarding": false
 }
@@ -594,6 +600,9 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `protocol` | `str` | No | `ssh` | No |
 | `health` | `ConnectionHealth` | No | `unknown` | No |
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
+| `ssh_alias` | `str` | No | `` | No |
+| `display_name` | `str` | No | `` | No |
+| `identity_status` | `str` | No | `resolved` | No |
 | `aliases` | `tuple[str, ...]` | No | `[]` | No |
 | `authentication_method` | `AuthenticationMethod` | No | `key` | No |
 | `identity_configured` | `bool` | No | `false` | No |
@@ -635,6 +644,7 @@ Synthetic representation:
   "authentication_method": "key",
   "certificate_configured": false,
   "certificate_files": [],
+  "display_name": "",
   "extra_ssh_config": "",
   "forward_agent": false,
   "forward_agent_explicit_no": false,
@@ -652,6 +662,7 @@ Synthetic representation:
   "identity_configured": false,
   "identity_file_none": false,
   "identity_files": [],
+  "identity_status": "resolved",
   "key_select_mode": 0,
   "local_command": "",
   "nickname": "example",
@@ -667,6 +678,7 @@ Synthetic representation:
   "request_tty": "",
   "security_key_provider": "",
   "source": "",
+  "ssh_alias": "",
   "username": "user",
   "x11_forwarding": false,
   "x11_forwarding_explicit_no": false
@@ -714,6 +726,8 @@ Synthetic representation:
 | `generation` | `int` | Yes | — | No |
 | `changed` | `bool` | No | `true` | No |
 | `changed_fields` | `tuple[str, ...]` | No | `[]` | No |
+| `ssh_alias` | `str` | No | `` | No |
+| `display_name` | `str` | No | `` | No |
 
 Synthetic representation:
 
@@ -722,8 +736,10 @@ Synthetic representation:
   "changed": true,
   "changed_fields": [],
   "connection_id": "production",
+  "display_name": "",
   "generation": 0,
-  "nickname": "example"
+  "nickname": "example",
+  "ssh_alias": ""
 }
 ```
 
@@ -778,19 +794,25 @@ Synthetic representation:
 | `protocol` | `str` | No | `ssh` | No |
 | `health` | `ConnectionHealth` | No | `unknown` | No |
 | `groups` | `tuple[GroupReference, ...]` | No | `[]` | No |
+| `ssh_alias` | `str` | No | `` | No |
+| `display_name` | `str` | No | `` | No |
+| `identity_status` | `str` | No | `resolved` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "display_name": "",
   "groups": [],
   "health": "unknown",
   "host": "example",
   "hostname": "example.invalid",
   "id": "production",
+  "identity_status": "resolved",
   "nickname": "example",
   "port": 22,
   "protocol": "ssh",
+  "ssh_alias": "",
   "username": "user"
 }
 ```
@@ -946,6 +968,7 @@ Synthetic representation:
 | `username` | `str` | No | `` | No |
 | `port` | `int` | No | `22` | No |
 | `protocol` | `str` | No | `ssh` | No |
+| `display_name` | `str` | No | `` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 
@@ -954,6 +977,7 @@ Synthetic representation:
 ```json
 {
   "config_patch": {},
+  "display_name": "",
   "hostname": "example.invalid",
   "nickname": "example",
   "plugin_data": {},
@@ -4216,6 +4240,7 @@ first-generation value and is enforced like any other.
 | `hostname` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `username` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `port` | `int | None | UNSET` | No | ``UNSET`` | No |
+| `display_name` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 | `expected_generation` | `int | None` | No | `null` | No |
@@ -4225,6 +4250,7 @@ Synthetic representation:
 ```json
 {
   "config_patch": {},
+  "display_name": "`UNSET`",
   "expected_generation": null,
   "hostname": "`UNSET`",
   "nickname": "`UNSET`",

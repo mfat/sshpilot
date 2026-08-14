@@ -136,7 +136,7 @@ def test_plugin_creates_ssh_connection(env):
     assert info.protocol == 'ssh'
 
     snap = repo.snapshot()
-    assert any(c.id == 'newhost' for c in snap.connections)
+    assert any(c.ssh_alias == 'newhost' for c in snap.connections)
     content = root.read_text()
     assert 'Host newhost' in content
     assert 'new.example.com' in content

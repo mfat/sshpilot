@@ -40,6 +40,27 @@ def _write_state(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
 
 
+def _id_for(snapshot, alias):
+    return next(item.id for item in snapshot.connections if item.ssh_alias == alias)
+
+
+def _ids_for(snapshot, aliases):
+    return tuple(_id_for(snapshot, alias) for alias in aliases)
+
+
+def _root_aliases(snapshot):
+    by_id = {item.id: item.ssh_alias for item in snapshot.connections}
+    return [by_id[item] for item in snapshot.root_connection_ids]
+
+
+def _stored_root_aliases(path):
+    data = json.loads(path.read_text())
+    if data.get("version") == 2:
+        identities = data.get("identities", {})
+        return [identities[item["id"]]["projection"]["alias"] for item in data["root_connections"]]
+    return list(data.get("groups", {}).get("root_connections", []))
+
+
 # ---------------------------------------------------------------------------
 # Initial load
 # ---------------------------------------------------------------------------
@@ -95,11 +116,11 @@ def test_legacy_migration_reconciles_deleted_connections_and_preserves_order(tmp
         isolated=False,
     )
     snapshot = repo.snapshot()
-    assert [item.id for item in snapshot.connections] == ["web", "db", "serial"]
+    assert [item.ssh_alias for item in snapshot.connections] == ["web", "db", "serial"]
     assert snapshot.groups[0].parent_id is None
-    assert snapshot.groups[0].connection_ids == ("db", "web")
+    assert set(snapshot.groups[0].connection_ids) == {_id_for(snapshot, "db"), _id_for(snapshot, "web")}
     assert snapshot.root_connection_ids == ("serial",)
-    assert [item.connection_id for item in snapshot.metadata] == ["db"]
+    assert [item.connection_id for item in snapshot.metadata] == [_id_for(snapshot, "db")]
     assert state.exists()
     assert legacy.read_bytes() == before
     assert repo._legacy_migration_result.dangling_memberships_removed == 1
@@ -175,7 +196,7 @@ def test_legacy_references_cannot_veto_completely_changed_ssh_config(tmp_path):
         isolated=False,
     )
 
-    assert [record.id for record in repo.snapshot().connections] == ["X", "Y", "Z"]
+    assert [record.ssh_alias for record in repo.snapshot().connections] == ["X", "Y", "Z"]
 
 
 def test_malformed_legacy_state_is_nonfatal_and_does_not_create_canonical_state(
@@ -196,7 +217,7 @@ def test_malformed_legacy_state_is_nonfatal_and_does_not_create_canonical_state(
         isolated=False,
     )
 
-    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert [record.ssh_alias for record in repo.snapshot().connections] == ["web"]
     assert not state.exists()
     assert legacy.read_bytes() == before
 
@@ -214,7 +235,6 @@ def test_canonical_orphan_metadata_is_dormant_and_preserved(tmp_path):
             "metadata": {"deleted": {"pinned": True}},
         },
     )
-    before = state.read_bytes()
 
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
@@ -224,7 +244,7 @@ def test_canonical_orphan_metadata_is_dormant_and_preserved(tmp_path):
     )
 
     assert repo.snapshot().metadata == ()
-    assert state.read_bytes() == before
+    assert json.loads(state.read_text())["version"] == 2
 
 
 def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path):
@@ -255,7 +275,6 @@ def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path
             },
         },
     )
-    before = state.read_bytes()
 
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
@@ -265,10 +284,10 @@ def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path
     )
 
     snapshot = repo.snapshot()
-    assert snapshot.groups[0].connection_ids == ("A",)
-    assert snapshot.root_connection_ids == ("B",)
-    assert [item.connection_id for item in snapshot.metadata] == ["A"]
-    assert state.read_bytes() == before
+    assert snapshot.groups[0].connection_ids == (_id_for(snapshot, "A"),)
+    assert snapshot.root_connection_ids == (_id_for(snapshot, "B"),)
+    assert [item.connection_id for item in snapshot.metadata] == [_id_for(snapshot, "A")]
+    assert json.loads(state.read_text())["version"] == 2
 
     root.write_text(
         "Host A\n    HostName a.example\n\n"
@@ -277,13 +296,12 @@ def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path
         "Host OLD_ROOT\n    HostName root.example\n"
     )
     snapshot = repo.reload()
-    assert snapshot.groups[0].connection_ids == ("A", "OLD_HOST")
-    assert snapshot.root_connection_ids == ("B", "OLD_ROOT")
+    assert snapshot.groups[0].connection_ids == (_id_for(snapshot, "A"), _id_for(snapshot, "OLD_HOST"))
+    assert snapshot.root_connection_ids == (_id_for(snapshot, "B"), _id_for(snapshot, "OLD_ROOT"))
     assert [item.connection_id for item in snapshot.metadata] == [
-        "A",
-        "OLD_HOST",
+        _id_for(snapshot, "A"),
+        _id_for(snapshot, "OLD_HOST"),
     ]
-    assert state.read_bytes() == before
 
 
 def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path):
@@ -313,35 +331,35 @@ def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path)
             "metadata": {"Included": {"pinned": True}},
         },
     )
-    before = state.read_bytes()
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
         state_path=state,
         legacy_config_path=tmp_path / "config.json",
         isolated=False,
     )
-    assert [record.id for record in repo.snapshot().connections] == [
+    assert [record.ssh_alias for record in repo.snapshot().connections] == [
         "Root",
         "Included",
     ]
 
     included.unlink()
     snapshot = repo.reload()
-    assert [record.id for record in snapshot.connections] == ["Root"]
+    assert [record.ssh_alias for record in snapshot.connections] == ["Root"]
     assert snapshot.groups[0].connection_ids == ()
     assert snapshot.metadata == ()
-    assert snapshot.root_connection_ids == ("Root",)
-    assert state.read_bytes() == before
+    assert snapshot.root_connection_ids == (_id_for(snapshot, "Root"),)
+    assert json.loads(state.read_text())["version"] == 2
 
     included.write_text("Host Included\n    HostName included.example\n")
     snapshot = repo.reload()
-    assert [record.id for record in snapshot.connections] == [
+    assert [record.ssh_alias for record in snapshot.connections] == [
         "Root",
         "Included",
     ]
-    assert snapshot.groups[0].connection_ids == ("Included",)
-    assert snapshot.metadata[0].connection_id == "Included"
-    assert state.read_bytes() == before
+    # A tombstoned identity is not resurrected by a later alias reuse.
+    assert snapshot.groups[0].connection_ids == ()
+    assert snapshot.metadata == ()
+    assert json.loads(state.read_text())["version"] == 2
 
 
 def test_legacy_parent_cycle_is_nonfatal_without_canonical_file(tmp_path):
@@ -367,7 +385,7 @@ def test_legacy_parent_cycle_is_nonfatal_without_canonical_file(tmp_path):
         legacy_config_path=legacy,
         isolated=False,
     )
-    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert [record.ssh_alias for record in repo.snapshot().connections] == ["web"]
     assert not state.exists()
     assert legacy.read_bytes() == before
 
@@ -379,10 +397,10 @@ def test_loads_ssh_connections_in_order(tmp_path):
         "Host db\n    HostName db.internal\n",
     )
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["web", "db"]
+    assert [c.ssh_alias for c in snap.connections] == ["web", "db"]
     assert [c.nickname for c in snap.connections] == ["web", "db"]
     assert snap.connections[0].hostname == "example.com"
-    assert snap.root_connection_ids == ("web", "db")
+    assert snap.root_connection_ids == _ids_for(snap, ("web", "db"))
     assert repo.get_record("web") is not None
     assert repo.get_record("nope") is None
 
@@ -445,9 +463,9 @@ def test_loads_groups_and_metadata_from_state_file(tmp_path):
     group = snap.groups[0]
     assert group.name == "Production"
     assert group.color == "#ff0000"
-    assert group.connection_ids == ("web",)
+    assert group.connection_ids == (_id_for(snap, "web"),)
     assert snap.root_connection_ids == ()
-    assert [m.connection_id for m in snap.metadata] == ["web"]
+    assert [m.connection_id for m in snap.metadata] == [_id_for(snap, "web")]
     assert snap.metadata[0].values["pinned"] is True
     assert snap.connections[0].groups[0].id == "prod"
 
@@ -477,7 +495,7 @@ def test_migrates_legacy_config_json(tmp_path):
         tmp_path, "Host web\n    HostName example.com\n    User alice\n"
     )
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["web", "tel"]
+    assert [c.ssh_alias for c in snap.connections] == ["web", "tel"]
     assert [g.id for g in snap.groups] == ["prod"]
     assert snap.metadata[0].values["pinned"] is True
     # The dedicated file was written; legacy values were not deleted.
@@ -509,7 +527,7 @@ def test_malformed_canonical_state_does_not_block_ssh_startup(tmp_path, caplog):
     before = state.read_bytes()
     with caplog.at_level(logging.WARNING):
         repo, _root, _state, _legacy = _repo(tmp_path)
-    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert [record.ssh_alias for record in repo.snapshot().connections] == ["web"]
     assert state.read_bytes() == before
     assert "Failed to load auxiliary connection state" in caplog.text
 
@@ -529,7 +547,7 @@ def test_unsupported_canonical_state_does_not_block_ssh_startup(tmp_path):
     repo, _root, _state, _legacy = _repo(
         tmp_path, "Host web\n    HostName web.example\n"
     )
-    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert [record.ssh_alias for record in repo.snapshot().connections] == ["web"]
     assert state.read_bytes() == before
 
 
@@ -575,7 +593,7 @@ def test_inconsistent_canonical_groups_do_not_block_ssh_startup(
     repo, _root, _state, _legacy = _repo(
         tmp_path, "Host web\n    HostName web.example\n"
     )
-    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert [record.ssh_alias for record in repo.snapshot().connections] == ["web"]
     assert repo.snapshot().groups == ()
     assert state.read_bytes() == before
 
@@ -599,30 +617,22 @@ def test_dormant_root_order_survives_unrelated_sidecar_writes(tmp_path):
         "Host A\n    HostName a.example\n\n"
         "Host B\n    HostName b.example\n",
     )
-    assert repo.snapshot().root_connection_ids == ("A", "B")
+    assert repo.snapshot().root_connection_ids == _ids_for(repo.snapshot(), ("A", "B"))
 
     repo.update_connection_metadata("A", {"pinned": True})
-    assert json.loads(state.read_text())["groups"]["root_connections"] == [
-        "A",
-        "MISSING",
-        "B",
-    ]
+    assert _stored_root_aliases(state) == ["A", "B"]
 
     group = repo.create_group("Production")
     repo.rename_group(group.id, "Production Servers")
     repo.set_group_color(group.id, "#ff0000")
-    assert json.loads(state.read_text())["groups"]["root_connections"] == [
-        "A",
-        "MISSING",
-        "B",
-    ]
+    assert _stored_root_aliases(state) == ["A", "B"]
 
     root.write_text(
         "Host A\n    HostName a.example\n\n"
         "Host MISSING\n    HostName missing.example\n\n"
         "Host B\n    HostName b.example\n"
     )
-    assert repo.reload().root_connection_ids == ("A", "MISSING", "B")
+    assert _root_aliases(repo.reload()) == ["A", "MISSING", "B"]
 
 
 def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
@@ -635,11 +645,8 @@ def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
     )
 
     root.write_text("Host B\n    HostName b.example\n")
-    assert repo.reload().root_connection_ids == ("B",)
-    assert json.loads(state.read_text())["groups"]["root_connections"] == [
-        "A",
-        "B",
-    ]
+    assert repo.reload().root_connection_ids == (_id_for(repo.snapshot(), "B"),)
+    assert _stored_root_aliases(state) == ["B"]
 
     root.write_text(
         "Host A\n    HostName a.example\n\n"
@@ -647,7 +654,7 @@ def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
     )
     repo.reload()
     repo.delete_connection("A")
-    assert json.loads(state.read_text())["groups"]["root_connections"] == ["B"]
+    assert _stored_root_aliases(state) == ["B"]
 
 
 # ---------------------------------------------------------------------------
@@ -673,9 +680,9 @@ def test_snapshot_filters_unknown_group_membership(tmp_path):
     )
     repo, _root, state, _ = _repo(tmp_path)
     assert repo.snapshot().groups[0].connection_ids == ()
-    assert json.loads(state.read_text())["groups"]["groups"]["g1"][
-        "connection_ids"
-    ] == ["ghost"]
+    stored = json.loads(state.read_text())
+    assert stored["version"] == 2
+    assert stored["groups"][0]["members"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -704,7 +711,7 @@ def test_reload_after_external_change_increments_generation(tmp_path):
     repo.add_listener(lambda change: events.append(change))
     after = repo.reload()
     assert after.generation == 1
-    assert [c.id for c in after.connections] == ["web", "other"]
+    assert [c.ssh_alias for c in after.connections] == ["web", "other"]
     assert len(events) == 1
     assert events[0].before.generation == 0
     assert events[0].after.generation == 1

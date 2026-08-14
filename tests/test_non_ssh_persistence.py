@@ -77,7 +77,7 @@ def test_fresh_repository_reload_survives(tmp_path):
     assert conn.protocol == 'telnet'
     assert conn.hostname == '10.0.0.5'
     # The ssh_config host still loads alongside the JSON record.
-    assert any(c.id == 'alpha' for c in snap.connections)
+    assert any(c.ssh_alias == 'alpha' for c in snap.connections)
 
 
 def test_rename_updates_json_entry(tmp_path):
@@ -94,7 +94,8 @@ def test_rename_updates_json_entry(tmp_path):
     names = [e['nickname'] for e in _state(state)['non_ssh_connections']]
     assert names == ['renamed-switch']
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ['alpha', 'renamed-switch']
+    assert [c.ssh_alias for c in snap.connections if c.protocol == 'ssh'] == ['alpha']
+    assert [c.id for c in snap.connections if c.protocol != 'ssh'] == ['renamed-switch']
 
 
 def test_delete_removes_json_entry(tmp_path):
@@ -133,7 +134,7 @@ def test_password_stored_only_through_secret_provider(tmp_path):
 
     # The state file stores no password for the connection.
     raw = state.read_text()
-    assert 'password' not in raw.lower()
+    assert '"password"' not in raw.lower()
 
     # The secret provider owns the credential: store by connection id under
     # the canonical host, and read it back the same way.

@@ -424,7 +424,7 @@ class WelcomePage(Gtk.Overlay):
 
         def _last_used(conn):
             try:
-                return self.window.connection_manager.get_metadata(conn.nickname).get('last_used', 0) or 0
+                return self.window.connection_manager.get_metadata(conn.id).get('last_used', 0) or 0
             except Exception:
                 return 0
 
@@ -528,7 +528,15 @@ class WelcomePage(Gtk.Overlay):
     def _connect_connection_summary(self, summary):
         """Resolve a clicked DTO only when entering the legacy terminal path."""
 
-        connection = self.connection_manager.find_connection_by_nickname(summary.nickname)
+        get_by_id = getattr(self.connection_manager, "get_connection_by_id", None)
+        connection = (
+            get_by_id(summary.id) if callable(get_by_id) else None
+        )
+        if connection is None:
+            connection = self.connection_manager.find_connection_by_nickname(
+                getattr(summary, "ssh_alias", None)
+                or getattr(summary, "nickname", None)
+            )
         if connection is not None:
             self.window.terminal_manager.connect_to_host(connection)
 
@@ -558,7 +566,11 @@ class WelcomePage(Gtk.Overlay):
             box.remove(child)
             child = nxt
 
-        conn_map = {c.nickname: c for c in self.connection_manager.connections}
+        conn_map = {
+            key: c
+            for c in self.connection_manager.connections
+            for key in (c.id, c.nickname)
+        }
         pinned = [
             conn_map[n]
             for n in (
@@ -572,7 +584,7 @@ class WelcomePage(Gtk.Overlay):
             rows = []
             for conn in pinned:
                 row = self._min_row(
-                    conn.nickname, self._conn_target(conn),
+                    conn.display_name or conn.nickname, self._conn_target(conn),
                     lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
                 self._attach_pinned_context_menu(row, conn)
                 rows.append(row)
@@ -737,9 +749,9 @@ class WelcomePage(Gtk.Overlay):
     def _on_connection_removed(self, _manager, connection):
         """Auto-unpin a connection when it is deleted from the inventory."""
         try:
-            nickname = getattr(connection, 'nickname', None)
-            if nickname and self.window.connection_manager.get_metadata(nickname).get("pinned"):
-                self.window.client.update_connection_metadata(nickname, {"pinned": False})
+            connection_id = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+            if connection_id and self.window.connection_manager.get_metadata(connection_id).get("pinned"):
+                self.window.client.update_connection_metadata(connection_id, {"pinned": False})
                 self.refresh_pinned()
         except Exception:
             pass

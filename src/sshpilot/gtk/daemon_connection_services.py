@@ -94,6 +94,9 @@ class DaemonConnectionServices:
             username=str(values.get("username", "") or ""),
             port=int(values.get("port", 22) or 22),
             protocol=protocol,
+            display_name=str(values.get("display_name", "") or ""),
+            # The initial app label defaults to the SSH alias in the daemon;
+            # pass an explicit label when the editor supplied one.
             config_patch=self._config_patch(values) if protocol == "ssh" else {},
             plugin_data=self._plugin_data(values) if protocol != "ssh" else {},
         )
@@ -124,6 +127,7 @@ class DaemonConnectionServices:
             ),
             username=values.get("username", getattr(connection, "username", "")),
             port=int(values.get("port", getattr(connection, "port", 22)) or 22),
+            display_name=values.get("display_name", getattr(connection, "display_name", "")),
             config_patch=self._config_patch(values) if protocol == "ssh" else {},
             plugin_data=self._plugin_data(values) if protocol != "ssh" else {},
         )

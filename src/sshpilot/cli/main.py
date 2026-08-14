@@ -214,7 +214,14 @@ def _show(value, json_output, stdout, title):
 def _resolve_connection(client, name: str) -> ConnectionId:
     matches = []
     for item in client.list_connections():
-        if name in {str(item.id), item.nickname, item.host, item.hostname}:
+        if name in {
+            str(item.id),
+            item.nickname,
+            getattr(item, "ssh_alias", ""),
+            getattr(item, "display_name", ""),
+            item.host,
+            item.hostname,
+        }:
             if item.id not in matches:
                 matches.append(item.id)
     if not matches:

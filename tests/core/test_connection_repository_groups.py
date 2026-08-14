@@ -37,6 +37,17 @@ def _state(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _id_for(snapshot, alias):
+    return next(item.id for item in snapshot.connections if item.ssh_alias == alias)
+
+
+def _stored_group(state, group_id):
+    data = _state(state)
+    if data.get("version") == 2:
+        return next(group for group in data["groups"] if group["id"] == group_id)
+    return data["groups"]["groups"][group_id]
+
+
 def _seed_web(repo):
     return repo.create_connection(
         {"nickname": "web", "hostname": "example.com", "protocol": "ssh"}
@@ -53,8 +64,7 @@ def test_create_group_and_persist(tmp_path):
     group = repo.create_group("Production", color="#ff0000")
     assert group.name == "Production"
     assert group.color == "#ff0000"
-    stored = _state(state)
-    assert stored["groups"]["groups"][group.id]["name"] == "Production"
+    assert _stored_group(state, group.id)["name"] == "Production"
     snap = repo.snapshot()
     assert snap.groups[0].id == group.id
 
@@ -75,7 +85,7 @@ def test_rename_group(tmp_path):
     snap = repo.snapshot()
     renamed = next(g for g in snap.groups if g.id == group.id)
     assert renamed.name == "New"
-    assert _state(state)["groups"]["groups"][group.id]["name"] == "New"
+    assert _stored_group(state, group.id)["name"] == "New"
 
 
 def test_set_group_color(tmp_path):
@@ -188,7 +198,7 @@ def test_delete_group_preserves_other_memberships(tmp_path):
     repo.copy_connection_to_group("web", g2.id)
     repo.delete_group(g1.id)
     snap = repo.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert [ref.id for ref in web.groups] == [g2.id]
 
 
@@ -197,11 +207,11 @@ def test_delete_group_moves_last_membership_to_root(tmp_path):
     _seed_web(repo)
     g1 = repo.create_group("G1")
     repo.copy_connection_to_group("web", g1.id)
-    assert "web" not in repo.snapshot().root_connection_ids
+    assert _id_for(repo.snapshot(), "web") not in repo.snapshot().root_connection_ids
     repo.delete_group(g1.id)
     snap = repo.snapshot()
-    assert "web" in snap.root_connection_ids
-    assert _state(state)["groups"]["root_connections"] == ["web"]
+    assert _id_for(snap, "web") in snap.root_connection_ids
+    assert _state(state)["root_connections"] == [{"id": _id_for(snap, "web"), "kind": "ssh_uuid"}]
 
 
 # ---------------------------------------------------------------------------
@@ -217,9 +227,10 @@ def test_assign_connection_to_group_moves(tmp_path):
     repo.copy_connection_to_group("web", g1.id)
     repo.assign_connection_to_group("web", g2.id)
     snap = repo.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert [ref.id for ref in web.groups] == [g2.id]
-    assert _state(state)["groups"]["groups"][g2.id]["connection_ids"] == ["web"]
+    stored = _stored_group(state, g2.id)
+    assert stored["members"] == [{"id": _id_for(snap, "web"), "kind": "ssh_uuid"}]
 
 
 def test_assign_connection_to_root(tmp_path):
@@ -229,9 +240,9 @@ def test_assign_connection_to_root(tmp_path):
     repo.assign_connection_to_group("web", g1.id)
     repo.assign_connection_to_group("web", None)
     snap = repo.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert web.groups == ()
-    assert "web" in snap.root_connection_ids
+    assert _id_for(snap, "web") in snap.root_connection_ids
 
 
 def test_copy_preserves_existing_memberships(tmp_path):
@@ -242,7 +253,7 @@ def test_copy_preserves_existing_memberships(tmp_path):
     repo.copy_connection_to_group("web", g1.id)
     repo.copy_connection_to_group("web", g2.id)
     snap = repo.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert {ref.id for ref in web.groups} == {g1.id, g2.id}
 
 
@@ -255,7 +266,7 @@ def test_remove_one_membership_only(tmp_path):
     repo.copy_connection_to_group("web", g2.id)
     repo.remove_connection_from_group("web", g1.id)
     snap = repo.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert [ref.id for ref in web.groups] == [g2.id]
 
 
@@ -271,7 +282,7 @@ def test_reorder_connection_within_group(tmp_path):
     repo.reorder_connection("C", "A", g1.id, "above")
     snap = repo.snapshot()
     group = next(g for g in snap.groups if g.id == g1.id)
-    assert group.connection_ids.index("C") < group.connection_ids.index("A")
+    assert group.connection_ids.index(_id_for(snap, "C")) < group.connection_ids.index(_id_for(snap, "A"))
 
 
 def test_reorder_connection_in_root(tmp_path):
@@ -282,7 +293,7 @@ def test_reorder_connection_in_root(tmp_path):
         )
     repo.reorder_connection("C", "A", None, "above")
     snap = repo.snapshot()
-    assert snap.root_connection_ids.index("C") < snap.root_connection_ids.index("A")
+    assert snap.root_connection_ids.index(_id_for(snap, "C")) < snap.root_connection_ids.index(_id_for(snap, "A"))
 
 
 # ---------------------------------------------------------------------------
@@ -306,9 +317,9 @@ def test_each_group_operation_emits_one_change(tmp_path):
 def test_group_expansion_not_stored(tmp_path):
     repo, root, state = _repo(tmp_path)
     group = repo.create_group("G1")
-    stored = _state(state)
-    assert "collapsed" not in stored["groups"]["groups"][group.id]
-    assert "expanded" not in stored["groups"]["groups"][group.id]
+    stored_group = _stored_group(state, group.id)
+    assert "collapsed" not in stored_group
+    assert "expanded" not in stored_group
 
 
 def test_set_group_color_clears_with_empty_string(tmp_path):
@@ -332,17 +343,17 @@ def test_copy_connection_is_idempotent(tmp_path):
     repo.copy_connection_to_group("web", g1.id)
     snap = repo.snapshot()
     group = next(g for g in snap.groups if g.id == g1.id)
-    assert group.connection_ids.count("web") == 1
+    assert group.connection_ids.count(_id_for(snap, "web")) == 1
 
 
 def test_copy_ungrouped_connection_leaves_root(tmp_path):
     repo, root, state = _repo(tmp_path)
     _seed_web(repo)
-    assert "web" in repo.snapshot().root_connection_ids
+    assert _id_for(repo.snapshot(), "web") in repo.snapshot().root_connection_ids
     g1 = repo.create_group("G1")
     repo.copy_connection_to_group("web", g1.id)
     snap = repo.snapshot()
-    assert "web" not in snap.root_connection_ids
+    assert _id_for(snap, "web") not in snap.root_connection_ids
     assert snap.root_connection_ids == ()
 
 
@@ -353,9 +364,9 @@ def test_remove_last_membership_returns_to_root(tmp_path):
     repo.copy_connection_to_group("web", g1.id)
     repo.remove_connection_from_group("web", g1.id)
     snap = repo.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert web.groups == ()
-    assert "web" in snap.root_connection_ids
+    assert _id_for(snap, "web") in snap.root_connection_ids
 
 
 def test_stale_move_connections_does_not_mutate(tmp_path):
@@ -390,9 +401,9 @@ def test_multi_membership_survives_fresh_load(tmp_path):
         isolated=False,
     )
     snap = repo2.snapshot()
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert {ref.id for ref in web.groups} == {g1.id, g2.id}
-    assert "web" not in snap.root_connection_ids
+    assert _id_for(snap, "web") not in snap.root_connection_ids
 
 
 def test_rename_preserves_multiple_memberships_across_reload(tmp_path):
@@ -407,11 +418,11 @@ def test_rename_preserves_multiple_memberships_across_reload(tmp_path):
         expected_generation=0,
     )
     snap = repo.snapshot()
-    renamed = next(c for c in snap.connections if c.id == "web2")
+    renamed = next(c for c in snap.connections if c.ssh_alias == "web2")
     assert {ref.id for ref in renamed.groups} == {g1.id, g2.id}
     # No old alias remains in any membership data.
-    assert "web" not in [cid for g in snap.groups for cid in g.connection_ids]
-    assert "web" not in snap.root_connection_ids
+    assert _id_for(snap, "web2") in [cid for g in snap.groups for cid in g.connection_ids]
+    assert _id_for(snap, "web2") not in snap.root_connection_ids
     # Memberships persist across a fresh repository load.
     repo2 = ConnectionRepository(
         ssh_store=SshConfigStore(root),
@@ -420,5 +431,5 @@ def test_rename_preserves_multiple_memberships_across_reload(tmp_path):
         isolated=False,
     )
     snap2 = repo2.snapshot()
-    renamed2 = next(c for c in snap2.connections if c.id == "web2")
+    renamed2 = next(c for c in snap2.connections if c.ssh_alias == "web2")
     assert {ref.id for ref in renamed2.groups} == {g1.id, g2.id}

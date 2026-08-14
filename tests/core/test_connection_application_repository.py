@@ -55,6 +55,14 @@ def _service(repo):
     return ConnectionApplicationService(repo, client_name="sshpilotd")
 
 
+def _id_for(snapshot, alias):
+    return next(item.id for item in snapshot.connections if item.ssh_alias == alias)
+
+
+def _metadata_for(snapshot, alias):
+    return next(item for item in snapshot.metadata if item.connection_id == _id_for(snapshot, alias))
+
+
 def _create_req(nickname, hostname="example.net", **kwargs):
     return CreateConnectionRequest(
         nickname=nickname,
@@ -90,7 +98,7 @@ def test_list_connections_returns_public_summaries(tmp_path):
     repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n    User bob\n")
     service = _service(repo)
     summaries = service.list_connections()
-    assert [s.id for s in summaries] == ["web"]
+    assert [s.ssh_alias for s in summaries] == ["web"]
     summary = summaries[0]
     assert summary.nickname == "web"
     assert summary.hostname == "example.com"
@@ -132,7 +140,7 @@ def test_snapshot_connection_store(tmp_path):
     repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
     service = _service(repo)
     snap = service.snapshot_connection_store()
-    assert [c.id for c in snap.connections] == ["web"]
+    assert [c.ssh_alias for c in snap.connections] == ["web"]
     assert snap.generation == 0
 
 
@@ -161,7 +169,7 @@ def test_update_connection_routes_and_bumps_generation(tmp_path):
             port=2222,
         ),
     )
-    assert result.connection_id == "web"
+    assert result.connection_id == service.get_connection(ConnectionId("web")).id
     details = service.get_connection(ConnectionId("web"))
     assert details.hostname == "example.org"
     assert details.username == "carol"
@@ -187,7 +195,7 @@ def test_duplicate_connection_routes(tmp_path):
     repo, root = _repo(tmp_path, "Host web\n    HostName example.com\n")
     service = _service(repo)
     result = service.duplicate_connection(ConnectionId("web"))
-    assert result.connection_id == "web-Copy"
+    assert result.connection_id == service.get_connection(ConnectionId("web-Copy")).id
     assert "Host web-Copy" in root.read_text()
 
 
@@ -214,7 +222,7 @@ def test_split_connection_routes(tmp_path):
             config_patch={},
         )
     )
-    assert result.connection_id == "jump2"
+    assert result.connection_id == service.get_connection(ConnectionId("jump2")).id
     text = root.read_text()
     assert "Host db" in text
     assert "Host jump2" in text
@@ -234,7 +242,7 @@ def test_group_mutations_route(tmp_path):
     assert service.copy_connection_to_group_rpc("web", group_id) is True
     snap = service.snapshot_connection_store()
     assert [g.name for g in snap.groups] == ["Production"]
-    web = next(c for c in snap.connections if c.id == "web")
+    web = next(c for c in snap.connections if c.ssh_alias == "web")
     assert [g.id for g in web.groups] == [group_id]
 
 
@@ -248,7 +256,7 @@ def test_metadata_mutations_route(tmp_path):
         is True
     )
     snap = service.snapshot_connection_store()
-    meta = next(m for m in snap.metadata if m.connection_id == "web")
+    meta = _metadata_for(snap, "web")
     assert meta.values["tags"] == ("prod",)
     assert meta.values["pinned"] is True
 
@@ -259,7 +267,7 @@ def test_rename_tag_routes(tmp_path):
     service.update_connection_metadata(ConnectionId("web"), {"tags": ["old"]})
     assert service.rename_tag_rpc("old", "new") == 1
     snap = service.snapshot_connection_store()
-    meta = next(m for m in snap.metadata if m.connection_id == "web")
+    meta = _metadata_for(snap, "web")
     assert meta.values["tags"] == ("new",)
 
 
@@ -349,5 +357,5 @@ def test_store_changed_payload_is_full_snapshot(tmp_path):
     service.subscribe_events(lambda event: payloads.append(event.payload))
     service.create_connection(_create_req("new"))
     snapshot = payloads[-1]
-    assert [c.id for c in snapshot.connections] == ["new"]
+    assert [c.ssh_alias for c in snapshot.connections] == ["new"]
     assert snapshot.generation == 1

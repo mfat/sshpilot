@@ -2669,12 +2669,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         try:
             all_pinned = all(
-                bool(self.connection_manager.get_metadata(c.nickname).get("pinned"))
+                bool(self.connection_manager.get_metadata(
+                    getattr(c, "id", None)
+                    or getattr(c, "ssh_alias", None)
+                    or getattr(c, "nickname", None)
+                ).get("pinned"))
                 for c in conns
             )
             for c in conns:
+                connection_id = (
+                    getattr(c, "id", None)
+                    or getattr(c, "ssh_alias", None)
+                    or getattr(c, "nickname", None)
+                )
                 self.client.update_connection_metadata(
-                    c.nickname, {"pinned": not all_pinned}
+                    connection_id, {"pinned": not all_pinned}
                 )
             if len(conns) == 1:
                 msg = _("Unpinned from start page") if all_pinned else _("Pinned to start page")
@@ -3477,7 +3486,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 object.__setattr__(
                     conn,
                     "tags",
-                    list(self.connection_manager.get_metadata(conn.nickname).get("tags", [])),
+                    list(self.connection_manager.get_metadata(conn.id).get("tags", [])),
                 )
             except Exception:
                 object.__setattr__(conn, 'tags', [])
@@ -4372,7 +4381,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             try:
                 state['request'] = bridge.submit(
                     lambda: client.get_connection_editor(
-                        ConnectionId(connection.nickname)
+                        ConnectionId(connection_id_for(connection))
                     ),
                     on_success=_on_success,
                     on_error=_handle_error,
@@ -6279,10 +6288,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             steps = []
             for connection in connections:
-                nickname = getattr(connection, 'nickname', None)
-                if not nickname:
+                connection_id = getattr(connection, 'id', None) or getattr(connection, 'nickname', None)
+                if not connection_id:
                     continue
-                member_groups = self.group_manager.get_connection_groups(nickname)
+                member_groups = self.group_manager.get_connection_groups(connection_id)
                 if (
                     context_group_id
                     and len(connections) == 1
@@ -6293,7 +6302,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         ConnectionId, GroupId, RemoveConnectionFromGroupRequest,
                     )
                     steps.append(
-                        lambda _prev, n=nickname, gid=context_group_id: (
+                        lambda _prev, n=connection_id, gid=context_group_id: (
                             controller.client.remove_connection_from_group(
                                 RemoveConnectionFromGroupRequest(
                                     connection_id=ConnectionId(n),
@@ -6304,7 +6313,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
                 else:
                     steps.append(
-                        lambda _prev, n=nickname: (
+                        lambda _prev, n=connection_id: (
                             controller.client.assign_connection_to_group(n, "")
                         )
                     )
@@ -6738,6 +6747,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             forwarding_rule_to_dict,
         )
         from .api.models import CreateConnectionRequest, UpdateConnectionRequest
+        from .api.models.connections import UNSET
 
         bridge = self.client_bridge
         if bridge is None:
@@ -6864,6 +6874,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 else:
                     request = UpdateConnectionRequest(
                         nickname=connection_data.get('nickname'),
+                        display_name=connection_data.get('display_name', UNSET),
                         hostname=connection_data.get('hostname'),
                         username=connection_data.get('username'),
                         port=connection_data.get('port'),
@@ -6878,6 +6889,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 config_patch = _build_config_patch()
                 request = CreateConnectionRequest(
                     nickname=connection_data.get('nickname', ''),
+                    display_name=connection_data.get('display_name', ''),
                     hostname=connection_data.get('hostname', ''),
                     username=connection_data.get('username', ''),
                     port=connection_data.get('port', 22),

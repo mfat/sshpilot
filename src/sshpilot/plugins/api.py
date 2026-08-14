@@ -23,6 +23,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+
+def _connection_matches(item: Any, reference: str) -> bool:
+    """Resolve the plugin-era name input without making alias the identity."""
+    return reference in {
+        str(getattr(item, "id", "")),
+        str(getattr(item, "ssh_alias", "")),
+        str(getattr(item, "nickname", "")),
+        str(getattr(item, "display_name", "")),
+    }
+
 # (major, minor). Bump minor for additive changes, major for breaking ones.
 # 1.1: PluginContext.delete_secret; get_secret/set_secret wired to the keyring.
 # 1.2: Event system (ctx.events), UI extension (ctx.ui), terminal control
@@ -788,7 +798,7 @@ class PluginContext:
             return CommandResult(-1, "", "The daemon is unavailable")
         try:
             connection = next(
-                (item for item in client.list_connections() if item.nickname == nickname),
+                (item for item in client.list_connections() if _connection_matches(item, nickname)),
                 None,
             )
         except Exception as exc:  # noqa: BLE001
@@ -903,7 +913,7 @@ class PluginContext:
             return handle
         try:
             connection = next(
-                (item for item in client.list_connections() if item.nickname == nickname),
+                (item for item in client.list_connections() if _connection_matches(item, nickname)),
                 None,
             )
         except Exception:
@@ -1227,7 +1237,7 @@ class PluginContext:
             )
         connections = client.list_connections()
         connection = next(
-            (item for item in connections if item.nickname == nickname), None
+            (item for item in connections if _connection_matches(item, nickname)), None
         )
         if connection is None:
             raise RuntimeError(f"No connection named {nickname!r}")

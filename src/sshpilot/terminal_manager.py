@@ -457,7 +457,7 @@ class TerminalManager:
         from sshpilot import icon_utils
 
         page = window.tab_view.append(terminal)
-        page.set_title(tab_title or connection.nickname)
+        page.set_title(tab_title or getattr(connection, "display_name", None) or connection.nickname)
         page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
         if group_name:
             setattr(terminal, "group_name", group_name)
@@ -593,12 +593,12 @@ class TerminalManager:
         if not manager:
             return None, None
 
-        nickname = getattr(connection, "nickname", None)
-        if not nickname:
+        connection_id = getattr(connection, "id", None) or getattr(connection, "nickname", None)
+        if not connection_id:
             return None, None
 
         try:
-            group_id = manager.get_connection_group(nickname)
+            group_id = manager.get_connection_group(connection_id)
         except Exception:
             group_id = None
 
@@ -850,7 +850,9 @@ class TerminalManager:
             dialog = Adw.MessageDialog(
                 transient_for=window,
                 modal=True,
-                heading=_("Disconnect from {host}").format(host=connection.nickname or host_value),
+                heading=_("Disconnect from {host}").format(
+                    host=getattr(connection, "display_name", None) or connection.nickname or host_value
+                ),
                 body=_("Are you sure you want to disconnect from this host?"),
             )
             dialog.add_response("cancel", _("Cancel"))
@@ -1151,8 +1153,11 @@ class TerminalManager:
             import time
 
             nickname = getattr(terminal.connection, "nickname", None)
-            if nickname:
-                self.window.client.update_connection_metadata(nickname, {"last_used": time.time()})
+            connection_id = getattr(terminal.connection, "id", None) or nickname
+            if connection_id:
+                self.window.client.update_connection_metadata(
+                    connection_id, {"last_used": time.time()}
+                )
                 welcome = getattr(self.window, "welcome_view", None)
                 if welcome is not None and hasattr(welcome, "refresh_recent"):
                     welcome.refresh_recent()
@@ -1282,7 +1287,10 @@ class TerminalManager:
                     )
                 )
             else:
-                page.set_title(terminal.connection.nickname)
+                page.set_title(
+                    getattr(terminal.connection, "display_name", None)
+                    or terminal.connection.nickname
+                )
 
     def get_terminal_job_status(self, terminal):
         """

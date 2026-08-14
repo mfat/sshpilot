@@ -37,6 +37,10 @@ def _state(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _id_for(snapshot, alias):
+    return next(item.id for item in snapshot.connections if item.ssh_alias == alias)
+
+
 def _seed_web(repo):
     return repo.create_connection(
         {"nickname": "web", "hostname": "example.com", "protocol": "ssh"}
@@ -93,7 +97,7 @@ def test_metadata_persists_to_state_file(tmp_path):
     _seed_web(repo)
     repo.update_connection_metadata("web", {"pinned": True})
     stored = _state(state)
-    assert stored["metadata"]["web"]["pinned"] is True
+    assert stored["metadata"][_id_for(repo.snapshot(), "web")]["pinned"] is True
 
 
 def test_metadata_for_unknown_connection_rejected(tmp_path):
@@ -119,7 +123,7 @@ def test_empty_metadata_removes_entry(tmp_path):
     repo.update_connection_metadata("web", {"pinned": None})
     snap = repo.snapshot()
     assert snap.metadata == ()
-    assert "web" not in _state(state)["metadata"]
+    assert _id_for(repo.snapshot(), "web") not in _state(state)["metadata"]
 
 
 # ---------------------------------------------------------------------------
@@ -137,12 +141,12 @@ def test_rename_tag_case_insensitive_and_dedupes(tmp_path):
     repo.update_connection_metadata("db", {"tags": ["prod", "db"]})
     repo.rename_tag("PROD", "production")
     snap = repo.snapshot()
-    web_values = next(m for m in snap.metadata if m.connection_id == "web").values
-    db_values = next(m for m in snap.metadata if m.connection_id == "db").values
+    web_values = next(m for m in snap.metadata if m.connection_id == _id_for(snap, "web")).values
+    db_values = next(m for m in snap.metadata if m.connection_id == _id_for(snap, "db")).values
     assert web_values["tags"] == ("production", "web")
     assert db_values["tags"] == ("production", "db")
     stored = _state(state)
-    assert stored["metadata"]["web"]["tags"] == ["production", "web"]
+    assert stored["metadata"][_id_for(snap, "web")]["tags"] == ["production", "web"]
 
 
 def test_add_tag_to_connections_is_atomic_and_preserves_metadata(tmp_path):
@@ -166,11 +170,11 @@ def test_add_tag_to_connections_is_atomic_and_preserves_metadata(tmp_path):
     assert changed == 2
     assert len(events) == 1
     values = {item.connection_id: item.values for item in repo.snapshot().metadata}
-    assert values["a"]["tags"] == ("web",)
-    assert values["a"]["pinned"] is True
-    assert values["b"]["tags"] == ("prod", "Web")
-    assert values["b"]["keep"] == 7
-    assert values["c"]["tags"] == ("Web",)
+    assert values[_id_for(repo.snapshot(), "a")]["tags"] == ("web",)
+    assert values[_id_for(repo.snapshot(), "a")]["pinned"] is True
+    assert values[_id_for(repo.snapshot(), "b")]["tags"] == ("prod", "Web")
+    assert values[_id_for(repo.snapshot(), "b")]["keep"] == 7
+    assert values[_id_for(repo.snapshot(), "c")]["tags"] == ("Web",)
 
 
 def test_add_tag_to_connections_rejects_invalid_batch_without_partial_update(tmp_path):

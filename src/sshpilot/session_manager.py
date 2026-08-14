@@ -153,7 +153,7 @@ class SessionManager:
                     )
                     if connection is None:
                         continue
-                    entry["connection_id"] = connection.nickname
+                    entry["connection_id"] = getattr(connection, "id", None) or connection.nickname
                     changed = True
 
         for payload in self.sessions.values():

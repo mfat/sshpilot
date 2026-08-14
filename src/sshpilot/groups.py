@@ -48,8 +48,8 @@ class GroupManager:
 
     def connection_key(self, reference) -> str:
         return str(
-            getattr(reference, "nickname", None)
-            or getattr(reference, "id", None)
+            getattr(reference, "id", None)
+            or getattr(reference, "nickname", None)
             or reference
             or ""
         )

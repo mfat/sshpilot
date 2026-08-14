@@ -356,7 +356,7 @@ def create_internal_file_manager_tab(
     bridge = getattr(parent_window, "client_bridge", None) if parent_window else None
     connection_id = None
     if connection is not None:
-        connection_id = str(getattr(connection, "nickname", None) or getattr(connection, "id", None) or "")
+        connection_id = str(getattr(connection, "id", None) or getattr(connection, "nickname", None) or "")
 
     controller = FileManagerWindow(
         application=app,

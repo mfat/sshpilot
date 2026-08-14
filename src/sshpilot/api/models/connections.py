@@ -14,6 +14,7 @@ from .connection_store import validate_safe_metadata
 
 _UNSET_TYPE = type("_UNSET_TYPE", (), {"__repr__": lambda s: "UNSET"})()
 UNSET = _UNSET_TYPE
+MAX_DISPLAY_NAME_LENGTH = 512
 
 
 # -- Forwarding rule --------------------------------------------------------
@@ -222,11 +223,24 @@ class ConnectionSummary:
     protocol: str = "ssh"
     health: ConnectionHealth = ConnectionHealth.UNKNOWN
     groups: Tuple[GroupReference, ...] = ()
+    ssh_alias: str = ""
+    display_name: str = ""
+    identity_status: str = "resolved"
 
     def __post_init__(self) -> None:
         require_identifier(self.id, "connection id")
         if not self.nickname.strip():
             raise ValueError("connection nickname must not be empty")
+        alias = self.ssh_alias or self.nickname
+        name = self.display_name or self.nickname
+        if not alias.strip():
+            raise ValueError("connection SSH alias must not be empty")
+        if not name.strip():
+            raise ValueError("connection display name must not be empty")
+        if self.identity_status not in {"resolved", "unresolved"}:
+            raise ValueError("connection identity status is invalid")
+        object.__setattr__(self, "ssh_alias", alias)
+        object.__setattr__(self, "display_name", name)
         if not 1 <= self.port <= 65535:
             raise ValueError("connection port must be between 1 and 65535")
         if not self.protocol.strip():
@@ -283,11 +297,15 @@ class ConnectionMutationResult:
     generation: int
     changed: bool = True
     changed_fields: Tuple[str, ...] = ()
+    ssh_alias: str = ""
+    display_name: str = ""
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
         if not self.nickname.strip():
             raise ValueError("connection nickname must not be empty")
+        object.__setattr__(self, "ssh_alias", self.ssh_alias or self.nickname)
+        object.__setattr__(self, "display_name", self.display_name or self.nickname)
         if self.generation < 0:
             raise ValueError("generation must not be negative")
         if type(self.changed) is not bool:
@@ -469,6 +487,7 @@ class CreateConnectionRequest:
     username: str = ""
     port: int = 22
     protocol: str = "ssh"
+    display_name: str = ""
     config_patch: Mapping[str, Any] = field(default_factory=dict)
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
 
@@ -483,6 +502,12 @@ class CreateConnectionRequest:
             raise ValueError("connection port must be between 1 and 65535")
         if type(self.protocol) is not str or not self.protocol.strip():
             raise ValueError("connection protocol must not be empty")
+        if type(self.display_name) is not str:
+            raise TypeError("connection display name must be a string")
+        if self.display_name and not self.display_name.strip():
+            raise ValueError("connection display name must not be whitespace-only")
+        if len(self.display_name) > MAX_DISPLAY_NAME_LENGTH:
+            raise ValueError("connection display name is too long")
         if self.config_patch:
             normalized_patch = dict(self.config_patch)
             object.__setattr__(self, "config_patch", normalized_patch)
@@ -512,6 +537,7 @@ class UpdateConnectionRequest:
     hostname: Union[str, None, _UNSET_TYPE] = UNSET
     username: Union[str, None, _UNSET_TYPE] = UNSET
     port: Union[int, None, _UNSET_TYPE] = UNSET
+    display_name: Union[str, None, _UNSET_TYPE] = UNSET
     config_patch: Mapping[str, Any] = field(default_factory=dict)
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
     expected_generation: Optional[int] = None  # stale-editor detection
@@ -519,7 +545,7 @@ class UpdateConnectionRequest:
     def __post_init__(self) -> None:
         has_core = any(
             v is not None and v is not UNSET
-            for v in (self.nickname, self.hostname, self.username, self.port)
+            for v in (self.nickname, self.hostname, self.username, self.port, self.display_name)
         )
         has_patch = bool(self.config_patch) or bool(self.plugin_data)
         if not has_core and not has_patch:
@@ -536,6 +562,16 @@ class UpdateConnectionRequest:
             type(self.port) is not int or not 1 <= self.port <= 65535
         ):
             raise ValueError("connection port must be between 1 and 65535")
+        if self.display_name is not None and self.display_name is not UNSET and (
+            type(self.display_name) is not str or not self.display_name.strip()
+        ):
+            raise ValueError("connection display name must not be empty")
+        if (
+            self.display_name is not None
+            and self.display_name is not UNSET
+            and len(self.display_name) > MAX_DISPLAY_NAME_LENGTH
+        ):
+            raise ValueError("connection display name is too long")
         if has_patch:
             normalized_patch = dict(self.config_patch)
             for k, v in list(normalized_patch.items()):

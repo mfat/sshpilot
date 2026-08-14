@@ -5,6 +5,15 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.33`; `PROTOCOL_VERSION` stays
+  `1.0`. Connection summaries now explicitly report whether an SSH projection
+  has resolved UUID ownership; unresolved aliases remain launchable but are
+  not treated as app identities.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.32`; `PROTOCOL_VERSION` stays
+  `1.0`. SSH connection API identities are UUIDs, with separate `ssh_alias`
+  and app-owned `display_name` fields.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.31`; `PROTOCOL_VERSION` stays
   `1.0`. Added optional `force_tty` to open-session requests. When set, the
   daemon forces a remote TTY allocation (`ssh -t`) so interactive remote

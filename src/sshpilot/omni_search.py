@@ -332,10 +332,12 @@ def _ssh_host_suggestions(
 
 
 def _recent_and_pinned(window, connections: Sequence[Any]) -> List[Any]:
-    by_name = {
-        str(getattr(connection, "nickname", "")): connection
-        for connection in connections
-    }
+    by_name = {}
+    for connection in connections:
+        for attr in ("id", "ssh_alias", "nickname", "display_name"):
+            value = getattr(connection, attr, None)
+            if value:
+                by_name[str(value)] = connection
     ordered: List[Any] = []
     try:
         for nickname in (
@@ -350,7 +352,12 @@ def _recent_and_pinned(window, connections: Sequence[Any]) -> List[Any]:
 
     def last_used(connection):
         try:
-            return window.connection_manager.get_metadata(connection.nickname).get(
+            connection_id = (
+                getattr(connection, "id", None)
+                or getattr(connection, "ssh_alias", None)
+                or getattr(connection, "nickname", None)
+            )
+            return window.connection_manager.get_metadata(connection_id).get(
                 "last_used", 0
             ) or 0
         except Exception:

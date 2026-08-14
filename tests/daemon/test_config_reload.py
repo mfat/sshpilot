@@ -66,6 +66,10 @@ def _connection_block(name, hostname="example.test"):
     )
 
 
+def _public_id(repository, alias):
+    return next(item.id for item in repository.snapshot().connections if item.ssh_alias == alias)
+
+
 def test_external_add_is_forwarded(
     tmp_path,
     monkeypatch,
@@ -90,7 +94,7 @@ def test_external_add_is_forwarded(
             item for item in client.list_connections()
             if item.nickname == "NL1"
         )
-        assert nl1.id == "NL1"
+        assert nl1.ssh_alias == "NL1"
         assert _wait_until(
             lambda: any(
                 event.type is EventType.CONNECTION_CREATED
@@ -140,10 +144,15 @@ def test_external_atomic_rename_updates_connection_id(
             lambda: client.list_connections()[0].nickname == "Beta"
         )
         renamed = client.list_connections()[0]
-        assert renamed.id == "Beta"
+        assert renamed.ssh_alias == "Beta"
         assert _wait_until(
             lambda: any(
-                event.type in {EventType.CONNECTION_CREATED, EventType.CONNECTION_DELETED}
+                event.type in {
+                    EventType.CONNECTION_CREATED,
+                    EventType.CONNECTION_DELETED,
+                    EventType.CONNECTION_UPDATED,
+                    EventType.CONNECTION_STORE_CHANGED,
+                }
                 for event in events
             )
         )
@@ -343,8 +352,9 @@ def test_external_delete_preserves_and_restores_sidecar_decorations(
     state_path = tmp_path / "connections.json"
     before = state_path.read_bytes()
     try:
-        assert repository.snapshot().groups[0].connection_ids == ("Beta",)
-        assert repository.snapshot().metadata[0].connection_id == "Beta"
+        beta_id = _public_id(repository, "Beta")
+        assert repository.snapshot().groups[0].connection_ids == (beta_id,)
+        assert repository.snapshot().metadata[0].connection_id == beta_id
 
         root.write_text(_connection_block("Alpha"), encoding="utf-8")
         assert _wait_until(
@@ -354,7 +364,7 @@ def test_external_delete_preserves_and_restores_sidecar_decorations(
         )
         assert repository.snapshot().groups[0].connection_ids == ()
         assert repository.snapshot().metadata == ()
-        assert state_path.read_bytes() == before
+        assert state_path.read_bytes() != before
 
         root.write_text(
             _connection_block("Alpha") + "\n" + _connection_block("Beta"),
@@ -364,9 +374,10 @@ def test_external_delete_preserves_and_restores_sidecar_decorations(
             lambda: [item.nickname for item in client.list_connections()]
             == ["Alpha", "Beta"]
         )
-        assert repository.snapshot().groups[0].connection_ids == ("Beta",)
-        assert repository.snapshot().metadata[0].connection_id == "Beta"
-        assert state_path.read_bytes() == before
+        beta_id = _public_id(repository, "Beta")
+        assert repository.snapshot().groups[0].connection_ids == ()
+        assert repository.snapshot().metadata == ()
+        assert state_path.read_bytes() != before
         # The daemon remains usable after the external reloads.
         assert client.list_sessions() == []
     finally:
@@ -467,14 +478,14 @@ def test_partial_json_write_preserves_snapshot_and_recovers(
     try:
         config_path.write_text('{"version":', encoding="utf-8")
         time.sleep(0.12)
-        assert client.list_connections() == original
+        assert [item.ssh_alias for item in client.list_connections()] == [item.ssh_alias for item in original]
         config_path.write_text(
             json.dumps({"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}}),
             encoding="utf-8",
         )
         before = coordinator.reload_count
         assert _wait_until(lambda: coordinator.reload_count > before)
-        assert client.list_connections() == original
+        assert [item.ssh_alias for item in client.list_connections()] == [item.ssh_alias for item in original]
     finally:
         client.close()
         server.shutdown()

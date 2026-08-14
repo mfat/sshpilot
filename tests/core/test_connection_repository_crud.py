@@ -41,6 +41,18 @@ def _state(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _id_for(snapshot, alias):
+    return next(item.id for item in snapshot.connections if item.ssh_alias == alias)
+
+
+def _stored_root_aliases(path):
+    data = _state(path)
+    if data.get("version") == 2:
+        identities = data.get("identities", {})
+        return [identities[item["id"]]["projection"]["alias"] for item in data["root_connections"]]
+    return list(data.get("groups", {}).get("root_connections", []))
+
+
 # ---------------------------------------------------------------------------
 # SSH CRUD
 # ---------------------------------------------------------------------------
@@ -51,10 +63,10 @@ def test_ssh_create(tmp_path):
     created = repo.create_connection(
         {"nickname": "new", "hostname": "example.net", "username": "u", "protocol": "ssh"}
     )
-    assert created.id == "new"
+    assert created.nickname == "new"
     assert "Host new" in root.read_text()
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["new"]
+    assert [c.ssh_alias for c in snap.connections] == ["new"]
     assert snap.generation == 1
 
 
@@ -70,7 +82,7 @@ def test_ssh_create_rolls_back_when_state_write_fails(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -129,9 +141,9 @@ def test_ssh_rename_migrates_everything(tmp_path):
         expected_generation=0,
     )
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["web2"]
+    assert [c.ssh_alias for c in snap.connections] == ["web2"]
     assert snap.connections[0].groups[0].id == gid
-    assert snap.metadata[0].connection_id == "web2"
+    assert snap.metadata[0].connection_id == _id_for(snap, "web2")
     assert "Host web2" in root.read_text()
     assert "Host web\n" not in root.read_text()
 
@@ -152,7 +164,7 @@ def test_ssh_rename_stale_editor_rejected(tmp_path):
     assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
     # Nothing changed.
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["web"]
+    assert [c.ssh_alias for c in snap.connections] == ["web"]
 
 
 def test_ssh_delete_removes_block_and_metadata(tmp_path):
@@ -166,7 +178,7 @@ def test_ssh_delete_removes_block_and_metadata(tmp_path):
     assert "Host web" not in text
     assert "Host other" in text
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["other"]
+    assert [c.ssh_alias for c in snap.connections] == ["other"]
     assert snap.metadata == ()
     assert "web" not in _state(state)["metadata"]
 
@@ -186,7 +198,7 @@ def test_ssh_duplicate_mirrors_group_placement(tmp_path):
     dup = repo.duplicate_connection("web")
     assert dup.id != "web"
     snap = repo.snapshot()
-    dup_summary = next(c for c in snap.connections if c.id == dup.id)
+    dup_summary = next(c for c in snap.connections if c.ssh_alias == dup.id)
     assert dup_summary.groups[0].id == gid
 
 
@@ -203,7 +215,7 @@ def test_ssh_split_one_alias(tmp_path):
         },
         expected_generation=0,
     )
-    assert result.id == "jump2"
+    assert result.nickname == "jump2"
     text = root.read_text()
     assert "Host db" in text
     assert "Host jump2" in text
@@ -226,7 +238,7 @@ def test_non_ssh_create_persists_to_state_file(tmp_path):
     assert any(d.get("nickname") == "tel" for d in stored["non_ssh_connections"])
     assert "tel" not in root.read_text() if root.exists() else True
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["tel"]
+    assert [c.ssh_alias for c in snap.connections] == ["tel"]
 
 
 def test_non_ssh_update_and_rename(tmp_path):
@@ -251,7 +263,7 @@ def test_non_ssh_update_and_rename(tmp_path):
     names = [d.get("nickname") for d in stored["non_ssh_connections"]]
     assert names == ["tel2"]
     snap = repo.snapshot()
-    assert [c.id for c in snap.connections] == ["tel2"]
+    assert [c.ssh_alias for c in snap.connections] == ["tel2"]
     assert snap.connections[0].hostname == "10.0.0.6"
 
 
@@ -373,8 +385,8 @@ def test_rename_grouped_connection_without_metadata_survives_reload(tmp_path):
     )
     # The state file must carry the renamed membership so a reload stays valid.
     snap = repo.reload()
-    assert [c.id for c in snap.connections] == ["web2"]
-    web2 = next(c for c in snap.connections if c.id == "web2")
+    assert [c.ssh_alias for c in snap.connections] == ["web2"]
+    web2 = next(c for c in snap.connections if c.ssh_alias == "web2")
     assert web2.groups[0].id == gid
 
 
@@ -384,7 +396,7 @@ def test_create_then_reload_preserves_root_order(tmp_path):
         {"nickname": "new", "hostname": "new.example", "protocol": "ssh"}
     )
     snap = repo.reload()
-    assert snap.root_connection_ids == ("web", "new")
+    assert snap.root_connection_ids == (_id_for(snap, "web"), _id_for(snap, "new"))
 
 
 def test_delete_grouped_connection_survives_reload(tmp_path):
@@ -406,7 +418,7 @@ def test_managed_delete_removes_persisted_root_reference(tmp_path):
 
     repo.delete_connection("A")
 
-    assert json.loads(state.read_text())["groups"]["root_connections"] == ["B"]
+    assert _stored_root_aliases(state) == ["B"]
 
 
 def test_non_ssh_update_stale_generation_rejected(tmp_path):
@@ -515,7 +527,7 @@ def test_rollback_after_state_failure_ssh_update(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -534,7 +546,7 @@ def test_rollback_after_state_failure_ssh_delete(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -602,7 +614,7 @@ def test_rollback_after_state_failure_ssh_rename(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -621,7 +633,7 @@ def test_rollback_after_state_failure_ssh_duplicate(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -640,7 +652,7 @@ def test_rollback_after_state_failure_ssh_split(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises((CoreError, OSError)):

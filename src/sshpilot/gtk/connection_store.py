@@ -83,17 +83,31 @@ class ConnectionPresentationStore:
         return next((item for item in self.connections if item.id == connection_id), None)
 
     get_connection_by_uuid = get_connection_by_id
-    find_connection_by_nickname = get_connection_by_id
+    def find_connection_by_nickname(self, nickname: str) -> Optional[ConnectionSummary]:
+        return next(
+            (
+                item for item in self.connections
+                if item.id == nickname
+                or item.ssh_alias == nickname
+                or item.nickname == nickname
+                or item.display_name == nickname
+            ),
+            None,
+        )
 
     def get_metadata(self, connection_id: str):
+        item = self.find_connection_by_nickname(connection_id) or self.get_connection_by_id(connection_id)
+        key = item.id if item is not None else connection_id
         return next(
-            (item.values for item in self.metadata if item.connection_id == connection_id),
+            (item.values for item in self.metadata if item.connection_id == key),
             {},
         )
 
     def get_connection_groups(self, connection_id: str):
+        item = self.find_connection_by_nickname(connection_id) or self.get_connection_by_id(connection_id)
+        key = item.id if item is not None else connection_id
         return tuple(
-            group for group in self.groups if connection_id in group.connection_ids
+            group for group in self.groups if key in group.connection_ids
         )
 
     def get_group(self, group_id: str):

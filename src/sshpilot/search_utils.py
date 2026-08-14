@@ -21,6 +21,8 @@ def connection_matches(connection: Any, query: str) -> bool:
     if not keywords:
         return True
     fields = [
+        getattr(connection, "display_name", ""),
+        getattr(connection, "ssh_alias", ""),
         getattr(connection, "nickname", ""),
         getattr(connection, "host", ""),
         getattr(connection, "hostname", ""),
