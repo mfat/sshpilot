@@ -141,6 +141,7 @@ prepare exact SSH bytes and target loader projection (no writes)
   -> write complete validated connections.json.pending
   -> commit SSH with revision/bytes/symlink guards
   -> write target v2 sidecar
+  -> record the sidecar post-write rollback token
   -> clear pending intent and publish snapshot
 ```
 
@@ -181,9 +182,12 @@ Recovery is conservative:
 | unavailable/partial | any | defer; do not apply or clear |
 
 Pre-replace failures leave the old target byte-for-byte unchanged. A failure
-after `os.replace()` while syncing the parent reports durability unknown.
-External edits create no application intent and use normal repository reload
-reconciliation.
+after `os.replace()` while syncing the parent reports durability unknown; the
+intent is not cleared unless the sidecar post-write state was recorded and the
+rollback/recovery path can classify both durable resources. Intent cleanup is
+therefore attempted only after sidecar post-write capture, for every managed
+SSH operation. External edits create no application intent and use normal
+repository reload reconciliation.
 
 ## DisplayName and current API
 

@@ -344,8 +344,9 @@ class ConnectionRepository:
                 )
                 ssh_config = self._ssh_store.load()
                 if not self._identity_state_unavailable:
-                    self._commit_identity_target_locked(intent, ssh_config)
-                    self._record_post_write_locked(disk_before, self._state_path)
+                    self._commit_identity_target_locked(
+                        intent, ssh_config, disk_before
+                    )
                     self._finish_identity_intent_locked()
                 else:
                     # A corrupt/unsupported sidecar must not be replaced by
@@ -1086,8 +1087,15 @@ class ConnectionRepository:
         self,
         intent: IdentityTransactionIntent,
         committed: LoadedSshConfiguration,
+        captured,
     ) -> None:
-        """Publish exactly the already-durable managed transaction target."""
+        """Commit and record the exact target before clearing its intent.
+
+        The sidecar post-write token is deliberately captured here, immediately
+        after the target write and before any caller can clear ``.pending``.
+        That keeps rollback able to restore both durable resources if intent
+        cleanup fails after unlink or during its parent-directory fsync.
+        """
         self._verify_committed_target_locked(intent, committed)
         # Keep the ordinary persistence hook observable for rollback/crash
         # tests, while making its input unambiguously the complete intent
@@ -1097,6 +1105,7 @@ class ConnectionRepository:
             self._persist_state_file_locked()
         finally:
             self._pending_identity_target = None
+        self._record_post_write_locked(captured, self._state_path)
         self._identity_state = intent.target_state
         self._identity_state_unavailable = False
         self._loaded_ssh_config = committed
@@ -1560,7 +1569,7 @@ class ConnectionRepository:
                         disk_before, Path(result.touched_path)
                     ) if result.touched_path else None
                     committed = self._ssh_store.load()
-                    self._commit_identity_target_locked(intent, committed)
+                    self._commit_identity_target_locked(intent, committed, disk_before)
                     created = self._service.get(result.connection_id)
                     if created is None:
                         raise _repository_error("The committed connection was not found")
@@ -1578,8 +1587,6 @@ class ConnectionRepository:
                     self._persist_state_file_locked()
                 if protocol == "ssh":
                     self._finish_identity_intent_locked()
-                # Record the daemon-written state file for rollback verification.
-                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1644,7 +1651,7 @@ class ConnectionRepository:
                             disk_before, Path(result.touched_path),
                         )
                     committed = self._ssh_store.load()
-                    self._commit_identity_target_locked(intent, committed)
+                    self._commit_identity_target_locked(intent, committed, disk_before)
                     updated = self._service.get(new_id)
                     if updated is None:
                         raise _repository_error("The committed connection was not found")
@@ -1674,7 +1681,6 @@ class ConnectionRepository:
                     self._persist_state_file_locked()
                 if protocol == "ssh":
                     self._finish_identity_intent_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1712,7 +1718,7 @@ class ConnectionRepository:
                             disk_before, Path(result.touched_path),
                         )
                     committed = self._ssh_store.load()
-                    self._commit_identity_target_locked(intent, committed)
+                    self._commit_identity_target_locked(intent, committed, disk_before)
                     created = self._service.get(result.connection_id)
                     if created is None:
                         raise _repository_error("The committed connection was not found")
@@ -1726,7 +1732,6 @@ class ConnectionRepository:
                     self._persist_state_file_locked()
                 if existing.protocol == "ssh":
                     self._finish_identity_intent_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1760,7 +1765,7 @@ class ConnectionRepository:
                             disk_before, Path(result.touched_path),
                         )
                     committed = self._ssh_store.load()
-                    self._commit_identity_target_locked(intent, committed)
+                    self._commit_identity_target_locked(intent, committed, disk_before)
                 else:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
@@ -1770,7 +1775,6 @@ class ConnectionRepository:
                     self._persist_state_file_locked()
                 if existing.protocol == "ssh":
                     self._finish_identity_intent_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1822,10 +1826,9 @@ class ConnectionRepository:
                         disk_before, Path(result.touched_path),
                     )
                 committed = self._ssh_store.load()
-                self._commit_identity_target_locked(intent, committed)
+                self._commit_identity_target_locked(intent, committed, disk_before)
                 result_id = result.connection_id
                 self._finish_identity_intent_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 import pytest
 
@@ -11,6 +12,7 @@ from sshpilot.core.connections.identity_state_v2 import IdentityStateV2
 from sshpilot.core.connections.identity_state_v2 import ConnectionReference
 from sshpilot.core.connections.identity_state_v2 import ReferenceKind
 from sshpilot.core.connections.repository import ConnectionRepository
+from sshpilot.core.connections import repository as repository_module
 from sshpilot.core.connections.ssh_config_store import SshConfigStore
 from sshpilot.core.errors import CoreError, ErrorCode
 from sshpilot.core.connections.state_file import (
@@ -237,6 +239,176 @@ def test_crash_after_ssh_before_sidecar_recovers_target(tmp_path, monkeypatch):
     assert restarted.snapshot().connections[0].id == "prod2"
     assert recovered.identities[0].uuid == old_uuid
     assert not identity_transaction_intent_path(state).exists()
+
+
+def _inject_intent_clear_failure(monkeypatch, *, unlink_first: bool):
+    real_clear = repository_module.clear_pending_identity_transaction
+    calls = {"count": 0}
+
+    def fail_once(path):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            if unlink_first:
+                os.unlink(path)
+            raise OSError("injected intent cleanup failure")
+        return real_clear(path)
+
+    monkeypatch.setattr(
+        repository_module,
+        "clear_pending_identity_transaction",
+        fail_once,
+    )
+    return calls
+
+
+@pytest.mark.parametrize("unlink_first", [False, True])
+def test_update_intent_cleanup_failure_restores_both_resources(
+    tmp_path, monkeypatch, unlink_first
+):
+    repo, root, state = _repo(
+        tmp_path, "Host old\n    HostName old.example\n    User deploy\n"
+    )
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+    base_generation = read_identity_state_v2(state).sidecar_generation
+    _inject_intent_clear_failure(monkeypatch, unlink_first=unlink_first)
+
+    with pytest.raises(OSError, match="injected intent cleanup failure"):
+        repo.update_connection(
+            "old",
+            {"nickname": "new", "hostname": "new.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert read_identity_state_v2(state).sidecar_generation == base_generation
+    assert repo.snapshot().connections[0].id == "old"
+    assert not identity_transaction_intent_path(state).exists()
+
+
+def test_create_intent_cleanup_failure_leaves_no_target_identity(
+    tmp_path, monkeypatch
+):
+    repo, root, state = _repo(
+        tmp_path, "Host prod\n    HostName prod.example\n"
+    )
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+    _inject_intent_clear_failure(monkeypatch, unlink_first=True)
+
+    with pytest.raises(OSError, match="injected intent cleanup failure"):
+        repo.create_connection(
+            {"nickname": "copy", "hostname": "copy.example", "protocol": "ssh"}
+        )
+
+    restored = read_identity_state_v2(state)
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert {item.projection.alias for item in restored.identities} == {"prod"}
+    assert not identity_transaction_intent_path(state).exists()
+
+
+def test_duplicate_intent_cleanup_failure_restores_group_and_uuid_state(
+    tmp_path, monkeypatch
+):
+    repo, root, state = _repo(
+        tmp_path, "Host prod\n    HostName prod.example\n"
+    )
+    group = repo.create_group("Production")
+    repo.copy_connection_to_group("prod", group.id)
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+    base_state = read_identity_state_v2(state)
+    _inject_intent_clear_failure(monkeypatch, unlink_first=False)
+
+    with pytest.raises(OSError, match="injected intent cleanup failure"):
+        repo.duplicate_connection("prod")
+
+    restored = read_identity_state_v2(state)
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert restored == base_state
+    assert repo.get_record("prod-Copy") is None
+    assert not identity_transaction_intent_path(state).exists()
+
+
+def test_delete_intent_cleanup_failure_restores_tombstone_and_ssh_state(
+    tmp_path, monkeypatch
+):
+    repo, root, state = _repo(
+        tmp_path, "Host prod\n    HostName prod.example\n"
+    )
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+    _inject_intent_clear_failure(monkeypatch, unlink_first=True)
+
+    with pytest.raises(OSError, match="injected intent cleanup failure"):
+        repo.delete_connection("prod")
+
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert repo.get_record("prod") is not None
+    assert not identity_transaction_intent_path(state).exists()
+
+
+def test_split_intent_cleanup_failure_restores_original_config_and_state(
+    tmp_path, monkeypatch
+):
+    repo, root, state = _repo(
+        tmp_path, "Host db jump\n    HostName=db.internal\n    User dbuser\n"
+    )
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+    _inject_intent_clear_failure(monkeypatch, unlink_first=True)
+
+    with pytest.raises(OSError, match="injected intent cleanup failure"):
+        repo.split_connection(
+            "jump",
+            "jump",
+            {
+                "nickname": "jump2",
+                "hostname": "jump.example",
+                "username": "j",
+                "protocol": "ssh",
+            },
+            expected_generation=0,
+        )
+
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert repo.get_record("jump") is not None
+    assert repo.get_record("jump2") is None
+    assert not identity_transaction_intent_path(state).exists()
+
+
+def test_sidecar_write_durability_failure_preserves_intent_for_recovery(
+    tmp_path, monkeypatch
+):
+    """An uncertain sidecar replace must not be mistaken for a clean commit."""
+    repo, root, state = _repo(
+        tmp_path, "Host old\n    HostName old.example\n"
+    )
+    base_root = root.read_bytes()
+    real_write = repository_module.write_identity_state_v2
+
+    def write_then_fail(path, target):
+        real_write(path, target)
+        raise OSError("injected sidecar durability failure")
+
+    monkeypatch.setattr(
+        repository_module, "write_identity_state_v2", write_then_fail
+    )
+    with pytest.raises(OSError, match="injected sidecar durability failure"):
+        repo.update_connection(
+            "old",
+            {"nickname": "new", "hostname": "new.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+
+    assert root.read_bytes() == base_root
+    assert identity_transaction_intent_path(state).exists()
+    assert repo._identity_state_unavailable is True
 
 
 def test_managed_create_allocates_new_uuid_for_duplicate_destination(tmp_path):
