@@ -1195,7 +1195,7 @@ class SshConfigStore:
         self._generations.pop(connection_id, None)
         self._generations[new_name] = old_generation + 1
         fresh = self._reload_after_write()
-        if connection_id in {c.id for c in fresh.connections}:
+        if connection_id != new_name and connection_id in {c.id for c in fresh.connections}:
             # The original connection survived the split (a different alias
             # was split out): keep its generation counter intact.
             self._generations[connection_id] = old_generation

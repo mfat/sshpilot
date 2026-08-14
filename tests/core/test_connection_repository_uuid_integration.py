@@ -212,6 +212,52 @@ def test_repository_duplicate_skips_empty_authored_copy_alias(tmp_path):
     assert root.read_text().count("Host old-Copy-2\n") == 1
 
 
+def test_repository_same_name_split_advances_generation_once_and_preserves_uuid(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host old\n    HostName old.example\n",
+    )
+    uuid = read_identity_state_v2(state).identities[0].uuid
+    events = []
+    repo.add_listener(events.append)
+
+    result = repo.split_connection(
+        "old",
+        "old",
+        {"nickname": "old", "hostname": "new.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    assert result.id == "old"
+    assert result.generation == 1
+    assert repo.get_record("old").generation == 1
+    assert repo.get_editor_record("old").generation == 1
+    assert read_identity_state_v2(state).identities[0].uuid == uuid
+    assert not identity_transaction_intent_path(state).exists()
+    assert len(events) == 1
+
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection(
+            "old",
+            {"nickname": "old", "hostname": "stale.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert root.read_bytes() == before
+    assert len(events) == 1
+
+    updated = repo.update_connection(
+        "old",
+        {"nickname": "old", "hostname": "current.example", "protocol": "ssh"},
+        expected_generation=1,
+    )
+    assert updated.generation == 2
+    assert repo.get_record("old").generation == 2
+    assert repo.get_editor_record("old").generation == 2
+    assert not identity_transaction_intent_path(state).exists()
+    assert len(events) == 2
+
+
 def test_managed_noop_ssh_update_with_display_name_builds_valid_intent(tmp_path):
     repo, root, state = _repo(
         tmp_path, "Host prod\n    HostName server.example\n    User deploy\n"

@@ -494,6 +494,98 @@ def test_split_allows_recreating_removed_source_token(tmp_path, prepared):
         assert "Host old\n    HostName new.example\n" in root.read_text()
 
 
+def test_same_name_split_advances_direct_generation_and_rejects_stale_update(tmp_path):
+    root = _write(tmp_path / "config", "Host old\n    HostName old.example\n")
+    store = _store(root)
+    result = store.split(
+        "old",
+        "old",
+        {"nickname": "old", "hostname": "new.example"},
+        expected_generation=0,
+    )
+    assert result.connection_id == "old"
+    assert result.config.connections[0].generation == 1
+    assert store._generations["old"] == 1
+    assert store.load().connections[0].generation == 1
+
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        store.update(
+            "old",
+            {"nickname": "old", "hostname": "stale.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert root.read_bytes() == before
+
+    updated = store.update(
+        "old",
+        {"nickname": "old", "hostname": "current.example", "protocol": "ssh"},
+        expected_generation=1,
+    )
+    assert updated.config.connections[0].generation == 2
+    assert store._generations["old"] == 2
+    assert store.load().connections[0].generation == 2
+
+
+def test_same_name_prepared_split_matches_direct_generation(tmp_path):
+    root = _write(tmp_path / "config", "Host old\n    HostName old.example\n")
+    store = _store(root)
+    prepared = store.prepare_split(
+        "old",
+        "old",
+        {"nickname": "old", "hostname": "new.example"},
+        expected_generation=0,
+    )
+    result = store.commit_prepared(prepared)
+    assert result.connection_id == "old"
+    assert result.config.connections[0].generation == 1
+    assert store._generations["old"] == 1
+    assert store.load().connections[0].generation == 1
+
+
+def test_split_surviving_shared_alias_keeps_generation_separate_from_new_alias(tmp_path):
+    root = _write(
+        tmp_path / "config",
+        "Host original other\n    HostName shared.example\n",
+    )
+    store = _store(root)
+    result = store.split(
+        "original",
+        "other",
+        {"nickname": "new", "hostname": "new.example"},
+        expected_generation=0,
+    )
+    assert result.connection_id == "new"
+    assert store._generations["original"] == 0
+    assert store._generations["new"] == 1
+    loaded = store.load()
+    assert {item.id: item.generation for item in loaded.connections} == {
+        "original": 0,
+        "new": 1,
+    }
+
+    with pytest.raises(CoreError) as exc:
+        store.update(
+            "new",
+            {"nickname": "new", "hostname": "stale.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    original = store.update(
+        "original",
+        {"nickname": "original", "hostname": "original.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    assert original.config.connections[0].generation == 1
+    new = store.update(
+        "new",
+        {"nickname": "new", "hostname": "newer.example", "protocol": "ssh"},
+        expected_generation=1,
+    )
+    assert new.config.connections[-1].generation == 2
+
+
 def test_split_pattern_destination_is_preserved_and_does_not_collide(tmp_path):
     pattern = "Host reserved *\n    User deploy\n\n"
     root = _write(
