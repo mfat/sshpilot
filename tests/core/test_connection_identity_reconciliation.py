@@ -107,7 +107,7 @@ def test_exact_alias_has_priority_over_every_other_change():
     [
         (projection("new", username="deploy", identity_files=("a",)), MatchReason.DESTINATION_USER_IDENTITY),
         (projection("new", username="deploy", identity_files=("b",)), MatchReason.DESTINATION_USER),
-        (projection("new", username="root", identity_files=("b",)), MatchReason.DESTINATION_ORDER_FALLBACK),
+        (projection("new", username="root", identity_files=("b",)), MatchReason.DESTINATION_UNIQUE_REMAINDER),
     ],
 )
 def test_destination_anchor_preserves_uuid_when_alias_changes(new, reason):
@@ -183,43 +183,36 @@ def test_uuid_factory_collision_with_existing_or_new_uuid_fails_explicitly():
 
 
 @pytest.mark.parametrize(
-    "old_items,new_items,expected",
-    [
-        ([old("a", projection("old-a", order=0))], [projection("new-a", order=0)], ["a"]),
-        (
-            [old("a", projection("old-a", order=0))],
-            [projection("new-a", order=0), projection("new-b", order=1)],
-            ["a", "created-1"],
-        ),
-        (
-            [old("a", projection("old-a", order=0)), old("b", projection("old-b", order=1))],
-            [projection("new-a", order=0)],
-            ["a"],
-        ),
-        (
-            [old("a", projection("old-a", order=0)), old("b", projection("old-b", order=1))],
-            [projection("new-a", order=0), projection("new-b", order=1)],
-            ["a", "b"],
-        ),
-        (
-            [old("a", projection("old-a", order=0)), old("b", projection("old-b", order=1))],
-            [projection("new-a", order=0), projection("new-b", order=1), projection("new-c", order=2)],
-            ["a", "b", "created-1"],
-        ),
-        (
-            [old("a", projection("old-a", order=0)), old("b", projection("old-b", order=1)), old("c", projection("old-c", order=2))],
-            [projection("new-a", order=0), projection("new-b", order=1)],
-            ["a", "b"],
-        ),
-    ],
+    "old_count,new_count",
+    [(1, 2), (2, 1), (2, 2), (3, 3)],
 )
-def test_destination_collision_shapes_are_one_to_one(old_items, new_items, expected):
+def test_non_unique_destination_remainders_are_ambiguous(old_count, new_count):
+    old_items = [
+        old(f"old-{index}", projection(f"old-{index}", order=index))
+        for index in range(old_count)
+    ]
+    new_items = [
+        projection(f"new-{index}", order=index) for index in range(new_count)
+    ]
     result = reconcile(old_items, new_items)
-    assert [item.old.uuid for item in result.matched] + [
-        item.uuid for item in result.created
-    ] == expected
-    assert len({item.old.uuid for item in result.matched}) == len(result.matched)
-    assert len({item.uuid for item in result.created}) == len(result.created)
+    assert not result.matched
+    assert not result.created
+    assert not result.deleted
+    assert len(result.ambiguous) == 1
+    assert [entry.uuid for entry in result.ambiguous[0].old] == [
+        f"old-{index}" for index in range(old_count)
+    ]
+    assert [item.alias for item in result.ambiguous[0].new] == [
+        f"new-{index}" for index in range(new_count)
+    ]
+
+
+def test_unique_destination_remainder_is_not_an_order_fallback():
+    result = reconcile(
+        [old("u1", projection("old", username=None))],
+        [projection("new", username=None)],
+    )
+    assert result.matched[0].reason is MatchReason.DESTINATION_UNIQUE_REMAINDER
 
 
 def test_collision_passes_consume_user_and_identity_before_order():
@@ -281,25 +274,22 @@ def test_collision_matching_is_invariant_to_input_insertion_order():
     ]
 
 
-def test_identical_collision_candidates_use_declaration_order_as_deterministic_fallback():
+def test_indistinguishable_collision_candidates_are_ambiguous_not_order_paired():
     result = reconcile(
         [
-            old("u1", projection("old-one", username="one", order=0)),
-            old("u2", projection("old-two", username="two", order=1)),
+            old("u1", projection("old-one", username="deploy", order=0)),
+            old("u2", projection("old-two", username="deploy", order=1)),
         ],
         [
-            projection("new-one", username="new-one", order=0),
-            projection("new-two", username="new-two", order=1),
+            projection("new-one", username="deploy", order=0),
+            projection("new-two", username="deploy", order=1),
         ],
     )
-    assert [(item.old.uuid, item.new_projection.alias) for item in result.matched] == [
-        ("u1", "new-one"),
-        ("u2", "new-two"),
-    ]
-    assert all(
-        item.reason is MatchReason.DESTINATION_ORDER_FALLBACK
-        for item in result.matched
-    )
+    assert result.matched == ()
+    assert result.created == ()
+    assert result.deleted == ()
+    assert [entry.uuid for entry in result.ambiguous[0].old] == ["u1", "u2"]
+    assert [item.alias for item in result.ambiguous[0].new] == ["new-one", "new-two"]
 
 
 def test_exact_alias_survives_collision_and_cannot_be_stolen():
@@ -847,15 +837,29 @@ def test_mixed_identityfile_collision_preserves_comparable_modes_after_reorder()
     }
     assert mapping["new-none"] == ("none-id", MatchReason.DESTINATION_USER_IDENTITY)
     assert mapping["new-files"] == ("files-id", MatchReason.DESTINATION_USER_IDENTITY)
-    assert mapping["new-dynamic"][1] is MatchReason.DESTINATION_USER
-    assert mapping["new-unspecified"][1] is MatchReason.DESTINATION_USER
-    assert len({match.old.uuid for match in first.matched}) == 4
+    assert set(mapping) == {"new-none", "new-files"}
+    assert [entry.uuid for entry in first.ambiguous[0].old] == [
+        "dynamic-id",
+        "unspecified-id",
+    ]
+    assert [item.alias for item in first.ambiguous[0].new] == [
+        "new-dynamic",
+        "new-unspecified",
+    ]
+    assert len({match.old.uuid for match in first.matched}) == 2
     assert {
         alias: (item.old.uuid, item.reason)
         for alias, item in (
             (match.new_projection.alias, match) for match in second.matched
         )
     } == mapping
+    assert {
+        entry.uuid for entry in second.ambiguous[0].old
+    } == {"unspecified-id", "dynamic-id"}
+    assert {item.alias for item in second.ambiguous[0].new} == {
+        "new-dynamic",
+        "new-unspecified",
+    }
 
 
 @pytest.mark.parametrize("include_position", ["before", "after"])
@@ -912,12 +916,12 @@ def test_environment_identity_file_is_not_safe_tie_break_evidence(tmp_path):
     assert item.identity_file_evidence.status is IdentityFileEvidenceStatus.DYNAMIC
 
 
-def test_both_omitted_users_only_reach_order_fallback():
+def test_both_omitted_users_reach_unique_remainder_only():
     result = reconcile(
         [old("u1", projection("old", username=None))],
         [projection("new", username=None)],
     )
-    assert result.matched[0].reason is MatchReason.DESTINATION_ORDER_FALLBACK
+    assert result.matched[0].reason is MatchReason.DESTINATION_UNIQUE_REMAINDER
 
 
 def test_omitted_user_does_not_equal_explicit_local_username():
@@ -925,7 +929,7 @@ def test_omitted_user_does_not_equal_explicit_local_username():
         [old("u1", projection("old", username=None))],
         [projection("new", username="deploy")],
     )
-    assert result.matched[0].reason is MatchReason.DESTINATION_ORDER_FALLBACK
+    assert result.matched[0].reason is MatchReason.DESTINATION_UNIQUE_REMAINDER
 
 
 def test_dynamic_identity_file_cannot_strengthen_pass_a():
@@ -1055,7 +1059,7 @@ def test_actual_loader_multi_token_partial_rename_consumes_exact_alias_first(tmp
     assert result.matched[0].reason is MatchReason.EXACT_ALIAS
 
 
-def test_actual_loader_multi_token_complete_rename_uses_collision_order(tmp_path):
+def test_actual_loader_multi_token_complete_rename_is_ambiguous(tmp_path):
     root = tmp_path / "config"
     root.write_text(
         "Host foo bar\n    HostName server.example\n    User deploy\n",
@@ -1079,14 +1083,11 @@ def test_actual_loader_multi_token_complete_rename_uses_collision_order(tmp_path
         [old("foo-id", old_projections[0]), old("bar-id", old_projections[1])],
         new_projections,
     )
-    assert [(match.old.uuid, match.new_projection.alias) for match in result.matched] == [
-        ("foo-id", "baz"),
-        ("bar-id", "qux"),
-    ]
-    assert all(
-        match.reason is MatchReason.DESTINATION_USER
-        for match in result.matched
-    )
+    assert result.matched == ()
+    assert result.created == ()
+    assert result.deleted == ()
+    assert [entry.uuid for entry in result.ambiguous[0].old] == ["foo-id", "bar-id"]
+    assert [item.alias for item in result.ambiguous[0].new] == ["baz", "qux"]
 
 
 @pytest.mark.parametrize(
@@ -1247,3 +1248,184 @@ def test_registry_from_actual_records_is_restartable(tmp_path):
     result = reconcile(restored.entries, projections)
     assert result.matched[0].old.uuid == "u1"
     assert result.matched[0].reason is MatchReason.DESTINATION_USER
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        IdentityFileEvidenceMode.EXPLICIT_NONE,
+        IdentityFileEvidenceMode.EXPLICIT_FILES,
+        IdentityFileEvidenceMode.UNSPECIFIED,
+        IdentityFileEvidenceMode.DYNAMIC,
+    ],
+)
+def test_duplicate_identity_evidence_partition_is_ambiguous(mode):
+    old_items = [
+        old("u1", _identity_projection("old-a", mode, ("a",) if mode is IdentityFileEvidenceMode.EXPLICIT_FILES else ())),
+        old("u2", _identity_projection("old-b", mode, ("a",) if mode is IdentityFileEvidenceMode.EXPLICIT_FILES else ())),
+    ]
+    new_items = [
+        _identity_projection("new-a", mode, ("a",) if mode is IdentityFileEvidenceMode.EXPLICIT_FILES else ()),
+        _identity_projection("new-b", mode, ("a",) if mode is IdentityFileEvidenceMode.EXPLICIT_FILES else ()),
+    ]
+    result = reconcile(old_items, new_items)
+    assert result.matched == ()
+    assert result.created == ()
+    assert result.deleted == ()
+    assert len(result.ambiguous) == 1
+
+
+def test_unique_user_partitions_reconcile_without_declaration_order():
+    old_items = [
+        old("root-id", projection("old-root", username="root", order=0)),
+        old("deploy-id", projection("old-deploy", username="deploy", order=1)),
+        old("backup-id", projection("old-backup", username="backup", order=2)),
+    ]
+    new_items = [
+        projection("new-backup", username="backup", order=0),
+        projection("new-root", username="root", order=1),
+        projection("new-deploy", username="deploy", order=2),
+    ]
+    result = reconcile(old_items, new_items)
+    assert {
+        item.new_projection.alias: item.old.uuid for item in result.matched
+    } == {
+        "new-root": "root-id",
+        "new-deploy": "deploy-id",
+        "new-backup": "backup-id",
+    }
+    assert all(item.reason is MatchReason.DESTINATION_USER for item in result.matched)
+
+
+def test_unique_strong_match_is_consumed_before_ambiguous_remainder():
+    result = reconcile(
+        [
+            old(
+                "root-id",
+                projection("old-root", username="root", identity_files=("key-a",)),
+            ),
+            old("deploy-a", projection("old-a", username="deploy")),
+            old("deploy-b", projection("old-b", username="deploy")),
+        ],
+        [
+            projection("new-b", username="deploy"),
+            projection("new-root", username="root", identity_files=("key-a",)),
+            projection("new-a", username="deploy"),
+        ],
+    )
+    assert [
+        (item.old.uuid, item.new_projection.alias, item.reason)
+        for item in result.matched
+    ] == [("root-id", "new-root", MatchReason.DESTINATION_USER_IDENTITY)]
+    assert [entry.uuid for entry in result.ambiguous[0].old] == [
+        "deploy-a",
+        "deploy-b",
+    ]
+    assert [item.alias for item in result.ambiguous[0].new] == [
+        "new-a",
+        "new-b",
+    ]
+
+
+def test_exact_alias_is_consumed_before_ambiguous_renamed_remainder():
+    result = reconcile(
+        [
+            old("keep-id", projection("keep", username="root")),
+            old("old-a", projection("old-a", username="deploy")),
+            old("old-b", projection("old-b", username="deploy")),
+        ],
+        [
+            projection("new-b", username="deploy"),
+            projection("keep", username="changed"),
+            projection("new-a", username="deploy"),
+        ],
+    )
+    assert [(item.old.uuid, item.new_projection.alias, item.reason) for item in result.matched] == [
+        ("keep-id", "keep", MatchReason.EXACT_ALIAS)
+    ]
+    assert [entry.uuid for entry in result.ambiguous[0].old] == ["old-a", "old-b"]
+    assert [item.alias for item in result.ambiguous[0].new] == ["new-a", "new-b"]
+
+
+def test_ambiguous_candidates_are_not_created_or_deleted_and_cannot_be_applied():
+    registry_entries = (
+        old("u1", projection("old-a")),
+        old("u2", projection("old-b")),
+    )
+    result = reconcile(
+        registry_entries,
+        [projection("new-a"), projection("new-b")],
+    )
+    assert result.ambiguous
+    assert not result.created
+    assert not result.deleted
+    with pytest.raises(ValueError, match="unresolved ambiguous identities"):
+        apply_reconciliation(result)
+
+
+def test_ambiguous_result_is_semantically_invariant_to_input_order():
+    old_items = [
+        old("u1", projection("old-a", order=0)),
+        old("u2", projection("old-b", order=1)),
+        old("u3", projection("old-c", order=2)),
+    ]
+    new_items = [
+        projection("new-a", order=0),
+        projection("new-b", order=1),
+        projection("new-c", order=2),
+    ]
+    first = reconcile(old_items, new_items)
+    second = reconcile(list(reversed(old_items)), list(reversed(new_items)))
+
+    def signature(result):
+        return (
+            tuple(
+                sorted(
+                    (item.old.uuid, item.new_projection.alias, item.reason.value)
+                    for item in result.matched
+                )
+            ),
+            tuple(
+                (
+                    tuple(entry.uuid for entry in group.old),
+                    tuple(item.alias for item in group.new),
+                )
+                for group in result.ambiguous
+            ),
+            tuple(entry.uuid for entry in result.deleted),
+            tuple(entry.uuid for entry in result.created),
+        )
+
+    assert signature(first) == signature(second)
+
+
+def test_actual_loader_restart_preserves_ambiguity_after_alias_reorder(tmp_path):
+    root = tmp_path / "config"
+    root.write_text(
+        "Host old-a\n    HostName server.example\n    User deploy\n\n"
+        "Host old-b\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    first = load_ssh_configuration(root, isolated=True)
+    registry = registry_from_records(
+        first.connections,
+        uuid_factory=iter(["u1", "u2"]).__next__,
+    )
+    restored = IdentityRegistry.from_dict(json.loads(json.dumps(registry.to_dict())))
+
+    root.write_text(
+        "Host new-b\n    HostName server.example\n    User deploy\n\n"
+        "Host new-a\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    second = load_ssh_configuration(root, isolated=True)
+    projections = [
+        ConnectionIdentityProjection.from_record(record, declaration_order=index)
+        for index, record in enumerate(second.connections)
+    ]
+    result = reconcile(restored.entries, projections)
+    assert not result.matched
+    assert not result.created
+    assert not result.deleted
+    assert [entry.uuid for entry in result.ambiguous[0].old] == ["u1", "u2"]
+    assert [item.alias for item in result.ambiguous[0].new] == ["new-b", "new-a"]

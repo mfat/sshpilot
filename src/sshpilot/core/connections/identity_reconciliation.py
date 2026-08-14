@@ -24,7 +24,7 @@ class MatchReason(str, Enum):
     EXACT_ALIAS = "exact_alias"
     DESTINATION_USER_IDENTITY = "destination_user_identity"
     DESTINATION_USER = "destination_user"
-    DESTINATION_ORDER_FALLBACK = "destination_order_fallback"
+    DESTINATION_UNIQUE_REMAINDER = "destination_unique_remainder"
     CREATE = "create"
     DELETE = "delete"
     AMBIGUOUS = "ambiguous"
@@ -601,33 +601,47 @@ class IdentityRegistry:
         return cls(entries=tuple(entries))
 
 
-def _projection_sort_key(
-    item: Tuple[int, ConnectionIdentityProjection],
-) -> Tuple[int, str, str, int]:
-    index, projection = item
-    # Declaration order is the stated fallback.  Alias/source only make a
-    # malformed equal-order snapshot deterministic; source is never compared
-    # as reconciliation evidence.
-    return projection.declaration_order, projection.alias, projection.source, index
+def _old_entry_sort_key(entry: IdentityRegistryEntry) -> Tuple[int, str, str, str]:
+    return (
+        entry.projection.declaration_order,
+        entry.projection.alias,
+        entry.projection.source,
+        entry.uuid,
+    )
 
 
-def _pair_bucket(
+def _new_projection_sort_key(
+    projection: ConnectionIdentityProjection,
+) -> Tuple[int, str, str]:
+    return (
+        projection.declaration_order,
+        projection.alias,
+        projection.source,
+    )
+
+
+def _ambiguous(
     old: Sequence[Tuple[int, IdentityRegistryEntry]],
     new: Sequence[Tuple[int, ConnectionIdentityProjection]],
-    reason: MatchReason,
-) -> Iterable[Match]:
-    old_sorted = sorted(
-        old,
-        key=lambda item: (
-            item[1].projection.declaration_order,
-            item[1].projection.alias,
-            item[1].projection.source,
-            item[0],
+) -> Ambiguous:
+    """Order ambiguity members for diagnostics without mapping them."""
+
+    return Ambiguous(
+        old=tuple(sorted((entry for _, entry in old), key=_old_entry_sort_key)),
+        new=tuple(
+            sorted(
+                (projection for _, projection in new),
+                key=_new_projection_sort_key,
+            )
         ),
     )
-    new_sorted = sorted(new, key=_projection_sort_key)
-    for (_, old_entry), (_, new_projection) in zip(old_sorted, new_sorted):
-        yield Match(old_entry, new_projection, reason)
+
+
+def _partition(items: Sequence[Any], key_fn: Callable[[Any], Any]) -> Dict[Any, list]:
+    partitions: Dict[Any, list] = {}
+    for item in items:
+        partitions.setdefault(key_fn(item), []).append(item)
+    return partitions
 
 
 def reconcile_identities(
@@ -638,10 +652,12 @@ def reconcile_identities(
 ) -> ReconciliationResult:
     """Reconcile one old snapshot with one new snapshot deterministically.
 
-    Exact aliases consume first.  Remaining candidates are grouped by the
-    literal ``(hostname, normalized_port)`` anchor and consumed in three
-    deterministic passes: ordered identity files plus user, user, then
-    declaration order.  Tombstones are intentionally excluded.
+    Exact aliases consume first. Remaining candidates are grouped by the
+    literal ``(hostname, normalized_port)`` anchor. Within each destination,
+    only a unique evidence partition can establish a member-to-member match.
+    Multiple candidates in an otherwise matching partition are reserved as an
+    explicit ambiguity; declaration order is never identity evidence.
+    Tombstones are intentionally excluded.
     """
 
     active_old = [
@@ -688,11 +704,14 @@ def reconcile_identities(
 
     matched_old = set(used_old)
     matched_new = set(used_new)
+    reserved_old = set()
+    reserved_new = set()
+    ambiguous = []
     for anchor in sorted(set(old_by_anchor) & set(new_by_anchor), key=repr):
         old_bucket = old_by_anchor[anchor]
         new_bucket = new_by_anchor[anchor]
-        remaining_old = old_bucket
-        remaining_new = new_bucket
+        remaining_old = list(old_bucket)
+        remaining_new = list(new_bucket)
         for old_key_fn, new_key_fn, reason in (
             (
                 lambda entry: (
@@ -713,79 +732,94 @@ def reconcile_identities(
                 MatchReason.DESTINATION_USER,
             ),
         ):
-            old_partitions: Dict[Any, list] = {}
-            new_partitions: Dict[Any, list] = {}
-            for item in remaining_old:
-                if reason is MatchReason.DESTINATION_USER_IDENTITY and (
-                    not item[1].projection.username_is_explicit
-                    or item[1].projection.identity_file_evidence.mode
-                    not in {
-                        IdentityFileEvidenceMode.EXPLICIT_NONE,
-                        IdentityFileEvidenceMode.EXPLICIT_FILES,
-                    }
-                ):
-                    continue
-                if reason is MatchReason.DESTINATION_USER and not item[
-                    1
-                ].projection.username_is_explicit:
-                    continue
-                old_partitions.setdefault(old_key_fn(item[1]), []).append(item)
-            for item in remaining_new:
-                if reason is MatchReason.DESTINATION_USER_IDENTITY and (
-                    not item[1].username_is_explicit
-                    or item[1].identity_file_evidence.mode
-                    not in {
-                        IdentityFileEvidenceMode.EXPLICIT_NONE,
-                        IdentityFileEvidenceMode.EXPLICIT_FILES,
-                    }
-                ):
-                    continue
-                if reason is MatchReason.DESTINATION_USER and not item[
-                    1
-                ].username_is_explicit:
-                    continue
-                new_partitions.setdefault(new_key_fn(item[1]), []).append(item)
+            old_partitions = _partition(
+                remaining_old, lambda item: old_key_fn(item[1])
+            )
+            new_partitions = _partition(
+                remaining_new, lambda item: new_key_fn(item[1])
+            )
+            if reason is MatchReason.DESTINATION_USER_IDENTITY:
+                comparable_modes = {
+                    IdentityFileEvidenceMode.EXPLICIT_NONE,
+                    IdentityFileEvidenceMode.EXPLICIT_FILES,
+                }
+                old_partitions = {
+                    key: items
+                    for key, items in old_partitions.items()
+                    if all(
+                        item[1].projection.username_is_explicit
+                        and item[1].projection.identity_file_evidence.mode
+                        in comparable_modes
+                        for item in items
+                    )
+                }
+                new_partitions = {
+                    key: items
+                    for key, items in new_partitions.items()
+                    if all(
+                        item[1].username_is_explicit
+                        and item[1].identity_file_evidence.mode in comparable_modes
+                        for item in items
+                    )
+                }
+            elif reason is MatchReason.DESTINATION_USER:
+                old_partitions = {
+                    key: items
+                    for key, items in old_partitions.items()
+                    if all(item[1].projection.username_is_explicit for item in items)
+                }
+                new_partitions = {
+                    key: items
+                    for key, items in new_partitions.items()
+                    if all(item[1].username_is_explicit for item in items)
+                }
             for key in sorted(set(old_partitions) & set(new_partitions), key=repr):
-                paired = list(
-                    _pair_bucket(old_partitions[key], new_partitions[key], reason)
-                )
-                matches.extend(paired)
-                paired_old = {id(match.old) for match in paired}
-                paired_new = {id(match.new_projection) for match in paired}
+                old_candidates = old_partitions[key]
+                new_candidates = new_partitions[key]
+                if len(old_candidates) == 1 and len(new_candidates) == 1:
+                    old_index, old_entry = old_candidates[0]
+                    new_index, new_projection = new_candidates[0]
+                    matches.append(Match(old_entry, new_projection, reason))
+                    matched_old.add(old_index)
+                    matched_new.add(new_index)
+                else:
+                    ambiguous.append(_ambiguous(old_candidates, new_candidates))
+                    reserved_old.update(item[0] for item in old_candidates)
+                    reserved_new.update(item[0] for item in new_candidates)
+                old_ids = {item[0] for item in old_candidates}
+                new_ids = {item[0] for item in new_candidates}
                 remaining_old = [
-                    item for item in remaining_old if id(item[1]) not in paired_old
+                    item for item in remaining_old if item[0] not in old_ids
                 ]
                 remaining_new = [
-                    item for item in remaining_new if id(item[1]) not in paired_new
+                    item for item in remaining_new if item[0] not in new_ids
                 ]
-                for old_index, old_entry in old_partitions[key]:
-                    if id(old_entry) in paired_old:
-                        matched_old.add(old_index)
-                for new_index, new_projection in new_partitions[key]:
-                    if id(new_projection) in paired_new:
-                        matched_new.add(new_index)
-        paired = list(
-            _pair_bucket(
-                remaining_old,
-                remaining_new,
-                MatchReason.DESTINATION_ORDER_FALLBACK,
+        if len(remaining_old) == 1 and len(remaining_new) == 1:
+            old_index, old_entry = remaining_old[0]
+            new_index, new_projection = remaining_new[0]
+            matches.append(
+                Match(
+                    old_entry,
+                    new_projection,
+                    MatchReason.DESTINATION_UNIQUE_REMAINDER,
+                )
             )
-        )
-        matches.extend(paired)
-        for old_index, old_entry in remaining_old:
-            if any(match.old is old_entry for match in paired):
-                matched_old.add(old_index)
-        for new_index, new_projection in remaining_new:
-            if any(match.new_projection is new_projection for match in paired):
-                matched_new.add(new_index)
+            matched_old.add(old_index)
+            matched_new.add(new_index)
+        elif remaining_old and remaining_new:
+            ambiguous.append(_ambiguous(remaining_old, remaining_new))
+            reserved_old.update(item[0] for item in remaining_old)
+            reserved_new.update(item[0] for item in remaining_new)
 
+    resolved_old = matched_old | reserved_old
+    resolved_new = matched_new | reserved_new
     deleted = tuple(
-        entry for index, entry in active_old if index not in matched_old
+        entry for index, entry in active_old if index not in resolved_old
     )
     reserved_uuids = {entry.uuid for entry in old_entries}
     created_list = []
     for index, projection in enumerate(new_projections):
-        if index in matched_new:
+        if index in resolved_new:
             continue
         new_uuid = str(uuid_factory())
         if not new_uuid or new_uuid in reserved_uuids:
@@ -800,21 +834,33 @@ def reconcile_identities(
         )
     created = tuple(created_list)
     matches.sort(key=lambda match: (match.new_projection.declaration_order, match.new_projection.alias))
+    ambiguous.sort(
+        key=lambda item: (
+            _new_projection_sort_key(item.new[0]) if item.new else (0, "", ""),
+            _old_entry_sort_key(item.old[0]) if item.old else (0, "", "", ""),
+        )
+    )
     return ReconciliationResult(
         matched=tuple(matches),
         created=created,
         deleted=deleted,
-        ambiguous=(),
+        ambiguous=tuple(ambiguous),
     )
 
 
 def apply_reconciliation(result: ReconciliationResult) -> IdentityRegistry:
     """Build the next active registry, preserving metadata on matches.
 
-    Deleted entries are omitted from the active registry.  Callers may retain
+    Deleted entries are omitted from the active registry. Callers may retain
     them separately as tombstones for diagnostics, but the matcher never uses
-    those tombstones as future evidence.
+    those tombstones as future evidence. An unresolved ambiguity is not a
+    deletion or creation decision, so applying it is rejected explicitly.
     """
+
+    if result.ambiguous:
+        raise ValueError(
+            "cannot apply reconciliation with unresolved ambiguous identities"
+        )
 
     entries = [
         IdentityRegistryEntry(

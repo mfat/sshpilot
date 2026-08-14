@@ -5,8 +5,8 @@ Backend/core investigation only. No UI or frontend files were changed.
 ## 1. Baseline
 
 - Branch: `dev`.
-- Exact `dev` base SHA for this correction: `81e5ae5d9b8f85709373cac5f0668a8647e1c39d`.
-- The preceding implementation commit is `81e5ae5d9b8f85709373cac5f0668a8647e1c39d`; the
+- Exact `dev` base SHA for this correction: `6c7251dbfafd2825fe55b3f7f8c626737553eec8`.
+- The preceding implementation commit is `6c7251dbfafd2825fe55b3f7f8c626737553eec8`; the
   worktree was clean before this correction.
 - `git fetch` could not update `.git/FETCH_HEAD` because this checkout exposes
   `.git` read-only. `git ls-remote origin refs/heads/dev` independently
@@ -111,7 +111,7 @@ unavailable.
 | HostName percent tokens, including `%h` | DYNAMIC / RULE 2 DISABLED | host-dependent/runtime-dependent values are unavailable |
 | safe literal IdentityFile sequence | SAFE AS COLLISION TIE-BREAKER | raw ordered values only; never a destination anchor |
 | IdentityFile percent tokens or environment variables | DYNAMIC / RULE 2 DISABLED for Pass A | excluded from identity-file equality; User Pass B may remain available |
-| omitted User | SAFE ONLY FOR RULE 1 | local OS username is not durable evidence; two omitted users reach only order fallback |
+| omitted User | SAFE ONLY FOR RULE 1 | local OS username is not durable evidence; omitted users reach only the unique remainder rule |
 | explicit literal User | SAFE AS COLLISION TIE-BREAKER | used only in Pass A/B inside an already trusted destination group |
 | loader-expanded launch values | PARSER LIMITATION | retained for launching, never promoted to identity evidence |
 | HostName case, trailing dot, IPv6 spelling, DNS, `/etc/hosts` | OPEN DECISION | comparison remains literal; no network normalization |
@@ -154,8 +154,10 @@ safe values become `EXPLICIT_FILES`, and dynamic status remains `DYNAMIC`.
 For the regression collision, the old empty-tuple implementation paired by
 declaration order: `old-a(EXPLICIT_NONE)` could receive `new-b(UNSPECIFIED)`
 and `old-b(UNSPECIFIED)` could receive `new-a(EXPLICIT_NONE)`. With semantic
-modes, the result is `old-a -> new-a` with
-`DESTINATION_USER_IDENTITY`, and `old-b -> new-b` with `DESTINATION_USER`.
+modes, explicit-none candidates are compared only to explicit-none candidates;
+unspecified candidates do not strengthen Pass A. If a remaining User partition
+has multiple members, it is reported as one ambiguity rather than being zipped
+by declaration order.
 
 ## 4. Matching algorithm implemented
 
@@ -168,14 +170,21 @@ modes, the result is `old-a -> new-a` with
    invalid/out-of-range ports, dynamic tokens, Include/Match uncertainty, and
    repeated blocks have no Rule-2 anchor. Only Port is normalized; 22 is the
    default.
-5. Within each anchor, consume exact `(User, IdentityFile mode, ordered
+5. Within each anchor, inspect exact `(User, IdentityFile mode, ordered
    values)` partitions (`DESTINATION_USER_IDENTITY`) only for explicit static
-   modes, then User partitions
-   (`DESTINATION_USER`), then all remaining pairs by declaration/projection
-   order (`DESTINATION_ORDER_FALLBACK`).
-6. Remaining old entries are deletes. Remaining new entries receive injected
-   UUIDs and are creates. Tombstones never participate.
-7. Results expose matched/created/deleted/ambiguous and match reasons.
+   modes, then explicit User partitions (`DESTINATION_USER`). A partition is
+   consumed as a match only when it contains exactly one old and one new
+   member. A partition with multiple plausible members is reserved as one
+   `AMBIGUOUS` group and cannot fall through to a weaker pass.
+6. After stronger partitions are consumed, a destination with exactly one old
+   and one new remaining member is matched as
+   `DESTINATION_UNIQUE_REMAINDER`. Declaration order is not used to establish
+   that mapping. Multiple old/new remainders become one ambiguity group;
+   one-sided leftovers remain ordinary deletes or creates.
+7. Ambiguous old and new candidates are excluded from `deleted` and `created`.
+   Ordinary unmatched old entries are deletes; ordinary unmatched new entries
+   receive injected UUIDs and are creates. Tombstones never participate.
+8. Results expose matched/created/deleted/ambiguous and match reasons.
 
 Known in-app operations are a separate future path and should supply
 `EXPLICIT_IN_APP_CONTINUITY`; they should not be inferred after a typed rename.
@@ -185,7 +194,9 @@ Known in-app operations are a separate future path and should supply
 - Exact alias cannot be stolen by a collision group.
 - Matching is one-to-one; no old UUID or new projection is consumed twice.
 - Every new projection is matched, created, or explicitly ambiguous.
-- Every unmatched active old identity is deleted; tombstones are excluded.
+- Ambiguous old identities are not deleted and ambiguous new projections are
+  not created; the result is intentionally not an automatic state transition.
+- Every other unmatched active old identity is deleted; tombstones are excluded.
 - Source, unrelated directives, comments, formatting, and network state do not
   affect matching.
 - Hostname comparison is literal; only Port is normalized.
@@ -198,6 +209,10 @@ Known in-app operations are a separate future path and should supply
 - DisplayName follows UUID continuity and is not cleared by SSH directive edits.
 - Applying and serializing a result then reloading unchanged data is idempotent.
 - UUIDs are injected in tests and never derived from aliases.
+- Declaration/projection order may stabilize ambiguity presentation but never
+  maps one old UUID to one new projection.
+- `apply_reconciliation()` rejects results containing unresolved ambiguity
+  rather than silently dropping old identities or inventing new UUIDs.
 
 ## 6. Edge-case matrix
 
@@ -206,17 +221,21 @@ Known in-app operations are a separate future path and should supply
 | same alias, no change; HostName/Port/User/IdentityFile/unrelated change | exact alias preserves UUID | RESOLVED: exact-alias test |
 | same alias moved Include/source | exact alias; source ignored | RESOLVED: nested Include test |
 | alias rename, same destination | destination match | RESOLVED: anchor test |
-| rename + User changed | order fallback preserves UUID | RESOLVED + credential policy |
-| rename + identities changed | User/order pass preserves UUID | RESOLVED |
+| rename + User changed | User pass or unique remainder preserves UUID when unambiguous | RESOLVED + credential policy |
+| rename + identities changed | User pass or unique remainder preserves UUID when unambiguous | RESOLVED |
 | alias and destination changed | create/delete, no guess | RESOLVED |
 | rename with no HostName | anchor unavailable; create/delete | EXPLICIT POLICY: alias-as-destination is ambiguous |
 | missing Port vs 22; 022; non-default Port | 22 normalized; 022 parses as 22; other port literal | RESOLVED |
 | invalid/out-of-range Port | no trustworthy anchor; loader public field still falls back to 22 | EXISTING LOADER LIMITATION |
-| 1:1, 1:N, N:1, N:N collisions | deterministic consuming one-to-one passes | RESOLVED: parameter matrix |
-| same/different User and ordered identities | Pass A, B, C; no scoring | RESOLVED |
-| identical collision candidates | declaration order fallback; deterministic, not truth | OPEN DECISION |
+| 1:1 destination remainder | one possible mapping; `DESTINATION_UNIQUE_REMAINDER` | RESOLVED |
+| 1:N, N:1, N:N destination remainder | unresolved candidate set; no create/delete | RESOLVED: cardinality matrix |
+| same/different User and ordered identities | unique partitions match; duplicate partitions are reserved ambiguous | RESOLVED |
+| identical collision candidates | ambiguity group; no UUID transfer | RESOLVED: ambiguity policy |
+| duplicate User partition | one candidate set, not ordered member matches | RESOLVED |
+| duplicate User+Identity partition | one candidate set, not ordered member matches | RESOLVED |
+| strong unique match plus ambiguous remainder | strong match consumed; only remainder ambiguous | RESOLVED |
 | exact alias surviving collision | exact alias consumes first | RESOLVED |
-| declaration reorder | declaration order only fallback evidence | EXPLICIT POLICY |
+| declaration reorder | presentation order only; never identity evidence | RESOLVED: explicit ambiguity policy |
 | multi-token partial/complete rename | tokens are separate projections | RESOLVED: loader test |
 | wildcard/negated Host rules | rules, no saved UUIDs | RESOLVED |
 | repeated concrete alias | loader merges using its own semantics | EXISTING LOADER LIMITATION |
@@ -230,7 +249,7 @@ Known in-app operations are a separate future path and should supply
 | `%h` HostName and host-dependent IdentityFile | destination unavailable; dynamic identity files excluded from Pass A | RESOLVED |
 | `$HOME` and percent-token IdentityFiles | `DYNAMIC`; excluded from Pass A | RESOLVED |
 | persisted evidence with invalid trusted anchor or invalid IdentityFile mode | deserialization rejects it | RESOLVED |
-| omitted User vs explicit local username; both omitted | no local OS username evidence; both omitted reach order fallback only | RESOLVED |
+| omitted User vs explicit local username; both omitted | no local OS username evidence; only a unique remainder may match | RESOLVED |
 | case/trailing dot/IPv6/%h hostname forms | literal comparison | EXPLICIT POLICY |
 | raw editor rename | existing broad heuristic can migrate unique signature | EXISTING BEHAVIOR |
 | external rename while daemon runs | current path reports delete/create and loses visible alias metadata | BUG FOUND |
@@ -244,12 +263,14 @@ Known in-app operations are a separate future path and should supply
 
 ## 7. Open decisions
 
-### A. Totally indistinguishable collision
+### A. Totally indistinguishable collision — resolved policy
 
-The base algorithm uses declaration order as requested. This is deterministic
-bookkeeping, not evidence of truth. Recommendation: retain it only if product
-accepts that tradeoff; otherwise emit `AMBIGUOUS` and require confirmation.
-Automatic production migration is blocked until this is decided.
+Declaration order is not identity evidence. A 1:1 remainder is safe because
+there is only one possible mapping; any 1:N, N:1, or N:N candidate set is
+reported as `AMBIGUOUS`. Declaration/projection order may sort members for
+stable diagnostics, but it must never transfer a UUID. `apply_reconciliation()`
+rejects unresolved ambiguity. This is now an explicit product/architecture
+decision, not an open choice in the prototype.
 
 ### B. IdentityFile representation — decided for this prototype
 
@@ -392,26 +413,28 @@ ownership. No secret values appear in this prototype.
 
 ## 13. Test results
 
-Added `tests/core/test_connection_identity_reconciliation.py`: **106 passed**
-at the current checkpoint (the final validation count is recorded below).
+Added `tests/core/test_connection_identity_reconciliation.py`; the final
+validation count is recorded below. The suite now includes explicit ambiguity
+cardinality, partition reservation, input-order, apply-safety, and actual
+loader/restart cases.
 The existing focused suite remains **150 passed, 1 skipped**.
 
 Final gates:
 
 ```text
 pytest -q tests/architecture                 61 passed
-pytest -q tests/core                          589 passed, 1 skipped
+pytest -q tests/core                          598 passed, 1 skipped
 pytest -q tests/api                           650 passed
 pytest -q tests/daemon/test_config_reload.py tests/daemon/test_production_composition.py
                                              25 passed
-pytest -q <relevant loader/repository/editor/config tests> 175 passed, 1 skipped
+pytest -q <relevant loader/repository/editor/config tests> 138 passed, 1 skipped
 python3 scripts/generate_api_artifacts.py --check
 API artifacts are current.
 ruff check src/ tests/ scripts/generate_api_artifacts.py
 All checks passed.
 ```
 
-The final `pytest -q` run reached **4,775 passed, 29 skipped**, with **22
+The final `pytest -q` run reached **4,782 passed, 29 skipped**, with **24
 failures and 22 collection/setup errors**. These were outside the changed
 backend path: optional `mcp`/`trio` availability, easyenv plugin daemon
 settings, PTY/GTK stubs, daemon lifecycle/Xvfb cleanup, and existing terminal
@@ -428,23 +451,26 @@ artifact was changed.
 - this report
 
 No commit was created in this working session; the requested base remains
-`81e5ae5d9b8f85709373cac5f0668a8647e1c39d`.
+`6c7251dbfafd2825fe55b3f7f8c626737553eec8`.
 No GTK, UI, frontend, API wire model, secret-store, or generated file changed.
 
 ## 15. Recommendation
 
-The pure backend model is promising and restart-serializable, but external
-daemon reload is not wired to it, the production sidecar remains alias-keyed,
-the loader is not a complete OpenSSH effective-config evaluator, and the
-indistinguishable-collision policy is unresolved. Groups, tags, order, and
-display metadata cannot yet safely become UUID-owned in production.
+The pure backend model is restart-serializable and the indistinguishable
+collision policy is now explicit: declaration order never transfers UUIDs.
+External daemon reload is intentionally not wired in this prototype, the
+production sidecar remains alias-keyed, and the loader is not a complete
+OpenSSH effective-config evaluator. Those are productionization scope items,
+not unresolved member-matching policy. Groups, tags, order, and display
+metadata remain outside this task and must be migrated only after the UUID
+sidecar design is reviewed. UI remains out of scope.
 
-Remaining decisions are the collision ambiguity policy, UUID sidecar migration
-and crash recovery, parser semantic gaps outside the conservative safe subset,
-and public API compatibility planning. UI remains out of scope.
+Remaining decisions are UUID sidecar migration and crash recovery, parser
+semantic gaps outside the conservative safe subset, and public API
+compatibility planning. The collision ambiguity policy is resolved.
 
 The IdentityFile correctness issue is resolved in the prototype: semantic modes
 are distinct, dynamic evidence cannot strengthen Pass A, legacy empty evidence
 is decoded conservatively, and persisted evidence invariants are enforced.
 
-VERDICT: STATIC RECONCILIATION MODEL READY — EXPLICIT POLICY DECISIONS REMAIN
+VERDICT: RECONCILIATION PROTOTYPE COMPLETE — READY FOR PRODUCTION UUID PERSISTENCE DESIGN
