@@ -192,8 +192,12 @@ detection are central invariants. Arrays are retained where user order matters.
 * DisplayName is identity-owned and is not replaced by a later alias.
 * Groups and root order use typed references. Non-SSH IDs remain outside the
   SSH UUID namespace.
+* Placement preserves current service semantics: an active connection is in
+  one or more groups or appears exactly once in root order, never both. A
+  tombstone appears in neither. Multiple group membership remains allowed.
 * Metadata is keyed by UUID for SSH records. Non-SSH metadata remains keyed by
-  its protocol-local ID until a separate protocol-neutral migration.
+  its protocol-local ID until a separate protocol-neutral migration. Metadata
+  may remain attached to tombstones for historical identity safety.
 * \`legacy_orphans\` quarantines stale v1 references rather than silently
   dropping them or attaching them to a future alias.
 * \`pending_ambiguities\` records candidate sets and revision for diagnostics;
@@ -225,10 +229,17 @@ Policy:
 * Existing safe metadata with a non-empty string \`display_name\` bootstraps
   DisplayName; otherwise DisplayName is exactly the current alias. No pretty
   name is inferred from HostName.
-* Group/root aliases resolve to current SSH aliases and then to existing
-  non-SSH IDs. Duplicate refs are retained once with diagnostics.
+* Group/root aliases resolve only when the legacy string belongs to exactly one
+  namespace. If it is both an SSH alias and a non-SSH ID, the reference is
+  quarantined as a namespace collision. Duplicate refs are retained once with
+  diagnostics.
 * A stale group, root, or metadata alias becomes a \`legacy_orphans\` record.
-  It is not silently dropped and never resurrects a later identity.
+  It is not silently dropped and never resurrects a later identity. Group/root
+  orphans retain their original index, group ID, and source container length so
+  a future repair can restore ordering.
+* Group membership wins a v1 group/root conflict. Any active record absent from
+  both group and root is appended to root in current SSH projection order,
+  followed by existing non-SSH order.
 * Non-SSH records and safe metadata preserve their existing IDs.
 * A second startup sees v2 and does not rerun allocation. UUID collision or
   malformed input fails before a v2 write.
@@ -248,10 +259,10 @@ U1 / DisplayName Production Server / prod / server.example
 
 Groups, tags, pinned state, notes, and root UUID order do not change.
 
-Explicit typed deletion retires the UUID. The safe first production policy is a
-tombstone retained until explicit maintenance/purge, excluded from automatic
-reconciliation, and never eligible for UUID reuse. This favors safety over
-sidecar compactness; purge needs an explicit export/recovery protocol.
+Explicit typed deletion retires the UUID. Tombstones are retained indefinitely
+by default until a future explicit maintenance/purge operation, excluded from
+automatic reconciliation and active placement, and never eligible for UUID
+reuse. No age-based purge occurs. Historical metadata may remain attached.
 
 An external disappearance may become a tombstone only after the adapter has
 confirmed a normal deletion. Ambiguous old candidates remain active/pending.
@@ -277,6 +288,35 @@ being a UUID-owned app connection internally. A future explicit operation can
 supply continuity, deletion, or creation intent. Unchanged retries must produce
 the same candidate set. Never turn ambiguity into create/delete automatically.
 
+### Future backend resolution contract
+
+The future backend operation is conceptually
+\`ResolveConnectionIdentityAmbiguity\`. It is not a public API or UI operation
+in this phase. The isolated \`AmbiguityResolution\` validator models its
+guarded input:
+
+\`\`\`text
+expected_ssh_revision
+expected_sidecar_generation
+old_to_new: one-to-one (old UUID, new alias) mappings
+explicit_creates: unresolved aliases intentionally made new
+explicit_deletes: old UUIDs intentionally retired
+\`\`\`
+
+The request must account for every old UUID and every new alias in exactly one
+of those sets. Every old/new reference must belong to the same pending
+ambiguity; no UUID or alias may be reused. Revision or generation mismatch is
+a stable stale-state failure. A successful production adapter would apply the
+explicit choices, preserve DisplayName/metadata only for mapped UUIDs, clear
+that pending ambiguity, increment the sidecar generation, and never touch
+secrets. Ordering is never consulted.
+
+Pending ambiguity is revision-scoped. If a complete SSH configuration changes
+before resolution, the old diagnostic is not reused. The adapter reconciles the
+last committed UUID registry against the newest projections and replaces or
+clears pending diagnostics from that result. A stale ambiguity cannot block a
+later unambiguous configuration.
+
 ## 9. Startup, live reload, and raw editor
 
 ### Startup while stopped
@@ -296,6 +336,9 @@ the same candidate set. Never turn ambiguity into create/delete automatically.
 Missing v2 with no v1 starts empty under explicit current-configuration policy.
 A corrupt/unsupported v2 must not be replaced by an empty file: preserve it,
 load SSH for launch if safe, and report identity state unavailable pending repair.
+The stable backend state is conceptually \`SSH_STATE=AVAILABLE\` and
+\`IDENTITY_STATE=UNAVAILABLE_CORRUPT\`; UUID-owned metadata remains degraded
+until the sidecar is repaired.
 
 ### External edit while running
 
@@ -332,7 +375,8 @@ Recommended dual-resource protocol:
 
 1. record \`base_ssh_revision\` and sidecar generation;
 2. write/fsync a pending intent containing transaction ID, base revision, target
-   revision, operation kind, and a complete validated target state;
+   revision, base sidecar generation, operation label, and a complete validated
+   target state;
 3. write SSH with the existing expected-revision/atomic writer;
 4. fsync and commit sidecar target state with the new SSH revision;
 5. fsync parent and clear the pending intent atomically.
@@ -353,6 +397,10 @@ External edits have no application intent: config may arrive first and sidecar
 may lag. Startup/reload reconciles the actual source revision. Safe results
 update state; ambiguity never transfers ownership; transient empty/missing
 Includes use existing retry rather than tombstone resurrection.
+
+The pending transaction is a complete validated target snapshot, not a
+replayable mutation journal. Recovery depends on durable desired state plus
+revision rather than replaying old commands.
 
 Invariant:
 
@@ -394,9 +442,10 @@ revision now on disk. It does not use API generation as a filesystem lock.
 
 ## 13. Non-SSH, metadata, and secrets
 
-Non-SSH records remain protocol-local in this phase. Typed references make the
-boundary explicit; a later protocol-neutral layer can unify them after plugin
-contracts are audited.
+Non-SSH records remain protocol-local in the initial v2 production phase.
+Typed references make the boundary explicit; a later protocol-neutral layer can
+unify them after plugin contracts are audited. This is a deliberate phase
+boundary, not a blocker for SSH UUID persistence.
 
 | Current v1 field | v2 target | Rule |
 |---|---|---|
@@ -408,8 +457,8 @@ contracts are audited.
 | tags/pinned/notes/WoL and other existing safe fields | UUID metadata | migrate only fields actually present and safe |
 
 The current secret provider uses alias/host/user-shaped lookup candidates. This
-design changes no secret key or lookup. Future work must explicitly decide
-whether credentials follow UUID, destination, host/user, or confirmation.
+design changes no secret key or lookup. Credential continuity is deferred to a
+separate security design and does not block initial v2 persistence.
 
 \`\`\`text
 UUID/app metadata continuity != credential continuity
@@ -433,9 +482,10 @@ frontend IDs remain alias-compatible now. Safe sequence:
 
 Never give \`id\` dual semantics. Whether a wire version/capability bump is
 needed depends on compatibility testing; old clients must never interpret a UUID
-as an SSH alias. No DTO or codec changes are made here.
+as an SSH alias. This is a later API phase and does not block initial internal
+UUID persistence. No DTO or codec changes are made here.
 
-## 15. Prototype, tests, and unresolved decisions
+## 15. Prototype, tests, and policy status
 
 Added:
 
@@ -445,21 +495,27 @@ Added:
 * \`tests/core/test_connection_identity_state_v2.py\`: migration preservation,
   stale/duplicate handling, strict refs, JSON round-trip, factory collision,
   actual-loader restart rename, restart ambiguity, tombstone alias reuse, and
-  conservative legacy evidence decoding.
+  conservative legacy evidence decoding; pending ambiguity referential
+  integrity; tombstone placement; root/group normalization; orphan ordering;
+  namespace collisions; strict metadata; and guarded resolution accounting.
 
 The loader integration tests call \`load_ssh_configuration()\` and
 \`ConnectionIdentityProjection.from_record()\` before serializing and
 deserializing state; they are not disconnected toy-model tests.
 
-Before production implementation, decide:
+The following policies are resolved for initial sidecar implementation:
 
-1. tombstone retention and purge/recovery UX;
-2. explicit operation for resolving pending ambiguity;
-3. complete target snapshot versus replayable pending journal;
-4. daemon/API surface for corrupt v2 state;
-5. non-SSH identity unification;
-6. credential continuity/security policy;
-7. public API capability/version compatibility details.
+1. tombstones are retained indefinitely until explicit purge;
+2. pending transactions contain complete validated target snapshots;
+3. corrupt v2 is preserved, SSH remains usable where possible, and identity
+   state is degraded/unavailable;
+4. non-SSH IDs remain protocol-local;
+5. credential continuity is separate and deferred;
+6. public API UUID migration is a later phase with distinct fields.
+
+The only future consumer-specific interaction is the explicit backend
+ambiguity-resolution operation described above; it has a defined revision,
+generation, one-to-one, and complete-accounting contract.
 
 ## 16. Recommended implementation sequence
 
@@ -478,11 +534,10 @@ No phase authorizes UI work in this task.
 
 ## Recommendation
 
-The schema, strict invariants, migration, restart evidence, and ambiguity
-boundary are coherent and ready to inform implementation. Production sidecar
-wiring should begin only after the listed tombstone, ambiguity-resolution,
-pending-intent, corruption-surface, API-compatibility, and credential-policy
-decisions are recorded and approved.
+The schema, strict invariants, migration, restart evidence, ambiguity boundary,
+resolved tombstone/transaction/corruption policies, and deferred phase
+boundaries are coherent. Production sidecar implementation may proceed, while
+the production adapter must preserve the explicit ambiguity-resolution contract
+and remain separate from public API, UI, and secret migration.
 
-**VERDICT: UUID PERSISTENCE DESIGN NOT READY — EXPLICIT DECISIONS REQUIRED**
-
+**VERDICT: UUID PERSISTENCE DESIGN READY — PROCEED TO PRODUCTION SIDECAR IMPLEMENTATION**

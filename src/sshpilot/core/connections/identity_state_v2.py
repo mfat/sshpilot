@@ -237,6 +237,9 @@ class LegacyOrphan:
     alias: str
     group_id: Optional[str] = None
     values: Mapping[str, Any] = field(default_factory=dict)
+    original_index: Optional[int] = None
+    original_container_length: Optional[int] = None
+    reason: str = "stale_reference"
 
     def __post_init__(self) -> None:
         if self.kind not in {"group_member", "root_connection", "metadata"}:
@@ -245,6 +248,27 @@ class LegacyOrphan:
             raise ValueError("legacy orphan alias must be non-empty")
         if self.group_id is not None and type(self.group_id) is not str:
             raise TypeError("legacy orphan group id must be a string or null")
+        if type(self.reason) is not str or not self.reason.strip():
+            raise ValueError("legacy orphan reason must be non-empty")
+        if self.original_index is not None and (
+            type(self.original_index) is not int or self.original_index < 0
+        ):
+            raise ValueError("legacy orphan index must be non-negative or null")
+        if self.original_container_length is not None and (
+            type(self.original_container_length) is not int
+            or self.original_container_length <= 0
+        ):
+            raise ValueError("legacy orphan container length must be positive or null")
+        if (
+            self.original_index is not None
+            and self.original_container_length is not None
+            and self.original_index >= self.original_container_length
+        ):
+            raise ValueError("legacy orphan index must be inside its container")
+        if self.kind != "group_member" and self.group_id is not None:
+            raise ValueError("only group-member orphans may have a group id")
+        if not isinstance(self.values, Mapping):
+            raise TypeError("legacy orphan values must be an object")
         object.__setattr__(self, "values", validate_safe_metadata(self.values))
 
     def to_dict(self) -> Mapping[str, Any]:
@@ -252,18 +276,31 @@ class LegacyOrphan:
             "kind": self.kind,
             "alias": self.alias,
             "values": dict(self.values),
+            "reason": self.reason,
         }
         if self.group_id is not None:
             payload["group_id"] = self.group_id
+        if self.original_index is not None:
+            payload["original_index"] = self.original_index
+        if self.original_container_length is not None:
+            payload["original_container_length"] = self.original_container_length
         return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "LegacyOrphan":
+        if not isinstance(payload, Mapping):
+            raise TypeError("legacy orphan must be an object")
+        values = payload.get("values", {})
+        if not isinstance(values, Mapping):
+            raise TypeError("legacy orphan values must be an object")
         return cls(
             kind=payload.get("kind", ""),
             alias=payload.get("alias", ""),
             group_id=payload.get("group_id"),
-            values=payload.get("values", {}),
+            values=values,
+            original_index=payload.get("original_index"),
+            original_container_length=payload.get("original_container_length"),
+            reason=payload.get("reason", "stale_reference"),
         )
 
 
@@ -276,17 +313,22 @@ class PendingAmbiguity:
     def __post_init__(self) -> None:
         if type(self.ssh_config_revision) is not str or not self.ssh_config_revision:
             raise ValueError("pending ambiguity needs an SSH revision")
-        if type(self.old_uuids) is not tuple or len(set(self.old_uuids)) != len(self.old_uuids):
+        if type(self.old_uuids) is not tuple or not self.old_uuids:
+            raise ValueError("pending ambiguity needs old UUID candidates")
+        if len(set(self.old_uuids)) != len(self.old_uuids):
             raise ValueError("pending ambiguity UUIDs must be a unique tuple")
         for identity_uuid in self.old_uuids:
             canonical_uuid(identity_uuid)
-        if type(self.new_projections) is not tuple:
-            raise TypeError("pending ambiguity projections must be a tuple")
+        if type(self.new_projections) is not tuple or not self.new_projections:
+            raise ValueError("pending ambiguity needs new projections")
         if any(
             not isinstance(projection, ConnectionIdentityProjection)
             for projection in self.new_projections
         ):
             raise TypeError("pending ambiguity projections must be projections")
+        aliases = [projection.alias for projection in self.new_projections]
+        if len(aliases) != len(set(aliases)):
+            raise ValueError("pending ambiguity aliases must be unique")
 
     def to_dict(self) -> Mapping[str, Any]:
         return {
@@ -300,6 +342,8 @@ class PendingAmbiguity:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "PendingAmbiguity":
+        if not isinstance(payload, Mapping):
+            raise TypeError("pending ambiguity must be an object")
         raw_projections = payload.get("new_projections", [])
         if not isinstance(raw_projections, list):
             raise TypeError("pending ambiguity projections must be an array")
@@ -310,6 +354,94 @@ class PendingAmbiguity:
                 _projection_from_dict(item) for item in raw_projections
             ),
         )
+
+
+@dataclass(frozen=True)
+class AmbiguityResolution:
+    """Ephemeral, revision-guarded backend resolution request.
+
+    This is intentionally not a public API DTO or a durable journal. It
+    validates the complete user decision before a future production adapter
+    constructs and commits a new ``IdentityStateV2`` snapshot.
+    """
+
+    expected_ssh_revision: str
+    expected_sidecar_generation: int
+    old_to_new: Tuple[Tuple[str, str], ...] = ()
+    explicit_creates: Tuple[str, ...] = ()
+    explicit_deletes: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.expected_ssh_revision) is not str or not self.expected_ssh_revision:
+            raise ValueError("ambiguity resolution needs an SSH revision")
+        if type(self.expected_sidecar_generation) is not int or (
+            self.expected_sidecar_generation < 0
+        ):
+            raise ValueError("ambiguity resolution needs a valid sidecar generation")
+        if type(self.old_to_new) is not tuple:
+            raise TypeError("ambiguity mappings must be a tuple")
+        old_uuids = [old_uuid for old_uuid, _ in self.old_to_new]
+        new_aliases = [new_alias for _, new_alias in self.old_to_new]
+        if len(old_uuids) != len(set(old_uuids)):
+            raise ValueError("an old UUID may be mapped once")
+        if len(new_aliases) != len(set(new_aliases)):
+            raise ValueError("a new alias may be mapped once")
+        for old_uuid, new_alias in self.old_to_new:
+            canonical_uuid(old_uuid)
+            if type(new_alias) is not str or not new_alias:
+                raise ValueError("mapped aliases must be non-empty strings")
+        for aliases, label in (
+            (self.explicit_creates, "created aliases"),
+            (self.explicit_deletes, "deleted UUIDs"),
+        ):
+            if type(aliases) is not tuple:
+                raise TypeError(f"{label} must be a tuple")
+            if len(aliases) != len(set(aliases)):
+                raise ValueError(f"{label} must be unique")
+        for alias in self.explicit_creates:
+            if type(alias) is not str or not alias:
+                raise ValueError("created aliases must be non-empty strings")
+        for identity_uuid in self.explicit_deletes:
+            canonical_uuid(identity_uuid)
+        if set(old_uuids) & set(self.explicit_deletes):
+            raise ValueError("an old UUID cannot be mapped and explicitly deleted")
+        if set(new_aliases) & set(self.explicit_creates):
+            raise ValueError("an alias cannot be mapped and explicitly created")
+
+
+def validate_ambiguity_resolution(
+    state: "IdentityStateV2",
+    resolution: AmbiguityResolution,
+) -> PendingAmbiguity:
+    """Validate a complete decision against one current pending ambiguity.
+
+    The function has no mutation or persistence side effect. A production
+    adapter can use the returned ambiguity to build a new validated snapshot,
+    increment the sidecar generation, and clear that ambiguity.
+    """
+
+    if not isinstance(state, IdentityStateV2):
+        raise TypeError("ambiguity resolution needs IdentityStateV2")
+    if not isinstance(resolution, AmbiguityResolution):
+        raise TypeError("ambiguity resolution has an invalid type")
+    if state.observed_ssh_revision != resolution.expected_ssh_revision:
+        raise ValueError("stale SSH revision for ambiguity resolution")
+    if state.sidecar_generation != resolution.expected_sidecar_generation:
+        raise ValueError("stale sidecar generation for ambiguity resolution")
+    mapped_old = {old_uuid for old_uuid, _ in resolution.old_to_new}
+    mapped_new = {new_alias for _, new_alias in resolution.old_to_new}
+    requested_old = mapped_old | set(resolution.explicit_deletes)
+    requested_new = mapped_new | set(resolution.explicit_creates)
+    candidates = [
+        ambiguity
+        for ambiguity in state.pending_ambiguities
+        if ambiguity.ssh_config_revision == resolution.expected_ssh_revision
+        and requested_old == set(ambiguity.old_uuids)
+        and requested_new == {item.alias for item in ambiguity.new_projections}
+    ]
+    if len(candidates) != 1:
+        raise ValueError("resolution must account for exactly one pending ambiguity")
+    return candidates[0]
 
 
 @dataclass(frozen=True)
@@ -334,12 +466,26 @@ class IdentityStateV2:
             raise ValueError("unsupported identity state version")
         if type(self.sidecar_generation) is not int or self.sidecar_generation < 0:
             raise ValueError("sidecar generation must be non-negative")
+        if type(self.identities) is not tuple or any(
+            not isinstance(identity, PersistedIdentity) for identity in self.identities
+        ):
+            raise TypeError("identities must be PersistedIdentity values")
         identities = [identity.uuid for identity in self.identities]
         if len(set(identities)) != len(identities):
             raise ValueError("identity UUIDs must be unique")
+        identity_by_uuid = {identity.uuid: identity for identity in self.identities}
+        active_ssh_ids = {
+            identity_uuid
+            for identity_uuid, identity in identity_by_uuid.items()
+            if not identity.tombstone
+        }
         group_ids = [group.id for group in self.groups]
         if len(set(group_ids)) != len(group_ids):
             raise ValueError("group IDs must be unique")
+        if type(self.groups) is not tuple or any(
+            not isinstance(group, UuidGroupState) for group in self.groups
+        ):
+            raise TypeError("groups must be UuidGroupState values")
         ssh_ids = set(identities)
         non_ssh_ids: set[str] = set()
         for item in self.non_ssh_connections:
@@ -357,11 +503,21 @@ class IdentityStateV2:
             raise ValueError("root connection references must be unique")
         for reference in self.root_connections:
             self._validate_reference(reference, ssh_ids, non_ssh_ids)
+            if reference.kind is ReferenceKind.SSH_UUID and identity_by_uuid[
+                reference.value
+            ].tombstone:
+                raise ValueError("tombstoned identities cannot be root connections")
+        grouped_references: set[ConnectionReference] = set()
         for group in self.groups:
             if group.parent_id is not None and group.parent_id not in set(group_ids):
                 raise ValueError("group parent must reference an existing group")
             for reference in group.members:
                 self._validate_reference(reference, ssh_ids, non_ssh_ids)
+                grouped_references.add(reference)
+                if reference.kind is ReferenceKind.SSH_UUID and identity_by_uuid[
+                    reference.value
+                ].tombstone:
+                    raise ValueError("tombstoned identities cannot be group members")
         for group in self.groups:
             seen: set[str] = set()
             parent = group.parent_id
@@ -374,17 +530,70 @@ class IdentityStateV2:
                     for candidate in self.groups
                     if candidate.id == parent
                 )
+        root_references = set(self.root_connections)
+        all_active_references = {
+            ConnectionReference(ReferenceKind.SSH_UUID, identity_uuid)
+            for identity_uuid in active_ssh_ids
+        } | {
+            ConnectionReference(ReferenceKind.NON_SSH_ID, connection_id)
+            for connection_id in non_ssh_ids
+        }
+        if grouped_references & root_references:
+            raise ValueError("grouped connections cannot also be root connections")
+        if all_active_references - grouped_references - root_references:
+            raise ValueError("every ungrouped active connection needs root placement")
+        if not isinstance(self.metadata, Mapping):
+            raise TypeError("metadata must be a mapping")
         for identity_uuid, values in self.metadata.items():
+            if type(identity_uuid) is not str:
+                raise TypeError("metadata UUID keys must be strings")
             canonical_uuid(identity_uuid)
             if identity_uuid not in ssh_ids:
                 raise ValueError("metadata must reference an existing SSH UUID")
+            if not isinstance(values, Mapping):
+                raise TypeError("metadata values must be objects")
             validate_safe_metadata(values)
+        if not isinstance(self.non_ssh_metadata, Mapping):
+            raise TypeError("non-SSH metadata must be a mapping")
         for connection_id, values in self.non_ssh_metadata.items():
             if type(connection_id) is not str or not connection_id:
                 raise ValueError("non-SSH metadata IDs must be non-empty")
             if connection_id not in non_ssh_ids:
                 raise ValueError("non-SSH metadata must reference an existing connection")
+            if not isinstance(values, Mapping):
+                raise TypeError("non-SSH metadata values must be objects")
             validate_safe_metadata(values)
+        if type(self.pending_ambiguities) is not tuple or any(
+            not isinstance(item, PendingAmbiguity)
+            for item in self.pending_ambiguities
+        ):
+            raise TypeError("pending ambiguities must be PendingAmbiguity values")
+        pending_old: set[str] = set()
+        pending_aliases: set[str] = set()
+        active_aliases = {
+            identity.projection.alias
+            for identity in self.identities
+            if not identity.tombstone
+        }
+        for ambiguity in self.pending_ambiguities:
+            for identity_uuid in ambiguity.old_uuids:
+                if identity_uuid not in active_ssh_ids:
+                    raise ValueError(
+                        "pending ambiguity must reference an active SSH UUID"
+                    )
+                if identity_uuid in pending_old:
+                    raise ValueError("an old UUID may appear in one ambiguity only")
+                pending_old.add(identity_uuid)
+            for projection in ambiguity.new_projections:
+                if projection.alias in pending_aliases:
+                    raise ValueError(
+                        "an unresolved alias may appear in one ambiguity only"
+                    )
+                if projection.alias in active_aliases:
+                    raise ValueError(
+                        "pending ambiguity alias already belongs to an active identity"
+                    )
+                pending_aliases.add(projection.alias)
         if self.last_reconciled_ssh_revision is not None and not isinstance(
             self.last_reconciled_ssh_revision, str
         ):
@@ -446,6 +655,8 @@ class IdentityStateV2:
         raw_identities = payload.get("identities", {})
         if not isinstance(raw_identities, Mapping):
             raise TypeError("identities must be a UUID-keyed object")
+        if any(not isinstance(entry, Mapping) for entry in raw_identities.values()):
+            raise TypeError("identity entries must be objects")
         identities = tuple(
             PersistedIdentity.from_dict(identity_uuid, entry)
             for identity_uuid, entry in raw_identities.items()
@@ -460,6 +671,16 @@ class IdentityStateV2:
             raw_non_ssh_metadata, Mapping
         ):
             raise TypeError("metadata containers must be objects")
+        if any(
+            type(key) is not str or not isinstance(value, Mapping)
+            for key, value in raw_metadata.items()
+        ):
+            raise TypeError("metadata values must be objects with string keys")
+        if any(
+            type(key) is not str or not isinstance(value, Mapping)
+            for key, value in raw_non_ssh_metadata.items()
+        ):
+            raise TypeError("non-SSH metadata values must be objects with string keys")
         raw_non_ssh = payload.get("non_ssh_connections", [])
         if not isinstance(raw_non_ssh, list):
             raise TypeError("non-SSH connections must be an array")
@@ -473,14 +694,13 @@ class IdentityStateV2:
             root_connections=tuple(
                 ConnectionReference.from_dict(item) for item in raw_root
             ),
-            metadata={str(key): dict(value) for key, value in raw_metadata.items()},
+            metadata={key: dict(value) for key, value in raw_metadata.items()},
             non_ssh_connections=tuple(
                 dict(item) if isinstance(item, Mapping) else item
                 for item in raw_non_ssh
             ),
             non_ssh_metadata={
-                str(key): dict(value)
-                for key, value in raw_non_ssh_metadata.items()
+                key: dict(value) for key, value in raw_non_ssh_metadata.items()
             },
             legacy_orphans=tuple(LegacyOrphan.from_dict(item) for item in raw_orphans),
             pending_ambiguities=tuple(
@@ -501,6 +721,9 @@ class MigrationReport:
     non_ssh_preserved: int = 0
     stale_references_quarantined: int = 0
     duplicate_references_deduplicated: int = 0
+    placement_conflicts_resolved: int = 0
+    unplaced_connections_appended: int = 0
+    namespace_collisions_quarantined: int = 0
 
 
 def _unique_uuid(factory: Callable[[], str], used: set[str]) -> str:
@@ -534,11 +757,15 @@ def migrate_v1_state(
         if projection.alias in projection_by_alias:
             raise ValueError("current SSH projections contain duplicate aliases")
         projection_by_alias[projection.alias] = projection
-    non_ssh_ids = {
-        str(item.get("id") or item.get("nickname") or "")
-        for item in state.non_ssh_connections
-        if item.get("id") or item.get("nickname")
-    }
+    non_ssh_ids = []
+    for item in state.non_ssh_connections:
+        connection_id = item.get("id") or item.get("nickname")
+        if connection_id:
+            if connection_id in non_ssh_ids:
+                raise ValueError("non-SSH connection IDs must be unique")
+            non_ssh_ids.append(connection_id)
+    non_ssh_id_set = set(non_ssh_ids)
+    namespace_collisions = set(projection_by_alias) & non_ssh_id_set
     used: set[str] = set()
     identities = []
     uuid_by_alias: dict[str, str] = {}
@@ -557,30 +784,76 @@ def migrate_v1_state(
     duplicate_count = 0
     stale_count = 0
 
+    def quarantine(
+        *,
+        kind: str,
+        alias: str,
+        group_id: Optional[str],
+        original_index: Optional[int],
+        original_container_length: Optional[int],
+        reason: str,
+        values: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        nonlocal stale_count
+        stale_count += 1
+        orphans.append(
+            LegacyOrphan(
+                kind=kind,
+                alias=alias,
+                group_id=group_id,
+                values=values or {},
+                original_index=original_index,
+                original_container_length=original_container_length,
+                reason=reason,
+            )
+        )
+
     def resolve_reference(
         alias: str,
         *,
         orphan_kind: str,
         group_id: Optional[str] = None,
+        original_index: Optional[int],
+        original_container_length: Optional[int],
+        values: Optional[Mapping[str, Any]] = None,
     ) -> Optional[ConnectionReference]:
-        nonlocal stale_count
+        if alias in namespace_collisions:
+            quarantine(
+                kind=orphan_kind,
+                alias=alias,
+                group_id=group_id,
+                original_index=original_index,
+                original_container_length=original_container_length,
+                reason="namespace_collision",
+                values=values,
+            )
+            return None
         if alias in uuid_by_alias:
             return ConnectionReference(ReferenceKind.SSH_UUID, uuid_by_alias[alias])
-        if alias in non_ssh_ids:
+        if alias in non_ssh_id_set:
             return ConnectionReference(ReferenceKind.NON_SSH_ID, alias)
-        stale_count += 1
-        orphans.append(LegacyOrphan(orphan_kind, alias, group_id))
+        quarantine(
+            kind=orphan_kind,
+            alias=alias,
+            group_id=group_id,
+            original_index=original_index,
+            original_container_length=original_container_length,
+            reason="stale_reference",
+            values=values,
+        )
         return None
 
     groups = []
     for group in state.groups:
         members = []
         seen = set()
-        for alias in group.connection_ids:
+        for index, alias in enumerate(group.connection_ids):
             reference = resolve_reference(
                 alias,
                 orphan_kind="group_member",
                 group_id=group.id,
+                original_index=index,
+                original_container_length=len(group.connection_ids),
             )
             if reference is None:
                 continue
@@ -602,9 +875,20 @@ def migrate_v1_state(
 
     root = []
     seen_root = set()
-    for alias in state.root_connections:
-        reference = resolve_reference(alias, orphan_kind="root_connection")
+    grouped_references = {member for group in groups for member in group.members}
+    placement_conflicts = 0
+    for index, alias in enumerate(state.root_connections):
+        reference = resolve_reference(
+            alias,
+            orphan_kind="root_connection",
+            original_index=index,
+            original_container_length=len(state.root_connections),
+        )
         if reference is None:
+            continue
+        if reference in grouped_references:
+            placement_conflicts += 1
+            duplicate_count += 1
             continue
         if reference in seen_root:
             duplicate_count += 1
@@ -615,15 +899,49 @@ def migrate_v1_state(
     metadata: dict[str, Mapping[str, Any]] = {}
     non_ssh_metadata: dict[str, Mapping[str, Any]] = {}
     for alias, values in state.metadata.items():
+        if alias in namespace_collisions:
+            quarantine(
+                kind="metadata",
+                alias=alias,
+                group_id=None,
+                original_index=None,
+                original_container_length=None,
+                reason="namespace_collision",
+                values=values,
+            )
+            continue
         if alias in uuid_by_alias:
             identity_uuid = uuid_by_alias[alias]
             metadata[identity_uuid] = validate_safe_metadata(values)
             continue
-        if alias in non_ssh_ids:
+        if alias in non_ssh_id_set:
             non_ssh_metadata[alias] = validate_safe_metadata(values)
             continue
-        stale_count += 1
-        orphans.append(LegacyOrphan("metadata", alias, values=values))
+        quarantine(
+            kind="metadata",
+            alias=alias,
+            group_id=None,
+            original_index=None,
+            original_container_length=None,
+            reason="stale_reference",
+            values=values,
+        )
+
+    grouped = grouped_references
+    root_set = set(root)
+    active_references = [
+        ConnectionReference(ReferenceKind.SSH_UUID, uuid_by_alias[projection.alias])
+        for projection in projections
+    ] + [
+        ConnectionReference(ReferenceKind.NON_SSH_ID, connection_id)
+        for connection_id in non_ssh_ids
+    ]
+    unplaced = [
+        reference
+        for reference in active_references
+        if reference not in grouped and reference not in root_set
+    ]
+    root.extend(unplaced)
 
     # An existing safe metadata display_name is an explicit bootstrap name;
     # otherwise the alias is the only honest initial name.
@@ -662,4 +980,7 @@ def migrate_v1_state(
         non_ssh_preserved=len(state.non_ssh_connections),
         stale_references_quarantined=stale_count,
         duplicate_references_deduplicated=duplicate_count,
+        placement_conflicts_resolved=placement_conflicts,
+        unplaced_connections_appended=len(unplaced),
+        namespace_collisions_quarantined=len(namespace_collisions),
     )

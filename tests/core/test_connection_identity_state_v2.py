@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,12 +16,16 @@ from sshpilot.core.connections.identity_reconciliation import (
     reconcile_identities,
 )
 from sshpilot.core.connections.identity_state_v2 import (
+    AmbiguityResolution,
     ConnectionReference,
     IdentityStateV2,
+    LegacyOrphan,
+    PendingAmbiguity,
     PersistedIdentity,
     ReferenceKind,
     UuidGroupState,
     migrate_v1_state,
+    validate_ambiguity_resolution,
 )
 from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
 from sshpilot.core.connections.state_file import ConnectionFileState, GroupFileState
@@ -43,6 +48,44 @@ def projection(alias: str, *, order: int = 0, host: str = "server.example"):
         username_literal="deploy",
         username_is_explicit=True,
         identity_file_evidence=IdentityFileEvidence.unspecified(),
+    )
+
+
+def state_with_identities(
+    identities=(U1,),
+    *,
+    tombstones=(),
+    groups=(),
+    root=None,
+    non_ssh=(),
+    pending=(),
+    observed_revision="rev-1",
+):
+    persisted = tuple(
+        PersistedIdentity(
+            identity_uuid,
+            identity_uuid,
+            projection(identity_uuid, order=index),
+            tombstone=identity_uuid in tombstones,
+        )
+        for index, identity_uuid in enumerate(identities)
+    )
+    group_values = tuple(groups)
+    grouped = {member for group in group_values for member in group.members}
+    if root is None:
+        root = tuple(
+            ConnectionReference(ReferenceKind.SSH_UUID, identity_uuid)
+            for identity_uuid in identities
+            if identity_uuid not in tombstones
+            and ConnectionReference(ReferenceKind.SSH_UUID, identity_uuid) not in grouped
+        )
+    return IdentityStateV2(
+        identities=persisted,
+        groups=group_values,
+        root_connections=tuple(root),
+        non_ssh_connections=tuple(non_ssh),
+        pending_ambiguities=tuple(pending),
+        observed_ssh_revision=observed_revision,
     )
 
 
@@ -74,10 +117,7 @@ def test_v1_migration_preserves_app_state_and_quarantines_stale_references():
     assert [identity.uuid for identity in migrated.identities] == [U1]
     assert migrated.identities[0].display_name == "Alpha server"
     assert migrated.metadata[U1] == {"pinned": True}
-    assert migrated.root_connections == (
-        ConnectionReference(ReferenceKind.NON_SSH_ID, "serial-1"),
-        ConnectionReference(ReferenceKind.SSH_UUID, U1),
-    )
+    assert migrated.root_connections == ()
     assert [member.value for member in migrated.groups[0].members] == [
         U1,
         "serial-1",
@@ -88,8 +128,9 @@ def test_v1_migration_preserves_app_state_and_quarantines_stale_references():
         ("root_connection", "missing"),
         ("metadata", "missing"),
     ]
-    assert report.duplicate_references_deduplicated == 1
+    assert report.duplicate_references_deduplicated == 3
     assert report.stale_references_quarantined == 3
+    assert report.placement_conflicts_resolved == 2
 
 
 def test_v2_round_trip_preserves_typed_references_and_projection_evidence():
@@ -104,7 +145,7 @@ def test_v2_round_trip_preserves_typed_references_and_projection_evidence():
                 members=(ConnectionReference(ReferenceKind.SSH_UUID, U1),),
             ),
         ),
-        root_connections=(ConnectionReference(ReferenceKind.SSH_UUID, U1),),
+        root_connections=(),
         metadata={U1: {"pinned": True}},
         sidecar_generation=3,
         last_reconciled_ssh_revision="rev-1",
@@ -295,3 +336,209 @@ def test_legacy_empty_identity_evidence_is_weaker_not_explicit_none():
         restored.entries[0].projection.identity_file_evidence.mode
         is IdentityFileEvidenceMode.UNSPECIFIED
     )
+
+
+def test_pending_ambiguity_requires_non_empty_unique_candidates():
+    with pytest.raises(ValueError, match="old UUID"):
+        PendingAmbiguity("rev-1", (), (projection("new-a"),))
+    with pytest.raises(ValueError, match="new projections"):
+        PendingAmbiguity("rev-1", (U1,), ())
+    with pytest.raises(ValueError, match="unique tuple"):
+        PendingAmbiguity("rev-1", (U1, U1), (projection("new-a"),))
+    with pytest.raises(ValueError, match="aliases must be unique"):
+        PendingAmbiguity("rev-1", (U1,), (projection("new-a"), projection("new-a")))
+
+
+def test_pending_ambiguity_requires_active_known_old_uuids_and_unique_global_sets():
+    pending = PendingAmbiguity("rev-1", (U1,), (projection("new-a"),))
+    payload = state_with_identities(pending=(pending,)).to_dict()
+    payload["pending_ambiguities"][0]["old_uuids"] = [U2]
+    with pytest.raises(ValueError, match="active SSH UUID"):
+        IdentityStateV2.from_dict(payload)
+
+    tombstone_state = state_with_identities(tombstones=(U1,))
+    tombstone_payload = tombstone_state.to_dict()
+    tombstone_payload["pending_ambiguities"] = [pending.to_dict()]
+    with pytest.raises(ValueError, match="active SSH UUID"):
+        IdentityStateV2.from_dict(tombstone_payload)
+
+    with pytest.raises(ValueError, match="one ambiguity only"):
+        state_with_identities(
+            identities=(U1, U2),
+            pending=(
+                PendingAmbiguity("rev-1", (U1,), (projection("new-a"),)),
+                PendingAmbiguity("rev-1", (U1,), (projection("new-b"),)),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="one ambiguity only"):
+        state_with_identities(
+            identities=(U1, U2),
+            pending=(
+                PendingAmbiguity("rev-1", (U1,), (projection("new-a"),)),
+                PendingAmbiguity("rev-1", (U2,), (projection("new-a"),)),
+            ),
+        )
+
+
+def test_tombstones_are_not_placement_references_but_may_retain_metadata():
+    tombstone_ref = ConnectionReference(ReferenceKind.SSH_UUID, U1)
+    with pytest.raises(ValueError, match="tombstoned identities"):
+        IdentityStateV2(
+            identities=(PersistedIdentity(U1, "Alpha", projection("alpha"), True, 1),),
+            root_connections=(tombstone_ref,),
+        )
+    with pytest.raises(ValueError, match="tombstoned identities"):
+        IdentityStateV2(
+            identities=(PersistedIdentity(U1, "Alpha", projection("alpha"), True, 1),),
+            groups=(UuidGroupState("work", "Work", (tombstone_ref,)),),
+        )
+    state = IdentityStateV2(
+        identities=(PersistedIdentity(U1, "Alpha", projection("alpha"), True, 1),),
+        metadata={U1: {"historical": True}},
+    )
+    assert state.metadata[U1] == {"historical": True}
+
+
+def test_v2_rejects_group_root_conflict_and_invalid_tombstone_placement():
+    reference = ConnectionReference(ReferenceKind.SSH_UUID, U1)
+    with pytest.raises(ValueError, match="grouped connections"):
+        IdentityStateV2(
+            identities=(PersistedIdentity(U1, "Alpha", projection("alpha")),),
+            groups=(UuidGroupState("work", "Work", (reference,)),),
+            root_connections=(reference,),
+        )
+
+
+def test_v1_migration_appends_unplaced_ssh_and_non_ssh_connections_to_root():
+    state = ConnectionFileState(
+        non_ssh_connections=({"id": "serial-1", "protocol": "serial"},),
+        groups=(GroupFileState("work", "Work", connection_ids=("alpha",)),),
+    )
+    migrated, report = migrate_v1_state(
+        state,
+        (projection("alpha"), projection("beta", order=1)),
+        ssh_config_revision="rev-1",
+        uuid_factory=iter((U1, U2)).__next__,
+    )
+    assert migrated.root_connections == (
+        ConnectionReference(ReferenceKind.SSH_UUID, U2),
+        ConnectionReference(ReferenceKind.NON_SSH_ID, "serial-1"),
+    )
+    assert report.unplaced_connections_appended == 2
+
+
+def test_legacy_orphan_round_trip_preserves_ordering_context():
+    orphan = LegacyOrphan(
+        "group_member",
+        "missing",
+        group_id="work",
+        original_index=1,
+        original_container_length=3,
+    )
+    restored = LegacyOrphan.from_dict(json.loads(json.dumps(orphan.to_dict())))
+    assert restored == orphan
+    assert restored.original_index == 1
+    assert restored.original_container_length == 3
+
+
+def test_v1_namespace_collision_quarantines_group_root_and_metadata_references():
+    state = ConnectionFileState(
+        non_ssh_connections=({"id": "console", "protocol": "serial"},),
+        groups=(GroupFileState("work", "Work", connection_ids=("console",)),),
+        root_connections=("console",),
+        metadata={"console": {"pinned": True}},
+    )
+    migrated, report = migrate_v1_state(
+        state,
+        (projection("console"),),
+        ssh_config_revision="rev-1",
+        uuid_factory=iter((U1,)).__next__,
+    )
+    assert migrated.groups[0].members == ()
+    assert [reference.kind for reference in migrated.root_connections] == [
+        ReferenceKind.SSH_UUID,
+        ReferenceKind.NON_SSH_ID,
+    ]
+    assert migrated.metadata == {}
+    assert len(migrated.legacy_orphans) == 3
+    assert {orphan.reason for orphan in migrated.legacy_orphans} == {
+        "namespace_collision"
+    }
+    assert report.namespace_collisions_quarantined == 1
+
+
+def test_metadata_and_orphan_values_must_be_json_objects():
+    payload = state_with_identities().to_dict()
+    payload["metadata"][U1] = ["not", "an", "object"]
+    with pytest.raises(TypeError, match="metadata values"):
+        IdentityStateV2.from_dict(payload)
+
+    payload = state_with_identities(non_ssh=({"id": "serial-1"},), root=(
+        ConnectionReference(ReferenceKind.SSH_UUID, U1),
+        ConnectionReference(ReferenceKind.NON_SSH_ID, "serial-1"),
+    )).to_dict()
+    payload["non_ssh_metadata"]["serial-1"] = ["not", "an", "object"]
+    with pytest.raises(TypeError, match="non-SSH metadata"):
+        IdentityStateV2.from_dict(payload)
+
+    with pytest.raises(TypeError, match="legacy orphan values"):
+        LegacyOrphan.from_dict({"kind": "metadata", "alias": "x", "values": []})
+
+
+def test_group_parent_must_exist_and_must_not_cycle():
+    with pytest.raises(ValueError, match="group parent"):
+        IdentityStateV2(
+            groups=(UuidGroupState("child", "Child", parent_id="missing"),),
+        )
+    with pytest.raises(ValueError, match="cycles"):
+        IdentityStateV2(
+            groups=(
+                UuidGroupState("a", "A", parent_id="b"),
+                UuidGroupState("b", "B", parent_id="a"),
+            ),
+        )
+
+
+def test_ambiguity_resolution_requires_complete_revision_guarded_accounting():
+    pending = PendingAmbiguity(
+        "rev-2",
+        (U1, U2),
+        (projection("new-a"), projection("new-b", order=1)),
+    )
+    state = state_with_identities(
+        identities=(U1, U2),
+        pending=(pending,),
+        observed_revision="rev-2",
+    )
+    resolution = AmbiguityResolution(
+        expected_ssh_revision="rev-2",
+        expected_sidecar_generation=0,
+        old_to_new=((U1, "new-a"),),
+        explicit_creates=("new-b",),
+        explicit_deletes=(U2,),
+    )
+    assert validate_ambiguity_resolution(state, resolution) == pending
+
+    with pytest.raises(ValueError, match="stale SSH revision"):
+        validate_ambiguity_resolution(
+            state,
+            replace(resolution, expected_ssh_revision="rev-3"),
+        )
+    with pytest.raises(ValueError, match="account for exactly one"):
+        validate_ambiguity_resolution(
+            state,
+            replace(resolution, explicit_creates=()),
+        )
+
+
+def test_revision_change_can_replace_pending_ambiguity_without_reusing_it():
+    pending = PendingAmbiguity("rev-1", (U1,), (projection("new-a"),))
+    state = state_with_identities(pending=(pending,), observed_revision="rev-1")
+    refreshed = replace(
+        state,
+        pending_ambiguities=(),
+        observed_ssh_revision="rev-2",
+    )
+    assert refreshed.pending_ambiguities == ()
+    assert refreshed.observed_ssh_revision == "rev-2"
