@@ -72,6 +72,89 @@ def test_create_rejects_duplicate_nickname(tmp_path):
     assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
 
 
+@pytest.mark.parametrize("prepared", [False, True])
+def test_create_rejects_empty_authored_alias(tmp_path, prepared):
+    root = _write(
+        tmp_path / "config",
+        "Host reserved\n    # authored reservation\n\n",
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    operation = store.prepare_create if prepared else store.create
+    with pytest.raises(CoreError) as exc:
+        operation({"nickname": "reserved", "hostname": "example.com"})
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before
+
+
+def test_create_rejects_authored_alias_in_included_file(tmp_path):
+    root = _write(tmp_path / "config", "Include fragments/reserved.conf\n")
+    reserved = _write(
+        tmp_path / "fragments" / "reserved.conf",
+        "Host reserved\n    # authored reservation\n",
+    )
+    store = _store(root)
+    before = (root.read_bytes(), reserved.read_bytes())
+    with pytest.raises(CoreError) as exc:
+        store.prepare_create({"nickname": "reserved", "hostname": "example.com"})
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert (root.read_bytes(), reserved.read_bytes()) == before
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_duplicate_skips_empty_authored_copy_alias(tmp_path, prepared):
+    root = _write(
+        tmp_path / "config",
+        "Host old-Copy\n    # authored reservation\n\n"
+        "Host old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    operation = store.prepare_duplicate if prepared else store.duplicate
+    result = operation("old")
+    assert result.connection_id == "old-Copy-2"
+    if prepared:
+        assert "Host old-Copy-2\n" in result.target_text
+        assert root.read_text().count("Host old-Copy-2\n") == 0
+    else:
+        assert "Host old-Copy\n    # authored reservation\n" in root.read_text()
+        assert root.read_text().count("Host old-Copy-2\n") == 1
+
+
+def test_duplicate_considers_authored_alias_in_included_file(tmp_path):
+    root = _write(tmp_path / "config", "Include fragments/reserved.conf\n")
+    _write(
+        tmp_path / "fragments" / "reserved.conf",
+        "Host old-Copy\n    # authored reservation\n",
+    )
+    source = _write(
+        tmp_path / "fragments" / "source.conf",
+        "Host old\n    HostName old.example\n",
+    )
+    root.write_text(
+        "Include fragments/reserved.conf\nInclude fragments/source.conf\n",
+        encoding="utf-8",
+    )
+    result = _store(root).prepare_duplicate("old")
+    assert result.connection_id == "old-Copy-2"
+    assert "Host old\n" in source.read_text()
+
+
+def test_pattern_alias_does_not_reserve_create_or_duplicate(tmp_path):
+    pattern = "Host reserved *\n    User deploy\n\n"
+    root = _write(
+        tmp_path / "config",
+        pattern + "Host old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    created = store.create({"nickname": "reserved", "hostname": "reserved.example"})
+    assert created.connection_id == "reserved"
+    assert pattern in root.read_text()
+
+    duplicate = store.duplicate("old")
+    assert duplicate.connection_id == "old-Copy"
+    assert pattern in root.read_text()
+
+
 def test_update_rewrites_only_the_target_block(tmp_path):
     root = _write(
         tmp_path / "config",
@@ -347,6 +430,86 @@ def test_split_concrete_alias_preserves_matching_pattern_rule(tmp_path):
     updated = root.read_text()
     assert rule in updated
     assert "Host new\n" in updated
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_split_rejects_empty_authored_destination(tmp_path, prepared):
+    root = _write(
+        tmp_path / "config",
+        "Host reserved\n    # authored reservation\n\n"
+        "Host old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    operation = store.prepare_split if prepared else store.split
+    with pytest.raises(CoreError) as exc:
+        operation(
+            "old",
+            "old",
+            {"nickname": "reserved", "hostname": "reserved.example"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before
+
+
+def test_split_rejects_destination_remaining_in_shared_source_block(tmp_path):
+    root = _write(
+        tmp_path / "config",
+        "Host old other\n    HostName shared.example\n",
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        store.prepare_split(
+            "other",
+            "other",
+            {"nickname": "old", "hostname": "old.example"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_split_allows_recreating_removed_source_token(tmp_path, prepared):
+    root = _write(
+        tmp_path / "config",
+        "Host old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    operation = store.prepare_split if prepared else store.split
+    result = operation(
+        "old",
+        "old",
+        {"nickname": "old", "hostname": "new.example"},
+        expected_generation=0,
+    )
+    if prepared:
+        assert "Host old\n" in result.target_text
+        assert "HostName new.example\n" in result.target_text
+        assert root.read_text() == "Host old\n    HostName old.example\n"
+    else:
+        assert result.connection_id == "old"
+        assert "Host old\n    HostName new.example\n" in root.read_text()
+
+
+def test_split_pattern_destination_is_preserved_and_does_not_collide(tmp_path):
+    pattern = "Host reserved *\n    User deploy\n\n"
+    root = _write(
+        tmp_path / "config",
+        pattern + "Host old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    result = store.split(
+        "old",
+        "old",
+        {"nickname": "reserved", "hostname": "reserved.example"},
+        expected_generation=0,
+    )
+    assert result.connection_id == "reserved"
+    assert pattern in root.read_text()
+    assert "Host reserved\n    HostName reserved.example\n" in root.read_text()
 
 
 def test_delete_unknown_connection_raises_not_found(tmp_path):

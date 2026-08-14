@@ -566,6 +566,7 @@ class SshConfigStore:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "A nickname is required")
         if any(record.id == nickname for record in config.connections):
             raise _already_exists_error()
+        self._ensure_authored_alias_available(nickname)
         expected = self._root_path.read_bytes() if self._root_path.exists() else None
         if self._root_path.exists():
             doc = SSHConfigDocument.parse_file(str(self._root_path))
@@ -609,7 +610,7 @@ class SshConfigStore:
         if new_name != connection_id and any(item.id == new_name for item in config.connections):
             raise _already_exists_error()
         if new_name != connection_id:
-            self._ensure_destination_alias_available(new_name)
+            self._ensure_authored_alias_available(new_name)
         expected = target.read_bytes()
         doc = SSHConfigDocument.parse_file(str(target))
         found = False
@@ -688,7 +689,10 @@ class SshConfigStore:
             if key.startswith("__") or key in {"aliases", "password_changed"}:
                 base.pop(key, None)
         base.pop("uuid", None)
-        new_name = generate_duplicate_nickname(record.nickname, {item.id for item in config.connections})
+        existing_ids = {
+            item.id for item in config.connections
+        } | self._authored_concrete_aliases()
+        new_name = generate_duplicate_nickname(record.nickname, existing_ids)
         base["nickname"] = new_name
         base.setdefault("hostname", record.hostname or new_name)
         target = Path(source)
@@ -729,6 +733,7 @@ class SshConfigStore:
             raise CoreError(ErrorCode.VALIDATION_ERROR, "A split host token and destination name are required")
         if new_name != connection_id and any(item.id == new_name for item in config.connections):
             raise _already_exists_error()
+        self._ensure_split_destination_available(new_name, original_host_token)
         target = Path(source)
         expected = target.read_bytes()
         doc = SSHConfigDocument.parse_file(str(target))
@@ -840,6 +845,14 @@ class SshConfigStore:
 
     def _concrete_host_blocks_for_alias(self, alias: str) -> List[HostBlock]:
         """Find authored concrete declarations for *alias* in the Include graph."""
+        return [
+            block
+            for block in self._authored_concrete_host_blocks()
+            if alias in block.tokens
+        ]
+
+    def _authored_concrete_host_blocks(self) -> List[HostBlock]:
+        """Enumerate literal Host declarations across the Include graph."""
         occurrences: List[HostBlock] = []
         for cfg_file in _resolve_config_files(self._root_path):
             doc = SSHConfigDocument.parse_file(str(cfg_file))
@@ -847,14 +860,31 @@ class SshConfigStore:
                 if (
                     isinstance(node, HostBlock)
                     and is_concrete_host_block(node)
-                    and alias in node.tokens
                 ):
                     occurrences.append(node)
         return occurrences
 
-    def _ensure_destination_alias_available(self, alias: str) -> None:
-        """Reject renames colliding with any authored concrete declaration."""
-        if self._concrete_host_blocks_for_alias(alias):
+    def _authored_concrete_aliases(self) -> set[str]:
+        """Return every literal alias authored in the reachable config tree."""
+        return {
+            alias
+            for block in self._authored_concrete_host_blocks()
+            for alias in block.tokens
+        }
+
+    def _ensure_authored_alias_available(self, alias: str) -> None:
+        """Reject aliases colliding with any authored concrete declaration."""
+        if alias in self._authored_concrete_aliases():
+            raise _already_exists_error()
+
+    def _ensure_split_destination_available(
+        self, destination: str, removed_token: str
+    ) -> None:
+        """Reject a split destination owned after removing its source token."""
+        aliases = self._authored_concrete_aliases()
+        if destination == removed_token:
+            aliases.discard(removed_token)
+        if destination in aliases:
             raise _already_exists_error()
 
     # -- writes ------------------------------------------------------------
@@ -904,6 +934,7 @@ class SshConfigStore:
             )
         if any(record.id == nickname for record in config.connections):
             raise _already_exists_error()
+        self._ensure_authored_alias_available(nickname)
 
         expected_revision = config.root_revision
         expected_bytes = (
@@ -946,7 +977,7 @@ class SshConfigStore:
         target = Path(source)
         new_name = str(payload.get("nickname") or "").strip() or connection_id
         if new_name != connection_id:
-            self._ensure_destination_alias_available(new_name)
+            self._ensure_authored_alias_available(new_name)
 
         expected_revision = config.root_revision
         expected_bytes = target.read_bytes()
@@ -1048,7 +1079,9 @@ class SshConfigStore:
                 base.pop(key, None)
         base.pop("uuid", None)
 
-        existing_ids = {rec.id for rec in config.connections}
+        existing_ids = {
+            rec.id for rec in config.connections
+        } | self._authored_concrete_aliases()
         new_nickname = generate_duplicate_nickname(record.nickname, existing_ids)
         base["nickname"] = new_nickname
         if "hostname" not in base or not str(base.get("hostname") or "").strip():
@@ -1111,6 +1144,7 @@ class SshConfigStore:
             item.id == new_name for item in config.connections
         ):
             raise _already_exists_error()
+        self._ensure_split_destination_available(new_name, original_host_token)
 
         target = Path(source)
         expected_revision = config.root_revision

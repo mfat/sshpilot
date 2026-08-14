@@ -152,6 +152,66 @@ def test_managed_rename_rejects_empty_concrete_destination_without_side_effects(
     assert events == []
 
 
+def test_repository_create_rejects_empty_authored_alias_without_side_effects(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host reserved\n    # authored reservation\n",
+    )
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+    before_snapshot = repo.snapshot()
+    events = []
+    repo.add_listener(events.append)
+    with pytest.raises(CoreError) as exc:
+        repo.create_connection(
+            {"nickname": "reserved", "hostname": "reserved.example", "protocol": "ssh"}
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before_root
+    assert state.read_bytes() == before_state
+    assert repo.snapshot() == before_snapshot
+    assert not identity_transaction_intent_path(state).exists()
+    assert events == []
+
+
+def test_repository_split_rejects_empty_authored_alias_without_side_effects(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host reserved\n    # authored reservation\n\n"
+        "Host old\n    HostName old.example\n",
+    )
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+    before_snapshot = repo.snapshot()
+    events = []
+    repo.add_listener(events.append)
+    with pytest.raises(CoreError) as exc:
+        repo.split_connection(
+            "old",
+            "old",
+            {"nickname": "reserved", "hostname": "reserved.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before_root
+    assert state.read_bytes() == before_state
+    assert repo.snapshot() == before_snapshot
+    assert not identity_transaction_intent_path(state).exists()
+    assert events == []
+
+
+def test_repository_duplicate_skips_empty_authored_copy_alias(tmp_path):
+    repo, root, _state = _repo(
+        tmp_path,
+        "Host old-Copy\n    # authored reservation\n\n"
+        "Host old\n    HostName old.example\n",
+    )
+    duplicate = repo.duplicate_connection("old")
+    assert duplicate.id == "old-Copy-2"
+    assert "Host old-Copy\n    # authored reservation\n" in root.read_text()
+    assert root.read_text().count("Host old-Copy-2\n") == 1
+
+
 def test_managed_noop_ssh_update_with_display_name_builds_valid_intent(tmp_path):
     repo, root, state = _repo(
         tmp_path, "Host prod\n    HostName server.example\n    User deploy\n"
