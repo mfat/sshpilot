@@ -246,30 +246,33 @@ class LegacyOrphan:
             raise ValueError("legacy orphan kind is invalid")
         if type(self.alias) is not str or not self.alias:
             raise ValueError("legacy orphan alias must be non-empty")
-        if self.group_id is not None and type(self.group_id) is not str:
-            raise TypeError("legacy orphan group id must be a string or null")
         if type(self.reason) is not str or not self.reason.strip():
             raise ValueError("legacy orphan reason must be non-empty")
-        if self.original_index is not None and (
-            type(self.original_index) is not int or self.original_index < 0
-        ):
-            raise ValueError("legacy orphan index must be non-negative or null")
-        if self.original_container_length is not None and (
-            type(self.original_container_length) is not int
-            or self.original_container_length <= 0
-        ):
-            raise ValueError("legacy orphan container length must be positive or null")
-        if (
-            self.original_index is not None
-            and self.original_container_length is not None
-            and self.original_index >= self.original_container_length
-        ):
-            raise ValueError("legacy orphan index must be inside its container")
-        if self.kind != "group_member" and self.group_id is not None:
-            raise ValueError("only group-member orphans may have a group id")
+        if self.kind == "group_member":
+            if type(self.group_id) is not str or not self.group_id.strip():
+                raise ValueError("group-member orphan needs a non-empty group id")
+            self._validate_position()
+        elif self.kind == "root_connection":
+            if self.group_id is not None:
+                raise ValueError("root orphan cannot have a group id")
+            self._validate_position()
+        elif self.group_id is not None:
+            raise ValueError("metadata orphan cannot have a group id")
+        elif self.original_index is not None or self.original_container_length is not None:
+            raise ValueError("metadata orphan cannot have placement coordinates")
         if not isinstance(self.values, Mapping):
             raise TypeError("legacy orphan values must be an object")
         object.__setattr__(self, "values", validate_safe_metadata(self.values))
+
+    def _validate_position(self) -> None:
+        if type(self.original_index) is not int or self.original_index < 0:
+            raise ValueError("placement orphan needs a non-negative original index")
+        if type(self.original_container_length) is not int or (
+            self.original_container_length <= 0
+        ):
+            raise ValueError("placement orphan needs a positive container length")
+        if self.original_index >= self.original_container_length:
+            raise ValueError("orphan index must be inside its container")
 
     def to_dict(self) -> Mapping[str, Any]:
         payload: dict[str, Any] = {
@@ -479,14 +482,16 @@ class IdentityStateV2:
             for identity_uuid, identity in identity_by_uuid.items()
             if not identity.tombstone
         }
-        group_ids = [group.id for group in self.groups]
-        if len(set(group_ids)) != len(group_ids):
-            raise ValueError("group IDs must be unique")
         if type(self.groups) is not tuple or any(
             not isinstance(group, UuidGroupState) for group in self.groups
         ):
             raise TypeError("groups must be UuidGroupState values")
+        group_ids = [group.id for group in self.groups]
+        if len(set(group_ids)) != len(group_ids):
+            raise ValueError("group IDs must be unique")
         ssh_ids = set(identities)
+        if type(self.non_ssh_connections) is not tuple:
+            raise TypeError("non-SSH connections must be a tuple")
         non_ssh_ids: set[str] = set()
         for item in self.non_ssh_connections:
             if not isinstance(item, Mapping):
@@ -499,14 +504,14 @@ class IdentityStateV2:
             non_ssh_ids.add(connection_id)
         if type(self.root_connections) is not tuple:
             raise TypeError("root connections must be a tuple")
-        if len(set(self.root_connections)) != len(self.root_connections):
-            raise ValueError("root connection references must be unique")
         for reference in self.root_connections:
             self._validate_reference(reference, ssh_ids, non_ssh_ids)
             if reference.kind is ReferenceKind.SSH_UUID and identity_by_uuid[
                 reference.value
             ].tombstone:
                 raise ValueError("tombstoned identities cannot be root connections")
+        if len(set(self.root_connections)) != len(self.root_connections):
+            raise ValueError("root connection references must be unique")
         grouped_references: set[ConnectionReference] = set()
         for group in self.groups:
             if group.parent_id is not None and group.parent_id not in set(group_ids):
@@ -594,14 +599,33 @@ class IdentityStateV2:
                         "pending ambiguity alias already belongs to an active identity"
                     )
                 pending_aliases.add(projection.alias)
-        if self.last_reconciled_ssh_revision is not None and not isinstance(
-            self.last_reconciled_ssh_revision, str
-        ):
-            raise TypeError("SSH revision must be a string or null")
-        if self.observed_ssh_revision is not None and not isinstance(
-            self.observed_ssh_revision, str
-        ):
-            raise TypeError("observed SSH revision must be a string or null")
+        self._validate_optional_revision(
+            self.last_reconciled_ssh_revision,
+            "last-reconciled SSH revision",
+        )
+        self._validate_optional_revision(
+            self.observed_ssh_revision,
+            "observed SSH revision",
+        )
+        if self.pending_ambiguities:
+            if not self.observed_ssh_revision:
+                raise ValueError(
+                    "pending ambiguities require an observed SSH revision"
+                )
+            for ambiguity in self.pending_ambiguities:
+                if ambiguity.ssh_config_revision != self.observed_ssh_revision:
+                    raise ValueError(
+                        "pending ambiguity revision must equal observed SSH revision"
+                    )
+
+    @staticmethod
+    def _validate_optional_revision(value: Optional[str], label: str) -> None:
+        if value is None:
+            return
+        if type(value) is not str:
+            raise TypeError(f"{label} must be a non-empty string or null")
+        if not value:
+            raise ValueError(f"{label} must be a non-empty string or null")
 
     @staticmethod
     def _validate_reference(

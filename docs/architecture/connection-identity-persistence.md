@@ -200,8 +200,9 @@ detection are central invariants. Arrays are retained where user order matters.
   may remain attached to tombstones for historical identity safety.
 * \`legacy_orphans\` quarantines stale v1 references rather than silently
   dropping them or attaching them to a future alias.
-* \`pending_ambiguities\` records candidate sets and revision for diagnostics;
-  it never assigns UUIDs.
+* \`pending_ambiguities\` contains only the unresolved candidate sets for
+  \`observed_ssh_revision\`; it is not an ambiguity-history store and never
+  assigns UUIDs.
 * \`sidecar_generation\` counts durable sidecar changes. It is not repository
   or API snapshot generation. SSH revision is the loader source-tree revision.
 
@@ -237,6 +238,9 @@ Policy:
   It is not silently dropped and never resurrects a later identity. Group/root
   orphans retain their original index, group ID, and source container length so
   a future repair can restore ordering.
+  The persisted forms are canonical: group members require group ID and valid
+  index/length coordinates; root orphans require valid coordinates and no group
+  ID; metadata orphans carry no placement coordinates.
 * Group membership wins a v1 group/root conflict. Any active record absent from
   both group and root is appended to root in current SSH projection order,
   followed by existing non-SSH order.

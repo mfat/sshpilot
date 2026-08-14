@@ -535,6 +535,8 @@ def test_ambiguity_resolution_requires_complete_revision_guarded_accounting():
 def test_revision_change_can_replace_pending_ambiguity_without_reusing_it():
     pending = PendingAmbiguity("rev-1", (U1,), (projection("new-a"),))
     state = state_with_identities(pending=(pending,), observed_revision="rev-1")
+    with pytest.raises(ValueError, match="must equal observed"):
+        replace(state, observed_ssh_revision="rev-2")
     refreshed = replace(
         state,
         pending_ambiguities=(),
@@ -542,3 +544,133 @@ def test_revision_change_can_replace_pending_ambiguity_without_reusing_it():
     )
     assert refreshed.pending_ambiguities == ()
     assert refreshed.observed_ssh_revision == "rev-2"
+
+
+def test_pending_ambiguity_revision_must_match_observed_revision():
+    pending = PendingAmbiguity("rev-1", (U1,), (projection("new-a"),))
+    state = state_with_identities(pending=(pending,), observed_revision="rev-1")
+    payload = state.to_dict()
+    payload["pending_ambiguities"][0]["ssh_config_revision"] = "rev-2"
+    with pytest.raises(ValueError, match="must equal observed"):
+        IdentityStateV2.from_dict(payload)
+
+    with pytest.raises(ValueError, match="require an observed"):
+        state_with_identities(pending=(pending,), observed_revision=None)
+    with pytest.raises(ValueError, match="non-empty"):
+        state_with_identities(pending=(pending,), observed_revision="")
+
+
+def test_optional_revision_fields_reject_empty_strings_but_can_differ():
+    state = state_with_identities(observed_revision="rev-2")
+    valid = replace(state, last_reconciled_ssh_revision="rev-1")
+    assert valid.last_reconciled_ssh_revision == "rev-1"
+    with pytest.raises(ValueError, match="last-reconciled"):
+        replace(state, last_reconciled_ssh_revision="")
+    with pytest.raises(ValueError, match="observed"):
+        replace(state, observed_ssh_revision="")
+
+
+def test_group_member_orphan_requires_canonical_position_fields():
+    valid = LegacyOrphan(
+        "group_member",
+        "missing",
+        group_id="work",
+        original_index=1,
+        original_container_length=3,
+    )
+    assert LegacyOrphan.from_dict(valid.to_dict()) == valid
+    for field in ("group_id", "original_index", "original_container_length"):
+        payload = valid.to_dict()
+        payload.pop(field)
+        with pytest.raises((TypeError, ValueError)):
+            LegacyOrphan.from_dict(payload)
+    with pytest.raises(ValueError, match="inside"):
+        LegacyOrphan("group_member", "missing", "work", {}, 3, 3)
+
+
+def test_root_orphan_requires_canonical_position_without_group():
+    valid = LegacyOrphan(
+        "root_connection",
+        "missing",
+        original_index=1,
+        original_container_length=3,
+    )
+    assert LegacyOrphan.from_dict(valid.to_dict()) == valid
+    for field in ("original_index", "original_container_length"):
+        payload = valid.to_dict()
+        payload.pop(field)
+        with pytest.raises((TypeError, ValueError)):
+            LegacyOrphan.from_dict(payload)
+    payload = valid.to_dict()
+    payload["group_id"] = "work"
+    with pytest.raises(ValueError, match="group id"):
+        LegacyOrphan.from_dict(payload)
+
+
+def test_metadata_orphan_has_no_placement_coordinates():
+    valid = LegacyOrphan("metadata", "missing", values={"note": "review"})
+    assert LegacyOrphan.from_dict(valid.to_dict()) == valid
+    for field, value in (("group_id", "work"), ("original_index", 0), ("original_container_length", 1)):
+        payload = valid.to_dict()
+        payload[field] = value
+        with pytest.raises(ValueError, match="metadata orphan"):
+            LegacyOrphan.from_dict(payload)
+
+
+def test_migration_orphans_have_canonical_ordering_context():
+    state = ConnectionFileState(
+        groups=(GroupFileState("work", "Work", connection_ids=("a", "missing", "b")),),
+        root_connections=("a", "missing-root", "b"),
+    )
+    migrated, _ = migrate_v1_state(
+        state,
+        (projection("a"), projection("b", order=1)),
+        ssh_config_revision="rev-1",
+        uuid_factory=iter((U1, U2)).__next__,
+    )
+    group_orphan = next(item for item in migrated.legacy_orphans if item.kind == "group_member")
+    root_orphan = next(item for item in migrated.legacy_orphans if item.kind == "root_connection")
+    assert (group_orphan.group_id, group_orphan.original_index, group_orphan.original_container_length) == (
+        "work",
+        1,
+        3,
+    )
+    assert (root_orphan.group_id, root_orphan.original_index, root_orphan.original_container_length) == (
+        None,
+        1,
+        3,
+    )
+    restored = IdentityStateV2.from_dict(json.loads(json.dumps(migrated.to_dict())))
+    assert restored.legacy_orphans == migrated.legacy_orphans
+
+
+def test_namespace_collision_placement_orphans_keep_coordinates():
+    state = ConnectionFileState(
+        non_ssh_connections=({"id": "console"},),
+        groups=(GroupFileState("work", "Work", connection_ids=("console",)),),
+        root_connections=("console",),
+    )
+    migrated, _ = migrate_v1_state(
+        state,
+        (projection("console"),),
+        ssh_config_revision="rev-1",
+        uuid_factory=iter((U1,)).__next__,
+    )
+    group_orphan, root_orphan = [
+        item for item in migrated.legacy_orphans if item.kind != "metadata"
+    ]
+    assert (group_orphan.group_id, group_orphan.original_index, group_orphan.original_container_length) == (
+        "work",
+        0,
+        1,
+    )
+    assert (root_orphan.group_id, root_orphan.original_index, root_orphan.original_container_length) == (
+        None,
+        0,
+        1,
+    )
+
+
+def test_direct_malformed_group_construction_has_deliberate_type_error():
+    with pytest.raises(TypeError, match="groups"):
+        IdentityStateV2(groups=(object(),))
