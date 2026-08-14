@@ -5,7 +5,9 @@ Backend/core investigation only. No UI or frontend files were changed.
 ## 1. Baseline
 
 - Branch: `dev`.
-- Exact local and remote `dev` SHA: `bfc9cfe045e0f3d0a26e9543021429e0ba5169db`.
+- Exact `dev` base SHA for this correction: `1c630f2fb5cae24b216986665a492e600b00b6e8`.
+- The preceding implementation commit is `1c630f2fb5cae24b216986665a492e600b00b6e8`; the
+  worktree was clean before this correction.
 - `git fetch` could not update `.git/FETCH_HEAD` because this checkout exposes
   `.git` read-only. `git ls-remote origin refs/heads/dev` independently
   returned the same SHA. The worktree was clean before changes.
@@ -83,16 +85,53 @@ The matcher has no filesystem, GTK/GI, daemon RPC, subprocess, DNS, socket,
 or network dependency. `IdentityRegistry` provides JSON-compatible
 serialization and restart tests, but production v1 state is deliberately not
 modified. `ConnectionRecord`/loader retain private, non-serialized literal
-port/user/IdentityFile evidence for this prototype.
+port/user/IdentityFile evidence plus explicit evidence status/reasons for this
+prototype. Ordinary launch-oriented `hostname`, `port`, and resolved `username`
+fields are never treated as proof by the matcher.
+
+## Static evidence trust model
+
+The loader now emits an explicit destination-evidence status and reason. Rule 2
+only sees a `(HostName, normalized Port)` anchor when the conservative analyzer
+proves a single static concrete Host block with valid literal values. Rule 1
+exact-alias continuity remains valid even when every other evidence field is
+unavailable.
+
+| SSH construct | Classification | Implemented policy |
+|---|---|---|
+| explicit literal HostName in one concrete block | SAFE FOR RULE 2 | trusted only without the limitations below |
+| missing HostName | SAFE ONLY FOR RULE 1 | alias fallback-to-destination is not evidence |
+| explicit valid literal Port | SAFE FOR RULE 2 | decimal text is validated and 22 is normalized |
+| missing/default Port | SAFE FOR RULE 2 only in a proven direct block | implicit 22 is rejected when inheritance is possible |
+| Host `*` / wildcard / negated inheritance | SAFE ONLY FOR RULE 1 | disables Rule 2 for the affected loader snapshot |
+| repeated concrete Host | SAFE ONLY FOR RULE 1 | disables Rule 2 because merge semantics are not proven |
+| Include-derived values and Include order | SAFE ONLY FOR RULE 1 | current loader loses positional semantics, so Rule 2 is disabled |
+| Match user/host/originalhost | DYNAMIC / RULE 2 DISABLED | retained as rules; never evaluated by identity code |
+| Match exec/localnetwork/canonical/final | DYNAMIC / RULE 2 DISABLED | no command or environment evaluation occurs |
+| HostName percent tokens, including `%h` | DYNAMIC / RULE 2 DISABLED | host-dependent/runtime-dependent values are unavailable |
+| safe literal IdentityFile sequence | SAFE AS COLLISION TIE-BREAKER | raw ordered values only; never a destination anchor |
+| IdentityFile percent tokens or environment variables | DYNAMIC / RULE 2 DISABLED for Pass A | excluded from identity-file equality; User Pass B may remain available |
+| omitted User | SAFE ONLY FOR RULE 1 | local OS username is not durable evidence; two omitted users reach only order fallback |
+| explicit literal User | SAFE AS COLLISION TIE-BREAKER | used only in Pass A/B inside an already trusted destination group |
+| loader-expanded launch values | PARSER LIMITATION | retained for launching, never promoted to identity evidence |
+| HostName case, trailing dot, IPv6 spelling, DNS, `/etc/hosts` | OPEN DECISION | comparison remains literal; no network normalization |
+
+This is intentionally not an OpenSSH evaluator. The current safe subset is
+small; when the loader cannot prove effective semantics, it reports unavailable
+evidence instead of manufacturing a default anchor. `ssh -G -F` tests are local
+characterization oracles only and are not a production matcher dependency.
 
 ## 4. Matching algorithm implemented
 
 1. Exclude tombstoned old entries.
 2. Validate active old and new aliases are unique.
 3. Match exact aliases first; consume both sides; reason `EXACT_ALIAS`.
-4. For remaining entries, use literal `(HostName, normalized Port)`. Missing
-   HostName, invalid/out-of-range ports, and non-static destinations have no
-   anchor. Only Port is normalized; 22 is the default.
+4. For remaining entries, use literal `(HostName, normalized Port)` only when
+   both projections carry `TRUSTWORTHY` static destination evidence. Missing
+   HostName, inherited/default values whose provenance is uncertain,
+   invalid/out-of-range ports, dynamic tokens, Include/Match uncertainty, and
+   repeated blocks have no Rule-2 anchor. Only Port is normalized; 22 is the
+   default.
 5. Within each anchor, consume exact `(User, ordered IdentityFiles)`
    partitions (`DESTINATION_USER_IDENTITY`), then User partitions
    (`DESTINATION_USER`), then all remaining pairs by declaration/projection
@@ -129,7 +168,7 @@ Known in-app operations are a separate future path and should supply
 | rename + User changed | order fallback preserves UUID | RESOLVED + credential policy |
 | rename + identities changed | User/order pass preserves UUID | RESOLVED |
 | alias and destination changed | create/delete, no guess | RESOLVED |
-| rename with no HostName | anchor unavailable; create/delete | EXPLICIT POLICY |
+| rename with no HostName | anchor unavailable; create/delete | EXPLICIT POLICY: alias-as-destination is ambiguous |
 | missing Port vs 22; 022; non-default Port | 22 normalized; 022 parses as 22; other port literal | RESOLVED |
 | invalid/out-of-range Port | no trustworthy anchor; loader public field still falls back to 22 | EXISTING LOADER LIMITATION |
 | 1:1, 1:N, N:1, N:N collisions | deterministic consuming one-to-one passes | RESOLVED: parameter matrix |
@@ -140,15 +179,17 @@ Known in-app operations are a separate future path and should supply
 | multi-token partial/complete rename | tokens are separate projections | RESOLVED: loader test |
 | wildcard/negated Host rules | rules, no saved UUIDs | RESOLVED |
 | repeated concrete alias | loader merges using its own semantics | EXISTING LOADER LIMITATION |
-| nested Includes, block move, Include order | source not evidence | RESOLVED / policy |
-| Host `*` defaults | not fully applied by loader | EXISTING LOADER LIMITATION |
-| Match user/host/originalhost/exec/localnetwork/canonical/final | retained as rules; no commands execute | EXPLICIT POLICY |
-| multiple IdentityFiles/order/none | literal ordered sequence; `none` is empty | RESOLVED |
-| raw vs expanded IdentityFile | literal evidence captured privately; expanded launch values remain separate | OPEN DECISION |
+| nested Includes, block move, Include order | exact alias works; positional Include evidence disables Rule 2 | EXISTING LOADER LIMITATION |
+| Host `*` HostName/Port/User defaults | no static destination or explicit User evidence | EXISTING LOADER LIMITATION |
+| Match user/host/originalhost/exec/localnetwork/canonical/final | retained as rules; no commands execute; Rule 2 disabled | DYNAMIC / RULE 2 DISABLED |
+| multiple IdentityFiles/order/none | raw literal ordered sequence; `none` is empty | RESOLVED |
+| raw vs expanded IdentityFile | raw literals are safe only when no `$`/percent token; expanded launch values remain separate | EXPLICIT POLICY |
+| `%h` HostName and host-dependent IdentityFile | destination unavailable; dynamic identity files excluded from Pass A | RESOLVED |
+| omitted User vs explicit local username; both omitted | no local OS username evidence; both omitted reach order fallback only | RESOLVED |
 | case/trailing dot/IPv6/%h hostname forms | literal comparison | EXPLICIT POLICY |
 | raw editor rename | existing broad heuristic can migrate unique signature | EXISTING BEHAVIOR |
 | external rename while daemon runs | current path reports delete/create and loses visible alias metadata | BUG FOUND |
-| external rename while stopped | serialized prototype registry preserves UUID by destination | RESOLVED PROTOTYPE |
+| external rename while stopped | loader → registry JSON → loader → reconcile preserves UUID for trusted direct blocks | RESOLVED PROTOTYPE |
 | restart unchanged / Include move / collision rename | UUID persists in prototype registry | RESOLVED PROTOTYPE |
 | delete then later same destination | tombstone excluded; new UUID | RESOLVED |
 | missing sidecar / malformed sidecar | missing = empty registry; malformed raises | OPEN PRODUCTION POLICY |
@@ -251,15 +292,24 @@ evaluator. It resolves recursive Includes with sorted glob order, materializes
 concrete tokens, records wildcard/negated rules, accumulates selected
 directives, and retains Match blocks as raw rules. It does not fully model all
 OpenSSH first-value-wins/default interactions across repeated blocks, Host `*`,
-or dynamic Match conditions. Missing HostName is therefore an unavailable
-identity anchor. Invalid public ports currently fall back to 22, but private
-literal evidence prevents the prototype from trusting that fallback.
+or dynamic Match conditions. The analyzer therefore marks all concrete records
+in snapshots containing wildcard/global/Match/Include uncertainty as unavailable
+for Rule 2. Include placement is not retained in the materialized record, so
+moving an included block can safely preserve exact aliases but cannot safely
+prove a renamed destination. Missing HostName is likewise unavailable. Invalid
+public ports currently fall back to 22, but private literal evidence prevents
+the prototype from trusting that fallback.
 
 IdentityFile values are expanded by the loader; the prototype captures literal
-ordered evidence separately. The loader uses local `socket.gethostname()` for
-the `%l` parser token, but the reconciliation module does not import or call
-network APIs. `ssh -G -F <temporary-config> <alias>` remains a possible local
-oracle for future parser tests, not the production identity mechanism.
+ordered evidence separately and marks `$`/percent-token values dynamic. The
+loader uses local `socket.gethostname()` for the `%l` parser token, but the
+reconciliation module does not import or call network APIs. Host-dependent
+HostName expressions such as `%h.example.com` are never anchors. Focused
+`ssh -G -F <temporary-config> <alias>` tests compare hostname/port/user where
+available; `ssh -G` remains a local oracle, not the production identity
+mechanism. Include inside a Host context is currently a structural parser
+boundary and may produce no materialized connection, which is recorded as an
+existing loader limitation rather than inferred identity.
 
 ## 11. Persistence/failure policy
 
@@ -292,22 +342,26 @@ ownership. No secret values appear in this prototype.
 
 ## 13. Test results
 
-Added `tests/core/test_connection_identity_reconciliation.py`: **39 passed**.
+Added `tests/core/test_connection_identity_reconciliation.py`: **63 passed**
+at the current checkpoint (the final validation count is recorded below).
 The existing focused suite remains **150 passed, 1 skipped**.
 
 Final gates:
 
 ```text
 pytest -q tests/architecture                 61 passed
-pytest -q tests/core                          522 passed, 1 skipped
+pytest -q tests/core                          546 passed, 1 skipped
 pytest -q tests/api                           650 passed
+pytest -q tests/daemon/test_config_reload.py tests/daemon/test_production_composition.py
+                                             25 passed
+pytest -q <relevant loader/repository/editor/config tests> 175 passed, 1 skipped
 python3 scripts/generate_api_artifacts.py --check
 API artifacts are current.
 ruff check src/ tests/ scripts/generate_api_artifacts.py
 All checks passed.
 ```
 
-The complete `pytest -q` run reached **4,708 passed, 29 skipped**, with **22
+The complete `pytest -q` run reached **4,733 passed, 29 skipped**, with **22
 failures and 22 collection/setup errors**. These were outside the changed
 backend path: optional `mcp`/`trio` availability, easyenv plugin daemon
 settings, PTY/GTK stubs, daemon lifecycle/Xvfb cleanup, and existing terminal
@@ -323,7 +377,8 @@ artifact was changed.
 - `tests/core/test_connection_identity_reconciliation.py`
 - this report
 
-No commits were created: `.git` is read-only in this execution environment.
+No commit was created in this working session; the requested base remains
+`1c630f2fb5cae24b216986665a492e600b00b6e8`.
 No GTK, UI, frontend, API wire model, secret-store, or generated file changed.
 
 ## 15. Recommendation

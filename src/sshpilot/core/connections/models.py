@@ -58,6 +58,12 @@ class ConnectionRecord:
     raw_port: Optional[str] = None
     raw_username: Optional[str] = None
     raw_identity_files: tuple = ()
+    static_destination_status: str = "unavailable"
+    static_destination_reason: str = "not_provided"
+    username_literal: Optional[str] = None
+    username_is_explicit: bool = False
+    identity_file_evidence_status: str = "unavailable"
+    identity_file_evidence_reason: str = "not_provided"
 
     def normalized_nickname(self) -> str:
         return (self.nickname or "").strip()
@@ -86,6 +92,22 @@ class ConnectionRecord:
         raw_port = raw.pop("__identity_raw_port", None)
         raw_username = raw.pop("__identity_raw_username", None)
         raw_identity_files = raw.pop("__identity_raw_identity_files", ())
+        static_destination_status = raw.pop(
+            "__identity_destination_status", "unavailable"
+        )
+        static_destination_reason = raw.pop(
+            "__identity_destination_reason", "not_provided"
+        )
+        username_literal = raw.pop("__identity_username_literal", None)
+        username_is_explicit = bool(
+            raw.pop("__identity_username_is_explicit", False)
+        )
+        identity_file_evidence_status = raw.pop(
+            "__identity_file_evidence_status", "unavailable"
+        )
+        identity_file_evidence_reason = raw.pop(
+            "__identity_file_evidence_reason", "not_provided"
+        )
         raw.pop("uuid", None)
         nick = str(raw.get("nickname") or raw.get("id") or raw.get("host") or "").strip()
         cid = connection_id or str(raw.get("id") or nick).strip()
@@ -127,6 +149,14 @@ class ConnectionRecord:
                 if isinstance(raw_identity_files, (tuple, list))
                 else ()
             ),
+            static_destination_status=str(static_destination_status),
+            static_destination_reason=str(static_destination_reason),
+            username_literal=(
+                str(username_literal) if username_literal is not None else None
+            ),
+            username_is_explicit=username_is_explicit,
+            identity_file_evidence_status=str(identity_file_evidence_status),
+            identity_file_evidence_reason=str(identity_file_evidence_reason),
         )
 
     def with_updates(self, updates: Mapping[str, Any]) -> "ConnectionRecord":

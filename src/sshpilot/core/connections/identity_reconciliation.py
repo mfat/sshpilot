@@ -10,7 +10,7 @@ The matcher never performs I/O, DNS, subprocesses, or network operations.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
@@ -30,6 +30,105 @@ class MatchReason(str, Enum):
     AMBIGUOUS = "ambiguous"
 
 
+class DestinationEvidenceStatus(str, Enum):
+    TRUSTWORTHY = "trustworthy"
+    UNAVAILABLE = "unavailable"
+
+
+class DestinationEvidenceReason(str, Enum):
+    EXPLICIT_STATIC = "explicit_static"
+    MISSING_HOSTNAME = "missing_hostname"
+    HOST_DEPENDENT_HOSTNAME = "host_dependent_hostname"
+    INHERITED_CONFIGURATION = "inherited_configuration"
+    INCLUDE_SEMANTICS = "include_semantics"
+    DYNAMIC_MATCH = "dynamic_match"
+    REPEATED_HOST = "repeated_host"
+    GLOBAL_CONFIGURATION = "global_configuration"
+    INVALID_PORT = "invalid_port"
+    NOT_PROVIDED = "not_provided"
+
+
+class IdentityFileEvidenceStatus(str, Enum):
+    SAFE_STATIC_LITERAL = "safe_static_literal"
+    DYNAMIC = "dynamic"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class DestinationAnchor:
+    hostname: str
+    port: int
+
+    def as_tuple(self) -> Tuple[str, int]:
+        return self.hostname, 22 if self.port == 22 else self.port
+
+
+@dataclass(frozen=True)
+class StaticDestinationEvidence:
+    status: DestinationEvidenceStatus
+    reason: DestinationEvidenceReason
+    anchor: Optional[DestinationAnchor] = None
+
+    @classmethod
+    def trustworthy(cls, hostname: str, port: int) -> "StaticDestinationEvidence":
+        if not hostname or type(port) is not int or not 1 <= port <= 65535:
+            raise ValueError("trustworthy destination evidence must be valid")
+        return cls(
+            status=DestinationEvidenceStatus.TRUSTWORTHY,
+            reason=DestinationEvidenceReason.EXPLICIT_STATIC,
+            anchor=DestinationAnchor(hostname, port),
+        )
+
+    @classmethod
+    def unavailable(
+        cls,
+        reason: DestinationEvidenceReason = DestinationEvidenceReason.NOT_PROVIDED,
+    ) -> "StaticDestinationEvidence":
+        return cls(
+            status=DestinationEvidenceStatus.UNAVAILABLE,
+            reason=reason,
+            anchor=None,
+        )
+
+
+@dataclass(frozen=True)
+class IdentityFileEvidence:
+    status: IdentityFileEvidenceStatus
+    values: Tuple[str, ...] = ()
+    reason: str = ""
+
+    @classmethod
+    def safe(cls, values: Iterable[str]) -> "IdentityFileEvidence":
+        return cls(
+            status=IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL,
+            values=tuple(values),
+            reason="static literal",
+        )
+
+    @classmethod
+    def dynamic(cls, reason: str) -> "IdentityFileEvidence":
+        return cls(
+            status=IdentityFileEvidenceStatus.DYNAMIC,
+            values=(),
+            reason=reason,
+        )
+
+    @classmethod
+    def unavailable(cls, reason: str = "not provided") -> "IdentityFileEvidence":
+        return cls(
+            status=IdentityFileEvidenceStatus.UNAVAILABLE,
+            values=(),
+            reason=reason,
+        )
+
+
+def _enum_or_default(enum_type, value: str, default):
+    try:
+        return enum_type(value)
+    except (TypeError, ValueError):
+        return default
+
+
 @dataclass(frozen=True)
 class ConnectionIdentityProjection:
     """Concrete, materialized SSH connection data used as evidence.
@@ -47,6 +146,14 @@ class ConnectionIdentityProjection:
     identity_files: Tuple[str, ...] = ()
     declaration_order: int = 0
     source: str = ""
+    destination_evidence: StaticDestinationEvidence = field(
+        default_factory=StaticDestinationEvidence.unavailable
+    )
+    username_literal: Optional[str] = None
+    username_is_explicit: bool = False
+    identity_file_evidence: IdentityFileEvidence = field(
+        default_factory=IdentityFileEvidence.unavailable
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.alias, str) or not self.alias:
@@ -59,16 +166,22 @@ class ConnectionIdentityProjection:
             raise TypeError("projection declaration order must be an integer")
         if type(self.identity_files) is not tuple:
             raise TypeError("projection identity files must be a tuple")
+        if not isinstance(self.destination_evidence, StaticDestinationEvidence):
+            raise TypeError("destination evidence must be StaticDestinationEvidence")
+        if not isinstance(self.identity_file_evidence, IdentityFileEvidence):
+            raise TypeError("identity file evidence must be IdentityFileEvidence")
+        if self.username_is_explicit and not self.username_literal:
+            raise ValueError("explicit username evidence requires a literal")
 
     @property
     def destination_anchor(self) -> Optional[Tuple[str, int]]:
         """Return a literal static anchor, or ``None`` when it is unsafe."""
 
-        if not self.hostname:
+        if self.destination_evidence.status is not DestinationEvidenceStatus.TRUSTWORTHY:
             return None
-        if type(self.port) is not int or not 1 <= self.port <= 65535:
+        if self.destination_evidence.anchor is None:
             return None
-        return self.hostname, 22 if self.port == 22 else self.port
+        return self.destination_evidence.anchor.as_tuple()
 
     @classmethod
     def from_record(
@@ -106,6 +219,44 @@ class ConnectionIdentityProjection:
                 port = None
         raw_username = getattr(record, "raw_username", None)
         username = record.username if raw_username is None else raw_username
+        destination_status = _enum_or_default(
+            DestinationEvidenceStatus,
+            getattr(record, "static_destination_status", "unavailable"),
+            DestinationEvidenceStatus.UNAVAILABLE,
+        )
+        destination_reason = _enum_or_default(
+            DestinationEvidenceReason,
+            getattr(record, "static_destination_reason", "not_provided"),
+            DestinationEvidenceReason.NOT_PROVIDED,
+        )
+        if destination_status is DestinationEvidenceStatus.TRUSTWORTHY:
+            if not record.hostname or port is None:
+                destination_evidence = StaticDestinationEvidence.unavailable(
+                    DestinationEvidenceReason.NOT_PROVIDED
+                )
+            else:
+                destination_evidence = StaticDestinationEvidence.trustworthy(
+                    record.hostname, port
+                )
+        else:
+            destination_evidence = StaticDestinationEvidence.unavailable(
+                destination_reason
+            )
+        identity_status = _enum_or_default(
+            IdentityFileEvidenceStatus,
+            getattr(record, "identity_file_evidence_status", "unavailable"),
+            IdentityFileEvidenceStatus.UNAVAILABLE,
+        )
+        if identity_status is IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL:
+            identity_evidence = IdentityFileEvidence.safe(identity_files)
+        elif identity_status is IdentityFileEvidenceStatus.DYNAMIC:
+            identity_evidence = IdentityFileEvidence.dynamic(
+                getattr(record, "identity_file_evidence_reason", "dynamic")
+            )
+        else:
+            identity_evidence = IdentityFileEvidence.unavailable(
+                getattr(record, "identity_file_evidence_reason", "unavailable")
+            )
         return cls(
             alias=record.id,
             hostname=record.hostname or None,
@@ -114,6 +265,12 @@ class ConnectionIdentityProjection:
             identity_files=identity_files,
             declaration_order=declaration_order,
             source=record.source,
+            destination_evidence=destination_evidence,
+            username_literal=getattr(record, "username_literal", None),
+            username_is_explicit=bool(
+                getattr(record, "username_is_explicit", False)
+            ),
+            identity_file_evidence=identity_evidence,
         )
 
 
@@ -180,7 +337,14 @@ class IdentityRegistry:
                         "hostname": entry.projection.hostname,
                         "port": entry.projection.port,
                         "username": entry.projection.username,
+                        "username_literal": entry.projection.username_literal,
+                        "username_is_explicit": entry.projection.username_is_explicit,
                         "identity_files": list(entry.projection.identity_files),
+                        "identity_file_evidence_status": entry.projection.identity_file_evidence.status.value,
+                        "identity_file_evidence_values": list(entry.projection.identity_file_evidence.values),
+                        "identity_file_evidence_reason": entry.projection.identity_file_evidence.reason,
+                        "destination_evidence_status": entry.projection.destination_evidence.status.value,
+                        "destination_evidence_reason": entry.projection.destination_evidence.reason.value,
                         "declaration_order": entry.projection.declaration_order,
                         "source": entry.projection.source,
                     },
@@ -210,6 +374,43 @@ class IdentityRegistry:
             identity_files = projection.get("identity_files", [])
             if not isinstance(identity_files, list):
                 raise ValueError("identity registry identity files must be an array")
+            identity_evidence_values = projection.get(
+                "identity_file_evidence_values", identity_files
+            )
+            if not isinstance(identity_evidence_values, list):
+                raise ValueError("identity registry identity evidence must be an array")
+            identity_status = _enum_or_default(
+                IdentityFileEvidenceStatus,
+                projection.get("identity_file_evidence_status", "unavailable"),
+                IdentityFileEvidenceStatus.UNAVAILABLE,
+            )
+            if identity_status is IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL:
+                identity_evidence = IdentityFileEvidence.safe(identity_evidence_values)
+            elif identity_status is IdentityFileEvidenceStatus.DYNAMIC:
+                identity_evidence = IdentityFileEvidence.dynamic(
+                    str(projection.get("identity_file_evidence_reason", "dynamic"))
+                )
+            else:
+                identity_evidence = IdentityFileEvidence.unavailable(
+                    str(projection.get("identity_file_evidence_reason", "unavailable"))
+                )
+            destination_status = _enum_or_default(
+                DestinationEvidenceStatus,
+                projection.get("destination_evidence_status", "unavailable"),
+                DestinationEvidenceStatus.UNAVAILABLE,
+            )
+            destination_reason = _enum_or_default(
+                DestinationEvidenceReason,
+                projection.get("destination_evidence_reason", "not_provided"),
+                DestinationEvidenceReason.NOT_PROVIDED,
+            )
+            destination_anchor = None
+            if destination_status is DestinationEvidenceStatus.TRUSTWORTHY:
+                hostname = projection.get("hostname")
+                port = projection.get("port")
+                if not isinstance(hostname, str) or type(port) is not int:
+                    raise ValueError("trustworthy destination evidence is incomplete")
+                destination_anchor = DestinationAnchor(hostname, port)
             entries.append(
                 IdentityRegistryEntry(
                     uuid=str(raw.get("uuid", "")),
@@ -220,7 +421,21 @@ class IdentityRegistry:
                         hostname=projection.get("hostname"),
                         port=projection.get("port"),
                         username=str(projection.get("username", "")),
+                        username_literal=(
+                            str(projection["username_literal"])
+                            if projection.get("username_literal") is not None
+                            else None
+                        ),
+                        username_is_explicit=bool(
+                            projection.get("username_is_explicit", False)
+                        ),
                         identity_files=tuple(str(item) for item in identity_files),
+                        identity_file_evidence=identity_evidence,
+                        destination_evidence=StaticDestinationEvidence(
+                            status=destination_status,
+                            reason=destination_reason,
+                            anchor=destination_anchor,
+                        ),
                         declaration_order=int(projection.get("declaration_order", 0)),
                         source=str(projection.get("source", "")),
                     ),
@@ -324,23 +539,43 @@ def reconcile_identities(
         for old_key_fn, new_key_fn, reason in (
             (
                 lambda entry: (
-                    entry.projection.username,
-                    entry.projection.identity_files,
+                    entry.projection.username_literal,
+                    entry.projection.identity_file_evidence.values,
                 ),
-                lambda entry: (entry.username, entry.identity_files),
+                lambda entry: (entry.username_literal, entry.identity_file_evidence.values),
                 MatchReason.DESTINATION_USER_IDENTITY,
             ),
             (
-                lambda entry: entry.projection.username,
-                lambda entry: entry.username,
+                lambda entry: entry.projection.username_literal,
+                lambda entry: entry.username_literal,
                 MatchReason.DESTINATION_USER,
             ),
         ):
             old_partitions: Dict[Any, list] = {}
             new_partitions: Dict[Any, list] = {}
             for item in remaining_old:
+                if reason is MatchReason.DESTINATION_USER_IDENTITY and (
+                    not item[1].projection.username_is_explicit
+                    or item[1].projection.identity_file_evidence.status
+                    is not IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+                ):
+                    continue
+                if reason is MatchReason.DESTINATION_USER and not item[
+                    1
+                ].projection.username_is_explicit:
+                    continue
                 old_partitions.setdefault(old_key_fn(item[1]), []).append(item)
             for item in remaining_new:
+                if reason is MatchReason.DESTINATION_USER_IDENTITY and (
+                    not item[1].username_is_explicit
+                    or item[1].identity_file_evidence.status
+                    is not IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+                ):
+                    continue
+                if reason is MatchReason.DESTINATION_USER and not item[
+                    1
+                ].username_is_explicit:
+                    continue
                 new_partitions.setdefault(new_key_fn(item[1]), []).append(item)
             for key in sorted(set(old_partitions) & set(new_partitions), key=repr):
                 paired = list(
@@ -379,15 +614,23 @@ def reconcile_identities(
     deleted = tuple(
         entry for index, entry in active_old if index not in matched_old
     )
-    created = tuple(
-        IdentityRegistryEntry(
-            uuid=str(uuid_factory()),
-            projection=projection,
-            display_name=projection.alias,
+    reserved_uuids = {entry.uuid for entry in old_entries}
+    created_list = []
+    for index, projection in enumerate(new_projections):
+        if index in matched_new:
+            continue
+        new_uuid = str(uuid_factory())
+        if not new_uuid or new_uuid in reserved_uuids:
+            raise ValueError("UUID factory returned a duplicate identity UUID")
+        reserved_uuids.add(new_uuid)
+        created_list.append(
+            IdentityRegistryEntry(
+                uuid=new_uuid,
+                projection=projection,
+                display_name=projection.alias,
+            )
         )
-        for index, projection in enumerate(new_projections)
-        if index not in matched_new
-    )
+    created = tuple(created_list)
     matches.sort(key=lambda match: (match.new_projection.declaration_order, match.new_projection.alias))
     return ReconciliationResult(
         matched=tuple(matches),
