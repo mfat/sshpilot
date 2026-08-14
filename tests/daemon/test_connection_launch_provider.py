@@ -137,6 +137,63 @@ def test_terminal_launch_without_remote_command_has_host_last(provider):
     assert "-t" not in command
 
 
+@pytest.mark.parametrize(
+    ("term", "expected"),
+    [
+        (None, "xterm-256color"),
+        ("", "xterm-256color"),
+        ("dumb", "xterm-256color"),
+        ("DUMB", "xterm-256color"),
+        ("foot", "foot"),
+        ("kitty", "kitty"),
+        ("xterm-256color", "xterm-256color"),
+    ],
+)
+def test_terminal_launch_normalizes_unusable_term_at_provider_boundary(
+    provider, monkeypatch, term, expected
+):
+    """Interactive SSH launches always provide a usable terminal type."""
+    import sshpilot.ssh_connection_builder as builder
+
+    class Prepared:
+        command = ("ssh", "web")
+        env = {} if term is None else {"TERM": term}
+        use_askpass = False
+
+    monkeypatch.setattr(builder, "build_ssh_connection", lambda _context: Prepared())
+    monkeypatch.setattr(
+        "sshpilot.daemon.connection_launch_provider.shutil.which",
+        lambda _name, **_kwargs: "/usr/bin/ssh",
+    )
+
+    prov, _records = provider
+    _command, environment = prov.prepare_terminal_launch(
+        "web", interaction_policy="normal"
+    )
+
+    assert environment["TERM"] == expected
+
+
+def test_non_terminal_ssh_launch_does_not_get_terminal_term_default(provider, monkeypatch):
+    import sshpilot.ssh_connection_builder as builder
+
+    class Prepared:
+        command = ("ssh", "web")
+        env = {}
+        use_askpass = False
+
+    monkeypatch.setattr(builder, "build_ssh_connection", lambda _context: Prepared())
+    monkeypatch.setattr(
+        "sshpilot.daemon.connection_launch_provider.shutil.which",
+        lambda _name, **_kwargs: "/usr/bin/ssh",
+    )
+
+    prov, _records = provider
+    _command, environment = prov.prepare_scp_launch("web")
+
+    assert "TERM" not in environment
+
+
 def test_production_settings_view_is_not_called_as_a_function(provider, monkeypatch):
     class SettingsView:
         def get_setting(self, _key, default=None):
