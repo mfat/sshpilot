@@ -127,6 +127,66 @@ def test_rename_rewrites_the_host_alias(tmp_path):
     assert _ids(result.config) == ["web2"]
 
 
+@pytest.mark.parametrize("pattern_before", [True, False])
+def test_rename_does_not_rewrite_pattern_containing_destination(tmp_path, pattern_before):
+    pattern = "Host new *\n    User deploy\n    # preserve this rule\n"
+    concrete = "Host old\n    HostName old.example\n"
+    text = (pattern + "\n" + concrete) if pattern_before else (concrete + "\n" + pattern)
+    root = _write(tmp_path / "config", text)
+    store = _store(root)
+    result = store.update(
+        "old",
+        {"nickname": "new", "hostname": "old.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    updated = root.read_text()
+    assert result.connection_id == "new"
+    assert pattern in updated
+    assert "Host new\n    HostName old.example\n" in updated
+    assert "Host old\n" not in updated
+    assert _ids(result.config).count("new") == 1
+
+
+def test_pattern_containing_old_alias_is_not_repeated_ownership(tmp_path):
+    root = _write(
+        tmp_path / "config",
+        "Host old *\n    ForwardAgent no\n    # preserve this rule\n\n"
+        "Host old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    before_rule = "Host old *\n    ForwardAgent no\n    # preserve this rule\n"
+    store.update(
+        "old",
+        {"nickname": "renamed", "hostname": "old.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    updated = root.read_text()
+    assert before_rule in updated
+    assert "Host renamed\n    HostName old.example\n" in updated
+
+
+@pytest.mark.parametrize("destination_before", [True, False])
+def test_empty_concrete_destination_alias_rejects_rename(tmp_path, destination_before):
+    destination = "Host new\n    # reserved\n"
+    source = "Host old\n    HostName old.example\n"
+    root = _write(
+        tmp_path / "config",
+        (destination + "\n" + source)
+        if destination_before
+        else (source + "\n" + destination),
+    )
+    store = _store(root)
+    before = root.read_bytes()
+    with pytest.raises(CoreError) as exc:
+        store.update(
+            "old",
+            {"nickname": "new", "hostname": "old.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before
+
+
 @pytest.mark.parametrize("operation", ["update", "delete"])
 def test_repeated_host_declaration_rejects_managed_mutation(tmp_path, operation):
     root = _write(
@@ -260,6 +320,35 @@ def test_delete_of_one_alias_keeps_the_block_for_others(tmp_path):
     assert _ids(result.config) == ["db"]
 
 
+def test_delete_concrete_alias_preserves_matching_pattern_rule(tmp_path):
+    rule = "Host old *\n    ForwardAgent no\n    # preserve\n"
+    root = _write(
+        tmp_path / "config",
+        rule + "\nHost old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    store.delete("old")
+    assert root.read_text() == rule + "\n"
+
+
+def test_split_concrete_alias_preserves_matching_pattern_rule(tmp_path):
+    rule = "Host old *\n    ForwardAgent no\n    # preserve\n"
+    root = _write(
+        tmp_path / "config",
+        rule + "\nHost old\n    HostName old.example\n",
+    )
+    store = _store(root)
+    store.split(
+        "old",
+        "old",
+        {"nickname": "new", "hostname": "new.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    updated = root.read_text()
+    assert rule in updated
+    assert "Host new\n" in updated
+
+
 def test_delete_unknown_connection_raises_not_found(tmp_path):
     root = _write(tmp_path / "config", "Host web\n    HostName example.com\n")
     store = _store(root)
@@ -319,6 +408,24 @@ def test_edit_of_included_fragment_writes_back_to_the_fragment(tmp_path):
     assert "HostName alpha2.example.com" in alpha.read_text()
     # The root config itself was not touched.
     assert "alpha2.example.com" not in root.read_text()
+
+
+def test_concrete_destination_collision_in_included_files_rejects_rename(tmp_path):
+    root = _write(tmp_path / "config", "Include fragments/one.conf\nInclude fragments/two.conf\n")
+    fragments = root.parent / "fragments"
+    fragments.mkdir()
+    source = _write(fragments / "one.conf", "Host old\n    HostName old.example\n")
+    destination = _write(fragments / "two.conf", "Host new\n    # reserved\n")
+    store = _store(root)
+    before = (root.read_bytes(), source.read_bytes(), destination.read_bytes())
+    with pytest.raises(CoreError) as exc:
+        store.update(
+            "old",
+            {"nickname": "new", "hostname": "old.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert (root.read_bytes(), source.read_bytes(), destination.read_bytes()) == before
 
 
 def test_prepared_preview_supports_absolute_include_outside_root_parent(tmp_path):

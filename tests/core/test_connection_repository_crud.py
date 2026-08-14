@@ -431,6 +431,106 @@ def test_non_ssh_update_and_rename(tmp_path):
     assert snap.connections[0].hostname == "10.0.0.6"
 
 
+def test_non_ssh_duplicate_resets_generation_coherently_and_survives_restart(tmp_path):
+    repo, _root, state = _repo(tmp_path)
+    source = repo.create_connection(
+        {
+            "nickname": "router1",
+            "protocol": "telnet",
+            "hostname": "192.0.2.10",
+            "display_name": "Office Router",
+            "plugin_value": "preserve-me",
+        }
+    )
+    for expected in (1, 2, 3):
+        source = repo.update_connection(
+            "router1",
+            {"hostname": f"192.0.2.{10 + expected}", "protocol": "telnet"},
+            expected_generation=expected,
+        )
+    assert source.generation == 4
+    group = repo.create_group("Routers")
+    repo.assign_connection_to_group("router1", group.id)
+
+    events = []
+    repo.add_listener(events.append)
+    duplicate = repo.duplicate_connection("router1")
+    assert duplicate.generation == 1
+    assert duplicate.data["generation"] == 1
+    assert repo.get_record(duplicate.id).generation == 1
+    assert repo.get_record(duplicate.id).data["generation"] == 1
+    assert repo.get_editor_record(duplicate.id).generation == 1
+    assert repo._non_ssh_generations[duplicate.id] == 1
+    assert source.generation == 4
+    assert duplicate.data["display_name"] == "Office Router"
+    assert duplicate.data["plugin_value"] == "preserve-me"
+    assert repo.snapshot().connections[-1].groups[0].id == group.id
+    assert len(events) == 1
+    assert read_identity_state_v2(state).identities == ()
+    stored = _state(state)["non_ssh_connections"]
+    assert next(item for item in stored if item["nickname"] == duplicate.id)["generation"] == 1
+    assert next(item for item in stored if item["nickname"] == "router1")["generation"] == 4
+
+    application = ConnectionApplicationService(repo, client_name="test")
+    api_duplicate = application.duplicate_connection("router1")
+    assert api_duplicate.generation == 1
+
+    restarted, _root, _state_path = _repo(tmp_path)
+    duplicate_record = restarted.get_record(duplicate.id)
+    assert duplicate_record.generation == 1
+    assert duplicate_record.data["generation"] == 1
+    assert restarted.get_editor_record(duplicate.id).generation == 1
+    assert restarted._non_ssh_generations[duplicate.id] == 1
+    assert duplicate_record.data["display_name"] == "Office Router"
+    assert restarted.get_record("router1").generation == 4
+
+    before = state.read_bytes()
+    no_events = []
+    restarted.add_listener(no_events.append)
+    with pytest.raises(CoreError) as exc:
+        restarted.update_connection(
+            duplicate.id,
+            {"hostname": "192.0.2.99", "protocol": "telnet"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert state.read_bytes() == before
+    assert no_events == []
+
+    updated = restarted.update_connection(
+        duplicate.id,
+        {"hostname": "192.0.2.99", "protocol": "telnet"},
+        expected_generation=1,
+    )
+    assert updated.generation == 2
+    assert restarted.get_record(duplicate.id).data["generation"] == 2
+    assert restarted._non_ssh_generations[duplicate.id] == 2
+    assert next(
+        item for item in _state(state)["non_ssh_connections"]
+        if item["nickname"] == duplicate.id
+    )["generation"] == 2
+
+
+def test_non_ssh_duplicate_without_stored_generation_starts_at_one(tmp_path):
+    _write_state(
+        tmp_path / "connections.json",
+        {
+            "version": 1,
+            "non_ssh_connections": [
+                {"nickname": "router1", "protocol": "telnet", "hostname": "192.0.2.10"}
+            ],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    repo, _root, _state_path = _repo(tmp_path)
+    duplicate = repo.duplicate_connection("router1")
+    assert duplicate.generation == 1
+    assert duplicate.data["generation"] == 1
+    assert repo.get_record(duplicate.id).generation == 1
+    assert repo.get_editor_record(duplicate.id).generation == 1
+
+
 def test_non_ssh_delete(tmp_path):
     _write_state(
         tmp_path / "connections.json",

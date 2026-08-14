@@ -36,6 +36,7 @@ from ...ssh_config_document import (
     RawSpan,
     SSHConfigDocument,
     _split_keyword,
+    is_concrete_host_block,
 )
 from ...ssh_config_formatter import merged_block_lines
 from ..errors import CoreError, ErrorCode
@@ -607,13 +608,17 @@ class SshConfigStore:
         new_name = str(payload.get("nickname") or "").strip() or connection_id
         if new_name != connection_id and any(item.id == new_name for item in config.connections):
             raise _already_exists_error()
+        if new_name != connection_id:
+            self._ensure_destination_alias_available(new_name)
         expected = target.read_bytes()
         doc = SSHConfigDocument.parse_file(str(target))
         found = False
         nodes: List[Any] = []
         for node in doc.nodes:
-            if isinstance(node, HostBlock) and any(
-                token in {connection_id, new_name} for token in node.tokens
+            if (
+                isinstance(node, HostBlock)
+                and is_concrete_host_block(node)
+                and connection_id in node.tokens
             ):
                 if not found:
                     nodes.append(RawSpan(lines=doc.render_lines(merged_block_lines(node, payload))))
@@ -621,7 +626,10 @@ class SshConfigStore:
                 continue
             nodes.append(node)
         if not found:
-            nodes.append(RawSpan(lines=doc.render_lines(["\n"] + merged_block_lines(None, payload))))
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection declaration changed before it could be edited",
+            )
         doc.nodes = nodes
         return self._prepare_document_replacement(
             operation="update", target=target,
@@ -645,7 +653,11 @@ class SshConfigStore:
         modified = False
         nodes: List[Any] = []
         for node in doc.nodes:
-            if isinstance(node, HostBlock) and connection_id in node.tokens:
+            if (
+                isinstance(node, HostBlock)
+                and is_concrete_host_block(node)
+                and connection_id in node.tokens
+            ):
                 modified = True
                 remaining = [token for token in node.tokens if token != connection_id]
                 if remaining:
@@ -723,7 +735,11 @@ class SshConfigStore:
         found = False
         nodes: List[Any] = []
         for node in doc.nodes:
-            if isinstance(node, HostBlock) and original_host_token in node.tokens:
+            if (
+                isinstance(node, HostBlock)
+                and is_concrete_host_block(node)
+                and original_host_token in node.tokens
+            ):
                 found = True
                 remaining = [token for token in node.tokens if token != original_host_token]
                 if remaining:
@@ -810,12 +826,7 @@ class SshConfigStore:
         self, connection_id: str, *, allow_shared: bool
     ) -> None:
         """Reject structured edits without unique Host declaration ownership."""
-        occurrences = []
-        for cfg_file in _resolve_config_files(self._root_path):
-            doc = SSHConfigDocument.parse_file(str(cfg_file))
-            for node in doc.nodes:
-                if isinstance(node, HostBlock) and connection_id in node.tokens:
-                    occurrences.append(node)
+        occurrences = self._concrete_host_blocks_for_alias(connection_id)
         if len(occurrences) > 1:
             raise CoreError(
                 ErrorCode.MUTATION_AMBIGUOUS,
@@ -826,6 +837,25 @@ class SshConfigStore:
                 ErrorCode.MUTATION_AMBIGUOUS,
                 "The connection shares a Host declaration with other aliases",
             )
+
+    def _concrete_host_blocks_for_alias(self, alias: str) -> List[HostBlock]:
+        """Find authored concrete declarations for *alias* in the Include graph."""
+        occurrences: List[HostBlock] = []
+        for cfg_file in _resolve_config_files(self._root_path):
+            doc = SSHConfigDocument.parse_file(str(cfg_file))
+            for node in doc.nodes:
+                if (
+                    isinstance(node, HostBlock)
+                    and is_concrete_host_block(node)
+                    and alias in node.tokens
+                ):
+                    occurrences.append(node)
+        return occurrences
+
+    def _ensure_destination_alias_available(self, alias: str) -> None:
+        """Reject renames colliding with any authored concrete declaration."""
+        if self._concrete_host_blocks_for_alias(alias):
+            raise _already_exists_error()
 
     # -- writes ------------------------------------------------------------
 
@@ -915,7 +945,8 @@ class SshConfigStore:
             raise _store_error("The connection has no recorded source file")
         target = Path(source)
         new_name = str(payload.get("nickname") or "").strip() or connection_id
-        candidate_names = {new_name, connection_id}
+        if new_name != connection_id:
+            self._ensure_destination_alias_available(new_name)
 
         expected_revision = config.root_revision
         expected_bytes = target.read_bytes()
@@ -925,7 +956,8 @@ class SshConfigStore:
         for node in doc.nodes:
             if (
                 isinstance(node, HostBlock)
-                and any(token in candidate_names for token in node.tokens)
+                and is_concrete_host_block(node)
+                and connection_id in node.tokens
             ):
                 if not host_found:
                     new_nodes.append(
@@ -939,8 +971,10 @@ class SshConfigStore:
                 continue
             new_nodes.append(node)
         if not host_found:
-            block_lines = merged_block_lines(None, payload)
-            new_nodes.append(RawSpan(lines=doc.render_lines(["\n"] + block_lines)))
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "The connection declaration changed before it could be edited",
+            )
         doc.nodes = new_nodes
 
         if not self._revision_matches(expected_revision):
@@ -970,7 +1004,11 @@ class SshConfigStore:
         modified = False
         new_nodes: List[Any] = []
         for node in doc.nodes:
-            if isinstance(node, HostBlock) and connection_id in node.tokens:
+            if (
+                isinstance(node, HostBlock)
+                and is_concrete_host_block(node)
+                and connection_id in node.tokens
+            ):
                 modified = True
                 remaining = [t for t in node.tokens if t != connection_id]
                 if remaining:
@@ -1082,7 +1120,11 @@ class SshConfigStore:
         matching_blocks = [
             node
             for node in doc.nodes
-            if isinstance(node, HostBlock) and original_host_token in node.tokens
+            if (
+                isinstance(node, HostBlock)
+                and is_concrete_host_block(node)
+                and original_host_token in node.tokens
+            )
         ]
         if not matching_blocks:
             raise CoreError(
@@ -1091,7 +1133,11 @@ class SshConfigStore:
             )
         new_nodes: List[Any] = []
         for node in doc.nodes:
-            if isinstance(node, HostBlock) and original_host_token in node.tokens:
+            if (
+                isinstance(node, HostBlock)
+                and is_concrete_host_block(node)
+                and original_host_token in node.tokens
+            ):
                 remaining = [t for t in node.tokens if t != original_host_token]
                 if remaining:
                     header = node.lines[0]

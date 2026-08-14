@@ -107,6 +107,51 @@ def test_managed_alias_and_destination_change_keeps_uuid(tmp_path):
     assert repo.snapshot().connections[0].id == "new"
 
 
+@pytest.mark.parametrize("pattern_before", [True, False])
+def test_managed_rename_preserves_pattern_rule_and_uuid(tmp_path, pattern_before):
+    pattern = "Host new *\n    User deploy\n    # preserve\n"
+    concrete = "Host old\n    HostName old.example\n"
+    text = (pattern + "\n" + concrete) if pattern_before else (concrete + "\n" + pattern)
+    repo, root, state = _repo(tmp_path, text)
+    uuid = read_identity_state_v2(state).identities[0].uuid
+    repo.set_display_name("old", "Production Old")
+    repo.update_connection(
+        "old",
+        {"nickname": "new", "hostname": "old.example", "protocol": "ssh"},
+        expected_generation=0,
+    )
+    updated = root.read_text()
+    assert pattern in updated
+    assert "Host new\n    HostName old.example\n" in updated
+    persisted = read_identity_state_v2(state)
+    assert persisted.identities[0].uuid == uuid
+    assert persisted.identities[0].display_name == "Production Old"
+    assert persisted.identities[0].projection.alias == "new"
+
+
+def test_managed_rename_rejects_empty_concrete_destination_without_side_effects(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host new\n    # reserved\n\n"
+        "Host old\n    HostName old.example\n",
+    )
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+    events = []
+    repo.add_listener(events.append)
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection(
+            "old",
+            {"nickname": "new", "hostname": "old.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.CONNECTION_ALREADY_EXISTS
+    assert root.read_bytes() == before_root
+    assert state.read_bytes() == before_state
+    assert not identity_transaction_intent_path(state).exists()
+    assert events == []
+
+
 def test_managed_noop_ssh_update_with_display_name_builds_valid_intent(tmp_path):
     repo, root, state = _repo(
         tmp_path, "Host prod\n    HostName server.example\n    User deploy\n"
