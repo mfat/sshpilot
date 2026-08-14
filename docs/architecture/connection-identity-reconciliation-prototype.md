@@ -5,8 +5,8 @@ Backend/core investigation only. No UI or frontend files were changed.
 ## 1. Baseline
 
 - Branch: `dev`.
-- Exact `dev` base SHA for this correction: `1c630f2fb5cae24b216986665a492e600b00b6e8`.
-- The preceding implementation commit is `1c630f2fb5cae24b216986665a492e600b00b6e8`; the
+- Exact `dev` base SHA for this correction: `81e5ae5d9b8f85709373cac5f0668a8647e1c39d`.
+- The preceding implementation commit is `81e5ae5d9b8f85709373cac5f0668a8647e1c39d`; the
   worktree was clean before this correction.
 - `git fetch` could not update `.git/FETCH_HEAD` because this checkout exposes
   `.git` read-only. `git ls-remote origin refs/heads/dev` independently
@@ -121,6 +121,42 @@ small; when the loader cannot prove effective semantics, it reports unavailable
 evidence instead of manufacturing a default anchor. `ssh -G -F` tests are local
 characterization oracles only and are not a production matcher dependency.
 
+## Authentication evidence model
+
+`IdentityFile` evidence is semantic rather than an empty/non-empty path list:
+
+| Mode | Meaning | Pass A |
+|---|---|---|
+| `UNSPECIFIED` | no explicit `IdentityFile` directive | never comparable; falls to User/order |
+| `EXPLICIT_NONE` | explicit `IdentityFile none` | comparable only to `EXPLICIT_NONE` |
+| `EXPLICIT_FILES` | one or more ordered static literal expressions | comparable only to the same ordered values |
+| `DYNAMIC` | `$` expansion, host/runtime percent token, or otherwise unsafe expression | never comparable; falls to User/order |
+
+The mode is observable on `IdentityFileEvidence.mode` and serialized as
+`identity_file_evidence_mode`. Pass A requires explicit User evidence plus an
+exact match of both semantic mode and ordered values. `UNSPECIFIED` and
+`DYNAMIC` are deliberately not equal to one another or to `EXPLICIT_NONE`, so
+absence of a directive cannot masquerade as `IdentityFile none`. IdentityFile
+never establishes destination continuity by itself.
+
+The prototype adopts the config-intent interpretation of `~`: a raw value such
+as `~/.ssh/id_a` is `EXPLICIT_FILES` because reconciliation compares whether
+the configuration retained the same authentication intent, not whether the
+physical path resolves to the same key under another home directory. Expanded
+launch values remain separate. `$HOME` and every percent token except escaped
+`%%` are dynamic; `%%` is a literal percent in config intent.
+
+Prototype JSON from the preceding commit stored only status and values. When
+that legacy payload has an empty safe tuple, deserialization chooses the weaker
+`UNSPECIFIED` mode because it cannot safely invent `EXPLICIT_NONE`. Non-empty
+safe values become `EXPLICIT_FILES`, and dynamic status remains `DYNAMIC`.
+
+For the regression collision, the old empty-tuple implementation paired by
+declaration order: `old-a(EXPLICIT_NONE)` could receive `new-b(UNSPECIFIED)`
+and `old-b(UNSPECIFIED)` could receive `new-a(EXPLICIT_NONE)`. With semantic
+modes, the result is `old-a -> new-a` with
+`DESTINATION_USER_IDENTITY`, and `old-b -> new-b` with `DESTINATION_USER`.
+
 ## 4. Matching algorithm implemented
 
 1. Exclude tombstoned old entries.
@@ -132,8 +168,9 @@ characterization oracles only and are not a production matcher dependency.
    invalid/out-of-range ports, dynamic tokens, Include/Match uncertainty, and
    repeated blocks have no Rule-2 anchor. Only Port is normalized; 22 is the
    default.
-5. Within each anchor, consume exact `(User, ordered IdentityFiles)`
-   partitions (`DESTINATION_USER_IDENTITY`), then User partitions
+5. Within each anchor, consume exact `(User, IdentityFile mode, ordered
+   values)` partitions (`DESTINATION_USER_IDENTITY`) only for explicit static
+   modes, then User partitions
    (`DESTINATION_USER`), then all remaining pairs by declaration/projection
    order (`DESTINATION_ORDER_FALLBACK`).
 6. Remaining old entries are deletes. Remaining new entries receive injected
@@ -154,6 +191,10 @@ Known in-app operations are a separate future path and should supply
 - Hostname comparison is literal; only Port is normalized.
 - Missing/explicit 22 are equivalent; invalid ports are not trustworthy.
 - IdentityFiles remain an ordered tie-break sequence.
+- `UNSPECIFIED`, `EXPLICIT_NONE`, `EXPLICIT_FILES`, and `DYNAMIC` are distinct
+  semantic evidence modes; only comparable explicit modes enter Pass A.
+- Persisted trusted destination anchors and IdentityFile evidence are rejected
+  when their dataclass invariants are inconsistent.
 - DisplayName follows UUID continuity and is not cleared by SSH directive edits.
 - Applying and serializing a result then reloading unchanged data is idempotent.
 - UUIDs are injected in tests and never derived from aliases.
@@ -182,9 +223,13 @@ Known in-app operations are a separate future path and should supply
 | nested Includes, block move, Include order | exact alias works; positional Include evidence disables Rule 2 | EXISTING LOADER LIMITATION |
 | Host `*` HostName/Port/User defaults | no static destination or explicit User evidence | EXISTING LOADER LIMITATION |
 | Match user/host/originalhost/exec/localnetwork/canonical/final | retained as rules; no commands execute; Rule 2 disabled | DYNAMIC / RULE 2 DISABLED |
-| multiple IdentityFiles/order/none | raw literal ordered sequence; `none` is empty | RESOLVED |
-| raw vs expanded IdentityFile | raw literals are safe only when no `$`/percent token; expanded launch values remain separate | EXPLICIT POLICY |
+| no IdentityFile directive | `UNSPECIFIED`; cannot strengthen Pass A | RESOLVED |
+| `IdentityFile none` | `EXPLICIT_NONE`; distinct from unspecified and comparable only to explicit none | RESOLVED |
+| multiple IdentityFiles/order | `EXPLICIT_FILES`; ordered sequence, reversed order differs | RESOLVED |
+| raw vs expanded IdentityFile | raw literals are semantic config intent; expanded launch values remain separate | EXPLICIT POLICY: `~` accepted |
 | `%h` HostName and host-dependent IdentityFile | destination unavailable; dynamic identity files excluded from Pass A | RESOLVED |
+| `$HOME` and percent-token IdentityFiles | `DYNAMIC`; excluded from Pass A | RESOLVED |
+| persisted evidence with invalid trusted anchor or invalid IdentityFile mode | deserialization rejects it | RESOLVED |
 | omitted User vs explicit local username; both omitted | no local OS username evidence; both omitted reach order fallback only | RESOLVED |
 | case/trailing dot/IPv6/%h hostname forms | literal comparison | EXPLICIT POLICY |
 | raw editor rename | existing broad heuristic can migrate unique signature | EXISTING BEHAVIOR |
@@ -206,12 +251,14 @@ bookkeeping, not evidence of truth. Recommendation: retain it only if product
 accepts that tradeoff; otherwise emit `AMBIGUOUS` and require confirmation.
 Automatic production migration is blocked until this is decided.
 
-### B. IdentityFile representation
+### B. IdentityFile representation — decided for this prototype
 
-The loader currently expands `~`, environment variables, and selected `%`
-tokens. Those values can vary across environments. Recommendation: persist
-literal ordered values for reconciliation and use expanded values only for SSH
-launching. This requires a sidecar schema decision.
+Use raw ordered literal expressions as config-intent evidence and keep expanded
+values only for SSH launching. `~/.ssh/id_a` is therefore `EXPLICIT_FILES`,
+while `$HOME`, `%h`, `%r`, `%p`, `%u`, `%d`, `%i`, `%l`, `%L`, `%C`, `%j`, and
+`%k` are `DYNAMIC`. This avoids environment-dependent physical-path identity
+while preserving meaningful repeated configuration intent. A future sidecar
+must persist the mode and ordered raw values, not only an expanded path list.
 
 ### C. Dynamic Match-derived destination
 
@@ -279,6 +326,8 @@ registry and resolver before changing the public contract.
 The isolated registry stores UUID, display name, last projection, and
 tombstone state. Tests cover unchanged restart, stopped `old -> new` rename,
 no-HostName ambiguity, collision restart, Include moves, and delete-then-reuse.
+The complete loader → registry JSON → deserialization → alias rename → loader
+→ reconcile path remains covered after the IdentityFile mode change.
 
 Production external rename continuity is **not active yet**: the real
 repository/daemon path remains alias delete/create. The new characterization
@@ -300,8 +349,9 @@ prove a renamed destination. Missing HostName is likewise unavailable. Invalid
 public ports currently fall back to 22, but private literal evidence prevents
 the prototype from trusting that fallback.
 
-IdentityFile values are expanded by the loader; the prototype captures literal
-ordered evidence separately and marks `$`/percent-token values dynamic. The
+IdentityFile values are expanded by the loader for launch behavior; the
+prototype captures raw ordered evidence separately, with explicit semantic
+mode, and marks `$`/percent-token values dynamic. The
 loader uses local `socket.gethostname()` for the `%l` parser token, but the
 reconciliation module does not import or call network APIs. Host-dependent
 HostName expressions such as `%h.example.com` are never anchors. Focused
@@ -342,7 +392,7 @@ ownership. No secret values appear in this prototype.
 
 ## 13. Test results
 
-Added `tests/core/test_connection_identity_reconciliation.py`: **63 passed**
+Added `tests/core/test_connection_identity_reconciliation.py`: **106 passed**
 at the current checkpoint (the final validation count is recorded below).
 The existing focused suite remains **150 passed, 1 skipped**.
 
@@ -350,7 +400,7 @@ Final gates:
 
 ```text
 pytest -q tests/architecture                 61 passed
-pytest -q tests/core                          546 passed, 1 skipped
+pytest -q tests/core                          589 passed, 1 skipped
 pytest -q tests/api                           650 passed
 pytest -q tests/daemon/test_config_reload.py tests/daemon/test_production_composition.py
                                              25 passed
@@ -361,7 +411,7 @@ ruff check src/ tests/ scripts/generate_api_artifacts.py
 All checks passed.
 ```
 
-The complete `pytest -q` run reached **4,733 passed, 29 skipped**, with **22
+The final `pytest -q` run reached **4,775 passed, 29 skipped**, with **22
 failures and 22 collection/setup errors**. These were outside the changed
 backend path: optional `mcp`/`trio` availability, easyenv plugin daemon
 settings, PTY/GTK stubs, daemon lifecycle/Xvfb cleanup, and existing terminal
@@ -378,7 +428,7 @@ artifact was changed.
 - this report
 
 No commit was created in this working session; the requested base remains
-`1c630f2fb5cae24b216986665a492e600b00b6e8`.
+`81e5ae5d9b8f85709373cac5f0668a8647e1c39d`.
 No GTK, UI, frontend, API wire model, secret-store, or generated file changed.
 
 ## 15. Recommendation
@@ -389,8 +439,12 @@ the loader is not a complete OpenSSH effective-config evaluator, and the
 indistinguishable-collision policy is unresolved. Groups, tags, order, and
 display metadata cannot yet safely become UUID-owned in production.
 
-Required blockers are the collision ambiguity decision, UUID sidecar migration
-and crash recovery, literal-vs-expanded evidence policy, parser semantic gaps,
+Remaining decisions are the collision ambiguity policy, UUID sidecar migration
+and crash recovery, parser semantic gaps outside the conservative safe subset,
 and public API compatibility planning. UI remains out of scope.
 
-VERDICT: NOT READY — EXPLICIT DECISIONS REQUIRED
+The IdentityFile correctness issue is resolved in the prototype: semantic modes
+are distinct, dynamic evidence cannot strengthen Pass A, legacy empty evidence
+is decoded conservatively, and persisted evidence invariants are enforced.
+
+VERDICT: STATIC RECONCILIATION MODEL READY — EXPLICIT POLICY DECISIONS REMAIN

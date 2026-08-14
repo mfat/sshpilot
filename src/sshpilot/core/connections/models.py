@@ -62,6 +62,7 @@ class ConnectionRecord:
     static_destination_reason: str = "not_provided"
     username_literal: Optional[str] = None
     username_is_explicit: bool = False
+    identity_file_evidence_mode: str = "unspecified"
     identity_file_evidence_status: str = "unavailable"
     identity_file_evidence_reason: str = "not_provided"
 
@@ -104,6 +105,9 @@ class ConnectionRecord:
         )
         identity_file_evidence_status = raw.pop(
             "__identity_file_evidence_status", "unavailable"
+        )
+        identity_file_evidence_mode = raw.pop(
+            "__identity_file_evidence_mode", "unspecified"
         )
         identity_file_evidence_reason = raw.pop(
             "__identity_file_evidence_reason", "not_provided"
@@ -155,6 +159,7 @@ class ConnectionRecord:
                 str(username_literal) if username_literal is not None else None
             ),
             username_is_explicit=username_is_explicit,
+            identity_file_evidence_mode=str(identity_file_evidence_mode),
             identity_file_evidence_status=str(identity_file_evidence_status),
             identity_file_evidence_reason=str(identity_file_evidence_reason),
         )

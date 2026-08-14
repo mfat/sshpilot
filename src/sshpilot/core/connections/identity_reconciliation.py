@@ -54,10 +54,48 @@ class IdentityFileEvidenceStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
+class IdentityFileEvidenceMode(str, Enum):
+    """Semantic meaning of the IdentityFile directives in a projection."""
+
+    UNSPECIFIED = "unspecified"
+    EXPLICIT_NONE = "explicit_none"
+    EXPLICIT_FILES = "explicit_files"
+    DYNAMIC = "dynamic"
+
+
+def _is_static_identity_expression(value: str) -> bool:
+    """Return whether a raw IdentityFile expression is deterministic config intent.
+
+    ``~`` is intentionally accepted: this prototype compares configuration
+    intent, not the physical key path resolved under a possibly different
+    home directory. Environment variables and every percent token remain
+    dynamic evidence.
+    """
+
+    if "$" in value:
+        return False
+    index = 0
+    while index < len(value):
+        if value[index] != "%":
+            index += 1
+            continue
+        if index + 1 < len(value) and value[index + 1] == "%":
+            index += 2
+            continue
+        return False
+    return True
+
+
 @dataclass(frozen=True)
 class DestinationAnchor:
     hostname: str
     port: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.hostname, str) or not self.hostname:
+            raise ValueError("destination hostname must be a non-empty string")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("destination port must be between 1 and 65535")
 
     def as_tuple(self) -> Tuple[str, int]:
         return self.hostname, 22 if self.port == 22 else self.port
@@ -68,6 +106,22 @@ class StaticDestinationEvidence:
     status: DestinationEvidenceStatus
     reason: DestinationEvidenceReason
     anchor: Optional[DestinationAnchor] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, DestinationEvidenceStatus):
+            raise TypeError("destination evidence status must be an enum")
+        if not isinstance(self.reason, DestinationEvidenceReason):
+            raise TypeError("destination evidence reason must be an enum")
+        if self.status is DestinationEvidenceStatus.TRUSTWORTHY:
+            if self.anchor is None:
+                raise ValueError("trustworthy destination evidence needs an anchor")
+            if self.reason is not DestinationEvidenceReason.EXPLICIT_STATIC:
+                raise ValueError("trustworthy evidence must be explicit static evidence")
+        else:
+            if self.reason is DestinationEvidenceReason.EXPLICIT_STATIC:
+                raise ValueError("unavailable evidence cannot claim explicit static proof")
+            if self.anchor is not None:
+                raise ValueError("unavailable destination evidence cannot carry an anchor")
 
     @classmethod
     def trustworthy(cls, hostname: str, port: int) -> "StaticDestinationEvidence":
@@ -93,33 +147,70 @@ class StaticDestinationEvidence:
 
 @dataclass(frozen=True)
 class IdentityFileEvidence:
-    status: IdentityFileEvidenceStatus
+    mode: IdentityFileEvidenceMode
     values: Tuple[str, ...] = ()
     reason: str = ""
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, IdentityFileEvidenceMode):
+            raise TypeError("IdentityFile evidence mode must be an enum")
+        if type(self.values) is not tuple:
+            raise TypeError("IdentityFile evidence values must be a tuple")
+        if any(not isinstance(value, str) or not value for value in self.values):
+            raise ValueError("IdentityFile evidence values must be non-empty strings")
+        if self.mode in {
+            IdentityFileEvidenceMode.UNSPECIFIED,
+            IdentityFileEvidenceMode.EXPLICIT_NONE,
+            IdentityFileEvidenceMode.DYNAMIC,
+        } and self.values:
+            raise ValueError(f"{self.mode.value} IdentityFile evidence cannot carry values")
+        if self.mode is IdentityFileEvidenceMode.EXPLICIT_FILES:
+            if not self.values:
+                raise ValueError("explicit IdentityFile evidence needs values")
+            if any(value.strip().lower() == "none" for value in self.values):
+                raise ValueError("explicit file evidence cannot contain IdentityFile none")
+            if any(not _is_static_identity_expression(value) for value in self.values):
+                raise ValueError("dynamic IdentityFile expressions cannot be static evidence")
+
+    @property
+    def status(self) -> IdentityFileEvidenceStatus:
+        """Compatibility view of the semantic mode used by the earlier prototype."""
+
+        if self.mode in {
+            IdentityFileEvidenceMode.EXPLICIT_NONE,
+            IdentityFileEvidenceMode.EXPLICIT_FILES,
+        }:
+            return IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+        if self.mode is IdentityFileEvidenceMode.DYNAMIC:
+            return IdentityFileEvidenceStatus.DYNAMIC
+        return IdentityFileEvidenceStatus.UNAVAILABLE
+
+    @classmethod
+    def unspecified(cls, reason: str = "no IdentityFile directive") -> "IdentityFileEvidence":
+        return cls(IdentityFileEvidenceMode.UNSPECIFIED, (), reason)
+
+    @classmethod
+    def explicit_none(cls, reason: str = "IdentityFile none") -> "IdentityFileEvidence":
+        return cls(IdentityFileEvidenceMode.EXPLICIT_NONE, (), reason)
+
     @classmethod
     def safe(cls, values: Iterable[str]) -> "IdentityFileEvidence":
+        literal_values = tuple(values)
+        if not literal_values:
+            return cls.unspecified()
         return cls(
-            status=IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL,
-            values=tuple(values),
-            reason="static literal",
+            IdentityFileEvidenceMode.EXPLICIT_FILES,
+            literal_values,
+            "static literal",
         )
 
     @classmethod
     def dynamic(cls, reason: str) -> "IdentityFileEvidence":
-        return cls(
-            status=IdentityFileEvidenceStatus.DYNAMIC,
-            values=(),
-            reason=reason,
-        )
+        return cls(IdentityFileEvidenceMode.DYNAMIC, (), reason)
 
     @classmethod
     def unavailable(cls, reason: str = "not provided") -> "IdentityFileEvidence":
-        return cls(
-            status=IdentityFileEvidenceStatus.UNAVAILABLE,
-            values=(),
-            reason=reason,
-        )
+        return cls.unspecified(reason)
 
 
 def _enum_or_default(enum_type, value: str, default):
@@ -127,6 +218,13 @@ def _enum_or_default(enum_type, value: str, default):
         return enum_type(value)
     except (TypeError, ValueError):
         return default
+
+
+def _enum_from_payload(enum_type, value: Any, field_name: str):
+    try:
+        return enum_type(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid {field_name}: {value!r}") from exc
 
 
 @dataclass(frozen=True)
@@ -247,14 +345,41 @@ class ConnectionIdentityProjection:
             getattr(record, "identity_file_evidence_status", "unavailable"),
             IdentityFileEvidenceStatus.UNAVAILABLE,
         )
-        if identity_status is IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL:
-            identity_evidence = IdentityFileEvidence.safe(identity_files)
-        elif identity_status is IdentityFileEvidenceStatus.DYNAMIC:
+        identity_mode = _enum_or_default(
+            IdentityFileEvidenceMode,
+            getattr(record, "identity_file_evidence_mode", "unspecified"),
+            IdentityFileEvidenceMode.UNSPECIFIED,
+        )
+        if (
+            identity_mode is IdentityFileEvidenceMode.UNSPECIFIED
+            and identity_status is IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+            and identity_files
+        ):
+            # Records produced by the previous prototype had no mode field.
+            # Non-empty safe values are unambiguously explicit files; an old
+            # empty safe tuple remains conservatively unspecified.
+            identity_mode = IdentityFileEvidenceMode.EXPLICIT_FILES
+        elif (
+            identity_mode is IdentityFileEvidenceMode.UNSPECIFIED
+            and identity_status is IdentityFileEvidenceStatus.DYNAMIC
+        ):
+            identity_mode = IdentityFileEvidenceMode.DYNAMIC
+        if identity_mode is IdentityFileEvidenceMode.EXPLICIT_NONE:
+            identity_evidence = IdentityFileEvidence.explicit_none(
+                getattr(record, "identity_file_evidence_reason", "explicit_none")
+            )
+        elif identity_mode is IdentityFileEvidenceMode.EXPLICIT_FILES:
+            identity_evidence = IdentityFileEvidence(
+                IdentityFileEvidenceMode.EXPLICIT_FILES,
+                tuple(identity_files),
+                getattr(record, "identity_file_evidence_reason", "static literal"),
+            )
+        elif identity_mode is IdentityFileEvidenceMode.DYNAMIC:
             identity_evidence = IdentityFileEvidence.dynamic(
                 getattr(record, "identity_file_evidence_reason", "dynamic")
             )
         else:
-            identity_evidence = IdentityFileEvidence.unavailable(
+            identity_evidence = IdentityFileEvidence.unspecified(
                 getattr(record, "identity_file_evidence_reason", "unavailable")
             )
         return cls(
@@ -340,6 +465,7 @@ class IdentityRegistry:
                         "username_literal": entry.projection.username_literal,
                         "username_is_explicit": entry.projection.username_is_explicit,
                         "identity_files": list(entry.projection.identity_files),
+                        "identity_file_evidence_mode": entry.projection.identity_file_evidence.mode.value,
                         "identity_file_evidence_status": entry.projection.identity_file_evidence.status.value,
                         "identity_file_evidence_values": list(entry.projection.identity_file_evidence.values),
                         "identity_file_evidence_reason": entry.projection.identity_file_evidence.reason,
@@ -379,30 +505,61 @@ class IdentityRegistry:
             )
             if not isinstance(identity_evidence_values, list):
                 raise ValueError("identity registry identity evidence must be an array")
-            identity_status = _enum_or_default(
-                IdentityFileEvidenceStatus,
-                projection.get("identity_file_evidence_status", "unavailable"),
-                IdentityFileEvidenceStatus.UNAVAILABLE,
+            evidence_reason = str(
+                projection.get("identity_file_evidence_reason", "unavailable")
             )
-            if identity_status is IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL:
-                identity_evidence = IdentityFileEvidence.safe(identity_evidence_values)
-            elif identity_status is IdentityFileEvidenceStatus.DYNAMIC:
-                identity_evidence = IdentityFileEvidence.dynamic(
-                    str(projection.get("identity_file_evidence_reason", "dynamic"))
+            if "identity_file_evidence_mode" in projection:
+                identity_mode = _enum_from_payload(
+                    IdentityFileEvidenceMode,
+                    projection["identity_file_evidence_mode"],
+                    "identity_file_evidence_mode",
                 )
             else:
-                identity_evidence = IdentityFileEvidence.unavailable(
-                    str(projection.get("identity_file_evidence_reason", "unavailable"))
+                # Commit 81e5ae5 serialized only status plus values. An empty
+                # safe tuple was ambiguous, so it is deliberately restored as
+                # the weaker UNSPECIFIED mode rather than EXPLICIT_NONE.
+                legacy_status = _enum_from_payload(
+                    IdentityFileEvidenceStatus,
+                    projection.get("identity_file_evidence_status", "unavailable"),
+                    "identity_file_evidence_status",
                 )
-            destination_status = _enum_or_default(
+                if (
+                    legacy_status is IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+                    and identity_evidence_values
+                ):
+                    identity_mode = IdentityFileEvidenceMode.EXPLICIT_FILES
+                elif legacy_status is IdentityFileEvidenceStatus.DYNAMIC:
+                    identity_mode = IdentityFileEvidenceMode.DYNAMIC
+                else:
+                    identity_mode = IdentityFileEvidenceMode.UNSPECIFIED
+            if (
+                identity_mode is not IdentityFileEvidenceMode.EXPLICIT_FILES
+                and identity_evidence_values
+            ):
+                raise ValueError(
+                    f"{identity_mode.value} IdentityFile evidence cannot carry values"
+                )
+            if identity_mode is IdentityFileEvidenceMode.EXPLICIT_NONE:
+                identity_evidence = IdentityFileEvidence.explicit_none(evidence_reason)
+            elif identity_mode is IdentityFileEvidenceMode.EXPLICIT_FILES:
+                identity_evidence = IdentityFileEvidence(
+                    IdentityFileEvidenceMode.EXPLICIT_FILES,
+                    tuple(identity_evidence_values),
+                    evidence_reason,
+                )
+            elif identity_mode is IdentityFileEvidenceMode.DYNAMIC:
+                identity_evidence = IdentityFileEvidence.dynamic(evidence_reason)
+            else:
+                identity_evidence = IdentityFileEvidence.unspecified(evidence_reason)
+            destination_status = _enum_from_payload(
                 DestinationEvidenceStatus,
                 projection.get("destination_evidence_status", "unavailable"),
-                DestinationEvidenceStatus.UNAVAILABLE,
+                "destination_evidence_status",
             )
-            destination_reason = _enum_or_default(
+            destination_reason = _enum_from_payload(
                 DestinationEvidenceReason,
                 projection.get("destination_evidence_reason", "not_provided"),
-                DestinationEvidenceReason.NOT_PROVIDED,
+                "destination_evidence_reason",
             )
             destination_anchor = None
             if destination_status is DestinationEvidenceStatus.TRUSTWORTHY:
@@ -540,9 +697,14 @@ def reconcile_identities(
             (
                 lambda entry: (
                     entry.projection.username_literal,
+                    entry.projection.identity_file_evidence.mode,
                     entry.projection.identity_file_evidence.values,
                 ),
-                lambda entry: (entry.username_literal, entry.identity_file_evidence.values),
+                lambda entry: (
+                    entry.username_literal,
+                    entry.identity_file_evidence.mode,
+                    entry.identity_file_evidence.values,
+                ),
                 MatchReason.DESTINATION_USER_IDENTITY,
             ),
             (
@@ -556,8 +718,11 @@ def reconcile_identities(
             for item in remaining_old:
                 if reason is MatchReason.DESTINATION_USER_IDENTITY and (
                     not item[1].projection.username_is_explicit
-                    or item[1].projection.identity_file_evidence.status
-                    is not IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+                    or item[1].projection.identity_file_evidence.mode
+                    not in {
+                        IdentityFileEvidenceMode.EXPLICIT_NONE,
+                        IdentityFileEvidenceMode.EXPLICIT_FILES,
+                    }
                 ):
                     continue
                 if reason is MatchReason.DESTINATION_USER and not item[
@@ -568,8 +733,11 @@ def reconcile_identities(
             for item in remaining_new:
                 if reason is MatchReason.DESTINATION_USER_IDENTITY and (
                     not item[1].username_is_explicit
-                    or item[1].identity_file_evidence.status
-                    is not IdentityFileEvidenceStatus.SAFE_STATIC_LITERAL
+                    or item[1].identity_file_evidence.mode
+                    not in {
+                        IdentityFileEvidenceMode.EXPLICIT_NONE,
+                        IdentityFileEvidenceMode.EXPLICIT_FILES,
+                    }
                 ):
                     continue
                 if reason is MatchReason.DESTINATION_USER and not item[

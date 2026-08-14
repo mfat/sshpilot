@@ -13,7 +13,10 @@ import pytest
 
 from sshpilot.core.connections.identity_reconciliation import (
     ConnectionIdentityProjection,
+    DestinationAnchor,
     DestinationEvidenceReason,
+    DestinationEvidenceStatus,
+    IdentityFileEvidenceMode,
     IdentityFileEvidence,
     IdentityFileEvidenceStatus,
     IdentityRegistry,
@@ -47,7 +50,10 @@ def projection(
             DestinationEvidenceReason.MISSING_HOSTNAME
         )
     username_is_explicit = username is not None
-    identity_evidence = IdentityFileEvidence.safe(identity_files)
+    if any("$" in value or "%" in value.replace("%%", "") for value in identity_files):
+        identity_evidence = IdentityFileEvidence.dynamic("test dynamic expression")
+    else:
+        identity_evidence = IdentityFileEvidence.safe(identity_files)
     return ConnectionIdentityProjection(
         alias=alias,
         hostname=hostname,
@@ -368,6 +374,125 @@ def test_registry_serialization_and_restart_are_idempotent():
     assert not again.created and not again.deleted
 
 
+def test_identityfile_semantic_modes_round_trip():
+    entries = (
+        old("u-none", _identity_projection("none", IdentityFileEvidenceMode.EXPLICIT_NONE)),
+        old("u-unspecified", _identity_projection("unspecified", IdentityFileEvidenceMode.UNSPECIFIED)),
+        old("u-files", _identity_projection("files", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a", "b"))),
+        old("u-dynamic", _identity_projection("dynamic", IdentityFileEvidenceMode.DYNAMIC)),
+    )
+    restored = IdentityRegistry.from_dict(
+        json.loads(json.dumps(IdentityRegistry(entries=entries).to_dict()))
+    )
+    assert [
+        entry.projection.identity_file_evidence.mode for entry in restored.entries
+    ] == [
+        IdentityFileEvidenceMode.EXPLICIT_NONE,
+        IdentityFileEvidenceMode.UNSPECIFIED,
+        IdentityFileEvidenceMode.EXPLICIT_FILES,
+        IdentityFileEvidenceMode.DYNAMIC,
+    ]
+
+
+def test_legacy_prototype_empty_safe_evidence_restores_conservatively():
+    entries = (
+        old("u-none", _identity_projection("none", IdentityFileEvidenceMode.EXPLICIT_NONE)),
+        old("u-files", _identity_projection("files", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a",))),
+    )
+    payload = json.loads(json.dumps(IdentityRegistry(entries=entries).to_dict()))
+    for raw in payload["identities"]:
+        raw["projection"].pop("identity_file_evidence_mode")
+    restored = IdentityRegistry.from_dict(payload)
+    assert restored.entries[0].projection.identity_file_evidence.mode is IdentityFileEvidenceMode.UNSPECIFIED
+    assert restored.entries[1].projection.identity_file_evidence.mode is IdentityFileEvidenceMode.EXPLICIT_FILES
+
+
+@pytest.mark.parametrize(
+    "mutator",
+    [
+        lambda projection: projection.update(
+            {"destination_evidence_status": "trustworthy", "hostname": "", "port": 22}
+        ),
+        lambda projection: projection.update(
+            {"destination_evidence_status": "trustworthy", "hostname": "server.example", "port": 0}
+        ),
+    ],
+)
+def test_malformed_destination_registry_evidence_is_rejected(mutator):
+    payload = json.loads(
+        json.dumps(
+            IdentityRegistry(entries=(old("u1", projection("old")),)).to_dict()
+        )
+    )
+    mutator(payload["identities"][0]["projection"])
+    with pytest.raises((TypeError, ValueError)):
+        IdentityRegistry.from_dict(payload)
+
+
+def test_unavailable_destination_evidence_cannot_carry_anchor():
+    with pytest.raises(ValueError, match="cannot carry an anchor"):
+        StaticDestinationEvidence(
+            DestinationEvidenceStatus.UNAVAILABLE,
+            DestinationEvidenceReason.NOT_PROVIDED,
+            DestinationAnchor("server.example", 22),
+        )
+
+
+@pytest.mark.parametrize(
+    "mode,values",
+    [
+        (IdentityFileEvidenceMode.UNSPECIFIED, ("a",)),
+        (IdentityFileEvidenceMode.EXPLICIT_NONE, ("a",)),
+        (IdentityFileEvidenceMode.EXPLICIT_FILES, ()),
+        (IdentityFileEvidenceMode.EXPLICIT_FILES, ("none",)),
+        (IdentityFileEvidenceMode.DYNAMIC, ("a",)),
+    ],
+)
+def test_identityfile_evidence_invariants_reject_invalid_values(mode, values):
+    with pytest.raises((TypeError, ValueError)):
+        IdentityFileEvidence(mode, values)
+
+
+@pytest.mark.parametrize(
+    "mode,values",
+    [
+        ("explicit_files", []),
+        ("explicit_none", ["id_a"]),
+        ("dynamic", ["id_a"]),
+        ("unknown", []),
+    ],
+)
+def test_malformed_identityfile_registry_evidence_is_rejected(mode, values):
+    payload = json.loads(
+        json.dumps(
+            IdentityRegistry(
+                entries=(
+                    old(
+                        "u1",
+                        _identity_projection(
+                            "old", IdentityFileEvidenceMode.EXPLICIT_FILES, ("id_a",)
+                        ),
+                    ),
+                )
+            ).to_dict()
+        )
+    )
+    projection_payload = payload["identities"][0]["projection"]
+    projection_payload["identity_file_evidence_mode"] = mode
+    projection_payload["identity_file_evidence_values"] = values
+    with pytest.raises((TypeError, ValueError)):
+        IdentityRegistry.from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    "hostname,port",
+    [("", 22), ("server.example", 0), ("server.example", 65536), ("server.example", True)],
+)
+def test_destination_anchor_invariants_reject_invalid_values(hostname, port):
+    with pytest.raises((TypeError, ValueError)):
+        DestinationAnchor(hostname, port)
+
+
 def test_actual_loader_materializes_multi_tokens_and_excludes_rules(tmp_path):
     root = tmp_path / "config"
     root.write_text(
@@ -562,6 +687,175 @@ def test_loader_marks_repeated_concrete_host_unavailable(tmp_path):
     )
     assert item.destination_anchor is None
     assert item.destination_evidence.reason is DestinationEvidenceReason.REPEATED_HOST
+
+
+def test_identityfile_none_does_not_cross_with_unspecified_after_reorder(tmp_path):
+    old_root = tmp_path / "old-config"
+    old_root.write_text(
+        "Host old-a\n"
+        "    HostName server.example\n"
+        "    User deploy\n"
+        "    IdentityFile none\n\n"
+        "Host old-b\n"
+        "    HostName server.example\n"
+        "    User deploy\n",
+        encoding="utf-8",
+    )
+    new_root = tmp_path / "new-config"
+    new_root.write_text(
+        "Host new-b\n"
+        "    HostName server.example\n"
+        "    User deploy\n\n"
+        "Host new-a\n"
+        "    HostName server.example\n"
+        "    User deploy\n"
+        "    IdentityFile none\n",
+        encoding="utf-8",
+    )
+    old_records = load_ssh_configuration(old_root, isolated=True).connections
+    new_records = load_ssh_configuration(new_root, isolated=True).connections
+    old_projections = [
+        ConnectionIdentityProjection.from_record(record, declaration_order=index)
+        for index, record in enumerate(old_records)
+    ]
+    new_projections = [
+        ConnectionIdentityProjection.from_record(record, declaration_order=index)
+        for index, record in enumerate(new_records)
+    ]
+
+    assert old_projections[0].identity_file_evidence.mode is IdentityFileEvidenceMode.EXPLICIT_NONE
+    assert old_projections[1].identity_file_evidence.mode is IdentityFileEvidenceMode.UNSPECIFIED
+    assert new_projections[0].identity_file_evidence.mode is IdentityFileEvidenceMode.UNSPECIFIED
+    assert new_projections[1].identity_file_evidence.mode is IdentityFileEvidenceMode.EXPLICIT_NONE
+
+    result = reconcile(
+        [old("old-a-id", old_projections[0]), old("old-b-id", old_projections[1])],
+        new_projections,
+    )
+    assert {
+        match.new_projection.alias: (match.old.uuid, match.reason)
+        for match in result.matched
+    } == {
+        "new-a": ("old-a-id", MatchReason.DESTINATION_USER_IDENTITY),
+        "new-b": ("old-b-id", MatchReason.DESTINATION_USER),
+    }
+
+
+def _identity_projection(
+    alias: str, mode: IdentityFileEvidenceMode, values: Tuple[str, ...] = ()
+) -> ConnectionIdentityProjection:
+    item = projection(alias, identity_files=values)
+    if mode is IdentityFileEvidenceMode.EXPLICIT_NONE:
+        evidence = IdentityFileEvidence.explicit_none()
+    elif mode is IdentityFileEvidenceMode.EXPLICIT_FILES:
+        evidence = IdentityFileEvidence.safe(values)
+    elif mode is IdentityFileEvidenceMode.DYNAMIC:
+        evidence = IdentityFileEvidence.dynamic("test dynamic expression")
+    else:
+        evidence = IdentityFileEvidence.unspecified()
+    return replace(item, identity_file_evidence=evidence)
+
+
+@pytest.mark.parametrize(
+    "old_mode,new_mode,expected_reason",
+    [
+        (
+            IdentityFileEvidenceMode.EXPLICIT_NONE,
+            IdentityFileEvidenceMode.EXPLICIT_NONE,
+            MatchReason.DESTINATION_USER_IDENTITY,
+        ),
+        (
+            IdentityFileEvidenceMode.EXPLICIT_NONE,
+            IdentityFileEvidenceMode.UNSPECIFIED,
+            MatchReason.DESTINATION_USER,
+        ),
+        (
+            IdentityFileEvidenceMode.UNSPECIFIED,
+            IdentityFileEvidenceMode.EXPLICIT_NONE,
+            MatchReason.DESTINATION_USER,
+        ),
+        (
+            IdentityFileEvidenceMode.UNSPECIFIED,
+            IdentityFileEvidenceMode.UNSPECIFIED,
+            MatchReason.DESTINATION_USER,
+        ),
+        (
+            IdentityFileEvidenceMode.EXPLICIT_FILES,
+            IdentityFileEvidenceMode.EXPLICIT_FILES,
+            MatchReason.DESTINATION_USER_IDENTITY,
+        ),
+        (
+            IdentityFileEvidenceMode.EXPLICIT_FILES,
+            IdentityFileEvidenceMode.DYNAMIC,
+            MatchReason.DESTINATION_USER,
+        ),
+        (
+            IdentityFileEvidenceMode.DYNAMIC,
+            IdentityFileEvidenceMode.DYNAMIC,
+            MatchReason.DESTINATION_USER,
+        ),
+        (
+            IdentityFileEvidenceMode.DYNAMIC,
+            IdentityFileEvidenceMode.EXPLICIT_FILES,
+            MatchReason.DESTINATION_USER,
+        ),
+    ],
+)
+def test_identityfile_modes_control_pass_a_only_when_comparable(
+    old_mode, new_mode, expected_reason
+):
+    old_values = ("~/.ssh/id_a",) if old_mode is IdentityFileEvidenceMode.EXPLICIT_FILES else ()
+    new_values = ("~/.ssh/id_a",) if new_mode is IdentityFileEvidenceMode.EXPLICIT_FILES else ()
+    result = reconcile(
+        [old("u1", _identity_projection("old", old_mode, old_values))],
+        [_identity_projection("new", new_mode, new_values)],
+    )
+    assert result.matched[0].reason is expected_reason
+
+
+def test_identityfile_static_sequences_are_ordered_evidence():
+    same = reconcile(
+        [old("u1", _identity_projection("old", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a", "b")))],
+        [_identity_projection("new", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a", "b"))],
+    )
+    reversed_values = reconcile(
+        [old("u1", _identity_projection("old", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a", "b")))],
+        [_identity_projection("new", IdentityFileEvidenceMode.EXPLICIT_FILES, ("b", "a"))],
+    )
+    assert same.matched[0].reason is MatchReason.DESTINATION_USER_IDENTITY
+    assert reversed_values.matched[0].reason is MatchReason.DESTINATION_USER
+
+
+def test_mixed_identityfile_collision_preserves_comparable_modes_after_reorder():
+    old_items = [
+        old("none-id", _identity_projection("old-none", IdentityFileEvidenceMode.EXPLICIT_NONE)),
+        old("unspecified-id", _identity_projection("old-unspecified", IdentityFileEvidenceMode.UNSPECIFIED)),
+        old("files-id", _identity_projection("old-files", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a",))),
+        old("dynamic-id", _identity_projection("old-dynamic", IdentityFileEvidenceMode.DYNAMIC)),
+    ]
+    new_items = [
+        _identity_projection("new-dynamic", IdentityFileEvidenceMode.DYNAMIC),
+        _identity_projection("new-files", IdentityFileEvidenceMode.EXPLICIT_FILES, ("a",)),
+        _identity_projection("new-none", IdentityFileEvidenceMode.EXPLICIT_NONE),
+        _identity_projection("new-unspecified", IdentityFileEvidenceMode.UNSPECIFIED),
+    ]
+    first = reconcile(old_items, new_items)
+    second = reconcile(list(reversed(old_items)), list(reversed(new_items)))
+    mapping = {
+        match.new_projection.alias: (match.old.uuid, match.reason)
+        for match in first.matched
+    }
+    assert mapping["new-none"] == ("none-id", MatchReason.DESTINATION_USER_IDENTITY)
+    assert mapping["new-files"] == ("files-id", MatchReason.DESTINATION_USER_IDENTITY)
+    assert mapping["new-dynamic"][1] is MatchReason.DESTINATION_USER
+    assert mapping["new-unspecified"][1] is MatchReason.DESTINATION_USER
+    assert len({match.old.uuid for match in first.matched}) == 4
+    assert {
+        alias: (item.old.uuid, item.reason)
+        for alias, item in (
+            (match.new_projection.alias, match) for match in second.matched
+        )
+    } == mapping
 
 
 @pytest.mark.parametrize("include_position", ["before", "after"])
@@ -790,7 +1084,7 @@ def test_actual_loader_multi_token_complete_rename_uses_collision_order(tmp_path
         ("bar-id", "qux"),
     ]
     assert all(
-        match.reason is MatchReason.DESTINATION_USER_IDENTITY
+        match.reason is MatchReason.DESTINATION_USER
         for match in result.matched
     )
 
@@ -813,6 +1107,64 @@ def test_identity_file_order_and_none_are_stable_tie_break_evidence(
     record = load_ssh_configuration(root, isolated=True).connections[0]
     item = ConnectionIdentityProjection.from_record(record, declaration_order=0)
     assert item.identity_files == expected
+    if expected:
+        assert item.identity_file_evidence.mode is IdentityFileEvidenceMode.EXPLICIT_FILES
+    else:
+        assert item.identity_file_evidence.mode is IdentityFileEvidenceMode.EXPLICIT_NONE
+
+
+def test_no_identityfile_directive_is_unspecified(tmp_path):
+    root = tmp_path / "config"
+    root.write_text("Host one\n    HostName example.com\n", encoding="utf-8")
+    record = load_ssh_configuration(root, isolated=True).connections[0]
+    item = ConnectionIdentityProjection.from_record(record, declaration_order=0)
+    assert item.identity_file_evidence.mode is IdentityFileEvidenceMode.UNSPECIFIED
+
+
+@pytest.mark.parametrize(
+    "token,expected_mode",
+    [
+        ("%%", IdentityFileEvidenceMode.EXPLICIT_FILES),
+        ("%h", IdentityFileEvidenceMode.DYNAMIC),
+        ("%r", IdentityFileEvidenceMode.DYNAMIC),
+        ("%p", IdentityFileEvidenceMode.DYNAMIC),
+        ("%u", IdentityFileEvidenceMode.DYNAMIC),
+        ("%d", IdentityFileEvidenceMode.DYNAMIC),
+        ("%i", IdentityFileEvidenceMode.DYNAMIC),
+        ("%l", IdentityFileEvidenceMode.DYNAMIC),
+        ("%L", IdentityFileEvidenceMode.DYNAMIC),
+        ("%C", IdentityFileEvidenceMode.DYNAMIC),
+        ("%j", IdentityFileEvidenceMode.DYNAMIC),
+        ("%k", IdentityFileEvidenceMode.DYNAMIC),
+    ],
+)
+def test_identityfile_percent_tokens_are_classified_conservatively(
+    tmp_path, token, expected_mode
+):
+    root = tmp_path / "config"
+    root.write_text(
+        "Host one\n    HostName example.com\n"
+        f"    IdentityFile ~/.ssh/{token}\n",
+        encoding="utf-8",
+    )
+    record = load_ssh_configuration(root, isolated=True).connections[0]
+    item = ConnectionIdentityProjection.from_record(record, declaration_order=0)
+    assert item.identity_file_evidence.mode is expected_mode
+
+
+def test_tilde_identityfile_is_config_intent_evidence(tmp_path):
+    root = tmp_path / "config"
+    root.write_text(
+        "Host one\n    HostName example.com\n"
+        "    IdentityFile ~/.ssh/id_a\n",
+        encoding="utf-8",
+    )
+    item = ConnectionIdentityProjection.from_record(
+        load_ssh_configuration(root, isolated=True).connections[0],
+        declaration_order=0,
+    )
+    assert item.identity_file_evidence.mode is IdentityFileEvidenceMode.EXPLICIT_FILES
+    assert item.identity_file_evidence.values == ("~/.ssh/id_a",)
 
 
 def test_external_repository_reload_currently_does_not_reconcile_alias_rename(tmp_path):
@@ -894,4 +1246,4 @@ def test_registry_from_actual_records_is_restartable(tmp_path):
     ]
     result = reconcile(restored.entries, projections)
     assert result.matched[0].old.uuid == "u1"
-    assert result.matched[0].reason is MatchReason.DESTINATION_USER_IDENTITY
+    assert result.matched[0].reason is MatchReason.DESTINATION_USER

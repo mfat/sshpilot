@@ -628,6 +628,7 @@ def _static_identity_evidence(files: List[Path]) -> Dict[str, Dict[str, str]]:
             "destination_reason": "not_provided",
             "username_literal": "",
             "username_is_explicit": "0",
+            "identity_mode": "unspecified",
             "identity_status": "unavailable",
             "identity_reason": "not_provided",
         }
@@ -668,11 +669,29 @@ def _static_identity_evidence(files: List[Path]) -> Dict[str, Dict[str, str]]:
             result["username_literal"] = users[0]
             result["username_is_explicit"] = "1"
         if any(not _static_value(value) for value in identities):
+            result["identity_mode"] = "dynamic"
             result["identity_status"] = "dynamic"
             result["identity_reason"] = "host_or_runtime_dependent"
-        else:
+        elif identities and all(
+            str(value).strip().lower() == "none" for value in identities
+        ):
+            result["identity_mode"] = "explicit_none"
+            result["identity_status"] = "safe_static_literal"
+            result["identity_reason"] = "explicit_none"
+        elif any(str(value).strip().lower() == "none" for value in identities):
+            # Mixed ``none`` and file directives have order/merge semantics
+            # that this analyzer does not prove safely.
+            result["identity_mode"] = "dynamic"
+            result["identity_status"] = "dynamic"
+            result["identity_reason"] = "mixed_none_and_files"
+        elif identities:
+            result["identity_mode"] = "explicit_files"
             result["identity_status"] = "safe_static_literal"
             result["identity_reason"] = "static_literal"
+        else:
+            result["identity_mode"] = "unspecified"
+            result["identity_status"] = "unavailable"
+            result["identity_reason"] = "no_identityfile_directive"
         evidence[alias] = result
     return evidence
 
@@ -848,6 +867,9 @@ def load_ssh_configuration(
                 == "1",
                 "__identity_file_evidence_status": values.get(
                     "identity_status", "unavailable"
+                ),
+                "__identity_file_evidence_mode": values.get(
+                    "identity_mode", "unspecified"
                 ),
                 "__identity_file_evidence_reason": values.get(
                     "identity_reason", "not_provided"
