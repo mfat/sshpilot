@@ -1,0 +1,411 @@
+"""Production filesystem tests for v2 identity state and transaction intents."""
+
+from __future__ import annotations
+
+import json
+import stat
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from sshpilot.core.connections.identity_reconciliation import (
+    ConnectionIdentityProjection,
+    IdentityFileEvidence,
+    IdentityRegistryEntry,
+    StaticDestinationEvidence,
+    reconcile_identities,
+)
+from sshpilot.core.connections.identity_state_v2 import (
+    ConnectionReference,
+    IdentityRecoveryAction,
+    IdentityStateV2,
+    IdentityTransactionIntent,
+    PersistedIdentity,
+    ReferenceKind,
+    classify_identity_transaction_recovery,
+)
+from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
+from sshpilot.core.connections.state_file import (
+    ConnectionFileState,
+    ConnectionStateFileKind,
+    GroupFileState,
+    clear_pending_identity_transaction,
+    identity_transaction_intent_path,
+    migrate_connection_state_v1_to_v2,
+    probe_connection_state_file,
+    read_identity_state_v2,
+    read_pending_identity_transaction,
+    recover_pending_identity_transaction,
+    write_connection_state,
+    write_identity_state_v2,
+    write_pending_identity_transaction,
+)
+from sshpilot.core.errors import CoreError
+
+
+U1 = "11111111-1111-4111-8111-111111111111"
+U2 = "22222222-2222-4222-8222-222222222222"
+
+
+def _projection(alias: str, *, order: int = 0, host: str = "server.example"):
+    return ConnectionIdentityProjection(
+        alias=alias,
+        hostname=host,
+        port=22,
+        username="deploy",
+        identity_files=(),
+        declaration_order=order,
+        source="/tmp/config",
+        destination_evidence=StaticDestinationEvidence.trustworthy(host, 22),
+        username_literal="deploy",
+        username_is_explicit=True,
+        identity_file_evidence=IdentityFileEvidence.unspecified(),
+    )
+
+
+def _state(*, generation: int = 0, revision: str = "rev-old", alias: str = "old"):
+    return IdentityStateV2(
+        identities=(PersistedIdentity(U1, "Production", _projection(alias)),),
+        root_connections=(ConnectionReference(ReferenceKind.SSH_UUID, U1),),
+        sidecar_generation=generation,
+        last_reconciled_ssh_revision=revision,
+        observed_ssh_revision=revision,
+    )
+
+
+def _intent(base: IdentityStateV2, target: IdentityStateV2) -> IdentityTransactionIntent:
+    return IdentityTransactionIntent(
+        transaction_id="tx-1",
+        base_ssh_revision="rev-old",
+        target_ssh_revision="rev-new",
+        base_sidecar_generation=base.sidecar_generation,
+        operation_label="test transaction",
+        target_state=target,
+    )
+
+
+def test_v2_reader_writer_round_trip_and_deterministic_bytes(tmp_path: Path):
+    path = tmp_path / "connections.json"
+    state = _state()
+    write_identity_state_v2(path, state)
+    first = path.read_bytes()
+    assert read_identity_state_v2(path) == state
+    write_identity_state_v2(path, state)
+    assert path.read_bytes() == first
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.V2
+
+
+def test_v2_missing_is_explicit_and_malformed_never_becomes_empty(tmp_path: Path):
+    path = tmp_path / "connections.json"
+    assert read_identity_state_v2(path) is None
+    path.write_text("{broken", encoding="utf-8")
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.CORRUPT
+    with pytest.raises(CoreError):
+        read_identity_state_v2(path)
+
+
+@pytest.mark.parametrize(
+    "writer",
+    [
+        lambda path: path.write_bytes(b"\xff"),
+        lambda path: path.write_text("[]", encoding="utf-8"),
+        lambda path: path.write_text(json.dumps({"version": 999}), encoding="utf-8"),
+        lambda path: path.write_text(json.dumps({"version": 1}), encoding="utf-8"),
+    ],
+)
+def test_v2_reader_rejects_non_v2_or_invalid_files(tmp_path: Path, writer):
+    path = tmp_path / "connections.json"
+    writer(path)
+    kind = probe_connection_state_file(path)
+    if "999" in path.read_text(encoding="utf-8", errors="ignore"):
+        assert kind is ConnectionStateFileKind.UNSUPPORTED
+    elif "version" in path.read_text(encoding="utf-8", errors="ignore"):
+        assert kind is ConnectionStateFileKind.V1
+    else:
+        assert kind is ConnectionStateFileKind.CORRUPT
+    with pytest.raises(CoreError):
+        read_identity_state_v2(path)
+
+
+def test_v2_symlink_is_rejected_for_read_and_write(tmp_path: Path):
+    target = tmp_path / "target.json"
+    write_identity_state_v2(target, _state())
+    link = tmp_path / "connections.json"
+    link.symlink_to(target)
+    with pytest.raises(CoreError):
+        read_identity_state_v2(link)
+    with pytest.raises(CoreError):
+        write_identity_state_v2(link, _state())
+
+
+def test_v1_to_v2_migration_is_atomic_and_idempotent(tmp_path: Path):
+    path = tmp_path / "connections.json"
+    write_connection_state(
+        path,
+        ConnectionFileState(
+            groups=(GroupFileState("work", "Work", connection_ids=("old",)),),
+            metadata={"old": {"pinned": True}},
+        ),
+    )
+    before = path.read_bytes()
+    migrated, report = migrate_connection_state_v1_to_v2(
+        path,
+        (_projection("old"),),
+        ssh_config_revision="rev-old",
+        uuid_factory=lambda: U1,
+    )
+    assert report.identities_created == 1
+    assert migrated.identities[0].uuid == U1
+    assert migrated.metadata == {U1: {"pinned": True}}
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.V2
+    restored = read_identity_state_v2(path)
+    assert restored == migrated
+    with pytest.raises(CoreError) as excinfo:
+        migrate_connection_state_v1_to_v2(
+            path,
+            (_projection("old"),),
+            ssh_config_revision="rev-old",
+            uuid_factory=lambda: U2,
+        )
+    assert excinfo.value.diagnostic_category == "invalid_state"
+    assert before != path.read_bytes()
+    assert read_identity_state_v2(path).identities[0].uuid == U1
+
+
+def test_failed_migration_keeps_valid_v1_bytes(tmp_path: Path):
+    path = tmp_path / "connections.json"
+    write_connection_state(path, ConnectionFileState())
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="duplicate identity UUID"):
+        migrate_connection_state_v1_to_v2(
+            path,
+            (_projection("a"), _projection("b", order=1)),
+            ssh_config_revision="rev-old",
+            uuid_factory=lambda: U1,
+        )
+    assert path.read_bytes() == before
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.V1
+
+
+def test_real_loader_migration_persists_projection_and_restart_rename(tmp_path: Path):
+    config = tmp_path / "ssh_config"
+    config.write_text(
+        "Host old-prod\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    loaded = load_ssh_configuration(config, isolated=True)
+    record = loaded.connections[0]
+    projection = ConnectionIdentityProjection.from_record(record, declaration_order=0)
+    path = tmp_path / "connections.json"
+    write_connection_state(path, ConnectionFileState())
+    state, _ = migrate_connection_state_v1_to_v2(
+        path,
+        (projection,),
+        ssh_config_revision=loaded.root_revision,
+        uuid_factory=lambda: U1,
+    )
+    assert state.last_reconciled_ssh_revision == loaded.root_revision
+    assert state.observed_ssh_revision == loaded.root_revision
+    assert state.identities[0].display_name == "old-prod"
+
+    config.write_text(
+        "Host prod\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    restarted = read_identity_state_v2(path)
+    new_loaded = load_ssh_configuration(config, isolated=True)
+    new_projection = ConnectionIdentityProjection.from_record(
+        new_loaded.connections[0], declaration_order=0
+    )
+    result = reconcile_identities(
+        tuple(
+            IdentityRegistryEntry(
+                item.uuid,
+                item.projection,
+                item.display_name,
+                item.tombstone,
+            )
+            for item in restarted.identities
+        ),
+        (new_projection,),
+        uuid_factory=lambda: U2,
+    )
+    assert [(match.old.uuid, match.new_projection.alias) for match in result.matched] == [
+        (U1, "prod")
+    ]
+
+
+def test_real_loader_restart_ambiguity_survives_disk_serialization(tmp_path: Path):
+    config = tmp_path / "ssh_config"
+    config.write_text(
+        "Host old-a\n    HostName server.example\n    User deploy\n\n"
+        "Host old-b\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    old_loaded = load_ssh_configuration(config, isolated=True)
+    old_projections = tuple(
+        ConnectionIdentityProjection.from_record(record, declaration_order=index)
+        for index, record in enumerate(old_loaded.connections)
+    )
+    path = tmp_path / "connections.json"
+    write_connection_state(path, ConnectionFileState())
+    migrate_connection_state_v1_to_v2(
+        path,
+        old_projections,
+        ssh_config_revision=old_loaded.root_revision,
+        uuid_factory=iter((U1, U2)).__next__,
+    )
+    state = read_identity_state_v2(path)
+    config.write_text(
+        "Host new-b\n    HostName server.example\n    User deploy\n\n"
+        "Host new-a\n    HostName server.example\n    User deploy\n",
+        encoding="utf-8",
+    )
+    new_loaded = load_ssh_configuration(config, isolated=True)
+    new_projections = tuple(
+        ConnectionIdentityProjection.from_record(record, declaration_order=index)
+        for index, record in enumerate(new_loaded.connections)
+    )
+    result = reconcile_identities(
+        tuple(
+            IdentityRegistryEntry(item.uuid, item.projection, item.display_name)
+            for item in state.identities
+        ),
+        new_projections,
+        uuid_factory=lambda: U2,
+    )
+    assert result.matched == ()
+    assert result.created == ()
+    assert result.deleted == ()
+    assert len(result.ambiguous) == 1
+
+
+def test_intent_round_trip_and_revision_generation_invariants(tmp_path: Path):
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    intent = _intent(base, target)
+    path = tmp_path / "connections.json.pending"
+    write_pending_identity_transaction(path, intent)
+    assert read_pending_identity_transaction(path) == intent
+    assert identity_transaction_intent_path(tmp_path / "connections.json") == path
+    with pytest.raises(ValueError, match="base generation plus one"):
+        IdentityTransactionIntent(
+            transaction_id="tx",
+            base_ssh_revision="old",
+            target_ssh_revision="new",
+            base_sidecar_generation=4,
+            operation_label="bad",
+            target_state=target,
+        )
+    with pytest.raises(ValueError, match="record its SSH revision"):
+        IdentityTransactionIntent(
+            transaction_id="tx",
+            base_ssh_revision="old",
+            target_ssh_revision="new",
+            base_sidecar_generation=0,
+            operation_label="bad",
+            target_state=replace(target, last_reconciled_ssh_revision="old"),
+        )
+
+
+def test_recovery_crash_window_matrix(tmp_path: Path):
+    sidecar = tmp_path / "connections.json"
+    intent_path = identity_transaction_intent_path(sidecar)
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    intent = _intent(base, target)
+    write_identity_state_v2(sidecar, base)
+
+    write_pending_identity_transaction(intent_path, intent)
+    assert recover_pending_identity_transaction(
+        sidecar, actual_ssh_revision="rev-old"
+    ).action is IdentityRecoveryAction.ABORT_BASE
+    assert not intent_path.exists()
+    assert read_identity_state_v2(sidecar) == base
+
+    write_pending_identity_transaction(intent_path, intent)
+    assert recover_pending_identity_transaction(
+        sidecar, actual_ssh_revision="rev-new"
+    ).action is IdentityRecoveryAction.FINALIZE_TARGET
+    assert read_identity_state_v2(sidecar) == target
+    assert not intent_path.exists()
+
+    write_pending_identity_transaction(intent_path, intent)
+    assert recover_pending_identity_transaction(
+        sidecar, actual_ssh_revision="rev-new"
+    ).action is IdentityRecoveryAction.FINALIZE_TARGET
+    assert not intent_path.exists()
+
+    write_identity_state_v2(sidecar, base)
+    write_pending_identity_transaction(intent_path, intent)
+    decision = recover_pending_identity_transaction(
+        sidecar, actual_ssh_revision="rev-external"
+    )
+    assert decision.action is IdentityRecoveryAction.REQUIRES_RECONCILIATION
+    assert intent_path.exists()
+
+    write_identity_state_v2(sidecar, replace(base, sidecar_generation=2))
+    decision = classify_identity_transaction_recovery(
+        read_identity_state_v2(sidecar), intent, "rev-old"
+    )
+    assert decision.action is IdentityRecoveryAction.STALE_INTENT
+
+    assert classify_identity_transaction_recovery(
+        base, intent, None
+    ).action is IdentityRecoveryAction.DEFERRED
+
+
+def test_intent_corruption_and_symlink_are_not_no_pending(tmp_path: Path):
+    sidecar = tmp_path / "connections.json"
+    intent = identity_transaction_intent_path(sidecar)
+    intent.write_text("{broken", encoding="utf-8")
+    with pytest.raises(CoreError):
+        read_pending_identity_transaction(intent)
+    intent.unlink()
+    target = tmp_path / "real.pending"
+    target.write_text("{}", encoding="utf-8")
+    link = tmp_path / "connections.json.pending"
+    link.symlink_to(target)
+    with pytest.raises(CoreError):
+        clear_pending_identity_transaction(link)
+    with pytest.raises(CoreError):
+        write_pending_identity_transaction(link, _intent(_state(), replace(
+            _state(generation=1, revision="rev-new", alias="new"),
+            last_reconciled_ssh_revision="rev-new",
+            observed_ssh_revision="rev-new",
+        )))
+
+
+def test_corrupt_sidecar_is_not_replaced_during_recovery(tmp_path: Path):
+    sidecar = tmp_path / "connections.json"
+    intent_path = identity_transaction_intent_path(sidecar)
+    sidecar.write_text("{broken", encoding="utf-8")
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    write_pending_identity_transaction(intent_path, _intent(base, target))
+    with pytest.raises(CoreError):
+        recover_pending_identity_transaction(sidecar, actual_ssh_revision="rev-new")
+    assert sidecar.read_text(encoding="utf-8") == "{broken"
+    assert intent_path.exists()
+
+
+def test_unsafe_metadata_cannot_be_written_to_v2_or_intent(tmp_path: Path):
+    with pytest.raises((TypeError, ValueError)):
+        IdentityStateV2(
+            identities=(PersistedIdentity(U1, "bad", _projection("old")),),
+            metadata={U1: {"password": "secret"}},
+        )

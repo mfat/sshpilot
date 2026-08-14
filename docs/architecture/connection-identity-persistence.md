@@ -1,10 +1,10 @@
 # SSH Pilot connection identity persistence design
 
-Status: isolated backend design and migration prototype. This document does not authorize production sidecar wiring, public API identity migration, secret migration, or UI work.
+Status: Phase 1 filesystem implementation complete. This document does not authorize repository/daemon UUID wiring, public API identity migration, secret migration, or UI work.
 
 ## 1. Scope and baseline
 
-This design is based on \`287f639c029d9a23af976e308d3e6fad4b3e3baf\`. The accepted reconciliation contract is:
+This design is based on \`bc2b3ab28e72f1fc3935283221750305d27d8125\`. The accepted reconciliation contract is:
 
 1. exact alias;
 2. trusted static destination;
@@ -15,7 +15,10 @@ This design is based on \`287f639c029d9a23af976e308d3e6fad4b3e3baf\`. The accept
 
 Declaration order is diagnostic ordering only; it is never identity evidence. Ambiguous candidates are excluded from both \`created\` and \`deleted\`, and \`apply_reconciliation()\` rejects an unresolved result.
 
-The implementation added in this change is isolated in \`core/connections/identity_state_v2.py\`. It has no filesystem, daemon, API, GTK, SSH subprocess, network, or secret-store dependency. It is a schema and migration prototype, not a replacement for the v1 \`StateFile\`.
+The v2 domain model remains isolated from the repository, daemon, API, GTK,
+SSH subprocess, network, and secret store. Production filesystem entrypoints
+are implemented in \`core/connections/state_file.py\`; the existing v1
+entrypoints remain unchanged for current repository callers.
 
 ## 2. Current production architecture
 
@@ -489,19 +492,74 @@ needed depends on compatibility testing; old clients must never interpret a UUID
 as an SSH alias. This is a later API phase and does not block initial internal
 UUID persistence. No DTO or codec changes are made here.
 
-## 15. Prototype, tests, and policy status
+## 15. Phase 1 filesystem implementation
+
+The production storage boundary is additive. Existing v1 functions
+\`read_connection_state()\`, \`write_connection_state()\`, and
+\`read_legacy_connection_state()\` remain unchanged for current repository
+callers. New entrypoints are:
+
+* \`probe_connection_state_file()\` classifies absent, v1, v2, unsupported,
+  and corrupt files without treating corruption as empty state;
+* \`read_identity_state_v2()\` and \`write_identity_state_v2()\` strictly
+  construct/serialize \`IdentityStateV2\` through model invariants;
+* \`migrate_connection_state_v1_to_v2()\` accepts authoritative loader
+  projections, runs pure migration, and atomically replaces v1 only after
+  successful validation;
+* \`connections.json.pending\` is the deterministic same-directory intent
+  path. Its read/write/clear functions use the same size, UTF-8, symlink,
+  mode, temporary-file, fsync, and generic-error protections as v1;
+* \`recover_pending_identity_transaction()\` applies only BASE and TARGET
+  decisions. Unrelated, stale, incomplete, corrupt, or unavailable state is
+  returned to the higher-level adapter without UUID changes.
+
+Both v2 state and intent use deterministic sorted JSON and complete target
+snapshots. Filesystem persistence performs no DNS, network, subprocess,
+OpenSSH execution, or secret access.
+
+The intent format has its own version, transaction ID, base/target SSH
+revisions, base sidecar generation, operation label/kind, and a fully
+validated \`target_state\`. Normal operations require the target's
+\`last_reconciled_ssh_revision\` to equal the target revision. Explicit
+\`ambiguity_resolution\` permits the accepted observed-vs-last-reconciled
+distinction while still requiring the target to observe the target revision.
+Target generation must equal base generation plus one.
+
+Recovery classification is:
+
+| Actual complete SSH revision | Current sidecar | Decision |
+|---|---|---|
+| target | base generation or exact target state | finalize target, then clear intent |
+| base | base generation | abort/clear intent, retain sidecar |
+| unrelated | base generation | require higher-level reconciliation; retain intent |
+| any | newer/conflicting generation | stale intent; never overwrite |
+| unavailable/partial | any | deferred; do not clear or apply |
+
+Malformed intent and malformed v2 state are errors, not \`NO_PENDING\`. A
+corrupt main sidecar is preserved and cannot be replaced from an intent. An
+intent symlink is rejected. External SSH edits create no intent; they remain a
+later repository/daemon reconciliation concern.
+
+## 16. Prototype, tests, and policy status
 
 Added:
 
 * \`src/sshpilot/core/connections/identity_state_v2.py\`: UUIDv4 state model,
   typed references, persisted projections, strict v2 invariants, v1
   migration, orphan quarantine, and migration reports;
+* \`src/sshpilot/core/connections/state_file.py\`: shared hardened v1/v2
+  filesystem primitives, version probe, atomic migration, pending-intent
+  storage, and recovery application;
 * \`tests/core/test_connection_identity_state_v2.py\`: migration preservation,
   stale/duplicate handling, strict refs, JSON round-trip, factory collision,
   actual-loader restart rename, restart ambiguity, tombstone alias reuse, and
   conservative legacy evidence decoding; pending ambiguity referential
   integrity; tombstone placement; root/group normalization; orphan ordering;
   namespace collisions; strict metadata; and guarded resolution accounting.
+* \`tests/core/test_connection_identity_state_storage.py\`: strict v2 disk
+  reads/writes, version detection, atomic migration/idempotence, actual-loader
+  restart rename and ambiguity, intent serialization, crash-window recovery,
+  stale/corrupt/symlink handling, and secret exclusion.
 
 The loader integration tests call \`load_ssh_configuration()\` and
 \`ConnectionIdentityProjection.from_record()\` before serializing and
@@ -521,7 +579,7 @@ The only future consumer-specific interaction is the explicit backend
 ambiguity-resolution operation described above; it has a defined revision,
 generation, one-to-one, and complete-accounting contract.
 
-## 16. Recommended implementation sequence
+## 17. Recommended implementation sequence
 
 \`\`\`text
 Phase 1  production v2 types, hardened writer integration, migration and recovery tests
@@ -544,4 +602,4 @@ boundaries are coherent. Production sidecar implementation may proceed, while
 the production adapter must preserve the explicit ambiguity-resolution contract
 and remain separate from public API, UI, and secret migration.
 
-**VERDICT: UUID PERSISTENCE DESIGN READY — PROCEED TO PRODUCTION SIDECAR IMPLEMENTATION**
+**VERDICT: PRODUCTION UUID SIDECAR STORAGE READY — PROCEED TO REPOSITORY UUID INTEGRATION**

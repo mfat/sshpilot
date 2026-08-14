@@ -1,7 +1,7 @@
-"""Isolated prototype for UUID-owned connection state.
+"""Domain model for UUID-owned connection state.
 
 This module is intentionally not wired into ``ConnectionRepository`` or the
-public API.  It proves the production sidecar boundary independently from the
+public API.  It defines the production sidecar boundary independently from the
 currently alias-shaped v1 state file:
 
 * SSH connections are owned by canonical UUIDv4 identities;
@@ -11,7 +11,7 @@ currently alias-shaped v1 state file:
 * stale v1 alias references are quarantined instead of silently discarded.
 
 No secrets, network calls, SSH subprocesses, or filesystem I/O are performed.
-The caller owns atomic persistence and transaction recovery.
+Filesystem persistence and recovery primitives live in ``state_file.py``.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from .state_file import ConnectionFileState
 
 
 V2_VERSION = 2
+IDENTITY_TRANSACTION_VERSION = 1
 _PROJECTION_SERIALIZATION_UUID = "00000000-0000-4000-8000-000000000000"
 
 
@@ -63,6 +64,12 @@ def new_uuid4() -> str:
         f"{raw[10]:02x}{raw[11]:02x}{raw[12]:02x}{raw[13]:02x}{raw[14]:02x}{raw[15]:02x}"
     )
     return canonical_uuid(value)
+
+
+def new_transaction_id() -> str:
+    """Generate an opaque transaction token, independent of identity UUIDs."""
+
+    return secrets.token_hex(16)
 
 
 class ReferenceKind(str, Enum):
@@ -449,7 +456,7 @@ def validate_ambiguity_resolution(
 
 @dataclass(frozen=True)
 class IdentityStateV2:
-    """Concrete v2 sidecar model; not yet the production StateFile schema."""
+    """Concrete validated v2 sidecar snapshot."""
 
     identities: Tuple[PersistedIdentity, ...] = ()
     groups: Tuple[UuidGroupState, ...] = ()
@@ -734,6 +741,157 @@ class IdentityStateV2:
             last_reconciled_ssh_revision=payload.get("last_reconciled_ssh_revision"),
             observed_ssh_revision=payload.get("observed_ssh_revision"),
         )
+
+
+@dataclass(frozen=True)
+class IdentityTransactionIntent:
+    """Durable intent containing a complete validated v2 target snapshot."""
+
+    transaction_id: str
+    base_ssh_revision: str
+    target_ssh_revision: str
+    base_sidecar_generation: int
+    operation_label: str
+    target_state: IdentityStateV2
+    operation_kind: str = "normal"
+    version: int = IDENTITY_TRANSACTION_VERSION
+
+    def __post_init__(self) -> None:
+        if self.version != IDENTITY_TRANSACTION_VERSION:
+            raise ValueError("unsupported identity transaction version")
+        for value, label in (
+            (self.transaction_id, "transaction id"),
+            (self.base_ssh_revision, "base SSH revision"),
+            (self.target_ssh_revision, "target SSH revision"),
+            (self.operation_label, "operation label"),
+        ):
+            if type(value) is not str or not value.strip():
+                raise ValueError(f"{label} must be a non-empty string")
+        if type(self.base_sidecar_generation) is not int or (
+            self.base_sidecar_generation < 0
+        ):
+            raise ValueError("base sidecar generation must be non-negative")
+        if not isinstance(self.target_state, IdentityStateV2):
+            raise TypeError("transaction target must be IdentityStateV2")
+        if self.target_state.sidecar_generation != self.base_sidecar_generation + 1:
+            raise ValueError(
+                "transaction target generation must be base generation plus one"
+            )
+        if self.operation_kind not in {"normal", "ambiguity_resolution"}:
+            raise ValueError("identity transaction kind is invalid")
+        if self.operation_kind == "normal":
+            if self.target_state.last_reconciled_ssh_revision != self.target_ssh_revision:
+                raise ValueError(
+                    "normal transaction target must record its SSH revision"
+                )
+        elif self.target_state.observed_ssh_revision != self.target_ssh_revision:
+            raise ValueError(
+                "ambiguity-resolution target must observe its SSH revision"
+            )
+
+    def to_dict(self) -> Mapping[str, Any]:
+        return {
+            "version": self.version,
+            "transaction_id": self.transaction_id,
+            "base_ssh_revision": self.base_ssh_revision,
+            "target_ssh_revision": self.target_ssh_revision,
+            "base_sidecar_generation": self.base_sidecar_generation,
+            "operation_label": self.operation_label,
+            "operation_kind": self.operation_kind,
+            "target_state": self.target_state.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> "IdentityTransactionIntent":
+        if not isinstance(payload, Mapping):
+            raise TypeError("identity transaction must be an object")
+        target = payload.get("target_state")
+        if not isinstance(target, Mapping):
+            raise TypeError("transaction target must be an object")
+        return cls(
+            version=payload.get("version"),
+            transaction_id=payload.get("transaction_id", ""),
+            base_ssh_revision=payload.get("base_ssh_revision", ""),
+            target_ssh_revision=payload.get("target_ssh_revision", ""),
+            base_sidecar_generation=payload.get("base_sidecar_generation"),
+            operation_label=payload.get("operation_label", ""),
+            operation_kind=payload.get("operation_kind", "normal"),
+            target_state=IdentityStateV2.from_dict(target),
+        )
+
+
+class IdentityRecoveryAction(str, Enum):
+    NO_PENDING = "no_pending"
+    FINALIZE_TARGET = "finalize_target"
+    ABORT_BASE = "abort_base"
+    REQUIRES_RECONCILIATION = "requires_reconciliation"
+    DEFERRED = "deferred"
+    STALE_INTENT = "stale_intent"
+
+
+@dataclass(frozen=True)
+class IdentityRecoveryDecision:
+    action: IdentityRecoveryAction
+    reason: str
+
+
+def classify_identity_transaction_recovery(
+    current_state: IdentityStateV2,
+    intent: Optional[IdentityTransactionIntent],
+    actual_ssh_revision: Optional[str],
+) -> IdentityRecoveryDecision:
+    """Classify recovery without reading or mutating the filesystem."""
+
+    if not isinstance(current_state, IdentityStateV2):
+        raise TypeError("recovery needs the current IdentityStateV2")
+    if intent is None:
+        return IdentityRecoveryDecision(
+            IdentityRecoveryAction.NO_PENDING, "no pending identity transaction"
+        )
+    if not isinstance(intent, IdentityTransactionIntent):
+        raise TypeError("recovery intent has an invalid type")
+    if actual_ssh_revision is None or (
+        type(actual_ssh_revision) is not str or not actual_ssh_revision
+    ):
+        return IdentityRecoveryDecision(
+            IdentityRecoveryAction.DEFERRED,
+            "complete SSH revision is unavailable",
+        )
+
+    current_is_target = current_state == intent.target_state
+    if actual_ssh_revision == intent.target_ssh_revision:
+        if current_is_target or current_state.sidecar_generation == (
+            intent.base_sidecar_generation
+        ):
+            return IdentityRecoveryDecision(
+                IdentityRecoveryAction.FINALIZE_TARGET,
+                "SSH config matches the transaction target revision",
+            )
+        return IdentityRecoveryDecision(
+            IdentityRecoveryAction.STALE_INTENT,
+            "target revision conflicts with a newer sidecar state",
+        )
+
+    if actual_ssh_revision == intent.base_ssh_revision:
+        if current_state.sidecar_generation == intent.base_sidecar_generation:
+            return IdentityRecoveryDecision(
+                IdentityRecoveryAction.ABORT_BASE,
+                "SSH config remains at the transaction base revision",
+            )
+        return IdentityRecoveryDecision(
+            IdentityRecoveryAction.STALE_INTENT,
+            "base revision conflicts with a newer sidecar state",
+        )
+
+    if current_state.sidecar_generation == intent.base_sidecar_generation:
+        return IdentityRecoveryDecision(
+            IdentityRecoveryAction.REQUIRES_RECONCILIATION,
+            "SSH config has an unrelated revision",
+        )
+    return IdentityRecoveryDecision(
+        IdentityRecoveryAction.STALE_INTENT,
+        "pending transaction is stale relative to the sidecar",
+    )
 
 
 @dataclass(frozen=True)
