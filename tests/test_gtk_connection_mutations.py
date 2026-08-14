@@ -992,6 +992,56 @@ def test_daemon_editor_success_sends_loaded_generation_in_update():
     assert request.expected_generation == 7
 
 
+def test_noop_save_succeeds_without_submitting_an_rpc():
+    """Opening the editor and saving without edits must be a local no-op.
+
+    Regression: the delta comparison once flagged the derived ``keyfile`` and
+    ``certificate`` aliases as changed (they are absent from the baseline), so
+    every no-op save built an empty update request and failed with
+    "connection update must contain at least one field".
+    """
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        __changed_fields=(),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+
+    assert completed == [True]
+    assert window.client_bridge.calls == []
+    assert window.client.updated == []
+
+
+def test_noop_save_with_keyfile_succeeds_without_submitting_an_rpc():
+    """A no-op save on a connection with an identity file must also be local."""
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        keyfile="~/.ssh/id_rsa",
+        identity_files=["~/.ssh/id_rsa"],
+        certificate="/keys/cert",
+        certificate_files=["/keys/cert"],
+        __changed_fields=(),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+
+    assert completed == [True]
+    assert window.client_bridge.calls == []
+    assert window.client.updated == []
+
+
 def test_daemon_editor_second_save_carries_refreshed_generation_and_surfaces_stale():
     window = _MutationWindow()
     window.client.editor = SimpleNamespace(generation=7, nickname="demo")

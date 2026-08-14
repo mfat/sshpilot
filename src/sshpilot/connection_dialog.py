@@ -2387,7 +2387,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return tuple(values)
         changed = []
         for key, current in values.items():
-            if key.startswith("__") or key in {"password"}:
+            if key.startswith("__") or key in {"password", "keyfile", "certificate"}:
+                # ``keyfile``/``certificate`` are derived from the identity /
+                # certificate file lists, which are compared themselves; their
+                # singular aliases must never flag a spurious change (they are
+                # absent from the baseline, so a literal comparison is always
+                # unequal).
                 continue
             candidate = current
             if key in {"identity_files", "certificate_files", "proxy_jump"}:
