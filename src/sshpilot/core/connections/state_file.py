@@ -32,6 +32,7 @@ from ...api.models.connection_store import thaw_safe_metadata, validate_safe_met
 from ..errors import CoreError, ErrorCode
 
 _MAX_STATE_BYTES = 16 * 1024 * 1024
+_MAX_IDENTITY_INTENT_BYTES = 32 * 1024 * 1024
 _STATE_VERSION = 1
 _SECRET_KEY_FRAGMENTS = (
     "password",
@@ -168,10 +169,14 @@ class GroupFileState:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "GroupFileState":
-        raw = dict(data or {})
+        if not isinstance(data, Mapping):
+            raise TypeError("group must be an object")
+        raw = dict(data)
         connection_ids = raw.get("connection_ids", ())
         if not isinstance(connection_ids, (list, tuple)):
             raise ValueError("group connection ids must be an array")
+        if any(type(item) is not str or not item.strip() for item in connection_ids):
+            raise ValueError("group connection ids must be non-empty strings")
         return cls(
             id=str(raw.get("id") or ""),
             name=str(raw.get("name") or ""),
@@ -180,9 +185,7 @@ class GroupFileState:
             ),
             order=int(raw.get("order") or 0),
             color=str(raw.get("color") or ""),
-            connection_ids=tuple(
-                str(item) for item in connection_ids if str(item)
-            ),
+            connection_ids=tuple(connection_ids),
         )
 
 
@@ -243,37 +246,47 @@ class ConnectionFileState:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ConnectionFileState":
-        raw = dict(data or {})
+        if not isinstance(data, Mapping):
+            raise TypeError("connection state must be an object")
+        raw = dict(data)
         non_ssh = raw.get("non_ssh_connections", [])
         if not isinstance(non_ssh, list):
             raise ValueError("non-SSH connections must be an array")
+        if any(not isinstance(item, Mapping) for item in non_ssh):
+            raise TypeError("non-SSH connections must contain objects")
         groups_blob = raw.get("groups")
         if not isinstance(groups_blob, dict):
             raise ValueError("groups must be an object")
         raw_groups = groups_blob.get("groups", {})
         if not isinstance(raw_groups, dict):
             raise ValueError("connection groups must be an object")
+        if any(not isinstance(item, Mapping) for item in raw_groups.values()):
+            raise TypeError("connection groups must contain objects")
         root_raw = groups_blob.get("root_connections", [])
         if not isinstance(root_raw, list):
             raise ValueError("root connections must be an array")
+        if any(type(item) is not str or not item.strip() for item in root_raw):
+            raise TypeError("root connections must contain non-empty strings")
         metadata_raw = raw.get("metadata", {})
         if not isinstance(metadata_raw, dict):
             raise ValueError("metadata must be an object")
+        if any(
+            type(key) is not str or not key.strip() or not isinstance(value, Mapping)
+            for key, value in metadata_raw.items()
+        ):
+            raise TypeError("metadata must contain objects with string keys")
         return cls(
             version=raw.get("version", _STATE_VERSION),
             non_ssh_connections=tuple(
-                dict(item) for item in non_ssh if isinstance(item, dict)
+                dict(item) for item in non_ssh
             ),
             groups=tuple(
                 GroupFileState.from_dict(item)
                 for item in raw_groups.values()
-                if isinstance(item, dict)
             ),
-            root_connections=tuple(str(item) for item in root_raw if str(item)),
+            root_connections=tuple(root_raw),
             metadata={
-                str(cid): dict(values)
-                for cid, values in metadata_raw.items()
-                if isinstance(values, dict)
+                cid: dict(values) for cid, values in metadata_raw.items()
             },
         )
 
@@ -282,12 +295,17 @@ class ConnectionFileState:
 # Reads
 # ---------------------------------------------------------------------------
 
-def _read_state_bytes(path: Path) -> Optional[bytes]:
+def _read_state_bytes(
+    path: Path,
+    *,
+    max_bytes: Optional[int] = None,
+) -> Optional[bytes]:
     """Read exact state bytes without following symlinks.
 
     Returns ``None`` when the file is absent; raises ``CoreError`` for any
     symlink, metadata, size, or read failure.
     """
+    limit = _MAX_STATE_BYTES if max_bytes is None else max_bytes
     try:
         st = os.lstat(path)
     except FileNotFoundError:
@@ -301,7 +319,7 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
             diagnostic_category="unsafe_file",
             diagnostic_reason="unsafe state-file target",
         )
-    if st.st_size > _MAX_STATE_BYTES:
+    if st.st_size > limit:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Connection-state file exceeds the size limit",
@@ -332,7 +350,7 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
             if not chunk:
                 break
             total += len(chunk)
-            if total > _MAX_STATE_BYTES:
+            if total > limit:
                 raise CoreError(
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "Connection-state file exceeds the size limit",
@@ -440,8 +458,40 @@ def probe_connection_state_file(path: Path) -> ConnectionStateFileKind:
     if type(version) is not int:
         return ConnectionStateFileKind.CORRUPT
     if version == 1:
+        required = {"version", "non_ssh_connections", "groups", "metadata"}
+        groups = data.get("groups")
+        if not required <= data.keys() or not isinstance(groups, Mapping):
+            return ConnectionStateFileKind.CORRUPT
+        if not {"groups", "root_connections"} <= groups.keys():
+            return ConnectionStateFileKind.CORRUPT
+        try:
+            ConnectionFileState.from_dict(data)
+        except (TypeError, ValueError, KeyError):
+            return ConnectionStateFileKind.CORRUPT
         return ConnectionStateFileKind.V1
     if version == 2:
+        required = {
+            "version",
+            "sidecar_generation",
+            "last_reconciled_ssh_revision",
+            "observed_ssh_revision",
+            "identities",
+            "groups",
+            "root_connections",
+            "metadata",
+            "non_ssh_connections",
+            "non_ssh_metadata",
+            "legacy_orphans",
+            "pending_ambiguities",
+        }
+        if not required <= data.keys():
+            return ConnectionStateFileKind.CORRUPT
+        try:
+            from .identity_state_v2 import IdentityStateV2
+
+            IdentityStateV2.from_dict(data)
+        except (TypeError, ValueError, KeyError):
+            return ConnectionStateFileKind.CORRUPT
         return ConnectionStateFileKind.V2
     return ConnectionStateFileKind.UNSUPPORTED
 
@@ -630,9 +680,20 @@ def _fsync_parent(path: Path) -> None:
                 pass
 
 
-def _atomic_write_bytes(path: Path, content: bytes, *, prefix: str) -> None:
+def _atomic_write_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    prefix: str,
+    max_bytes: Optional[int] = None,
+) -> None:
     """Atomically write bytes using the hardened v1 storage policy."""
     path = Path(path)
+    limit = _MAX_STATE_BYTES if max_bytes is None else max_bytes
+    if len(content) > limit:
+        raise _state_rejected(
+            "unsafe_file", "serialized state exceeds the size limit"
+        )
     try:
         _refuse_symlink(path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -708,7 +769,7 @@ def migrate_connection_state_v1_to_v2(
     path: Path,
     projections: Sequence["ConnectionIdentityProjection"],
     *,
-    ssh_config_revision: Optional[str],
+    ssh_config_revision: str,
     uuid_factory: Optional[Callable[[], str]] = None,
 ) -> Tuple["IdentityStateV2", "MigrationReport"]:
     """Safely migrate one real v1 sidecar to v2.
@@ -718,6 +779,8 @@ def migrate_connection_state_v1_to_v2(
     truncates the v1 file before the atomic v2 replacement commits.
     """
     path = Path(path)
+    if type(ssh_config_revision) is not str or not ssh_config_revision.strip():
+        raise ValueError("SSH config revision must be a non-empty string")
     kind = probe_connection_state_file(path)
     if kind is ConnectionStateFileKind.ABSENT:
         raise _state_rejected("missing_state", "v1 state file is absent")
@@ -749,7 +812,9 @@ def read_pending_identity_transaction(
     path: Path,
 ) -> Optional["IdentityTransactionIntent"]:
     """Read a strict pending target snapshot; malformed data is an error."""
-    raw = _read_state_bytes(Path(path))
+    raw = _read_state_bytes(
+        Path(path), max_bytes=_MAX_IDENTITY_INTENT_BYTES
+    )
     if raw is None:
         return None
     data = _decode_json_object(raw)
@@ -772,8 +837,18 @@ def write_pending_identity_transaction(
 
     if type(intent) is not IdentityTransactionIntent:
         raise TypeError("identity transaction must be an IdentityTransactionIntent")
+    target_content = _serialize_json(intent.target_state.to_dict(), "Identity-state")
+    if len(target_content) > _MAX_STATE_BYTES:
+        raise _state_rejected(
+            "unsafe_file", "serialized transaction target exceeds the state limit"
+        )
     content = _serialize_json(intent.to_dict(), "Identity transaction")
-    _atomic_write_bytes(Path(path), content, prefix=".connections-pending-")
+    _atomic_write_bytes(
+        Path(path),
+        content,
+        prefix=".connections-pending-",
+        max_bytes=_MAX_IDENTITY_INTENT_BYTES,
+    )
 
 
 def clear_pending_identity_transaction(path: Path) -> None:

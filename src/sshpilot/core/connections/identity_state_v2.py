@@ -777,17 +777,31 @@ class IdentityTransactionIntent:
             raise ValueError(
                 "transaction target generation must be base generation plus one"
             )
-        if self.operation_kind not in {"normal", "ambiguity_resolution"}:
+        if self.operation_kind not in {"normal", "pending_ambiguity"}:
             raise ValueError("identity transaction kind is invalid")
         if self.operation_kind == "normal":
-            if self.target_state.last_reconciled_ssh_revision != self.target_ssh_revision:
+            if (
+                self.target_state.last_reconciled_ssh_revision
+                != self.target_ssh_revision
+                or self.target_state.observed_ssh_revision
+                != self.target_ssh_revision
+            ):
                 raise ValueError(
-                    "normal transaction target must record its SSH revision"
+                    "normal transaction target must record its target SSH revision"
                 )
-        elif self.target_state.observed_ssh_revision != self.target_ssh_revision:
-            raise ValueError(
-                "ambiguity-resolution target must observe its SSH revision"
-            )
+            if self.target_state.pending_ambiguities:
+                raise ValueError(
+                    "normal transaction target cannot contain pending ambiguities"
+                )
+        else:
+            if not self.target_state.pending_ambiguities:
+                raise ValueError(
+                    "pending-ambiguity target needs pending ambiguities"
+                )
+            if self.target_state.observed_ssh_revision != self.target_ssh_revision:
+                raise ValueError(
+                    "pending-ambiguity target must observe its target revision"
+                )
 
     def to_dict(self) -> Mapping[str, Any]:
         return {

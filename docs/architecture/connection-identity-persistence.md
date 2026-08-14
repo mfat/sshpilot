@@ -251,8 +251,9 @@ Policy:
 * A second startup sees v2 and does not rerun allocation. UUID collision or
   malformed input fails before a v2 write.
 * The caller writes v2 only after conversion and validation succeeds, using the
-  existing hardened same-directory atomic writer. If writing fails, v1 remains
-  recoverable.
+  existing hardened same-directory atomic writer. Failures before
+  \`os.replace()\` preserve the v1 bytes exactly; a failure after replacement
+  while fsyncing the parent reports durability unknown.
 
 ## 7. Lifecycle, deletion, and alias reuse
 
@@ -507,23 +508,34 @@ callers. New entrypoints are:
   projections, runs pure migration, and atomically replaces v1 only after
   successful validation;
 * \`connections.json.pending\` is the deterministic same-directory intent
-  path. Its read/write/clear functions use the same size, UTF-8, symlink,
+  path. Its read/write/clear functions use the same UTF-8, symlink,
   mode, temporary-file, fsync, and generic-error protections as v1;
 * \`recover_pending_identity_transaction()\` applies only BASE and TARGET
   decisions. Unrelated, stale, incomplete, corrupt, or unavailable state is
   returned to the higher-level adapter without UUID changes.
 
-Both v2 state and intent use deterministic sorted JSON and complete target
-snapshots. Filesystem persistence performs no DNS, network, subprocess,
+The main v1/v2 sidecar has a 16 MiB serialized-byte limit. Pending intents have
+an explicit 32 MiB serialized-byte limit because they contain a complete target
+sidecar plus an envelope. The nested target is independently required to fit
+the 16 MiB sidecar limit before the intent can be written. Both use
+deterministic sorted JSON and complete target snapshots. Filesystem persistence
+performs no DNS, network, subprocess,
 OpenSSH execution, or secret access.
 
 The intent format has its own version, transaction ID, base/target SSH
 revisions, base sidecar generation, operation label/kind, and a fully
 validated \`target_state\`. Normal operations require the target's
 \`last_reconciled_ssh_revision\` to equal the target revision. Explicit
-\`ambiguity_resolution\` permits the accepted observed-vs-last-reconciled
-distinction while still requiring the target to observe the target revision.
-Target generation must equal base generation plus one.
+There are two persisted kinds: \`normal\` and \`pending_ambiguity\`.
+\`normal\` requires last-reconciled and observed revisions to equal the target,
+and contains no pending ambiguities. \`pending_ambiguity\` requires a non-empty
+pending set scoped to the target observed revision and permits
+last-reconciled to remain behind while UUID ownership is frozen. The old
+prototype spelling \`ambiguity_resolution\` is rejected. Explicit ambiguity
+resolution is a later sidecar identity decision against an SSH configuration
+already on disk; it is not this dual-resource intent kind unless a future
+operation also writes SSH configuration. Target generation must equal base
+generation plus one.
 
 Recovery classification is:
 

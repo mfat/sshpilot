@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import sshpilot.core.connections.state_file as state_file_module
 
 from sshpilot.core.connections.identity_reconciliation import (
     ConnectionIdentityProjection,
@@ -21,6 +22,7 @@ from sshpilot.core.connections.identity_state_v2 import (
     IdentityRecoveryAction,
     IdentityStateV2,
     IdentityTransactionIntent,
+    PendingAmbiguity,
     PersistedIdentity,
     ReferenceKind,
     classify_identity_transaction_recovery,
@@ -106,6 +108,32 @@ def test_v2_missing_is_explicit_and_malformed_never_becomes_empty(tmp_path: Path
         read_identity_state_v2(path)
 
 
+def test_main_writer_rejects_oversized_v2_before_touching_target(
+    tmp_path: Path, monkeypatch
+):
+    path = tmp_path / "connections.json"
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", 1)
+    with pytest.raises(CoreError):
+        write_identity_state_v2(path, _state())
+    assert not path.exists()
+
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", 16 * 1024 * 1024)
+    write_identity_state_v2(path, _state())
+    before = path.read_bytes()
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", 1)
+    with pytest.raises(CoreError):
+        write_identity_state_v2(path, _state(generation=1))
+    assert path.read_bytes() == before
+
+
+def test_shared_v1_writer_rejects_oversized_serialization(tmp_path: Path, monkeypatch):
+    path = tmp_path / "connections.json"
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", 1)
+    with pytest.raises(CoreError):
+        write_connection_state(path, ConnectionFileState())
+    assert not path.exists()
+
+
 @pytest.mark.parametrize(
     "writer",
     [
@@ -121,8 +149,6 @@ def test_v2_reader_rejects_non_v2_or_invalid_files(tmp_path: Path, writer):
     kind = probe_connection_state_file(path)
     if "999" in path.read_text(encoding="utf-8", errors="ignore"):
         assert kind is ConnectionStateFileKind.UNSUPPORTED
-    elif "version" in path.read_text(encoding="utf-8", errors="ignore"):
-        assert kind is ConnectionStateFileKind.V1
     else:
         assert kind is ConnectionStateFileKind.CORRUPT
     with pytest.raises(CoreError):
@@ -172,6 +198,23 @@ def test_v1_to_v2_migration_is_atomic_and_idempotent(tmp_path: Path):
     assert excinfo.value.diagnostic_category == "invalid_state"
     assert before != path.read_bytes()
     assert read_identity_state_v2(path).identities[0].uuid == U1
+
+
+@pytest.mark.parametrize("revision", [None, ""])
+def test_v1_to_v2_migration_requires_revision_and_preserves_v1(
+    tmp_path: Path, revision
+):
+    path = tmp_path / "connections.json"
+    write_connection_state(path, ConnectionFileState())
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="revision"):
+        migrate_connection_state_v1_to_v2(
+            path,
+            (_projection("old"),),
+            ssh_config_revision=revision,
+            uuid_factory=lambda: U1,
+        )
+    assert path.read_bytes() == before
 
 
 def test_failed_migration_keeps_valid_v1_bytes(tmp_path: Path):
@@ -303,7 +346,7 @@ def test_intent_round_trip_and_revision_generation_invariants(tmp_path: Path):
             operation_label="bad",
             target_state=target,
         )
-    with pytest.raises(ValueError, match="record its SSH revision"):
+    with pytest.raises(ValueError, match="target SSH revision"):
         IdentityTransactionIntent(
             transaction_id="tx",
             base_ssh_revision="old",
@@ -312,6 +355,126 @@ def test_intent_round_trip_and_revision_generation_invariants(tmp_path: Path):
             operation_label="bad",
             target_state=replace(target, last_reconciled_ssh_revision="old"),
         )
+
+
+def test_intent_limits_cover_envelope_and_nested_target(tmp_path: Path, monkeypatch):
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    path = tmp_path / "connections.json.pending"
+    monkeypatch.setattr(state_file_module, "_MAX_IDENTITY_INTENT_BYTES", 1)
+    with pytest.raises(CoreError):
+        write_pending_identity_transaction(path, _intent(base, target))
+    assert not path.exists()
+
+    monkeypatch.setattr(state_file_module, "_MAX_IDENTITY_INTENT_BYTES", 32 * 1024 * 1024)
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", 1)
+    with pytest.raises(CoreError):
+        write_pending_identity_transaction(path, _intent(base, target))
+    assert not path.exists()
+
+
+def test_transaction_kind_semantics_are_explicit():
+    base = _state()
+    safe_target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    assert _intent(base, safe_target).operation_kind == "normal"
+
+    with pytest.raises(ValueError, match="target SSH revision"):
+        IdentityTransactionIntent(
+            transaction_id="tx",
+            base_ssh_revision="rev-old",
+            target_ssh_revision="rev-new",
+            base_sidecar_generation=0,
+            operation_label="stale observed",
+            target_state=replace(safe_target, observed_ssh_revision="rev-old"),
+        )
+    pending = replace(
+        _state(generation=1, revision="rev-new", alias="old"),
+        last_reconciled_ssh_revision="rev-old",
+        observed_ssh_revision="rev-new",
+        pending_ambiguities=(
+            PendingAmbiguity("rev-new", (U1,), (_projection("new"),)),
+        ),
+    )
+    pending_intent = IdentityTransactionIntent(
+        transaction_id="tx-pending",
+        base_ssh_revision="rev-old",
+        target_ssh_revision="rev-new",
+        base_sidecar_generation=0,
+        operation_label="pending SSH commit",
+        operation_kind="pending_ambiguity",
+        target_state=pending,
+    )
+    restored = IdentityTransactionIntent.from_dict(
+        json.loads(json.dumps(pending_intent.to_dict()))
+    )
+    assert restored.operation_kind == "pending_ambiguity"
+
+    with pytest.raises(ValueError, match="pending ambiguities"):
+        IdentityTransactionIntent(
+            transaction_id="tx-empty",
+            base_ssh_revision="rev-old",
+            target_ssh_revision="rev-new",
+            base_sidecar_generation=0,
+            operation_label="missing pending",
+            operation_kind="pending_ambiguity",
+            target_state=safe_target,
+        )
+    with pytest.raises(ValueError, match="transaction kind"):
+        IdentityTransactionIntent(
+            transaction_id="tx-old-kind",
+            base_ssh_revision="rev-old",
+            target_ssh_revision="rev-new",
+            base_sidecar_generation=0,
+            operation_label="old spelling",
+            operation_kind="ambiguity_resolution",
+            target_state=safe_target,
+        )
+
+
+def test_probe_requires_structurally_complete_recognized_versions(tmp_path: Path):
+    path = tmp_path / "connections.json"
+    write_connection_state(path, ConnectionFileState())
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.V1
+    write_identity_state_v2(path, _state())
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.V2
+
+    for version in (1, 2):
+        path.write_text(json.dumps({"version": version}), encoding="utf-8")
+        assert probe_connection_state_file(path) is ConnectionStateFileKind.CORRUPT
+
+    path.write_text(json.dumps({"version": "2"}), encoding="utf-8")
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.CORRUPT
+
+    state = _state()
+    payload = state.to_dict()
+    payload["metadata"] = {U1: {"password": "not allowed"}}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert probe_connection_state_file(path) is ConnectionStateFileKind.CORRUPT
+
+
+def test_intent_target_must_fit_main_sidecar_limit(tmp_path: Path, monkeypatch):
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    path = tmp_path / "connections.json.pending"
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", 1)
+    monkeypatch.setattr(
+        state_file_module, "_MAX_IDENTITY_INTENT_BYTES", 32 * 1024 * 1024
+    )
+    with pytest.raises(CoreError):
+        write_pending_identity_transaction(path, _intent(base, target))
+    assert not path.exists()
 
 
 def test_recovery_crash_window_matrix(tmp_path: Path):
