@@ -3,8 +3,17 @@ from dataclasses import fields
 import pytest
 
 from sshpilot.api import ErrorCode, SshPilotError
-from sshpilot.api.models import ConnectionDetails, ConnectionSummary
+from sshpilot.api.models import (
+    AuthenticationMethod,
+    ConnectionDetails,
+    ConnectionEditorDetails,
+    ConnectionSummary,
+)
 from sshpilot.api.models.common import ConnectionId
+from sshpilot.api.transport.codec import (
+    connection_editor_details_from_wire,
+    connection_editor_details_to_wire,
+)
 
 
 def test_list_and_get_connections_preserve_order_and_identity(
@@ -85,3 +94,23 @@ def test_connection_id_matches_nickname(
     fake_repo.update_connection("demo", {"nickname": "renamed"})
 
     assert client.list_connections()[0].id == "renamed"
+
+
+def test_editor_details_codec_preserves_display_name():
+    details = ConnectionEditorDetails(
+        id=ConnectionId("prod"),
+        nickname="prod",
+        host="prod",
+        hostname="server.example",
+        username="deploy",
+        port=22,
+        display_name="Production Server",
+        aliases=(),
+        authentication_method=AuthenticationMethod.KEY,
+    )
+
+    decoded = connection_editor_details_from_wire(
+        connection_editor_details_to_wire(details)
+    )
+
+    assert decoded.display_name == "Production Server"

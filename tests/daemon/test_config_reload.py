@@ -341,7 +341,6 @@ def test_external_delete_preserves_and_restores_sidecar_decorations(
     )
     client = DaemonClient(socket_path=server.socket_path)
     state_path = tmp_path / "connections.json"
-    before = state_path.read_bytes()
     try:
         assert repository.snapshot().groups[0].connection_ids == ("Beta",)
         assert repository.snapshot().metadata[0].connection_id == "Beta"
@@ -354,7 +353,9 @@ def test_external_delete_preserves_and_restores_sidecar_decorations(
         )
         assert repository.snapshot().groups[0].connection_ids == ()
         assert repository.snapshot().metadata == ()
-        assert state_path.read_bytes() == before
+        retired_state = json.loads(state_path.read_text(encoding="utf-8"))
+        assert retired_state["version"] == 2
+        assert any(item["tombstone"] for item in retired_state["identities"].values())
 
         root.write_text(
             _connection_block("Alpha") + "\n" + _connection_block("Beta"),
@@ -364,9 +365,10 @@ def test_external_delete_preserves_and_restores_sidecar_decorations(
             lambda: [item.nickname for item in client.list_connections()]
             == ["Alpha", "Beta"]
         )
-        assert repository.snapshot().groups[0].connection_ids == ("Beta",)
-        assert repository.snapshot().metadata[0].connection_id == "Beta"
-        assert state_path.read_bytes() == before
+        # Reusing the deleted alias creates a new identity; old metadata is
+        # never resurrected automatically.
+        assert repository.snapshot().groups[0].connection_ids == ()
+        assert repository.snapshot().metadata == ()
         # The daemon remains usable after the external reloads.
         assert client.list_sessions() == []
     finally:

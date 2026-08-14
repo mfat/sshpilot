@@ -176,7 +176,10 @@ class WindowTabsMixin:
             page.custom_tab_title = None
             terminal = page.get_child()
             if hasattr(terminal, 'connection'):
-                page.set_title(terminal.connection.nickname)
+                page.set_title(
+                    getattr(terminal.connection, "display_name", None)
+                    or terminal.connection.nickname
+                )
 
     # ── tab context menu (right-click) ─────────────────────────────────────────
 
@@ -1004,7 +1007,11 @@ class WindowTabsMixin:
             dialog = Adw.MessageDialog(
                 transient_for=self,
                 modal=True,
-                heading=_("Close connection to {name}").format(name=connection.nickname or host_value),
+                heading=_("Close connection to {name}").format(
+                    name=getattr(connection, "display_name", None)
+                    or connection.nickname
+                    or host_value
+                ),
                 body=_("Are you sure you want to close this connection?")
             )
             dialog.add_response('cancel', _("Cancel"))
@@ -1792,7 +1799,10 @@ class WindowTabsMixin:
                 continue
             child = page.get_child()
             if hasattr(child, 'connection'):
-                page.set_title(child.connection.nickname)
+                page.set_title(
+                    getattr(child.connection, "display_name", None)
+                    or child.connection.nickname
+                )
 
 
 def _is_terminal_widget(widget) -> bool:

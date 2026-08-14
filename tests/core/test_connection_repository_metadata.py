@@ -16,6 +16,7 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 from sshpilot.api.models.common import ConnectionId  # noqa: E402
 from sshpilot.api.models.connection_store import AddTagToConnectionsRequest  # noqa: E402
@@ -34,7 +35,25 @@ def _repo(tmp_path, ssh_text: str = ""):
 
 
 def _state(path: Path) -> dict:
-    return json.loads(path.read_text())
+    raw = json.loads(path.read_text())
+    if raw.get("version") != 2:
+        return raw
+    state = read_identity_state_v2(path)
+    aliases = {
+        identity.uuid: identity.projection.alias
+        for identity in state.identities
+        if not identity.tombstone
+    }
+    return {
+        "version": 1,
+        "non_ssh_connections": list(state.non_ssh_connections),
+        "groups": {"groups": {}, "root_connections": []},
+        "metadata": {
+            aliases[uuid]: values
+            for uuid, values in state.metadata.items()
+            if uuid in aliases
+        },
+    }
 
 
 def _seed_web(repo):

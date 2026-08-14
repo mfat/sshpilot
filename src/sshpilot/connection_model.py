@@ -36,6 +36,7 @@ class Connection:
     def _apply_data(self, data: Dict[str, Any]) -> None:
         self.id = str(data.get("id") or data.get("nickname") or "")
         self.nickname = str(data.get("nickname") or self.id)
+        self.display_name = str(data.get("display_name") or self.nickname)
         self.host = str(data.get("host") or self.nickname)
         self.hostname = str(data.get("hostname") or "")
         self.username = str(data.get("username") or "")
@@ -50,7 +51,7 @@ class Connection:
         self._apply_data(self.data)
 
     def __str__(self) -> str:
-        return f"{self.nickname} ({self.username}@{self.hostname})"
+        return f"{self.display_name} ({self.username}@{self.hostname})"
 
     def get_effective_host(self) -> str:
         return self.hostname or self.host or self.nickname

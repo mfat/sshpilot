@@ -677,3 +677,8 @@ interactive insertion continues to honor the `insert_only` preference.
 - SFTP, forwarding, plugin, or secret client operations
 - Remote access, TCP/WebSocket transport, named pipes, and terminal/session
   event transport
+## 0.32
+
+- Added the optional `display_name` presentation field to connection summaries
+  and mutation results. SSH connection IDs remain their OpenSSH aliases; this
+  additive field does not expose the internal UUID identity.

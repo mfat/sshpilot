@@ -18,6 +18,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
+from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError  # noqa: E402
 
 
@@ -38,6 +40,56 @@ def _repo(tmp_path, ssh_text: str = "", *, isolated: bool = False):
 def _write_state(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2))
+
+
+def _v1_projection(path: Path) -> dict:
+    """Project v2 placement into the legacy shape for compatibility assertions."""
+    raw = json.loads(path.read_text())
+    if raw.get("version") != 2:
+        return raw
+    state = read_identity_state_v2(path)
+    aliases = {
+        identity.uuid: identity.projection.alias
+        for identity in state.identities
+        if not identity.tombstone
+    }
+
+    def ref_value(reference):
+        return (
+            aliases.get(reference.value)
+            if reference.kind is ReferenceKind.SSH_UUID
+            else reference.value
+        )
+
+    return {
+        "version": 1,
+        "non_ssh_connections": list(state.non_ssh_connections),
+        "groups": {
+            "groups": {
+                group.id: {
+                    "id": group.id,
+                    "name": group.name,
+                    "parent_id": group.parent_id,
+                    "order": group.order,
+                    "color": group.color,
+                    "connection_ids": [
+                        value for member in group.members
+                        if (value := ref_value(member)) is not None
+                    ],
+                }
+                for group in state.groups
+            },
+            "root_connections": [
+                value for reference in state.root_connections
+                if (value := ref_value(reference)) is not None
+            ],
+        },
+        "metadata": {
+            aliases[uuid]: values
+            for uuid, values in state.metadata.items()
+            if uuid in aliases
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -214,8 +266,6 @@ def test_canonical_orphan_metadata_is_dormant_and_preserved(tmp_path):
             "metadata": {"deleted": {"pinned": True}},
         },
     )
-    before = state.read_bytes()
-
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
         state_path=state,
@@ -224,7 +274,7 @@ def test_canonical_orphan_metadata_is_dormant_and_preserved(tmp_path):
     )
 
     assert repo.snapshot().metadata == ()
-    assert state.read_bytes() == before
+    assert read_identity_state_v2(state).legacy_orphans
 
 
 def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path):
@@ -255,8 +305,6 @@ def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path
             },
         },
     )
-    before = state.read_bytes()
-
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
         state_path=state,
@@ -268,7 +316,7 @@ def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path
     assert snapshot.groups[0].connection_ids == ("A",)
     assert snapshot.root_connection_ids == ("B",)
     assert [item.connection_id for item in snapshot.metadata] == ["A"]
-    assert state.read_bytes() == before
+    assert read_identity_state_v2(state).version == 2
 
     root.write_text(
         "Host A\n    HostName a.example\n\n"
@@ -283,7 +331,7 @@ def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path
         "A",
         "OLD_HOST",
     ]
-    assert state.read_bytes() == before
+    assert read_identity_state_v2(state).version == 2
 
 
 def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path):
@@ -313,7 +361,6 @@ def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path)
             "metadata": {"Included": {"pinned": True}},
         },
     )
-    before = state.read_bytes()
     repo = ConnectionRepository(
         ssh_store=SshConfigStore(root),
         state_path=state,
@@ -331,7 +378,7 @@ def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path)
     assert snapshot.groups[0].connection_ids == ()
     assert snapshot.metadata == ()
     assert snapshot.root_connection_ids == ("Root",)
-    assert state.read_bytes() == before
+    assert read_identity_state_v2(state).version == 2
 
     included.write_text("Host Included\n    HostName included.example\n")
     snapshot = repo.reload()
@@ -339,9 +386,11 @@ def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path)
         "Root",
         "Included",
     ]
-    assert snapshot.groups[0].connection_ids == ("Included",)
-    assert snapshot.metadata[0].connection_id == "Included"
-    assert state.read_bytes() == before
+    # The disappeared identity was retired; a later alias reuse is a new
+    # UUID and cannot resurrect the old group or metadata ownership.
+    assert snapshot.groups[0].connection_ids == ()
+    assert snapshot.metadata == ()
+    assert read_identity_state_v2(state).version == 2
 
 
 def test_legacy_parent_cycle_is_nonfatal_without_canonical_file(tmp_path):
@@ -602,20 +651,12 @@ def test_dormant_root_order_survives_unrelated_sidecar_writes(tmp_path):
     assert repo.snapshot().root_connection_ids == ("A", "B")
 
     repo.update_connection_metadata("A", {"pinned": True})
-    assert json.loads(state.read_text())["groups"]["root_connections"] == [
-        "A",
-        "MISSING",
-        "B",
-    ]
+    assert _v1_projection(state)["groups"]["root_connections"] == ["A", "B"]
 
     group = repo.create_group("Production")
     repo.rename_group(group.id, "Production Servers")
     repo.set_group_color(group.id, "#ff0000")
-    assert json.loads(state.read_text())["groups"]["root_connections"] == [
-        "A",
-        "MISSING",
-        "B",
-    ]
+    assert _v1_projection(state)["groups"]["root_connections"] == ["A", "B"]
 
     root.write_text(
         "Host A\n    HostName a.example\n\n"
@@ -636,10 +677,7 @@ def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
 
     root.write_text("Host B\n    HostName b.example\n")
     assert repo.reload().root_connection_ids == ("B",)
-    assert json.loads(state.read_text())["groups"]["root_connections"] == [
-        "A",
-        "B",
-    ]
+    assert _v1_projection(state)["groups"]["root_connections"] == ["B"]
 
     root.write_text(
         "Host A\n    HostName a.example\n\n"
@@ -647,7 +685,7 @@ def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
     )
     repo.reload()
     repo.delete_connection("A")
-    assert json.loads(state.read_text())["groups"]["root_connections"] == ["B"]
+    assert _v1_projection(state)["groups"]["root_connections"] == ["B"]
 
 
 # ---------------------------------------------------------------------------
@@ -673,9 +711,9 @@ def test_snapshot_filters_unknown_group_membership(tmp_path):
     )
     repo, _root, state, _ = _repo(tmp_path)
     assert repo.snapshot().groups[0].connection_ids == ()
-    assert json.loads(state.read_text())["groups"]["groups"]["g1"][
+    assert _v1_projection(state)["groups"]["groups"]["g1"][
         "connection_ids"
-    ] == ["ghost"]
+    ] == []
 
 
 # ---------------------------------------------------------------------------

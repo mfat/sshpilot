@@ -6867,6 +6867,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         hostname=connection_data.get('hostname'),
                         username=connection_data.get('username'),
                         port=connection_data.get('port'),
+                        display_name=connection_data.get('display_name'),
                         config_patch=config_patch,
                         expected_generation=current_generation,
                     )
@@ -6882,6 +6883,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     username=connection_data.get('username', ''),
                     port=connection_data.get('port', 22),
                     protocol='ssh',
+                    display_name=connection_data.get('display_name', ''),
                     config_patch=config_patch,
                 )
                 operation = lambda: self.client.create_connection(request)

@@ -1668,6 +1668,7 @@ def connection_summary_to_wire(summary: ConnectionSummary) -> Dict[str, Any]:
         "protocol": summary.protocol,
         "health": summary.health.value,
         "groups": _groups_to_wire(summary.groups),
+        "display_name": summary.display_name,
     }
 
 
@@ -1688,6 +1689,7 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS,
+        optional={"display_name"},
         context="connection summary",
     )
     try:
@@ -1712,6 +1714,7 @@ def connection_summary_from_wire(value: Any) -> ConnectionSummary:
         protocol=_identifier(data["protocol"], "connection protocol"),
         health=health,
         groups=_groups_from_wire(data["groups"]),
+        display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
     )
 
 
@@ -1738,6 +1741,7 @@ def connection_mutation_result_to_wire(result: Any) -> Dict[str, Any]:
         "generation": result.generation,
         "changed": result.changed,
         "changed_fields": list(result.changed_fields),
+        "display_name": result.display_name,
     }
 
 
@@ -1748,7 +1752,7 @@ def connection_mutation_result_from_wire(value: Any) -> Any:
         value,
         context="ConnectionMutationResult",
         required={"connection_id", "nickname", "generation"},
-        optional={"changed", "changed_fields"},
+        optional={"changed", "changed_fields", "display_name"},
     )
     changed = data.get("changed", True)
     fields = data.get("changed_fields", [])
@@ -1760,6 +1764,7 @@ def connection_mutation_result_from_wire(value: Any) -> Any:
         generation=_integer(data["generation"], "generation"),
         changed=changed,
         changed_fields=tuple(_text(item, "changed field") for item in fields),
+        display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
     )
 
 
@@ -1776,9 +1781,13 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS | detail_fields,
+        optional={"display_name"},
         context="connection details",
     )
-    summary = connection_summary_from_wire({key: data[key] for key in _SUMMARY_FIELDS})
+    summary_payload = {key: data[key] for key in _SUMMARY_FIELDS}
+    if "display_name" in data:
+        summary_payload["display_name"] = data["display_name"]
+    summary = connection_summary_from_wire(summary_payload)
     if type(data["aliases"]) is not list or type(data["proxy_jump"]) is not list:
         raise ValueError("connection aliases and proxy jump must be arrays")
     aliases = tuple(_identifier(item, "connection alias") for item in data["aliases"])
@@ -1974,9 +1983,13 @@ def connection_editor_details_from_wire(
     data = _strict_fields(
         value,
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
+        optional={"display_name"},
         context="connection editor details",
     )
-    summary = connection_summary_from_wire({key: data[key] for key in summary_fields})
+    summary_payload = {key: data[key] for key in summary_fields}
+    if "display_name" in data:
+        summary_payload["display_name"] = data["display_name"]
+    summary = connection_summary_from_wire(summary_payload)
     if type(data["aliases"]) is not list or type(data["proxy_jump"]) is not list:
         raise ValueError("connection aliases and proxy jump must be arrays")
     aliases = tuple(_identifier(item, "connection alias") for item in data["aliases"])
@@ -2006,6 +2019,7 @@ def connection_editor_details_from_wire(
         protocol=summary.protocol,
         health=summary.health,
         groups=summary.groups,
+        display_name=summary.display_name,
         aliases=aliases,
         authentication_method=authentication_method,
         identity_configured=_boolean(data["identity_configured"], "identity configured"),
@@ -2155,6 +2169,7 @@ def create_connection_request_to_wire(
         "username": request.username,
         "port": request.port,
         "protocol": request.protocol,
+        "display_name": request.display_name,
     }
     if request.config_patch:
         result["config_patch"] = dict(request.config_patch)
@@ -2167,7 +2182,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
     data = _strict_fields(
         value,
         required={"nickname", "hostname", "username", "port", "protocol"},
-        optional={"config_patch", "plugin_data"},
+        optional={"config_patch", "plugin_data", "display_name"},
         context="create connection request",
     )
     raw_patch = data.get("config_patch")
@@ -2193,6 +2208,7 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         ),
         port=_integer(data["port"], "connection port"),
         protocol=_identifier(data["protocol"], "connection protocol"),
+        display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
         config_patch=config_patch,
         plugin_data=dict(raw_plugin_data),
     )
@@ -2212,6 +2228,8 @@ def update_connection_request_to_wire(
         result["username"] = request.username
     if request.port is not UNSET:
         result["port"] = request.port
+    if request.display_name is not UNSET:
+        result["display_name"] = request.display_name
     if request.config_patch:
         result["config_patch"] = dict(request.config_patch)
     if request.plugin_data:
@@ -2230,6 +2248,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
             "hostname",
             "username",
             "port",
+            "display_name",
             "config_patch",
             "plugin_data",
             "expected_generation",
@@ -2243,6 +2262,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     hostname = data.get("hostname", UNSET)
     username = data.get("username", UNSET)
     port = data.get("port", UNSET)
+    display_name = data.get("display_name", UNSET)
 
     if nickname is not UNSET and nickname is not None:
         nickname = _identifier(nickname, "connection nickname")
@@ -2272,6 +2292,7 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
         hostname=hostname,
         username=username,
         port=port,
+        display_name=display_name,
         config_patch=config_patch,
         plugin_data=dict(raw_plugin_data),
         expected_generation=expected_generation,

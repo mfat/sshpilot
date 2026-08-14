@@ -1168,7 +1168,7 @@ def test_tilde_identityfile_is_config_intent_evidence(tmp_path):
     assert item.identity_file_evidence.values == ("~/.ssh/id_a",)
 
 
-def test_external_repository_reload_currently_does_not_reconcile_alias_rename(tmp_path):
+def test_external_repository_reload_reconciles_safe_alias_rename(tmp_path):
     root = tmp_path / "config"
     state = tmp_path / "connections.json"
     root.write_text("Host old\n    HostName server.example\n", encoding="utf-8")
@@ -1183,7 +1183,7 @@ def test_external_repository_reload_currently_does_not_reconcile_alias_rename(tm
                             "id": "prod",
                             "name": "Production",
                             "order": 0,
-                            "connections": ["old"],
+                            "connection_ids": ["old"],
                         }
                     },
                     "root_connections": [],
@@ -1202,13 +1202,11 @@ def test_external_repository_reload_currently_does_not_reconcile_alias_rename(tm
     root.write_text("Host new\n    HostName server.example\n", encoding="utf-8")
     snapshot = repo.reload()
     assert [item.id for item in snapshot.connections] == ["new"]
-    assert snapshot.groups[0].connection_ids == ()
-    assert snapshot.metadata == ()
-    # The dormant alias-keyed state remains on disk; reload did not apply the
-    # raw-editor-only rename heuristic.
-    assert json.loads(state.read_text(encoding="utf-8"))["metadata"] == {
-        "old": {"pinned": True}
-    }
+    assert snapshot.groups[0].connection_ids == ("new",)
+    assert snapshot.metadata[0].connection_id == "new"
+    persisted = json.loads(state.read_text(encoding="utf-8"))
+    assert persisted["version"] == 2
+    assert persisted["metadata"]
 
 
 def test_daemon_reload_path_reports_external_rename_as_delete_create_currently(tmp_path):

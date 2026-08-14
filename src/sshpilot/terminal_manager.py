@@ -457,7 +457,11 @@ class TerminalManager:
         from sshpilot import icon_utils
 
         page = window.tab_view.append(terminal)
-        page.set_title(tab_title or connection.nickname)
+        page.set_title(
+            tab_title
+            or getattr(connection, "display_name", None)
+            or connection.nickname
+        )
         page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
         if group_name:
             setattr(terminal, "group_name", group_name)

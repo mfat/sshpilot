@@ -17,6 +17,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
+from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 
 
@@ -38,7 +40,52 @@ def _write_state(path: Path, payload: dict) -> None:
 
 
 def _state(path: Path) -> dict:
-    return json.loads(path.read_text())
+    raw = json.loads(path.read_text())
+    if raw.get("version") != 2:
+        return raw
+    state = read_identity_state_v2(path)
+    aliases = {
+        identity.uuid: identity.projection.alias
+        for identity in state.identities
+        if not identity.tombstone
+    }
+
+    def ref_value(reference):
+        return (
+            aliases.get(reference.value)
+            if reference.kind is ReferenceKind.SSH_UUID
+            else reference.value
+        )
+
+    return {
+        "version": 1,
+        "non_ssh_connections": list(state.non_ssh_connections),
+        "groups": {
+            "groups": {
+                group.id: {
+                    "id": group.id,
+                    "name": group.name,
+                    "parent_id": group.parent_id,
+                    "order": group.order,
+                    "color": group.color,
+                    "connection_ids": [
+                        value for member in group.members
+                        if (value := ref_value(member)) is not None
+                    ],
+                }
+                for group in state.groups
+            },
+            "root_connections": [
+                value for reference in state.root_connections
+                if (value := ref_value(reference)) is not None
+            ],
+        },
+        "metadata": {
+            aliases[uuid]: values
+            for uuid, values in state.metadata.items()
+            if uuid in aliases
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +117,7 @@ def test_ssh_create_rolls_back_when_state_write_fails(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -406,7 +453,7 @@ def test_managed_delete_removes_persisted_root_reference(tmp_path):
 
     repo.delete_connection("A")
 
-    assert json.loads(state.read_text())["groups"]["root_connections"] == ["B"]
+    assert _state(state)["groups"]["root_connections"] == ["B"]
 
 
 def test_non_ssh_update_stale_generation_rejected(tmp_path):
@@ -515,7 +562,7 @@ def test_rollback_after_state_failure_ssh_update(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -534,7 +581,7 @@ def test_rollback_after_state_failure_ssh_delete(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -602,7 +649,7 @@ def test_rollback_after_state_failure_ssh_rename(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -621,7 +668,7 @@ def test_rollback_after_state_failure_ssh_duplicate(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -640,7 +687,7 @@ def test_rollback_after_state_failure_ssh_split(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises((CoreError, OSError)):

@@ -187,7 +187,7 @@ class DaemonSessionsDialog:
         self.window.active_terminals[connection] = terminal
 
         page = self.window.tab_view.append(terminal)
-        page.set_title(connection.nickname)
+        page.set_title(getattr(connection, "display_name", None) or connection.nickname)
         page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
         self.window.show_tab_view()
         self.window.tab_view.set_selected_page(page)

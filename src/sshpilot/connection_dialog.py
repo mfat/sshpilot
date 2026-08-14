@@ -90,6 +90,7 @@ def _editor_details_to_connection(details):
     ]
     return types.SimpleNamespace(
         nickname=getattr(details, 'nickname', '') or '',
+        display_name=getattr(details, 'display_name', '') or '',
         hostname=getattr(details, 'hostname', '') or '',
         host=getattr(details, 'host', '') or '',
         username=getattr(details, 'username', '') or '',
@@ -2344,7 +2345,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
 
         required_attrs = [
-            'nickname_row', 'hostname_row', 'username_row', 'port_row',
+            'display_name_row', 'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
             'auth_toggle', 'key_editor', 'cert_editor', 'password_row',
             'key_select_row', 'key_only_row', 'pubkey_auth_row'
@@ -2372,6 +2373,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._apply_protocol_to_ui()
                 if hasattr(self.connection, 'nickname'):
                     self.nickname_row.set_text(self.connection.nickname or "")
+                self.display_name_row.set_text(
+                    getattr(self.connection, 'display_name', None)
+                    or self.connection.nickname or ""
+                )
                 self._load_shared_meta_rows()
                 self._load_plugin_field_values()
             finally:
@@ -2382,6 +2387,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
+            self.display_name_row.set_text(
+                getattr(self.connection, 'display_name', None)
+                or self.connection.nickname or ""
+            )
             if hasattr(self.connection, 'hostname'):
                 self.hostname_row.set_text(self.connection.hostname or "")
             if hasattr(self.connection, 'username'):
@@ -2880,9 +2889,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.protocol_row.connect('notify::selected', self._on_protocol_changed)
         basic_group.add(self.protocol_row)
 
-        # Nickname
+        # Display Name (SSH Pilot-owned presentation metadata)
+        self.display_name_row = Adw.EntryRow(title=_("Name"))
+        basic_group.add(self.display_name_row)
+
+        # SSH alias / Host token
         self.nickname_row = Adw.EntryRow(
-            title=_("Nickname (no whitespace allowed)")
+            title=_("SSH Alias (no whitespace allowed)")
         )
         basic_group.add(self.nickname_row)
         
@@ -3574,6 +3587,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # Gather connection data
         connection_data = {
+            'display_name': self.display_name_row.get_text().strip(),
             'nickname': self.nickname_row.get_text().strip(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),

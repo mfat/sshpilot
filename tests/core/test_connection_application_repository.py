@@ -120,6 +120,15 @@ def test_get_connection_editor_returns_editor_details(tmp_path):
     assert editor.identity_files[0].endswith(".ssh/id_ed25519")
 
 
+def test_get_connection_editor_preserves_display_name(tmp_path):
+    repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    repo.set_display_name("web", "Production Web")
+
+    editor = _service(repo).get_connection_editor(ConnectionId("web"))
+
+    assert editor.display_name == "Production Web"
+
+
 def test_get_missing_connection_raises_not_found(tmp_path):
     repo, _root = _repo(tmp_path)
     service = _service(repo)

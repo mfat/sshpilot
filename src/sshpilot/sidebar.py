@@ -1526,7 +1526,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._info_box = info_box
 
         self.nickname_label = Gtk.Label()
-        self.nickname_label.set_markup(f"<b>{connection.nickname}</b>")
+        connection_name = getattr(connection, "display_name", None) or connection.nickname
+        self.nickname_label.set_markup(f"<b>{connection_name}</b>")
         self.nickname_label.set_halign(Gtk.Align.START)
         self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.nickname_label.set_valign(Gtk.Align.CENTER)  # Center vertically when host label is hidden
@@ -2354,7 +2355,11 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
-            self.nickname_label.set_markup(f"<b>{self.connection.nickname}</b>")
+            connection_name = (
+                getattr(self.connection, "display_name", None)
+                or self.connection.nickname
+            )
+            self.nickname_label.set_markup(f"<b>{connection_name}</b>")
             self.nickname_label.set_tooltip_text(self.connection.nickname)
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):

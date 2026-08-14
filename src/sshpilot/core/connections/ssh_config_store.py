@@ -25,6 +25,7 @@ import shlex
 import shutil
 import stat
 import tempfile
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -271,6 +272,39 @@ class SshConfigMutationResult:
     touched_path: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class PreparedSshMutation:
+    """A validated SSH replacement that has not changed durable state."""
+
+    operation: str
+    base_revision: str
+    target_revision: str
+    target_path: Path
+    expected_bytes: Optional[bytes]
+    target_text: str
+    connection_id: str = ""
+    remove_connection_id: Optional[str] = None
+
+    def commit(self, store: "SshConfigStore") -> SshConfigText:
+        """Commit after rechecking the base revision and expected bytes."""
+        if not isinstance(store, SshConfigStore):
+            raise TypeError("prepared mutation needs its owning SshConfigStore")
+        store._refuse_symlinked_root()
+        if not store._revision_matches(self.base_revision):
+            raise _stale_error()
+        _atomic_write_text(
+            self.target_path,
+            self.target_text,
+            expected_bytes=self.expected_bytes,
+        )
+        return SshConfigText(
+            text=self.target_text,
+            revision=store._current_revision(),
+            display_name=store._display_name(),
+            writable=store._is_writable(),
+        )
+
+
 class SshConfigStore:
     """Daemon-owned, headless, atomic SSH config read/mutation store."""
 
@@ -408,6 +442,350 @@ class SshConfigStore:
             display_name=self._display_name(),
             writable=self._is_writable(),
         )
+
+    def prepare_replace_text(
+        self, text: str, expected_revision: str
+    ) -> PreparedSshMutation:
+        """Prepare a raw-config replacement without writing any file."""
+        if type(text) is not str:
+            raise TypeError("SSH configuration content must be exact text")
+        if type(expected_revision) is not str or not expected_revision.strip():
+            raise TypeError("an expected SSH config revision is required")
+        self._refuse_symlinked_root()
+        expected_bytes = (
+            self._root_path.read_bytes() if self._root_path.exists() else None
+        )
+        if not self._revision_matches(expected_revision):
+            raise _stale_error()
+        target_bytes = text.encode("utf-8")
+        target_revision = self._revision_for_root_bytes(target_bytes)
+        return PreparedSshMutation(
+            operation="replace_text",
+            base_revision=expected_revision,
+            target_revision=target_revision,
+            target_path=self._root_path,
+            expected_bytes=expected_bytes,
+            target_text=text,
+        )
+
+    def commit_prepared(self, prepared: PreparedSshMutation) -> SshConfigMutationResult:
+        """Commit a prepared mutation and reload authoritative projections."""
+        if type(prepared) is not PreparedSshMutation:
+            raise TypeError("a PreparedSshMutation is required")
+        prepared.commit(self)
+        if prepared.remove_connection_id is not None:
+            self._generations.pop(prepared.remove_connection_id, None)
+        if prepared.connection_id:
+            self._generations[prepared.connection_id] = (
+                self._generations.get(prepared.connection_id, 0) + 1
+            )
+        fresh = self._reload_after_write()
+        return SshConfigMutationResult(
+            config=fresh,
+            connection_id=prepared.connection_id,
+            touched_path=str(prepared.target_path),
+        )
+
+    def preview_prepared(self, prepared: PreparedSshMutation) -> LoadedSshConfiguration:
+        """Load a prepared config from an isolated temporary source tree.
+
+        Preparation remains side-effect free for the real SSH tree.  The
+        temporary tree is only used to obtain the same authoritative loader
+        projections that a committed mutation will produce.
+        """
+        if type(prepared) is not PreparedSshMutation:
+            raise TypeError("a PreparedSshMutation is required")
+        source = self.load()
+        root = self._root_path.resolve()
+        common = root.parent
+        with tempfile.TemporaryDirectory(prefix="sshpilot-preview-") as temp:
+            temp_root = Path(temp) / root.relative_to(common)
+            for raw_path in source.source_paths:
+                original = Path(raw_path).resolve()
+                try:
+                    relative = original.relative_to(common)
+                except ValueError as exc:
+                    raise _store_error("The prepared SSH configuration could not be previewed") from exc
+                destination = Path(temp) / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(original, destination)
+            target = Path(temp) / prepared.target_path.resolve().relative_to(common)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(prepared.target_text.encode("utf-8"))
+            loaded = load_ssh_configuration(temp_root, isolated=self._isolated)
+
+            # Preview loading deliberately happens in a private source tree,
+            # but provenance is part of the persisted identity projection.
+            # Restore daemon-owned source paths to the paths the committed
+            # mutation will actually expose; otherwise an intent written
+            # before commit can never compare equal to the target sidecar
+            # after a crash between sidecar replacement and intent cleanup.
+            preview_root = Path(temp)
+
+            def actual_path(value: Any) -> Any:
+                if not isinstance(value, str) or not value:
+                    return value
+                candidate = Path(value)
+                try:
+                    return str(common / candidate.resolve().relative_to(preview_root))
+                except ValueError:
+                    return value
+
+            for record in loaded.connections:
+                record.source = actual_path(record.source)
+                if isinstance(record.data, dict):
+                    for key in ("source", "source_config_path", "config_root"):
+                        if key in record.data:
+                            record.data[key] = actual_path(record.data[key])
+            return loaded
+
+    def _prepare_document_replacement(
+        self,
+        *,
+        operation: str,
+        target: Path,
+        expected_revision: str,
+        expected_bytes: Optional[bytes],
+        target_text: str,
+        connection_id: str = "",
+        remove_connection_id: Optional[str] = None,
+    ) -> PreparedSshMutation:
+        if not self._revision_matches(expected_revision):
+            raise _stale_error()
+        return PreparedSshMutation(
+            operation=operation,
+            base_revision=expected_revision,
+            target_revision=self._revision_for_path_bytes(target, target_text.encode("utf-8")),
+            target_path=target,
+            expected_bytes=expected_bytes,
+            target_text=target_text,
+            connection_id=connection_id,
+            remove_connection_id=remove_connection_id,
+        )
+
+    def prepare_create(self, data: Mapping[str, Any]) -> PreparedSshMutation:
+        """Prepare a new Host block without touching the SSH config."""
+        self._refuse_symlinked_root()
+        config = self.load()
+        payload = dict(data)
+        payload.pop("uuid", None)
+        nickname = str(payload.get("nickname") or "").strip()
+        if not nickname:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, "A nickname is required")
+        if any(record.id == nickname for record in config.connections):
+            raise _already_exists_error()
+        expected = self._root_path.read_bytes() if self._root_path.exists() else None
+        if self._root_path.exists():
+            doc = SSHConfigDocument.parse_file(str(self._root_path))
+            doc.nodes.append(
+                RawSpan(lines=doc.render_lines(["\n"] + merged_block_lines(None, payload)))
+            )
+            text = doc.text()
+        else:
+            text = _SSH_CONFIG_HEADER + "".join(merged_block_lines(None, payload))
+        return self._prepare_document_replacement(
+            operation="create", target=self._root_path,
+            expected_revision=config.root_revision, expected_bytes=expected,
+            target_text=text, connection_id=nickname,
+        )
+
+    def prepare_update(
+        self,
+        connection_id: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int],
+    ) -> PreparedSshMutation:
+        """Prepare an existing Host-block update without writing it."""
+        self._refuse_symlinked_root()
+        config = self.load()
+        record = self._find(config, connection_id)
+        self._check_stale(connection_id, expected_generation)
+        payload = dict(data)
+        payload.pop("uuid", None)
+        payload.pop("source", None)
+        payload.pop("source_config_path", None)
+        payload["id"] = payload.get("nickname") or record.nickname
+        payload["nickname"] = payload.get("nickname") or record.nickname
+        _preserve_multivalue_on_update(record, payload)
+        source = _source_of(record)
+        if not source:
+            raise _store_error("The connection has no recorded source file")
+        target = Path(source)
+        new_name = str(payload.get("nickname") or "").strip() or connection_id
+        if new_name != connection_id and any(item.id == new_name for item in config.connections):
+            raise _already_exists_error()
+        expected = target.read_bytes()
+        doc = SSHConfigDocument.parse_file(str(target))
+        found = False
+        nodes: List[Any] = []
+        for node in doc.nodes:
+            if isinstance(node, HostBlock) and any(
+                token in {connection_id, new_name} for token in node.tokens
+            ):
+                if not found:
+                    nodes.append(RawSpan(lines=doc.render_lines(merged_block_lines(node, payload))))
+                found = True
+                continue
+            nodes.append(node)
+        if not found:
+            nodes.append(RawSpan(lines=doc.render_lines(["\n"] + merged_block_lines(None, payload))))
+        doc.nodes = nodes
+        return self._prepare_document_replacement(
+            operation="update", target=target,
+            expected_revision=config.root_revision, expected_bytes=expected,
+            target_text=doc.text(), connection_id=new_name,
+            remove_connection_id=connection_id if new_name != connection_id else None,
+        )
+
+    def prepare_delete(self, connection_id: str) -> PreparedSshMutation:
+        """Prepare deletion of one Host token without writing it."""
+        self._refuse_symlinked_root()
+        config = self.load()
+        record = self._find(config, connection_id)
+        source = _source_of(record)
+        if not source:
+            raise _store_error("The connection has no recorded source file")
+        target = Path(source)
+        expected = target.read_bytes()
+        doc = SSHConfigDocument.parse_file(str(target))
+        modified = False
+        nodes: List[Any] = []
+        for node in doc.nodes:
+            if isinstance(node, HostBlock) and connection_id in node.tokens:
+                modified = True
+                remaining = [token for token in node.tokens if token != connection_id]
+                if remaining:
+                    node.tokens = remaining
+                    node.lines[0] = doc.render_lines([f"Host {shlex.join(remaining)}\n"])[0]
+                    nodes.append(node)
+                continue
+            nodes.append(node)
+        if not modified:
+            raise _not_found_error()
+        doc.nodes = nodes
+        return self._prepare_document_replacement(
+            operation="delete", target=target,
+            expected_revision=config.root_revision, expected_bytes=expected,
+            target_text=doc.text(), remove_connection_id=connection_id,
+        )
+
+    def prepare_duplicate(self, connection_id: str) -> PreparedSshMutation:
+        """Prepare a duplicate Host block without writing it."""
+        self._refuse_symlinked_root()
+        config = self.load()
+        record = self._find(config, connection_id)
+        source = _source_of(record)
+        if not source:
+            raise _store_error("The connection has no recorded source file")
+        base = dict(copy.deepcopy(record.data or {}))
+        for key in list(base):
+            if key.startswith("__") or key in {"aliases", "password_changed"}:
+                base.pop(key, None)
+        base.pop("uuid", None)
+        new_name = generate_duplicate_nickname(record.nickname, {item.id for item in config.connections})
+        base["nickname"] = new_name
+        base.setdefault("hostname", record.hostname or new_name)
+        target = Path(source)
+        expected = target.read_bytes()
+        doc = SSHConfigDocument.parse_file(str(target))
+        doc.nodes.append(RawSpan(lines=doc.render_lines(["\n"] + merged_block_lines(None, base))))
+        return self._prepare_document_replacement(
+            operation="duplicate", target=target,
+            expected_revision=config.root_revision, expected_bytes=expected,
+            target_text=doc.text(), connection_id=new_name,
+        )
+
+    def prepare_split(
+        self,
+        connection_id: str,
+        original_host_token: str,
+        data: Mapping[str, Any],
+        *,
+        expected_generation: Optional[int],
+    ) -> PreparedSshMutation:
+        """Prepare a split without changing the real SSH tree."""
+        self._refuse_symlinked_root()
+        config = self.load()
+        record = self._find(config, connection_id)
+        self._check_stale(connection_id, expected_generation)
+        source = _source_of(record)
+        if not source:
+            raise _store_error("The connection has no recorded source file")
+        payload = dict(data)
+        payload.pop("uuid", None)
+        payload.pop("source", None)
+        payload.pop("source_config_path", None)
+        new_name = str(payload.get("nickname") or "").strip()
+        if not original_host_token or not new_name:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, "A split host token and destination name are required")
+        if new_name != connection_id and any(item.id == new_name for item in config.connections):
+            raise _already_exists_error()
+        target = Path(source)
+        expected = target.read_bytes()
+        doc = SSHConfigDocument.parse_file(str(target))
+        found = False
+        nodes: List[Any] = []
+        for node in doc.nodes:
+            if isinstance(node, HostBlock) and original_host_token in node.tokens:
+                found = True
+                remaining = [token for token in node.tokens if token != original_host_token]
+                if remaining:
+                    node.tokens = remaining
+                    node.lines[0] = doc.render_lines([f"Host {shlex.join(remaining)}\n"])[0]
+                    nodes.append(node)
+                continue
+            nodes.append(node)
+        if not found:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, "The original host token was not found")
+        nodes.append(
+            RawSpan(lines=doc.render_lines(["\n"] + merged_block_lines(None, payload)))
+        )
+        doc.nodes = nodes
+        return self._prepare_document_replacement(
+            operation="split", target=target, expected_revision=config.root_revision,
+            expected_bytes=expected, target_text=doc.text(), connection_id=new_name,
+            remove_connection_id=connection_id if new_name != connection_id else None,
+        )
+
+    def _revision_for_root_bytes(self, root_bytes: bytes) -> str:
+        """Compute the source-tree revision with the root bytes substituted."""
+        hasher = hashlib.sha256()
+        files = _resolve_config_files(self._root_path)
+        for path in files:
+            data = root_bytes if Path(path) == self._root_path.resolve() else Path(path).read_bytes()
+            rel = os.path.relpath(path)
+            hasher.update(rel.encode("utf-8"))
+            hasher.update(b"\x00")
+            hasher.update(data)
+            hasher.update(b"\x00")
+        if not files and not self._root_path.exists():
+            rel = os.path.relpath(self._root_path)
+            hasher.update(rel.encode("utf-8"))
+            hasher.update(b"\x00")
+            hasher.update(root_bytes)
+            hasher.update(b"\x00")
+        return hasher.hexdigest()
+
+    def _revision_for_path_bytes(self, target: Path, target_bytes: bytes) -> str:
+        """Compute a source-tree revision with one participating file replaced."""
+        hasher = hashlib.sha256()
+        files = _resolve_config_files(self._root_path)
+        target_resolved = target.resolve()
+        for path in files:
+            data = target_bytes if Path(path).resolve() == target_resolved else Path(path).read_bytes()
+            rel = os.path.relpath(path)
+            hasher.update(rel.encode("utf-8"))
+            hasher.update(b"\x00")
+            hasher.update(data)
+            hasher.update(b"\x00")
+        if target_resolved not in {Path(path).resolve() for path in files}:
+            rel = os.path.relpath(target)
+            hasher.update(rel.encode("utf-8"))
+            hasher.update(b"\x00")
+            hasher.update(target_bytes)
+            hasher.update(b"\x00")
+        return hasher.hexdigest()
 
     # -- lookups -----------------------------------------------------------
 
