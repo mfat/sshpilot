@@ -477,6 +477,97 @@ def test_intent_target_must_fit_main_sidecar_limit(tmp_path: Path, monkeypatch):
     assert not path.exists()
 
 
+def test_v2_from_dict_requires_every_canonical_field(tmp_path: Path):
+    path = tmp_path / "connections.json"
+    state = _state()
+    payload = state.to_dict()
+    required = (
+        "version",
+        "sidecar_generation",
+        "identities",
+        "groups",
+        "root_connections",
+        "metadata",
+        "non_ssh_connections",
+        "non_ssh_metadata",
+        "legacy_orphans",
+        "pending_ambiguities",
+        "observed_ssh_revision",
+        "last_reconciled_ssh_revision",
+    )
+    for field in required:
+        missing = dict(payload)
+        missing.pop(field)
+        with pytest.raises((TypeError, ValueError)):
+            IdentityStateV2.from_dict(missing)
+        path.write_text(json.dumps(missing), encoding="utf-8")
+        assert probe_connection_state_file(path) is ConnectionStateFileKind.CORRUPT
+        with pytest.raises(CoreError):
+            read_identity_state_v2(path)
+
+
+def test_intent_from_dict_requires_every_canonical_field(tmp_path: Path):
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    payload = _intent(base, target).to_dict()
+    required = (
+        "version",
+        "transaction_id",
+        "base_ssh_revision",
+        "target_ssh_revision",
+        "base_sidecar_generation",
+        "operation_label",
+        "operation_kind",
+        "target_state",
+    )
+    path = tmp_path / "connections.json.pending"
+    for field in required:
+        missing = dict(payload)
+        missing.pop(field)
+        with pytest.raises((TypeError, ValueError)):
+            IdentityTransactionIntent.from_dict(missing)
+        path.write_text(json.dumps(missing), encoding="utf-8")
+        with pytest.raises(CoreError):
+            read_pending_identity_transaction(path)
+
+
+def test_external_oversized_target_intent_is_rejected_on_read_and_recovery(
+    tmp_path: Path, monkeypatch
+):
+    base = _state()
+    target = replace(
+        _state(generation=1, revision="rev-new", alias="new"),
+        metadata={U1: {"notes": "x" * 2000}},
+        last_reconciled_ssh_revision="rev-new",
+        observed_ssh_revision="rev-new",
+    )
+    intent = _intent(base, target)
+    sidecar = tmp_path / "connections.json"
+    intent_path = identity_transaction_intent_path(sidecar)
+    write_identity_state_v2(sidecar, base)
+    write_bytes = json.dumps(intent.to_dict(), indent=2, sort_keys=True).encode()
+    intent_path.write_bytes(write_bytes)
+    before_sidecar = sidecar.read_bytes()
+    before_intent = intent_path.read_bytes()
+    base_size = len(before_sidecar)
+    monkeypatch.setattr(state_file_module, "_MAX_STATE_BYTES", base_size + 1)
+    assert len(json.dumps(target.to_dict(), sort_keys=True).encode()) > base_size + 1
+    with pytest.raises(CoreError):
+        read_pending_identity_transaction(intent_path)
+    with pytest.raises(CoreError):
+        recover_pending_identity_transaction(
+            sidecar,
+            intent_path=intent_path,
+            actual_ssh_revision="rev-new",
+        )
+    assert sidecar.read_bytes() == before_sidecar
+    assert intent_path.read_bytes() == before_intent
+
+
 def test_recovery_crash_window_matrix(tmp_path: Path):
     sidecar = tmp_path / "connections.json"
     intent_path = identity_transaction_intent_path(sidecar)

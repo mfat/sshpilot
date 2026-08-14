@@ -169,14 +169,10 @@ class GroupFileState:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "GroupFileState":
-        if not isinstance(data, Mapping):
-            raise TypeError("group must be an object")
-        raw = dict(data)
+        raw = dict(data or {})
         connection_ids = raw.get("connection_ids", ())
         if not isinstance(connection_ids, (list, tuple)):
             raise ValueError("group connection ids must be an array")
-        if any(type(item) is not str or not item.strip() for item in connection_ids):
-            raise ValueError("group connection ids must be non-empty strings")
         return cls(
             id=str(raw.get("id") or ""),
             name=str(raw.get("name") or ""),
@@ -185,7 +181,9 @@ class GroupFileState:
             ),
             order=int(raw.get("order") or 0),
             color=str(raw.get("color") or ""),
-            connection_ids=tuple(connection_ids),
+            connection_ids=tuple(
+                str(item) for item in connection_ids if str(item)
+            ),
         )
 
 
@@ -246,47 +244,37 @@ class ConnectionFileState:
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ConnectionFileState":
-        if not isinstance(data, Mapping):
-            raise TypeError("connection state must be an object")
-        raw = dict(data)
+        raw = dict(data or {})
         non_ssh = raw.get("non_ssh_connections", [])
         if not isinstance(non_ssh, list):
             raise ValueError("non-SSH connections must be an array")
-        if any(not isinstance(item, Mapping) for item in non_ssh):
-            raise TypeError("non-SSH connections must contain objects")
         groups_blob = raw.get("groups")
         if not isinstance(groups_blob, dict):
             raise ValueError("groups must be an object")
         raw_groups = groups_blob.get("groups", {})
         if not isinstance(raw_groups, dict):
             raise ValueError("connection groups must be an object")
-        if any(not isinstance(item, Mapping) for item in raw_groups.values()):
-            raise TypeError("connection groups must contain objects")
         root_raw = groups_blob.get("root_connections", [])
         if not isinstance(root_raw, list):
             raise ValueError("root connections must be an array")
-        if any(type(item) is not str or not item.strip() for item in root_raw):
-            raise TypeError("root connections must contain non-empty strings")
         metadata_raw = raw.get("metadata", {})
         if not isinstance(metadata_raw, dict):
             raise ValueError("metadata must be an object")
-        if any(
-            type(key) is not str or not key.strip() or not isinstance(value, Mapping)
-            for key, value in metadata_raw.items()
-        ):
-            raise TypeError("metadata must contain objects with string keys")
         return cls(
             version=raw.get("version", _STATE_VERSION),
             non_ssh_connections=tuple(
-                dict(item) for item in non_ssh
+                dict(item) for item in non_ssh if isinstance(item, dict)
             ),
             groups=tuple(
                 GroupFileState.from_dict(item)
                 for item in raw_groups.values()
+                if isinstance(item, dict)
             ),
-            root_connections=tuple(root_raw),
+            root_connections=tuple(str(item) for item in root_raw if str(item)),
             metadata={
-                cid: dict(values) for cid, values in metadata_raw.items()
+                str(cid): dict(values)
+                for cid, values in metadata_raw.items()
+                if isinstance(values, dict)
             },
         )
 
@@ -458,34 +446,12 @@ def probe_connection_state_file(path: Path) -> ConnectionStateFileKind:
     if type(version) is not int:
         return ConnectionStateFileKind.CORRUPT
     if version == 1:
-        required = {"version", "non_ssh_connections", "groups", "metadata"}
-        groups = data.get("groups")
-        if not required <= data.keys() or not isinstance(groups, Mapping):
-            return ConnectionStateFileKind.CORRUPT
-        if not {"groups", "root_connections"} <= groups.keys():
-            return ConnectionStateFileKind.CORRUPT
         try:
-            ConnectionFileState.from_dict(data)
-        except (TypeError, ValueError, KeyError):
+            _parse_state_bytes(raw)
+        except CoreError:
             return ConnectionStateFileKind.CORRUPT
         return ConnectionStateFileKind.V1
     if version == 2:
-        required = {
-            "version",
-            "sidecar_generation",
-            "last_reconciled_ssh_revision",
-            "observed_ssh_revision",
-            "identities",
-            "groups",
-            "root_connections",
-            "metadata",
-            "non_ssh_connections",
-            "non_ssh_metadata",
-            "legacy_orphans",
-            "pending_ambiguities",
-        }
-        if not required <= data.keys():
-            return ConnectionStateFileKind.CORRUPT
         try:
             from .identity_state_v2 import IdentityStateV2
 
@@ -821,11 +787,18 @@ def read_pending_identity_transaction(
     try:
         from .identity_state_v2 import IdentityTransactionIntent
 
-        return IdentityTransactionIntent.from_dict(data)
+        intent = IdentityTransactionIntent.from_dict(data)
     except (TypeError, ValueError, KeyError) as exc:
         raise _state_rejected(
             "invalid_transaction_intent", "pending identity transaction is invalid"
         ) from exc
+    target_content = _serialize_json(intent.target_state.to_dict(), "Identity-state")
+    if len(target_content) > _MAX_STATE_BYTES:
+        raise _state_rejected(
+            "invalid_transaction_intent",
+            "serialized transaction target exceeds the state limit",
+        )
+    return intent
 
 
 def write_pending_identity_transaction(

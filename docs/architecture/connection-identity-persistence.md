@@ -500,6 +500,12 @@ The production storage boundary is additive. Existing v1 functions
 \`read_legacy_connection_state()\` remain unchanged for current repository
 callers. New entrypoints are:
 
+The v1 file remains a legacy compatibility format: its historical parser
+normalization and tolerance are authoritative and are intentionally different
+from the strict canonical v2 format. The version probe delegates recognized
+version 1 payloads to that parser and recognized version 2 payloads to
+\`IdentityStateV2.from_dict()\`; it does not maintain a parallel schema.
+
 * \`probe_connection_state_file()\` classifies absent, v1, v2, unsupported,
   and corrupt files without treating corruption as empty state;
 * \`read_identity_state_v2()\` and \`write_identity_state_v2()\` strictly
@@ -521,6 +527,10 @@ the 16 MiB sidecar limit before the intent can be written. Both use
 deterministic sorted JSON and complete target snapshots. Filesystem persistence
 performs no DNS, network, subprocess,
 OpenSSH execution, or secret access.
+
+A successfully read pending intent also passes the nested target through the
+same 16 MiB sidecar-size check. Therefore a readable intent always contains a
+target that the production sidecar writer can represent.
 
 The intent format has its own version, transaction ID, base/target SSH
 revisions, base sidecar generation, operation label/kind, and a fully

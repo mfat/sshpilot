@@ -683,6 +683,23 @@ class IdentityStateV2:
             raise TypeError("identity state must be an object")
         if payload.get("version") != V2_VERSION:
             raise ValueError("unsupported identity state version")
+        required = {
+            "version",
+            "sidecar_generation",
+            "last_reconciled_ssh_revision",
+            "observed_ssh_revision",
+            "identities",
+            "groups",
+            "root_connections",
+            "metadata",
+            "non_ssh_connections",
+            "non_ssh_metadata",
+            "legacy_orphans",
+            "pending_ambiguities",
+        }
+        missing = required - set(payload)
+        if missing:
+            raise ValueError("identity state is missing canonical fields")
         raw_identities = payload.get("identities", {})
         if not isinstance(raw_identities, Mapping):
             raise TypeError("identities must be a UUID-keyed object")
@@ -819,17 +836,29 @@ class IdentityTransactionIntent:
     def from_dict(cls, payload: Mapping[str, Any]) -> "IdentityTransactionIntent":
         if not isinstance(payload, Mapping):
             raise TypeError("identity transaction must be an object")
+        required = {
+            "version",
+            "transaction_id",
+            "base_ssh_revision",
+            "target_ssh_revision",
+            "base_sidecar_generation",
+            "operation_label",
+            "operation_kind",
+            "target_state",
+        }
+        if required - set(payload):
+            raise ValueError("identity transaction is missing canonical fields")
         target = payload.get("target_state")
         if not isinstance(target, Mapping):
             raise TypeError("transaction target must be an object")
         return cls(
-            version=payload.get("version"),
-            transaction_id=payload.get("transaction_id", ""),
-            base_ssh_revision=payload.get("base_ssh_revision", ""),
-            target_ssh_revision=payload.get("target_ssh_revision", ""),
-            base_sidecar_generation=payload.get("base_sidecar_generation"),
-            operation_label=payload.get("operation_label", ""),
-            operation_kind=payload.get("operation_kind", "normal"),
+            version=payload["version"],
+            transaction_id=payload["transaction_id"],
+            base_ssh_revision=payload["base_ssh_revision"],
+            target_ssh_revision=payload["target_ssh_revision"],
+            base_sidecar_generation=payload["base_sidecar_generation"],
+            operation_label=payload["operation_label"],
+            operation_kind=payload["operation_kind"],
             target_state=IdentityStateV2.from_dict(target),
         )
 

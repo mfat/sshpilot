@@ -9,6 +9,7 @@ import pytest
 from sshpilot.core.connections.state_file import (
     ConnectionFileState,
     GroupFileState,
+    probe_connection_state_file,
     read_connection_state,
     read_legacy_connection_state,
     write_connection_state,
@@ -152,6 +153,66 @@ def test_migration_ignores_unrelated_legacy_fields(tmp_path):
     config = _legacy_config(tmp_path)
     state = read_legacy_connection_state(config)
     assert state.metadata == {"switch": {"tags": ("network",), "pinned": True}}
+
+
+def test_v1_reader_preserves_historical_compatibility_normalization(tmp_path):
+    path = tmp_path / "connections.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "non_ssh_connections": [
+                    {"id": "switch", "protocol": "telnet"},
+                    "malformed-non-ssh",
+                ],
+                "groups": {
+                    "groups": {
+                        "work": {
+                            "id": "work",
+                            "name": "Work",
+                            "connection_ids": ["switch", 7, "", None],
+                        },
+                        "malformed": "ignored",
+                    },
+                    "root_connections": [7, "gateway", "", None],
+                },
+                "metadata": {
+                    "switch": {"pinned": True},
+                    "ignored-list": ["not an object"],
+                    "ignored-string": "not an object",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = read_connection_state(path)
+
+    assert state.non_ssh_connections == (
+        {"id": "switch", "protocol": "telnet"},
+    )
+    assert len(state.groups) == 1
+    assert state.groups[0].connection_ids == ("switch", "7", "None")
+    assert state.root_connections == ("7", "gateway", "None")
+    assert state.metadata == {"switch": {"pinned": True}}
+
+
+def test_probe_delegates_tolerant_v1_payload_to_authoritative_reader(tmp_path):
+    path = tmp_path / "connections.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "non_ssh_connections": [],
+                "groups": {"groups": {}, "root_connections": []},
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    parsed = read_connection_state(path)
+    assert probe_connection_state_file(path).value == "v1"
+    assert parsed == ConnectionFileState()
 
 
 def test_missing_legacy_config_yields_defaults(tmp_path):

@@ -162,6 +162,9 @@ def test_v2_round_trip_preserves_typed_references_and_projection_evidence():
 def test_v2_rejects_unknown_references_and_malformed_non_ssh_records():
     base = {
         "version": 2,
+        "sidecar_generation": 0,
+        "last_reconciled_ssh_revision": None,
+        "observed_ssh_revision": None,
         "identities": {},
         "groups": [],
         "root_connections": [],
