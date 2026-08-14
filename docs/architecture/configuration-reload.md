@@ -44,7 +44,7 @@ and connection snapshot. Short-lived missing or empty root-file states receive
 two bounded stabilization retries; persistent removal is then treated as an
 authoritative edit.
 
-Diffing uses stable SSH Pilot UUIDs and public `ConnectionSummary`
+Diffing uses stable connection alias IDs and public `ConnectionSummary`
 values. Events are emitted after commit in deterministic order:
 
 1. `connection.deleted`
@@ -54,8 +54,7 @@ values. Events are emitted after commit in deterministic order:
 A rename is one update with the same alias if the editor retains the Host
 block. The loader also recognizes a single stale token in a single-host block,
 which covers the common external `Host old` to `Host new` edit. A genuinely
-A genuinely new host receives a new UUID and exposes its SSH Host alias
-separately.
+new host is created with its SSH Host alias as the connection ID.
 
 Daemon writes are not ignored by a timing window. Their filesystem notices
 coalesce into a reload, and semantic equality produces no duplicate event or

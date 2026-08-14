@@ -20,7 +20,7 @@ documented model surface.
 
 | Type | Purpose | Required form | Runtime status |
 | --- | --- | --- | --- |
-| `ConnectionId` | Saved SSH connection identity | Immutable SSH Pilot UUID | Implemented; `ssh_alias` is separate |
+| `ConnectionId` | Saved connection identity | SSH Host alias (opaque string) | Implemented; alias-backed ID |
 | `SessionId` | Daemon-lifetime runtime session identity | `session-<n>` | Daemon implemented |
 | `RequestId` | Request correlation | `request-<n>` or opaque string | Implemented |
 | `InteractionId` | Daemon-lifetime interaction identity | `interaction-<n>` | Daemon implemented |
@@ -34,10 +34,9 @@ documented model surface.
 
 The aliases are `typing.NewType` wrappers over `str`; they add static intent,
 not runtime serialization. Consumers must not parse their contents.
-For SSH records, `ConnectionId` is the immutable SSH Pilot UUID. The current
-OpenSSH selector is exposed as `ssh_alias`, while the UUID-owned human label is
-`display_name`. Runtime/session IDs remain daemon-lifetime values; consumers
-must not infer cross-restart persistence from them.
+`ConnectionId` equals the concrete SSH Host alias and changes only when that
+alias is renamed (delete + create semantics). Runtime IDs are unique for one
+daemon lifetime; consumers must not infer cross-restart persistence.
 `InteractionId` follows the same daemon-lifetime rule and is never derived from
 prompt text, session IDs, connection IDs, or timestamps.
 

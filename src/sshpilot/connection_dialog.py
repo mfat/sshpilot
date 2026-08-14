@@ -2372,10 +2372,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._apply_protocol_to_ui()
                 if hasattr(self.connection, 'nickname'):
                     self.nickname_row.set_text(self.connection.nickname or "")
-                self.display_name_row.set_text(
-                    getattr(self.connection, 'display_name', None)
-                    or self.connection.nickname or ""
-                )
                 self._load_shared_meta_rows()
                 self._load_plugin_field_values()
             finally:
@@ -2386,10 +2382,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
-            self.display_name_row.set_text(
-                getattr(self.connection, 'display_name', None)
-                or self.connection.nickname or ""
-            )
             if hasattr(self.connection, 'hostname'):
                 self.hostname_row.set_text(self.connection.hostname or "")
             if hasattr(self.connection, 'username'):
@@ -2888,15 +2880,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.protocol_row.connect('notify::selected', self._on_protocol_changed)
         basic_group.add(self.protocol_row)
 
-        # OpenSSH selector; the app-owned Display Name is independent.
+        # Nickname
         self.nickname_row = Adw.EntryRow(
-            title=_("SSH Alias (no whitespace allowed)")
+            title=_("Nickname (no whitespace allowed)")
         )
         basic_group.add(self.nickname_row)
-
-        # SSH Pilot-owned label; it is not written to ~/.ssh/config.
-        self.display_name_row = Adw.EntryRow(title=_("Display Name"))
-        basic_group.add(self.display_name_row)
         
         # Hostname
         self.hostname_row = Adw.EntryRow(title=_("Hostname / IP address"))
@@ -3388,12 +3376,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if hasattr(self, 'wol_mac_row'):
             try:
                 store = getattr(self.parent_window, 'connection_manager', None)
-                connection_id = (
-                    getattr(self.connection, 'id', None)
-                    or getattr(self.connection, 'nickname', '')
-                ).strip()
-                if store and connection_id:
-                    meta = store.get_metadata(connection_id)
+                nickname = getattr(self.connection, 'nickname', '').strip()
+                if store and nickname:
+                    meta = store.get_metadata(nickname)
                     if meta:
                         self.wol_mac_row.set_text((meta.get('wol_mac') or '').strip())
                         self.wol_broadcast_row.set_text((meta.get('wol_broadcast_ip') or '').strip())
@@ -3409,15 +3394,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         if hasattr(self, 'tags_row'):
             try:
                 store = getattr(self.parent_window, 'connection_manager', None)
-                connection_id = (
-                    getattr(self.connection, 'id', None)
-                    or getattr(self.connection, 'nickname', '')
-                ).strip()
-                if store and connection_id:
+                nickname = getattr(self.connection, 'nickname', '').strip()
+                if store and nickname:
                     # Suppress inline autocompletion while loading.
                     self._set_text_without_completion(
                         self.tags_row,
-                        ', '.join(store.get_metadata(connection_id).get('tags', [])),
+                        ', '.join(store.get_metadata(nickname).get('tags', [])),
                     )
             except Exception as e:
                 logger.debug("Load tags meta: %s", e)
@@ -3591,15 +3573,8 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         key_select_mode_val = self._selected_key_mode()
 
         # Gather connection data
-        display_name_row = getattr(self, 'display_name_row', None)
-        display_name = (
-            display_name_row.get_text().strip()
-            if display_name_row is not None
-            else self.nickname_row.get_text().strip()
-        )
         connection_data = {
             'nickname': self.nickname_row.get_text().strip(),
-            'display_name': display_name,
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
             'port': int(self.port_row.get_text().strip() or '22'),

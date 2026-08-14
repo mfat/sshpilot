@@ -32,6 +32,7 @@ from ..api.models.connections import (
     AuthenticationMethod,
     ConnectionDetails,
     ConnectionEditorDetails,
+    ConnectionHealth,
     ConnectionId,
     ConnectionMutationResult,
     ConnectionSummary,
@@ -39,6 +40,7 @@ from ..api.models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     ForwardingRule,
+    GroupReference,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
     SshConfigText,
@@ -290,13 +292,11 @@ class ConnectionApplicationService:
         return result
 
     def lookup_daemon_password(self, connection_id: ConnectionId) -> Optional[str]:
-        connection_id = self._ssh_secret_selector(connection_id)
         return self._provider_call(
             self._secret_provider, "lookup_connection_password", connection_id
         )
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:
-        connection_id = self._ssh_secret_selector(connection_id)
         return bool(self._provider_call(
             self._secret_provider, "has_connection_password", connection_id
         ))
@@ -314,7 +314,6 @@ class ConnectionApplicationService:
         previous_host: str = "",
         previous_username: str = "",
     ) -> bool:
-        connection_id = self._ssh_secret_selector(connection_id)
         result = self._provider_call(
             self._secret_provider,
             "store_connection_password",
@@ -334,7 +333,6 @@ class ConnectionApplicationService:
         previous_host: str = "",
         previous_username: str = "",
     ) -> bool:
-        connection_id = self._ssh_secret_selector(connection_id)
         result = self._provider_call(
             self._secret_provider,
             "delete_connection_password",
@@ -344,14 +342,6 @@ class ConnectionApplicationService:
             previous_username=previous_username,
         )
         return bool(result)
-
-    def _ssh_secret_selector(self, connection_id: ConnectionId) -> ConnectionId:
-        """Resolve UUIDs to aliases while retaining legacy test/provider adapters."""
-
-        resolver = getattr(self._repository, "ssh_alias_for", None)
-        if callable(resolver):
-            return resolver(connection_id)
-        return connection_id
 
     def store_connection_password_rpc(
         self, request: Any
@@ -692,7 +682,11 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository split failed")
             raise self._persistence_error(request.connection_id) from error
-        return self._mutation_result(record)
+        return ConnectionMutationResult(
+            connection_id=record.id,
+            nickname=record.nickname,
+            generation=record.generation,
+        )
 
     def enable_serialized_command_threads(self) -> None:
         self._allow_cross_thread_commands = True
@@ -814,12 +808,15 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository create failed")
             raise self._persistence_error() from error
-        return self._mutation_result(record)
+        return ConnectionMutationResult(
+            connection_id=record.id,
+            nickname=record.nickname,
+            generation=record.generation,
+        )
 
     def _build_create_data(self, request: CreateConnectionRequest) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "nickname": request.nickname,
-            "display_name": request.display_name or request.nickname,
             "hostname": request.hostname,
             "username": request.username,
             "port": request.port,
@@ -880,7 +877,11 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository duplicate failed")
             raise self._persistence_error(connection_id) from error
-        return self._mutation_result(record)
+        return ConnectionMutationResult(
+            connection_id=record.id,
+            nickname=record.nickname,
+            generation=record.generation,
+        )
 
     def update_connection(
         self,
@@ -918,23 +919,6 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         before_data = dict(record.data or {})
-        only_display_name = (
-            request.display_name is not UNSET
-            and not request.config_patch
-            and not request.plugin_data
-            and all(
-                getattr(request, name) is UNSET
-                for name in ("nickname", "hostname", "username", "port")
-            )
-        )
-        if only_display_name:
-            try:
-                updated = self._repository.set_display_name(
-                    connection_id, str(request.display_name)
-                )
-            except CoreError as error:
-                raise _map_core_error(error) from error
-            return self._mutation_result(updated, changed=True, changed_fields=("display_name",))
         data = dict(record.data or {})
         compared_fields = set(request.config_patch or {})
         compared_fields.update(
@@ -942,8 +926,6 @@ class ConnectionApplicationService:
             if getattr(request, name) is not None and getattr(request, name) is not UNSET
         )
         compared_fields.update(request.plugin_data or {})
-        if request.display_name is not UNSET:
-            compared_fields.add("display_name")
         for name in ("nickname", "hostname", "username", "port"):
             value = getattr(request, name)
             if value is not None and value is not UNSET:
@@ -972,18 +954,18 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository update failed")
             raise self._persistence_error(connection_id) from error
-        if request.display_name is not UNSET:
-            updated = self._repository.set_display_name(
-                updated.id, str(request.display_name)
-            )
         after_data = dict(updated.data or {})
         changed_fields = tuple(sorted(
             field for field in compared_fields
             if field not in {"id", "source", "generation"}
             and before_data.get(field) != after_data.get(field)
         ))
-        return self._mutation_result(
-            updated, changed=bool(changed_fields), changed_fields=changed_fields
+        return ConnectionMutationResult(
+            connection_id=updated.id,
+            nickname=updated.nickname,
+            generation=updated.generation,
+            changed=bool(changed_fields),
+            changed_fields=changed_fields,
         )
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
@@ -1000,12 +982,6 @@ class ConnectionApplicationService:
                 "The requested connection does not exist",
                 connection_id=request.connection_id,
             )
-        public_id = getattr(self._repository, "public_id_for", None)
-        public_connection_id = (
-            public_id(request.connection_id)
-            if callable(public_id)
-            else request.connection_id
-        )
         try:
             self._repository.delete_connection(request.connection_id)
         except SshPilotError:
@@ -1016,7 +992,7 @@ class ConnectionApplicationService:
             logger.exception("Repository delete failed")
             raise self._persistence_error(request.connection_id) from error
         return DeleteConnectionResult(
-            connection_id=ConnectionId(public_connection_id),
+            connection_id=request.connection_id,
             deleted=True,
         )
 
@@ -1192,24 +1168,6 @@ class ConnectionApplicationService:
             return tuple(str(v) for v in value if v is not None)
         return (str(value),)
 
-    def _mutation_result(
-        self,
-        record: ConnectionRecord,
-        *,
-        changed: bool = True,
-        changed_fields: Tuple[str, ...] = (),
-    ) -> ConnectionMutationResult:
-        summary = self._record_to_summary(record)
-        return ConnectionMutationResult(
-            connection_id=summary.id,
-            nickname=summary.nickname,
-            generation=record.generation,
-            changed=changed,
-            changed_fields=changed_fields,
-            ssh_alias=summary.ssh_alias,
-            display_name=summary.display_name,
-        )
-
     def _record_to_summary(self, record: ConnectionRecord) -> ConnectionSummary:
         """Convert one record to its public, secret-free summary.
 
@@ -1217,13 +1175,33 @@ class ConnectionApplicationService:
         result matches the authoritative store. No fallback path: a missing
         record or failed snapshot raises rather than silently guessing groups.
         """
+        data = record.data or {}
+        try:
+            port = int(record.port)
+        except (TypeError, ValueError):
+            port = 22
+        if not 1 <= port <= 65535:
+            port = 22
         snapshot = self._repository.snapshot()
+        group_names = {g.id: g.name for g in snapshot.groups}
+        group_ids: List[str] = []
         for summary in snapshot.connections:
-            if (record.protocol == "ssh" and summary.ssh_alias == record.id) or summary.id == record.id:
-                return summary
-        raise CoreError(
-            ErrorCode.CONNECTION_NOT_FOUND,
-            "The connection is not present in the current snapshot",
+            if summary.id == record.id:
+                group_ids = [g.id for g in summary.groups]
+                break
+        return ConnectionSummary(
+            id=ConnectionId(record.id),
+            nickname=record.nickname,
+            host=record.host or str(data.get("host") or record.id),
+            hostname=record.hostname,
+            username=record.username,
+            port=port,
+            protocol=record.protocol or "ssh",
+            health=ConnectionHealth.UNKNOWN,
+            groups=tuple(
+                GroupReference(id=gid, name=group_names.get(gid, ""))
+                for gid in group_ids
+            ),
         )
 
     def _record_to_details(self, record: ConnectionRecord) -> ConnectionDetails:
@@ -1251,8 +1229,6 @@ class ConnectionApplicationService:
             protocol=summary.protocol,
             health=summary.health,
             groups=summary.groups,
-            ssh_alias=summary.ssh_alias,
-            display_name=summary.display_name,
             aliases=record.aliases or self._string_tuple(data.get("aliases")),
             authentication_method=auth_method,
             identity_configured=bool(keyfile) or bool(data.get("identity_files")),
@@ -1292,9 +1268,6 @@ class ConnectionApplicationService:
         return ConnectionEditorDetails(
             id=details.id,
             nickname=details.nickname,
-            ssh_alias=details.ssh_alias,
-            display_name=details.display_name,
-            identity_status=details.identity_status,
             host=details.host,
             hostname=details.hostname,
             username=details.username,

@@ -474,33 +474,24 @@ UUID/app metadata continuity != credential continuity
 
 No password, passphrase, secret handle, or private key material belongs in v2.
 
-## 14. Public API identity boundary
+## 14. Future public API migration
 
-The production API now exposes distinct identity fields:
-
-* \`ConnectionSummary.id\` and SSH group/metadata references are UUIDs;
-* \`ssh_alias\` is the current OpenSSH selector;
-* \`display_name\` is UUID-owned application metadata.
-
-The repository still accepts an alias at its internal compatibility boundary
-while older service callers are retired, but it publishes UUID references and
-resolves UUIDs to aliases only at SSH-facing launch/config/secret seams. The
-remaining sequence is:
+Public \`ConnectionSummary.id\`, group IDs, metadata IDs, runtime requests, and
+frontend IDs remain alias-compatible now. Safe sequence:
 
 1. productionize v2 types, serializer, migration, and recovery;
 2. repository owns UUID registry internally while API retains an alias resolver;
 3. startup, live reload, raw editor, and typed operations share one path;
 4. groups, metadata, and root order become UUID-backed internally;
-5. API exposes distinct \`id=UUID\`, \`ssh_alias\`, and \`display_name\`; **done**;
-6. migrate clients/frontends and contract tests; **in progress**;
-7. expose/edit DisplayName in the connection editor; **implemented**;
+5. API exposes distinct \`id=UUID\`, \`ssh_alias\`, and \`display_name\`;
+6. migrate clients/frontends and contract tests;
+7. only then consider DisplayName presentation;
 8. design credential continuity separately.
 
 Never give \`id\` dual semantics. Whether a wire version/capability bump is
 needed depends on compatibility testing; old clients must never interpret a UUID
-as an SSH alias. The wire implementation version is bumped so incompatible
-clients fail the existing capability negotiation rather than silently sending
-UUIDs to an alias-only daemon.
+as an SSH alias. This is a later API phase and does not block initial internal
+UUID persistence. No DTO or codec changes are made here.
 
 ## 15. Phase 1 filesystem implementation
 
@@ -604,50 +595,26 @@ The following policies are resolved for initial sidecar implementation:
    state is degraded/unavailable;
 4. non-SSH IDs remain protocol-local;
 5. credential continuity is separate and deferred;
-6. public API UUID migration is implemented with distinct fields; older clients
-   are excluded by the API implementation-version negotiation.
+6. public API UUID migration is a later phase with distinct fields.
 
 The only future consumer-specific interaction is the explicit backend
 ambiguity-resolution operation described above; it has a defined revision,
 generation, one-to-one, and complete-accounting contract.
 
-## 17. Production integration status
-
-The production repository adapter now loads authoritative SSH projections
-before reconstructing the temporary alias-shaped service facade. Its durable
-source is `IdentityStateV2`; the facade remains an internal compatibility
-layer while the API migration completes. SSH snapshot IDs are UUIDs,
-`ssh_alias` is the OpenSSH selector, and `display_name` is UUID-owned.
-An SSH projection in a revision-scoped pending ambiguity is marked
-`identity_status="unresolved"`: its real alias remains launchable, but it has
-no app identity and cannot receive UUID-owned mutations or metadata.
-
-Typed SSH mutations and raw text saves use prepared SSH mutations plus a
-complete validated pending target snapshot. A temporary loader preview obtains
-target projections without writing the real configuration tree. External edits
-create no intent and are reconciled through the shared matcher. Recovery stays
-revision-guarded and never guesses on unrelated revisions or ambiguity.
-
-Preview-only provenance is normalized back to the daemon's real source paths
-before target projections enter a pending intent. This keeps an exact target
-sidecar comparable after a crash between sidecar replacement and intent
-cleanup. The former broad raw-record signature is no longer part of production
-reconciliation.
-
-## 18. Recommended implementation sequence
+## 17. Recommended implementation sequence
 
 \`\`\`text
-Phase 1  production v2 types, hardened writer integration, migration and recovery tests  [done]
-Phase 2  repository internally owns UUID registry and shared reconciliation       [done]
-Phase 3  prepared managed SSH transactions and crash-window recovery              [done]
-Phase 4  public API exposes UUID + ssh_alias + display_name as distinct fields     [done]
-Phase 5  clients/frontends and editor migrate to UUID/display-name semantics       [done]
-Phase 6  alias-identity cleanup and credential-boundary audit                      [done]
-Phase 7  credential continuity/security design and any explicit migration           [future]
+Phase 1  production v2 types, hardened writer integration, migration and recovery tests
+Phase 2  repository internally owns UUID registry; public API remains alias-compatible
+Phase 3  startup, live reload, raw editor, and typed operations share one path
+Phase 4  groups, metadata, and root order are fully UUID-backed
+Phase 5  public API exposes UUID + ssh_alias + display_name as distinct fields
+Phase 6  clients/frontends migrate to UUID identity
+Phase 7  DisplayName presentation, separately reviewed
+Phase 8  credential continuity/security design and any explicit migration
 \`\`\`
 
-Credential continuity remains separate: no credential value or secret handle is
-stored in v2 state or a pending intent.
+No phase authorizes UI work in this task.
 
 ## Recommendation
 
@@ -657,4 +624,4 @@ boundaries are coherent. Production sidecar implementation may proceed, while
 the production adapter must preserve the explicit ambiguity-resolution contract
 and remain separate from public API, UI, and secret migration.
 
-**VERDICT: UUID CONNECTION IDENTITY + DISPLAYNAME MIGRATION COMPLETE**
+**VERDICT: PRODUCTION UUID SIDECAR STORAGE READY — PROCEED TO REPOSITORY UUID INTEGRATION**

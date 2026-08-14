@@ -2505,8 +2505,7 @@ class WindowConfigDialogsMixin:
                 return
 
             connection_nicknames = [
-                getattr(conn, 'id', None) or conn.nickname
-                for conn in connections if hasattr(conn, 'nickname')
+                conn.nickname for conn in connections if hasattr(conn, 'nickname')
             ]
             if not connection_nicknames:
                 return

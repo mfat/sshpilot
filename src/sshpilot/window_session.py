@@ -25,24 +25,14 @@ class WindowSessionMixin:
     @staticmethod
     def _connection_session_reference(connection) -> dict:
         nickname = getattr(connection, 'nickname', '')
-        connection_id = getattr(connection, 'id', None) or nickname
-        return {'nickname': nickname, 'connection_id': connection_id}
+        return {'nickname': nickname, 'connection_id': nickname}
 
     def _connection_from_session_reference(self, entry):
         if not isinstance(entry, dict):
             return None
         connection_id = entry.get('connection_id') or entry.get('nickname')
         if connection_id:
-            by_id = getattr(self.connection_manager, 'get_connection_by_id', None)
-            if callable(by_id):
-                connection = by_id(connection_id)
-                if connection is not None:
-                    return connection
-            by_nickname = getattr(
-                self.connection_manager, 'find_connection_by_nickname', None
-            )
-            if callable(by_nickname):
-                return by_nickname(connection_id)
+            return self.connection_manager.find_connection_by_nickname(connection_id)
         return None
 
     def capture_session(self) -> dict:

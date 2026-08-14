@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.33",
+  "api_implementation_version": "0.31",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -3283,9 +3283,6 @@
       "protocol",
       "health",
       "groups",
-      "ssh_alias",
-      "display_name",
-      "identity_status",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -3311,9 +3308,6 @@
       "protocol",
       "health",
       "groups",
-      "ssh_alias",
-      "display_name",
-      "identity_status",
       "aliases",
       "authentication_method",
       "identity_configured",
@@ -3355,9 +3349,7 @@
       "nickname",
       "generation",
       "changed",
-      "changed_fields",
-      "ssh_alias",
-      "display_name"
+      "changed_fields"
     ],
     "ConnectionStoreSnapshot": [
       "generation",
@@ -3375,10 +3367,7 @@
       "port",
       "protocol",
       "health",
-      "groups",
-      "ssh_alias",
-      "display_name",
-      "identity_status"
+      "groups"
     ],
     "ConnectionValidationError": [
       "field",
@@ -3413,7 +3402,6 @@
       "username",
       "port",
       "protocol",
-      "display_name",
       "config_patch",
       "plugin_data"
     ],
@@ -4125,7 +4113,6 @@
       "hostname",
       "username",
       "port",
-      "display_name",
       "config_patch",
       "plugin_data",
       "expected_generation"

@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.33",
+  "api_implementation_version": "0.31",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1931,27 +1931,6 @@
           "type": "tuple[GroupReference, ...]"
         },
         {
-          "default": "",
-          "name": "ssh_alias",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "",
-          "name": "display_name",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "resolved",
-          "name": "identity_status",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
           "default": [],
           "name": "aliases",
           "required": false,
@@ -2107,27 +2086,6 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[GroupReference, ...]"
-        },
-        {
-          "default": "",
-          "name": "ssh_alias",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "",
-          "name": "display_name",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "resolved",
-          "name": "identity_status",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
         },
         {
           "default": [],
@@ -2404,20 +2362,6 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
-        },
-        {
-          "default": "",
-          "name": "ssh_alias",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "",
-          "name": "display_name",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -2526,27 +2470,6 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[GroupReference, ...]"
-        },
-        {
-          "default": "",
-          "name": "ssh_alias",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "",
-          "name": "display_name",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "resolved",
-          "name": "identity_status",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -2728,13 +2651,6 @@
         {
           "default": "ssh",
           "name": "protocol",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        },
-        {
-          "default": "",
-          "name": "display_name",
           "required": false,
           "sensitive": false,
           "type": "str"
@@ -6709,13 +6625,6 @@
           "required": false,
           "sensitive": false,
           "type": "int | None | UNSET"
-        },
-        {
-          "default": "`UNSET`",
-          "name": "display_name",
-          "required": false,
-          "sensitive": false,
-          "type": "str | None | UNSET"
         },
         {
           "default": {},

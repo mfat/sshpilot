@@ -1,8 +1,8 @@
 """Domain model for UUID-owned connection state.
 
-This module defines the production sidecar boundary independently from the
-currently alias-shaped v1 state file. ``ConnectionRepository`` may own this
-state internally while its compatibility facade and public API are migrated:
+This module is intentionally not wired into ``ConnectionRepository`` or the
+public API.  It defines the production sidecar boundary independently from the
+currently alias-shaped v1 state file:
 
 * SSH connections are owned by canonical UUIDv4 identities;
 * the last loader projection/evidence is persisted for restart reconciliation;
@@ -105,7 +105,7 @@ class ConnectionReference:
 
 
 def _projection_to_dict(projection: ConnectionIdentityProjection) -> Mapping[str, Any]:
-    """Serialize the accepted projection without public API fields."""
+    """Serialize the accepted prototype projection without public API fields."""
 
     wrapper = IdentityRegistry(
         entries=(
@@ -119,7 +119,7 @@ def _projection_to_dict(projection: ConnectionIdentityProjection) -> Mapping[str
 
 
 def _projection_from_dict(payload: Mapping[str, Any]) -> ConnectionIdentityProjection:
-    """Reuse the frozen evidence validators for v2 projections."""
+    """Reuse the frozen prototype evidence validators for v2 projections."""
 
     if not isinstance(payload, Mapping):
         raise TypeError("identity projection must be an object")

@@ -163,11 +163,7 @@ class DaemonSessionRestoreManager:
             window.terminal_to_connection[terminal] = connection
             window.active_terminals[connection] = terminal
             page = window.tab_view.append(terminal)
-            page.set_title(
-                metadata.tab_title
-                or getattr(connection, "display_name", None)
-                or connection.nickname
-            )
+            page.set_title(metadata.tab_title or connection.nickname)
             page.set_icon(
                 icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic")
             )

@@ -180,7 +180,7 @@ def test_repository_save_reloads_connection_state_and_fires_events(tmp_path):
     root = tmp_path / ".ssh" / "config"
     _write_config(root, "Host one\n    HostName one.example.com\n")
     repo = _make_repository(root, state_dir=tmp_path / "state")
-    assert [c.ssh_alias for c in repo.snapshot().connections] == ["one"]
+    assert [c.id for c in repo.snapshot().connections] == ["one"]
 
     changes = []
     repo.add_listener(changes.append)
@@ -199,14 +199,14 @@ def test_repository_save_reloads_connection_state_and_fires_events(tmp_path):
     assert saved.revision != loaded.revision
 
     # Connection state reloaded immediately by the daemon (no watcher wait).
-    connection_aliases = {c.ssh_alias for c in repo.snapshot().connections}
-    assert {"one", "two"} <= connection_aliases
+    connection_ids = {c.id for c in repo.snapshot().connections}
+    assert {"one", "two"} <= connection_ids
 
     # The normal repository change (→ connection.created / store.changed
     # events) was published.
     assert changes, "expected a RepositoryChange after a successful save"
-    after_aliases = {c.ssh_alias for c in changes[-1].after.connections}
-    assert "two" in after_aliases
+    after_ids = {c.id for c in changes[-1].after.connections}
+    assert "two" in after_ids
 
 
 def test_repository_save_rejects_stale_revision(tmp_path):
@@ -265,9 +265,8 @@ def test_raw_host_rename_reconciles_group_and_metadata_sidecar(tmp_path):
     )
 
     snapshot = repo.snapshot()
-    new_id = next(item.id for item in snapshot.connections if item.ssh_alias == "new")
-    assert snapshot.groups[0].connection_ids == (new_id,)
-    assert [item.connection_id for item in snapshot.metadata] == [new_id]
+    assert snapshot.groups[0].connection_ids == ("new",)
+    assert [item.connection_id for item in snapshot.metadata] == ["new"]
     assert thaw_safe_metadata(snapshot.metadata[0].values)["tags"] == ["ops"]
 
 

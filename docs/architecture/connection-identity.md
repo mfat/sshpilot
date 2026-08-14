@@ -1,7 +1,6 @@
 # Connection Identity
 
-Saved SSH Pilot identity is an app-owned UUID; the concrete SSH `Host` alias
-is the launch selector.
+Saved connection identity is the concrete SSH `Host` alias.
 
 ```ssh
 Host production
@@ -13,9 +12,7 @@ is represented as:
 
 ```python
 ConnectionSummary(
-    id="550e8400-e29b-41d4-a716-446655440000",
-    display_name="Production",
-    ssh_alias="production",
+    id="production",
     nickname="production",
     host="production",
     hostname="10.0.0.5",
@@ -28,16 +25,16 @@ UUID metadata comments.
 
 ## Rules
 
-- Saved SSH connection ID = immutable UUID; `ssh_alias` is the OpenSSH Host token
+- Saved connection ID = SSH Host alias (`connection.id == connection.nickname`)
 - Wildcard (`*`, `?`) and negated (`!…`) Host tokens are rules, not connections
 - Multi-token concrete Host lines expose each token as its own connection ID
-- A safe alias rename preserves UUID and app-owned metadata
-- Ambiguous external edits never guess ownership
+- An alias rename is deletion of the old ID plus creation of the new ID
+- There is no heuristic rename detection
 
 ## Groups
 
 Group IDs are stable application-defined slugs derived from the display name
-(`production`, `production-2`, …). SSH membership is keyed by UUID.
+(`production`, `production-2`, …). Membership is keyed by connection alias.
 
 ## Runtime resources
 

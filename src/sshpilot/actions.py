@@ -312,14 +312,10 @@ class WindowActions:
             failures = []
             for connection in connections:
                 try:
-                    connection_id = (
-                        getattr(connection, 'id', None)
-                        or getattr(connection, 'nickname', None)
-                        or ''
-                    ).strip() if connection else ''
-                    if not connection_id:
+                    nickname = getattr(connection, 'nickname', '').strip() if connection else ''
+                    if not nickname:
                         continue
-                    meta = self.window.connection_manager.get_metadata(connection_id)
+                    meta = self.window.connection_manager.get_metadata(nickname)
                     mac = (meta.get('wol_mac') or '').strip()
                     if not mac:
                         continue
@@ -334,9 +330,7 @@ class WindowActions:
                     if ok:
                         sent += 1
                     else:
-                        failures.append(
-                            f"{getattr(connection, 'display_name', None) or connection_id}: {msg}"
-                        )
+                        failures.append(f"{nickname}: {msg}")
                 except Exception as e:
                     failures.append(f"{getattr(connection, 'nickname', '?')}: {e}")
             if sent == 0 and not failures:

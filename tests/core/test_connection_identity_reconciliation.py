@@ -1168,7 +1168,7 @@ def test_tilde_identityfile_is_config_intent_evidence(tmp_path):
     assert item.identity_file_evidence.values == ("~/.ssh/id_a",)
 
 
-def test_external_repository_reload_reconciles_safe_alias_rename(tmp_path):
+def test_external_repository_reload_currently_does_not_reconcile_alias_rename(tmp_path):
     root = tmp_path / "config"
     state = tmp_path / "connections.json"
     root.write_text("Host old\n    HostName server.example\n", encoding="utf-8")
@@ -1201,17 +1201,17 @@ def test_external_repository_reload_reconciles_safe_alias_rename(tmp_path):
     )
     root.write_text("Host new\n    HostName server.example\n", encoding="utf-8")
     snapshot = repo.reload()
-    assert [item.ssh_alias for item in snapshot.connections] == ["new"]
-    assert snapshot.metadata[0].connection_id == snapshot.connections[0].id
+    assert [item.id for item in snapshot.connections] == ["new"]
     assert snapshot.groups[0].connection_ids == ()
-    persisted = json.loads(state.read_text(encoding="utf-8"))
-    assert persisted["version"] == 2
-    assert persisted["metadata"] == {
-        str(snapshot.connections[0].id): {"pinned": True}
+    assert snapshot.metadata == ()
+    # The dormant alias-keyed state remains on disk; reload did not apply the
+    # raw-editor-only rename heuristic.
+    assert json.loads(state.read_text(encoding="utf-8"))["metadata"] == {
+        "old": {"pinned": True}
     }
 
 
-def test_daemon_reload_path_preserves_external_safe_rename_identity(tmp_path):
+def test_daemon_reload_path_reports_external_rename_as_delete_create_currently(tmp_path):
     root = tmp_path / "config"
     root.write_text("Host old\n    HostName server.example\n", encoding="utf-8")
     repo = ConnectionRepository(
@@ -1223,9 +1223,8 @@ def test_daemon_reload_path_preserves_external_safe_rename_identity(tmp_path):
     backend = AuthoritativeConfigurationBackend(repo)
     root.write_text("Host new\n    HostName server.example\n", encoding="utf-8")
     result = backend.reload()
-    assert result.deleted == ()
-    assert result.created == ()
-    assert result.updated[0].ssh_alias == "new"
+    assert [item.id for item in result.deleted] == ["old"]
+    assert [item.id for item in result.created] == ["new"]
 
 
 def test_registry_from_actual_records_is_restartable(tmp_path):
