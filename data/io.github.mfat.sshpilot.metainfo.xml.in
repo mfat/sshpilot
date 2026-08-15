@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.8.1" date="2026-08-15">
+      <description>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.8.0" date="2026-08-13">
       <description>
         <p>Migrated the code base to a new daemon-based system</p>
