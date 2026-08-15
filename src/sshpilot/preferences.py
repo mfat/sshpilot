@@ -3777,17 +3777,31 @@ class PreferencesWindow(Adw.NavigationPage):
                     def _force(_d, resp, token=result.confirmation):
                         if resp != 'force':
                             return
+                        accepted = False
+                        error_body = None
+                        forced = None
                         try:
                             forced = DaemonClient(timeout=2.0)
-                            try:
-                                forced.restart_daemon(
-                                    RestartDaemonRequest(force=True, confirmation=token)
+                            forced_result = forced.restart_daemon(
+                                RestartDaemonRequest(force=True, confirmation=token)
+                            )
+                            accepted = bool(forced_result.accepted)
+                            if not accepted:
+                                error_body = forced_result.message or _(
+                                    "The daemon rejected the forced restart."
                                 )
-                            finally:
-                                forced.close()
                         except Exception as exc:
                             logger.error("Forced daemon restart failed: %s", exc)
-                        on_complete()
+                            error_body = str(exc)
+                        finally:
+                            if forced is not None:
+                                forced.close()
+                        if accepted:
+                            on_complete()
+                        else:
+                            self._show_daemon_restart_error(
+                                error_body or _("The daemon rejected the forced restart.")
+                            )
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
@@ -3799,15 +3813,19 @@ class PreferencesWindow(Adw.NavigationPage):
                 client.close()
         except Exception as exc:
             logger.error("Daemon restart failed: %s", exc)
-            err = Adw.AlertDialog(
-                heading=_("Could not restart daemon"),
-                body=str(exc),
-            )
-            err.add_response('ok', _("OK"))
-            err.set_default_response('ok')
-            err.set_close_response('ok')
-            err.present(self)
+            self._show_daemon_restart_error(str(exc))
         self._refresh_daemon_status_row()
+
+    def _show_daemon_restart_error(self, body: str) -> None:
+        """Present the safe, non-fatal error dialog for a failed daemon restart."""
+        err = Adw.AlertDialog(
+            heading=_("Could not restart daemon"),
+            body=body,
+        )
+        err.add_response('ok', _("OK"))
+        err.set_default_response('ok')
+        err.set_close_response('ok')
+        err.present(self)
 
     def _schedule_daemon_reconnect_after_restart(self) -> None:
         """Ask the running application to spawn/reconnect after an explicit restart."""

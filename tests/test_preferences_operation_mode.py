@@ -165,3 +165,165 @@ class _DialogStub:
 
     def present(self, *a):
         self.presented = True
+
+
+class _AlertDialogStub:
+    """Adw.AlertDialog stand-in that records and lets tests emit responses."""
+
+    def __init__(self):
+        self.presented = False
+        self._response_handlers = []
+
+    def add_response(self, *a):
+        pass
+
+    def set_response_appearance(self, *a):
+        pass
+
+    def set_default_response(self, *a):
+        pass
+
+    def set_close_response(self, *a):
+        pass
+
+    def connect(self, signal, handler, *args):
+        if signal == 'response':
+            self._response_handlers.append((handler, args))
+
+    def present(self, *a):
+        self.presented = True
+
+    def emit_response(self, response, *args):
+        for handler, user_args in self._response_handlers:
+            handler(self, response, *(args + user_args))
+
+
+def _alert_dialog_factory(instances):
+    def _make(*a, **kw):
+        dialog = _AlertDialogStub()
+        instances.append(dialog)
+        return dialog
+
+    return _make
+
+
+def _forced_aware_restart(fake, forced):
+    """Two-phase restart fake: non-force probes return the first result,
+    forced calls return `forced`."""
+    first = fake._restart_result
+
+    def _restart(request):
+        fake.restart_calls.append(request)
+        if request.force:
+            return forced
+        return first
+
+    return _restart
+
+
+def _request_restart_via_force_dialog(monkeypatch, fake, forced=None):
+    """Run ``_request_daemon_restart`` with a live-resources daemon and return
+    the confirmation dialog plus any recorded completions."""
+    if forced is not None:
+        fake.restart_daemon = _forced_aware_restart(fake, forced)
+    completions = []
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+    dialogs = []
+    monkeypatch.setattr(
+        "sshpilot.preferences.Adw.AlertDialog", _alert_dialog_factory(dialogs)
+    )
+    prefs, _ = _make_prefs()
+
+    prefs._request_daemon_restart(on_complete=lambda: completions.append("done"))
+
+    assert dialogs, "expected the live-resources confirmation dialog"
+    return dialogs, completions, fake
+
+
+def test_forced_restart_accepted_runs_completion_once(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+    dialogs, completions, fake = _request_restart_via_force_dialog(
+        monkeypatch,
+        fake,
+        forced=SimpleNamespace(
+            accepted=True, confirmation=None, will_lose=(), message=""
+        ),
+    )
+
+    dialogs[0].emit_response('force')
+
+    assert completions == ["done"]
+    assert len(fake.restart_calls) == 2
+    assert fake.restart_calls[1].force is True
+    assert fake.closed is True
+    assert dialogs[0].presented is True
+
+
+def test_forced_restart_exception_does_not_run_completion(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+
+    def _restart(request):
+        fake.restart_calls.append(request)
+        if request.force:
+            raise RuntimeError("forced restart rpc failed")
+        return SimpleNamespace(
+            accepted=False, confirmation="token", will_lose=("session",)
+        )
+
+    fake.restart_daemon = _restart
+    dialogs, completions, fake = _request_restart_via_force_dialog(monkeypatch, fake)
+
+    dialogs[0].emit_response('force')
+
+    assert completions == []
+    assert len(fake.restart_calls) == 2
+    assert fake.restart_calls[1].force is True
+    assert fake.closed is True
+    # The safe error dialog must be shown, and the confirmation dialog closed.
+    assert len(dialogs) == 2
+    assert dialogs[-1].presented is True
+
+
+def test_forced_restart_rejected_does_not_run_completion(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+    dialogs, completions, fake = _request_restart_via_force_dialog(
+        monkeypatch,
+        fake,
+        forced=SimpleNamespace(
+            accepted=False,
+            confirmation=None,
+            will_lose=(),
+            message="Restart refused",
+        ),
+    )
+
+    dialogs[0].emit_response('force')
+
+    assert completions == []
+    assert len(fake.restart_calls) == 2
+    assert fake.restart_calls[1].force is True
+    assert fake.closed is True
+    assert len(dialogs) == 2
+    assert dialogs[-1].presented is True
+
+
+def test_forced_restart_cancelled_skips_forced_rpc_and_completion(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+    dialogs, completions, fake = _request_restart_via_force_dialog(monkeypatch, fake)
+
+    dialogs[0].emit_response('cancel')
+
+    assert completions == []
+    # Only the initial non-force probe ran; no forced restart RPC.
+    assert len(fake.restart_calls) == 1
+    assert fake.restart_calls[0].force is False
+    assert fake.closed is True
+    assert len(dialogs) == 1
