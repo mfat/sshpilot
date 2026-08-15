@@ -798,6 +798,32 @@ class SshPilotApplication(Adw.Application):
                         "Failed to refresh welcome client after reconnect",
                         exc_info=True,
                     )
+
+            # Rebind long-lived Preferences controllers as well.  Preferences
+            # is intentionally reused after being popped, so its controllers
+            # can otherwise retain the client whose transport just failed.
+            # Recreate the thin controllers over the confirmed replacement
+            # client; their daemon-owned snapshots will be refreshed by the
+            # existing attachment path when their pages are built.
+            try:
+                window.secrets_controller = window._build_secrets_controller()
+                window._attach_secrets_interaction_presenter()
+            except Exception:
+                logger.warning(
+                    "Failed to refresh secret services after daemon reconnect",
+                    exc_info=True,
+                )
+            preferences = getattr(window, "_preferences_window", None)
+            if preferences is not None:
+                try:
+                    preferences.set_ssh_overrides_controller(
+                        window._build_ssh_overrides_controller()
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to refresh Preferences SSH overrides after daemon reconnect",
+                        exc_info=True,
+                    )
         if previous is not None and previous is not result.client:
             try:
                 previous.close()

@@ -36,12 +36,21 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
     connection_projection = MagicMock()
     runtime_projection = MagicMock()
+    preferences = MagicMock()
+    replacement_overrides = object()
+    replacement_secrets = object()
     app.window = SimpleNamespace(
         _is_quitting=False,
         client=None,
         welcome_view=None,
         connection_manager=connection_projection,
         connection_runtime_status=runtime_projection,
+        _preferences_window=preferences,
+        _build_ssh_overrides_controller=MagicMock(
+            return_value=replacement_overrides
+        ),
+        _build_secrets_controller=MagicMock(return_value=replacement_secrets),
+        _attach_secrets_interaction_presenter=MagicMock(),
     )
     app._api_client_bridge = None
     app._api_client_selection = None
@@ -99,6 +108,13 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     assert installed == [new_client]
     connection_projection.attach_client.assert_called_once_with(new_client)
     runtime_projection.attach_client.assert_called_once_with(new_client)
+    app.window._build_secrets_controller.assert_called_once_with()
+    app.window._attach_secrets_interaction_presenter.assert_called_once_with()
+    app.window._build_ssh_overrides_controller.assert_called_once_with()
+    preferences.set_ssh_overrides_controller.assert_called_once_with(
+        replacement_overrides
+    )
+    assert app.window.secrets_controller is replacement_secrets
     assert app._daemon_reconnect_in_progress is False
 
 

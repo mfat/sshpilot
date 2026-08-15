@@ -23,8 +23,11 @@ external-terminal process selection, and explicitly local plugin commands remain
 legitimate frontend features.
 
 Current repair-pass baseline: 2026-08-15, branch `dev`, HEAD
-`170de28f3ad174ee80829ae6282d961d12d84bc0` (`daemon-only retirement cleanup`),
-parent `a2c8e68d11de71ee2672927a27a00877be488714`. The worktree was already
+`fae52a61115cc9bd2d937eadafd51c1e71cb8c63` (`fixed passphrase save error`),
+parent `57de9e1829048f19cde36d380964f86946d9603d` (`Implemented and
+documented the daemon-only retirement repairs`). The migration cleanup commit
+under review is `170de28f3ad174ee80829ae6282d961d12d84bc0`; its parent is
+`a2c8e68d11de71ee2672927a27a00877be488714`. The worktree was already
 dirty at session start; unrelated changes were preserved. This session also
 removed the committed `.codebase-memory` binaries and added the directory to
 `.gitignore` because repository policy does not require generated graph
@@ -112,7 +115,7 @@ call, and side effect, not filename or comments.
 Status values in this table are limited to `PENDING`, `IN PROGRESS`,
 `BLOCKED`, `REMOVED`, and `VERIFIED`. “Verified” requires reproducible test
 evidence; the migration is not complete while any item is pending or blocked.
-The verification column records the base HEAD because this repair pass is
+The verification column records `fae52a6` because this repair pass is
 intentionally uncommitted; every result below applies to the dirty worktree
 described in the handoff, not to `170de28f` alone.
 
@@ -135,6 +138,8 @@ described in the handoff, not to `170de28f` alone.
 | R14 | Compatibility policy | model import shim and historical in-process references | documented bounded shim/history | IN PROGRESS | architecture/core/API run passed; final current-doc/source audit pending | 170de28f | Removal at next incompatible plugin/API window |
 | R15 | Full retirement audit | prior ledger asserted verification despite failures | 20-domain source-to-side-effect trace and final search | PENDING | final practical and serial runs pending | 170de28f | Cannot mark migration complete yet |
 | R16 | Connection-dialog passphrases | Every save reverified unchanged loaded passphrases and could report unavailable key management as “invalid” | Preserve unchanged daemon-loaded values; verify only edited values; no pre-confirmation default key manager | VERIFIED | `tests/test_connection_dialog_passphrase.py` — 17 passed; targeted Ruff/compile/diff checks passed | 170de28f | New/changed passphrases still fail closed; daemon mode must be confirmed before key actions |
+| R17 | Capability contract test | Launcher test expected the pre-repair capability set and rejected the correctly advertised external-terminal capability | Handshake advertisement includes `terminal.external_launch` when the provider implements preparation | VERIFIED | `tests/daemon/test_launcher.py` — 17 passed | 170de28f | Test expectation repaired; runtime capability behavior remains daemon/provider guarded |
+| R18 | Reconnect/preferences lifecycle | Existing Preferences controllers retained a closed daemon client after application reconnect | Rebind SSH-overrides and secret controllers to the confirmed replacement client | VERIFIED | `tests/test_daemon_reconnect_gtk.py` — 13 passed; Preferences/secret/mode batch — 29 passed; Ruff passed | fae52a6 + working tree | Reconnect now rebuilds secret services/presenter and rebinds the reused Preferences controller |
 
 ## 6a. Source-to-side-effect trace
 
@@ -209,6 +214,7 @@ the status table and matrix below.
 | 2026-08-15 | Keep API implementation version at 0.39 and repair the 0.39 documentation/snapshot rather than inventing 0.42 | Treat dirty generated additions as a version bump | Source authority and protocol compatibility remain 0.39/1.0; current additive surface is captured by the reviewed baseline | `api/version.py`, docs, generated artifacts |
 | 2026-08-15 | Persistent Docker password storage uses the same protected command-input frame as session credentials; the dialog callback is the only consent signal | Send password in ordinary RPC JSON or persist every “use once” entry | Secrets must not cross ordinary wire/log/DTO surfaces and storage consent must be explicit | daemon client/dispatch, Docker page |
 | 2026-08-15 | Connection-dialog saves do not reverify an unchanged passphrase loaded from daemon storage | Reverify every save or construct a default-scope frontend key manager | Unrelated edits must not fail because a stored key is temporarily unavailable; only edited secrets need validation | `FileListEditor._commit_passphrase`, `_discover_disk_keys`, connection-dialog save |
+| 2026-08-15 | `terminal.external_launch` belongs in the real-daemon handshake contract when the launch provider supports it | Keep the capability absent to preserve a stale exact-set test | Clients must see the operation that the daemon can actually execute; the test was stale after the capability repair | `RequestDispatcher`, `tests/daemon/test_launcher.py` |
 
 ### Unsaved-host identity decision table
 
@@ -265,13 +271,13 @@ service tests and daemon-in-thread fixtures are test/composition usage only.
 | Docker/secrets | provider, protected frame, persistence consent, no-leak tests | `tests/daemon/test_secret_dispatch.py` — 24 passed; Docker GUI module skipped because GUI environment is unavailable; full GUI/plugin evidence pending |
 | Connection-dialog passphrases | unchanged-value save, edited-value rejection, no pre-confirmation default key manager | `tests/test_connection_dialog_passphrase.py` — 17 passed |
 | Operation mode | transition, blockers, target/config/repository/hook/rollback/cleanup/restart faults | `tests/daemon/test_operation_mode_service.py` — 12 passed, including canonical missing-config and four-writer concurrency; complete live daemon fault/restart matrix pending |
-| Effective config | Include/glob/cycle/tokens/repeated/Match/paths/roots and canonical facade guard | 134 effective/core tests pass; default-path regression is blocked by malformed/unreadable container system SSH config; parity/guard/full run pending |
+| Effective config | Include/glob/cycle/tokens/repeated/Match/paths/roots and canonical facade guard | 134 effective/core tests pass; `test_default_config_path_excludes_system_defaults` now passes in the current run, but supported-environment parity/guard/full run remains pending |
 | Unsaved host | ID, alias/direct, user inference, Include/Match, case/IP/port/ProxyJump/non-SSH/rename | Existing core tests pass; required matrix pending |
 | Alias safety | GUI/API/repository/import/effective lookup | model/repository/effective regressions added; full matrix pending |
 | API/contracts | codecs, dispatch/client, capabilities, docs, schema, version snapshots | focused API documentation — 18 passed; architecture/API/core prior run — 1449 passed, 1 skipped; generator check pending final run; source/docs/snapshot version is 0.39 |
 | Remote services | SSH sessions, SFTP, SCP, transfers, forwarding, known hosts, keys, askpass | Prior evidence exists but must be reproduced in this pass |
 | Local features | PTY/VTE/PyXtermJS/local panes/external emulator/local plugins | Must remain covered by local-terminal/plugin suites |
-| Broad verification | supported full suite, serial concurrency-sensitive runs | Parallel explicit non-MCP run: 4875 passed, 29 skipped, 8 failed, 21 errors; eight failures pass isolated; serial full run was interrupted; see section 10 |
+| Broad verification | supported full suite, serial concurrency-sensitive runs | Current parallel run: 2511 passed, 6 skipped, 1 failed, 21 errors before `--maxfail=20`; serial full run interrupted in a slow native-SCP test; see section 10 |
 | Hygiene | `ruff`, compileall, `git diff --check`, generated check | `.venv/bin/python scripts/generate_api_artifacts.py --check`, `.venv/bin/ruff check src tests scripts/generate_api_artifacts.py`, `.venv/bin/python -m compileall -q src/sshpilot`, and `git diff --check` all passed after the final source edits |
 
 ## 10. Known failures and unresolved questions
@@ -281,22 +287,56 @@ Previously recorded failures must not be called green without reproduction:
 * Default environment: `pytest -q -n0` fails collection because the optional
   MCP dependency does not provide `mcp.ClientSession` (`113 deselected, 21
   skipped, 1 collection error`). Classification: dependency/environment.
-* Explicit parallel non-MCP headless command:
+* Current parallel non-MCP headless command:
   `find tests -type f -name 'test_*.py' ! -path 'tests/mcp/*' -print0 | xargs
-  -0 pytest -q -n auto -m 'not integration and not gui'` produced `4875
-  passed, 29 skipped, 8 failed, 21 errors` in 103.30s. The eight failures
-  pass as `8 passed` under the isolated serial command. Classification:
-  concurrency, environment, or test-fixture; not a product-green result.
-* `test_default_config_path_excludes_system_defaults` was reproduced both in
-  the larger serial selection and alone in this container:
-  `.venv/bin/pytest -q -n0 tests/test_effective_config_diff.py::test_default_config_path_excludes_system_defaults`
-  -> `1 failed`. The scratch HOME config resolves correctly with `-F`, but the
-  displayed plain `ssh -G foo` side returns no output because OpenSSH rejects
-  the container's unreadable `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf`
-  symlink (`Bad owner or permissions ...`). Classification: environment/test
-  contract, not silently product-green; reproduce in the supported environment
-  after fixing or explicitly isolating that system configuration. This blocks
-  the effective-config verification gate.
+  -0 .venv/bin/pytest -q -n auto -m 'not integration and not gui' --maxfail=20`
+  produced `2511 passed, 6 skipped, 1 failed, 21 errors` in 82.11s before
+  xdist stopped at its failure limit. The one failure is the event-ordering
+  race described below. The 21 errors are all EasyEnv setup failures in
+  `tests/test_easyenv_plugin_e2e.py`: its fake client lacks the required
+  daemon `set_plugin_setting` method, and the fixture calls
+  `ctx.settings.set(...)`. Classification: test-fixture contract, not a
+  daemon production failure.
+* `tests/daemon/test_event_forwarding.py::test_connection_store_changed_event_reaches_idle_client`
+  is reproducibly timing-sensitive: the callback sets its `delivered` event
+  for the first `connection.updated` event (sequence 1), while the daemon
+  publishes `connection_store.changed` (sequence 2) immediately afterward.
+  A direct probe observed `[('connection.updated', 1),
+  ('connection_store.changed', 2)]`; the test asserts after the first event
+  and can therefore see an empty store-event list. The module passes in
+  isolation (`14 passed` in 3.04s) but the single test failed in both a serial
+  loop and the parallel suite. Classification: test synchronization defect;
+  the daemon event was not lost.
+* A serial full-suite run with `--durations=20` reached 35% and appeared to
+  stall. Ctrl-C captured the active test as
+  `tests/daemon/test_native_scp_backend.py::test_native_backend_retries_once_with_legacy_protocol_for_sftp_failure`,
+  blocked in `_BoundedStderr.finish(self._wait_timeout)`. The test passes
+  alone in 29.03s and the complete native-SCP module passes in 116.60s.
+  Classification: slow subprocess-test behavior, not a functional failure;
+  serial full-suite verification remains incomplete.
+* Preference Done runtime diagnosis (2026-08-15): the supplied log showed
+  config-owned UI settings saving, followed by SSH override and secret reads
+  on a `DaemonClient` whose transport is already closed. The reconnect path in
+  `SshPilotApplication._finish_daemon_reconnect` updates
+  `window.client`, `connection_manager`, `connection_runtime_status`, and
+  the welcome view, but does not rebind an existing
+  `PreferencesWindow.ssh_overrides_controller` or `window.secrets_controller`.
+  Those controllers retain the old closed client, so pressing Done after a
+  transport loss reports `The daemon transport is closed`. Fixed in the
+  working tree: reconnect now rebuilds the Secrets controller/presenter and
+  calls `PreferencesWindow.set_ssh_overrides_controller()` with the replacement
+  client. Regression evidence: reconnect module `13 passed`, Preferences/
+  secret/mode batch `29 passed`, and focused Ruff passed. Classification:
+  confirmed production reconnect/UI lifecycle defect, now repaired; a real
+  GUI run remains useful for end-to-end confirmation.
+* `test_default_config_path_excludes_system_defaults` previously failed in a
+  larger run when plain `ssh -G foo` rejected the container's unreadable
+  `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` symlink. The current direct
+  command `.venv/bin/pytest -q -n0
+  tests/test_effective_config_diff.py::test_default_config_path_excludes_system_defaults`
+  passes (`1 passed in 0.13s`); the system-config sensitivity remains a risk
+  to reproduce in the supported environment. Classification: prior
+  environment/test-contract failure, not currently reproducible.
 * `test_key_passphrase_roundtrip` passes alone (`1 passed`); the earlier
   libsecret failure is not reproduced in this environment. Classification:
   optional dependency/environment.
@@ -338,20 +378,23 @@ in-process remote backend definition.
 
 ## 11. Session handoff
 
-* **Last completed item:** repaired the confirmed capability-enum bug in
+* **Last completed item:** reproduced the parallel-suite failures, diagnosed
+  and repaired the Preferences Done closed-transport path, and added the
+  reconnect controller-rebinding regression test; the stale launcher
+  capability expectation remains repaired in the dirty worktree.
+  Earlier completed items include the confirmed capability-enum bug in
   `MainWindow`, added the deterministic settings-writer lock test, restored
   Manage Files preference semantics, added protected Docker password consent,
   added startup watcher-race coverage, re-audited the external-launch
   handshake through handler/service ownership using the code graph, and fixed
   connection-dialog saves incorrectly rejecting unchanged stored passphrases.
-* **Current in-progress item:** final hygiene and verification after the
-  effective-config environment failure was reproduced precisely.
-* **Exact next action:** run the following command in the supported project
-  environment after correcting the system OpenSSH configuration or recording
-  an accepted test isolation strategy:
-  `.venv/bin/pytest -q -n0 tests/test_effective_config_diff.py tests/core tests/architecture tests/api`
-  Then run the final artifact/lint/compile/diff checks. Do not make production
-  authority depend on the container's broken `/etc/ssh` config.
+* **Current in-progress item:** re-audit the remaining broad-suite test
+  synchronization/fixture failures; the reconnect/UI defect is complete and
+  R18 is VERIFIED.
+* **Exact next action:** run
+  `.venv/bin/pytest -q -n0 tests/daemon/test_event_forwarding.py tests/test_daemon_reconnect_gtk.py tests/test_preferences_ssh_overrides.py tests/test_preferences_secret_backend.py`
+  and then repair only the event-test synchronization and EasyEnv fake-client
+  contract, without changing daemon-only production ownership.
 * **Commands already run:** orientation reads and commit/parent inspection;
   graph index/search/trace/snippets; focused startup/reload/preferences/Docker,
   operation-mode, effective-config/include/core/repository, API documentation,
@@ -363,55 +406,40 @@ in-process remote backend definition.
   (26 passed), secret/Docker slice (24 passed, 1 skipped); contract batch
   (1573 passed, 1 skipped, 1 failed); the final focused contract command
   (291 passed); explicit parallel non-MCP headless
-  suite (4875 passed, 29 skipped, 8 failed, 21 errors); isolated reproduction
-  of those eight failures (8 passed); API documentation (18 passed). The
+  suite (2511 passed, 6 skipped, 1 failed, 21 errors before `--maxfail=20`);
+  serial event-forwarding module (14 passed); native-SCP module (11 passed in
+  116.60s); API documentation (18 passed). The
   final checks passed after the source edits: `.venv/bin/python
   scripts/generate_api_artifacts.py --check` (`API artifacts are current`),
   `.venv/bin/ruff check src tests scripts/generate_api_artifacts.py` (`All
   checks passed`), `.venv/bin/python -m compileall -q src/sshpilot`, and
-  `git diff --check`.
-* **Failing tests:** the latest `.venv/bin/pytest -q -n0` run was manually
-  interrupted after reaching a known effective-config failure, so it has no
-  aggregate result and must not be called green. The focused contract batch
-  before the final clean run was `1573 passed, 1 skipped, 1 failed`; the
-  failure is
-  `tests/test_effective_config_diff.py::test_default_config_path_excludes_system_defaults`.
-  Direct reproduction shows `ssh -G foo` exits 255 with `Bad owner or
-  permissions on /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf`, so the
-  test's comparison display is empty. This is an environment/test-contract
-  blocker, not an excuse to claim verification. The explicit parallel non-MCP
-  run completed with `4875 passed, 29 skipped, 8 failed, 21 errors` in 103.30
-  seconds; those failures isolated to `8 passed` and are
-  concurrency/environment/fixture-sensitive. The 21 EasyEnv errors are the
-  daemon-settings fake lacking `set_plugin_setting`. GUI Docker coverage is
-  explicitly skipped because the GUI environment is unavailable. These facts
-  block a full practical-suite completion claim. A prior default collection
-  attempt also reported missing `mcp.ClientSession` (`113 deselected, 21
-  skipped, 1 collection error`); the newest default run progressed further,
-  so this dependency result needs a fresh supported-environment reproduction.
-* **Files currently modified:** `.codebase-memory/.gitattributes`,
-  `.codebase-memory/artifact.json`, `.codebase-memory/graph.db.zst` (deleted);
-  `.gitignore`; `docs/api/CHANGELOG.md`,
-  `docs/api/generated/model-index.md`, `docs/api/generated/schema.json`,
-  `docs/api/methods.md`; `docs/architecture.md`,
-  `docs/architecture/daemon-only-retirement.md`; `scripts/generate_api_artifacts.py`;
-  `src/sshpilot/api/{client.py,daemon_client.py,models/__init__.py,models/common.py,models/connections.py,models/daemon.py,transport/codec.py}`;
-  `src/sshpilot/core/{connection_application_service.py,ssh_config_effective.py}`;
-  `src/sshpilot/core/connections/{repository.py,ssh_config_loader.py,ssh_config_store.py}`;
-  `src/sshpilot/daemon/{config_reload.py,connection_launch_provider.py,connection_secret_provider.py,dispatch.py,operation_mode_service.py,server.py}`;
-  `src/sshpilot/{connection_dialog.py,effective_config_check.py,preferences.py,ssh_config_utils.py,startup_info.py,terminal_manager.py,window.py,window_file_manager.py}`;
-  `src/sshpilot/plugins/builtin/docker_manager/page.py`;
-  `tests/api/snapshots/public_api.json`, `tests/api/snapshots/versions/0.39.json`;
-  `tests/api/{test_capabilities_contract.py,test_connection_models.py}`;
-  `tests/architecture/test_core_boundary.py`;
-  `tests/core/{test_connection_application_service.py,test_connection_repository.py,test_ssh_config_loader.py}`;
-  `tests/daemon/{test_config_reload.py,test_connection_mutations.py,test_connection_secret_provider.py,test_lifecycle_phase13_3.py,test_operation_mode_service.py,test_secret_dispatch.py}`;
-  `tests/daemon/test_config_reload_coordinator.py`,
-  `tests/test_effective_config_checker_generation.py`,
-  `tests/{test_connection_dialog_passphrase.py,test_effective_config_diff.py,test_gui_docker_password.py,test_manage_files_ui.py,test_preferences_operation_mode.py,test_startup_behavior.py,test_window_client_composition.py,test_window_daemon_errors.py}`.
-* **Current commit:** `170de28f3ad174ee80829ae6282d961d12d84bc0`; no commit has
-  been created for this repair pass. Current modified/deleted files are the
-  paths reported by `git status --short`; no unrelated changes were discarded.
+  `git diff --check`; passphrase/launcher/event-forwarding combined regression
+  command (`48 passed`); reconnect/preferences regression command (`47 passed`)
+  after the controller-rebinding fix; targeted compileall and Ruff checks
+  passed.
+* **Current failing/incomplete verification:** the launcher capability
+  expectation is repaired (`17 passed`). The current parallel non-MCP run is
+  `2511 passed, 6 skipped, 1 failed, 21 errors` before `--maxfail=20`: the one
+  failure is the event-ordering test synchronization defect, and the 21
+  errors are EasyEnv fake-client setup failures. A serial full run was
+  interrupted in the slow native-SCP test; that module passes in 116.60s.
+  `test_default_config_path_excludes_system_defaults` now passes directly.
+  The Preferences closed-transport defect is repaired and covered by R18.
+  GUI Docker coverage remains skipped because the GUI environment is
+  unavailable. These facts block a full practical-suite completion claim. A
+  prior default collection attempt reported missing `mcp.ClientSession`
+  (`113 deselected, 21 skipped, 1 collection error`); the newest default run
+  progressed further, so this dependency result still needs supported-
+  environment reproduction.
+* **Files currently modified:**
+  `docs/architecture/daemon-only-retirement.md`, `src/sshpilot/main.py`,
+  `tests/daemon/test_launcher.py`, and `tests/test_daemon_reconnect_gtk.py`.
+  The migration implementation and passphrase repair are in committed
+  ancestors `57de9e18` and `fae52a61`; no unrelated changes were discarded.
+* **Current commit:** `fae52a61115cc9bd2d937eadafd51c1e71cb8c63`; parent
+  `57de9e1829048f19cde36d380964f86946d9603d`; migration cleanup commit under
+  review `170de28f3ad174ee80829ae6282d961d12d84bc0`; no commit has been
+  created for the current ledger/test-expectation edits.
 
 ## 12. Completion checklist
 
@@ -433,9 +461,9 @@ in-process remote backend definition.
 
 The production authority repairs and focused regression coverage are present,
 and the architecture/API/core and migration-focused suites pass in `.venv`.
-The decision remains conservative because the broad practical command still
-has 8 isolated-pass concurrency/environment failures and 21 EasyEnv fixture
-collection errors, the optional MCP dependency prevents default collection,
-and the operation-mode/effective-config/unsaved-host integration matrices are
-not yet complete. No production fallback is being restored while these gates
-remain open.
+The decision remains conservative because the broad practical command has a
+reproducible event-test synchronization failure and 21 EasyEnv fixture
+contract errors, serial verification is incomplete due to a very slow native
+SCP test, and the operation-mode/effective-config/unsaved-host integration
+matrices are not complete. No production fallback is being restored while
+these gates remain open.
