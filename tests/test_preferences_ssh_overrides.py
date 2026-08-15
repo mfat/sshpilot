@@ -101,6 +101,13 @@ class _FailingClient(_ServiceClient):
         )
 
 
+class _ClosedClient:
+    """A daemon client whose transport has already been closed."""
+
+    def get_global_ssh_overrides(self):
+        raise SshPilotError(ErrorCode.TRANSPORT_CLOSED, "The client is closed")
+
+
 def _make_config(tmp_path, monkeypatch, payload):
     monkeypatch.setattr(config_mod, "get_config_dir", lambda: str(tmp_path))
     config_path = tmp_path / "config.json"
@@ -303,6 +310,61 @@ def test_late_controller_attachment_enables_existing_ssh_override_rows(
     assert prefs.ssh_overrides_controller is controller
     assert all(row._sensitive is True for row in rows)
     assert prefs.connect_timeout_row.get_value() == 42
+
+
+def test_closed_daemon_does_not_fall_back_to_local_ssh_overrides(
+    tmp_path, monkeypatch
+):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 99}},
+    )
+    prefs = _make_prefs(config, SshOverridesController(_ClosedClient()))
+
+    def _local_config_is_not_authoritative(*_args, **_kwargs):
+        pytest.fail("closed daemon must not read SSH overrides from Config")
+
+    config.get_setting = _local_config_is_not_authoritative
+
+    values = prefs._ssh_override_page_values()
+
+    assert values == {
+        "connect_timeout": 0,
+        "connection_attempts": 0,
+        "server_alive_interval": 0,
+        "server_alive_count_max": 0,
+        "strict_host_key_checking": "accept-new",
+        "batch_mode": False,
+        "compression": False,
+        "verbosity": 0,
+        "debug_enabled": False,
+    }
+    rows = (
+        prefs.connect_timeout_row,
+        prefs.connection_attempts_row,
+        prefs.keepalive_interval_row,
+        prefs.keepalive_count_row,
+        prefs.strict_host_row,
+        prefs.batch_mode_row,
+        prefs.compression_row,
+        prefs.verbosity_row,
+        prefs.debug_enabled_row,
+    )
+    assert all(row._sensitive is False for row in rows)
+
+
+def test_mark_daemon_unavailable_detaches_stale_ssh_overrides_controller(
+    tmp_path, monkeypatch
+):
+    config = _make_config(tmp_path, monkeypatch, {"ssh": {}})
+    controller = SshOverridesController(_ClosedClient())
+    prefs = _make_prefs(config, controller)
+
+    prefs.mark_daemon_unavailable()
+
+    assert prefs.ssh_overrides_controller is None
+    assert prefs.connect_timeout_row._sensitive is False
 
 
 # ---------------------------------------------------------------------------

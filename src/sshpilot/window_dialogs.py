@@ -2086,7 +2086,7 @@ class WindowConfigDialogsMixin:
         def on_success_response(dialog, response):
             if response == 'restart':
                 try:
-                    self.config.config_data = self.config.load_json_config()
+                    self.config.reload_json_cache_strict()
                     if self.connection_manager:
                         self.connection_manager.refresh()
                     if self.group_manager:

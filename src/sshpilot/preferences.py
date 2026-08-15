@@ -32,6 +32,21 @@ from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 logger = logging.getLogger(__name__)
 
 
+# Presentation-only values used while daemon-owned SSH overrides are
+# unavailable. They must never be written back to Config.
+_UNAVAILABLE_SSH_OVERRIDE_VALUES = {
+    "connect_timeout": 0,
+    "connection_attempts": 0,
+    "server_alive_interval": 0,
+    "server_alive_count_max": 0,
+    "strict_host_key_checking": "accept-new",
+    "batch_mode": False,
+    "compression": False,
+    "verbosity": 0,
+    "debug_enabled": False,
+}
+
+
 _GROUP_PREVIEW_CSS_INSTALLED = False
 
 
@@ -250,6 +265,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self.parent_window = parent_window
         self.config = config
         self.ssh_overrides_controller = ssh_overrides_controller
+        self._ssh_overrides_unavailable = False
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
@@ -1826,9 +1842,17 @@ class PreferencesWindow(Adw.NavigationPage):
 
     def _request_confirmed_operation_mode(self) -> None:
         """Set the radio state only from a daemon-confirmed mode result."""
+        # Preferences pages are built lazily. Reconnect can rebind an already
+        # preloaded window before the Advanced page (and its radios) exists.
+        # Defer the request until the page builder creates the controls.
+        if not hasattr(self, "default_mode_radio") or not hasattr(
+            self, "isolated_mode_radio"
+        ):
+            return
         owner = getattr(self, "parent_window", None)
         client = getattr(owner, "client", None)
         bridge = getattr(owner, "client_bridge", None)
+        generation = getattr(owner, "_daemon_client_generation", 0)
         if client is None or bridge is None:
             self.default_mode_radio.set_sensitive(False)
             self.isolated_mode_radio.set_sensitive(False)
@@ -1839,6 +1863,12 @@ class PreferencesWindow(Adw.NavigationPage):
                 raise RuntimeError("operation.mode capability is unavailable")
 
             def _apply(result):
+                if (
+                    getattr(owner, "client", None) is not client
+                    or getattr(owner, "_daemon_client_generation", 0) != generation
+                ):
+                    logger.debug("Ignoring stale Preferences operation-mode result")
+                    return
                 if not getattr(result, "accepted", True):
                     message = getattr(
                         result,
@@ -1863,13 +1893,24 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as error:
             self._operation_mode_unavailable(error)
 
+    def reset_operation_mode_confirmation(self) -> None:
+        """Invalidate mode state after the parent swaps daemon transports."""
+        self._confirmed_operation_mode = None
+        self._operation_mode_request_in_flight = False
+        self._set_operation_mode_controls_sensitive(False)
+        self._set_operation_mode_radios(False)
+        self._request_confirmed_operation_mode()
+
     def _operation_mode_unavailable(self, error) -> None:
         logger.warning("Operation mode state unavailable: %s", error)
-        self.default_mode_radio.set_sensitive(False)
-        self.isolated_mode_radio.set_sensitive(False)
+        self._set_operation_mode_controls_sensitive(False)
 
     def _set_operation_mode_radios(self, isolated: bool) -> None:
         """Apply confirmed state without treating GTK signal feedback as input."""
+        if not hasattr(self, "default_mode_radio") or not hasattr(
+            self, "isolated_mode_radio"
+        ):
+            return
         self._suppress_operation_mode_toggle = True
         try:
             self.isolated_mode_radio.set_active(bool(isolated))
@@ -1878,7 +1919,10 @@ class PreferencesWindow(Adw.NavigationPage):
             self._suppress_operation_mode_toggle = False
 
     def _set_operation_mode_controls_sensitive(self, sensitive: bool) -> None:
-        for radio in (self.default_mode_radio, self.isolated_mode_radio):
+        for radio in (
+            getattr(self, "default_mode_radio", None),
+            getattr(self, "isolated_mode_radio", None),
+        ):
             setter = getattr(radio, "set_sensitive", None)
             if callable(setter):
                 setter(bool(sensitive))
@@ -2226,7 +2270,9 @@ class PreferencesWindow(Adw.NavigationPage):
 
         The daemon-backed controller is authoritative when injected; the page
         then reflects daemon state instead of the local config cache. Without a
-        controller (legacy construction) the local config view is used.
+        controller, or when the daemon is unavailable, disabled presentation
+        placeholders are used. The local Config cache is never authoritative
+        for these fields.
         """
         if self.ssh_overrides_controller is not None:
             try:
@@ -2242,31 +2288,44 @@ class PreferencesWindow(Adw.NavigationPage):
                     "verbosity": snapshot.verbosity,
                     "debug_enabled": snapshot.debug_enabled,
                 }
-            except Exception:
-                logger.warning(
-                    "Failed to load global SSH overrides", exc_info=True
+            except Exception as error:
+                logger.debug(
+                    "Global SSH overrides unavailable (%s)",
+                    type(error).__name__,
                 )
+                self._ssh_overrides_unavailable = True
+                self._set_ssh_override_controls_sensitive(False)
 
-        def _config_int(key, default=0):
-            try:
-                value = int(self.config.get_setting(key, None))
-            except (TypeError, ValueError):
-                value = default
-            return value if value >= 0 else default
+        return dict(_UNAVAILABLE_SSH_OVERRIDE_VALUES)
 
-        return {
-            "connect_timeout": _config_int('ssh.connection_timeout'),
-            "connection_attempts": _config_int('ssh.connection_attempts'),
-            "server_alive_interval": _config_int('ssh.keepalive_interval'),
-            "server_alive_count_max": _config_int('ssh.keepalive_count_max'),
-            "strict_host_key_checking": str(
-                self.config.get_setting('ssh.strict_host_key_checking', 'accept-new')
-            ),
-            "batch_mode": bool(self.config.get_setting('ssh.batch_mode', False)),
-            "compression": bool(self.config.get_setting('ssh.compression', False)),
-            "verbosity": _config_int('ssh.verbosity'),
-            "debug_enabled": bool(self.config.get_setting('ssh.debug_enabled', False)),
-        }
+    def _ssh_override_rows(self):
+        """Return already-built daemon-owned SSH override rows."""
+        names = (
+            "connect_timeout_row",
+            "connection_attempts_row",
+            "keepalive_interval_row",
+            "keepalive_count_row",
+            "strict_host_row",
+            "batch_mode_row",
+            "compression_row",
+            "verbosity_row",
+            "debug_enabled_row",
+        )
+        return tuple(
+            row for name in names if (row := getattr(self, name, None)) is not None
+        )
+
+    def _set_ssh_override_controls_sensitive(self, sensitive: bool) -> None:
+        for row in self._ssh_override_rows():
+            setter = getattr(row, "set_sensitive", None)
+            if callable(setter):
+                setter(bool(sensitive))
+
+    def mark_daemon_unavailable(self) -> None:
+        """Detach stale daemon state and disable SSH override editing."""
+        self.ssh_overrides_controller = None
+        self._ssh_overrides_unavailable = True
+        self._set_ssh_override_controls_sensitive(False)
 
     def set_ssh_overrides_controller(self, controller):
         """Attach the daemon SSH-overrides controller after Preferences exists.
@@ -2278,24 +2337,19 @@ class PreferencesWindow(Adw.NavigationPage):
         an already-built page from the authoritative daemon snapshot.
         """
         self.ssh_overrides_controller = controller
+        self._ssh_overrides_unavailable = controller is None
         if controller is None or not hasattr(self, 'connect_timeout_row'):
             return
 
-        rows = (
-            self.connect_timeout_row,
-            self.connection_attempts_row,
-            self.keepalive_interval_row,
-            self.keepalive_count_row,
-            self.strict_host_row,
-            self.batch_mode_row,
-            self.compression_row,
-            self.verbosity_row,
-            self.debug_enabled_row,
-        )
+        rows = self._ssh_override_rows()
         try:
             snapshot = controller.load()
         except Exception:
-            logger.warning("Failed to attach global SSH overrides controller", exc_info=True)
+            logger.debug(
+                "Global SSH overrides controller unavailable during attach",
+                exc_info=True,
+            )
+            self._ssh_overrides_unavailable = True
             for row in rows:
                 row.set_sensitive(False)
             return
@@ -5441,6 +5495,10 @@ class PreferencesWindow(Adw.NavigationPage):
             controller = self.ssh_overrides_controller
             page_built = hasattr(self, 'connect_timeout_row')
 
+            if page_built and getattr(self, "_ssh_overrides_unavailable", False):
+                logger.info("Cannot save SSH overrides while the daemon is unavailable")
+                return False
+
             # 0. Refresh the legacy cache from the authoritative file before
             #    any Config-owned write.  A stale cache would rewrite an older
             #    SSH-overrides revision back to disk on the first set_setting,
@@ -5493,7 +5551,18 @@ class PreferencesWindow(Adw.NavigationPage):
                 try:
                     controller.update(self._collect_ssh_override_patch())
                 except Exception as exc:
-                    logger.error(f"Failed to save global SSH overrides: {exc}")
+                    code = getattr(getattr(exc, "code", None), "value", None)
+                    if code in {"transport_closed", "transport_timeout", "daemon_unavailable"}:
+                        self.mark_daemon_unavailable()
+                        logger.info(
+                            "Cannot save SSH overrides while the daemon is unavailable"
+                        )
+                    else:
+                        logger.error(
+                            "Failed to save global SSH overrides type=%s code=%s",
+                            type(exc).__name__,
+                            code,
+                        )
                     return False
 
             # 3. Refresh the legacy cache from the authoritative file so a
@@ -5655,22 +5724,17 @@ class PreferencesWindow(Adw.NavigationPage):
             if previous_mode is None:
                 raise RuntimeError("operation mode has not been confirmed by the daemon")
 
-            def _restore(active_mode=None):
-                if active_mode is None:
-                    self._set_operation_mode_radios(
-                        previous_mode is OperationMode.ISOLATED
-                    )
-                    return
-                self._set_operation_mode_radios(active_mode is OperationMode.ISOLATED)
+            def _restore():
+                # A rejected/recovery result is not a new confirmation. Keep
+                # the last mode confirmed by this Preferences instance.
+                self._set_operation_mode_radios(
+                    previous_mode is OperationMode.ISOLATED
+                )
 
             def _on_success(result):
                 try:
                     if not result.accepted:
-                        _restore(getattr(result, "active_mode", None))
-                        if owner is not None and getattr(result, "active_mode", None) is not None:
-                            apply_mode = getattr(owner, "_apply_confirmed_operation_mode", None)
-                            if callable(apply_mode):
-                                apply_mode(result.active_mode)
+                        _restore()
                         if owner is not None and getattr(result, "recovery_required", False):
                             if hasattr(owner, "_show_operation_mode_recovery"):
                                 owner._show_operation_mode_recovery(result.message)
@@ -5687,7 +5751,9 @@ class PreferencesWindow(Adw.NavigationPage):
                     self._update_operation_mode_styles()
                 finally:
                     self._operation_mode_request_in_flight = False
-                    self._set_operation_mode_controls_sensitive(True)
+                    self._set_operation_mode_controls_sensitive(
+                        bool(result.accepted) and not getattr(result, "recovery_required", False)
+                    )
 
             def _on_error(error):
                 try:

@@ -130,9 +130,14 @@ DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
 _COMMAND_INPUT_METHODS = frozenset(
-    {"connections.store_password", "connections.set_session_password"}
+    {
+        "connections.store_password",
+        "connections.set_session_password",
+        "broadcast.start",
+    }
 )
 _COMMAND_INPUT_MAX_PENDING = 64
+_COMMAND_INPUT_MAX_BYTES = 1024 * 1024
 _COMMAND_INPUT_TTL = 30.0
 _FORWARDED_EVENT_TYPES = frozenset(
     {
@@ -1116,6 +1121,11 @@ class DaemonServer:
                             ErrorCode.INVALID_REQUEST,
                             "The protected command input was already supplied",
                         )
+                    if len(frame.secret) > _COMMAND_INPUT_MAX_BYTES:
+                        raise SshPilotError(
+                            ErrorCode.FRAME_TOO_LARGE,
+                            "The protected command input is too large",
+                        )
                     self._command_inputs[request_id] = (
                         state.token,
                         bytearray(frame.secret),
@@ -1163,6 +1173,11 @@ class DaemonServer:
         deadline = time.monotonic() + min(timeout, _COMMAND_INPUT_TTL)
         with self._command_input_condition:
             while request_key not in self._command_inputs and not self._stopping.is_set():
+                # Disconnect/cancellation removes the pending registration and
+                # notifies this condition. Do not wait out the TTL after that
+                # ownership has been revoked.
+                if request_key not in self._command_input_pending:
+                    return None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     self._command_input_pending.pop(request_key, None)
@@ -1306,6 +1321,12 @@ class DaemonServer:
                 if envelope.method in _COMMAND_INPUT_METHODS:
                     self._register_command_input(state, envelope.request_id)
                 result = dispatcher.dispatch(envelope, state.protocol)
+            if envelope.method == "system.handshake" and state.protocol.handshake_completed:
+                # A newly handshaken peer starts at the current stream position;
+                # events published before the handshake are intentionally not
+                # replayed to it.
+                with self._event_lock:
+                    state.protocol.next_event_sequence = self._next_event_sequence
             if isinstance(result, DeferredResult):
                 self._submit_deferred(state, envelope, result, context=request_context)
                 return
@@ -2355,20 +2376,6 @@ class DaemonServer:
         with self._event_lock:
             if not self._accepting_core_events or self._stopping.is_set():
                 return
-            sequence = self._next_event_sequence
-            try:
-                envelope = public_event_to_envelope(
-                    event,
-                    sequence=sequence,
-                    protocol_version=PROTOCOL_VERSION,
-                )
-                frame = encode_frame(encode_envelope(envelope))
-            except (FramingError, TypeError, ValueError):
-                logger.error(
-                    "Daemon rejected invalid core event type=%s",
-                    event.type.value,
-                )
-                return
             self._next_event_sequence += 1
             for state in self._clients.values():
                 if (
@@ -2403,12 +2410,27 @@ class DaemonServer:
                     state.queued_outbound_bytes = 0
                     state.queued_terminal_bytes = 0
                     continue
+                sequence = state.protocol.next_event_sequence
+                try:
+                    envelope = public_event_to_envelope(
+                        event,
+                        sequence=sequence,
+                        protocol_version=PROTOCOL_VERSION,
+                    )
+                    frame = encode_frame(encode_envelope(envelope))
+                except (FramingError, TypeError, ValueError):
+                    logger.error(
+                        "Daemon rejected invalid core event type=%s",
+                        event.type.value,
+                    )
+                    continue
                 if not self._enqueue_frame_locked(
                     state,
                     _OutboundFrame(frame, is_event=True),
                     priority=True,
                 ):
                     continue
+                state.protocol.next_event_sequence += 1
         self._wake_selector()
 
     def _enqueue_frame_locked(

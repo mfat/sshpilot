@@ -5139,19 +5139,26 @@ def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
             persisted_mode = OperationMode(persisted_raw)
         except (TypeError, ValueError):
             raise ValueError("operation mode result contains an unknown persisted mode") from None
-    rollback_completed = data.get("rollback_completed", True)
     recovery_required = data.get("recovery_required", False)
+    recovery_required = _boolean(recovery_required, "recovery_required")
+    # These fields were added to the 0.40 operation-mode result.  A daemon
+    # that reports recovery without the additive rollback flag must still
+    # decode to a truthful model; the invariant requires rollback_completed to
+    # be false whenever recovery is required.
+    rollback_completed = data.get("rollback_completed", not recovery_required)
     return OperationModeResult(
         accepted=_boolean(data["accepted"], "accepted"),
         active_mode=mode,
         generation=_integer(data["generation"], "generation"),
         seeded=_boolean(data["seeded"], "seeded"),
         conflict=_boolean(data["conflict"], "conflict"),
-        message=_text(data["message"], "message"),
+        # Successful status responses intentionally use an empty explanation;
+        # rejection/recovery responses carry a user-facing message.
+        message=_text(data["message"], "message", allow_empty=True),
         target_description=_text(data["target_description"], "target description"),
         persisted_mode=persisted_mode,
         rollback_completed=_boolean(rollback_completed, "rollback_completed"),
-        recovery_required=_boolean(recovery_required, "recovery_required"),
+        recovery_required=recovery_required,
     )
 
 

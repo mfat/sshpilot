@@ -243,6 +243,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             OperationMode.ISOLATED if isolated else None
         )
         self._confirmed_operation_mode = None
+        self._daemon_client_generation = 0
         self._key_scope = KeyStoreScope.DEFAULT
         self.key_manager = None
         # Compatibility attribute while call sites migrate terminology. This is
@@ -480,6 +481,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if client is getattr(self, "client", None):
             return
 
+        old_client = getattr(self, "client", None)
+        old_generation = getattr(self, "_daemon_client_generation", 0)
         controller = getattr(self, "_group_mutation_controller", None)
         if controller is not None:
             controller.close()
@@ -493,15 +496,38 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # mode is still unconfirmed. The async status request below recreates
         # the manager only after the daemon confirms its semantic scope.
         self.client = client
+        self._daemon_client_generation = old_generation + 1
         self._confirmed_operation_mode = None
         self.key_manager = None
-        self._attach_client_backed_services()
+        try:
+            self._attach_client_backed_services()
+        except Exception:
+            # Rebind is a prepare/commit operation.  If a dependent service
+            # rejects the candidate, restore a complete old-client graph and
+            # leave publication to the application layer untouched.
+            logger.warning("Daemon client rebind failed; restoring old client", exc_info=True)
+            failed_controller = getattr(self, "_group_mutation_controller", None)
+            if failed_controller is not None:
+                failed_controller.close()
+            failed_presenter = getattr(self, "_secrets_interaction_presenter", None)
+            if failed_presenter is not None:
+                failed_presenter.close()
+            self.client = old_client
+            self._daemon_client_generation = old_generation
+            self._confirmed_operation_mode = None
+            self.key_manager = None
+            if old_client is not None:
+                self._attach_client_backed_services()
+            raise
 
         preferences = getattr(self, "_preferences_window", None)
         if preferences is not None:
             preferences.set_ssh_overrides_controller(
                 self._build_ssh_overrides_controller()
             )
+            reset = getattr(preferences, "reset_operation_mode_confirmation", None)
+            if callable(reset):
+                reset()
 
     def _refresh_operation_mode_scope(self) -> None:
         """Project the daemon-confirmed mode into client-backed UI services."""
@@ -518,6 +544,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
 
         def _apply(result) -> None:
+            if (
+                self.client is not client
+                or getattr(self, "_daemon_client_generation", 0) != generation
+            ):
+                logger.debug("Ignoring stale operation-mode result")
+                return
+            if not getattr(result, "accepted", True):
+                message = getattr(
+                    result,
+                    "message",
+                    "The daemon could not confirm operation mode",
+                )
+                if getattr(result, "recovery_required", False):
+                    self._show_operation_mode_recovery(message)
+                else:
+                    logger.warning("Daemon rejected startup operation mode: %s", message)
+                return
             self._apply_confirmed_operation_mode(result.active_mode)
             requested = getattr(self, "_requested_operation_mode", None)
             if requested is not None and result.active_mode is not requested:
@@ -529,6 +572,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     on_error=self._on_startup_operation_mode_error,
                 )
 
+        generation = getattr(self, "_daemon_client_generation", 0)
         try:
             bridge.submit(client.get_operation_mode, on_success=_apply,
                           on_error=lambda _error: None)
@@ -655,6 +699,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._api_client_selection_request = None
         self.client = None
         self.key_manager = None
+        self._mark_daemon_unavailable()
         presenter = getattr(self, "_secrets_interaction_presenter", None)
         if presenter is not None:
             presenter.close()
@@ -696,6 +741,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(None)
         self._show_client_mode_warning()
+
+    def _mark_daemon_unavailable(self) -> None:
+        """Invalidate daemon-dependent UI state without selecting a fallback."""
+        self._confirmed_operation_mode = None
+        self.key_manager = None
+        preferences = getattr(self, "_preferences_window", None)
+        mark_unavailable = getattr(preferences, "mark_daemon_unavailable", None)
+        if callable(mark_unavailable):
+            mark_unavailable()
 
     def retry_daemon_connection(self) -> None:
         """Explicit recovery action; never changes backend ownership."""
@@ -7066,9 +7120,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         pass
                 
                 try:
-                    conf = getattr(self.connection_manager, 'config', None)
-                    if conf and hasattr(conf, 'load_json_config'):
-                        conf.config_data = conf.load_json_config()
                     self.connection_manager.refresh()
                     self.rebuild_connection_list()
                 except Exception as error:

@@ -12,6 +12,8 @@ from sshpilot.api.models import (
 )
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION
 from sshpilot.api.transport import (
+    ErrorData,
+    ErrorResponseEnvelope,
     EventEnvelope,
     SuccessResponseEnvelope,
     decode_envelope,
@@ -156,6 +158,37 @@ def test_daemon_client_rejects_unknown_response_id(tmp_path):
         DaemonClient(socket_path=socket_path)
 
     assert caught.value.code is ErrorCode.PROTOCOL_ERROR
+    thread.join(2)
+
+
+def test_daemon_client_surfaces_unsolicited_protocol_rejection(tmp_path):
+    socket_path = tmp_path / "protocol-rejection.sock"
+
+    def _action(peer):
+        peer.sendall(
+            encode_frame(
+                encode_envelope(
+                    ErrorResponseEnvelope(
+                        "1.0",
+                        "protocol",
+                        ErrorData(
+                            ErrorCode.PROTOCOL_ERROR,
+                            "The binary terminal frame is not permitted",
+                        ),
+                    )
+                )
+            )
+        )
+
+    thread, release = _connected_protocol_server(socket_path, _action)
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    failures = []
+    client.set_on_transport_lost(failures.append)
+    release.set()
+    assert _wait_until(lambda: bool(failures))
+    assert failures[0].code is ErrorCode.PROTOCOL_ERROR
+    assert "binary terminal frame" in failures[0].message
+    client.close()
     thread.join(2)
 
 

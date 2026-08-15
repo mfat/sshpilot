@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from typing import Any, List
 from types import SimpleNamespace
 from unittest import mock
@@ -359,6 +360,80 @@ def test_protected_input_rejects_wrong_owner_and_duplicate_frames():
     assert duplicate.secret == bytearray()
     assert errors[-1][0] is ErrorCode.INVALID_REQUEST
     server._clear_command_inputs()
+
+
+def test_protected_input_rejects_oversize_and_expires_without_secret_leak(monkeypatch):
+    from sshpilot.daemon import server as server_module
+    from sshpilot.daemon.server import DaemonServer
+
+    server = DaemonServer.__new__(DaemonServer)
+    server._command_input_condition = threading.Condition()
+    server._command_input_pending = {}
+    server._command_inputs = {}
+    server._stopping = threading.Event()
+    errors = []
+    server._queue_protocol_error = lambda _state, code, message: errors.append(
+        (code, message)
+    )
+    protocol = _state()
+    protocol.client_info = HandshakeRequest(
+        client_name="test",
+        client_version="1.0",
+        supported_protocol_versions=("1.0",),
+        client_capabilities=frozenset(),
+        frontend_type="cli",
+        supported_frame_types=frozenset({"binary-secret-v1"}),
+    )
+    owner = SimpleNamespace(token=22, protocol=protocol)
+    request_id = RequestId("bounded-request")
+    server._register_command_input(owner, request_id)
+    monkeypatch.setattr(server_module, "_COMMAND_INPUT_MAX_BYTES", 8)
+    secret = b"never-log-this"
+    frame = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"0" * 16,
+        bytearray(secret),
+    )
+    server._handle_secret_frame(owner, frame)
+    assert frame.secret == bytearray()
+    assert request_id not in server._command_inputs
+    assert errors[-1][0] is ErrorCode.FRAME_TOO_LARGE
+    assert "never-log-this" not in errors[-1][1]
+
+    expired_id = RequestId("expired-request")
+    monkeypatch.setattr(server_module, "_COMMAND_INPUT_TTL", 0.001)
+    server._register_command_input(owner, expired_id)
+    time.sleep(0.01)
+    with server._command_input_condition:
+        server._expire_command_inputs_locked()
+    assert str(expired_id) not in server._command_input_pending
+
+
+def test_disconnect_wakes_protected_input_waiter_immediately():
+    from sshpilot.daemon.server import DaemonServer
+
+    server = DaemonServer.__new__(DaemonServer)
+    server._command_input_condition = threading.Condition()
+    server._command_input_pending = {}
+    server._command_inputs = {}
+    server._stopping = threading.Event()
+    owner = SimpleNamespace(token=31)
+    request_id = RequestId("disconnect-request")
+    server._register_command_input(owner, request_id)
+    started = time.monotonic()
+    result = []
+    waiter = threading.Thread(
+        target=lambda: result.append(server._wait_command_input(request_id, timeout=30)),
+        daemon=True,
+    )
+    waiter.start()
+    time.sleep(0.01)
+    server._clear_command_inputs(owner.token)
+    waiter.join(0.5)
+    assert not waiter.is_alive()
+    assert result == [None]
+    assert time.monotonic() - started < 1
 
 
 def test_configuration_update_requires_request_params():

@@ -58,6 +58,7 @@ class DaemonStartupFailure(str, Enum):
     STARTUP_TIMEOUT = "startup_timeout"
     HANDSHAKE_FAILED = "handshake_failed"
     INCOMPATIBLE_PROTOCOL = "incompatible_protocol"
+    API_VERSION_MISMATCH = "api_version_mismatch"
     MISSING_CAPABILITY = "missing_capability"
     UNSAFE_SOCKET = "unsafe_socket"
     INTERNAL_ERROR = "internal_error"
@@ -378,7 +379,9 @@ class DaemonLauncher:
 
     @staticmethod
     def _classify_handshake_error(error: SshPilotError) -> DaemonLaunchError:
-        if error.code is ErrorCode.PROTOCOL_VERSION_UNSUPPORTED:
+        if error.code is ErrorCode.API_VERSION_MISMATCH:
+            reason = DaemonStartupFailure.API_VERSION_MISMATCH
+        elif error.code is ErrorCode.PROTOCOL_VERSION_UNSUPPORTED:
             reason = DaemonStartupFailure.INCOMPATIBLE_PROTOCOL
         elif error.code in {
             ErrorCode.PROTOCOL_ERROR,

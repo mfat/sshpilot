@@ -492,17 +492,22 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
 
-    def install_api_event_subscription(self, client) -> None:
-        """Subscribe once for the application-scoped daemon client."""
+    def install_api_event_subscription(self, client) -> bool:
+        """Subscribe once for the application-scoped daemon client.
+
+        Returns ``False`` when the candidate client cannot be subscribed, so
+        reconnect can abort before publishing a mixed client graph.
+        """
 
         self.clear_api_event_subscription()
 
         set_lost = getattr(client, "set_on_transport_lost", None)
         if callable(set_lost):
             set_lost(
-                lambda error: GLib.idle_add(
+                lambda error, source_client=client: GLib.idle_add(
                     self._on_daemon_transport_lost,
                     error,
+                    source_client,
                 )
             )
 
@@ -529,9 +534,13 @@ class SshPilotApplication(Adw.Application):
         except Exception as error:
             self._api_event_subscription = None
             logger.warning(
-                "Application API event subscription failed type=%s",
+                "Application API event subscription failed type=%s code=%s detail=%s",
                 type(error).__name__,
+                getattr(getattr(error, "code", None), "value", None),
+                getattr(error, "message", str(error)),
             )
+            return False
+        return True
 
     def _daemon_reconnect_suppressed(self) -> bool:
         """True when reconnect must not run (intentional terminate / quit)."""
@@ -586,8 +595,19 @@ class SshPilotApplication(Adw.Application):
                 exc_info=True,
             )
 
-    def _on_daemon_transport_lost(self, error) -> bool:
+    def _on_daemon_transport_lost(self, error, source_client=None) -> bool:
         """Schedule a bounded daemon reconnect after unexpected transport loss."""
+
+        if source_client is not None:
+            window = self.window
+            selected = getattr(self, "_api_client_selection", None)
+            current_clients = (
+                getattr(selected, "client", None),
+                getattr(window, "client", None) if window is not None else None,
+            )
+            if not any(source_client is current for current in current_clients):
+                logger.debug("Ignoring transport loss from stale daemon client")
+                return False
 
         if self._daemon_reconnect_suppressed():
             code = getattr(getattr(error, "code", None), "value", None)
@@ -598,11 +618,16 @@ class SshPilotApplication(Adw.Application):
             )
             return False
         code = getattr(getattr(error, "code", None), "value", None)
+        detail = getattr(error, "message", None)
         logger.warning(
-            "Daemon transport lost code=%s; scheduling reconnect",
+            "Daemon transport lost code=%s detail=%s; scheduling reconnect",
             code or type(error).__name__,
+            detail or "unspecified",
         )
         window = self.window
+        mark_unavailable = getattr(window, "_mark_daemon_unavailable", None)
+        if callable(mark_unavailable):
+            mark_unavailable()
         runtime_status = (
             getattr(window, "connection_runtime_status", None)
             if window is not None
@@ -759,19 +784,29 @@ class SshPilotApplication(Adw.Application):
         existing = getattr(self, "_api_client_selection", None)
         if existing is not None:
             previous = getattr(existing, "client", None)
-        self._api_client_selection = selection
         try:
-            self.install_api_event_subscription(result.client)
+            subscribed = self.install_api_event_subscription(result.client)
+            if subscribed is False:
+                raise RuntimeError("candidate daemon event subscription failed")
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Failed to reinstall API events after daemon reconnect",
                 exc_info=True,
             )
+            try:
+                result.client.close()
+            except Exception:
+                pass
+            return False
         window = self.window
         if window is not None and not getattr(window, "_is_quitting", False):
             replace_client = getattr(window, "_replace_daemon_client", None)
             if not callable(replace_client):
                 logger.error("Window cannot replace its daemon client safely")
+                try:
+                    result.client.close()
+                except Exception:
+                    pass
                 return False
             try:
                 replace_client(result.client)
@@ -780,6 +815,10 @@ class SshPilotApplication(Adw.Application):
                     "Failed to refresh daemon-backed services after reconnect",
                     exc_info=True,
                 )
+                try:
+                    result.client.close()
+                except Exception:
+                    pass
                 return False
             welcome = getattr(window, "welcome_view", None)
             if welcome is not None and hasattr(welcome, "set_client"):
@@ -793,6 +832,10 @@ class SshPilotApplication(Adw.Application):
                         "Failed to refresh welcome client after reconnect",
                         exc_info=True,
                     )
+
+        # Publish only after every dependent frontend service accepted the
+        # replacement. This prevents a mixed old/new client selection.
+        self._api_client_selection = selection
 
         if previous is not None and previous is not result.client:
             try:

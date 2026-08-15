@@ -99,6 +99,18 @@ def _make_prefs(result=None):
     return prefs, recorded
 
 
+def test_reconnect_reset_is_safe_before_operation_mode_page_is_built():
+    """Preloaded Preferences may not have operation-mode radio widgets yet."""
+    prefs = PreferencesWindow.__new__(PreferencesWindow)
+    prefs._confirmed_operation_mode = OperationMode.ISOLATED
+    prefs._operation_mode_request_in_flight = True
+
+    prefs.reset_operation_mode_confirmation()
+
+    assert prefs._confirmed_operation_mode is None
+    assert prefs._operation_mode_request_in_flight is False
+
+
 def test_operation_mode_toggle_uses_daemon_and_does_not_write_local_mode():
     result = SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
     prefs, recorded = _make_prefs(result)

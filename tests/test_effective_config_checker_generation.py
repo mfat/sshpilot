@@ -31,6 +31,22 @@ def test_checker_consumes_result_generation_and_publishes_newer_snapshot():
     assert checker._accept_result("web", 0, (True, 11)) is True
 
 
+def test_checker_does_not_query_an_already_closed_daemon_client():
+    class ClosedClient:
+        is_closed = True
+        calls = 0
+
+        def get_effective_config(self, _connection_id):
+            self.calls += 1
+            raise AssertionError("closed client must not receive an RPC")
+
+    client = ClosedClient()
+    checker = EffectiveConfigChecker(None, client_provider=lambda: client)
+
+    assert checker._compute(SimpleNamespace(nickname="web")) is None
+    assert client.calls == 0
+
+
 def test_stale_completion_does_not_clear_new_generation_queue_marker(monkeypatch):
     checker = EffectiveConfigChecker(None)
     monkeypatch.setattr(checker, "_ensure_worker", lambda: None)

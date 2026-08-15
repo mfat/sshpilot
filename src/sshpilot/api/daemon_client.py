@@ -1218,8 +1218,11 @@ class DaemonClient:
         result = self._request("daemon.get_operation_mode", {})
         try:
             return operation_mode_result_from_wire(result)
-        except (TypeError, ValueError):
-            self._fail_protocol("The daemon returned an invalid operation mode status")
+        except (TypeError, ValueError) as error:
+            self._fail_protocol(
+                "The daemon returned an invalid operation mode status: "
+                f"{error}"
+            )
 
     def set_daemon_log_level(self, request: SetDaemonLogLevelRequest) -> None:
         self._require_capability(Capability.DAEMON_CONTROL)
@@ -3169,6 +3172,17 @@ class DaemonClient:
             expected_version = self._selected_protocol_version or PROTOCOL_VERSION
             if envelope.protocol_version != expected_version:
                 self._fail_protocol_from_reader("The daemon response uses an unexpected protocol")
+                return
+            if (
+                isinstance(envelope, ErrorResponseEnvelope)
+                and str(envelope.request_id) == "protocol"
+            ):
+                # The daemon uses the reserved request id for an unsolicited
+                # protocol rejection. Surface its sanitized explanation
+                # instead of treating it as an unrelated unknown response.
+                self._fail_protocol_from_reader(
+                    f"{envelope.error.code.value}: {envelope.error.message}"
+                )
                 return
             with self._state_lock:
                 pending = self._pending_requests.pop(

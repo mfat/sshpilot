@@ -152,6 +152,13 @@ class EffectiveConfigChecker:
             client = self._client_provider()
             if client is None:
                 return None
+            if bool(getattr(client, "is_closed", False)) or bool(
+                getattr(client, "transport_failed", False)
+            ):
+                # A reconnect may invalidate a queued check while its worker
+                # is between selecting the client and issuing the RPC. Treat
+                # that client as stale rather than producing a noisy traceback.
+                return None
             from .api.connection_identity import connection_id_for
 
             result = client.get_effective_config(connection_id_for(connection))
@@ -160,6 +167,18 @@ class EffectiveConfigChecker:
             # Keep the daemon snapshot generation attached to the computation;
             # the worker drops a response older than the last published one.
             return bool(result.has_diff), int(getattr(result, "generation", 0))
-        except Exception:
-            logger.debug("daemon effective-config check failed", exc_info=True)
+        except Exception as error:
+            from .api.errors import ErrorCode, SshPilotError
+
+            if isinstance(error, SshPilotError) and error.code in {
+                ErrorCode.TRANSPORT_CLOSED,
+                ErrorCode.TRANSPORT_TIMEOUT,
+                ErrorCode.DAEMON_UNAVAILABLE,
+            }:
+                logger.debug(
+                    "daemon effective-config check unavailable code=%s",
+                    error.code.value,
+                )
+            else:
+                logger.debug("daemon effective-config check failed", exc_info=True)
             return None

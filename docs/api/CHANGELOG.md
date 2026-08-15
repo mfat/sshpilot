@@ -5,7 +5,11 @@ notes remain separate.
 
 ## Unreleased
 
-No unreleased API surface is currently recorded.
+- Daemon-only retirement repairs now preserve protected broadcast input
+  registration, truthful operation-mode recovery, atomic reconnect publication,
+  and cross-process shared-settings transactions. These are implementation
+  correctness fixes within the current 0.40 contract; no downgrade or
+  frontend backend fallback is supported.
 
 ## API 0.40 (current)
 

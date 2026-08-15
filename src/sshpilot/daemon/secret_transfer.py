@@ -98,7 +98,7 @@ class _HeadlessBackupConfig:
         """Drop the cached copy so the next read reflects on-disk changes.
 
         ``BackupManager`` mutates ``config_data`` in place after a restore
-        (``self.config.config_data = self.config.load_json_config()``); the
+    (``self.config.reload_json_cache_strict()``); the
         shim mirrors that contract by re-reading the settings file.
         """
         self._data = None

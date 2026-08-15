@@ -199,10 +199,12 @@ class OperationModeService:
                         target.unlink()
                     except OSError:
                         rollback_errors.append("target cleanup failed")
-                rollback_completed = not rollback_errors
                 persisted_mode = self._read_persisted_mode()
+                rollback_completed = not rollback_errors and (
+                    persisted_mode is self.active_mode
+                )
                 recovery_required = not rollback_completed or (
-                    persisted_mode is not None and persisted_mode is not self.active_mode
+                    persisted_mode is not self.active_mode
                 )
                 if recovery_required:
                     message = (

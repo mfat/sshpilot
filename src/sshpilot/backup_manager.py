@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple, List
 
 from .platform.paths import get_config_dir, get_ssh_dir
 from .core.settings import CONFIG_VERSION
+from .platform.locking import settings_transaction_lock
 
 if TYPE_CHECKING:
     from .config import Config
@@ -1119,7 +1120,9 @@ class BackupManager:
                 logger.info(f"Replaced app config at {config_file}")
 
                 # Reload config in memory
-                self.config.config_data = self.config.load_json_config()
+                reload_cache = getattr(self.config, 'reload_json_cache_strict', None)
+                if callable(reload_cache):
+                    reload_cache()
 
             logger.info("Configuration replaced successfully")
             return True, None
@@ -1162,7 +1165,9 @@ class BackupManager:
                 self._merge_app_config(app_config)
 
                 # Reload config in memory
-                self.config.config_data = self.config.load_json_config()
+                reload_cache = getattr(self.config, 'reload_json_cache_strict', None)
+                if callable(reload_cache):
+                    reload_cache()
 
             logger.info("Configuration merged successfully")
             return True, None
@@ -1267,7 +1272,16 @@ class BackupManager:
 
     def _merge_app_config(self, imported_config: Dict[str, Any]):
         """Merge app configuration with existing"""
+        config_file = Path(get_config_dir()) / 'config.json'
+        transaction = settings_transaction_lock(config_file)
+        transaction.acquire()
         try:
+            invalidate = getattr(self.config, '_invalidate', None)
+            if callable(invalidate):
+                invalidate()
+            reload_cache = getattr(self.config, 'reload_json_cache_strict', None)
+            if callable(reload_cache):
+                reload_cache()
             current_config = self.config.config_data.copy()
 
             # Merge groups
@@ -1308,13 +1322,15 @@ class BackupManager:
             current_config['config_version'] = CONFIG_VERSION
 
             # Save merged config
-            config_file = Path(get_config_dir()) / 'config.json'
-            with open(config_file, 'w', encoding='utf-8') as f:
-                json.dump(current_config, f, indent=2)
+            self._atomic_write_text(
+                str(config_file), json.dumps(current_config, indent=2), 0o600
+            )
+            transaction.release()
 
             logger.info("Merged app configuration")
 
         except Exception as e:
+            transaction.release()
             logger.error(f"Failed to merge app config: {e}")
             raise
 

@@ -577,6 +577,9 @@ class ClientProtocolState:
     client_info: Optional[HandshakeRequest] = None
     selected_protocol_version: Optional[str] = None
     seen_request_ids: Set[str] = field(default_factory=set)
+    # Sequence is scoped to events visible to this peer. Ownership-filtered
+    # interaction events must not create false continuity gaps.
+    next_event_sequence: int = 0
 
 
 class RequestDispatcher:
