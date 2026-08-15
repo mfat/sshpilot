@@ -94,6 +94,17 @@ def test_multi_alias_hosts_materialise_each_token():
     assert "jump" in _ids(result)
 
 
+def test_imported_leading_dash_host_alias_fails_closed(tmp_path):
+    config = tmp_path / "config"
+    config.write_text(
+        "Host -danger\n    HostName example.com\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CoreError):
+        load_ssh_configuration(config, isolated=False)
+
+
 def test_hostname_equals_form_is_parsed():
     db = _by_id(_golden(), "db")
     assert db.hostname == "db.internal"

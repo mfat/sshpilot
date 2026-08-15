@@ -834,6 +834,7 @@ class DaemonServer:
             self._operation_mode_service.set_runtime_hooks(
                 resource_probe=self._operation_mode_blockers,
                 on_committed=self._refresh_configuration_paths,
+                on_rollback=self._refresh_configuration_paths,
             )
 
     def _operation_mode_blockers(self) -> tuple[str, ...]:

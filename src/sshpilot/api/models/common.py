@@ -30,6 +30,18 @@ def require_identifier(value: str, field_name: str) -> str:
     return value
 
 
+def validate_ssh_host_alias(value: str, field_name: str = "connection nickname") -> str:
+    """Validate an SSH ``Host`` token at every authoritative boundary."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be a non-empty string")
+    normalized = value.strip()
+    if normalized.startswith("-"):
+        raise ValueError(f"{field_name} must not begin with '-' because OpenSSH may parse it as an option")
+    if "\x00" in normalized:
+        raise ValueError(f"{field_name} must not contain NUL")
+    return normalized
+
+
 @dataclass(frozen=True)
 class ClientInfo:
     """Describes the frontend/client implementation."""
@@ -69,4 +81,3 @@ class CompatibilityResult:
     compatible: bool
     protocol_version: str
     message: str = ""
-

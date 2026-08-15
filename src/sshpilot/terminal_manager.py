@@ -1225,15 +1225,25 @@ class TerminalManager:
             if bridge is None or client is None:
                 window._show_daemon_unavailable_dialog()
                 return
-            try:
-                stored_id = connection_id_for(connection)
-            except Exception:
+            # A CLI-created projection receives ``id == nickname`` for UI
+            # compatibility, but that is not a durable daemon identity.  Do
+            # not let a hostname-shaped nickname short-circuit the
+            # authoritative host/user comparison.
+            if data.get(CLI_CONNECT_FLAG):
                 stored_id = None
+            else:
+                try:
+                    stored_id = connection_id_for(connection)
+                except Exception:
+                    stored_id = None
 
             request = UnsavedHostCheckRequest(
                 hostname=hostname,
                 username=username,
                 connection_id=stored_id,
+                port=int(getattr(connection, "port", 22) or 22),
+                protocol=str(getattr(connection, "protocol", "ssh") or "ssh"),
+                proxy_jump=tuple(getattr(connection, "proxy_jump", ()) or ()),
             )
 
             def _after_check(result):
@@ -1268,7 +1278,9 @@ class TerminalManager:
             bridge.submit(
                 lambda: client.check_unsaved_host(request),
                 on_success=_after_check,
-                on_error=lambda error: window._show_daemon_unavailable_dialog(),
+                on_error=lambda error: logger.info(
+                    "Optional unsaved-host check skipped after daemon error: %s", error
+                ),
             )
         except Exception:
             logger.debug("Save-connection offer skipped", exc_info=True)

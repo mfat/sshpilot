@@ -396,6 +396,11 @@ def _parse_host_config(
         return None
 
     host = host_token
+    # ``ssh -G <host>`` receives this token as an argv element.  OpenSSH may
+    # interpret a leading dash as another option, so imported configuration
+    # must fail closed instead of materialising an unsafe connection.
+    if host.startswith("-"):
+        raise _config_error("SSH configuration contains an invalid Host alias")
     has_explicit_hostname = (
         "hostname" in config and str(config["hostname"]).strip() != ""
     )
@@ -831,6 +836,8 @@ def load_ssh_configuration(
         cleaned = [t.strip() for t in tokens if t and t.strip()]
         if not cleaned:
             return
+        if any(token.startswith("-") for token in cleaned):
+            raise _config_error("SSH configuration contains an invalid Host alias")
         if any("*" in t or "?" in t or t.startswith("!") for t in cleaned):
             host_cfg = dict(config)
             host_cfg["host"] = cleaned[0]

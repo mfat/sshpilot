@@ -18,7 +18,7 @@ class _Result:
     stderr = ""
 
 
-def _password_auth_ctx(*, stored_password=None):
+def _password_auth_ctx(*, stored_password=None, session_store_result=True):
     stored = stored_password is not None
     store_calls = []
     class Connection:
@@ -53,7 +53,12 @@ def _password_auth_ctx(*, stored_password=None):
         list_connections=lambda: [connection_info],
         get_connection=lambda _id: details,
         has_connection_password=lambda _id: stored,
-        store_connection_password=lambda request: store_calls.append(request) or True,
+        store_connection_password=lambda request: store_calls.append(
+            ("persistent", request)
+        ) or True,
+        set_session_connection_password=lambda request, password: store_calls.append(
+            (request, password)
+        ) or session_store_result,
     )
     ctx = types.SimpleNamespace(
         connection_manager=manager,
@@ -87,9 +92,31 @@ def test_password_auth_prompts_before_docker_probe(gui, monkeypatch):
     )
 
     assert page._ensure_ssh_password("web") is True
-    assert store_calls[0].password == "login-secret"
+    assert store_calls[0][0].connection_id == ctx.list_connections()[0].id
+    assert bytes(store_calls[0][1]) == b"login-secret"
     assert "connection" not in prompts[0]
-    assert prompts[0]["allow_store"] is False
+    assert prompts[0]["allow_store"] is True
+
+
+def test_explicit_store_uses_persistent_daemon_api(gui, monkeypatch):
+    from sshpilot import window
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    ctx, _connection, store_calls = _password_auth_ctx()
+    page = DockerConsolePage(ctx, initial_host="web")
+
+    def prompt(**kwargs):
+        assert kwargs["allow_store"] is True
+        kwargs["on_store"]("persisted-secret")
+        return "persisted-secret"
+
+    monkeypatch.setattr(window, "show_ssh_password_dialog", prompt)
+
+    assert page._ensure_ssh_password("web") is True
+    assert any(kind == "persistent" for kind, _request in store_calls)
+    assert not any(
+        kind != "persistent" for kind, _request in store_calls
+    )
 
 
 def test_saved_password_skips_docker_prompt(gui, monkeypatch):
@@ -129,3 +156,20 @@ def test_cancelled_password_stops_probe_and_polling(gui, monkeypatch):
     # The placeholder is an Adw.StatusPage: its user-visible text is the title.
     # (It was a Gtk.Box with a `_label` child when this test was written.)
     assert "SSH password required" in page._containers_placeholder.get_title()
+
+
+def test_session_password_storage_failure_blocks_docker_retry(gui, monkeypatch):
+    from sshpilot import window
+    from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
+
+    ctx, _connection, store_calls = _password_auth_ctx(session_store_result=False)
+    page = DockerConsolePage(ctx, initial_host="web")
+    monkeypatch.setattr(
+        window,
+        "show_ssh_password_dialog",
+        lambda **kwargs: "not-persisted",
+    )
+
+    assert page._ensure_ssh_password("web") is False
+    assert store_calls
+    assert "web" in page._ssh_auth_blocked

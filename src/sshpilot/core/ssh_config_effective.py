@@ -1,21 +1,25 @@
-"""GTK-free effective OpenSSH configuration comparison for the daemon core.
+"""Canonical GTK-free OpenSSH configuration resolution for the daemon core.
 
-The legacy top-level ``ssh_config_utils`` module remains available to direct
-utility tests and older integrations.  Production core code uses this module
-so the daemon service does not depend on the legacy/frontend-facing module.
+This module owns Include discovery, ``ssh -G`` execution, repeated-option
+parsing, and authored/effective comparison.  The legacy top-level
+``ssh_config_utils`` module is only a compatibility facade for these read
+helpers plus its unrelated atomic editor/validation helpers.
 """
 
 from __future__ import annotations
 
-import os
 import glob
+import getpass
 import logging
+import os
 import re
 import shlex
+import socket
 import subprocess
 import tempfile
 from collections import Counter
-from typing import Dict, List, Optional, Set, Union
+from dataclasses import dataclass
+from typing import Dict, FrozenSet, List, Optional, Set, Union
 
 from ..ssh_config_document import SSHConfigDocument
 
@@ -36,38 +40,80 @@ _PATH_DIRECTIVES = frozenset(
         "include",
     }
 )
+_TOKEN_RE = re.compile(r"%(.)")
 
 
-def _expand_include_token(value: str) -> str:
-    """Expand the local-only tokens supported by OpenSSH Include paths."""
+def expand_ssh_tokens(value: str) -> str:
+    """Expand host-independent OpenSSH tokens used by Include paths."""
     if not value or "%" not in value:
         return value
+    try:
+        user = getpass.getuser()
+    except Exception:
+        user = ""
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        hostname = ""
     mapping = {
         "%": "%",
         "d": os.path.expanduser("~"),
-        "u": os.environ.get("USER", ""),
+        "u": user,
         "i": str(os.getuid()) if hasattr(os, "getuid") else "",
-        "l": os.uname().nodename if hasattr(os, "uname") else "",
+        "l": hostname,
+        "L": hostname.split(".", 1)[0],
     }
-    hostname = mapping["l"]
-    mapping["L"] = hostname.split(".", 1)[0]
-    return re.sub(r"%(.)", lambda match: mapping.get(match.group(1), match.group(0)), value)
+    return _TOKEN_RE.sub(lambda match: mapping.get(match.group(1), match.group(0)), value)
 
 
-def _resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str]:
-    """Resolve the Include graph without depending on the legacy utility module."""
+@dataclass(frozen=True)
+class SSHConfigPathDiscovery:
+    """Resolved SSH inputs and filesystem paths needed to rediscover them."""
+
+    files: tuple[str, ...]
+    watch_paths: FrozenSet[str]
+    unreadable_paths: FrozenSet[str]
+
+
+def _watch_parent_for_pattern(pattern: str) -> str:
+    candidate = pattern
+    while glob.has_magic(candidate):
+        parent = os.path.dirname(candidate)
+        if parent == candidate:
+            break
+        candidate = parent
+    if not candidate or glob.has_magic(candidate):
+        candidate = os.path.dirname(pattern) or "."
+    return os.path.abspath(candidate)
+
+
+def discover_ssh_config_paths(
+    main_path: str, *, max_depth: int = 32
+) -> SSHConfigPathDiscovery:
+    """Resolve the Include graph and retain parents for future glob matches."""
     resolved: List[str] = []
     visited: Set[str] = set()
+    watch_paths: Set[str] = set()
+    unreadable_paths: Set[str] = set()
 
     def resolve(path: str, depth: int, stack: List[str]) -> None:
         absolute = os.path.abspath(os.path.expanduser(os.path.expandvars(path)))
-        if absolute in stack or depth > max_depth or absolute in visited:
+        watch_paths.add(absolute)
+        if absolute in stack:
+            logger.warning("Include cycle detected: %s -> %s", " -> ".join(stack), absolute)
+            return
+        if depth > max_depth:
+            logger.warning("Maximum include depth (%d) exceeded at %s", max_depth, absolute)
+            return
+        if absolute in visited:
             return
         try:
             with open(absolute, encoding="utf-8") as handle:
                 lines = handle.readlines()
         except (OSError, UnicodeError) as exc:
-            logger.debug("Cannot read SSH config include %s: %s", absolute, exc)
+            logger.warning("Cannot read SSH config include %s: %s", absolute, exc)
+            if os.path.exists(absolute):
+                unreadable_paths.add(absolute)
             return
         visited.add(absolute)
         resolved.append(absolute)
@@ -78,11 +124,21 @@ def _resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[st
             if not line or line.startswith("#") or not line.lower().startswith("include "):
                 continue
             for pattern in shlex.split(line[len("include "):]):
-                expanded = os.path.expanduser(os.path.expandvars(_expand_include_token(pattern)))
+                expanded = os.path.expanduser(
+                    os.path.expandvars(expand_ssh_tokens(pattern))
+                )
                 if not os.path.isabs(expanded):
-                    expanded = os.path.join(base_dir, expanded)
-                for matched in sorted(glob.glob(os.path.abspath(expanded))):
+                    expanded = os.path.abspath(os.path.join(base_dir, expanded))
+                else:
+                    expanded = os.path.abspath(expanded)
+                if glob.has_magic(expanded):
+                    watch_paths.add(_watch_parent_for_pattern(expanded))
+                else:
+                    watch_paths.add(expanded)
+                    watch_paths.add(os.path.dirname(expanded) or ".")
+                for matched in sorted(glob.glob(expanded)):
                     if os.path.isdir(matched):
+                        watch_paths.add(os.path.abspath(matched))
                         for child in sorted(glob.glob(os.path.join(matched, "*"))):
                             resolve(child, depth + 1, stack)
                     else:
@@ -90,19 +146,38 @@ def _resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[st
         stack.pop()
 
     resolve(main_path, 1, [])
-    return resolved
+    return SSHConfigPathDiscovery(
+        files=tuple(resolved),
+        watch_paths=frozenset(watch_paths),
+        unreadable_paths=frozenset(unreadable_paths),
+    )
+
+
+def resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str]:
+    return list(discover_ssh_config_paths(main_path, max_depth=max_depth).files)
+
+
+def _resolve_ssh_config_files(main_path: str, *, max_depth: int = 32) -> List[str]:
+    """Private compatibility name used by older core tests."""
+    return resolve_ssh_config_files(main_path, max_depth=max_depth)
+
+
+def _safe_host_identifier(host: str) -> str:
+    value = (host or "").strip()
+    if not value or "\x00" in value or value.startswith("-"):
+        return ""
+    return value
 
 
 def collect_host_block_lines(
     host_identifier: str, ssh_config_path: Optional[str] = None
 ) -> List[str]:
-    """Return combined lines from every concrete matching Host stanza."""
-    host_identifier = (host_identifier or "").strip()
+    host_identifier = _safe_host_identifier(host_identifier)
     if not host_identifier:
         return []
     config_path = ssh_config_path or os.path.expanduser("~/.ssh/config")
     try:
-        files = _resolve_ssh_config_files(config_path)
+        files = resolve_ssh_config_files(config_path)
     except Exception:
         files = [config_path]
     combined: List[str] = []
@@ -119,15 +194,30 @@ def collect_host_block_lines(
 
 
 def get_effective_ssh_config(
-    host: str, config_file: Optional[str] = None
+    host: str,
+    config_file: Optional[str] = None,
+    *,
+    user: Optional[str] = None,
+    port: Optional[int] = None,
+    proxy_jump: Optional[str] = None,
 ) -> Dict[str, Union[str, List[str]]]:
-    """Resolve *host* with OpenSSH ``-G`` and preserve repeated values."""
+    """Resolve *host* through OpenSSH without allowing option confusion."""
+    host = _safe_host_identifier(host)
+    if not host:
+        return {}
     command = ["ssh"]
     if config_file:
         expanded = os.path.abspath(os.path.expanduser(os.path.expandvars(config_file)))
         if not os.path.isfile(expanded):
+            logger.warning("Requested SSH config override %s does not exist", expanded)
             return {}
         command.extend(["-F", expanded])
+    if user:
+        command.extend(["-o", f"User={user}"])
+    if port is not None:
+        command.extend(["-p", str(port)])
+    if proxy_jump:
+        command.extend(["-o", f"ProxyJump={proxy_jump}"])
     command.extend(["-G", host])
     try:
         result = subprocess.run(
@@ -153,16 +243,14 @@ def get_effective_ssh_config(
     return config
 
 
-def _effective_config_lines(
-    config: Dict[str, Union[str, List[str]]]
-) -> List[str]:
+def _effective_config_lines(config: Dict[str, Union[str, List[str]]]) -> List[str]:
     lines: List[str] = []
     for key in sorted(config):
-        value = config[key]
-        if isinstance(value, list):
-            lines.extend(f"{key} {item}" for item in value)
+        values = config[key]
+        if isinstance(values, list):
+            lines.extend(f"{key} {value}" for value in values)
         else:
-            lines.append(f"{key} {value}")
+            lines.append(f"{key} {values}")
     return lines
 
 
@@ -181,8 +269,8 @@ def _authored_directives(block_text: str) -> Set[str]:
 def diff_effective_config(
     host: str, config_file: Optional[str], own_block_text: str
 ) -> Optional[Dict[str, object]]:
-    """Compare the authored Host block with OpenSSH's effective values."""
-    if not host:
+    """Compare an authored block against the daemon-selected OpenSSH config."""
+    if not _safe_host_identifier(host):
         return None
     fd, temporary_path = tempfile.mkstemp(prefix=".sshpilot-own-", suffix=".conf")
     try:
@@ -206,7 +294,7 @@ def diff_effective_config(
         return None
     display = display or full
 
-    def expand(config):
+    def expand_paths(config):
         result = {}
         for key, value in config.items():
             if key not in _PATH_DIRECTIVES:
@@ -219,7 +307,7 @@ def diff_effective_config(
                 result[key] = value
         return result
 
-    full, own, display = expand(full), expand(own), expand(display)
+    full, own, display = map(expand_paths, (full, own, display))
 
     def as_list(value) -> List[str]:
         if value is None:
@@ -249,7 +337,15 @@ def diff_effective_config(
         full_counts = Counter(full_values)
         added = list((full_counts - own_counts).elements())
         removed = list((own_counts - full_counts).elements())
-        kind = "overridden" if added and removed else "added" if added else "removed" if removed else "overridden"
+        kind = (
+            "overridden"
+            if added and removed
+            else "added"
+            if added
+            else "removed"
+            if removed
+            else "overridden"
+        )
         changes.append(
             {
                 "key": key,

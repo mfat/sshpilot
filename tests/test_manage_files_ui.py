@@ -194,3 +194,79 @@ def test_launch_remote_file_manager_no_backend(monkeypatch):
     assert "No compatible" in error
     assert captured["message"] == error
     assert window is None
+
+
+def test_manage_files_entry_honors_external_window_preference(monkeypatch):
+    setup_gi(monkeypatch)
+    module = reload_module("sshpilot.window_file_manager")
+    connection = type(
+        "Connection",
+        (),
+        {"nickname": "Example", "hostname": "example.com", "username": "alice", "port": 22},
+    )()
+    calls = []
+
+    class Config:
+        def get_setting(self, key, default=None):
+            assert key == "file_manager.open_externally"
+            return True
+
+    fake = type("Window", (), {})()
+    fake.config = Config()
+    fake._open_manage_files_now_for_connection = lambda conn: module.WindowFileManagerMixin._open_manage_files_now_for_connection(fake, conn)
+    fake._launch_external_file_manager = lambda conn: calls.append(("external", conn))
+    fake._create_file_manager_placeholder_tab = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("external preference must not create an embedded tab")
+    )
+    monkeypatch.setattr(module, "capabilities_for", lambda _connection: {module.Capability.FILE_TRANSFER})
+
+    module.WindowFileManagerMixin._open_manage_files_for_connection(fake, connection)
+
+    assert calls == [("external", connection)]
+
+
+def test_manage_files_entry_honors_embedded_window_preference(monkeypatch):
+    setup_gi(monkeypatch)
+    module = reload_module("sshpilot.window_file_manager")
+    connection = type(
+        "Connection",
+        (),
+        {"nickname": "Example", "hostname": "example.com", "username": "alice", "port": 22},
+    )()
+    calls = []
+
+    class Config:
+        def get_setting(self, key, default=None):
+            assert key == "file_manager.open_externally"
+            return False
+
+    fake = type("Window", (), {})()
+    fake.config = Config()
+    fake._open_manage_files_now_for_connection = lambda conn: module.WindowFileManagerMixin._open_manage_files_now_for_connection(fake, conn)
+    fake.connection_manager = object()
+    fake._create_file_manager_placeholder_tab = lambda *_args: {
+        "page": None,
+        "container": None,
+    }
+    fake._placeholder_is_open = lambda _placeholder: True
+    fake._register_file_manager_tab = lambda *_args, **_kwargs: calls.append("embedded")
+    fake._handle_file_manager_placeholder_error = lambda *_args: None
+    fake._show_manage_files_error = lambda *_args: None
+    fake._launch_external_file_manager = lambda _conn: calls.append("external")
+    monkeypatch.setattr(module, "capabilities_for", lambda _connection: {module.Capability.FILE_TRANSFER})
+    monkeypatch.setattr(module, "has_internal_file_manager", lambda: True)
+    monkeypatch.setattr(
+        module.GLib,
+        "timeout_add",
+        lambda _delay, callback: (callback(), True)[1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "create_internal_file_manager_tab",
+        lambda **_kwargs: (object(), object()),
+    )
+
+    module.WindowFileManagerMixin._open_manage_files_for_connection(fake, connection)
+
+    assert calls == ["embedded"]

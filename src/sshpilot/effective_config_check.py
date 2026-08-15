@@ -26,8 +26,6 @@ from gi.repository import GLib
 
 logger = logging.getLogger(__name__)
 
-# A host name no real ``Host`` block should match, used to probe whether the
-# config carries any global-scope directives (it still matches ``Host *``).
 class EffectiveConfigChecker:
     def __init__(self, connection_manager,
                  on_result: Optional[Callable[[str, bool], None]] = None,
@@ -42,6 +40,7 @@ class EffectiveConfigChecker:
         # matches, so an in-flight compute that finishes after an invalidate can
         # never overwrite the cache with a stale value.
         self._gen: dict[str, int] = {}
+        self._daemon_gen: dict[str, int] = {}
         self._lock = threading.Lock()
         self._queue: "queue.Queue" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -77,11 +76,13 @@ class EffectiveConfigChecker:
         with self._lock:
             if nickname is None:
                 self._cache.clear()
+                self._daemon_gen.clear()
                 self._queued.clear()
                 for key in self._gen:
                     self._gen[key] += 1
             else:
                 self._cache.pop(nickname, None)
+                self._daemon_gen.pop(nickname, None)
                 self._queued.discard(nickname)
                 self._gen[nickname] = self._gen.get(nickname, 0) + 1
         if nickname is None:
@@ -105,22 +106,39 @@ class EffectiveConfigChecker:
         while True:
             connection, nickname, gen = self._queue.get()  # blocks; persistent
             try:
-                differs = self._compute(connection)
+                computed = self._compute(connection)
             except Exception:
                 logger.debug("effective-config check failed for %s", nickname, exc_info=True)
-                differs = None
-            publish = False
-            with self._lock:
-                self._queued.discard(nickname)
-                # Drop the result if an invalidate bumped the generation while
-                # this compute was running.
-                if differs is not None and gen == self._gen.get(nickname, 0):
-                    self._cache[nickname] = differs
-                    publish = True
+                computed = None
+            differs = computed[0] if computed is not None else None
+            daemon_generation = computed[1] if computed is not None else None
+            publish = self._accept_result(
+                nickname,
+                gen,
+                None if differs is None else (differs, daemon_generation or 0),
+            )
             if publish and self._on_result is not None:
                 GLib.idle_add(self._on_result, nickname, differs)
 
-    def _compute(self, connection) -> Optional[bool]:
+    def _accept_result(
+        self,
+        nickname: str,
+        local_generation: int,
+        computed: Optional[tuple[bool, int]],
+    ) -> bool:
+        """Publish only a current local and daemon snapshot generation."""
+        with self._lock:
+            self._queued.discard(nickname)
+            if computed is None or local_generation != self._gen.get(nickname, 0):
+                return False
+            differs, daemon_generation = computed
+            if daemon_generation < self._daemon_gen.get(nickname, -1):
+                return False
+            self._cache[nickname] = differs
+            self._daemon_gen[nickname] = daemon_generation
+            return True
+
+    def _compute(self, connection) -> Optional[tuple[bool, int]]:
         """Ask the daemon for the generation-tagged effective-config result."""
         if self._client_provider is None:
             return None
@@ -133,7 +151,9 @@ class EffectiveConfigChecker:
             result = client.get_effective_config(connection_id_for(connection))
             if not result.available:
                 return None
-            return bool(result.has_diff)
+            # Keep the daemon snapshot generation attached to the computation;
+            # the worker drops a response older than the last published one.
+            return bool(result.has_diff), int(getattr(result, "generation", 0))
         except Exception:
             logger.debug("daemon effective-config check failed", exc_info=True)
             return None

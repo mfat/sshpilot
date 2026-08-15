@@ -444,8 +444,6 @@ class StartupInfo:
         config = self.info['config']
         print(f"  Operation mode: {config['operation_mode']}")
         print(f"  SSH configuration authority: {config['config_authority']}")
-        print(f"  Config directory: {config['config_dir']}")
-        print(f"  SSH directory: {config['ssh_dir']}")
         print()
         
         print(self.HEADER_LINE)

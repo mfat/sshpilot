@@ -262,3 +262,29 @@ def test_startup_info_has_no_secret_storage_import():
         )
 
 
+def test_verbose_startup_info_reports_semantic_daemon_config_without_paths(capsys):
+    """The verbose path must match the semantic-only config DTO."""
+    from sshpilot.startup_info import StartupInfo
+
+    info = StartupInfo.__new__(StartupInfo)
+    info.info = {
+        "version": {"version": "test"},
+        "platform": {"system": "Linux", "distro": "test", "architecture": "x86_64", "flatpak": False},
+        "python": {"version": "3", "implementation": "CPython"},
+        "libraries": {},
+        "tools": {
+            "ssh": {"available": False},
+            "sshpass": {"available": False, "executable": False},
+            "ssh_askpass": {"available": False},
+        },
+        "storage": {"effective_backend": "none", "libsecret": {}, "keyring": {}},
+        "config": {"operation_mode": "isolated", "config_authority": "daemon"},
+    }
+
+    info.print_info()
+    output = capsys.readouterr().out
+    assert "Operation mode: isolated" in output
+    assert "SSH configuration authority: daemon" in output
+    assert "Config directory:" not in output
+    assert "SSH directory:" not in output
+

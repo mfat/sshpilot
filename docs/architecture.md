@@ -7,7 +7,9 @@ the owner of backend state or remote I/O.
 
 For development workflow, see [running-from-source.md](running-from-source.md)
 and [../CONTRIBUTING.md](../CONTRIBUTING.md). For the concrete public contract,
-see the [frontend-neutral API reference](api/README.md).
+see the [frontend-neutral API reference](api/README.md). The active
+cross-session retirement ledger is
+[daemon-only-retirement.md](architecture/daemon-only-retirement.md).
 
 ## Current architecture boundary
 

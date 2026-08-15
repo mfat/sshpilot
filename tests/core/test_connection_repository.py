@@ -106,6 +106,19 @@ def test_initial_default_load_is_empty(tmp_path):
     assert snap.root_connection_ids == ()
 
 
+def test_repository_rejects_new_option_like_ssh_alias(tmp_path):
+    repo, _root, _state, _legacy = _repo(tmp_path)
+    with pytest.raises(CoreError, match="begin with"):
+        repo.create_connection(
+            {
+                "nickname": "-G",
+                "hostname": "example.com",
+                "username": "alice",
+                "protocol": "ssh",
+            }
+        )
+
+
 def test_legacy_migration_reconciles_deleted_connections_and_preserves_order(tmp_path):
     repo, root, state, legacy = _repo(
         tmp_path,

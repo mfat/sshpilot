@@ -20,6 +20,8 @@ instances: every read, mutation, and event flows through a
 from __future__ import annotations
 
 import logging
+import getpass
+import ipaddress
 import re
 import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -81,6 +83,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -140,7 +143,7 @@ class ConnectionApplicationService:
             Capability.CONNECTIONS_GROUPS,
             Capability.CONNECTIONS_SPLIT,
         }
-        if launch_provider is not None:
+        if callable(getattr(launch_provider, "prepare_terminal_launch", None)):
             supported.add(Capability.EXTERNAL_TERMINAL_LAUNCH)
         if ssh_overrides is not None:
             supported.update(
@@ -168,6 +171,13 @@ class ConnectionApplicationService:
 
     def get_capabilities(self) -> Capabilities:
         return self._capabilities
+
+    @property
+    def supports_external_terminal_launch(self) -> bool:
+        """Whether the composed daemon has a real external-launch provider."""
+        return callable(
+            getattr(self._launch_provider, "prepare_terminal_launch", None)
+        )
 
     # ------------------------------------------------------------------
     # Launch / secret providers (implementation lives outside core)
@@ -386,6 +396,16 @@ class ConnectionApplicationService:
             previous_host=request.previous_host,
             previous_username=request.previous_username,
         )
+
+    def set_session_connection_password_rpc(self, request: Any, password: bytearray) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return bool(self._provider_call(
+            self._secret_provider,
+            "set_session_connection_password",
+            request.connection_id,
+            password,
+        ))
 
     def delete_connection_password_rpc(
         self, request: Any
@@ -774,6 +794,7 @@ class ConnectionApplicationService:
         from ..ssh_config_formatter import format_ssh_config_entry
         from .ssh_config_effective import collect_host_block_lines, diff_effective_config
 
+        before_generation = self._repository.snapshot().generation
         root = str(self._repository.root_config_path)
         config_file = root if self._repository.ssh_config_isolated else None
         own_lines = collect_host_block_lines(record.nickname, config_file)
@@ -785,12 +806,17 @@ class ConnectionApplicationService:
         except Exception:
             logger.debug("Daemon effective-config resolution failed", exc_info=True)
             result = None
+        after_generation = self._repository.snapshot().generation
+        # A reload/mode transition raced the resolver.  Never publish a
+        # comparison tagged with the pre-transition snapshot.
+        if before_generation != after_generation:
+            result = None
         if not result:
             return EffectiveConfigComparison(
                 connection_id=connection_id,
                 host=record.nickname,
                 available=False,
-                generation=max(0, int(record.generation)),
+                generation=max(0, int(after_generation)),
             )
         return EffectiveConfigComparison(
             connection_id=connection_id,
@@ -800,7 +826,7 @@ class ConnectionApplicationService:
             changes=tuple(dict(item) for item in (result.get("changes") or ())),
             own=tuple(result.get("own") or ()),
             full=tuple(result.get("full") or ()),
-            generation=max(0, int(record.generation)),
+            generation=max(0, int(after_generation)),
         )
 
     def check_unsaved_host(
@@ -818,35 +844,100 @@ class ConnectionApplicationService:
         self._require_capability(Capability.CONNECTIONS_READ)
         if type(request) is not UnsavedHostCheckRequest:
             raise SshPilotError(ErrorCode.INVALID_REQUEST, "A destination check request is required")
-        hostname = request.hostname.strip().lower()
+        hostname = request.hostname.strip()
         username = request.username.strip()
         snapshot = self._repository.snapshot()
         saved = bool(
             request.connection_id
             and any(item.id == request.connection_id for item in snapshot.connections)
         )
-        if not saved:
+        if not saved and request.protocol.strip().lower() == "ssh":
+            requested_identity = self._destination_identity(
+                hostname,
+                username,
+                request.port,
+                request.proxy_jump,
+            )
             for record in self._repository.list_records():
-                record_hosts = {
-                    str(value or "").strip().lower()
-                    for value in (
-                        record.hostname,
-                        record.host,
-                        record.nickname,
-                        *(record.aliases or ()),
-                    )
-                    if str(value or "").strip()
-                }
-                record_user = (record.username or "").strip()
-                if hostname in record_hosts and record_user == username:
+                if (record.protocol or "ssh").strip().lower() != "ssh":
+                    continue
+                saved_identities = self._saved_destination_identities(record)
+                if requested_identity in saved_identities:
                     saved = True
                     break
         return UnsavedHostCheckResult(
             saved=saved,
-            hostname=hostname,
+            hostname=hostname.casefold(),
             username=username,
             generation=max(0, int(snapshot.generation)),
         )
+
+    def _active_config_file(self) -> Optional[str]:
+        root = getattr(self._repository, "root_config_path", None)
+        isolated = bool(getattr(self._repository, "ssh_config_isolated", False))
+        return str(root) if root is not None and isolated else None
+
+    def _destination_identity(
+        self,
+        hostname: str,
+        username: str,
+        port: int,
+        proxy_jump: Tuple[str, ...],
+    ) -> tuple:
+        from .ssh_config_effective import get_effective_ssh_config
+
+        proxy = ",".join(proxy_jump)
+        effective = get_effective_ssh_config(
+            hostname,
+            self._active_config_file(),
+            user=username or None,
+            port=port,
+            proxy_jump=proxy or None,
+        )
+        resolved_host = str(effective.get("hostname") or hostname).strip()
+        resolved_user = str(effective.get("user") or username or getpass.getuser()).strip()
+        try:
+            resolved_port = int(str(effective.get("port") or port))
+        except (TypeError, ValueError):
+            resolved_port = port
+        proxy_value = effective.get("proxyjump") or proxy
+        if isinstance(proxy_value, list):
+            proxy_value = ",".join(proxy_value)
+        return (
+            self._normalize_host(resolved_host),
+            resolved_user,
+            resolved_port,
+            str(proxy_value or "none").casefold(),
+        )
+
+    def _saved_destination_identities(self, record: ConnectionRecord) -> set[tuple]:
+        proxy_jump = tuple(record.data.get("proxy_jump") or ()) if record.data else ()
+        values = {
+            record.nickname,
+            record.host,
+            record.hostname,
+            *(record.aliases or ()),
+        }
+        return {
+            self._destination_identity(
+                value,
+                record.username or "",
+                int(record.port or 22),
+                proxy_jump,
+            )
+            for value in values
+            if str(value or "").strip()
+        }
+
+    @staticmethod
+    def _normalize_host(value: str) -> str:
+        value = value.strip().casefold()
+        if value.startswith("[") and value.endswith("]"):
+            value = value[1:-1]
+        try:
+            return ipaddress.ip_address(value).compressed.casefold()
+        except ValueError:
+            return value.rstrip(".")
 
     def get_ssh_config_text(self) -> SshConfigText:
         """Return the daemon-selected active SSH config text for the raw editor."""

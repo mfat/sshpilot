@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple, Union
 
-from .common import ConnectionId, SessionId, require_identifier
+from .common import ConnectionId, SessionId, require_identifier, validate_ssh_host_alias
 from .connection_store import validate_safe_metadata
 
 MAX_DISPLAY_NAME_LENGTH = 512
@@ -351,12 +351,23 @@ class UnsavedHostCheckRequest:
     hostname: str
     username: str = ""
     connection_id: Optional[str] = None
+    port: int = 22
+    protocol: str = "ssh"
+    proxy_jump: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if type(self.hostname) is not str or not self.hostname.strip() or "\x00" in self.hostname:
             raise ValueError("hostname must be non-empty")
         if type(self.username) is not str or "\x00" in self.username:
             raise ValueError("username is invalid")
+        if type(self.port) is not int or not 1 <= self.port <= 65535:
+            raise ValueError("port must be between 1 and 65535")
+        if type(self.protocol) is not str or not self.protocol.strip():
+            raise ValueError("protocol must not be empty")
+        if type(self.proxy_jump) is not tuple:
+            raise TypeError("proxy_jump must be a tuple")
+        if any(type(item) is not str or not item.strip() or "\x00" in item for item in self.proxy_jump):
+            raise ValueError("proxy_jump contains an invalid destination")
         if self.connection_id is not None:
             require_identifier(self.connection_id, "connection id")
 
@@ -430,6 +441,16 @@ class StoreConnectionPasswordRequest:
     previous_hostname: str = ""
     previous_host: str = ""
     previous_username: str = ""
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class SetSessionConnectionPasswordRequest:
+    """Identify a daemon-memory-only password supplied in a protected frame."""
+
+    connection_id: ConnectionId
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
@@ -553,8 +574,7 @@ class CreateConnectionRequest:
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if type(self.nickname) is not str or not self.nickname.strip():
-            raise ValueError("connection nickname must not be empty")
+        validate_ssh_host_alias(self.nickname)
         if type(self.hostname) is not str:
             raise TypeError("connection hostname must be a string")
         if type(self.username) is not str:
@@ -616,6 +636,8 @@ class UpdateConnectionRequest:
             type(self.nickname) is not str or not self.nickname.strip()
         ):
             raise ValueError("connection nickname must not be empty")
+        if self.nickname is not None and self.nickname is not UNSET:
+            validate_ssh_host_alias(self.nickname)
         if self.hostname is not None and self.hostname is not UNSET and type(self.hostname) is not str:
             raise TypeError("connection hostname must be a string")
         if self.username is not None and self.username is not UNSET and type(self.username) is not str:

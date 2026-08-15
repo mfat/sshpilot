@@ -50,6 +50,7 @@ from .models.connections import (
     DeleteKeyPassphraseRequest,
     SaveSshConfigTextRequest,
     StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     SshConfigText,
     UpdateConnectionRequest,
@@ -245,6 +246,7 @@ from .transport.codec import (
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
     store_connection_password_request_to_wire,
+    set_session_connection_password_request_to_wire,
     store_key_passphrase_request_to_wire,
     transfer_summary_from_wire,
     add_tag_to_connections_request_to_wire,
@@ -341,6 +343,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "has_connection_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
+    "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "has_key_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "reveal_connection_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
@@ -847,13 +850,40 @@ class DaemonClient:
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
         self._require_write_compatibility("store password")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        payload = store_connection_password_request_to_wire(request)
+        password = bytearray(request.password.encode("utf-8"))
+        payload.pop("password", None)
         result = self._request(
             "connections.store_password",
-            store_connection_password_request_to_wire(request),
+            payload,
             mutation_connection_id=request.connection_id,
+            mutation_description="store password",
+            secret_input=password,
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid password store result")
+        return result
+
+    def set_session_connection_password(
+        self,
+        request: SetSessionConnectionPasswordRequest,
+        password: bytearray,
+    ) -> bool:
+        self._require_write_compatibility("set session password")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        if type(request) is not SetSessionConnectionPasswordRequest:
+            raise TypeError("a session connection password request is required")
+        if type(password) is not bytearray:
+            raise TypeError("session password must be a bytearray")
+        result = self._request(
+            "connections.set_session_password",
+            set_session_connection_password_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+            mutation_description="set session password",
+            secret_input=password,
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid session password result")
         return result
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:

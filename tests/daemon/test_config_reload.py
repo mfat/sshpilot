@@ -492,7 +492,6 @@ def test_change_after_reload_read_schedules_follow_up(tmp_path, monkeypatch):
     client = DaemonClient(socket_path=server.socket_path)
     coordinator = server._configuration_reload
     assert coordinator is not None
-    coordinator.request_reload()
     assert _wait_until(lambda: coordinator.reload_count >= 1)
     backend = coordinator.backend
     original_reload = backend.reload

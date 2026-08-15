@@ -157,6 +157,21 @@ class WindowFileManagerMixin:
         # Remote SFTP is always the daemon-owned file-manager backend.  The
         # old GVFS URI route reconstructed SSH/auth state in GTK and therefore
         # cannot be a fallback when the daemon is unavailable.
+        open_externally = False
+        if not force_builtin:
+            try:
+                open_externally = bool(
+                    self.config.get_setting("file_manager.open_externally", False)
+                )
+            except Exception:
+                logger.debug("Could not read file-manager window preference", exc_info=True)
+        if open_externally:
+            # "External" here means a standalone FileManagerWindow, not GVFS
+            # or a frontend-built SSH process.  The standalone window uses the
+            # same daemon-backed SFTP controller as the embedded view.
+            self._launch_external_file_manager(connection)
+            return
+
         use_internal = has_internal_file_manager()
 
         placeholder_info = None

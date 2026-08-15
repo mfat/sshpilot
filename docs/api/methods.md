@@ -1,6 +1,6 @@
 # Client methods
 
-Current API implementation version: `0.38`.
+Current API implementation version: `0.39`.
 Protocol v1 remains `1.0`.
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
@@ -200,6 +200,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: start_scp_transfer status=daemon-only capability=transfers.scp -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
+<!-- api-method-contract: set_session_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: delete_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
@@ -439,6 +440,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.reveal_passphrase capability=connections.secrets.reveal -->
 <!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.set_session_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
@@ -929,6 +931,28 @@ client.delete_connection(DeleteConnectionRequest(connection_id))
 ```python
 client.store_connection_password(
     StoreConnectionPasswordRequest(connection_id, password)
+)
+```
+
+<!-- api-method: set_session_connection_password -->
+## `set_session_connection_password`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; retain a password for
+  the current daemon session without persisting it.
+- **Parameters / return:** `SetSessionConnectionPasswordRequest`
+  (connection_id) plus a protected mutable password input; returns `bool`.
+- **Errors:** Transport/protocol errors and connection validation errors.
+- **Side effects / security:** The password is delivered only through the
+  protected command-input frame and is held in daemon memory with a bounded
+  session lifetime. It is never written to the repository, returned in a DTO,
+  placed in argv/environment, or logged. Persistent storage remains a separate
+  explicit `store_connection_password` operation.
+
+```python
+client.set_session_connection_password(
+    SetSessionConnectionPasswordRequest(connection_id),
+    bytearray(password.encode()),
 )
 ```
 

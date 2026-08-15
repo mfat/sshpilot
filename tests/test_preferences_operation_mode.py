@@ -17,6 +17,21 @@ class _Radio:
     def set_active(self, active):
         self._active = bool(active)
 
+    def set_sensitive(self, _sensitive):
+        pass
+
+
+class _CallbackRadio(_Radio):
+    def __init__(self, active, callback):
+        super().__init__(active)
+        self._callback = callback
+
+    def set_active(self, active):
+        changed = self._active != bool(active)
+        super().set_active(active)
+        if changed:
+            self._callback(self)
+
 
 class _Button:
     def get_active(self):
@@ -50,6 +65,9 @@ class _ModeClient:
         self.requests.append(request)
         return self.result
 
+    def get_operation_mode(self):
+        return self.result
+
     def get_capabilities(self):
         return SimpleNamespace(supports=lambda _capability: True)
 
@@ -72,7 +90,11 @@ def _make_prefs(result=None):
     prefs.parent_window = SimpleNamespace()
     prefs.client = _ModeClient(result)
     prefs.client_bridge = _Bridge(result)
+    prefs.parent_window.client = prefs.client
+    prefs.parent_window.client_bridge = prefs.client_bridge
     prefs._refresh_daemon_status_row = lambda: None
+    prefs._suppress_operation_mode_toggle = False
+    prefs._operation_mode_request_in_flight = False
     return prefs, recorded
 
 
@@ -100,6 +122,49 @@ def test_operation_mode_failure_restores_frontend_radio_state():
     assert recorded == {}
     assert prefs.isolated_mode_radio.get_active() is False
     assert prefs.default_mode_radio.get_active() is True
+
+
+def test_confirmed_initial_projection_does_not_mutate_mode():
+    prefs, _recorded = _make_prefs(
+        SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    )
+    PreferencesWindow._request_confirmed_operation_mode(prefs)
+    assert prefs.client.requests == []
+    assert prefs.isolated_mode_radio.get_active() is True
+
+
+def test_successful_toggle_applies_radio_state_without_a_second_request():
+    prefs, _recorded = _make_prefs(
+        SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    )
+    prefs.isolated_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert len(prefs.client.requests) == 1
+    assert prefs.isolated_mode_radio.get_active() is True
+
+
+def test_rejected_toggle_restoration_does_not_send_compensating_request():
+    prefs, _recorded = _make_prefs(
+        SimpleNamespace(
+            accepted=False,
+            active_mode=OperationMode.DEFAULT,
+            message="sessions are active",
+        )
+    )
+    prefs.parent_window._show_operation_mode_rejection = lambda detail: setattr(
+        prefs, "rejection_detail", detail
+    )
+    prefs.isolated_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert len(prefs.client.requests) == 1
+    assert prefs.default_mode_radio.get_active() is True
+    assert prefs.rejection_detail == "sessions are active"
 
 
 class _FakeDaemonClient:

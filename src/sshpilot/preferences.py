@@ -1837,8 +1837,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
             def _apply(result):
                 isolated = result.active_mode.value == "isolated"
-                self.isolated_mode_radio.set_active(isolated)
-                self.default_mode_radio.set_active(not isolated)
+                self._set_operation_mode_radios(isolated)
                 self.default_mode_radio.set_sensitive(True)
                 self.isolated_mode_radio.set_sensitive(True)
 
@@ -1851,6 +1850,21 @@ class PreferencesWindow(Adw.NavigationPage):
         logger.warning("Operation mode state unavailable: %s", error)
         self.default_mode_radio.set_sensitive(False)
         self.isolated_mode_radio.set_sensitive(False)
+
+    def _set_operation_mode_radios(self, isolated: bool) -> None:
+        """Apply confirmed state without treating GTK signal feedback as input."""
+        self._suppress_operation_mode_toggle = True
+        try:
+            self.isolated_mode_radio.set_active(bool(isolated))
+            self.default_mode_radio.set_active(not isolated)
+        finally:
+            self._suppress_operation_mode_toggle = False
+
+    def _set_operation_mode_controls_sensitive(self, sensitive: bool) -> None:
+        for radio in (self.default_mode_radio, self.isolated_mode_radio):
+            setter = getattr(radio, "set_sensitive", None)
+            if callable(setter):
+                setter(bool(sensitive))
 
     def _add_advanced_behavior_group(self, advanced_page):
         """Add the Application Behavior group to the Advanced page."""
@@ -5588,7 +5602,11 @@ class PreferencesWindow(Adw.NavigationPage):
     def on_operation_mode_toggled(self, button):
         """Request a daemon-owned live switch between SSH configuration scopes."""
         try:
+            if getattr(self, "_suppress_operation_mode_toggle", False):
+                return
             if not button.get_active():
+                return
+            if getattr(self, "_operation_mode_request_in_flight", False):
                 return
 
             from .api.models.daemon import OperationMode, SetOperationModeRequest
@@ -5614,37 +5632,62 @@ class PreferencesWindow(Adw.NavigationPage):
                     owner._show_daemon_unavailable_dialog()
                 return
 
+            self._operation_mode_request_in_flight = True
+            self._set_operation_mode_controls_sensitive(False)
+            previous_isolated = bool(self.isolated_mode_radio.get_active())
+
             def _restore(active_mode=None):
                 if active_mode is None:
-                    self._request_confirmed_operation_mode()
+                    self._set_operation_mode_radios(previous_isolated)
                     return
                 isolated = active_mode is OperationMode.ISOLATED
-                for radio, active in (
-                    (self.isolated_mode_radio, isolated),
-                    (self.default_mode_radio, not isolated),
-                ):
-                    setter = getattr(radio, "set_active", None)
-                    if callable(setter):
-                        setter(active)
+                self._set_operation_mode_radios(isolated)
 
             def _on_success(result):
-                if not result.accepted:
-                    _restore(getattr(result, "active_mode", None))
+                try:
+                    if not result.accepted:
+                        _restore(getattr(result, "active_mode", None))
+                        if owner is not None and getattr(result, "active_mode", None) is not None:
+                            apply_mode = getattr(owner, "_apply_confirmed_operation_mode", None)
+                            if callable(apply_mode):
+                                apply_mode(result.active_mode)
+                        if owner is not None and getattr(result, "recovery_required", False):
+                            if hasattr(owner, "_show_operation_mode_recovery"):
+                                owner._show_operation_mode_recovery(result.message)
+                        elif owner is not None and hasattr(owner, "_show_operation_mode_rejection"):
+                            owner._show_operation_mode_rejection(result.message)
+                        return
+                    isolated = result.active_mode is OperationMode.ISOLATED
+                    self._set_operation_mode_radios(isolated)
+                    if owner is not None:
+                        apply_mode = getattr(owner, "_apply_confirmed_operation_mode", None)
+                        if callable(apply_mode):
+                            apply_mode(result.active_mode)
+                    self._update_operation_mode_styles()
+                finally:
+                    self._operation_mode_request_in_flight = False
+                    self._set_operation_mode_controls_sensitive(True)
+
+            def _on_error(error):
+                try:
+                    _restore()
                     if owner is not None and hasattr(owner, "_show_daemon_unavailable_dialog"):
-                        owner._show_daemon_unavailable_dialog(result.message)
-                    return
-                isolated = result.active_mode is OperationMode.ISOLATED
-                self.isolated_mode_radio.set_active(isolated)
-                self.default_mode_radio.set_active(not isolated)
-                self._update_operation_mode_styles()
+                        owner._show_daemon_unavailable_dialog(error)
+                    else:
+                        logger.error("Operation mode unavailable: %s", error)
+                finally:
+                    self._operation_mode_request_in_flight = False
+                    self._set_operation_mode_controls_sensitive(True)
 
             bridge.submit(
                 lambda: client.set_operation_mode(SetOperationModeRequest(mode=requested)),
                 on_success=_on_success,
-                on_error=lambda error: (_restore(), logger.error("Operation mode unavailable: %s", error)),
+                on_error=_on_error,
             )
 
         except Exception as e:
+            self._operation_mode_request_in_flight = False
+            self._set_operation_mode_controls_sensitive(True)
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
 
     def _update_operation_mode_styles(self):
@@ -6264,7 +6307,14 @@ class PreferencesWindow(Adw.NavigationPage):
             client = getattr(selection, 'client', None)
         if bridge is None:
             bridge = getattr(application, '_api_client_bridge', None)
-        if client is not None and bridge is not None and hasattr(client, 'set_daemon_log_level'):
+        from .api.capabilities import Capability
+        try:
+            supports_daemon_control = client is not None and client.get_capabilities().supports(
+                Capability.DAEMON_CONTROL
+            )
+        except Exception:
+            supports_daemon_control = False
+        if client is not None and bridge is not None and supports_daemon_control:
             try:
                 from .api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
 

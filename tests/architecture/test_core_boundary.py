@@ -68,6 +68,14 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # -- error mapping (presentation) -------------------------------
         ("backup_manager.py", "errors", "CoreError"),
         ("backup_manager.py", "settings", "CONFIG_VERSION"),
+        # -- legacy SSH-config facade; effective behavior is canonical core --
+        ("ssh_config_utils.py", "ssh_config_effective", "SSHConfigPathDiscovery"),
+        ("ssh_config_utils.py", "ssh_config_effective", "collect_host_block_lines"),
+        ("ssh_config_utils.py", "ssh_config_effective", "discover_ssh_config_paths"),
+        ("ssh_config_utils.py", "ssh_config_effective", "diff_effective_config"),
+        ("ssh_config_utils.py", "ssh_config_effective", "expand_ssh_tokens"),
+        ("ssh_config_utils.py", "ssh_config_effective", "get_effective_ssh_config"),
+        ("ssh_config_utils.py", "ssh_config_effective", "resolve_ssh_config_files"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),

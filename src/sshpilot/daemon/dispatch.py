@@ -179,6 +179,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.set_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.has_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "connections.reveal_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -412,9 +413,15 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.delete",
         "connections.split",
         "connections.get_editor",
+        "connections.get_effective_config",
+        "connections.check_unsaved_host",
+        "connections.prepare_external_terminal_launch",
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
+        "daemon.set_operation_mode",
+        "daemon.get_operation_mode",
         "connections.store_password",
+        "connections.set_session_password",
         "connections.has_password",
         "connections.reveal_password",
         "connections.move",
@@ -657,6 +664,7 @@ class RequestDispatcher:
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
+            "connections.set_session_password": self._handle_set_session_connection_password,
             "connections.has_password": self._handle_has_connection_password,
             "connections.reveal_password": self._handle_reveal_connection_password,
             "connections.store_plugin_secret": self._handle_store_plugin_secret,
@@ -941,6 +949,9 @@ class RequestDispatcher:
                 operation_mode=self._operation_mode is not None,
                 broadcast=self._broadcast_service is not None,
                 plugin_settings=self._plugin_settings is not None,
+                external_launch=bool(
+                    getattr(self._connections, "supports_external_terminal_launch", False)
+                ),
             ),
             compatibility_status="compatible",
             server_instance_id=self.server_instance_id,
@@ -1301,16 +1312,71 @@ class RequestDispatcher:
     ) -> DeferredResult:
         if "connection_id" not in request.params:
             raise ValueError("connections.store_password requires connection_id")
-        if "password" not in request.params:
-            raise ValueError("connections.store_password requires password")
-        typed_request = store_connection_password_request_from_wire(request.params)
+        if "password" in request.params:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "Persistent passwords must use protected secret transport",
+            )
+        if self._command_input_waiter is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Protected password transport is unavailable",
+            )
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+
+        def _store() -> bool:
+            secret = self._command_input_waiter(request.request_id)
+            try:
+                try:
+                    password = bytes(secret).decode("utf-8")
+                except (UnicodeDecodeError, TypeError, ValueError) as error:
+                    raise SshPilotError(
+                        ErrorCode.INVALID_REQUEST,
+                        "The protected password is invalid",
+                    ) from error
+                params = dict(request.params)
+                params["password"] = password
+                typed_request = store_connection_password_request_from_wire(params)
+                return self._connections.store_daemon_password(
+                    typed_request.connection_id,
+                    typed_request.password,
+                    previous_hostname=typed_request.previous_hostname,
+                    previous_host=typed_request.previous_host,
+                    previous_username=typed_request.previous_username,
+                )
+            finally:
+                if isinstance(secret, bytearray):
+                    secret[:] = b"\0" * len(secret)
+                    secret.clear()
+
         return DeferredResult(
-            operation=lambda: self._connections.store_daemon_password(
-                typed_request.connection_id,
-                typed_request.password,
-                previous_hostname=typed_request.previous_hostname,
-                previous_host=typed_request.previous_host,
-                previous_username=typed_request.previous_username,
+            operation=_store,
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=ConnectionId(connection_id),
+        )
+
+    def _handle_set_session_connection_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import (
+            set_session_connection_password_request_from_wire,
+        )
+
+        typed_request = set_session_connection_password_request_from_wire(request.params)
+        if self._command_input_waiter is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Protected session credential transport is unavailable",
+            )
+        return DeferredResult(
+            operation=lambda: self._connections.set_session_connection_password_rpc(
+                typed_request,
+                self._command_input_waiter(request.request_id),
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
@@ -2964,6 +3030,9 @@ class RequestDispatcher:
                 operation_mode=self._operation_mode is not None,
                 broadcast=self._broadcast_service is not None,
                 plugin_settings=self._plugin_settings is not None,
+                external_launch=bool(
+                    getattr(self._connections, "supports_external_terminal_launch", False)
+                ),
             ),
             compatibility=CompatibilityResult(
                 compatible=True,
@@ -3002,6 +3071,7 @@ class RequestDispatcher:
         operation_mode: bool = False,
         broadcast: bool = False,
         plugin_settings: bool = False,
+        external_launch: bool = False,
     ) -> FrozenSet[Capability]:
         # Protocol v1 exposes connection CRUD/events and daemon session lifecycle.
         connection_capabilities = frozenset(
@@ -3152,6 +3222,10 @@ class RequestDispatcher:
         if plugin_settings:
             daemon_capabilities |= frozenset(
                 {Capability.PLUGIN_SETTINGS_READ, Capability.PLUGIN_SETTINGS_WRITE}
+            )
+        if external_launch:
+            daemon_capabilities |= frozenset(
+                {Capability.EXTERNAL_TERMINAL_LAUNCH}
             )
         return daemon_capabilities
 

@@ -15,6 +15,7 @@ from sshpilot.ssh_config_utils import (
     diff_effective_config,
     get_effective_ssh_config,
 )
+from sshpilot.core import ssh_config_effective
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ssh") is None, reason="ssh binary not available"
@@ -75,6 +76,14 @@ def test_clean_config_reports_no_diff():
     assert result is not None
     assert result["has_diff"] is False
     assert result["changes"] == []
+
+
+def test_option_like_alias_is_rejected_before_openSSH_execution(monkeypatch):
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("OpenSSH must not receive an option-like alias")
+
+    monkeypatch.setattr(ssh_config_effective.subprocess, "run", unexpected)
+    assert ssh_config_effective.get_effective_ssh_config("-G") == {}
 
 
 def _use_home(tmp_path, monkeypatch, config_text=None) -> None:

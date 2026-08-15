@@ -24,6 +24,7 @@ from .models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
@@ -249,6 +250,12 @@ class SshPilotClient(Protocol):
         ...
 
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
+        ...
+
+    def set_session_connection_password(
+        self, request: SetSessionConnectionPasswordRequest, password: bytearray
+    ) -> bool:
+        """Provide a daemon-memory-only credential through protected transport."""
         ...
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:

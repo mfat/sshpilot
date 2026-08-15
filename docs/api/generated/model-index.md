@@ -2507,7 +2507,7 @@ Synthetic representation:
 
 **Status:** Implemented
 **Introduced:** Protocol v1
-**Purpose:** Confirmed mode state or an explicit, non-destructive rejection.
+**Purpose:** Confirmed mode state or an explicit transition/recovery outcome.
 
 **Related methods:** `get_operation_mode`, `set_operation_mode`
 **Related events:** None
@@ -2521,6 +2521,9 @@ Synthetic representation:
 | `conflict` | `bool` | No | `false` | No |
 | `message` | `str` | No | `` | No |
 | `target_description` | `str` | No | `` | No |
+| `persisted_mode` | `Optional[OperationMode]` | No | `null` | No |
+| `rollback_completed` | `bool` | No | `true` | No |
+| `recovery_required` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -2531,6 +2534,9 @@ Synthetic representation:
   "conflict": false,
   "generation": {},
   "message": "",
+  "persisted_mode": null,
+  "recovery_required": false,
+  "rollback_completed": true,
   "seeded": false,
   "target_description": ""
 }
@@ -3453,6 +3459,28 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SetSessionConnectionPasswordRequest -->
+## `SetSessionConnectionPasswordRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Identify a daemon-memory-only password supplied in a protected frame.
+
+**Related methods:** `set_session_connection_password`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `ConnectionId` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": "production"
+}
+```
+
 <!-- api-model: SftpChmodRequest -->
 ## `SftpChmodRequest`
 
@@ -4312,6 +4340,9 @@ Synthetic representation:
 | `hostname` | `str` | Yes | — | No |
 | `username` | `str` | No | `` | No |
 | `connection_id` | `str | None` | No | `null` | No |
+| `port` | `int` | No | `22` | No |
+| `protocol` | `str` | No | `ssh` | No |
+| `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -4319,6 +4350,9 @@ Synthetic representation:
 {
   "connection_id": null,
   "hostname": "example.invalid",
+  "port": 22,
+  "protocol": "ssh",
+  "proxy_jump": [],
   "username": ""
 }
 ```

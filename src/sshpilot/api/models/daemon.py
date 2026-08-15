@@ -41,7 +41,7 @@ class SetOperationModeRequest:
 
 @dataclass(frozen=True)
 class OperationModeResult:
-    """Confirmed mode state or an explicit, non-destructive rejection."""
+    """Confirmed mode state or an explicit transition/recovery outcome."""
 
     accepted: bool
     active_mode: OperationMode
@@ -50,12 +50,23 @@ class OperationModeResult:
     conflict: bool = False
     message: str = ""
     target_description: str = ""
+    persisted_mode: Optional[OperationMode] = None
+    rollback_completed: bool = True
+    recovery_required: bool = False
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool or type(self.seeded) is not bool:
             raise TypeError("operation result flags must be booleans")
         if type(self.conflict) is not bool:
             raise TypeError("conflict must be a boolean")
+        if self.persisted_mode is not None and not isinstance(
+            self.persisted_mode, OperationMode
+        ):
+            raise TypeError("persisted_mode must be an OperationMode or None")
+        if type(self.rollback_completed) is not bool or type(self.recovery_required) is not bool:
+            raise TypeError("rollback and recovery flags must be booleans")
+        if self.recovery_required and self.rollback_completed:
+            raise ValueError("a recoverable result must report incomplete rollback")
         if not isinstance(self.active_mode, OperationMode):
             raise TypeError("active_mode must be an OperationMode")
         if type(self.generation) is not int or self.generation < 0:

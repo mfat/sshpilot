@@ -877,6 +877,29 @@ class DockerConsolePage(
 
         from ....window import show_ssh_password_dialog
 
+        persistent = {"stored": False, "failed": False}
+
+        def _store_if_consented(value: str) -> None:
+            try:
+                from ....api.models.connections import StoreConnectionPasswordRequest
+
+                stored = client.store_connection_password(
+                    StoreConnectionPasswordRequest(
+                        connection_id=details.id,
+                        password=value,
+                    )
+                )
+                if not stored:
+                    raise RuntimeError("daemon rejected persistent SSH password")
+            except Exception:
+                persistent["failed"] = True
+                logger.debug(
+                    "Docker Console persistent password storage failed",
+                    exc_info=True,
+                )
+                return
+            persistent["stored"] = True
+
         password = show_ssh_password_dialog(
             from_widget=self,
             display_name=getattr(details, "display_name", nickname),
@@ -885,19 +908,27 @@ class DockerConsolePage(
             heading=_("SSH password required"),
             body=_("“{name}” uses password authentication.\n\n"
                    "Enter the SSH login password to open Docker Console:").format(name=nickname),
-            allow_store=False,
+            allow_store=True,
+            on_store=_store_if_consented,
         )
         if not password:
             self._ssh_auth_blocked.add(nickname)
             return False
+        if persistent["failed"]:
+            self._ssh_auth_blocked.add(nickname)
+            return False
+        if persistent["stored"]:
+            self._ssh_auth_blocked.discard(nickname)
+            return True
         try:
-            from ....api.models.connections import StoreConnectionPasswordRequest
-            if not client.store_connection_password(
-                StoreConnectionPasswordRequest(connection_id=details.id, password=password)
+            from ....api.models.connections import SetSessionConnectionPasswordRequest
+            if not client.set_session_connection_password(
+                SetSessionConnectionPasswordRequest(connection_id=details.id),
+                bytearray(password.encode("utf-8")),
             ):
-                raise RuntimeError("daemon rejected the SSH password")
+                raise RuntimeError("daemon rejected the session SSH password")
         except Exception:
-            logger.debug("Docker Console daemon password storage failed", exc_info=True)
+            logger.debug("Docker Console daemon session password failed", exc_info=True)
             self._ssh_auth_blocked.add(nickname)
             return False
         self._ssh_auth_blocked.discard(nickname)

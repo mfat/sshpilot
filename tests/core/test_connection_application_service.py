@@ -443,6 +443,86 @@ def test_unsaved_host_check_uses_daemon_snapshot_identity():
     assert saved.generation == 0
 
 
+def test_unsaved_host_check_uses_daemon_resolved_identity_matrix(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    resolved = {
+        "prod": {"hostname": "EXAMPLE.COM", "user": "alice", "port": "2222", "proxyjump": "jump"},
+        "example.com": {"hostname": "example.com", "user": "alice", "port": "2222", "proxyjump": "jump"},
+        "other": {"hostname": "other.example", "user": "alice", "port": "2222", "proxyjump": "jump"},
+    }
+
+    def fake_effective(host, *_args, **kwargs):
+        value = dict(resolved.get(host.casefold(), {}))
+        if kwargs.get("user"):
+            value["user"] = kwargs["user"]
+        if kwargs.get("port") is not None:
+            value["port"] = str(kwargs["port"])
+        if kwargs.get("proxy_jump"):
+            value["proxyjump"] = kwargs["proxy_jump"]
+        return value
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
+    repo = FakeRepository(
+        [
+            _record(
+                record_id="prod-id",
+                hostname="example.com",
+                username="alice",
+                port=2222,
+                data={"proxy_jump": ["jump"]},
+            ),
+            _record(
+                record_id="serial-id",
+                hostname="example.com",
+                username="alice",
+                protocol="serial",
+            ),
+        ]
+    )
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(
+            hostname="example.com", username="alice", port=2222, proxy_jump=("jump",)
+        )
+    ).saved is True
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(
+            hostname="EXAMPLE.COM", username="alice", port=2223, proxy_jump=("jump",)
+        )
+    ).saved is False
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(
+            hostname="other", username="alice", port=2222, proxy_jump=("jump",)
+        )
+    ).saved is False
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="example.com", username="alice", protocol="serial")
+    ).saved is False
+
+
+def test_unsaved_host_empty_user_uses_daemon_effective_login(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    monkeypatch.setattr(
+        ssh_config_effective,
+        "get_effective_ssh_config",
+        lambda host, *_args, **_kwargs: {
+            "hostname": "host.example",
+            "user": "local-user",
+            "port": "22",
+            "proxyjump": "none",
+        },
+    )
+    repo = FakeRepository([_record(hostname="host.example", username="local-user")])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="host.example", username="")
+    ).saved is True
+
+
 def test_display_name_update_is_additive_and_keeps_alias_id():
     repo = FakeRepository([_record()])
     service = ConnectionApplicationService(repo, client_name="test")

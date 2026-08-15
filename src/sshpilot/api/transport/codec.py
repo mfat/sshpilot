@@ -106,6 +106,7 @@ from ..models.connections import (
     SplitConnectionRequest,
     SshConfigText,
     StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
     StoreKeyPassphraseRequest,
     UNSET,
@@ -1999,7 +2000,13 @@ def unsaved_host_check_request_to_wire(
 ) -> Dict[str, Any]:
     if not isinstance(value, UnsavedHostCheckRequest):
         raise TypeError("value must be an UnsavedHostCheckRequest")
-    result = {"hostname": value.hostname, "username": value.username}
+    result = {
+        "hostname": value.hostname,
+        "username": value.username,
+        "port": value.port,
+        "protocol": value.protocol,
+        "proxy_jump": list(value.proxy_jump),
+    }
     if value.connection_id is not None:
         result["connection_id"] = value.connection_id
     return result
@@ -2009,13 +2016,16 @@ def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
     data = _strict_fields(
         value,
         required={"hostname", "username"},
-        optional={"connection_id"},
+        optional={"connection_id", "port", "protocol", "proxy_jump"},
         context="unsaved host check request",
     )
     return UnsavedHostCheckRequest(
         hostname=data["hostname"],
         username=data["username"],
         connection_id=data.get("connection_id"),
+        port=data.get("port", 22),
+        protocol=data.get("protocol", "ssh"),
+        proxy_jump=tuple(data.get("proxy_jump", ())),
     )
 
 
@@ -2491,6 +2501,27 @@ def store_connection_password_request_from_wire(
             "previous username",
             allow_empty=True,
         ),
+    )
+
+
+def set_session_connection_password_request_to_wire(
+    request: SetSessionConnectionPasswordRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetSessionConnectionPasswordRequest:
+        raise TypeError("session connection password request is required")
+    return {"connection_id": request.connection_id}
+
+
+def set_session_connection_password_request_from_wire(
+    value: Any,
+) -> SetSessionConnectionPasswordRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id"},
+        context="session connection password request",
+    )
+    return SetSessionConnectionPasswordRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id"))
     )
 
 
@@ -5083,6 +5114,9 @@ def operation_mode_result_to_wire(result: OperationModeResult) -> Dict[str, Any]
         "conflict": result.conflict,
         "message": result.message,
         "target_description": result.target_description,
+        "persisted_mode": result.persisted_mode.value if result.persisted_mode else None,
+        "rollback_completed": result.rollback_completed,
+        "recovery_required": result.recovery_required,
     }
 
 
@@ -5090,13 +5124,23 @@ def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
     data = _strict_fields(
         value,
         required={"accepted", "active_mode", "generation", "seeded", "conflict", "message", "target_description"},
-        optional=set(),
+        optional={"persisted_mode", "rollback_completed", "recovery_required"},
         context="operation mode result",
     )
     try:
         mode = OperationMode(data["active_mode"])
     except (TypeError, ValueError):
         raise ValueError("operation mode result contains an unknown mode") from None
+    persisted_raw = data.get("persisted_mode")
+    if persisted_raw is None:
+        persisted_mode = None
+    else:
+        try:
+            persisted_mode = OperationMode(persisted_raw)
+        except (TypeError, ValueError):
+            raise ValueError("operation mode result contains an unknown persisted mode") from None
+    rollback_completed = data.get("rollback_completed", True)
+    recovery_required = data.get("recovery_required", False)
     return OperationModeResult(
         accepted=_boolean(data["accepted"], "accepted"),
         active_mode=mode,
@@ -5105,6 +5149,9 @@ def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
         conflict=_boolean(data["conflict"], "conflict"),
         message=_text(data["message"], "message"),
         target_description=_text(data["target_description"], "target description"),
+        persisted_mode=persisted_mode,
+        rollback_completed=_boolean(rollback_completed, "rollback_completed"),
+        recovery_required=_boolean(recovery_required, "recovery_required"),
     )
 
 

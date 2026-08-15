@@ -219,7 +219,7 @@ class HeadlessConnectionView:
             host_label = self.resolve_host_identifier() or self.get_effective_host()
             if host_label:
                 try:
-                    from ..ssh_config_utils import get_effective_ssh_config
+                    from ..core.ssh_config_effective import get_effective_ssh_config
 
                     config_override = self._resolve_config_override_path()
                     if config_override:
@@ -717,7 +717,7 @@ class DaemonConnectionLaunchProvider:
             )
         config_file = connection._resolve_config_override_path()
         app_cfg = self._get_app_config()
-        from ..ssh_config_utils import get_effective_ssh_config
+        from ..core.ssh_config_effective import get_effective_ssh_config
         from ..ssh_connection_builder import (
             _build_base_ssh_command,
             resolve_native_auth,

@@ -104,7 +104,8 @@ from .platform_utils import (
     find_any_terminal,
     open_system_terminal,
 )
-from .plugins.api import Capability
+from .plugins.api import Capability as PluginCapability
+from .api.capabilities import Capability as ApiCapability
 from .plugins.registry import capabilities_for
 logger = logging.getLogger(__name__)
 
@@ -449,7 +450,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager.set_mutation_controller(self._group_mutation_controller)
         self.connection_runtime_status.attach_client(self.client)
         self.plugin_connection_services.attach_client(self.client)
-        self.key_manager = KeyManager(self.client, self._key_scope)
+        # Key operations stay unavailable until the daemon confirms its
+        # semantic mode; never construct a DEFAULT manager during a delayed
+        # isolated-mode status response.
+        self.key_manager = (
+            KeyManager(self.client, self._key_scope)
+            if self._confirmed_operation_mode is not None
+            else None
+        )
         checker = getattr(self, "effective_config_checker", None)
         if checker is not None:
             checker.invalidate()
@@ -465,32 +473,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         try:
             capabilities = client.get_capabilities()
-            if not capabilities.supports(Capability.OPERATION_MODE):
+            if not capabilities.supports(ApiCapability.OPERATION_MODE):
                 return
         except Exception:
             logger.debug("Operation-mode capability is not available", exc_info=True)
             return
 
         def _apply(result) -> None:
-            self._confirmed_operation_mode = result.active_mode
-            scope = (
-                KeyStoreScope.ISOLATED
-                if result.active_mode is OperationMode.ISOLATED
-                else KeyStoreScope.DEFAULT
-            )
-            self._key_scope = scope
-            if self.client is not None:
-                self.key_manager = KeyManager(self.client, scope)
-            requested = self._requested_operation_mode
+            self._apply_confirmed_operation_mode(result.active_mode)
+            requested = getattr(self, "_requested_operation_mode", None)
             if requested is not None and result.active_mode is not requested:
                 bridge.submit(
                     lambda: client.set_operation_mode(
                         SetOperationModeRequest(mode=requested)
                     ),
                     on_success=self._on_startup_operation_mode_result,
-                    on_error=lambda error: self._show_daemon_unavailable_dialog(
-                        error
-                    ),
+                    on_error=self._on_startup_operation_mode_error,
                 )
 
         try:
@@ -502,14 +500,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_startup_operation_mode_result(self, result) -> None:
         if not result.accepted:
             logger.warning("Daemon rejected startup operation mode: %s", result.message)
+            if getattr(result, "recovery_required", False):
+                self._show_operation_mode_recovery(result.message)
             return
         self._requested_operation_mode = None
-        self._confirmed_operation_mode = result.active_mode
+        self._apply_confirmed_operation_mode(result.active_mode)
+
+    def _on_startup_operation_mode_error(self, error) -> None:
+        """Report a failed startup mode request without losing its detail."""
+        self._show_daemon_unavailable_dialog(error)
+
+    def _apply_confirmed_operation_mode(self, mode: OperationMode) -> None:
+        """Project one daemon-confirmed mode into all GTK-owned state."""
+        if not isinstance(mode, OperationMode):
+            raise TypeError("mode must be an OperationMode")
+        self._confirmed_operation_mode = mode
         self._key_scope = (
             KeyStoreScope.ISOLATED
-            if result.active_mode is OperationMode.ISOLATED
+            if mode is OperationMode.ISOLATED
             else KeyStoreScope.DEFAULT
         )
+        config_data = getattr(getattr(self, "config", None), "config_data", None)
+        if isinstance(config_data, dict):
+            ssh = config_data.setdefault("ssh", {})
+            if isinstance(ssh, dict):
+                ssh["use_isolated_config"] = mode is OperationMode.ISOLATED
         if self.client is not None:
             self.key_manager = KeyManager(self.client, self._key_scope)
 
@@ -527,9 +542,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             capabilities = client.get_capabilities()
         except Exception:
             return None
-        from sshpilot.api.capabilities import Capability
-
-        if not capabilities.supports(Capability.SECRETS_READ):
+        if not capabilities.supports(ApiCapability.SECRETS_READ):
             return None
         from .gtk.secret_backends_controller import SecretBackendsController
 
@@ -679,7 +692,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             if not self.config.get_setting("terminal.daemon_restore_sessions", True):
                 return
-            if self.client_bridge is None or not hasattr(self.client, "list_sessions"):
+            if self.client_bridge is None or self.client is None:
+                return
+            try:
+                if not self.client.get_capabilities().supports(ApiCapability.SESSIONS_READ):
+                    return
+            except Exception:
                 return
             from .daemon_session_restore import DaemonSessionRestoreManager
 
@@ -898,9 +916,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             capabilities = client.get_capabilities()
         except Exception:
             return None
-        from sshpilot.api.capabilities import Capability
-
-        if not capabilities.supports(Capability.SSH_OVERRIDES_READ):
+        if not capabilities.supports(ApiCapability.SSH_OVERRIDES_READ):
             return None
         from .gtk.ssh_overrides_controller import SshOverridesController
         return SshOverridesController(client)
@@ -1076,7 +1092,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Show live daemon sessions management dialog."""
         del action, param
         try:
-            if not hasattr(self.client, "list_sessions"):
+            try:
+                supports_sessions = self.client is not None and self.client.get_capabilities().supports(
+                    ApiCapability.SESSIONS_READ
+                )
+            except Exception:
+                supports_sessions = False
+            if not supports_sessions:
                 dialog = Adw.AlertDialog.new(
                     _("Daemon Sessions Unavailable"),
                     _(
@@ -4552,7 +4574,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             from .ssh_config_editor_service import DaemonSshConfigTextService
 
             client = getattr(self, 'client', None)
-            if client is None or not hasattr(client, 'get_ssh_config_text'):
+            try:
+                supports_config = client is not None and client.get_capabilities().supports(
+                    ApiCapability.CONNECTIONS_CONFIG_READ
+                )
+            except Exception:
+                supports_config = False
+            if not supports_config:
                 self.show_toast(_(
                     "SSH config editing requires the background service. "
                     "Start it and try again."
@@ -4631,10 +4659,40 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
 
-    def _show_daemon_unavailable_dialog(self) -> None:
+    def _show_daemon_unavailable_dialog(self, detail=None) -> None:
+        detail_text = getattr(detail, "message", None) if detail is not None else None
+        if not detail_text and detail is not None:
+            detail_text = str(detail)
         self._error_dialog(
             _("Daemon unavailable"),
             _("Connect to the sshPilot daemon and retry this operation."),
+            detail=detail_text or "",
+        )
+
+    def _show_operation_mode_rejection(self, detail=None) -> None:
+        """Explain a daemon-confirmed rejection without calling it unavailable."""
+        detail_text = getattr(detail, "message", None) if detail is not None else None
+        if not detail_text and detail is not None:
+            detail_text = str(detail)
+        self._error_dialog(
+            _("Operation mode change rejected"),
+            _("SSH Pilot could not change the active SSH configuration scope."),
+            detail=detail_text or "The daemon kept the confirmed active mode.",
+        )
+
+    def _show_operation_mode_recovery(self, detail=None) -> None:
+        """Explain a mode transaction that needs restart/manual recovery."""
+        detail_text = getattr(detail, "message", None) if detail is not None else None
+        if not detail_text and detail is not None:
+            detail_text = str(detail)
+        self._error_dialog(
+            _("Operation mode recovery required"),
+            _(
+                "The daemon could not restore a consistent SSH configuration mode. "
+                "Do not start new operations until the daemon is restarted or the "
+                "reported state is repaired."
+            ),
+            detail=detail_text or "",
         )
 
     def _info_dialog(self, heading: str, body: str):
@@ -4872,7 +4930,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 logger.error(f"Failed to show error dialog: {e}")
             return
         connection = selected_row.connection
-        if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+        if PluginCapability.KEY_DEPLOYMENT not in capabilities_for(connection):
             logger.debug("ssh-copy-id unavailable: protocol %r has no key deployment",
                          getattr(connection, 'protocol', 'ssh'))
             return
@@ -5000,15 +5058,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.edit_button.set_sensitive(not multiple_connections)
             if hasattr(self, 'copy_key_button'):
                 self.copy_key_button.set_sensitive(
-                    not multiple_connections and Capability.KEY_DEPLOYMENT in caps
+                    not multiple_connections and PluginCapability.KEY_DEPLOYMENT in caps
                 )
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(
-                    not multiple_connections and Capability.FILE_TRANSFER in caps
+                    not multiple_connections and PluginCapability.FILE_TRANSFER in caps
                 )
             self.manage_files_button.set_sensitive(
                 not multiple_connections
-                and Capability.FILE_TRANSFER in caps
+                and PluginCapability.FILE_TRANSFER in caps
                 and not should_hide_file_manager_options()
             )
             self.manage_files_button.set_visible(not should_hide_file_manager_options())
@@ -6084,7 +6142,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         connection = getattr(self, "_context_menu_connection", None)
         if connection is None:
             return
-        if Capability.KEY_DEPLOYMENT not in capabilities_for(connection):
+        if PluginCapability.KEY_DEPLOYMENT not in capabilities_for(connection):
             return
         dialogs = None
         try:
@@ -6190,9 +6248,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Only target connections whose protocol can run remote commands.
         connections = [
             c for c in connections
-            if Capability.REMOTE_COMMAND in capabilities_for(c)
+            if PluginCapability.REMOTE_COMMAND in capabilities_for(c)
         ]
-        if connection is not None and Capability.REMOTE_COMMAND not in capabilities_for(connection):
+        if connection is not None and PluginCapability.REMOTE_COMMAND not in capabilities_for(connection):
             connection = None
 
         if len(connections) > 1:
@@ -6355,6 +6413,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._show_daemon_unavailable_dialog()
             return
         try:
+            if not client.get_capabilities().supports(
+                ApiCapability.EXTERNAL_TERMINAL_LAUNCH
+            ):
+                self._error_dialog(
+                    _("External terminal unavailable"),
+                    _("This daemon cannot prepare an external SSH launch."),
+                )
+                return
             bridge.submit(
                 lambda: client.prepare_external_terminal_launch(
                     connection_id_for(connection)
@@ -6382,8 +6448,58 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._show_terminal_error_dialog()
 
     def _on_external_terminal_launch_error(self, error) -> None:
-        logger.error("Daemon could not prepare external terminal launch: %s", error)
-        self._show_daemon_unavailable_dialog()
+        from .api import ErrorCode, SshPilotError
+
+        code = getattr(error, "code", None)
+        if code is ErrorCode.UNSUPPORTED_CAPABILITY:
+            self._error_dialog(
+                _("External terminal unavailable"),
+                _("This daemon cannot prepare an external SSH launch."),
+            )
+        elif code is ErrorCode.CONNECTION_NOT_FOUND:
+            self._error_dialog(
+                _("Connection unavailable"),
+                _("The selected connection no longer exists in the daemon."),
+            )
+        elif isinstance(error, SshPilotError) and code in {
+            ErrorCode.DAEMON_UNAVAILABLE,
+            ErrorCode.TRANSPORT_CLOSED,
+            ErrorCode.TRANSPORT_TIMEOUT,
+        }:
+            self._show_daemon_unavailable_dialog(error)
+        else:
+            logger.error(
+                "Daemon could not prepare external terminal launch: %s",
+                type(error).__name__,
+            )
+            self._error_dialog(
+                _("External terminal unavailable"),
+                _("The daemon could not prepare this SSH launch."),
+            )
+
+    def _on_effective_config_error(self, error) -> None:
+        """Handle effective-config failures without using terminal-launch UI."""
+        from .api import ErrorCode, SshPilotError
+
+        code = getattr(error, "code", None)
+        if code is ErrorCode.CONNECTION_NOT_FOUND:
+            heading = _("Connection unavailable")
+            body = _("The selected connection no longer exists in the daemon.")
+        elif code is ErrorCode.UNSUPPORTED_CAPABILITY:
+            heading = _("Effective configuration unavailable")
+            body = _("This daemon does not provide effective SSH configuration comparison.")
+        elif isinstance(error, SshPilotError) and code in {
+            ErrorCode.DAEMON_UNAVAILABLE,
+            ErrorCode.TRANSPORT_CLOSED,
+            ErrorCode.TRANSPORT_TIMEOUT,
+        }:
+            self._show_daemon_unavailable_dialog(error)
+            return
+        else:
+            heading = _("Effective configuration unavailable")
+            body = _("SSH Pilot could not resolve or compare the effective SSH configuration.")
+        logger.warning("Effective-config comparison unavailable code=%s", getattr(code, "value", code))
+        self._error_dialog(heading, body)
 
     def _show_terminal_error_dialog(self):
         """Show error dialog when no terminal is found"""
@@ -7237,14 +7353,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.client_bridge.submit(
                 lambda: self.client.get_effective_config(connection_id_for(connection)),
                 on_success=lambda result: self._present_effective_config_dialog(host, result),
-                on_error=lambda error: self._on_external_terminal_launch_error(error),
+                on_error=self._on_effective_config_error,
             )
         except Exception as error:
-            self._on_external_terminal_launch_error(error)
+            self._on_effective_config_error(error)
 
     def _present_effective_config_dialog(self, host, result) -> None:
         if not result.available:
-            self._show_daemon_unavailable_dialog()
+            logger.info("Effective-config comparison unavailable for %s", host)
+            self._error_dialog(
+                _("Effective configuration unavailable"),
+                _("The daemon could not resolve or compare this connection's effective SSH configuration."),
+            )
             return
         try:
             from .effective_config_dialog import EffectiveConfigDialog

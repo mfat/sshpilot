@@ -155,6 +155,7 @@ IMPLEMENTED_MODELS = {
     "StopDaemonRequest",
     "RestartDaemonRequest",
     "StoreConnectionPasswordRequest",
+    "SetSessionConnectionPasswordRequest",
     "StoreKeyPassphraseRequest",
     "StorePluginSecretRequest",
     "VerifyKeyPassphraseRequest",

@@ -5,10 +5,50 @@ notes remain separate.
 
 ## Unreleased
 
-- Bumped `API_IMPLEMENTATION_VERSION` to `0.37` after adding the daemon-only
-  client method contract for operation-mode transitions.
-- Bumped `API_IMPLEMENTATION_VERSION` to `0.38` for the daemon-owned
-  `daemon.get_operation_mode` status operation used by restore safety UI.
+No unreleased API surface is currently recorded.
+
+## API 0.39 (current)
+
+### API 0.39 daemon-only retirement repair
+
+- Added protected daemon-session password input for Docker Console's explicit
+  “use once” flow. It is held only in daemon memory; persistent password
+  storage remains a separate explicit operation.
+- Extended operation-mode results with persisted-mode, rollback-complete, and
+  recovery-required state so failed rollback cannot be reported as an ordinary
+  rejection.
+- Extended unsaved-host checks with semantic protocol, port, and ProxyJump
+  inputs. Identity compares daemon-resolved host, case-insensitive hostname,
+  case-sensitive user, effective port, and effective ProxyJump; an internal
+  connection ID is still authoritative when present. Empty users resolve to
+  the local OpenSSH login. Non-SSH destinations do not match by host fields.
+- Rejects new or renamed SSH Host aliases beginning with `-`; imported invalid
+  aliases are treated as unavailable and are never passed to OpenSSH as an
+  option.
+
+- Removed a duplicate `AddTagToConnectionsRequest` export while retaining the
+  same symbol and wire contract.
+
+- Advertised `terminal.external_launch` only when the daemon launch provider
+  implements the typed external-terminal preparation operation.
+- Kept `PROTOCOL_VERSION` at `1.0`; this release records additive typed API
+  and retirement repairs rather than a wire-breaking change.
+
+## Historical API entries
+
+The entries below record superseded implementation stages. They are not
+current production instructions; the current daemon-only contract is above.
+
+### API 0.38
+
+- Added the daemon-owned `daemon.get_operation_mode` status operation used by
+  restore-safety UI.
+
+### API 0.37
+
+- Added the daemon-only client method contract for operation-mode transitions.
+
+### API 0.36
 
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.36`; `PROTOCOL_VERSION` stays
   `1.0`. Added daemon-owned `daemon.set_operation_mode`, with semantic
@@ -704,12 +744,3 @@ interactive insertion continues to honor the `insert_only` preference.
 - SFTP, forwarding, plugin, or secret client operations
 - Remote access, TCP/WebSocket transport, named pipes, and terminal/session
   event transport
-## 0.32
-
-- Added the optional `display_name` presentation field to connection summaries
-  and mutation results. SSH connection IDs remain their OpenSSH aliases; this
-  additive field does not expose the internal UUID identity.
-# API 0.39 — 2026-08-15
-
-- Exported the daemon-owned operation-mode DTOs from the public model package;
-  Protocol v1 remains compatible.

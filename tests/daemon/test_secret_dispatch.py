@@ -255,6 +255,31 @@ def test_configuration_get_returns_deferred_result():
     assert wire["revision"] == "abc123"
 
 
+def test_persistent_connection_password_requires_protected_secret_frame():
+    connections = mock.Mock()
+    connections.store_daemon_password.return_value = True
+    secret = bytearray(b"protected-password")
+    dispatcher = RequestDispatcher(
+        ConnectionApplicationService(mock.Mock(), client_name="test"),
+        command_input_waiter=lambda _request_id: secret,
+    )
+    dispatcher._connections.store_daemon_password = connections.store_daemon_password
+
+    result = dispatcher.dispatch(
+        _envelope(
+            "connections.store_password",
+            {"connection_id": "saved"},
+        ),
+        _state(),
+    )
+
+    assert isinstance(result, DeferredResult)
+    assert result.operation() is True
+    connections.store_daemon_password.assert_called_once()
+    assert connections.store_daemon_password.call_args.args[1] == "protected-password"
+    assert secret == bytearray()
+
+
 def test_configuration_update_requires_request_params():
     dispatcher, service = _dispatcher()
     with pytest.raises(SshPilotError) as excinfo:

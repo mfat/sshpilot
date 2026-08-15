@@ -90,6 +90,33 @@ def test_lookup_connection_password_roundtrip(provider):
     assert prov.lookup_connection_password("web") == "hunter2"
 
 
+def test_session_password_is_memory_only_and_clears_input(provider):
+    prov, manager, _records = provider
+    secret = bytearray(b"use-once")
+
+    assert prov.set_session_connection_password("web", secret) is True
+    assert secret == bytearray()
+    assert prov.lookup_connection_password("web") == "use-once"
+    assert manager.stored == []
+    assert "use-once" not in repr(prov)
+    assert "use-once" not in repr(manager)
+
+
+def test_session_password_does_not_replace_explicit_persistent_store(provider):
+    prov, manager, _records = provider
+    assert prov.set_session_connection_password("web", bytearray(b"temporary")) is True
+    assert prov.store_connection_password("web", "persistent") is True
+    assert prov.lookup_connection_password("web") == "temporary"
+    assert manager.lookup(password_spec("example.com", "alice")) == "persistent"
+
+
+def test_session_password_invalid_or_cancelled_input_stores_nothing(provider):
+    prov, manager, _records = provider
+    assert prov.set_session_connection_password("web", bytearray()) is False
+    assert prov.set_session_connection_password("web", bytearray(b"bad\x00value")) is False
+    assert manager.stored == []
+
+
 def test_store_cleans_previous_host(provider):
     prov, manager, records = provider
     records["web"] = _record(hostname="new.example.com")

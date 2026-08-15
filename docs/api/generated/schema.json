@@ -457,6 +457,10 @@
       "capability": "plugins.settings.write",
       "status": "daemon-only"
     },
+    "set_session_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
+    },
     "sftp_chmod": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
@@ -690,6 +694,9 @@
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
+    },
+    "connections.set_session_password": {
+      "capability": "connections.secrets.write"
     },
     "connections.snapshot": {
       "capability": "connections.read"
@@ -4717,6 +4724,27 @@
           "required": false,
           "sensitive": false,
           "type": "str"
+        },
+        {
+          "default": null,
+          "name": "persisted_mode",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[OperationMode]"
+        },
+        {
+          "default": true,
+          "name": "rollback_completed",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "recovery_required",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -5738,6 +5766,18 @@
           "required": false,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetSessionConnectionPasswordRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "ConnectionId"
         }
       ],
       "status": "Implemented"
@@ -6842,6 +6882,27 @@
           "required": false,
           "sensitive": false,
           "type": "str | None"
+        },
+        {
+          "default": 22,
+          "name": "port",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": "ssh",
+          "name": "protocol",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "proxy_jump",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
         }
       ],
       "status": "Implemented"
