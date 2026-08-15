@@ -2,6 +2,7 @@ import logging
 from types import SimpleNamespace
 
 from sshpilot.api import ErrorCode, SshPilotError
+from sshpilot.api.connection_identity import connection_id_for
 from sshpilot.window import MainWindow
 
 
@@ -55,9 +56,19 @@ class _Client:
 class _Manager:
     def __init__(self):
         self.reloads = 0
+        self.connections = {}
+        self._defaults = {}
 
     def refresh(self):
         self.reloads += 1
+
+    def get_connection_by_id(self, connection_id):
+        key = str(connection_id)
+        if key in self.connections:
+            return self.connections[key]
+        if key not in self._defaults:
+            self._defaults[key] = _ActiveConn(id=key, connection_id=key, nickname=key)
+        return self._defaults[key]
 
 
 class _ProjectionGroupManager:
@@ -81,6 +92,7 @@ class _ProjectionWindow:
 
 class _MutationWindow:
     _daemon_mode_active = MainWindow._daemon_mode_active
+    _rebind_terminals_after_save = MainWindow._rebind_terminals_after_save
     _offer_reconnect_after_edit_save = MainWindow._offer_reconnect_after_edit_save
     _normalise_daemon_editor_value = staticmethod(
         MainWindow._normalise_daemon_editor_value
@@ -103,6 +115,9 @@ class _MutationWindow:
         self.rebuilds = 0
         self.disconnected = []
         self.errors = []
+        self.active_terminals = {}
+        self.terminal_to_connection = {}
+        self.connection_to_terminals = {}
         self.config = SimpleNamespace(get_connection_meta=lambda _name: {})
         mode = SimpleNamespace(value="daemon")
         self._app = SimpleNamespace(
@@ -161,9 +176,15 @@ class _ActiveConn:
             setattr(self, name, kwargs.get(name))
 
 
+class _TerminalStub:
+    def __init__(self, **kwargs):
+        for name, value in kwargs.items():
+            setattr(self, name, value)
+
+
 def _active_daemon_terminal():
     active = _ActiveConn(id="demo", nickname="demo")
-    terminal = SimpleNamespace(is_connected=True)
+    terminal = _TerminalStub(is_connected=True)
     return active, terminal
 
 
@@ -172,7 +193,9 @@ def test_noop_daemon_save_with_active_terminal_prompts_reconnect():
 
     Issue #1160: the prompt is offered on any successful save of an existing
     connection with an open terminal — change detection must not suppress it.
-    The no-op must also keep its local no-RPC completion behavior.
+    The no-op must also keep its local no-RPC completion behavior.  The prompt
+    carries the authoritative post-save summary, and the terminal state is
+    re-keyed to it.
     """
     window = _MutationWindow()
     active, terminal = _active_daemon_terminal()
@@ -194,7 +217,10 @@ def test_noop_daemon_save_with_active_terminal_prompts_reconnect():
     assert completed == [True]
     assert window.client_bridge.calls == []
     assert window.client.updated == []
-    assert prompts == [active]
+    expected = window.connection_manager.get_connection_by_id("demo")
+    assert prompts == [expected]
+    assert window.active_terminals == {expected: terminal}
+    assert terminal.connection is expected
 
 
 def test_daemon_reconnect_matches_authoritative_connection_id():
@@ -204,13 +230,19 @@ def test_daemon_reconnect_matches_authoritative_connection_id():
         nickname = "renamed"
 
     active = _ActiveConnection()
-    terminal = SimpleNamespace(is_connected=True)
+    terminal = _TerminalStub(is_connected=True)
     prompts, terminal_manager = _prompt_collector()
     window.active_terminals = {active: terminal}
     window.terminal_manager = terminal_manager
     dialog = _edit_dialog()
-    window._offer_reconnect_after_edit_save(dialog, "demo", "new-name")
-    assert prompts == [active]
+    resolved = window._rebind_terminals_after_save(dialog, "demo", "new-name")
+    window._offer_reconnect_after_edit_save(dialog, resolved)
+    assert prompts == [resolved]
+    # The prompted connection is the authoritative post-save summary, and the
+    # terminal was re-keyed to it.
+    assert resolved is not active
+    assert window.active_terminals == {resolved: terminal}
+    assert terminal.connection is resolved
 
 
 def test_no_active_terminal_does_not_prompt():
@@ -220,7 +252,8 @@ def test_no_active_terminal_does_not_prompt():
     window.active_terminals = {}
     window.terminal_manager = terminal_manager
     dialog = _edit_dialog()
-    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
+    resolved = window._rebind_terminals_after_save(dialog, "demo", "demo")
+    window._offer_reconnect_after_edit_save(dialog, resolved)
     assert prompts == []
 
 
@@ -233,15 +266,17 @@ def test_reconnect_offer_is_idempotent_per_save_operation():
     window.terminal_manager = terminal_manager
     dialog = _edit_dialog()
 
-    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
-    assert prompts == [active]
-    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
-    assert prompts == [active]
+    first = window._rebind_terminals_after_save(dialog, "demo", "demo")
+    window._offer_reconnect_after_edit_save(dialog, first)
+    assert prompts == [first]
+    window._offer_reconnect_after_edit_save(dialog, first)
+    assert prompts == [first]
 
     # A brand-new save operation (fresh dialog) may offer again.
     fresh = _edit_dialog()
-    window._offer_reconnect_after_edit_save(fresh, "demo", "demo")
-    assert prompts == [active, active]
+    second = window._rebind_terminals_after_save(fresh, "demo", "demo")
+    window._offer_reconnect_after_edit_save(fresh, second)
+    assert prompts == [first, second]
 
 
 def test_daemon_changed_edit_with_active_terminal_prompts_once():
@@ -267,7 +302,10 @@ def test_daemon_changed_edit_with_active_terminal_prompts_once():
 
     assert completed == [True]
     assert window.client.updated[0][0] == "demo"
-    assert prompts == [active]
+    expected = window.connection_manager.get_connection_by_id("demo")
+    assert prompts == [expected]
+    assert window.active_terminals == {expected: terminal}
+    assert terminal.connection is expected
 
 
 def test_daemon_display_name_only_edit_with_active_terminal_prompts_once():
@@ -293,7 +331,10 @@ def test_daemon_display_name_only_edit_with_active_terminal_prompts_once():
     success(SimpleNamespace(connection_id="demo", generation=8, nickname="demo"))
 
     assert completed == [True]
-    assert prompts == [active]
+    expected = window.connection_manager.get_connection_by_id("demo")
+    assert prompts == [expected]
+    assert window.active_terminals == {expected: terminal}
+    assert terminal.connection is expected
 
 
 def test_successful_daemon_edit_without_active_terminal_does_not_prompt():
@@ -381,15 +422,18 @@ def test_retried_partial_daemon_edit_prompts_only_once():
     metadata_ok(True)
 
     assert completed == [False, True]
-    assert prompts == [active]
+    expected = window.connection_manager.get_connection_by_id("demo")
+    assert prompts == [expected]
+    assert window.active_terminals == {expected: terminal}
 
 
 def test_daemon_rename_prompts_terminal_opened_with_original_nickname():
     """Renaming the ssh alias still offers reconnect for the open terminal.
 
     The daemon returns the post-rename identity while the terminal's
-    connection still carries the pre-rename nickname; the match must use the
-    identity the dialog was opened with.
+    connection still carries the pre-rename nickname; the save flow re-keys
+    the terminal to the authoritative post-save summary, so the prompt (and
+    the later reconnect) use the exact alias the daemon holds.
     """
     window = _MutationWindow()
     active, terminal = _active_daemon_terminal()
@@ -412,35 +456,51 @@ def test_daemon_rename_prompts_terminal_opened_with_original_nickname():
     success(SimpleNamespace(connection_id="renamed", generation=8, nickname="renamed"))
 
     assert completed == [True]
-    assert prompts == [active]
-    # The reconnect must reopen the session under the alias the daemon has.
-    assert terminal._reconnect_connection_id == "renamed"
+    renamed = window.connection_manager.get_connection_by_id("renamed")
+    assert prompts == [renamed]
+    # The terminal was re-keyed to the post-rename identity the daemon has.
+    assert window.active_terminals == {renamed: terminal}
+    assert terminal.connection is renamed
+    assert connection_id_for(renamed) == "renamed"
 
 
-def test_reconnect_offer_matches_terminal_via_stashed_identity():
-    """A second rename still finds the terminal after a previous rename.
-
-    The dialog edits the fresh post-rename projection while the terminal's
-    connection still carries the original alias; only the stashed post-save
-    identity bridges them.
-    """
+def test_second_rename_finds_terminal_rekeyed_by_first_save():
+    """A second rename still finds the terminal: the first save re-keyed it
+    to the fresh projection, so the pre-save identity of the second dialog
+    matches directly — no per-terminal stash is needed."""
     window = _MutationWindow()
-    active, terminal = _active_daemon_terminal()
-    terminal._reconnect_connection_id = "renamed"
+    active = _ActiveConn(id="old", nickname="old")
+    terminal = _TerminalStub(is_connected=True)
     prompts, terminal_manager = _prompt_collector()
     window.active_terminals = {active: terminal}
     window.terminal_manager = terminal_manager
+
+    # First rename: old -> renamed.
     dialog = _edit_dialog()
+    dialog.connection = _ActiveConn(id="old", nickname="old")
+    renamed = window._rebind_terminals_after_save(dialog, "renamed", "renamed")
+    assert window.active_terminals == {renamed: terminal}
+    assert terminal.connection is renamed
+    assert prompts == []
+
+    # Second rename: renamed -> renamed-again, editing the fresh projection.
     dialog.connection = _ActiveConn(id="renamed", nickname="renamed")
+    renamed_again = window._rebind_terminals_after_save(
+        dialog, "renamed-again", "renamed-again"
+    )
+    window._offer_reconnect_after_edit_save(dialog, renamed_again)
+    assert prompts == [renamed_again]
+    assert window.active_terminals == {renamed_again: terminal}
+    assert terminal.connection is renamed_again
 
-    window._offer_reconnect_after_edit_save(dialog, "renamed-again", "renamed-again")
 
-    assert prompts == [active]
-    assert terminal._reconnect_connection_id == "renamed-again"
+def test_reconnect_terminal_uses_canonical_connection_id(monkeypatch):
+    """The replacement session opens under the canonical connection id.
 
-
-def test_reconnect_terminal_prefers_stashed_post_save_identity(monkeypatch):
-    """The replacement session opens under the stashed post-save identity."""
+    The save flow re-keys the terminal to the authoritative post-save summary,
+    so reconnect_terminal derives the daemon alias from the (fresh) connection
+    object.  A stale stash attribute, if one survived, is no longer consulted.
+    """
     from sshpilot import terminal_manager as tm_module
 
     window = SimpleNamespace(
@@ -478,7 +538,9 @@ def test_reconnect_terminal_prefers_stashed_post_save_identity(monkeypatch):
         _terminal(_reconnect_connection_id="renamed")
     ) is True
     assert manager.reconnect_terminal(_terminal()) is True
-    assert opened == ["renamed", "old"]
+    # Both sessions open under the canonical id derived from the connection;
+    # the legacy stash is ignored.
+    assert opened == ["old", "old"]
 
 
 def test_reconnect_offer_prefers_original_identity_over_new_nickname():
@@ -487,20 +549,86 @@ def test_reconnect_offer_prefers_original_identity_over_new_nickname():
     window = _MutationWindow()
     edited = _ActiveConn(id="old", nickname="old")
     other = _ActiveConn(id="new", nickname="new")
+    other_terminal = _TerminalStub(is_connected=True)
+    edited_terminal = _TerminalStub(is_connected=True)
     prompts, terminal_manager = _prompt_collector()
     # The colliding terminal comes first so a first-match-wins scan of the
     # post-save nickname would pick the wrong connection.
     window.active_terminals = {
-        other: SimpleNamespace(is_connected=True),
-        edited: SimpleNamespace(is_connected=True),
+        other: other_terminal,
+        edited: edited_terminal,
     }
     window.terminal_manager = terminal_manager
     dialog = _edit_dialog()
     dialog.connection = _ActiveConn(id="old", nickname="old")
 
-    window._offer_reconnect_after_edit_save(dialog, "new", "new")
+    resolved = window._rebind_terminals_after_save(dialog, "new", "new")
+    window._offer_reconnect_after_edit_save(dialog, resolved)
 
-    assert prompts == [edited]
+    assert prompts == [resolved]
+    assert window.active_terminals == {
+        resolved: edited_terminal,
+        other: other_terminal,
+    }
+    assert edited_terminal.connection is resolved
+    assert not hasattr(other_terminal, "connection")
+
+
+def test_rebind_rekeys_every_terminal_and_all_maps():
+    """A rename re-keys every open terminal of the connection atomically.
+
+    ``terminal.connection`` and all three lookup maps move together to the
+    authoritative post-save summary; a second terminal for the same connection
+    is re-keyed exactly like the active one.
+    """
+    window = _MutationWindow()
+    old = _ActiveConn(id="old", nickname="old")
+    active_terminal = _TerminalStub(is_connected=True)
+    other_terminal = _TerminalStub(is_connected=True)
+    window.active_terminals = {old: active_terminal}
+    window.connection_to_terminals = {
+        old: [active_terminal, other_terminal]
+    }
+    window.terminal_to_connection = {
+        active_terminal: old,
+        other_terminal: old,
+    }
+    dialog = _edit_dialog()
+    dialog.connection = _ActiveConn(id="old", nickname="old")
+
+    renamed = window._rebind_terminals_after_save(dialog, "renamed", "renamed")
+
+    assert connection_id_for(renamed) == "renamed"
+    assert window.active_terminals == {renamed: active_terminal}
+    assert window.connection_to_terminals == {
+        renamed: [active_terminal, other_terminal]
+    }
+    assert window.terminal_to_connection == {
+        active_terminal: renamed,
+        other_terminal: renamed,
+    }
+    assert active_terminal.connection is renamed
+    assert other_terminal.connection is renamed
+
+
+def test_unresolvable_post_save_summary_does_not_rebind_or_prompt():
+    """If the refreshed store cannot resolve the authoritative post-save
+    summary, terminal state is left untouched and no reconnect is offered."""
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    window.connection_manager.connections = {"demo": None}
+    dialog = _edit_dialog()
+
+    resolved = window._rebind_terminals_after_save(dialog, "demo", "demo")
+    window._offer_reconnect_after_edit_save(dialog, resolved)
+
+    assert resolved is None
+    assert prompts == []
+    assert window.active_terminals == {active: terminal}
+    assert not hasattr(terminal, "connection")
 
 
 def test_retried_partial_create_does_not_prompt():
@@ -584,7 +712,7 @@ def test_local_edit_with_active_terminal_prompts_once():
     window = _MutationWindow()
     window._app._api_client_selection = SimpleNamespace(client=None)
     active = _ActiveConn(nickname="demo", id="demo")
-    terminal = SimpleNamespace(is_connected=True)
+    terminal = _TerminalStub(is_connected=True)
     prompts, terminal_manager = _prompt_collector()
     window.active_terminals = {active: terminal}
     window.terminal_manager = terminal_manager
@@ -678,9 +806,7 @@ def test_terminal_closed_before_offer_is_neutralized():
     window.active_terminals = {}
     window.terminal_manager = terminal_manager
     dialog = _edit_dialog()
-    window._offer_reconnect_after_edit_save(
-        dialog, "demo", "demo", active_connection=active
-    )
+    window._offer_reconnect_after_edit_save(dialog, active)
     assert prompts == []
 
 
@@ -692,7 +818,7 @@ def test_quitting_suppresses_reconnect_offer():
     window.terminal_manager = terminal_manager
     window._is_quitting = True
     dialog = _edit_dialog()
-    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
+    window._offer_reconnect_after_edit_save(dialog, active)
     assert prompts == []
 
 

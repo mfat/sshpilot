@@ -1385,15 +1385,9 @@ class TerminalManager:
         window = self.window
         # Only proceed if the user confirmed and the connection is still active
         if response != "reconnect" or connection not in window.active_terminals:
-            # Clean up the stored terminal instance if it exists
-            if hasattr(connection, "_terminal_instance"):
-                delattr(connection, "_terminal_instance")
             return
 
-        # Get the terminal instance either from active_terminals or the stored instance
-        terminal = window.active_terminals.get(connection) or getattr(
-            connection, "_terminal_instance", None
-        )
+        terminal = window.active_terminals.get(connection)
         if not terminal:
             logger.warning("No terminal instance found for reconnection")
             return
@@ -1440,10 +1434,6 @@ class TerminalManager:
             )
 
         finally:
-            # Clean up the stored terminal instance
-            if hasattr(connection, "_terminal_instance"):
-                delattr(connection, "_terminal_instance")
-
             # Reset the flag after a delay to ensure it's not set during normal operations
             GLib.timeout_add(1000, self._reset_controlled_reconnect)
 
@@ -1524,15 +1514,14 @@ class TerminalManager:
         terminal._set_connecting_overlay_visible(True)
 
         try:
-            # A save may have renamed the ssh alias: connection ids are
-            # nickname-derived, so the pre-save object terminal.connection
-            # points at an identity the daemon no longer has.  The save flow
-            # stashes the post-save identity on the terminal; prefer it.
+            # The save flow re-keys every terminal from the pre-save snapshot
+            # to the authoritative post-save ConnectionSummary, so the id
+            # derived here is exactly the alias the daemon holds after a
+            # rename.
             started = terminal.start_daemon_session(
                 window.client,
                 window.client_bridge,
-                getattr(terminal, "_reconnect_connection_id", None)
-                or connection_id_for(connection),
+                connection_id_for(connection),
             )
         except Exception:
             logger.exception("Failed to start replacement daemon terminal session")
