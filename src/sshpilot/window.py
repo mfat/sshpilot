@@ -6781,6 +6781,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         delta_available = '__changed_fields' in connection_data
         changed_fields = set(connection_data.pop('__changed_fields', ()) or ())
+        was_editing = bool(getattr(dialog, 'is_editing', False))
 
         def _build_config_patch():
             import re
@@ -6824,12 +6825,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         try:
             if dialog.is_editing:
-                if delta_available and not changed_fields:
-                    complete_save(True)
-                    return
                 connection_id = getattr(dialog, '_saved_connection_id', None)
                 if not connection_id:
                     connection_id = connection_id_for(dialog.connection)
+                if delta_available and not changed_fields:
+                    complete_save(True)
+                    try:
+                        self._offer_reconnect_after_edit_save(
+                            dialog,
+                            connection_id,
+                            connection_data.get('nickname'),
+                        )
+                    except Exception:
+                        pass
+                    return
                 config_patch = _build_config_patch()
 
                 # In daemon mode, use the generation loaded from the daemon
@@ -6948,9 +6957,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         dialog._daemon_generation = int(new_generation)
                 except Exception:
                     pass
-                if getattr(_details, 'changed', True):
+                if was_editing:
                     try:
-                        self._prompt_reconnect_after_daemon_save(
+                        self._offer_reconnect_after_edit_save(
+                            dialog,
                             new_conn_id,
                             connection_data.get('nickname'),
                         )
@@ -7037,44 +7047,71 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except RuntimeError:
             complete_save(False)
 
-    def _prompt_reconnect_after_daemon_save(
+    def _offer_reconnect_after_edit_save(
         self,
-        connection_id: str,
-        nickname: str,
+        dialog,
+        connection_id,
+        nickname,
+        *,
+        active_connection=None,
     ) -> None:
-        """Offer to reconnect an active terminal after a daemon config save.
+        """Offer to reconnect an active terminal after a successful edit save.
 
-        The daemon save path emits ``connection-updated`` to every open
-        terminal (which logs "waiting for user confirmation to reconnect")
-        but, unlike the local save path, never surfaces a prompt.  Match the
-        active terminal by the authoritative daemon connection identity and
-        present the same reconnect confirmation.
+        Any successful save of an existing SSH connection that currently has
+        an open terminal offers reconnection; change detection no longer
+        decides whether to prompt — that decision belongs to the user.
+
+        Idempotent per save operation: a resumed or retried partial save that
+        completes the same user Save never offers the prompt a second time.
+        The active terminal is located by the authoritative connection
+        identity, with the nickname only as a compatibility fallback, so a
+        rename during the save still matches the open terminal.  The daemon
+        save path emits ``connection-updated`` to every open terminal (which
+        logs "waiting for user confirmation to reconnect") but, unlike the
+        local save path, never surfaces a prompt — present the same reconnect
+        confirmation here.
         """
         if self._is_quitting:
             return
-        if not connection_id or not nickname:
+        if getattr(dialog, '_reconnect_prompt_offered', False):
             return
-        for active_connection, terminal in tuple(self.active_terminals.items()):
-            if active_connection is None or terminal is None:
-                continue
-            active_ids = {
-                str(value)
-                for value in (
-                    getattr(active_connection, 'id', None),
-                    getattr(active_connection, 'connection_id', None),
-                    getattr(active_connection, 'uuid', None),
-                )
-                if value is not None
-            }
-            active_nickname = getattr(active_connection, 'nickname', '')
-            if str(connection_id) not in active_ids and active_nickname != nickname:
-                continue
-            try:
-                active_connection._terminal_instance = terminal
-            except Exception:
-                pass
-            self.terminal_manager.prompt_reconnect(active_connection)
-            return
+        if active_connection is not None:
+            terminal = self.active_terminals.get(active_connection)
+            if terminal is None:
+                return
+            matched = active_connection
+        else:
+            if not connection_id or not nickname:
+                return
+            matched = None
+            for candidate, candidate_terminal in tuple(self.active_terminals.items()):
+                if candidate is None or candidate_terminal is None:
+                    continue
+                candidate_ids = {
+                    str(value)
+                    for value in (
+                        getattr(candidate, 'id', None),
+                        getattr(candidate, 'connection_id', None),
+                        getattr(candidate, 'uuid', None),
+                    )
+                    if value is not None
+                }
+                candidate_nickname = getattr(candidate, 'nickname', '')
+                if (
+                    str(connection_id) in candidate_ids
+                    or candidate_nickname == nickname
+                ):
+                    matched = candidate
+                    terminal = candidate_terminal
+                    break
+            if matched is None:
+                return
+        try:
+            matched._terminal_instance = terminal
+        except Exception:
+            pass
+        dialog._reconnect_prompt_offered = True
+        self.terminal_manager.prompt_reconnect(matched)
 
     def on_connection_saved(self, dialog, connection_data, pending_meta=None,
                             secret_plan=None, save_completion=None):
@@ -7114,7 +7151,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 for name in ('_daemon_save_checkpoint', '_daemon_metadata_saved',
                              '_daemon_config_fingerprint',
                              '_daemon_metadata_fingerprint',
-                             '_resumable_save_active'):
+                             '_resumable_save_active',
+                             '_reconnect_prompt_offered'):
                     try:
                         delattr(dialog, name)
                     except AttributeError:
@@ -7137,13 +7175,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if dialog.is_editing:
                 # Update existing connection
                 old_connection = dialog.connection
-                before_config_fingerprint = self._normalise_daemon_editor_value(
-                    getattr(old_connection, 'data', {}) or {}
-                )
-                is_connected = old_connection in self.active_terminals
-
-                # Store the current terminal instance if connected
-                terminal = self.active_terminals.get(old_connection) if is_connected else None
                 original_nickname = old_connection.nickname
 
                 try:
@@ -7200,17 +7231,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 logger.info(f"Updated connection: {old_connection.nickname}")
 
-                after_config_fingerprint = self._normalise_daemon_editor_value(
-                    connection_data
-                )
-                if (
-                    before_config_fingerprint != after_config_fingerprint
-                    and is_connected
-                    and terminal is not None
-                ):
-                    old_connection._terminal_instance = terminal
-                    self.terminal_manager.prompt_reconnect(old_connection)
                 _complete_save(True)
+                try:
+                    self._offer_reconnect_after_edit_save(
+                        dialog,
+                        connection_id_for(old_connection),
+                        connection_data.get('nickname'),
+                        active_connection=old_connection,
+                    )
+                except Exception:
+                    pass
                 # Its own block changed: drop the stale result and recompute.
                 self._invalidate_effective_check(original_nickname)
                 self._invalidate_effective_check(connection_data.get('nickname'), old_connection)

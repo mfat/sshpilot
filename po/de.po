@@ -6129,17 +6129,13 @@ msgstr ""
 msgid "{nickname} - {title}"
 msgstr "{nickname} - {title}"
 
-#: src/sshpilot/terminal_manager.py:1031
-msgid "Settings Changed"
-msgstr "Einstellungen geändert"
+#: src/sshpilot/terminal_manager.py:1369
+msgid "Reconnect?"
+msgstr "Neu verbinden?"
 
-#: src/sshpilot/terminal_manager.py:1032
-msgid ""
-"The connection settings have been updated.\n"
-"Would you like to reconnect with the new settings?"
-msgstr ""
-"Die Verbindungseinstellungen wurden aktualisiert.\n"
-"Möchten Sie sich mit den neuen Einstellungen erneut verbinden?"
+#: src/sshpilot/terminal_manager.py:1370
+msgid "If you changed settings, you can reconnect to apply them."
+msgstr "Wenn Sie Einstellungen geändert haben, können Sie sich neu verbinden, um sie zu übernehmen."
 
 #: src/sshpilot/terminal_manager.py:1097 src/sshpilot/terminal_manager.py:1175
 msgid "Reconnection Failed"

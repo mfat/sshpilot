@@ -1367,13 +1367,10 @@ class TerminalManager:
     # --- Controlled reconnect after a connection edit ----------------------
 
     def prompt_reconnect(self, connection):
-        """Ask whether to reconnect *connection* with its updated settings."""
+        """Ask whether to reconnect *connection* after a connection save."""
         dialog = Adw.AlertDialog(
-            heading=_("Settings Changed"),
-            body=_(
-                "The connection settings have been updated.\n"
-                "Would you like to reconnect with the new settings?"
-            ),
+            heading=_("Reconnect?"),
+            body=_("If you changed settings, you can reconnect to apply them."),
         )
         dialog.add_response("cancel", _("Cancel"))
         dialog.add_response("reconnect", _("Reconnect"))

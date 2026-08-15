@@ -280,7 +280,7 @@ def run(host: str, user: str, do_connect: bool, keep: bool) -> int:
             d.set_text(d.find_one("text", "Port"), "2222")
             click_button(d, "Save")
             time.sleep(2)
-            if not d.find("alert", "Settings Changed"):
+            if not d.find("alert", "Reconnect?"):
                 raise AssertionError("reconnect alert not shown")
             if not d.find("button", "Reconnect") or not d.find("button", "Cancel"):
                 raise AssertionError("Adw.AlertDialog buttons Cancel/Reconnect missing")

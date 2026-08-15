@@ -81,7 +81,7 @@ class _ProjectionWindow:
 
 class _MutationWindow:
     _daemon_mode_active = MainWindow._daemon_mode_active
-    _prompt_reconnect_after_daemon_save = MainWindow._prompt_reconnect_after_daemon_save
+    _offer_reconnect_after_edit_save = MainWindow._offer_reconnect_after_edit_save
     _normalise_daemon_editor_value = staticmethod(
         MainWindow._normalise_daemon_editor_value
     )
@@ -124,14 +124,77 @@ class _MutationWindow:
     def _error_dialog(self, title, message):
         self.errors.append((title, message))
 
+    def _rows_for_connection(self, connection):
+        return []
 
-def test_noop_daemon_mutation_result_does_not_prompt_reconnect():
-    window = _MutationWindow()
+    def _invalidate_effective_check(self, nickname, connection=None):
+        return None
+
+    def _warn_if_effective_config_differs(self, connection, connection_data):
+        return None
+
+    def _apply_saved_connection_meta(self, nickname, meta):
+        return None
+
+
+def _edit_dialog():
+    return SimpleNamespace(
+        is_editing=True,
+        connection=SimpleNamespace(nickname="demo", id="demo"),
+        is_daemon_editor=lambda: True,
+        _daemon_editor_loaded=True,
+        _daemon_generation=None,
+    )
+
+
+def _prompt_collector():
     prompts = []
-    window.active_terminals = {}
-    window.terminal_manager = SimpleNamespace(prompt_reconnect=lambda connection: prompts.append(connection))
-    window._prompt_reconnect_after_daemon_save("demo", "demo")
-    assert prompts == []
+    terminal_manager = SimpleNamespace(
+        prompt_reconnect=lambda connection: prompts.append(connection)
+    )
+    return prompts, terminal_manager
+
+
+class _ActiveConn:
+    def __init__(self, **kwargs):
+        for name in ("id", "connection_id", "uuid", "nickname"):
+            setattr(self, name, kwargs.get(name))
+
+
+def _active_daemon_terminal():
+    active = _ActiveConn(id="demo", nickname="demo")
+    terminal = SimpleNamespace(is_connected=True)
+    return active, terminal
+
+
+def test_noop_daemon_save_with_active_terminal_prompts_reconnect():
+    """A no-op daemon edit still offers reconnection for an active terminal.
+
+    Issue #1160: the prompt is offered on any successful save of an existing
+    connection with an open terminal — change detection must not suppress it.
+    The no-op must also keep its local no-RPC completion behavior.
+    """
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        __changed_fields=(),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+
+    assert completed == [True]
+    assert window.client_bridge.calls == []
+    assert window.client.updated == []
+    assert prompts == [active]
 
 
 def test_daemon_reconnect_matches_authoritative_connection_id():
@@ -142,11 +205,342 @@ def test_daemon_reconnect_matches_authoritative_connection_id():
 
     active = _ActiveConnection()
     terminal = SimpleNamespace(is_connected=True)
-    prompts = []
+    prompts, terminal_manager = _prompt_collector()
     window.active_terminals = {active: terminal}
-    window.terminal_manager = SimpleNamespace(prompt_reconnect=lambda connection: prompts.append(connection))
-    window._prompt_reconnect_after_daemon_save("demo", "new-name")
+    window.terminal_manager = terminal_manager
+    dialog = _edit_dialog()
+    window._offer_reconnect_after_edit_save(dialog, "demo", "new-name")
     assert prompts == [active]
+
+
+def test_no_active_terminal_does_not_prompt():
+    """A successful edit with no open terminal never offers reconnection."""
+    window = _MutationWindow()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {}
+    window.terminal_manager = terminal_manager
+    dialog = _edit_dialog()
+    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
+    assert prompts == []
+
+
+def test_reconnect_offer_is_idempotent_per_save_operation():
+    """A resumed/retried save must never offer the prompt a second time."""
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _edit_dialog()
+
+    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
+    assert prompts == [active]
+    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
+    assert prompts == [active]
+
+    # A brand-new save operation (fresh dialog) may offer again.
+    fresh = _edit_dialog()
+    window._offer_reconnect_after_edit_save(fresh, "demo", "demo")
+    assert prompts == [active, active]
+
+
+def test_daemon_changed_edit_with_active_terminal_prompts_once():
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="changed.example",
+        __changed_fields=("hostname",),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    success(SimpleNamespace(connection_id="demo", generation=8, nickname="demo"))
+
+    assert completed == [True]
+    assert window.client.updated[0][0] == "demo"
+    assert prompts == [active]
+
+
+def test_daemon_display_name_only_edit_with_active_terminal_prompts_once():
+    """A metadata-only (display name) daemon edit still offers reconnection."""
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        display_name="Production Server",
+        __changed_fields=("display_name",),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    success(SimpleNamespace(connection_id="demo", generation=8, nickname="demo"))
+
+    assert completed == [True]
+    assert prompts == [active]
+
+
+def test_successful_daemon_edit_without_active_terminal_does_not_prompt():
+    window = _MutationWindow()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="changed.example",
+        __changed_fields=("hostname",),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    success(SimpleNamespace(connection_id="demo", generation=8, nickname="demo"))
+
+    assert completed == [True]
+    assert prompts == []
+
+
+def test_failed_daemon_edit_does_not_prompt():
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="changed.example",
+        __changed_fields=("hostname",),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    _operation, _success, failure = window.client_bridge.calls[0]
+    failure(SshPilotError(ErrorCode.PERSISTENCE_FAILED, "cannot persist", details={}))
+
+    assert completed == [False]
+    assert prompts == []
+
+
+def test_retried_partial_daemon_edit_prompts_only_once():
+    """A resumed partial save never offers the prompt twice for one Save."""
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    metadata = {"tags": ["ops"]}
+    completed = []
+
+    def _fresh_data():
+        return _basic_data(
+            nickname="demo",
+            hostname="changed.example",
+            __changed_fields=("hostname",),
+        )
+
+    # Attempt 1: config commits, metadata fails -> no prompt yet.
+    window.on_connection_saved(dialog, _fresh_data(), metadata, {},
+                               lambda ok, *a, **k: completed.append(ok))
+    mutation, mutation_ok, _ = window.client_bridge.calls[0]
+    result = mutation()
+    mutation_ok(result)
+    assert prompts == []
+    window.client_bridge.calls[1][2](RuntimeError("metadata unavailable"))
+    assert completed == [False]
+    assert prompts == []
+
+    # Retry: resumes from the checkpoint, completes -> exactly one prompt.
+    window.on_connection_saved(dialog, _fresh_data(), metadata, {},
+                               lambda ok, *a, **k: completed.append(ok))
+    metadata_retry, metadata_ok, _ = window.client_bridge.calls[2]
+    metadata_retry()
+    metadata_ok(True)
+
+    assert completed == [False, True]
+    assert prompts == [active]
+
+
+def test_new_connection_save_does_not_prompt():
+    """Creating a connection must not offer reconnection just because Save ran.
+
+    The saved connection shares an identity with the open terminal, so this
+    proves the offer is gated on the save being an edit, not on identity alone.
+    """
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    completed = []
+    data = _basic_data(
+        nickname="new",
+        hostname="new.example",
+        __save_completion=lambda ok, *a, **k: completed.append(ok),
+    )
+
+    window.on_connection_saved(SimpleNamespace(is_editing=False, connection=None), data)
+
+    create, create_ok, _failure = window.client_bridge.calls[0]
+    result = create()
+    create_ok(result)
+    window.client_bridge.calls[1][1](True)
+
+    assert completed == [True]
+    assert prompts == []
+
+
+def test_local_edit_with_active_terminal_prompts_once():
+    """The in-process (non-daemon) save path offers reconnection too."""
+    window = _MutationWindow()
+    window._app._api_client_selection = SimpleNamespace(client=None)
+    active = _ActiveConn(nickname="demo", id="demo")
+    terminal = SimpleNamespace(is_connected=True)
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    window.connection_manager = SimpleNamespace(
+        apply_connection_update=lambda conn, data: True,
+        get_metadata=lambda name: {},
+        refresh=lambda: None,
+    )
+    window.group_manager = SimpleNamespace(rename_connection=lambda *a, **k: None)
+    dialog = SimpleNamespace(
+        is_editing=True,
+        connection=active,
+        _saved_connection_id=None,
+        is_daemon_editor=lambda: False,
+    )
+    completed = []
+    data = _basic_data(nickname="demo", hostname="demo.example")
+
+    window.on_connection_saved(dialog, data, None, None,
+                               lambda ok, *a, **k: completed.append(ok))
+
+    assert completed == [True]
+    assert prompts == [active]
+
+
+def test_prompt_reconnect_uses_neutral_wording_and_default_response(monkeypatch):
+    """The reconnect prompt is neutral and keeps Reconnect as the default."""
+    from sshpilot import terminal_manager as tm_module
+
+    class _FakeResponseAppearance:
+        SUGGESTED = "suggested"
+
+    class _FakeAlertDialog:
+        created = []
+
+        def __init__(self, *, heading, body):
+            self.heading = heading
+            self.body = body
+            self.responses = []
+            self.appearance = {}
+            self.default = None
+            self.close = None
+            self.connected = []
+            _FakeAlertDialog.created.append(self)
+
+        def add_response(self, response_id, label):
+            self.responses.append((response_id, label))
+
+        def set_response_appearance(self, response_id, appearance):
+            self.appearance[response_id] = appearance
+
+        def set_default_response(self, response_id):
+            self.default = response_id
+
+        def set_close_response(self, response_id):
+            self.close = response_id
+
+        def connect(self, *args):
+            self.connected.append(args)
+
+        def present(self, window):
+            self.presented_window = window
+
+    monkeypatch.setattr(tm_module.Adw, "ResponseAppearance", _FakeResponseAppearance)
+    monkeypatch.setattr(tm_module.Adw, "AlertDialog", _FakeAlertDialog)
+
+    window = SimpleNamespace(active_terminals={})
+    manager = tm_module.TerminalManager(window)
+    connection = SimpleNamespace(nickname="demo")
+
+    manager.prompt_reconnect(connection)
+
+    dialog = _FakeAlertDialog.created[-1]
+    assert dialog.heading == "Reconnect?"
+    assert dialog.body == "If you changed settings, you can reconnect to apply them."
+    assert dialog.responses == [("cancel", "Cancel"), ("reconnect", "Reconnect")]
+    assert dialog.appearance == {"reconnect": "suggested"}
+    assert dialog.default == "reconnect"
+    assert dialog.close == "cancel"
+    assert dialog.connected[0][0] == "response"
+    assert callable(dialog.connected[0][1])
+    assert dialog.connected[0][2] is connection
+    assert dialog.presented_window is window
+
+
+def test_terminal_closed_before_offer_is_neutralized():
+    """A terminal closed/disconnected mid-save never surfaces the prompt."""
+    window = _MutationWindow()
+    active = _ActiveConn(nickname="demo", id="demo")
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {}
+    window.terminal_manager = terminal_manager
+    dialog = _edit_dialog()
+    window._offer_reconnect_after_edit_save(
+        dialog, "demo", "demo", active_connection=active
+    )
+    assert prompts == []
+
+
+def test_quitting_suppresses_reconnect_offer():
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    window._is_quitting = True
+    dialog = _edit_dialog()
+    window._offer_reconnect_after_edit_save(dialog, "demo", "demo")
+    assert prompts == []
+
+
+def test_reconnect_response_cancel_leaves_terminal_running():
+    from sshpilot import terminal_manager as tm_module
+
+    window = SimpleNamespace(active_terminals={})
+    manager = tm_module.TerminalManager(window)
+    connection = SimpleNamespace(nickname="demo")
+
+    manager._on_reconnect_response(SimpleNamespace(), "cancel", connection)
+
+    assert not hasattr(window, "_is_controlled_reconnect")
+    assert not getattr(connection, "_terminal_instance", None)
 
 
 def test_daemon_mutation_result_changed_field_controls_prompt():
