@@ -374,6 +374,10 @@ class ConnectionService:
         payload.pop("uuid", None)
         payload["id"] = new_nick
         payload["nickname"] = new_nick
+        # A duplicate starts a fresh optimistic-concurrency generation.  The
+        # source record's generation is copied by to_dict(), so normalize it
+        # before create() constructs and publishes the new record.
+        payload["generation"] = 1
         payload["group_ids"] = self._group_ids_of(connection_id)
         created = self.create(payload)
         self._emit(

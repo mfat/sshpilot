@@ -137,3 +137,32 @@ def test_file_removed_externally_is_tolerated(monitor, diagnostic_file):
     monitor.unregister("session-a", unlink_path=diagnostic_file)
     time.sleep(0.2)
     assert not os.path.exists(diagnostic_file)
+
+
+def test_register_reports_armed_with_bool(monitor, diagnostic_file):
+    assert monitor.register("session-ok", diagnostic_file, lambda _data: None) is True
+    monitor.unregister("session-ok")
+
+
+def test_register_reports_failure_when_watch_cannot_be_added(
+    monitor, diagnostic_file, monkeypatch
+):
+    class _BrokenLibc:
+        def inotify_add_watch(self, *args):
+            return -1
+
+    monkeypatch.setattr(
+        "sshpilot.daemon.ssh_diagnostics_monitor._INOTIFY_LIBC",
+        _BrokenLibc(),
+    )
+    assert monitor.register("session-bad", diagnostic_file, lambda _data: None) is False
+
+
+def test_register_reports_failure_when_command_submission_fails(
+    monitor, diagnostic_file, monkeypatch
+):
+    def _boom(*args, **kwargs):
+        raise RuntimeError("diagnostics monitor is closed")
+
+    monkeypatch.setattr(monitor, "_submit", _boom)
+    assert monitor.register("session-bad", diagnostic_file, lambda _data: None) is False

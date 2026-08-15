@@ -9,6 +9,7 @@ from sshpilot.api.errors import ErrorCode
 from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.sessions import (
     AttachSessionRequest,
+    CloseSessionRequest,
     OpenSessionRequest,
     SessionExitInfo,
     SessionState,
@@ -79,7 +80,13 @@ class _EvidenceTerminalRunner:
 
 
 class _FakeReadiness:
-    """Stub of the SshReadinessManager contract for runtime tests."""
+    """Real-contract stub of the SshReadinessManager for runtime tests.
+
+    ``finish()`` releases the session's engagement exactly like the real
+    manager (which pops its lease record), so an early decisive result that
+    parks on the runtime must not have finished the lease yet — the handoff
+    race is surfaced instead of masked.
+    """
 
     def __init__(self, engaged=True, immediate_result=None):
         self._engaged = engaged
@@ -102,6 +109,8 @@ class _FakeReadiness:
     def finish(self, session_id):
         if session_id not in self.finished:
             self.finished.append(session_id)
+        # Mirror the real manager: finishing a lease releases engagement.
+        self._engaged = False
 
     def deliver(self, session_id, result):
         assert self.result_cb is not None
@@ -290,7 +299,9 @@ def test_grace_expiry_falls_back_to_pty_evidence():
     assert runtime.get_session(prepared.id).state is SessionState.STARTING
 
     readiness.fire_grace(prepared.id)
-    assert readiness.finished == [prepared.id]
+    # Grace expiry keeps the diagnostics lease armed so a late verdict can
+    # still be applied; only promotion/failure/exit/close finish it.
+    assert readiness.finished == []
     assert runtime.get_session(prepared.id).state is SessionState.STARTING
 
     runner.emit(b"\r\n\x1b[32malice@host\x1b[0m:\x1b[34m~\x1b[0m$ ")
@@ -439,6 +450,307 @@ def test_exit_before_authentication_does_not_claim_running():
     assert SessionState.RUNNING not in states
     assert readiness.finished == [prepared.id]
     assert runtime.get_session(prepared.id).state is SessionState.CLOSED
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_gated_session_without_result_stays_alive_until_marker():
+    """A diagnostics-gated session must not have its process reaped while the
+    decisive verdict is still outstanding (regression for the over-eager
+    terminate-after-start cleanup)."""
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-keepalive")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    assert runner.handle is not None
+    assert not runner.handle.terminated
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert not runner.handle.terminated
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_parked_authenticated_marker_applies_atomically_when_handle_stored():
+    """A marker that arrives before the process handle is stored is parked on
+    the record with the lease still engaged, then applied by start_session:
+    RUNNING exactly once, lease finished exactly once after."""
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-park-ok")
+    runner = _EvidenceTerminalRunner()
+    marker = SshDiagnosticResult(
+        SshDiagnosticState.AUTHENTICATED,
+        'debug1: Authenticated to example.test using "publickey".',
+    )
+    readiness = _FakeReadiness(engaged=True, immediate_result=marker)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert readiness.finished == [prepared.id]
+    assert not readiness.is_engaged(prepared.id)
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_parked_failure_applies_atomically_and_terminates_handle():
+    """A FAILED marker that arrives before the process handle is stored is
+    parked, then applied by start_session: the session fails (never RUNNING),
+    the lease finishes, and the freshly spawned process is reaped."""
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-park-fail")
+    runner = _EvidenceTerminalRunner()
+    failed = SshDiagnosticResult(
+        SshDiagnosticState.FAILED,
+        "alice@example.test: Permission denied (publickey).",
+    )
+    readiness = _FakeReadiness(engaged=True, immediate_result=failed)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    states: list = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    assert runner.handle is not None
+    assert runtime.get_session(prepared.id).state is SessionState.FAILED
+    assert SessionState.RUNNING not in states
+    assert readiness.finished == [prepared.id]
+    assert not readiness.is_engaged(prepared.id)
+    assert runner.handle.terminated
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_grace_after_promotion_is_a_noop():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-grace-late")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    readiness.fire_grace(prepared.id)
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_late_success_after_grace_promotes_still_starting_session():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-late-ok")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    readiness.fire_grace(prepared.id)
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_late_failure_after_grace_fails_still_starting_session():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-late-fail")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    states: list = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    readiness.fire_grace(prepared.id)
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.FAILED,
+            "alice@example.test: Connection closed by 127.0.0.1.",
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.FAILED
+    assert SessionState.RUNNING not in states
+    assert readiness.finished == [prepared.id]
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_late_diagnostics_after_pty_fallback_promotion_are_idempotent():
+    """Once the PTY fallback promotes a session, a late decisive marker must
+    neither promote again nor regress RUNNING to FAILED, and the authenticated
+    callback fires exactly once."""
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-late-pty")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    runtime.enable_connection_evidence_gate()
+    authenticated: list = []
+    runtime.set_authenticated_callback(lambda sid: authenticated.append(sid))
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    runner.emit(b"\r\n\x1b[32malice@host\x1b[0m:\x1b[34m~\x1b[0m$ ")
+    readiness.fire_grace(prepared.id)
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert authenticated == [prepared.id]
+
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to host ([::1]:22) using "publickey".',
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert authenticated == [prepared.id]
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.FAILED,
+            "alice@host: Connection closed by 127.0.0.1.",
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert authenticated == [prepared.id]
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_close_while_diagnostics_pending_finishes_lease():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-close-pending")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    assert runtime.get_session(prepared.id).state is SessionState.STARTING
+
+    runtime.close_session(CloseSessionRequest(session_id=prepared.id))
+    assert readiness.finished == [prepared.id]
+    # A late verdict after close must not resurrect the session.
+    readiness.deliver(
+        prepared.id,
+        SshDiagnosticResult(
+            SshDiagnosticState.AUTHENTICATED,
+            'debug1: Authenticated to example.test using "publickey".',
+        ),
+    )
+    assert runtime.get_session(prepared.id).state is SessionState.CLOSING
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_exit_before_authentication_with_failure_evidence_fails_and_finishes_lease():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-exit-fail")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    states: list = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    runner.emit(b"alice@example.test: Permission denied (publickey).\r\n")
+    assert runner.handle is not None
+    runner.handle.exit(SessionExitInfo(exit_code=255, reason="process_exit"))
+    runner.handle._on_eof()
+    assert SessionState.RUNNING not in states
+    assert SessionState.FAILED in states
+    assert readiness.finished == [prepared.id]
+
+    runtime.shutdown()
+    core.close()
+
+
+def test_success_delivered_twice_promotes_and_notifies_exactly_once():
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-twice")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    authenticated: list = []
+    runtime.set_authenticated_callback(lambda sid: authenticated.append(sid))
+    running_events: list = []
+    runtime.subscribe_events(
+        lambda event: running_events.append(
+            getattr(event.payload, "state", None)
+        )
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    marker = SshDiagnosticResult(
+        SshDiagnosticState.AUTHENTICATED,
+        'debug1: Authenticated to example.test using "publickey".',
+    )
+    readiness.deliver(prepared.id, marker)
+    readiness.deliver(prepared.id, marker)
+    assert runtime.get_session(prepared.id).state is SessionState.RUNNING
+    assert authenticated == [prepared.id]
+    assert running_events.count(SessionState.RUNNING) == 1
 
     runtime.shutdown()
     core.close()

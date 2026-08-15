@@ -319,6 +319,29 @@ class FakeRepository(ConnectionRepositoryProtocol):
         self._bump()
         return dict(self._metadata.get(connection_id, {}))
 
+    def set_display_name(self, connection_id: str, display_name: str) -> ConnectionRecord:
+        self.calls.append("set_display_name")
+        self._mutate()
+        record = self._records[connection_id]
+        payload = dict(record.data)
+        payload["display_name"] = display_name
+        updated = ConnectionRecord(
+            id=record.id,
+            nickname=record.nickname,
+            hostname=record.hostname,
+            username=record.username,
+            port=record.port,
+            protocol=record.protocol,
+            data=payload,
+            source=record.source,
+            generation=record.generation,
+            host=record.host,
+            aliases=record.aliases,
+        )
+        self._records[connection_id] = updated
+        self._bump()
+        return updated
+
     def rename_tag(self, old_tag: str, new_tag: str) -> None:
         self.calls.append("rename_tag")
         for values in self._metadata.values():
@@ -345,6 +368,7 @@ class FakeRepository(ConnectionRepositoryProtocol):
                 GroupReference(id=gid, name=self._groups[gid].name)
                 for gid in self._group_ids_of(record.id)
             ),
+            display_name=str(record.data.get("display_name") or record.nickname),
         )
 
     def _group_ids_of(self, connection_id: str) -> List[str]:
@@ -396,6 +420,18 @@ def test_record_converts_to_summary():
     assert summary.hostname == "example.com"
     assert summary.username == "alice"
     assert summary.port == 22
+
+
+def test_display_name_update_is_additive_and_keeps_alias_id():
+    repo = FakeRepository([_record()])
+    service = ConnectionApplicationService(repo, client_name="test")
+    result = service.update_connection(
+        ConnectionId("web"),
+        UpdateConnectionRequest(display_name="Production Server / تهران"),
+    )
+    assert result.connection_id == "web"
+    assert result.display_name == "Production Server / تهران"
+    assert repo.snapshot().connections[0].id == "web"
 
 
 def test_record_converts_to_details_and_editor():

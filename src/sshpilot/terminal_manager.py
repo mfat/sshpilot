@@ -457,7 +457,11 @@ class TerminalManager:
         from sshpilot import icon_utils
 
         page = window.tab_view.append(terminal)
-        page.set_title(tab_title or connection.nickname)
+        page.set_title(
+            tab_title
+            or getattr(connection, "display_name", None)
+            or connection.nickname
+        )
         page.set_icon(icon_utils.new_gicon_from_icon_name("utilities-terminal-symbolic"))
         if group_name:
             setattr(terminal, "group_name", group_name)
@@ -1363,13 +1367,10 @@ class TerminalManager:
     # --- Controlled reconnect after a connection edit ----------------------
 
     def prompt_reconnect(self, connection):
-        """Ask whether to reconnect *connection* with its updated settings."""
+        """Ask whether to reconnect *connection* after a connection save."""
         dialog = Adw.AlertDialog(
-            heading=_("Settings Changed"),
-            body=_(
-                "The connection settings have been updated.\n"
-                "Would you like to reconnect with the new settings?"
-            ),
+            heading=_("Reconnect?"),
+            body=_("If you changed settings, you can reconnect to apply them."),
         )
         dialog.add_response("cancel", _("Cancel"))
         dialog.add_response("reconnect", _("Reconnect"))
@@ -1384,15 +1385,9 @@ class TerminalManager:
         window = self.window
         # Only proceed if the user confirmed and the connection is still active
         if response != "reconnect" or connection not in window.active_terminals:
-            # Clean up the stored terminal instance if it exists
-            if hasattr(connection, "_terminal_instance"):
-                delattr(connection, "_terminal_instance")
             return
 
-        # Get the terminal instance either from active_terminals or the stored instance
-        terminal = window.active_terminals.get(connection) or getattr(
-            connection, "_terminal_instance", None
-        )
+        terminal = window.active_terminals.get(connection)
         if not terminal:
             logger.warning("No terminal instance found for reconnection")
             return
@@ -1439,10 +1434,6 @@ class TerminalManager:
             )
 
         finally:
-            # Clean up the stored terminal instance
-            if hasattr(connection, "_terminal_instance"):
-                delattr(connection, "_terminal_instance")
-
             # Reset the flag after a delay to ensure it's not set during normal operations
             GLib.timeout_add(1000, self._reset_controlled_reconnect)
 
@@ -1523,6 +1514,10 @@ class TerminalManager:
         terminal._set_connecting_overlay_visible(True)
 
         try:
+            # The save flow re-keys every terminal from the pre-save snapshot
+            # to the authoritative post-save ConnectionSummary, so the id
+            # derived here is exactly the alias the daemon holds after a
+            # rename.
             started = terminal.start_daemon_session(
                 window.client,
                 window.client_bridge,

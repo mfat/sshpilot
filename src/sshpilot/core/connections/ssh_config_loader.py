@@ -100,7 +100,12 @@ def _expand_ssh_tokens(value: str) -> str:
 # Include resolution (headless; unreadable files are fatal)
 # ---------------------------------------------------------------------------
 
-def _resolve_config_files(root_path: Path, *, max_depth: int = _MAX_INCLUDE_DEPTH) -> List[Path]:
+def _resolve_config_files(
+    root_path: Path,
+    *,
+    max_depth: int = _MAX_INCLUDE_DEPTH,
+    content_overrides: Optional[Mapping[Path, bytes]] = None,
+) -> List[Path]:
     """Resolve *root_path* and its recursive Includes into ordered files.
 
     Missing exact includes are tolerated (ssh treats them as empty). Any file
@@ -113,11 +118,21 @@ def _resolve_config_files(root_path: Path, *, max_depth: int = _MAX_INCLUDE_DEPT
     unreadable = []
 
     _MISSING = object()
+    overrides = {
+        Path(path).resolve(): bytes(content)
+        for path, content in (content_overrides or {}).items()
+    }
 
     def _read_lines(path: Path):
+        override = overrides.get(path.resolve())
+        if override is not None:
+            try:
+                return override.decode("utf-8").splitlines(keepends=True)
+            except UnicodeDecodeError:
+                unreadable.append(path)
+                return None
         try:
-            with open(path, encoding="utf-8") as handle:
-                return handle.readlines()
+            return path.read_text(encoding="utf-8").splitlines(keepends=True)
         except FileNotFoundError:
             return _MISSING  # missing include -> tolerated, treated as empty
         except (OSError, UnicodeError):
@@ -380,8 +395,11 @@ def _parse_host_config(
 
     identity_files: List[str] = []
     identity_suppressed = False
+    raw_identity_files: List[str] = []
     for entry in _as_list(config.get("identityfile")):
         unwrapped = _unwrap_ssh_value(entry)
+        if unwrapped:
+            raw_identity_files.append(str(unwrapped))
         if isinstance(unwrapped, str) and unwrapped.strip().lower() == "none":
             identity_suppressed = True
             continue
@@ -407,6 +425,16 @@ def _parse_host_config(
         "certificate": certificate_files[0] if certificate_files else "",
         "certificate_files": certificate_files,
         "forwarding_rules": _parse_forwarding_rules_from_config(config),
+        # Literal values are private evidence for the identity prototype.
+        # They are consumed by ConnectionRecord.from_dict and never emitted
+        # as public connection data or written back to SSH config.
+        "__identity_raw_port": (
+            _unwrap_ssh_value(config["port"]) if "port" in config else None
+        ),
+        "__identity_raw_username": (
+            _unwrap_ssh_value(config["user"]) if "user" in config else None
+        ),
+        "__identity_raw_identity_files": raw_identity_files,
     }
     if has_explicit_hostname:
         parsed["aliases"] = []
@@ -516,12 +544,20 @@ def _parse_host_config(
 # Document loading
 # ---------------------------------------------------------------------------
 
-def _compute_revision(files: List[Path]) -> str:
+def _compute_revision(
+    files: List[Path], content_overrides: Optional[Mapping[Path, bytes]] = None
+) -> str:
     """Deterministic SHA-256 over each file's path-relative identity + bytes."""
     hasher = hashlib.sha256()
+    overrides = {
+        Path(key).resolve(): bytes(value)
+        for key, value in (content_overrides or {}).items()
+    }
     for path in files:
         try:
-            data = path.read_bytes()
+            data = overrides.get(path.resolve())
+            if data is None:
+                data = path.read_bytes()
         except OSError as exc:
             raise _config_error("SSH configuration could not be read completely") from exc
         rel = os.path.relpath(path)
@@ -532,10 +568,173 @@ def _compute_revision(files: List[Path]) -> str:
     return hasher.hexdigest()
 
 
+def _static_value(value: str) -> bool:
+    """Whether a config value is literal enough for reconciliation evidence."""
+
+    if "$" in value:
+        return False
+    if "%" in value and any(token != "%%" for token in re.findall(r"%[A-Za-z%]", value)):
+        return False
+    return True
+
+
+def _host_option_values(block: HostBlock, key: str) -> List[str]:
+    values: List[str] = []
+    for raw_line in block.lines[1:]:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        option, value = _split_config_option(line)
+        if option and option.lower() == key and value is not None:
+            values.append(_unwrap_ssh_value(value))
+    return values
+
+
+def _static_identity_evidence(
+    files: List[Path], content_overrides: Optional[Mapping[Path, bytes]] = None
+) -> Dict[str, Dict[str, str]]:
+    """Conservatively classify evidence the legacy loader cannot prove.
+
+    This is intentionally a small safety analysis, not an OpenSSH evaluator.
+    Any global/wildcard/Match/Include ambiguity disables Rule 2 for concrete
+    records. Exact alias continuity remains available independently.
+    """
+
+    blocks: Dict[str, List[HostBlock]] = {}
+    global_reason: Optional[str] = None
+
+    def mark_global_reason(reason: str) -> None:
+        nonlocal global_reason
+        priority = {
+            "global_configuration": 1,
+            "inherited_configuration": 2,
+            "include_semantics": 3,
+            "dynamic_match": 4,
+        }
+        if global_reason is None or priority[reason] > priority[global_reason]:
+            global_reason = reason
+
+    overrides = {
+        Path(key).resolve(): bytes(value)
+        for key, value in (content_overrides or {}).items()
+    }
+    for cfg_file in files:
+        try:
+            raw = overrides.get(cfg_file.resolve())
+            doc = (
+                SSHConfigDocument.parse_text(raw.decode("utf-8"), path=str(cfg_file))
+                if raw is not None
+                else SSHConfigDocument.parse_file(cfg_file)
+            )
+        except (OSError, UnicodeDecodeError):
+            mark_global_reason("include_semantics")
+            continue
+        seen_host = False
+        for node in doc.nodes:
+            if isinstance(node, MatchBlock):
+                mark_global_reason("dynamic_match")
+                continue
+            if isinstance(node, HostBlock):
+                seen_host = True
+                if any(
+                    "*" in token or "?" in token or token.startswith("!")
+                    for token in node.tokens
+                ):
+                    mark_global_reason("inherited_configuration")
+                for token in node.tokens:
+                    if not ("*" in token or "?" in token or token.startswith("!")):
+                        blocks.setdefault(token, []).append(node)
+                continue
+            for raw_line in node.lines:
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                keyword, value = _split_keyword(line)
+                if keyword == "include":
+                    mark_global_reason("include_semantics")
+                elif not seen_host and value:
+                    mark_global_reason("global_configuration")
+
+    evidence: Dict[str, Dict[str, str]] = {}
+    for alias, alias_blocks in blocks.items():
+        result = {
+            "destination_status": "unavailable",
+            "destination_reason": "not_provided",
+            "username_literal": "",
+            "username_is_explicit": "0",
+            "identity_mode": "unspecified",
+            "identity_status": "unavailable",
+            "identity_reason": "not_provided",
+        }
+        if global_reason is not None:
+            result["destination_reason"] = global_reason
+            result["identity_reason"] = global_reason
+            evidence[alias] = result
+            continue
+        if len(alias_blocks) != 1:
+            result["destination_reason"] = "repeated_host"
+            result["identity_reason"] = "repeated_host"
+            evidence[alias] = result
+            continue
+        block = alias_blocks[0]
+        hostnames = _host_option_values(block, "hostname")
+        ports = _host_option_values(block, "port")
+        users = _host_option_values(block, "user")
+        identities = _host_option_values(block, "identityfile")
+        if len(hostnames) != 1:
+            result["destination_reason"] = "missing_hostname"
+        elif not _static_value(hostnames[0]):
+            result["destination_reason"] = "host_dependent_hostname"
+        else:
+            port = 22
+            if len(ports) > 1:
+                result["destination_reason"] = "repeated_host"
+            elif ports:
+                try:
+                    port = int(str(ports[0]).strip(), 10)
+                except (TypeError, ValueError):
+                    result["destination_reason"] = "invalid_port"
+                if not 1 <= port <= 65535:
+                    result["destination_reason"] = "invalid_port"
+            if result["destination_reason"] == "not_provided":
+                result["destination_status"] = "trustworthy"
+                result["destination_reason"] = "explicit_static"
+        if len(users) == 1 and _static_value(users[0]):
+            result["username_literal"] = users[0]
+            result["username_is_explicit"] = "1"
+        if any(not _static_value(value) for value in identities):
+            result["identity_mode"] = "dynamic"
+            result["identity_status"] = "dynamic"
+            result["identity_reason"] = "host_or_runtime_dependent"
+        elif identities and all(
+            str(value).strip().lower() == "none" for value in identities
+        ):
+            result["identity_mode"] = "explicit_none"
+            result["identity_status"] = "safe_static_literal"
+            result["identity_reason"] = "explicit_none"
+        elif any(str(value).strip().lower() == "none" for value in identities):
+            # Mixed ``none`` and file directives have order/merge semantics
+            # that this analyzer does not prove safely.
+            result["identity_mode"] = "dynamic"
+            result["identity_status"] = "dynamic"
+            result["identity_reason"] = "mixed_none_and_files"
+        elif identities:
+            result["identity_mode"] = "explicit_files"
+            result["identity_status"] = "safe_static_literal"
+            result["identity_reason"] = "static_literal"
+        else:
+            result["identity_mode"] = "unspecified"
+            result["identity_status"] = "unavailable"
+            result["identity_reason"] = "no_identityfile_directive"
+        evidence[alias] = result
+    return evidence
+
+
 def load_ssh_configuration(
     root_path: Path,
     *,
     isolated: bool,
+    _content_overrides: Optional[Mapping[Path, bytes]] = None,
 ) -> LoadedSshConfiguration:
     """Load the complete SSH configuration rooted at *root_path*.
 
@@ -546,7 +745,7 @@ def load_ssh_configuration(
     """
     root = Path(root_path)
     try:
-        files = _resolve_config_files(root)
+        files = _resolve_config_files(root, content_overrides=_content_overrides)
     except CoreError:
         raise
     except OSError as exc:
@@ -644,7 +843,15 @@ def load_ssh_configuration(
 
     for cfg_file in files:
         try:
-            doc = SSHConfigDocument.parse_file(cfg_file)
+            raw = {
+                Path(key).resolve(): bytes(value)
+                for key, value in (_content_overrides or {}).items()
+            }.get(cfg_file.resolve())
+            doc = (
+                SSHConfigDocument.parse_text(raw.decode("utf-8"), path=str(cfg_file))
+                if raw is not None
+                else SSHConfigDocument.parse_file(cfg_file)
+            )
         except (OSError, UnicodeDecodeError) as exc:
             raise _config_error("SSH configuration could not be read completely") from exc
 
@@ -682,6 +889,37 @@ def load_ssh_configuration(
         if pending_tokens and pending_config:
             flush_block(pending_tokens, pending_config, cfg_file)
 
+    static_evidence = _static_identity_evidence(files, _content_overrides)
+    for token in connection_order:
+        values = static_evidence.get(token, {})
+        connections[token].update(
+            {
+                "__identity_destination_status": values.get(
+                    "destination_status", "unavailable"
+                ),
+                "__identity_destination_reason": values.get(
+                    "destination_reason", "not_provided"
+                ),
+                "__identity_username_literal": values.get(
+                    "username_literal", ""
+                )
+                or None,
+                "__identity_username_is_explicit": values.get(
+                    "username_is_explicit", "0"
+                )
+                == "1",
+                "__identity_file_evidence_status": values.get(
+                    "identity_status", "unavailable"
+                ),
+                "__identity_file_evidence_mode": values.get(
+                    "identity_mode", "unspecified"
+                ),
+                "__identity_file_evidence_reason": values.get(
+                    "identity_reason", "not_provided"
+                ),
+            }
+        )
+
     records = tuple(
         ConnectionRecord.from_dict(connections[token], connection_id=token)
         for token in connection_order
@@ -690,5 +928,5 @@ def load_ssh_configuration(
         connections=records,
         rules=tuple(rules),
         source_paths=frozenset(files),
-        root_revision=_compute_revision(files),
+        root_revision=_compute_revision(files, _content_overrides),
     )

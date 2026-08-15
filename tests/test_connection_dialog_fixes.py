@@ -11,6 +11,16 @@ def test_editor_details_to_connection_empty_hostname():
     conn = _editor_details_to_connection(details)
     assert conn.hostname == ''  # Should not fallback to host
 
+
+def test_editor_details_to_connection_preserves_display_name():
+    details = types.SimpleNamespace(
+        nickname='prod-server',
+        display_name='Production Server',
+        hostname='server.example',
+    )
+    conn = _editor_details_to_connection(details)
+    assert conn.display_name == 'Production Server'
+
 def test_editor_details_to_connection_plugin_data():
     details = types.SimpleNamespace(
         nickname='plugin-host',

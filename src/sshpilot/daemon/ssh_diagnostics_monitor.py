@@ -65,6 +65,20 @@ _WATCH_MASK = IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_DELETE_SELF | IN_MOVE_
 
 _READ_CHUNK = 64 * 1024
 
+# Upper bound on how long register() may wait for the monitor thread to confirm
+# a watch.  The monitor only blocks on selector select(), a bounded drain, and
+# inotify reads, so this timeout is generous; a slow ack degrades readiness for
+# that one launch instead of wedging the daemon's command thread.
+_REGISTER_ACK_TIMEOUT_SECONDS = 2.0
+
+
+class _RegisterAck:
+    __slots__ = ("ok", "event")
+
+    def __init__(self) -> None:
+        self.ok = False
+        self.event = threading.Event()
+
 
 def _inotify_init() -> int:
     if not _INOTIFY_FUNCTIONS_READY:
@@ -160,9 +174,22 @@ class SshDiagnosticsMonitor:
         key: object,
         path: str,
         on_data: Callable[[bytes], None],
-    ) -> None:
-        """Watch *path* and deliver appended bytes (existing content included)."""
-        self._submit(("register", key, path, on_data))
+    ) -> bool:
+        """Watch *path* and deliver appended bytes (existing content included).
+
+        Blocks (bounded) until the monitor thread confirms the watch is armed
+        and returns whether it was.  ``False`` means the caller must not treat
+        the launch as instrumented (the caller owns any file cleanup).  This
+        ack is what lets the readiness manager engage a session only after the
+        watch actually exists, so OpenSSH's first write is never missed.
+        """
+        ack = _RegisterAck()
+        try:
+            self._submit(("register", key, path, on_data, ack))
+        except RuntimeError:
+            return False
+        ack.event.wait(_REGISTER_ACK_TIMEOUT_SECONDS)
+        return ack.ok
 
     def unregister(self, key: object, *, unlink_path: Optional[str] = None) -> None:
         """Drain the file to EOF, remove the watch, and optionally unlink it."""
@@ -238,26 +265,30 @@ class SshDiagnosticsMonitor:
                     pass
                 return True
             if kind == "register":
-                self._handle_register(command[1], command[2], command[3])
+                self._handle_register(command[1], command[2], command[3], command[4])
             elif kind == "unregister":
                 self._handle_unregister(command[1], command[2])
 
-    def _handle_register(self, key: object, path: str, on_data) -> None:
+    def _handle_register(self, key: object, path: str, on_data, ack: _RegisterAck) -> None:
         try:
             fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
         except OSError:
+            ack.event.set()
             return
         watch = _WatchState(path, fd, on_data)
         encoded = os.fsencode(path)
         wd = _INOTIFY_LIBC.inotify_add_watch(self._fd, encoded, _WATCH_MASK)
         if wd < 0:
             os.close(fd)
+            ack.event.set()
             return
         self._watches[wd] = watch
         self._by_key[key] = watch
         # A marker may already have been written before the watch was armed:
         # read whatever exists now so no event is lost.
         watch.drain()
+        ack.ok = True
+        ack.event.set()
 
     def _handle_unregister(self, key: object, unlink_path: Optional[str]) -> None:
         watch = self._by_key.pop(key, None)

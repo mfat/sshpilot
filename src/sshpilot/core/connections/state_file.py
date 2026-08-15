@@ -11,7 +11,9 @@ The write path refuses symlink destinations, creates missing parents as
 through a same-directory temporary file with ``fsync``, atomically replaces
 the target, and ``fsync``s the parent directory. Reads refuse symlinks, enforce
 strict UTF-8, a JSON object root, a 16 MiB size limit, and safe metadata.
-File contents and filesystem paths are never logged or surfaced in errors.
+The same hardened primitives also store the accepted UUID-owned v2 sidecar
+and its pending transaction intent; v1 callers remain compatible. File
+contents and filesystem paths are never logged or surfaced in errors.
 """
 
 from __future__ import annotations
@@ -22,23 +24,35 @@ import os
 import stat
 import tempfile
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Optional, Tuple
+from typing import Any, Callable, Mapping, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from ...api.models.connection_store import thaw_safe_metadata, validate_safe_metadata
 from ..errors import CoreError, ErrorCode
 
 _MAX_STATE_BYTES = 16 * 1024 * 1024
+_MAX_IDENTITY_INTENT_BYTES = 32 * 1024 * 1024
 _STATE_VERSION = 1
-_SECRET_KEY_FRAGMENTS = (
-    "password",
-    "passphrase",
-    "secret",
-    "token",
-    "credential",
-    "cookie",
-    "private_key",
-)
+
+if TYPE_CHECKING:
+    from .identity_reconciliation import ConnectionIdentityProjection
+    from .identity_state_v2 import (
+        IdentityRecoveryDecision,
+        IdentityStateV2,
+        IdentityTransactionIntent,
+        MigrationReport,
+    )
+
+
+class ConnectionStateFileKind(str, Enum):
+    """Safe classification of the JSON state file on disk."""
+
+    ABSENT = "absent"
+    V1 = "v1"
+    V2 = "v2"
+    UNSUPPORTED = "unsupported"
+    CORRUPT = "corrupt"
 
 
 def _core_error(exc: BaseException) -> CoreError:
@@ -84,11 +98,6 @@ def _refuse_symlink(path: os.PathLike) -> None:
             diagnostic_category="unsafe_file",
             diagnostic_reason="unsafe state-file target",
         )
-
-
-def _looks_like_secret_key(key: str) -> bool:
-    lowered = str(key).lower()
-    return any(fragment in lowered for fragment in _SECRET_KEY_FRAGMENTS)
 
 
 def _sanitize_legacy_metadata(meta: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
@@ -260,12 +269,17 @@ class ConnectionFileState:
 # Reads
 # ---------------------------------------------------------------------------
 
-def _read_state_bytes(path: Path) -> Optional[bytes]:
+def _read_state_bytes(
+    path: Path,
+    *,
+    max_bytes: Optional[int] = None,
+) -> Optional[bytes]:
     """Read exact state bytes without following symlinks.
 
     Returns ``None`` when the file is absent; raises ``CoreError`` for any
     symlink, metadata, size, or read failure.
     """
+    limit = _MAX_STATE_BYTES if max_bytes is None else max_bytes
     try:
         st = os.lstat(path)
     except FileNotFoundError:
@@ -279,7 +293,7 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
             diagnostic_category="unsafe_file",
             diagnostic_reason="unsafe state-file target",
         )
-    if st.st_size > _MAX_STATE_BYTES:
+    if st.st_size > limit:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
             "Connection-state file exceeds the size limit",
@@ -310,7 +324,7 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
             if not chunk:
                 break
             total += len(chunk)
-            if total > _MAX_STATE_BYTES:
+            if total > limit:
                 raise CoreError(
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "Connection-state file exceeds the size limit",
@@ -331,7 +345,7 @@ def _read_state_bytes(path: Path) -> Optional[bytes]:
     return b"".join(chunks)
 
 
-def _parse_state_bytes(raw: bytes) -> ConnectionFileState:
+def _decode_json_object(raw: bytes) -> Mapping[str, Any]:
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -357,6 +371,11 @@ def _parse_state_bytes(raw: bytes) -> ConnectionFileState:
             diagnostic_category="wrong_root_type",
             diagnostic_reason="state file root is not an object",
         )
+    return data
+
+
+def _parse_state_bytes(raw: bytes) -> ConnectionFileState:
+    data = _decode_json_object(raw)
     try:
         return ConnectionFileState.from_dict(data)
     except (TypeError, ValueError) as exc:
@@ -386,6 +405,71 @@ def read_connection_state(path: Path) -> ConnectionFileState:
     if raw is None:
         return ConnectionFileState()
     return _parse_state_bytes(raw)
+
+
+def probe_connection_state_file(path: Path) -> ConnectionStateFileKind:
+    """Classify an on-disk ``connections.json`` without repairing it.
+
+    Unsafe filesystem conditions still raise ``CoreError``. Malformed bytes,
+    JSON, roots, or version fields are classified as ``CORRUPT`` so callers
+    can distinguish corruption from an absent file without treating either as
+    an empty identity registry.
+    """
+    raw = _read_state_bytes(Path(path))
+    if raw is None:
+        return ConnectionStateFileKind.ABSENT
+    try:
+        data = _decode_json_object(raw)
+    except CoreError as exc:
+        if exc.diagnostic_category in {
+            "invalid_utf8",
+            "invalid_json",
+            "wrong_root_type",
+        }:
+            return ConnectionStateFileKind.CORRUPT
+        raise
+    version = data.get("version")
+    if type(version) is not int:
+        return ConnectionStateFileKind.CORRUPT
+    if version == 1:
+        try:
+            _parse_state_bytes(raw)
+        except CoreError:
+            return ConnectionStateFileKind.CORRUPT
+        return ConnectionStateFileKind.V1
+    if version == 2:
+        try:
+            from .identity_state_v2 import IdentityStateV2
+
+            IdentityStateV2.from_dict(data)
+        except (TypeError, ValueError, KeyError):
+            return ConnectionStateFileKind.CORRUPT
+        return ConnectionStateFileKind.V2
+    return ConnectionStateFileKind.UNSUPPORTED
+
+
+def read_identity_state_v2(path: Path) -> Optional["IdentityStateV2"]:
+    """Read and strictly validate a production v2 identity sidecar.
+
+    ``None`` means the target is absent. Existing malformed, unsupported, or
+    invalid state is always rejected and is never replaced with defaults.
+    """
+    raw = _read_state_bytes(Path(path))
+    if raw is None:
+        return None
+    data = _decode_json_object(raw)
+    if data.get("version") != 2:
+        raise _state_rejected(
+            "unsupported_version", "identity state version is unsupported"
+        )
+    try:
+        from .identity_state_v2 import IdentityStateV2
+
+        return IdentityStateV2.from_dict(data)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise _state_rejected(
+            "invalid_identity_state", "identity state schema is invalid"
+        ) from exc
 
 
 def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
@@ -499,10 +583,11 @@ def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
                 continue
             try:
                 sanitized = _sanitize_legacy_metadata(meta)
-            except (TypeError, ValueError) as exc:
-                raise _state_rejected(
-                    "invalid_metadata", "legacy metadata is unsafe or invalid"
-                ) from exc
+            except (TypeError, ValueError):
+                # Legacy metadata is auxiliary and entries are independent.
+                # Keep valid decorations migratable without weakening the
+                # shared safe-metadata validator or copying unsafe values.
+                continue
             if sanitized is not None:
                 metadata[str(cid)] = sanitized
 
@@ -519,21 +604,49 @@ def read_legacy_connection_state(config_path: Path) -> ConnectionFileState:
 # Atomic write
 # ---------------------------------------------------------------------------
 
-def write_connection_state(path: Path, state: ConnectionFileState) -> None:
-    """Atomically persist *state* to *path* with full durability hardening."""
-    if type(state) is not ConnectionFileState:
-        raise TypeError("connection state must be a ConnectionFileState")
-    path = Path(path)
+def _serialize_json(payload: Mapping[str, Any], label: str) -> bytes:
     try:
-        content = json.dumps(
-            state.to_dict(), indent=2, sort_keys=True
-        ).encode("utf-8")
+        return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
     except (TypeError, ValueError) as exc:
         raise CoreError(
             ErrorCode.CONNECTION_STATE_IO_ERROR,
-            "Connection-state data is not serializable",
+            f"{label} data is not serializable",
         ) from exc
 
+
+def _fsync_parent(path: Path) -> None:
+    """Make a completed same-directory rename or unlink durable."""
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    dir_fd: Optional[int] = None
+    try:
+        dir_fd = os.open(path.parent, flags)
+        os.fsync(dir_fd)
+    except OSError as exc:
+        raise _core_error(exc) from exc
+    finally:
+        if dir_fd is not None:
+            try:
+                os.close(dir_fd)
+            except OSError:
+                pass
+
+
+def _atomic_write_bytes(
+    path: Path,
+    content: bytes,
+    *,
+    prefix: str,
+    max_bytes: Optional[int] = None,
+) -> None:
+    """Atomically write bytes using the hardened v1 storage policy."""
+    path = Path(path)
+    limit = _MAX_STATE_BYTES if max_bytes is None else max_bytes
+    if len(content) > limit:
+        raise _state_rejected(
+            "unsafe_file", "serialized state exceeds the size limit"
+        )
     try:
         _refuse_symlink(path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -559,7 +672,7 @@ def write_connection_state(path: Path, state: ConnectionFileState) -> None:
     tmp_name: Optional[str] = None
     try:
         fd, tmp_name = tempfile.mkstemp(
-            dir=str(path.parent), prefix=".connections-", suffix=".tmp"
+            dir=str(path.parent), prefix=prefix, suffix=".tmp"
         )
         # os.fdopen takes ownership of the descriptor; do not close it twice.
         with os.fdopen(fd, "wb") as handle:
@@ -584,15 +697,177 @@ def write_connection_state(path: Path, state: ConnectionFileState) -> None:
     # Make the rename durable. The replacement may already have succeeded when
     # this fails, so callers must treat a raised CoreError here as
     # "durability unknown".
-    flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    dir_fd: Optional[int] = None
+    _fsync_parent(path)
+
+
+def write_connection_state(path: Path, state: ConnectionFileState) -> None:
+    """Atomically persist *state* to *path* with full durability hardening."""
+    if type(state) is not ConnectionFileState:
+        raise TypeError("connection state must be a ConnectionFileState")
+    content = _serialize_json(state.to_dict(), "Connection-state")
+    _atomic_write_bytes(Path(path), content, prefix=".connections-")
+
+
+def write_identity_state_v2(path: Path, state: "IdentityStateV2") -> None:
+    """Atomically persist an already-validated v2 identity state."""
+    from .identity_state_v2 import IdentityStateV2
+
+    if type(state) is not IdentityStateV2:
+        raise TypeError("identity state must be an IdentityStateV2")
+    content = _serialize_json(state.to_dict(), "Identity-state")
+    _atomic_write_bytes(Path(path), content, prefix=".connections-")
+
+
+def migrate_connection_state_v1_to_v2(
+    path: Path,
+    projections: Sequence["ConnectionIdentityProjection"],
+    *,
+    ssh_config_revision: str,
+    uuid_factory: Optional[Callable[[], str]] = None,
+) -> Tuple["IdentityStateV2", "MigrationReport"]:
+    """Safely migrate one real v1 sidecar to v2.
+
+    The caller supplies authoritative loader projections. This function never
+    derives evidence from serialized ``record.data`` and never removes or
+    truncates the v1 file before the atomic v2 replacement commits.
+    """
+    path = Path(path)
+    if type(ssh_config_revision) is not str or not ssh_config_revision.strip():
+        raise ValueError("SSH config revision must be a non-empty string")
+    kind = probe_connection_state_file(path)
+    if kind is ConnectionStateFileKind.ABSENT:
+        raise _state_rejected("missing_state", "v1 state file is absent")
+    if kind is not ConnectionStateFileKind.V1:
+        category = (
+            "unsupported_version"
+            if kind is ConnectionStateFileKind.UNSUPPORTED
+            else "invalid_state"
+        )
+        raise _state_rejected(category, "state file is not a valid v1 file")
+    legacy = read_connection_state(path)
+    from .identity_state_v2 import migrate_v1_state
+
+    kwargs: dict[str, Any] = {"ssh_config_revision": ssh_config_revision}
+    if uuid_factory is not None:
+        kwargs["uuid_factory"] = uuid_factory
+    state, report = migrate_v1_state(legacy, projections, **kwargs)
+    write_identity_state_v2(path, state)
+    return state, report
+
+
+def identity_transaction_intent_path(path: Path) -> Path:
+    """Return the deterministic same-directory pending-intent companion."""
+    path = Path(path)
+    return path.with_name(path.name + ".pending")
+
+
+def read_pending_identity_transaction(
+    path: Path,
+) -> Optional["IdentityTransactionIntent"]:
+    """Read a strict pending target snapshot; malformed data is an error."""
+    raw = _read_state_bytes(
+        Path(path), max_bytes=_MAX_IDENTITY_INTENT_BYTES
+    )
+    if raw is None:
+        return None
+    data = _decode_json_object(raw)
     try:
-        dir_fd = os.open(path.parent, flags)
-        os.fsync(dir_fd)
+        from .identity_state_v2 import IdentityTransactionIntent
+
+        intent = IdentityTransactionIntent.from_dict(data)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise _state_rejected(
+            "invalid_transaction_intent", "pending identity transaction is invalid"
+        ) from exc
+    target_content = _serialize_json(intent.target_state.to_dict(), "Identity-state")
+    if len(target_content) > _MAX_STATE_BYTES:
+        raise _state_rejected(
+            "invalid_transaction_intent",
+            "serialized transaction target exceeds the state limit",
+        )
+    return intent
+
+
+def write_pending_identity_transaction(
+    path: Path,
+    intent: "IdentityTransactionIntent",
+) -> None:
+    """Atomically persist a complete, validated target snapshot intent."""
+    from .identity_state_v2 import IdentityTransactionIntent
+
+    if type(intent) is not IdentityTransactionIntent:
+        raise TypeError("identity transaction must be an IdentityTransactionIntent")
+    target_content = _serialize_json(intent.target_state.to_dict(), "Identity-state")
+    if len(target_content) > _MAX_STATE_BYTES:
+        raise _state_rejected(
+            "unsafe_file", "serialized transaction target exceeds the state limit"
+        )
+    content = _serialize_json(intent.to_dict(), "Identity transaction")
+    _atomic_write_bytes(
+        Path(path),
+        content,
+        prefix=".connections-pending-",
+        max_bytes=_MAX_IDENTITY_INTENT_BYTES,
+    )
+
+
+def clear_pending_identity_transaction(path: Path) -> None:
+    """Durably remove a pending intent, refusing symlink targets."""
+    path = Path(path)
+    try:
+        _refuse_symlink(path)
+        os.unlink(path)
+    except FileNotFoundError:
+        return
+    except CoreError:
+        raise
     except OSError as exc:
         raise _core_error(exc) from exc
-    finally:
-        if dir_fd is not None:
-            os.close(dir_fd)
+    _fsync_parent(path)
+
+
+def recover_pending_identity_transaction(
+    sidecar_path: Path,
+    *,
+    actual_ssh_revision: Optional[str],
+    intent_path: Optional[Path] = None,
+) -> "IdentityRecoveryDecision":
+    """Apply only unambiguous pending-intent recovery decisions.
+
+    TARGET and BASE revisions are finalized/aborted respectively. Unrelated,
+    incomplete, stale, or corrupt state is left for a higher-level adapter and
+    is never resolved by guessing.
+    """
+    from .identity_state_v2 import (
+        IdentityRecoveryAction,
+        IdentityRecoveryDecision,
+        classify_identity_transaction_recovery,
+    )
+
+    sidecar_path = Path(sidecar_path)
+    intent_path = (
+        Path(intent_path)
+        if intent_path is not None
+        else identity_transaction_intent_path(sidecar_path)
+    )
+    intent = read_pending_identity_transaction(intent_path)
+    if intent is None:
+        return IdentityRecoveryDecision(
+            IdentityRecoveryAction.NO_PENDING,
+            "no pending identity transaction",
+        )
+    current = read_identity_state_v2(sidecar_path)
+    if current is None:
+        raise _state_rejected(
+            "missing_identity_state", "pending transaction has no sidecar state"
+        )
+    decision = classify_identity_transaction_recovery(
+        current, intent, actual_ssh_revision
+    )
+    if decision.action is IdentityRecoveryAction.FINALIZE_TARGET:
+        if current != intent.target_state:
+            write_identity_state_v2(sidecar_path, intent.target_state)
+        clear_pending_identity_transaction(intent_path)
+    elif decision.action is IdentityRecoveryAction.ABORT_BASE:
+        clear_pending_identity_transaction(intent_path)
+    return decision

@@ -302,7 +302,11 @@ class ScpWindowController:
             if not capabilities.supports(Capability.SFTP_READ):
                 self._show_transfer_error("Remote browsing requires the daemon SFTP service.")
                 return
-            display_name = getattr(connection, "nickname", "") or getattr(connection, "host", "")
+            display_name = (
+                getattr(connection, "display_name", None)
+                or getattr(connection, "nickname", "")
+                or getattr(connection, "host", "")
+            )
             sftp_service_id = _sftp_service_id
             browser_closed = {"value": False}
             request_generation = {"value": 0}

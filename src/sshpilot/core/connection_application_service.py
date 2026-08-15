@@ -32,7 +32,6 @@ from ..api.models.connections import (
     AuthenticationMethod,
     ConnectionDetails,
     ConnectionEditorDetails,
-    ConnectionHealth,
     ConnectionId,
     ConnectionMutationResult,
     ConnectionSummary,
@@ -40,7 +39,6 @@ from ..api.models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     ForwardingRule,
-    GroupReference,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
     SshConfigText,
@@ -686,6 +684,7 @@ class ConnectionApplicationService:
             connection_id=record.id,
             nickname=record.nickname,
             generation=record.generation,
+            display_name=self._record_to_summary(record).display_name,
         )
 
     def enable_serialized_command_threads(self) -> None:
@@ -812,6 +811,7 @@ class ConnectionApplicationService:
             connection_id=record.id,
             nickname=record.nickname,
             generation=record.generation,
+            display_name=self._record_to_summary(record).display_name,
         )
 
     def _build_create_data(self, request: CreateConnectionRequest) -> Dict[str, Any]:
@@ -821,6 +821,7 @@ class ConnectionApplicationService:
             "username": request.username,
             "port": request.port,
             "protocol": request.protocol,
+            "display_name": request.display_name,
         }
         if request.config_patch:
             self._apply_config_patch(data, request.config_patch)
@@ -881,6 +882,7 @@ class ConnectionApplicationService:
             connection_id=record.id,
             nickname=record.nickname,
             generation=record.generation,
+            display_name=self._record_to_summary(record).display_name,
         )
 
     def update_connection(
@@ -918,6 +920,44 @@ class ConnectionApplicationService:
                 "Plugin connections cannot contain SSH configuration",
                 connection_id=connection_id,
             )
+        display_only = (
+            request.display_name is not UNSET
+            and request.display_name is not None
+            and not request.config_patch
+            and not request.plugin_data
+            and all(
+                getattr(request, name) is UNSET
+                for name in ("nickname", "hostname", "username", "port")
+            )
+        )
+        if display_only:
+            try:
+                previous_display_name = self._record_to_summary(record).display_name
+                if request.expected_generation is None:
+                    updated = self._repository.set_display_name(
+                        connection_id, request.display_name
+                    )
+                else:
+                    updated = self._repository.set_display_name(
+                        connection_id,
+                        request.display_name,
+                        expected_generation=request.expected_generation,
+                    )
+            except CoreError as error:
+                raise _map_core_error(error) from error
+            summary = self._record_to_summary(updated)
+            return ConnectionMutationResult(
+                connection_id=updated.id,
+                nickname=updated.nickname,
+                generation=updated.generation,
+                changed=previous_display_name != request.display_name.strip(),
+                changed_fields=(
+                    ("display_name",)
+                    if previous_display_name != request.display_name.strip()
+                    else ()
+                ),
+                display_name=summary.display_name,
+            )
         before_data = dict(record.data or {})
         data = dict(record.data or {})
         compared_fields = set(request.config_patch or {})
@@ -925,6 +965,9 @@ class ConnectionApplicationService:
             name for name in ("nickname", "hostname", "username", "port")
             if getattr(request, name) is not None and getattr(request, name) is not UNSET
         )
+        if request.display_name is not UNSET and request.display_name is not None:
+            data["display_name"] = request.display_name
+            compared_fields.add("display_name")
         compared_fields.update(request.plugin_data or {})
         for name in ("nickname", "hostname", "username", "port"):
             value = getattr(request, name)
@@ -966,6 +1009,7 @@ class ConnectionApplicationService:
             generation=updated.generation,
             changed=bool(changed_fields),
             changed_fields=changed_fields,
+            display_name=self._record_to_summary(updated).display_name,
         )
 
     def delete_connection(self, request: DeleteConnectionRequest) -> DeleteConnectionResult:
@@ -1175,33 +1219,13 @@ class ConnectionApplicationService:
         result matches the authoritative store. No fallback path: a missing
         record or failed snapshot raises rather than silently guessing groups.
         """
-        data = record.data or {}
-        try:
-            port = int(record.port)
-        except (TypeError, ValueError):
-            port = 22
-        if not 1 <= port <= 65535:
-            port = 22
         snapshot = self._repository.snapshot()
-        group_names = {g.id: g.name for g in snapshot.groups}
-        group_ids: List[str] = []
         for summary in snapshot.connections:
             if summary.id == record.id:
-                group_ids = [g.id for g in summary.groups]
-                break
-        return ConnectionSummary(
-            id=ConnectionId(record.id),
-            nickname=record.nickname,
-            host=record.host or str(data.get("host") or record.id),
-            hostname=record.hostname,
-            username=record.username,
-            port=port,
-            protocol=record.protocol or "ssh",
-            health=ConnectionHealth.UNKNOWN,
-            groups=tuple(
-                GroupReference(id=gid, name=group_names.get(gid, ""))
-                for gid in group_ids
-            ),
+                return summary
+        raise CoreError(
+            ErrorCode.CONNECTION_NOT_FOUND,
+            "The connection is not present in the current snapshot",
         )
 
     def _record_to_details(self, record: ConnectionRecord) -> ConnectionDetails:
@@ -1229,6 +1253,7 @@ class ConnectionApplicationService:
             protocol=summary.protocol,
             health=summary.health,
             groups=summary.groups,
+            display_name=summary.display_name,
             aliases=record.aliases or self._string_tuple(data.get("aliases")),
             authentication_method=auth_method,
             identity_configured=bool(keyfile) or bool(data.get("identity_files")),
@@ -1275,6 +1300,7 @@ class ConnectionApplicationService:
             protocol=details.protocol,
             health=details.health,
             groups=details.groups,
+            display_name=details.display_name,
             aliases=details.aliases,
             authentication_method=details.authentication_method,
             identity_configured=details.identity_configured,

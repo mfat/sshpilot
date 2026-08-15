@@ -90,6 +90,7 @@ def _editor_details_to_connection(details):
     ]
     return types.SimpleNamespace(
         nickname=getattr(details, 'nickname', '') or '',
+        display_name=getattr(details, 'display_name', '') or '',
         hostname=getattr(details, 'hostname', '') or '',
         host=getattr(details, 'host', '') or '',
         username=getattr(details, 'username', '') or '',
@@ -2331,6 +2332,79 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _capture_editor_delta_baseline(self):
+        """Capture the authoritative form values used to build update deltas."""
+        def text(name, default=""):
+            row = getattr(self, name, None)
+            try:
+                return row.get_text().strip() if row is not None else default
+            except Exception:
+                return default
+
+        def active(name, default=False):
+            row = getattr(self, name, None)
+            try:
+                return bool(row.get_active()) if row is not None else default
+            except Exception:
+                return default
+
+        self._editor_delta_baseline = {
+            "display_name": text("display_name_row"),
+            "nickname": text("nickname_row"),
+            "hostname": text("hostname_row"),
+            "username": text("username_row"),
+            "port": int(text("port_row", "22") or "22"),
+            "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
+            "auth_method": int(self.auth_toggle.get_active()) if hasattr(self, "auth_toggle") else 0,
+            "key_select_mode": self._selected_key_mode(),
+            "add_keys_to_agent": self._selected_add_keys_to_agent(),
+            "aliases": tuple(getattr(self.connection, "aliases", ()) or ()),
+            "identity_files": tuple(self._collect_identity_files()),
+            "certificate_files": tuple(self._collect_certificate_files()),
+            "proxy_jump": tuple(
+                item.strip() for item in text("proxy_jump_row").replace(",", " ").split()
+                if item.strip()
+            ),
+            "forward_agent": active("forward_agent_row"),
+            "x11_forwarding": active("x11_row"),
+            "pubkey_auth_no": active("pubkey_auth_row"),
+            "identity_agent": text("identity_agent_row"),
+            "pkcs11_provider": text("pkcs11_provider_row"),
+            "security_key_provider": text("security_key_provider_row"),
+            "pre_command": text("pre_command_row"),
+            "local_command": text("local_command_row"),
+            "remote_command": text("remote_command_row"),
+            "extra_ssh_config": getattr(self.advanced_tab, "get_extra_ssh_config", lambda: "")() if hasattr(self, "advanced_tab") else "",
+            "forwarding_rules": tuple(
+                tuple(sorted(dict(rule).items()))
+                for rule in (getattr(self, "forwarding_rules", None) or [])
+            ),
+        }
+
+    def _changed_editor_fields(self, values):
+        baseline = getattr(self, "_editor_delta_baseline", None)
+        if not baseline:
+            return tuple(values)
+        changed = []
+        for key, current in values.items():
+            if key.startswith("__") or key in {"password", "keyfile", "certificate"}:
+                # ``keyfile``/``certificate`` are derived from the identity /
+                # certificate file lists, which are compared themselves; their
+                # singular aliases must never flag a spurious change (they are
+                # absent from the baseline, so a literal comparison is always
+                # unequal).
+                continue
+            candidate = current
+            if key in {"identity_files", "certificate_files", "proxy_jump"}:
+                candidate = tuple(current or ())
+            elif key == "forwarding_rules":
+                candidate = tuple(
+                    tuple(sorted(dict(rule).items())) for rule in (current or [])
+                )
+            if candidate != baseline.get(key):
+                changed.append(key)
+        return tuple(changed)
+
     def load_connection_data(self):
         """Load connection data into the dialog fields"""
         # Load whenever we have a connection object — including as_new prefills
@@ -2344,7 +2418,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
 
         required_attrs = [
-            'nickname_row', 'hostname_row', 'username_row', 'port_row',
+            'display_name_row', 'nickname_row', 'hostname_row', 'username_row', 'port_row',
             'proxy_jump_row', 'forward_agent_row',
             'auth_toggle', 'key_editor', 'cert_editor', 'password_row',
             'key_select_row', 'key_only_row', 'pubkey_auth_row'
@@ -2372,6 +2446,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 self._apply_protocol_to_ui()
                 if hasattr(self.connection, 'nickname'):
                     self.nickname_row.set_text(self.connection.nickname or "")
+                self.display_name_row.set_text(
+                    getattr(self.connection, 'display_name', None)
+                    or self.connection.nickname or ""
+                )
                 self._load_shared_meta_rows()
                 self._load_plugin_field_values()
             finally:
@@ -2382,6 +2460,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             # Load basic connection data
             if hasattr(self.connection, 'nickname'):
                 self.nickname_row.set_text(self.connection.nickname or "")
+            self.display_name_row.set_text(
+                getattr(self.connection, 'display_name', None)
+                or self.connection.nickname or ""
+            )
             if hasattr(self.connection, 'hostname'):
                 self.hostname_row.set_text(self.connection.hostname or "")
             if hasattr(self.connection, 'username'):
@@ -2582,6 +2664,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             logger.error(f"Error loading connection data: {e}")
             self.show_error(_("Failed to load connection data"))
         finally:
+            try:
+                if self.is_editing:
+                    self._capture_editor_delta_baseline()
+            except Exception:
+                logger.debug("Failed to capture editor delta baseline", exc_info=True)
             self._loading_connection_data = False
 
 
@@ -2880,9 +2967,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         self.protocol_row.connect('notify::selected', self._on_protocol_changed)
         basic_group.add(self.protocol_row)
 
-        # Nickname
+        # Display Name (SSH Pilot-owned presentation metadata)
+        self.display_name_row = Adw.EntryRow(title=_("Name"))
+        basic_group.add(self.display_name_row)
+
+        # SSH alias / Host token
         self.nickname_row = Adw.EntryRow(
-            title=_("Nickname (no whitespace allowed)")
+            title=_("SSH Alias (no whitespace allowed)")
         )
         basic_group.add(self.nickname_row)
         
@@ -3572,8 +3663,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         key_select_mode_val = self._selected_key_mode()
 
-        # Gather connection data
+        # Gather connection data.  A few headless/plugin compatibility tests
+        # construct the dialog without running the GTK widget builder; retain
+        # the legacy alias fallback when the additive Name row is unavailable.
+        display_name_row = getattr(self, 'display_name_row', None)
+        if display_name_row is not None:
+            display_name = display_name_row.get_text().strip()
+        else:
+            display_name = str(
+                getattr(self.connection, 'display_name', None)
+                or getattr(self.connection, 'nickname', '')
+                or ''
+            ).strip()
         connection_data = {
+            'display_name': display_name,
             'nickname': self.nickname_row.get_text().strip(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
@@ -3602,6 +3705,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'remote_command': (self.remote_command_row.get_text() if hasattr(self, 'remote_command_row') else ''),
             'extra_ssh_config': extra_ssh_config,
         }
+        if self.is_editing:
+            connection_data['__changed_fields'] = self._changed_editor_fields(
+                connection_data
+            )
 
         # Create a separate local-only secret plan that never enters wire DTOs.
         passphrase_ops = []

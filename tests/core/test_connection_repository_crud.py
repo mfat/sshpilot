@@ -16,8 +16,14 @@ import conftest  # noqa: F401  (installs the GI stub)
 from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
+from sshpilot.core.connection_application_service import (  # noqa: E402
+    ConnectionApplicationService,
+)
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
+from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
+from sshpilot.api.models.connections import UpdateConnectionRequest  # noqa: E402
 
 
 def _repo(tmp_path, ssh_text: str = ""):
@@ -38,7 +44,52 @@ def _write_state(path: Path, payload: dict) -> None:
 
 
 def _state(path: Path) -> dict:
-    return json.loads(path.read_text())
+    raw = json.loads(path.read_text())
+    if raw.get("version") != 2:
+        return raw
+    state = read_identity_state_v2(path)
+    aliases = {
+        identity.uuid: identity.projection.alias
+        for identity in state.identities
+        if not identity.tombstone
+    }
+
+    def ref_value(reference):
+        return (
+            aliases.get(reference.value)
+            if reference.kind is ReferenceKind.SSH_UUID
+            else reference.value
+        )
+
+    return {
+        "version": 1,
+        "non_ssh_connections": list(state.non_ssh_connections),
+        "groups": {
+            "groups": {
+                group.id: {
+                    "id": group.id,
+                    "name": group.name,
+                    "parent_id": group.parent_id,
+                    "order": group.order,
+                    "color": group.color,
+                    "connection_ids": [
+                        value for member in group.members
+                        if (value := ref_value(member)) is not None
+                    ],
+                }
+                for group in state.groups
+            },
+            "root_connections": [
+                value for reference in state.root_connections
+                if (value := ref_value(reference)) is not None
+            ],
+        },
+        "metadata": {
+            aliases[uuid]: values
+            for uuid, values in state.metadata.items()
+            if uuid in aliases
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +121,7 @@ def test_ssh_create_rolls_back_when_state_write_fails(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -155,6 +206,29 @@ def test_ssh_rename_stale_editor_rejected(tmp_path):
     assert [c.id for c in snap.connections] == ["web"]
 
 
+def test_repeated_host_update_is_rejected_without_repository_side_effects(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host foo\n    HostName first.example\n\n"
+        "Host foo bar\n    User deploy\n",
+    )
+    before_root = root.read_bytes()
+    before_state = state.read_bytes()
+    events = []
+    repo.add_listener(events.append)
+    with pytest.raises(CoreError) as exc:
+        repo.update_connection(
+            "foo",
+            {"nickname": "foo", "hostname": "changed.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.MUTATION_AMBIGUOUS
+    assert root.read_bytes() == before_root
+    assert state.read_bytes() == before_state
+    assert not state.with_name(state.name + ".pending").exists()
+    assert events == []
+
+
 def test_ssh_delete_removes_block_and_metadata(tmp_path):
     repo, root, state = _repo(
         tmp_path,
@@ -229,6 +303,108 @@ def test_non_ssh_create_persists_to_state_file(tmp_path):
     assert [c.id for c in snap.connections] == ["tel"]
 
 
+def test_non_ssh_display_name_is_record_owned_and_survives_restart(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    created = repo.create_connection(
+        {
+            "nickname": "router1",
+            "protocol": "telnet",
+            "hostname": "192.0.2.10",
+            "display_name": "Office Router",
+        }
+    )
+    assert created.id == "router1"
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+    assert read_identity_state_v2(state).identities == ()
+    assert not root.exists()
+
+    restarted, _root, _state = _repo(tmp_path)
+    summary = restarted.snapshot().connections[0]
+    assert summary.id == "router1"
+    assert summary.display_name == "Office Router"
+
+
+def test_non_ssh_display_name_update_is_persisted_once_and_noop_is_quiet(tmp_path):
+    repo, root, state = _repo(tmp_path)
+    repo.create_connection(
+        {"nickname": "router1", "protocol": "telnet", "hostname": "192.0.2.10"}
+    )
+    events = []
+    repo.add_listener(events.append)
+    before_bytes = state.read_bytes()
+    before_generation = repo.snapshot().generation
+
+    updated = repo.set_display_name("router1", "Office Router")
+    assert updated.data["display_name"] == "Office Router"
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+    assert repo.snapshot().generation == before_generation + 1
+    assert len(events) == 1
+    assert root.exists() is False
+
+    after_bytes = state.read_bytes()
+    event_count = len(events)
+    generation = repo.snapshot().generation
+    repo.set_display_name("router1", "Office Router")
+    assert state.read_bytes() == after_bytes
+    assert len(events) == event_count
+    assert repo.snapshot().generation == generation
+    assert after_bytes != before_bytes
+
+
+def test_application_display_name_update_supports_non_ssh_connection(tmp_path):
+    repo, _root, _state = _repo(tmp_path)
+    repo.create_connection(
+        {"nickname": "router1", "protocol": "telnet", "hostname": "192.0.2.10"}
+    )
+    application = ConnectionApplicationService(repo, client_name="test")
+    result = application.update_connection(
+        "router1", UpdateConnectionRequest(display_name="Office Router")
+    )
+    assert result.connection_id == "router1"
+    assert result.display_name == "Office Router"
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+
+
+def test_non_ssh_update_and_rename_preserve_display_name(tmp_path):
+    repo, _root, state = _repo(tmp_path)
+    repo.create_connection(
+        {
+            "nickname": "router1",
+            "protocol": "telnet",
+            "hostname": "192.0.2.10",
+            "display_name": "Office Router",
+        }
+    )
+    repo.update_connection(
+        "router1",
+        {"nickname": "router2", "protocol": "telnet", "hostname": "192.0.2.11"},
+        expected_generation=1,
+    )
+    assert repo.snapshot().connections[0].display_name == "Office Router"
+    assert _state(state)["non_ssh_connections"][0]["display_name"] == "Office Router"
+
+
+def test_invalid_non_ssh_display_name_falls_back_to_nickname(tmp_path):
+    _write_state(
+        tmp_path / "connections.json",
+        {
+            "version": 1,
+            "non_ssh_connections": [
+                {
+                    "nickname": "router1",
+                    "protocol": "telnet",
+                    "hostname": "192.0.2.10",
+                    "display_name": ["not text"],
+                }
+            ],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    repo, _root, _state_path = _repo(tmp_path)
+    assert repo.snapshot().connections[0].display_name == "router1"
+
+
 def test_non_ssh_update_and_rename(tmp_path):
     _write_state(
         tmp_path / "connections.json",
@@ -253,6 +429,106 @@ def test_non_ssh_update_and_rename(tmp_path):
     snap = repo.snapshot()
     assert [c.id for c in snap.connections] == ["tel2"]
     assert snap.connections[0].hostname == "10.0.0.6"
+
+
+def test_non_ssh_duplicate_resets_generation_coherently_and_survives_restart(tmp_path):
+    repo, _root, state = _repo(tmp_path)
+    source = repo.create_connection(
+        {
+            "nickname": "router1",
+            "protocol": "telnet",
+            "hostname": "192.0.2.10",
+            "display_name": "Office Router",
+            "plugin_value": "preserve-me",
+        }
+    )
+    for expected in (1, 2, 3):
+        source = repo.update_connection(
+            "router1",
+            {"hostname": f"192.0.2.{10 + expected}", "protocol": "telnet"},
+            expected_generation=expected,
+        )
+    assert source.generation == 4
+    group = repo.create_group("Routers")
+    repo.assign_connection_to_group("router1", group.id)
+
+    events = []
+    repo.add_listener(events.append)
+    duplicate = repo.duplicate_connection("router1")
+    assert duplicate.generation == 1
+    assert duplicate.data["generation"] == 1
+    assert repo.get_record(duplicate.id).generation == 1
+    assert repo.get_record(duplicate.id).data["generation"] == 1
+    assert repo.get_editor_record(duplicate.id).generation == 1
+    assert repo._non_ssh_generations[duplicate.id] == 1
+    assert source.generation == 4
+    assert duplicate.data["display_name"] == "Office Router"
+    assert duplicate.data["plugin_value"] == "preserve-me"
+    assert repo.snapshot().connections[-1].groups[0].id == group.id
+    assert len(events) == 1
+    assert read_identity_state_v2(state).identities == ()
+    stored = _state(state)["non_ssh_connections"]
+    assert next(item for item in stored if item["nickname"] == duplicate.id)["generation"] == 1
+    assert next(item for item in stored if item["nickname"] == "router1")["generation"] == 4
+
+    application = ConnectionApplicationService(repo, client_name="test")
+    api_duplicate = application.duplicate_connection("router1")
+    assert api_duplicate.generation == 1
+
+    restarted, _root, _state_path = _repo(tmp_path)
+    duplicate_record = restarted.get_record(duplicate.id)
+    assert duplicate_record.generation == 1
+    assert duplicate_record.data["generation"] == 1
+    assert restarted.get_editor_record(duplicate.id).generation == 1
+    assert restarted._non_ssh_generations[duplicate.id] == 1
+    assert duplicate_record.data["display_name"] == "Office Router"
+    assert restarted.get_record("router1").generation == 4
+
+    before = state.read_bytes()
+    no_events = []
+    restarted.add_listener(no_events.append)
+    with pytest.raises(CoreError) as exc:
+        restarted.update_connection(
+            duplicate.id,
+            {"hostname": "192.0.2.99", "protocol": "telnet"},
+            expected_generation=0,
+        )
+    assert exc.value.code is ErrorCode.STALE_CONNECTION_STATE
+    assert state.read_bytes() == before
+    assert no_events == []
+
+    updated = restarted.update_connection(
+        duplicate.id,
+        {"hostname": "192.0.2.99", "protocol": "telnet"},
+        expected_generation=1,
+    )
+    assert updated.generation == 2
+    assert restarted.get_record(duplicate.id).data["generation"] == 2
+    assert restarted._non_ssh_generations[duplicate.id] == 2
+    assert next(
+        item for item in _state(state)["non_ssh_connections"]
+        if item["nickname"] == duplicate.id
+    )["generation"] == 2
+
+
+def test_non_ssh_duplicate_without_stored_generation_starts_at_one(tmp_path):
+    _write_state(
+        tmp_path / "connections.json",
+        {
+            "version": 1,
+            "non_ssh_connections": [
+                {"nickname": "router1", "protocol": "telnet", "hostname": "192.0.2.10"}
+            ],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    repo, _root, _state_path = _repo(tmp_path)
+    duplicate = repo.duplicate_connection("router1")
+    assert duplicate.generation == 1
+    assert duplicate.data["generation"] == 1
+    assert repo.get_record(duplicate.id).generation == 1
+    assert repo.get_editor_record(duplicate.id).generation == 1
 
 
 def test_non_ssh_delete(tmp_path):
@@ -397,6 +673,18 @@ def test_delete_grouped_connection_survives_reload(tmp_path):
     assert snap.groups[0].connection_ids == ()
 
 
+def test_managed_delete_removes_persisted_root_reference(tmp_path):
+    repo, root, state = _repo(
+        tmp_path,
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+
+    repo.delete_connection("A")
+
+    assert _state(state)["groups"]["root_connections"] == ["B"]
+
+
 def test_non_ssh_update_stale_generation_rejected(tmp_path):
     _write_state(
         tmp_path / "connections.json",
@@ -503,7 +791,7 @@ def test_rollback_after_state_failure_ssh_update(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -522,7 +810,7 @@ def test_rollback_after_state_failure_ssh_delete(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -590,7 +878,7 @@ def test_rollback_after_state_failure_ssh_rename(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -609,7 +897,7 @@ def test_rollback_after_state_failure_ssh_duplicate(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises(OSError):
@@ -628,7 +916,7 @@ def test_rollback_after_state_failure_ssh_split(tmp_path, monkeypatch):
         raise OSError("injected state write failure")
 
     monkeypatch.setattr(
-        "sshpilot.core.connections.repository.write_connection_state",
+        "sshpilot.core.connections.repository.write_identity_state_v2",
         fail_write,
     )
     with pytest.raises((CoreError, OSError)):

@@ -515,13 +515,21 @@ class DaemonConnectionLaunchProvider:
             return self._prepare_protocol_launch(
                 connection, protocol, interaction_policy=interaction_policy
             )
-        return self._prepare_ssh_launch(
+        argv, environment = self._prepare_ssh_launch(
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
             remote_command=remote_command,
             force_tty=force_tty,
         )
+        # The daemon PTY is the semantic boundary for interactive SSH
+        # terminals.  Authentication helpers intentionally preserve the
+        # caller environment, but a missing or ``dumb`` TERM is not usable for
+        # the interactive OpenSSH child.  Keep valid terminal types intact.
+        term = environment.get("TERM")
+        if not term or term.lower() == "dumb":
+            environment["TERM"] = "xterm-256color"
+        return argv, environment
 
     def prepare_scp_launch(
         self,

@@ -13,8 +13,9 @@ state. It composes:
 
 The repository publishes immutable :class:`ConnectionStoreSnapshot` objects
 and fires ``RepositoryChange`` callbacks after every committed change,
-outside its lock. No partial state ever becomes visible: the initial load and
-every reload build a fully validated candidate before publishing.
+outside its lock. The authoritative SSH configuration is always loaded first;
+invalid auxiliary state degrades to an empty decoration projection without
+rewriting the sidecar.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import os
 import stat
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple, runtime_checkable
 
@@ -45,21 +46,61 @@ from ...api.models.connections import (
     GroupReference,
     SaveSshConfigTextRequest,
     SshConfigText,
+    MAX_DISPLAY_NAME_LENGTH,
 )
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, GroupRecord
+from .identity_repository_adapter import (
+    projections_from_records,
+    reconcile_identity_state,
+    state_to_service_file_state,
+)
+from .identity_state_v2 import (
+    ConnectionReference,
+    IdentityStateV2,
+    ReferenceKind,
+    UuidGroupState,
+    migrate_v1_state,
+    new_uuid4,
+)
 from .service import ConnectionService
 from .ssh_config_loader import LoadedSshConfiguration
 from .ssh_config_store import SshConfigStore, _atomic_write_text
 from .state_file import (
+    ConnectionStateFileKind,
     ConnectionFileState,
     GroupFileState,
+    probe_connection_state_file,
+    read_identity_state_v2,
+    recover_pending_identity_transaction,
     read_connection_state,
     read_legacy_connection_state,
-    write_connection_state,
+    write_identity_state_v2,
+    identity_transaction_intent_path,
+    write_pending_identity_transaction,
+    clear_pending_identity_transaction,
 )
+from .identity_state_v2 import IdentityRecoveryAction, IdentityTransactionIntent
+
+# Kept as a module attribute for legacy test/integration hooks.  Production
+# writes in this repository are v2-only after migration.
+from .state_file import write_connection_state as write_connection_state
 
 logger = logging.getLogger(__name__)
+
+
+def _display_name_for_record(
+    record: ConnectionRecord, identity: Any = None
+) -> str:
+    """Return the safe public label for an SSH or protocol-local record."""
+    if identity is not None:
+        return identity.display_name
+    value = record.data.get("display_name") if isinstance(record.data, Mapping) else None
+    if type(value) is str:
+        normalized = value.strip()
+        if normalized and len(normalized) <= MAX_DISPLAY_NAME_LENGTH:
+            return normalized
+    return record.nickname
 
 
 @dataclass(frozen=True)
@@ -180,6 +221,16 @@ class ConnectionRepositoryProtocol(Protocol):
         self, connection_id: str, values: Mapping[str, Any]
     ) -> Mapping[str, Any]: ...
 
+    def set_display_name(
+        self,
+        connection_id: str,
+        display_name: str,
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord: ...
+
+    def ssh_alias_for(self, connection_id: str) -> str: ...
+
     def rename_tag(self, old_tag: str, new_tag: str) -> int: ...
 
     def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int: ...
@@ -208,7 +259,13 @@ class ConnectionRepository:
         self._listeners: List[ChangeListener] = []
         self._pending_changes = []
         self._service = ConnectionService(autosave=False)
+        self._identity_state: Optional[IdentityStateV2] = None
+        self._identity_state_unavailable = False
+        self._identity_recovery_required = False
+        self._pending_identity_target: Optional[IdentityStateV2] = None
+        self._loaded_ssh_config: Optional[LoadedSshConfiguration] = None
         self._metadata: Dict[str, Dict[str, Any]] = {}
+        self._persisted_root_order: Tuple[str, ...] = ()
         self._non_ssh_generations: Dict[str, int] = {}
         self._generation = 0
         self._migrated_legacy = False
@@ -229,12 +286,12 @@ class ConnectionRepository:
 
     def get_record(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:
-            record = self._service.get(connection_id)
+            record = self._service.get(self._resolve_internal_id_locked(connection_id))
             return record
 
     def get_editor_record(self, connection_id: str) -> Optional[ConnectionRecord]:
         with self._lock:
-            record = self._service.get(connection_id)
+            record = self._service.get(self._resolve_internal_id_locked(connection_id))
             if record is None:
                 return None
             record.generation = self._generation_for_locked(connection_id)
@@ -270,107 +327,6 @@ class ConnectionRepository:
         with self._lock:
             return self._ssh_store.get_text()
 
-    @staticmethod
-    def _raw_record_signature(record: ConnectionRecord) -> tuple:
-        data = copy.deepcopy(record.data or {})
-        for key in (
-            "id",
-            "nickname",
-            "host",
-            "aliases",
-            "__host_tokens",
-            "source",
-        ):
-            data.pop(key, None)
-        return (
-            record.source,
-            tuple(sorted((str(key), repr(value)) for key, value in data.items())),
-        )
-
-    def _reconcile_raw_ssh_state_locked(
-        self,
-        previous_records: Tuple[ConnectionRecord, ...],
-        ssh_config: LoadedSshConfiguration,
-        file_state: ConnectionFileState,
-    ) -> ConnectionFileState:
-        previous = {
-            record.id: record
-            for record in previous_records
-            if record.protocol == "ssh"
-        }
-        current = {
-            record.id: record
-            for record in ssh_config.connections
-        }
-        removed = set(previous) - set(current)
-        added = set(current) - set(previous)
-        candidates: Dict[str, List[str]] = {}
-        for old_id in removed:
-            signature = self._raw_record_signature(previous[old_id])
-            matches = [
-                new_id
-                for new_id in added
-                if self._raw_record_signature(current[new_id]) == signature
-            ]
-            candidates[old_id] = matches
-        renames = {}
-        for old_id, matches in candidates.items():
-            if len(matches) != 1:
-                continue
-            new_id = matches[0]
-            if sum(new_id in values for values in candidates.values()) == 1:
-                renames[old_id] = new_id
-        known_ids = set(current)
-
-        def reconcile_id(connection_id: str) -> Optional[str]:
-            if connection_id in renames:
-                return renames[connection_id]
-            if connection_id in known_ids:
-                return connection_id
-            return None
-
-        groups = []
-        for group in file_state.groups:
-            members = []
-            seen = set()
-            for connection_id in group.connection_ids:
-                reconciled = reconcile_id(connection_id)
-                if reconciled is not None and reconciled not in seen:
-                    seen.add(reconciled)
-                    members.append(reconciled)
-            groups.append(
-                GroupFileState(
-                    id=group.id,
-                    name=group.name,
-                    parent_id=group.parent_id,
-                    order=group.order,
-                    color=group.color,
-                    connection_ids=tuple(members),
-                )
-            )
-
-        roots = []
-        seen_roots = set()
-        for connection_id in file_state.root_connections:
-            reconciled = reconcile_id(connection_id)
-            if reconciled is not None and reconciled not in seen_roots:
-                seen_roots.add(reconciled)
-                roots.append(reconciled)
-
-        metadata: Dict[str, Mapping[str, Any]] = {}
-        for connection_id, values in file_state.metadata.items():
-            reconciled = reconcile_id(connection_id)
-            if reconciled is not None and reconciled not in metadata:
-                metadata[reconciled] = values
-
-        return ConnectionFileState(
-            version=file_state.version,
-            non_ssh_connections=file_state.non_ssh_connections,
-            groups=tuple(groups),
-            root_connections=tuple(roots),
-            metadata=metadata,
-        )
-
     def save_ssh_config_text(
         self, request: SaveSshConfigTextRequest
     ) -> SshConfigText:
@@ -390,38 +346,34 @@ class ConnectionRepository:
             )
         with self._mutation_scope():
             before = self._begin()
-            previous_records = tuple(
-                copy.deepcopy(record)
-                for record in self._service.ordered_records()
-                if record.protocol == "ssh"
-            )
             disk_before = self._capture_transaction_files_locked(
                 self._ssh_store.root_path
             )
             try:
-                result = self._ssh_store.replace_text(
-                    request.text,
-                    request.expected_revision,
+                prepared = self._ssh_store.prepare_replace_text(
+                    request.text, request.expected_revision
                 )
+                if not self._identity_state_unavailable:
+                    intent = self._prepare_identity_intent_locked(
+                        prepared, operation_label="raw_config_edit"
+                    )
+                self._ssh_store.commit_prepared(prepared)
+                result = self._ssh_store.get_text()
                 self._record_post_write_locked(
                     disk_before, self._ssh_store.root_path
                 )
                 ssh_config = self._ssh_store.load()
-                file_state, migrated = self._read_state()
-                if migrated:
-                    file_state = self._reconcile_legacy_state(ssh_config, file_state)
-                file_state = self._reconcile_raw_ssh_state_locked(
-                    previous_records,
-                    ssh_config,
-                    file_state,
-                )
-                self._publish_state_locked(
-                    ssh_config,
-                    file_state,
-                    migrated=migrated,
-                )
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                if not self._identity_state_unavailable:
+                    self._commit_identity_target_locked(
+                        intent, ssh_config, disk_before
+                    )
+                    self._finish_identity_intent_locked()
+                else:
+                    # A corrupt/unsupported sidecar must not be replaced by
+                    # an invented registry merely because SSH text is valid.
+                    self._publish_state_locked(
+                        ssh_config, ConnectionFileState(), migrated=False
+                    )
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -446,9 +398,6 @@ class ConnectionRepository:
     def _initial_load(self) -> None:
         with self._lock:
             self._load_state_locked()
-            # Persist a one-time read-only migration after the load validated.
-            if self._migrated_legacy:
-                write_connection_state(self._state_path, self._build_file_state_locked())
 
     def _read_state(self) -> Tuple[ConnectionFileState, bool]:
         """Read the dedicated file, or the legacy values when it is absent."""
@@ -457,17 +406,126 @@ class ConnectionRepository:
         return read_legacy_connection_state(self._legacy_config_path), True
 
     def _load_state_locked(self) -> None:
-        """Load SSH config + connections.json into validated in-memory state.
-
-        Raises (leaving the previous state untouched) when any participating
-        source is unreadable, malformed, or inconsistent. A missing dedicated
-        file migrates defaults or legacy values.
-        """
+        """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
-        file_state, migrated = self._read_state()
-        if migrated:
-            file_state = self._reconcile_legacy_state(ssh_config, file_state)
-        self._publish_state_locked(ssh_config, file_state, migrated=migrated)
+        self._loaded_ssh_config = ssh_config
+        projections = projections_from_records(ssh_config.connections)
+        try:
+            kind = probe_connection_state_file(self._state_path)
+            if kind is ConnectionStateFileKind.V2:
+                intent_path = identity_transaction_intent_path(self._state_path)
+                # ``Path.exists()`` is false for a dangling symlink.  Treat
+                # every symlink companion as a pending auxiliary-state
+                # failure so it cannot be silently ignored as "no intent".
+                if intent_path.exists() or intent_path.is_symlink():
+                    decision = recover_pending_identity_transaction(
+                        self._state_path,
+                        actual_ssh_revision=ssh_config.root_revision,
+                        intent_path=intent_path,
+                    )
+                    if decision.action not in {
+                        IdentityRecoveryAction.NO_PENDING,
+                        IdentityRecoveryAction.FINALIZE_TARGET,
+                        IdentityRecoveryAction.ABORT_BASE,
+                    }:
+                        self._enter_identity_degraded_locked(decision.reason)
+                        self._publish_state_locked(
+                            ssh_config, ConnectionFileState(), migrated=False
+                        )
+                        return
+                state = read_identity_state_v2(self._state_path)
+                if state is None:
+                    raise _repository_error("Identity state disappeared during load")
+                if state.observed_ssh_revision != ssh_config.root_revision:
+                    state = reconcile_identity_state(
+                        state,
+                        projections,
+                        ssh_config_revision=ssh_config.root_revision,
+                    )
+                    write_identity_state_v2(self._state_path, state)
+                self._identity_state = state
+                self._identity_state_unavailable = False
+                self._identity_recovery_required = False
+                self._publish_state_locked(
+                    ssh_config,
+                    state_to_service_file_state(state, ssh_config.connections),
+                    migrated=False,
+                )
+                return
+            if kind is ConnectionStateFileKind.V1:
+                legacy = read_connection_state(self._state_path)
+                state, _report = migrate_v1_state(
+                    legacy,
+                    projections,
+                    ssh_config_revision=ssh_config.root_revision,
+                )
+                write_identity_state_v2(self._state_path, state)
+                self._identity_state = state
+                self._identity_state_unavailable = False
+                self._identity_recovery_required = False
+                self._publish_state_locked(
+                    ssh_config,
+                    state_to_service_file_state(state, ssh_config.connections),
+                    migrated=True,
+                )
+                return
+
+            # A missing dedicated sidecar still accepts the historical
+            # config.json migration, but it goes directly to v2.
+            if kind is ConnectionStateFileKind.ABSENT:
+                legacy = read_legacy_connection_state(self._legacy_config_path)
+                legacy = self._reconcile_legacy_state(ssh_config, legacy)
+                state, _report = migrate_v1_state(
+                    legacy,
+                    projections,
+                    ssh_config_revision=ssh_config.root_revision,
+                )
+                write_identity_state_v2(self._state_path, state)
+                self._identity_state = state
+                self._identity_state_unavailable = False
+                self._identity_recovery_required = False
+                self._publish_state_locked(
+                    ssh_config,
+                    state_to_service_file_state(state, ssh_config.connections),
+                    migrated=True,
+                )
+                return
+
+            # Corrupt/unsupported state is never replaced by an empty v2
+            # registry.  Keep SSH launch/read availability through an empty
+            # decoration projection and make identity mutations fail safely.
+            logger.warning(
+                "Failed to load auxiliary connection state; continuing with SSH "
+                "configuration only (reason=%s)",
+                kind.value,
+            )
+            self._enter_identity_degraded_locked(kind.value)
+            file_state = ConnectionFileState()
+            self._publish_state_locked(ssh_config, file_state, migrated=False)
+        except Exception as exc:
+            failure_reason = (
+                exc.diagnostic_category
+                if isinstance(exc, CoreError)
+                else type(exc).__name__
+            )
+            logger.warning(
+                "Failed to load auxiliary connection state; continuing with "
+                "SSH configuration only (reason=%s)",
+                failure_reason,
+            )
+            self._enter_identity_degraded_locked(failure_reason)
+            self._publish_state_locked(
+                ssh_config,
+                ConnectionFileState(),
+                migrated=False,
+            )
+
+    def _enter_identity_degraded_locked(self, reason: str) -> None:
+        """Drop any previously trusted UUID state after auxiliary failure."""
+        self._identity_state = None
+        self._identity_state_unavailable = True
+        self._identity_recovery_required = True
+        logger.warning("UUID identity state is degraded (reason=%s)", reason)
 
     def _reconcile_legacy_state(
         self,
@@ -592,13 +650,12 @@ class ConnectionRepository:
             groups=groups_blob,
         )
 
-        existing_ids = {record.id for record in connections}
         metadata: Dict[str, Dict[str, Any]] = {}
         for cid, values in file_state.metadata.items():
-            if cid in existing_ids:
-                metadata[cid] = validate_safe_metadata(values)
-            elif not migrated:
-                raise ValueError("canonical metadata refers to an unknown connection")
+            # Metadata is auxiliary decoration.  Keep validated entries for
+            # currently unavailable SSH aliases so a later reappearance can
+            # restore the decoration without having to rewrite the sidecar.
+            metadata[cid] = validate_safe_metadata(values)
 
         non_ssh_generations: Dict[str, int] = {}
         ssh_generations = {
@@ -607,7 +664,7 @@ class ConnectionRepository:
         for record in service.ordered_records():
             if record.protocol != "ssh":
                 non_ssh_generations[record.id] = self._non_ssh_generations.get(
-                    record.id, 0
+                    record.id, record.generation
                 )
             else:
                 record.generation = ssh_generations.get(record.id, 0)
@@ -616,6 +673,7 @@ class ConnectionRepository:
 
         self._service = service
         self._metadata = metadata
+        self._persisted_root_order = tuple(file_state.root_connections)
         self._non_ssh_generations = non_ssh_generations
         self._migrated_legacy = migrated or self._migrated_legacy
 
@@ -666,12 +724,10 @@ class ConnectionRepository:
                 protocol=record.protocol or "ssh",
                 health=ConnectionHealth.UNKNOWN,
                 groups=groups,
+                display_name=_display_name_for_record(record),
             )
 
         connections = tuple(_summary(r) for r in records)
-        # No filtering: referential integrity is enforced strictly by the
-        # snapshot constructor, so a dangling membership or root id fails the
-        # whole load instead of being silently discarded.
         groups = tuple(
             GroupSummary(
                 id=group.id,
@@ -679,11 +735,24 @@ class ConnectionRepository:
                 parent_id=group.parent_id,
                 order=group.order,
                 color=group.color,
-                connection_ids=tuple(group.connection_ids),
+                connection_ids=tuple(
+                    cid
+                    for cid in group.connection_ids
+                    if cid in connection_set
+                ),
             )
             for group in service.list_groups()
         )
-        root = tuple(service.root_order())
+        grouped_ids = {
+            cid
+            for group in groups
+            for cid in group.connection_ids
+        }
+        root = tuple(
+            cid
+            for cid in service.root_order()
+            if cid in connection_set and cid not in grouped_ids
+        )
         metadata_summaries = tuple(
             ConnectionMetadataSummary(
                 connection_id=ConnectionId(cid),
@@ -701,11 +770,89 @@ class ConnectionRepository:
         )
 
     def _build_snapshot_locked(self) -> ConnectionStoreSnapshot:
-        return self._assemble(
-            self._service, self._metadata, self._generation
+        if self._identity_state is None:
+            return self._assemble(self._service, self._metadata, self._generation)
+        return self._assemble_uuid_snapshot_locked()
+
+    def _assemble_uuid_snapshot_locked(self) -> ConnectionStoreSnapshot:
+        """Build an alias-compatible snapshot from UUID-owned sidecar state."""
+        state = self._identity_state
+        assert state is not None
+        active = {
+            item.projection.alias: item
+            for item in state.identities
+            if not item.tombstone
+        }
+        records = tuple(self._service.ordered_records())
+        aliases = {record.id for record in records}
+        alias_to_id = {record.id: record.id for record in records}
+        def public_id(alias: str) -> str:
+            return alias_to_id.get(alias, alias)
+
+        group_names = {group.id: group.name for group in self._service.list_groups()}
+        groups = tuple(
+            GroupSummary(
+                id=group.id,
+                name=group.name,
+                parent_id=group.parent_id,
+                order=group.order,
+                color=group.color,
+                connection_ids=tuple(
+                    public_id(cid) for cid in group.connection_ids if cid in aliases
+                ),
+            )
+            for group in self._service.list_groups()
+        )
+        grouped = {cid for group in groups for cid in group.connection_ids}
+        root = tuple(
+            public_id(cid)
+            for cid in self._service.root_order()
+            if cid in aliases and public_id(cid) not in grouped
+        )
+        summaries = []
+        for record in records:
+            identity = active.get(record.id) if record.protocol == "ssh" else None
+            public = record.id
+            try:
+                record_port = int(record.port)
+            except (TypeError, ValueError):
+                record_port = 22
+            groups_for_record = tuple(
+                GroupReference(id=group.id, name=group_names.get(group.id, ""))
+                for group in groups
+                if public in group.connection_ids
+            )
+            summaries.append(
+                ConnectionSummary(
+                    id=ConnectionId(public),
+                    nickname=record.nickname,
+                    host=record.host or str(record.data.get("host") or record.id),
+                    hostname=record.hostname,
+                    username=record.username,
+                    port=(record_port if 1 <= record_port <= 65535 else 22),
+                    protocol=record.protocol or "ssh",
+                    health=ConnectionHealth.UNKNOWN,
+                    groups=groups_for_record,
+                    display_name=_display_name_for_record(record, identity),
+                )
+            )
+        metadata = tuple(
+            ConnectionMetadataSummary(
+                connection_id=ConnectionId(public_id(cid)), values=values
+            )
+            for cid, values in self._metadata.items()
+            if cid in aliases
+        )
+        return ConnectionStoreSnapshot(
+            generation=self._generation,
+            connections=tuple(summaries),
+            groups=groups,
+            root_connection_ids=root,
+            metadata=metadata,
         )
 
     def _build_file_state_locked(self) -> ConnectionFileState:
+        self._sync_persisted_root_order_locked()
         groups = tuple(
             GroupFileState(
                 id=g.id,
@@ -726,9 +873,29 @@ class ConnectionRepository:
             version=1,
             non_ssh_connections=non_ssh,
             groups=groups,
-            root_connections=tuple(self._service.root_order()),
+            root_connections=self._persisted_root_order,
             metadata=thaw_safe_metadata(self._metadata),
         )
+
+    def _sync_persisted_root_order_locked(self) -> None:
+        """Apply current root membership while retaining dormant sidecar ids."""
+        current_ids = {
+            record.id for record in self._service.ordered_records()
+        }
+        current_root = [
+            cid for cid in self._service.root_order() if cid in current_ids
+        ]
+        current_root_ids = set(current_root)
+        merged: List[str] = []
+        next_root = 0
+        for cid in self._persisted_root_order:
+            if cid in current_root_ids:
+                merged.append(current_root[next_root])
+                next_root += 1
+            elif cid not in current_ids:
+                merged.append(cid)
+        merged.extend(current_root[next_root:])
+        self._persisted_root_order = tuple(merged)
 
     # ------------------------------------------------------------------
     # Transactional CRUD
@@ -748,9 +915,396 @@ class ConnectionRepository:
 
     def _resync_from_files(self) -> None:
         """Restore in-memory state to match the persisted files after a failure."""
-        ssh_config = self._ssh_store.load()
-        file_state, _migrated = self._read_state()
-        self._publish_state_locked(ssh_config, file_state)
+        self._load_state_locked()
+
+    def _require_identity_state_locked(self) -> IdentityStateV2:
+        if self._identity_state_unavailable or self._identity_state is None:
+            raise CoreError(
+                ErrorCode.CONNECTION_STATE_IO_ERROR,
+                "UUID identity state is unavailable",
+                diagnostic_category="identity_state_unavailable",
+                diagnostic_reason="identity sidecar is corrupt or unsupported",
+            )
+        return self._identity_state
+
+    def _resolve_internal_id_locked(self, connection_id: str) -> str:
+        """Resolve an internal UUID or current alias to the service alias."""
+        if self._service.get(connection_id) is not None:
+            return connection_id
+        if self._identity_state is not None:
+            for identity in self._identity_state.identities:
+                if not identity.tombstone and identity.uuid == connection_id:
+                    return identity.projection.alias
+        return connection_id
+
+    def _resolve_public_id(self, connection_id: str) -> str:
+        with self._lock:
+            public_id = str(connection_id)
+            self._assert_not_unresolved_locked(public_id)
+            return self._resolve_internal_id_locked(public_id)
+
+    def _assert_not_unresolved_locked(self, connection_id: str) -> None:
+        state = self._identity_state
+        if state is None:
+            return
+        aliases = {
+            projection.alias
+            for ambiguity in state.pending_ambiguities
+            for projection in ambiguity.new_projections
+        }
+        if connection_id in aliases:
+            raise CoreError(
+                ErrorCode.MUTATION_AMBIGUOUS,
+                "Connection identity is unresolved for the current SSH configuration",
+            )
+
+    def public_id_for(self, connection_id: str) -> str:
+        with self._lock:
+            internal = self._resolve_internal_id_locked(connection_id)
+            return internal
+
+    def ssh_alias_for(self, connection_id: str) -> str:
+        """Resolve an app identity to the current OpenSSH selector."""
+        with self._lock:
+            return self._resolve_internal_id_locked(str(connection_id))
+
+    def _reconcile_loaded_identity_locked(
+        self,
+        ssh_config: LoadedSshConfiguration,
+        *,
+        explicit_continuity: Optional[Mapping[str, str]] = None,
+        persist: bool = False,
+    ) -> None:
+        """Run the single reconciliation path for fresh loader data."""
+        state = self._require_identity_state_locked()
+        next_state = reconcile_identity_state(
+            state,
+            projections_from_records(ssh_config.connections),
+            ssh_config_revision=ssh_config.root_revision,
+            explicit_continuity=explicit_continuity or {},
+        )
+        self._identity_state = next_state
+        self._loaded_ssh_config = ssh_config
+        self._publish_state_locked(
+            ssh_config,
+            state_to_service_file_state(next_state, ssh_config.connections),
+            migrated=False,
+        )
+        if persist and next_state != state:
+            write_identity_state_v2(self._state_path, next_state)
+
+    def _prepare_identity_intent_locked(
+        self,
+        prepared: Any,
+        *,
+        operation_label: str,
+        explicit_continuity: Optional[Mapping[str, str]] = None,
+        display_names: Optional[Mapping[str, str]] = None,
+        target_transform: Optional[Callable[[IdentityStateV2], IdentityStateV2]] = None,
+    ) -> IdentityTransactionIntent:
+        """Build and durably record a complete target snapshot before SSH commit."""
+        state = self._require_identity_state_locked()
+        preview = self._ssh_store.preview_prepared(prepared)
+        target = reconcile_identity_state(
+            state,
+            projections_from_records(preview.connections),
+            ssh_config_revision=prepared.target_revision,
+            explicit_continuity=explicit_continuity or {},
+        )
+        if display_names:
+            target = replace(
+                target,
+                identities=tuple(
+                    replace(identity, display_name=display_names.get(
+                        identity.projection.alias, identity.display_name
+                    ).strip())
+                    if not identity.tombstone
+                    and identity.projection.alias in display_names
+                    else identity
+                    for identity in target.identities
+                ),
+            )
+        if target_transform is not None:
+            target = target_transform(target)
+        # A durable managed transaction always advances the sidecar exactly
+        # once.  The reconciliation adapter already advances changed states,
+        # but applying display-name continuity after reconciliation can make
+        # an otherwise unchanged target different without changing its
+        # generation.  Normalize both cases to the intent invariant rather
+        # than allowing IdentityTransactionIntent to reject the request.
+        target = replace(
+            target,
+            sidecar_generation=state.sidecar_generation + 1,
+        )
+        kind = "pending_ambiguity" if target.pending_ambiguities else "normal"
+        intent = IdentityTransactionIntent(
+            transaction_id=new_uuid4(),
+            base_ssh_revision=prepared.base_revision,
+            target_ssh_revision=prepared.target_revision,
+            base_sidecar_generation=state.sidecar_generation,
+            operation_label=operation_label,
+            operation_kind=kind,
+            target_state=target,
+        )
+        write_pending_identity_transaction(
+            identity_transaction_intent_path(self._state_path), intent
+        )
+        return intent
+
+    @staticmethod
+    def _projection_semantics(projection) -> tuple:
+        """Return the loader evidence that must agree across a commit."""
+        return (
+            projection.alias,
+            projection.hostname,
+            projection.port,
+            projection.username,
+            projection.identity_files,
+            projection.destination_evidence,
+            projection.username_literal,
+            projection.username_is_explicit,
+            projection.identity_file_evidence,
+        )
+
+    def _verify_committed_target_locked(
+        self,
+        intent: IdentityTransactionIntent,
+        committed: LoadedSshConfiguration,
+    ) -> None:
+        """Reject a prepared target whose committed loader view differs."""
+        if committed.root_revision != intent.target_ssh_revision:
+            raise CoreError(
+                ErrorCode.STALE_CONNECTION_STATE,
+                "The committed SSH configuration differs from the prepared target",
+            )
+        actual = {
+            item.alias: item
+            for item in projections_from_records(committed.connections)
+        }
+        expected = {
+            item.projection.alias: item.projection
+            for item in intent.target_state.identities
+            if not item.tombstone
+        }
+        for ambiguity in intent.target_state.pending_ambiguities:
+            expected.update({
+                item.alias: item for item in ambiguity.new_projections
+            })
+        if set(actual) - set(expected):
+            raise CoreError(
+                ErrorCode.STALE_CONNECTION_STATE,
+                "The committed SSH configuration differs from the prepared target",
+            )
+        for alias, projection in actual.items():
+            if self._projection_semantics(projection) != self._projection_semantics(
+                expected[alias]
+            ):
+                raise CoreError(
+                    ErrorCode.STALE_CONNECTION_STATE,
+                    "The committed SSH configuration differs from the prepared target",
+                )
+
+    def _commit_identity_target_locked(
+        self,
+        intent: IdentityTransactionIntent,
+        committed: LoadedSshConfiguration,
+        captured,
+    ) -> None:
+        """Commit and record the exact target before clearing its intent.
+
+        The sidecar post-write token is deliberately captured here, immediately
+        after the target write and before any caller can clear ``.pending``.
+        That keeps rollback able to restore both durable resources if intent
+        cleanup fails after unlink or during its parent-directory fsync.
+        """
+        self._verify_committed_target_locked(intent, committed)
+        # Keep the ordinary persistence hook observable for rollback/crash
+        # tests, while making its input unambiguously the complete intent
+        # target rather than a service-derived reconstruction.
+        self._pending_identity_target = intent.target_state
+        try:
+            self._persist_state_file_locked()
+        finally:
+            self._pending_identity_target = None
+        self._record_post_write_locked(captured, self._state_path)
+        self._identity_state = intent.target_state
+        self._identity_state_unavailable = False
+        self._loaded_ssh_config = committed
+        self._publish_state_locked(
+            committed,
+            state_to_service_file_state(
+                intent.target_state, committed.connections
+            ),
+            migrated=False,
+        )
+
+    def _duplicate_target_placement(
+        self,
+        source_alias: str,
+        duplicate_alias: str,
+    ) -> Callable[[IdentityStateV2], IdentityStateV2]:
+        """Build the complete UUID placement for a duplicate before intent."""
+        state = self._require_identity_state_locked()
+        source = next(
+            item for item in state.identities
+            if not item.tombstone and item.projection.alias == source_alias
+        )
+
+        def transform(target: IdentityStateV2) -> IdentityStateV2:
+            duplicate = next(
+                item for item in target.identities
+                if not item.tombstone and item.projection.alias == duplicate_alias
+            )
+            source_ref = ConnectionReference(ReferenceKind.SSH_UUID, source.uuid)
+            duplicate_ref = ConnectionReference(ReferenceKind.SSH_UUID, duplicate.uuid)
+            groups = []
+            grouped = set()
+            for group in target.groups:
+                members = list(group.members)
+                if source_ref in members and duplicate_ref not in members:
+                    members.append(duplicate_ref)
+                grouped.update(members)
+                groups.append(replace(group, members=tuple(members)))
+            roots = [
+                item for item in target.root_connections
+                if item != duplicate_ref
+            ]
+            if source_ref not in grouped and duplicate_ref not in roots:
+                roots.append(duplicate_ref)
+            return replace(
+                target,
+                groups=tuple(groups),
+                root_connections=tuple(roots),
+            )
+
+        return transform
+
+    def _finish_identity_intent_locked(self) -> None:
+        clear_pending_identity_transaction(identity_transaction_intent_path(self._state_path))
+
+    def _sync_identity_placements_from_service_locked(
+        self,
+        *,
+        explicit_continuity: Optional[Mapping[str, str]] = None,
+    ) -> IdentityStateV2:
+        """Convert temporary alias service placement back to UUID references."""
+        state = self._require_identity_state_locked()
+        records = tuple(self._service.ordered_records())
+        alias_to_uuid = {
+            identity.projection.alias: identity.uuid
+            for identity in state.identities
+            if not identity.tombstone
+        }
+        for old_alias, new_alias in (explicit_continuity or {}).items():
+            identity = next(
+                (
+                    item
+                    for item in state.identities
+                    if not item.tombstone and item.projection.alias == old_alias
+                ),
+                None,
+            )
+            if identity is not None:
+                alias_to_uuid[new_alias] = identity.uuid
+        non_ssh_ids = {
+            record.id for record in records if record.protocol != "ssh"
+        }
+        def reference(cid: str) -> Optional[ConnectionReference]:
+            if cid in alias_to_uuid:
+                return ConnectionReference(ReferenceKind.SSH_UUID, alias_to_uuid[cid])
+            if cid in non_ssh_ids:
+                return ConnectionReference(ReferenceKind.NON_SSH_ID, cid)
+            return None
+
+        old_groups = {group.id: group for group in state.groups}
+        groups = []
+        for group in self._service.list_groups():
+            members = []
+            for cid in group.connection_ids:
+                item = reference(cid)
+                if item is not None and item not in members:
+                    members.append(item)
+            # Keep unresolved old UUID ownership in place until ambiguity is
+            # explicitly resolved; service projection cannot render it.
+            previous = old_groups.get(group.id)
+            if previous is not None:
+                for item in previous.members:
+                    if item not in members:
+                        if item.kind is ReferenceKind.SSH_UUID and any(
+                            old.uuid == item.value and not old.tombstone
+                            for old in state.identities
+                        ):
+                            members.append(item)
+            groups.append(
+                UuidGroupState(
+                    id=group.id,
+                    name=group.name,
+                    members=tuple(members),
+                    parent_id=group.parent_id,
+                    order=group.order,
+                    color=group.color,
+                )
+            )
+        grouped = {item for group in groups for item in group.members}
+        roots = []
+        for cid in self._service.root_order():
+            item = reference(cid)
+            if item is not None and item not in grouped and item not in roots:
+                roots.append(item)
+        # Preserve placement of unresolved old active identities.
+        for item in state.root_connections:
+            if item not in grouped and item not in roots:
+                if item.kind is ReferenceKind.NON_SSH_ID and item.value not in non_ssh_ids:
+                    continue
+                if item.kind is ReferenceKind.SSH_UUID and not any(
+                    old.uuid == item.value and not old.tombstone
+                    for old in state.identities
+                ):
+                    continue
+                roots.append(item)
+        current_aliases = {
+            record.id for record in records if record.protocol == "ssh"
+        }
+        identities_by_uuid = {identity.uuid: identity for identity in state.identities}
+        metadata = {}
+        # Preserve UUID-owned state that cannot currently be projected because
+        # its alias is part of a pending ambiguity.  Only a visible active
+        # alias whose metadata is absent is treated as an explicit removal.
+        for uuid, values in state.metadata.items():
+            identity = identities_by_uuid.get(uuid)
+            if (
+                identity is None
+                or identity.tombstone
+                or identity.projection.alias not in current_aliases
+                or identity.projection.alias in self._metadata
+            ):
+                metadata[uuid] = values
+        for cid, values in self._metadata.items():
+            if cid in alias_to_uuid:
+                metadata[alias_to_uuid[cid]] = values
+            elif cid in non_ssh_ids:
+                # Non-SSH metadata is stored in its own namespace below.
+                continue
+        non_ssh_metadata = dict(state.non_ssh_metadata)
+        for record in records:
+            if record.protocol != "ssh" and record.id in self._metadata:
+                non_ssh_metadata[record.id] = self._metadata[record.id]
+        candidate = replace(
+            state,
+            groups=tuple(groups),
+            root_connections=tuple(roots),
+            metadata=metadata,
+            non_ssh_connections=tuple(
+                copy.deepcopy(record.data)
+                for record in records
+                if record.protocol != "ssh"
+            ),
+            non_ssh_metadata=non_ssh_metadata,
+        )
+        if candidate != state:
+            candidate = replace(candidate, sidecar_generation=state.sidecar_generation + 1)
+        self._identity_state = candidate
+        return candidate
 
     def _capture_transaction_files_locked(self, ssh_target: Optional[Path] = None):
         """Capture pre-write state for every file the mutation will touch.
@@ -1018,31 +1572,43 @@ class ConnectionRepository:
             protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
             try:
                 if protocol == "ssh":
-                    result = self._ssh_store.create(payload)
-                    fresh = next(
-                        r for r in result.config.connections
-                        if r.id == result.connection_id
+                    self._sync_identity_placements_from_service_locked()
+                    ssh_payload = dict(payload)
+                    ssh_payload.pop("display_name", None)
+                    prepared = self._ssh_store.prepare_create(ssh_payload)
+                    requested_name = str(payload.get("display_name") or "").strip()
+                    intent = self._prepare_identity_intent_locked(
+                        prepared,
+                        operation_label="create",
+                        display_names=(
+                            {str(payload.get("nickname")): requested_name}
+                            if requested_name else None
+                        ),
                     )
-                    created = self._service.create(fresh.data)
-                    self._overlay_ssh_generations(result.config)
-                    # Record the daemon-written SSH file for rollback verification.
-                    if result.touched_path:
-                        self._record_post_write_locked(
-                            disk_before, Path(result.touched_path),
-                        )
+                    result = self._ssh_store.commit_prepared(prepared)
+                    self._record_post_write_locked(
+                        disk_before, Path(result.touched_path)
+                    ) if result.touched_path else None
+                    committed = self._ssh_store.load()
+                    self._commit_identity_target_locked(intent, committed, disk_before)
+                    created = self._service.get(result.connection_id)
+                    if created is None:
+                        raise _repository_error("The committed connection was not found")
                 else:
                     nickname = self._validate_new_nickname(
                         str(payload.get("nickname") or "")
                     )
                     payload["id"] = nickname
                     payload["nickname"] = nickname
+                    payload["generation"] = 1
                     created = self._service.create(payload)
                     self._non_ssh_generations[created.id] = 1
                 # Root order / membership / metadata always live in
                 # connections.json; persist it after every committed mutation.
-                self._persist_state_file_locked()
-                # Record the daemon-written state file for rollback verification.
-                self._record_post_write_locked(disk_before, self._state_path)
+                if protocol != "ssh":
+                    self._persist_state_file_locked()
+                if protocol == "ssh":
+                    self._finish_identity_intent_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1058,6 +1624,8 @@ class ConnectionRepository:
     ) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
+            connection_id = self._resolve_internal_id_locked(connection_id)
+            self._assert_not_unresolved_locked(connection_id)
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -1077,22 +1645,38 @@ class ConnectionRepository:
                 self._validate_new_nickname(new_nick)
             try:
                 if protocol == "ssh":
-                    result = self._ssh_store.update(
+                    self._sync_identity_placements_from_service_locked()
+                    prepared = self._ssh_store.prepare_update(
                         connection_id,
                         payload,
                         expected_generation=expected_generation,
                     )
-                    new_id = result.connection_id
-                    fresh = next(
-                        r for r in result.config.connections
-                        if r.id == new_id
+                    planned_name = str(payload.get("nickname") or connection_id)
+                    planned_continuity = (
+                        {connection_id: planned_name}
+                        if planned_name != connection_id else {}
                     )
-                    updated = self._service.update(connection_id, fresh.data)
-                    self._overlay_ssh_generations(result.config)
+                    intent = self._prepare_identity_intent_locked(
+                        prepared,
+                        operation_label="update",
+                        explicit_continuity=planned_continuity,
+                        display_names=(
+                            {planned_name: str(payload["display_name"]).strip()}
+                            if payload.get("display_name")
+                            else None
+                        ),
+                    )
+                    result = self._ssh_store.commit_prepared(prepared)
+                    new_id = result.connection_id
                     if result.touched_path:
                         self._record_post_write_locked(
                             disk_before, Path(result.touched_path),
                         )
+                    committed = self._ssh_store.load()
+                    self._commit_identity_target_locked(intent, committed, disk_before)
+                    updated = self._service.get(new_id)
+                    if updated is None:
+                        raise _repository_error("The committed connection was not found")
                 else:
                     if (
                         expected_generation is not None
@@ -1106,17 +1690,22 @@ class ConnectionRepository:
                     nickname = new_nick or connection_id
                     payload["id"] = nickname
                     payload["nickname"] = nickname
+                    current_generation = self._non_ssh_generations.get(
+                        connection_id, existing.generation
+                    )
+                    next_generation = current_generation + 1
+                    payload["generation"] = next_generation
                     updated = self._service.update(connection_id, payload)
                     if new_nick and new_nick != connection_id:
-                        gen = self._non_ssh_generations.pop(connection_id, 0)
-                        self._non_ssh_generations[new_nick] = gen + 1
+                        self._non_ssh_generations.pop(connection_id, None)
+                        self._non_ssh_generations[new_nick] = next_generation
                     else:
-                        self._non_ssh_generations[connection_id] = (
-                            self._non_ssh_generations.get(connection_id, 0) + 1
-                        )
-                self._migrate_metadata_on_rename(connection_id, updated.id)
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                        self._non_ssh_generations[connection_id] = next_generation
+                if protocol != "ssh":
+                    self._migrate_metadata_on_rename(connection_id, updated.id)
+                    self._persist_state_file_locked()
+                if protocol == "ssh":
+                    self._finish_identity_intent_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1126,6 +1715,8 @@ class ConnectionRepository:
     def duplicate_connection(self, connection_id: str) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
+            connection_id = self._resolve_internal_id_locked(connection_id)
+            self._assert_not_unresolved_locked(connection_id)
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -1137,25 +1728,35 @@ class ConnectionRepository:
             )
             try:
                 if existing.protocol == "ssh":
-                    result = self._ssh_store.duplicate(connection_id)
-                    fresh = next(
-                        r for r in result.config.connections
-                        if r.id == result.connection_id
+                    self._sync_identity_placements_from_service_locked()
+                    prepared = self._ssh_store.prepare_duplicate(connection_id)
+                    intent = self._prepare_identity_intent_locked(
+                        prepared,
+                        operation_label="duplicate",
+                        target_transform=self._duplicate_target_placement(
+                            connection_id, prepared.connection_id
+                        ),
                     )
-                    created = self._service.create(fresh.data)
-                    self._overlay_ssh_generations(result.config)
+                    result = self._ssh_store.commit_prepared(prepared)
                     if result.touched_path:
                         self._record_post_write_locked(
                             disk_before, Path(result.touched_path),
                         )
+                    committed = self._ssh_store.load()
+                    self._commit_identity_target_locked(intent, committed, disk_before)
+                    created = self._service.get(result.connection_id)
+                    if created is None:
+                        raise _repository_error("The committed connection was not found")
                 else:
                     created = self._service.duplicate(connection_id)
                     self._non_ssh_generations[created.id] = 1
-                # Mirror the source's group placement on the duplicate.
-                for gid in self._service.group_ids_of(connection_id):
-                    self._service.copy_connection_to_group(created.id, gid)
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                if existing.protocol != "ssh":
+                    # Mirror the source's group placement on the duplicate.
+                    for gid in self._service.group_ids_of(connection_id):
+                        self._service.copy_connection_to_group(created.id, gid)
+                    self._persist_state_file_locked()
+                if existing.protocol == "ssh":
+                    self._finish_identity_intent_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1165,6 +1766,8 @@ class ConnectionRepository:
     def delete_connection(self, connection_id: str) -> None:
         with self._mutation_scope():
             before = self._begin()
+            connection_id = self._resolve_internal_id_locked(connection_id)
+            self._assert_not_unresolved_locked(connection_id)
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -1176,18 +1779,27 @@ class ConnectionRepository:
             )
             try:
                 if existing.protocol == "ssh":
-                    result = self._ssh_store.delete(connection_id)
-                    self._service.delete(connection_id)
+                    self._sync_identity_placements_from_service_locked()
+                    prepared = self._ssh_store.prepare_delete(connection_id)
+                    intent = self._prepare_identity_intent_locked(
+                        prepared, operation_label="delete"
+                    )
+                    result = self._ssh_store.commit_prepared(prepared)
                     if result.touched_path:
                         self._record_post_write_locked(
                             disk_before, Path(result.touched_path),
                         )
+                    committed = self._ssh_store.load()
+                    self._commit_identity_target_locked(intent, committed, disk_before)
                 else:
                     self._service.delete(connection_id)
                     self._non_ssh_generations.pop(connection_id, None)
-                self._metadata.pop(connection_id, None)
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                if existing.protocol != "ssh":
+                    self._remove_persisted_root_id_locked(connection_id)
+                    self._metadata.pop(connection_id, None)
+                    self._persist_state_file_locked()
+                if existing.protocol == "ssh":
+                    self._finish_identity_intent_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
@@ -1203,6 +1815,8 @@ class ConnectionRepository:
     ) -> ConnectionRecord:
         with self._mutation_scope():
             before = self._begin()
+            connection_id = self._resolve_internal_id_locked(connection_id)
+            self._assert_not_unresolved_locked(connection_id)
             existing = self._service.get(connection_id)
             if existing is None:
                 raise CoreError(
@@ -1213,39 +1827,56 @@ class ConnectionRepository:
                 Path(existing.source) if existing.protocol == "ssh" and existing.source else None
             )
             try:
-                result = self._ssh_store.split(
+                prepared = self._ssh_store.prepare_split(
                     connection_id,
                     original_host_token,
                     data,
                     expected_generation=expected_generation,
                 )
-                fresh_ids = {r.id for r in result.config.connections}
-                new_record = next(
-                    r for r in result.config.connections
-                    if r.id == result.connection_id
+                preview = self._ssh_store.preview_prepared(prepared)
+                continuity = (
+                    {connection_id: prepared.connection_id}
+                    if connection_id not in {item.id for item in preview.connections}
+                    and prepared.connection_id != connection_id
+                    else {}
                 )
-                if connection_id in fresh_ids:
-                    created = self._service.create(new_record.data)
-                    result_id = created.id
-                else:
-                    updated = self._service.update(connection_id, new_record.data)
-                    result_id = updated.id
-                    self._migrate_metadata_on_rename(connection_id, result_id)
-                self._overlay_ssh_generations(result.config)
+                intent = self._prepare_identity_intent_locked(
+                    prepared,
+                    operation_label="split",
+                    explicit_continuity=continuity,
+                )
+                result = self._ssh_store.commit_prepared(prepared)
                 if result.touched_path:
                     self._record_post_write_locked(
                         disk_before, Path(result.touched_path),
                     )
-                self._persist_state_file_locked()
-                self._record_post_write_locked(disk_before, self._state_path)
+                committed = self._ssh_store.load()
+                self._commit_identity_target_locked(intent, committed, disk_before)
+                result_id = result.connection_id
+                self._finish_identity_intent_locked()
             except Exception:
                 self._rollback_after_failure_locked(disk_before)
                 raise
             self._commit(before)
             return self._service.get(result_id)
 
-    def _persist_state_file_locked(self) -> None:
-        write_connection_state(self._state_path, self._build_file_state_locked())
+    def _persist_state_file_locked(
+        self, target_state: Optional[IdentityStateV2] = None
+    ) -> None:
+        if target_state is None:
+            target_state = self._pending_identity_target
+        state = (
+            target_state
+            if target_state is not None
+            else self._sync_identity_placements_from_service_locked()
+        )
+        write_identity_state_v2(self._state_path, state)
+
+    def _remove_persisted_root_id_locked(self, connection_id: str) -> None:
+        """Forget a root reference removed by an explicit managed delete."""
+        self._persisted_root_order = tuple(
+            cid for cid in self._persisted_root_order if cid != connection_id
+        )
 
     def _migrate_metadata_on_rename(self, old_id: str, new_id: str) -> None:
         """Move metadata to the new id (in-memory; the caller persists once)."""
@@ -1253,6 +1884,10 @@ class ConnectionRepository:
             return
         if old_id in self._metadata:
             self._metadata[new_id] = self._metadata.pop(old_id)
+        self._persisted_root_order = tuple(
+            new_id if cid == old_id else cid
+            for cid in self._persisted_root_order
+        )
 
     # ------------------------------------------------------------------
     # Group operations
@@ -1331,6 +1966,26 @@ class ConnectionRepository:
     def move_connections(self, request: MoveConnectionsRequest) -> None:
         with self._mutation_scope():
             before = self._begin()
+            for cid in request.connection_ids:
+                self._assert_not_unresolved_locked(str(cid))
+            if request.target_connection_id is not None:
+                self._assert_not_unresolved_locked(
+                    str(request.target_connection_id)
+                )
+            internal_ids = tuple(
+                self._resolve_internal_id_locked(cid)
+                for cid in request.connection_ids
+            )
+            internal_target = (
+                self._resolve_internal_id_locked(request.target_connection_id)
+                if request.target_connection_id is not None else None
+            )
+            if internal_ids != request.connection_ids or internal_target != request.target_connection_id:
+                request = replace(
+                    request,
+                    connection_ids=internal_ids,
+                    target_connection_id=internal_target,
+                )
             expected = request.expected_generation
             if expected is not None and expected != before.generation:
                 raise CoreError(
@@ -1349,6 +2004,7 @@ class ConnectionRepository:
     def assign_connection_to_group(
         self, connection_id: str, group_id: Optional[str]
     ) -> ConnectionRecord:
+        connection_id = self._resolve_public_id(connection_id)
         return self._group_mutation(
             lambda: self._service.assign_group(connection_id, group_id)
         )
@@ -1356,6 +2012,7 @@ class ConnectionRepository:
     def copy_connection_to_group(
         self, connection_id: str, group_id: str
     ) -> ConnectionRecord:
+        connection_id = self._resolve_public_id(connection_id)
         return self._group_mutation(
             lambda: self._service.copy_connection_to_group(connection_id, group_id)
         )
@@ -1363,6 +2020,7 @@ class ConnectionRepository:
     def remove_connection_from_group(
         self, connection_id: str, group_id: str
     ) -> ConnectionRecord:
+        connection_id = self._resolve_public_id(connection_id)
         return self._group_mutation(
             lambda: self._service.remove_connection_from_group(
                 connection_id, group_id
@@ -1376,6 +2034,8 @@ class ConnectionRepository:
         group_id: Optional[str],
         position: str,
     ) -> None:
+        connection_id = self._resolve_public_id(connection_id)
+        target_connection_id = self._resolve_public_id(target_connection_id)
         self._group_mutation(
             lambda: self._service.reorder_connection(
                 connection_id, target_connection_id, group_id, position
@@ -1392,6 +2052,8 @@ class ConnectionRepository:
         """Merge safe metadata; ``None`` values remove the corresponding key."""
         with self._mutation_scope():
             before = self._begin()
+            connection_id = self._resolve_internal_id_locked(connection_id)
+            self._assert_not_unresolved_locked(connection_id)
             try:
                 if self._service.get(connection_id) is None:
                     raise CoreError(
@@ -1417,6 +2079,107 @@ class ConnectionRepository:
             self._commit(before)
             return thaw_safe_metadata(self._metadata.get(connection_id, {}))
 
+    def set_display_name(
+        self,
+        connection_id: str,
+        display_name: str,
+        *,
+        expected_generation: Optional[int] = None,
+    ) -> ConnectionRecord:
+        """Persist an app-owned name without changing SSH configuration."""
+        if (
+            type(display_name) is not str
+            or not display_name.strip()
+            or len(display_name) > MAX_DISPLAY_NAME_LENGTH
+        ):
+            raise CoreError(ErrorCode.VALIDATION_ERROR, "A display name is required")
+        with self._mutation_scope():
+            before = self._begin()
+            record = self._service.get(connection_id)
+            if record is None:
+                raise CoreError(
+                    ErrorCode.CONNECTION_NOT_FOUND,
+                    "The connection does not exist",
+                )
+            if record.protocol != "ssh":
+                current_generation = self._non_ssh_generations.get(
+                    record.id, record.generation
+                )
+                if (
+                    expected_generation is not None
+                    and expected_generation != current_generation
+                ):
+                    raise CoreError(
+                        ErrorCode.STALE_CONNECTION_STATE,
+                        "The connection changed during the display name operation",
+                    )
+                normalized = display_name.strip()
+                if _display_name_for_record(record) == normalized:
+                    return record
+                next_generation = current_generation + 1
+                updated = self._service.update(
+                    record.id,
+                    {"display_name": normalized, "generation": next_generation},
+                )
+                self._non_ssh_generations[updated.id] = next_generation
+                try:
+                    self._persist_state_file_locked()
+                except Exception:
+                    self._resync_from_files()
+                    raise
+                self._commit(before)
+                return updated
+            previous = self._identity_state
+            internal = self._set_display_name_locked(connection_id, display_name)
+            if self._identity_state == previous:
+                return self._service.get(internal)
+            try:
+                write_identity_state_v2(self._state_path, self._identity_state)
+            except Exception:
+                # Keep the in-memory projection aligned with whichever durable
+                # sidecar state won the write.  In particular, a post-replace
+                # fsync failure means durability is unknown; re-reading is
+                # safer than assuming the old bytes still won.
+                try:
+                    self._resync_from_files()
+                except Exception:
+                    self._identity_state = previous
+                raise
+            self._commit(before)
+            return self._service.get(internal)
+
+    def _set_display_name_locked(
+        self, connection_id: str, display_name: str, *, bump: bool = True
+    ) -> str:
+        state = self._require_identity_state_locked()
+        self._assert_not_unresolved_locked(str(connection_id))
+        internal = self._resolve_internal_id_locked(connection_id)
+        identities = []
+        found = False
+        for identity in state.identities:
+            if not identity.tombstone and identity.projection.alias == internal:
+                found = True
+                normalized = display_name.strip()
+                identities.append(
+                    identity
+                    if identity.display_name == normalized
+                    else replace(identity, display_name=normalized)
+                )
+            else:
+                identities.append(identity)
+        if not found:
+            raise CoreError(ErrorCode.CONNECTION_NOT_FOUND, "The connection does not exist")
+        if tuple(identities) == state.identities:
+            return internal
+        self._identity_state = replace(
+            state,
+            identities=tuple(identities),
+            sidecar_generation=(
+                state.sidecar_generation + 1 if bump else state.sidecar_generation
+            ),
+        )
+        return internal
+
     def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int:
         """Add one tag to all requested connections atomically."""
         with self._mutation_scope():
@@ -1431,6 +2194,7 @@ class ConnectionRepository:
                 )
             tag = request.tag.strip()
             requested = tuple(str(connection_id) for connection_id in request.connection_ids)
+            requested = tuple(self._resolve_public_id(cid) for cid in requested)
             current_values = {}
             for connection_id in requested:
                 if self._service.get(connection_id) is None:

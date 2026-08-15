@@ -16,6 +16,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
+from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 from sshpilot.api.models.common import ConnectionId  # noqa: E402
 from sshpilot.api.models.connection_store import MoveConnectionsRequest  # noqa: E402
@@ -34,7 +36,52 @@ def _repo(tmp_path, ssh_text: str = ""):
 
 
 def _state(path: Path) -> dict:
-    return json.loads(path.read_text())
+    raw = json.loads(path.read_text())
+    if raw.get("version") != 2:
+        return raw
+    state = read_identity_state_v2(path)
+    aliases = {
+        identity.uuid: identity.projection.alias
+        for identity in state.identities
+        if not identity.tombstone
+    }
+
+    def ref_value(reference):
+        return (
+            aliases.get(reference.value)
+            if reference.kind is ReferenceKind.SSH_UUID
+            else reference.value
+        )
+
+    return {
+        "version": 1,
+        "non_ssh_connections": list(state.non_ssh_connections),
+        "groups": {
+            "groups": {
+                group.id: {
+                    "id": group.id,
+                    "name": group.name,
+                    "parent_id": group.parent_id,
+                    "order": group.order,
+                    "color": group.color,
+                    "connection_ids": [
+                        ref_value(reference) for reference in group.members
+                        if ref_value(reference) is not None
+                    ],
+                }
+                for group in state.groups
+            },
+            "root_connections": [
+                value for reference in state.root_connections
+                if (value := ref_value(reference)) is not None
+            ],
+        },
+        "metadata": {
+            aliases[uuid]: values
+            for uuid, values in state.metadata.items()
+            if uuid in aliases
+        },
+    }
 
 
 def _seed_web(repo):

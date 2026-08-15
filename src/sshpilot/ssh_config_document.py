@@ -82,6 +82,18 @@ class HostBlock:
         return ''.join(self.lines)
 
 
+def is_concrete_host_block(block: HostBlock) -> bool:
+    """Return whether a Host stanza contains only literal alias tokens.
+
+    Wildcard and negated Host stanzas are OpenSSH matching rules, not
+    authoring declarations for one saved connection.
+    """
+    return bool(block.tokens) and all(
+        "*" not in token and "?" not in token and not token.startswith("!")
+        for token in block.tokens
+    )
+
+
 @dataclass
 class MatchBlock:
     """One ``Match`` stanza, lines verbatim. Never edited; the loader keeps

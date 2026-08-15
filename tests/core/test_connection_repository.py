@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -17,6 +18,8 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
+from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
+from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError  # noqa: E402
 
 
@@ -37,6 +40,56 @@ def _repo(tmp_path, ssh_text: str = "", *, isolated: bool = False):
 def _write_state(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2))
+
+
+def _v1_projection(path: Path) -> dict:
+    """Project v2 placement into the legacy shape for compatibility assertions."""
+    raw = json.loads(path.read_text())
+    if raw.get("version") != 2:
+        return raw
+    state = read_identity_state_v2(path)
+    aliases = {
+        identity.uuid: identity.projection.alias
+        for identity in state.identities
+        if not identity.tombstone
+    }
+
+    def ref_value(reference):
+        return (
+            aliases.get(reference.value)
+            if reference.kind is ReferenceKind.SSH_UUID
+            else reference.value
+        )
+
+    return {
+        "version": 1,
+        "non_ssh_connections": list(state.non_ssh_connections),
+        "groups": {
+            "groups": {
+                group.id: {
+                    "id": group.id,
+                    "name": group.name,
+                    "parent_id": group.parent_id,
+                    "order": group.order,
+                    "color": group.color,
+                    "connection_ids": [
+                        value for member in group.members
+                        if (value := ref_value(member)) is not None
+                    ],
+                }
+                for group in state.groups
+            },
+            "root_connections": [
+                value for reference in state.root_connections
+                if (value := ref_value(reference)) is not None
+            ],
+        },
+        "metadata": {
+            aliases[uuid]: values
+            for uuid, values in state.metadata.items()
+            if uuid in aliases
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +160,9 @@ def test_legacy_migration_reconciles_deleted_connections_and_preserves_order(tmp
     assert repo._legacy_migration_result.dangling_parent_links_removed == 1
 
 
-def test_legacy_migration_failure_does_not_create_canonical_state(tmp_path):
+def test_invalid_legacy_metadata_is_skipped_and_migration_succeeds(
+    tmp_path, caplog
+):
     repo, root, state, legacy = _repo(
         tmp_path, "Host web\n    HostName web.example\n"
     )
@@ -116,25 +171,114 @@ def test_legacy_migration_failure_does_not_create_canonical_state(tmp_path):
     legacy.write_text(
         json.dumps(
             {
-                "connections_meta": {"deleted": {"password": "secret"}},
+                "connections": {
+                    "non_ssh": [
+                        {"nickname": "serial", "protocol": "serial", "hostname": "ttyS0"}
+                    ]
+                },
+                "connection_groups": {
+                    "groups": {
+                        "ops": {
+                            "id": "ops",
+                            "name": "Operations",
+                            "connections": ["web"],
+                        }
+                    },
+                    "connections": {"web": "ops"},
+                    "root_connections": ["serial"],
+                },
+                "connections_meta": {
+                    "web": {"pinned": True},
+                    "deleted": {"password": "secret"},
+                },
             }
         ),
         encoding="utf-8",
     )
     before = legacy.read_bytes()
-    with pytest.raises(CoreError):
-        ConnectionRepository(
+    with caplog.at_level(logging.WARNING):
+        repo = ConnectionRepository(
             ssh_store=SshConfigStore(root),
             state_path=state,
             legacy_config_path=legacy,
             isolated=False,
         )
+    snapshot = repo.snapshot()
+    assert [record.id for record in snapshot.connections] == ["web", "serial"]
+    assert snapshot.groups[0].connection_ids == ("web",)
+    assert snapshot.root_connection_ids == ("serial",)
+    assert snapshot.metadata[0].connection_id == "web"
+    assert state.exists()
+    assert legacy.read_bytes() == before
+    assert repo._identity_state_unavailable is False
+    assert "secret" not in caplog.text
+
+
+def test_legacy_references_cannot_veto_completely_changed_ssh_config(tmp_path):
+    repo, root, state, legacy = _repo(
+        tmp_path,
+        "Host X\n    HostName x.example\n\n"
+        "Host Y\n    HostName y.example\n\n"
+        "Host Z\n    HostName z.example\n",
+    )
+    del repo
+    state.unlink()
+    legacy.write_text(
+        json.dumps(
+            {
+                "connection_groups": {
+                    "groups": {
+                        "prod": {
+                            "id": "prod",
+                            "name": "Production",
+                            "connections": ["A", "B"],
+                        }
+                    },
+                    "connections": {"A": "prod"},
+                    "root_connections": ["C"],
+                },
+                "connections_meta": {"A": {"pinned": True}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+
+    assert [record.id for record in repo.snapshot().connections] == ["X", "Y", "Z"]
+
+
+def test_malformed_legacy_state_is_nonfatal_and_does_not_create_canonical_state(
+    tmp_path,
+):
+    repo, root, state, legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    del repo
+    state.unlink()
+    legacy.write_bytes(b"{not-json")
+    before = legacy.read_bytes()
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
     assert not state.exists()
     assert legacy.read_bytes() == before
 
 
-def test_canonical_unknown_metadata_remains_strict(tmp_path):
-    _, root, state, _ = _repo(tmp_path, "Host web\n    HostName web.example\n")
+def test_canonical_orphan_metadata_is_dormant_and_preserved(tmp_path):
+    ssh_text = "Host web\n    HostName web.example\n"
+    _, root, state, _ = _repo(tmp_path, ssh_text)
     state.unlink()
     _write_state(
         state,
@@ -145,16 +289,134 @@ def test_canonical_unknown_metadata_remains_strict(tmp_path):
             "metadata": {"deleted": {"pinned": True}},
         },
     )
-    with pytest.raises(ValueError):
-        ConnectionRepository(
-            ssh_store=SshConfigStore(root),
-            state_path=state,
-            legacy_config_path=tmp_path / "config.json",
-            isolated=False,
-        )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+
+    assert repo.snapshot().metadata == ()
+    assert read_identity_state_v2(state).legacy_orphans
 
 
-def test_legacy_parent_cycle_aborts_without_canonical_file(tmp_path):
+def test_canonical_orphan_group_and_root_ids_are_filtered_and_preserved(tmp_path):
+    root = tmp_path / "ssh_config"
+    root.write_text(
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n"
+    )
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 1,
+            "non_ssh_connections": [],
+            "groups": {
+                "groups": {
+                    "prod": {
+                        "id": "prod",
+                        "name": "Production",
+                        "connection_ids": ["A", "OLD_HOST"],
+                    }
+                },
+                "root_connections": ["B", "OLD_ROOT"],
+            },
+            "metadata": {
+                "A": {"pinned": True},
+                "OLD_HOST": {"tags": ["dormant"]},
+            },
+        },
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+
+    snapshot = repo.snapshot()
+    assert snapshot.groups[0].connection_ids == ("A",)
+    assert snapshot.root_connection_ids == ("B",)
+    assert [item.connection_id for item in snapshot.metadata] == ["A"]
+    assert read_identity_state_v2(state).version == 2
+
+    root.write_text(
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n\n"
+        "Host OLD_HOST\n    HostName old.example\n\n"
+        "Host OLD_ROOT\n    HostName root.example\n"
+    )
+    snapshot = repo.reload()
+    assert snapshot.groups[0].connection_ids == ("A", "OLD_HOST")
+    assert snapshot.root_connection_ids == ("B", "OLD_ROOT")
+    assert [item.connection_id for item in snapshot.metadata] == [
+        "A",
+        "OLD_HOST",
+    ]
+    assert read_identity_state_v2(state).version == 2
+
+
+def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path):
+    root = tmp_path / "ssh_config"
+    included = tmp_path / "fragment.conf"
+    root.write_text(
+        "Include fragment.conf\n\n"
+        "Host Root\n    HostName root.example\n"
+    )
+    included.write_text("Host Included\n    HostName included.example\n")
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 1,
+            "non_ssh_connections": [],
+            "groups": {
+                "groups": {
+                    "prod": {
+                        "id": "prod",
+                        "name": "Production",
+                        "connection_ids": ["Included"],
+                    }
+                },
+                "root_connections": ["Root"],
+            },
+            "metadata": {"Included": {"pinned": True}},
+        },
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    assert [record.id for record in repo.snapshot().connections] == [
+        "Root",
+        "Included",
+    ]
+
+    included.unlink()
+    snapshot = repo.reload()
+    assert [record.id for record in snapshot.connections] == ["Root"]
+    assert snapshot.groups[0].connection_ids == ()
+    assert snapshot.metadata == ()
+    assert snapshot.root_connection_ids == ("Root",)
+    assert read_identity_state_v2(state).version == 2
+
+    included.write_text("Host Included\n    HostName included.example\n")
+    snapshot = repo.reload()
+    assert [record.id for record in snapshot.connections] == [
+        "Root",
+        "Included",
+    ]
+    # The disappeared identity was retired; a later alias reuse is a new
+    # UUID and cannot resurrect the old group or metadata ownership.
+    assert snapshot.groups[0].connection_ids == ()
+    assert snapshot.metadata == ()
+    assert read_identity_state_v2(state).version == 2
+
+
+def test_legacy_parent_cycle_is_nonfatal_without_canonical_file(tmp_path):
     _, root, state, legacy = _repo(tmp_path, "Host web\n    HostName web.example\n")
     state.unlink()
     legacy.write_text(
@@ -170,14 +432,16 @@ def test_legacy_parent_cycle_aborts_without_canonical_file(tmp_path):
         ),
         encoding="utf-8",
     )
-    with pytest.raises(ValueError):
-        ConnectionRepository(
-            ssh_store=SshConfigStore(root),
-            state_path=state,
-            legacy_config_path=legacy,
-            isolated=False,
-        )
+    before = legacy.read_bytes()
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=legacy,
+        isolated=False,
+    )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
     assert not state.exists()
+    assert legacy.read_bytes() == before
 
 
 def test_loads_ssh_connections_in_order(tmp_path):
@@ -309,26 +573,142 @@ def test_no_partial_state_when_ssh_config_unreadable(tmp_path):
     assert repo.snapshot().generation == before.generation
 
 
-def test_malformed_state_file_is_an_error(tmp_path):
+def test_malformed_canonical_state_does_not_block_ssh_startup(tmp_path, caplog):
+    root = tmp_path / "ssh_config"
+    root.write_text("Host web\n    HostName web.example\n")
     state = tmp_path / "connections.json"
-    _write_state(state, {"version": 99, "non_ssh_connections": []})
-    with pytest.raises(CoreError):
-        _repo(tmp_path)
+    state.write_bytes(b"{not-json")
+    before = state.read_bytes()
+    with caplog.at_level(logging.WARNING):
+        repo, _root, _state, _legacy = _repo(tmp_path)
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert state.read_bytes() == before
+    assert "Failed to load auxiliary connection state" in caplog.text
 
 
-def test_orphan_metadata_rejected_in_canonical_state(tmp_path):
+def test_unsupported_canonical_state_does_not_block_ssh_startup(tmp_path):
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 99,
+            "non_ssh_connections": [],
+            "groups": {"groups": {}, "root_connections": []},
+            "metadata": {},
+        },
+    )
+    before = state.read_bytes()
+    repo, _root, _state, _legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert state.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "groups",
+    [
+        {
+            "g1": {
+                "id": "g1",
+                "name": "G1",
+                "parent_id": "missing",
+            }
+        },
+        {
+            "g1": {
+                "id": "g1",
+                "name": "G1",
+                "parent_id": "g2",
+            },
+            "g2": {
+                "id": "g2",
+                "name": "G2",
+                "parent_id": "g1",
+            },
+        },
+    ],
+    ids=["unknown-parent", "parent-cycle"],
+)
+def test_inconsistent_canonical_groups_do_not_block_ssh_startup(
+    tmp_path, groups
+):
     state = tmp_path / "connections.json"
     _write_state(
         state,
         {
             "version": 1,
             "non_ssh_connections": [],
-            "groups": {"groups": {}, "root_connections": []},
-            "metadata": {"ghost": {"pinned": True}},
+            "groups": {"groups": groups, "root_connections": []},
+            "metadata": {},
         },
     )
-    with pytest.raises(ValueError):
-        _repo(tmp_path)
+    before = state.read_bytes()
+    repo, _root, _state, _legacy = _repo(
+        tmp_path, "Host web\n    HostName web.example\n"
+    )
+    assert [record.id for record in repo.snapshot().connections] == ["web"]
+    assert repo.snapshot().groups == ()
+    assert state.read_bytes() == before
+
+
+def test_dormant_root_order_survives_unrelated_sidecar_writes(tmp_path):
+    state = tmp_path / "connections.json"
+    _write_state(
+        state,
+        {
+            "version": 1,
+            "non_ssh_connections": [],
+            "groups": {
+                "groups": {},
+                "root_connections": ["A", "MISSING", "B"],
+            },
+            "metadata": {},
+        },
+    )
+    repo, root, _state, _legacy = _repo(
+        tmp_path,
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+    assert repo.snapshot().root_connection_ids == ("A", "B")
+
+    repo.update_connection_metadata("A", {"pinned": True})
+    assert _v1_projection(state)["groups"]["root_connections"] == ["A", "B"]
+
+    group = repo.create_group("Production")
+    repo.rename_group(group.id, "Production Servers")
+    repo.set_group_color(group.id, "#ff0000")
+    assert _v1_projection(state)["groups"]["root_connections"] == ["A", "B"]
+
+    root.write_text(
+        "Host A\n    HostName a.example\n\n"
+        "Host MISSING\n    HostName missing.example\n\n"
+        "Host B\n    HostName b.example\n"
+    )
+    assert repo.reload().root_connection_ids == ("A", "MISSING", "B")
+
+
+def test_external_root_removal_stays_dormant_but_managed_delete_removes_it(
+    tmp_path,
+):
+    repo, root, state, _legacy = _repo(
+        tmp_path,
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+
+    root.write_text("Host B\n    HostName b.example\n")
+    assert repo.reload().root_connection_ids == ("B",)
+    assert _v1_projection(state)["groups"]["root_connections"] == ["B"]
+
+    root.write_text(
+        "Host A\n    HostName a.example\n\n"
+        "Host B\n    HostName b.example\n",
+    )
+    repo.reload()
+    repo.delete_connection("A")
+    assert _v1_projection(state)["groups"]["root_connections"] == ["B"]
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +716,7 @@ def test_orphan_metadata_rejected_in_canonical_state(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_rejects_unknown_group_membership(tmp_path):
+def test_snapshot_filters_unknown_group_membership(tmp_path):
     state = tmp_path / "connections.json"
     _write_state(
         state,
@@ -352,28 +732,11 @@ def test_snapshot_rejects_unknown_group_membership(tmp_path):
             "metadata": {},
         },
     )
-    with pytest.raises((CoreError, ValueError)):
-        _repo(tmp_path)
-
-
-def test_snapshot_rejects_unknown_group_parent(tmp_path):
-    state = tmp_path / "connections.json"
-    _write_state(
-        state,
-        {
-            "version": 1,
-            "non_ssh_connections": [],
-            "groups": {
-                "groups": {
-                    "g1": {"id": "g1", "name": "G1", "parent_id": "ghost"}
-                },
-                "root_connections": [],
-            },
-            "metadata": {},
-        },
-    )
-    with pytest.raises((CoreError, ValueError)):
-        _repo(tmp_path)
+    repo, _root, state, _ = _repo(tmp_path)
+    assert repo.snapshot().groups[0].connection_ids == ()
+    assert _v1_projection(state)["groups"]["groups"]["g1"][
+        "connection_ids"
+    ] == []
 
 
 # ---------------------------------------------------------------------------

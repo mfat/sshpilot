@@ -682,11 +682,13 @@ class SessionRuntime:
                     deadline=self._monotonic() + self._close_grace_seconds,
                 )
                 return
-            terminate_after_start = True
             events: List[CoreEvent] = []
+            notify_authenticated = False
             deferred_outputs: List[TerminalOutput] = []
             deferred_callbacks: Tuple[Callable[[TerminalOutput], None], ...] = ()
             diagnostic_failed = False
+            finish_readiness = False
+            terminate_after_start = False
             with self._lock:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
@@ -735,21 +737,29 @@ class SessionRuntime:
                     else:
                         promote = True
                     if promote:
-                        events.append(
-                            self._transition_locked(record, SessionState.RUNNING)
-                        )
+                        event, notify = self._promote_authenticated_locked(record)
+                        events.append(event)
+                        notify_authenticated = notify
                         deferred_outputs = list(record.deferred_live_output)
                         record.deferred_live_output.clear()
                         deferred_callbacks = tuple(
                             self._terminal_callbacks.values()
                         )
-                    terminate_after_start = False
+                        finish_readiness = diagnostic_gated
                 elif record.state is SessionState.CLOSING:
                     record.process_handle = handle
                     record.deferred_live_output.clear()
-                    terminate_after_start = False
+                elif record.state in {
+                    SessionState.EXITED,
+                    SessionState.FAILED,
+                    SessionState.CLOSED,
+                }:
+                    # The session left STARTING while the worker was busy
+                    # (e.g. the process died and drained the PTY first): reap
+                    # the freshly spawned handle.
+                    terminate_after_start = True
             self._publish(events)
-            if events and self._authenticated_callback is not None:
+            if notify_authenticated and self._authenticated_callback is not None:
                 self._authenticated_callback(session_id)
             for output in deferred_outputs:
                 for callback in deferred_callbacks:
@@ -764,11 +774,29 @@ class SessionRuntime:
                     deadline=self._monotonic() + self._close_grace_seconds,
                 )
                 return
+            if finish_readiness:
+                self._finish_readiness(session_id)
             if terminate_after_start:
                 self._terminate_handle(
                     handle,
                     deadline=self._monotonic() + self._close_grace_seconds,
                 )
+
+    def _promote_authenticated_locked(
+        self,
+        record: _SessionRecord,
+    ) -> Tuple[Optional[CoreEvent], bool]:
+        """Promote a STARTING session to RUNNING after authentication is proven.
+
+        Returns ``(event, notify_authenticated)``.  ``notify_authenticated``
+        is True exactly when the promotion transition fired, so the owner
+        authenticated callback never fires for a FAILED / EXITED / CLOSED /
+        CLOSING outcome.
+        """
+        if record.state is not SessionState.STARTING:
+            return None, False
+        event = self._transition_locked(record, SessionState.RUNNING)
+        return event, True
 
     def _on_ssh_diagnostic_result(
         self,
@@ -779,13 +807,17 @@ class SessionRuntime:
 
         AUTHENTICATED / MUX_SESSION_OPENED promote a STARTING session to
         RUNNING; a trusted FAILED detail fails it.  Either outcome finishes
-        the diagnostics lease.  A decisive result that races the process
-        handle is parked on the record and applied once the handle is stored.
+        the diagnostics lease once it is no longer parked.  A decisive result
+        that races the process handle is parked on the record (lease stays
+        engaged) and applied atomically by :meth:`start_session` once the
+        handle is stored; the authenticated callback only ever fires for the
+        successful STARTING -> RUNNING transition.
         """
         if result.state is SshDiagnosticState.PENDING:
             return
         events: List[CoreEvent] = []
-        finish = False
+        parked = False
+        notify_authenticated = False
         with self._lock:
             record = self._records.get(session_id)
             if record is None or record.state in {
@@ -793,13 +825,24 @@ class SessionRuntime:
                 SessionState.CLOSED,
             }:
                 return
+            # A decisive verdict that races the process handle is parked on the
+            # record with the lease still engaged; ``start_session`` applies it
+            # atomically once the handle is stored.  This holds even when the
+            # verdict arrives before ``diagnostic_primary`` is determined (e.g.
+            # the subscribe-time immediate delivery), because the manager lease
+            # is already engaged at that point.
+            parked = (
+                record.state is SessionState.STARTING
+                and record.process_handle is None
+            )
             if result.state is SshDiagnosticState.FAILED:
                 if record.diagnostic_failure_detail is None:
                     record.diagnostic_failure_detail = result.detail
-                if (
+                if parked:
+                    record.diagnostic_result = result
+                elif (
                     record.state is SessionState.STARTING
                     and record.diagnostic_primary
-                    and not record.pty_fallback
                 ):
                     record.failure = SessionFailure(
                         code=self._startup_failure_code(session_id).value,
@@ -813,24 +856,26 @@ class SessionRuntime:
                     )
                 else:
                     record.diagnostic_result = result
-                finish = True
             elif result.state in {
                 SshDiagnosticState.AUTHENTICATED,
                 SshDiagnosticState.MUX_SESSION_OPENED,
             }:
                 record.authenticated = True
-                finish = True
-                if record.state is SessionState.STARTING and not record.pty_fallback:
-                    if record.process_handle is None:
-                        record.diagnostic_result = result
-                    elif record.diagnostic_primary:
-                        events.append(
-                            self._transition_locked(record, SessionState.RUNNING)
-                        )
-        if finish:
+                if parked:
+                    record.diagnostic_result = result
+                elif (
+                    record.state is SessionState.STARTING
+                    and record.diagnostic_primary
+                ):
+                    event, notify = self._promote_authenticated_locked(record)
+                    events.append(event)
+                    notify_authenticated = notify
+                else:
+                    record.diagnostic_result = result
+        if not parked:
             self._finish_readiness(session_id)
         self._publish(events)
-        if events and self._authenticated_callback is not None:
+        if notify_authenticated and self._authenticated_callback is not None:
             self._authenticated_callback(session_id)
         if events:
             self._flush_deferred_output(session_id)
@@ -838,34 +883,31 @@ class SessionRuntime:
     def _on_ssh_grace_expired(self, session_id: SessionId) -> None:
         """Fall back to PTY connection evidence when diagnostics stay pending.
 
-        Runs on the readiness grace timer thread.  The session keeps running
-        under the PTY classifier; a late diagnostic verdict can no longer
-        change its fate.
+        Runs on the readiness grace timer thread.  The watch and diagnostics
+        file are deliberately kept armed: the session runs under the PTY
+        classifier from here on, but a late decisive verdict can still promote
+        (or fail) a session that is still STARTING.  The lease is released by
+        the eventual promotion/failure/exit/close, never here.
         """
         events: List[CoreEvent] = []
-        flush = False
+        notify_authenticated = False
         with self._lock:
             record = self._records.get(session_id)
             if record is None or record.state is not SessionState.STARTING:
                 return
             record.pty_fallback = True
             if (
-                record.diagnostic_primary
-                and record.process_handle is not None
+                record.process_handle is not None
+                and self._connection_evidence_locked(record).verdict
+                == "connected"
             ):
-                if (
-                    self._connection_evidence_locked(record).verdict
-                    == "connected"
-                ):
-                    events.append(
-                        self._transition_locked(record, SessionState.RUNNING)
-                    )
-                    flush = True
-        self._finish_readiness(session_id)
+                event, notify = self._promote_authenticated_locked(record)
+                events.append(event)
+                notify_authenticated = notify
         self._publish(events)
-        if events and self._authenticated_callback is not None:
+        if notify_authenticated and self._authenticated_callback is not None:
             self._authenticated_callback(session_id)
-        if flush:
+        if events:
             self._flush_deferred_output(session_id)
 
     def _finish_readiness(self, session_id: SessionId) -> None:
@@ -1680,6 +1722,7 @@ class SessionRuntime:
         if not data:
             return
         events: List[CoreEvent] = []
+        notify_authenticated = False
         with self._lock:
             record = self._records.get(session_id)
             if record is None or record.pty_eof:
@@ -1709,9 +1752,9 @@ class SessionRuntime:
                     and self._connection_evidence_locked(record).verdict
                     == "connected"
                 ):
-                    events.append(
-                        self._transition_locked(record, SessionState.RUNNING)
-                    )
+                    event, notify = self._promote_authenticated_locked(record)
+                    events.append(event)
+                    notify_authenticated = notify
                 callbacks = tuple(self._terminal_callbacks.values())
             elif record.state is not SessionState.RUNNING:
                 record.deferred_live_output.append(output)
@@ -1719,8 +1762,10 @@ class SessionRuntime:
             else:
                 callbacks = tuple(self._terminal_callbacks.values())
         self._publish(events)
-        if events and self._authenticated_callback is not None:
+        if notify_authenticated and self._authenticated_callback is not None:
             self._authenticated_callback(session_id)
+        if events:
+            self._flush_deferred_output(session_id)
         for callback in callbacks:
             try:
                 callback(output)

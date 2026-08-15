@@ -3744,6 +3744,12 @@ class PreferencesWindow(Adw.NavigationPage):
     def _on_daemon_restart_response(self, _dialog, response):
         if response != 'restart':
             return
+        self._request_daemon_restart(
+            on_complete=self._schedule_daemon_reconnect_after_restart,
+        )
+
+    def _request_daemon_restart(self, *, on_complete):
+        """Restart the daemon, confirming when live resources would be lost."""
         try:
             from .api.daemon_client import DaemonClient
             from .api.models.daemon import RestartDaemonRequest
@@ -3751,8 +3757,7 @@ class PreferencesWindow(Adw.NavigationPage):
             client = DaemonClient(timeout=2.0)
             try:
                 client.get_daemon_status()
-                request = RestartDaemonRequest(force=False)
-                result = client.restart_daemon(request)
+                result = client.restart_daemon(RestartDaemonRequest(force=False))
                 if not result.accepted and result.confirmation:
                     warn = Adw.AlertDialog(
                         heading=_("Daemon has live resources"),
@@ -3782,14 +3787,14 @@ class PreferencesWindow(Adw.NavigationPage):
                                 forced.close()
                         except Exception as exc:
                             logger.error("Forced daemon restart failed: %s", exc)
-                        self._schedule_daemon_reconnect_after_restart()
+                        on_complete()
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
                     warn.present(self)
                     return
                 if result.accepted:
-                    self._schedule_daemon_reconnect_after_restart()
+                    on_complete()
             finally:
                 client.close()
         except Exception as exc:
@@ -5569,16 +5574,40 @@ class PreferencesWindow(Adw.NavigationPage):
 
             self._update_operation_mode_styles()
 
-            parent_window = self.get_root()
-            if parent_window and hasattr(parent_window, 'connection_manager'):
-                parent_window.connection_manager.set_isolated_mode(bool(use_isolated))
-
-            # Offer an immediate restart to apply the mode change
-            self._prompt_restart_required(
+            self._prompt_operation_mode_restart(
                 _("Restart SSH Pilot to fully apply the new operation mode."))
 
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
+
+    def _prompt_operation_mode_restart(self, body):
+        """Restart dialog for an operation-mode change.
+
+        The SSH config root is daemon-owned and resolved from
+        ``ssh.use_isolated_config`` only when the daemon launches, so the
+        daemon must restart too; ``restart_app()`` alone (``os.execv``) would
+        leave the old daemon running and the mode would not change.
+        """
+        dlg = Adw.AlertDialog(heading=_("Restart Required"), body=body)
+        dlg.add_response('later', _("Later"))
+        dlg.add_response('restart', _("Restart Now"))
+        dlg.set_default_response('restart')
+        dlg.set_close_response('later')
+        dlg.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
+
+        def _on_response(_d, response):
+            if response == 'restart':
+                self._request_daemon_restart(
+                    on_complete=self._restart_app_after_mode_change,
+                )
+
+        dlg.connect('response', _on_response)
+        dlg.present(self)
+
+    def _restart_app_after_mode_change(self):
+        from .platform_utils import restart_app
+
+        restart_app()
 
     def _update_operation_mode_styles(self):
         """Ensure neither operation mode row appears disabled."""

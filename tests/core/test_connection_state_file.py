@@ -9,6 +9,7 @@ import pytest
 from sshpilot.core.connections.state_file import (
     ConnectionFileState,
     GroupFileState,
+    probe_connection_state_file,
     read_connection_state,
     read_legacy_connection_state,
     write_connection_state,
@@ -154,6 +155,66 @@ def test_migration_ignores_unrelated_legacy_fields(tmp_path):
     assert state.metadata == {"switch": {"tags": ("network",), "pinned": True}}
 
 
+def test_v1_reader_preserves_historical_compatibility_normalization(tmp_path):
+    path = tmp_path / "connections.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "non_ssh_connections": [
+                    {"id": "switch", "protocol": "telnet"},
+                    "malformed-non-ssh",
+                ],
+                "groups": {
+                    "groups": {
+                        "work": {
+                            "id": "work",
+                            "name": "Work",
+                            "connection_ids": ["switch", 7, "", None],
+                        },
+                        "malformed": "ignored",
+                    },
+                    "root_connections": [7, "gateway", "", None],
+                },
+                "metadata": {
+                    "switch": {"pinned": True},
+                    "ignored-list": ["not an object"],
+                    "ignored-string": "not an object",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = read_connection_state(path)
+
+    assert state.non_ssh_connections == (
+        {"id": "switch", "protocol": "telnet"},
+    )
+    assert len(state.groups) == 1
+    assert state.groups[0].connection_ids == ("switch", "7", "None")
+    assert state.root_connections == ("7", "gateway", "None")
+    assert state.metadata == {"switch": {"pinned": True}}
+
+
+def test_probe_delegates_tolerant_v1_payload_to_authoritative_reader(tmp_path):
+    path = tmp_path / "connections.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "non_ssh_connections": [],
+                "groups": {"groups": {}, "root_connections": []},
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    parsed = read_connection_state(path)
+    assert probe_connection_state_file(path).value == "v1"
+    assert parsed == ConnectionFileState()
+
+
 def test_missing_legacy_config_yields_defaults(tmp_path):
     state = read_legacy_connection_state(tmp_path / "missing.json")
     assert state.version == 1
@@ -161,27 +222,41 @@ def test_missing_legacy_config_yields_defaults(tmp_path):
     assert state.metadata == {}
 
 
-def test_migration_rejects_secret_like_metadata_keys(tmp_path):
+def test_migration_skips_secret_like_metadata_entries(tmp_path):
     config = _legacy_config(
         tmp_path,
         connections_meta={
             "switch": {"api_password": "hunter2", "tags": ["network"]},
         },
     )
-    with pytest.raises(CoreError) as excinfo:
-        read_legacy_connection_state(config)
-    assert excinfo.value.diagnostic_category == "invalid_metadata"
+    state = read_legacy_connection_state(config)
+    assert state.metadata == {}
 
 
-def test_migration_rejects_unusable_metadata_entries(tmp_path):
+def test_migration_skips_unusable_metadata_entries(tmp_path):
     config = _legacy_config(
         tmp_path,
         connections_meta={
             "switch": {"tags": [1, 2, 3], "bad": {"nested": float("nan")}},
         },
     )
-    with pytest.raises(CoreError):
-        read_legacy_connection_state(config)
+    state = read_legacy_connection_state(config)
+    assert state.metadata == {}
+
+
+def test_migration_skips_invalid_metadata_entries_independently(tmp_path):
+    config = _legacy_config(
+        tmp_path,
+        connections_meta={
+            "switch": {"tags": ["network"]},
+            "bad-secret": {"api_password": "not persisted"},
+            "bad-shape": {"value": float("nan")},
+        },
+    )
+    before = config.read_bytes()
+    state = read_legacy_connection_state(config)
+    assert state.metadata == {"switch": {"tags": ("network",)}}
+    assert config.read_bytes() == before
 
 
 # ---------------------------------------------------------------------------
