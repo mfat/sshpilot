@@ -6781,7 +6781,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         delta_available = '__changed_fields' in connection_data
         changed_fields = set(connection_data.pop('__changed_fields', ()) or ())
-        was_editing = bool(getattr(dialog, 'is_editing', False))
+        # Sticky per save operation: a resumed/retried partial save must keep
+        # the origin of the first attempt — the config commit flips
+        # dialog.is_editing to True, so a retried create would otherwise look
+        # like an edit and surface the reconnect offer for a new connection.
+        was_editing = getattr(dialog, '_save_started_as_edit', None)
+        if was_editing is None:
+            was_editing = bool(getattr(dialog, 'is_editing', False))
+            dialog._save_started_as_edit = was_editing
 
         def _build_config_patch():
             import re
@@ -6830,14 +6837,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     connection_id = connection_id_for(dialog.connection)
                 if delta_available and not changed_fields:
                     complete_save(True)
-                    try:
-                        self._offer_reconnect_after_edit_save(
-                            dialog,
-                            connection_id,
-                            connection_data.get('nickname'),
-                        )
-                    except Exception:
-                        pass
+                    if was_editing:
+                        try:
+                            self._offer_reconnect_after_edit_save(
+                                dialog,
+                                connection_id,
+                                connection_data.get('nickname'),
+                            )
+                        except Exception:
+                            pass
                     return
                 config_patch = _build_config_patch()
 
@@ -7063,49 +7071,104 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         Idempotent per save operation: a resumed or retried partial save that
         completes the same user Save never offers the prompt a second time.
-        The active terminal is located by the authoritative connection
-        identity, with the nickname only as a compatibility fallback, so a
-        rename during the save still matches the open terminal.  The daemon
-        save path emits ``connection-updated`` to every open terminal (which
-        logs "waiting for user confirmation to reconnect") but, unlike the
-        local save path, never surfaces a prompt — present the same reconnect
-        confirmation here.
+        The active terminal is located by the identity the dialog was opened
+        with (pre-rename), so renaming the ssh alias during the save still
+        matches its open terminal and never another connection's; the
+        post-save identity is only a compatibility fallback for terminals
+        already refreshed to the new nickname or emitters without
+        ``dialog.connection``.  The daemon save path emits
+        ``connection-updated`` to every open terminal (which logs "waiting
+        for user confirmation to reconnect") but, unlike the local save path,
+        never surfaces a prompt — present the same reconnect confirmation
+        here.
         """
         if self._is_quitting:
             return
         if getattr(dialog, '_reconnect_prompt_offered', False):
             return
+        saved_id = str(connection_id) if connection_id else ''
+        saved_nickname = str(nickname or '')
         if active_connection is not None:
             terminal = self.active_terminals.get(active_connection)
             if terminal is None:
                 return
             matched = active_connection
         else:
-            if not connection_id or not nickname:
-                return
-            matched = None
-            for candidate, candidate_terminal in tuple(self.active_terminals.items()):
-                if candidate is None or candidate_terminal is None:
-                    continue
-                candidate_ids = {
+            def _identity_ids(connection):
+                return {
                     str(value)
                     for value in (
-                        getattr(candidate, 'id', None),
-                        getattr(candidate, 'connection_id', None),
-                        getattr(candidate, 'uuid', None),
+                        getattr(connection, 'id', None),
+                        getattr(connection, 'connection_id', None),
+                        getattr(connection, 'uuid', None),
                     )
                     if value is not None
                 }
-                candidate_nickname = getattr(candidate, 'nickname', '')
-                if (
-                    str(connection_id) in candidate_ids
-                    or candidate_nickname == nickname
-                ):
-                    matched = candidate
-                    terminal = candidate_terminal
+
+            original = getattr(dialog, 'connection', None)
+            original_ids = _identity_ids(original) if original is not None else set()
+            original_nickname = (
+                str(getattr(original, 'nickname', '') or '')
+                if original is not None else ''
+            )
+            if not (original_ids or original_nickname or saved_id or saved_nickname):
+                return
+            candidates = []
+            for candidate, candidate_terminal in tuple(self.active_terminals.items()):
+                if candidate is None or candidate_terminal is None:
+                    continue
+                candidate_ids = _identity_ids(candidate)
+                # A previous save may have re-identified this terminal's
+                # connection (e.g. an earlier rename); its stashed post-save
+                # identity is part of what this terminal answers to.
+                stashed = getattr(
+                    candidate_terminal, '_reconnect_connection_id', None
+                )
+                if stashed:
+                    candidate_ids.add(str(stashed))
+                candidates.append((candidate, candidate_terminal, candidate_ids))
+            matched = None
+            terminal = None
+            # The identity the terminal was opened with (pre-rename) is
+            # authoritative: it can only belong to the connection being edited.
+            for candidate, candidate_terminal, candidate_ids in candidates:
+                if original is not None and candidate is original:
+                    matched, terminal = candidate, candidate_terminal
                     break
+                if original_ids and candidate_ids & original_ids:
+                    matched, terminal = candidate, candidate_terminal
+                    break
+                if (
+                    original_nickname
+                    and getattr(candidate, 'nickname', '') == original_nickname
+                ):
+                    matched, terminal = candidate, candidate_terminal
+                    break
+            # Compatibility fallback: the post-save identity covers terminals
+            # already refreshed to the new nickname and emitters without
+            # dialog.connection.
+            if matched is None and (saved_id or saved_nickname):
+                for candidate, candidate_terminal, candidate_ids in candidates:
+                    if saved_id and saved_id in candidate_ids:
+                        matched, terminal = candidate, candidate_terminal
+                        break
+                    if (
+                        saved_nickname
+                        and getattr(candidate, 'nickname', '') == saved_nickname
+                    ):
+                        matched, terminal = candidate, candidate_terminal
+                        break
             if matched is None:
                 return
+        # Connection ids are nickname-derived, so after a rename the daemon
+        # only knows the new alias while terminal.connection still carries the
+        # old one.  Stash the post-save identity so the reconnect reopens the
+        # session under the alias the daemon actually has.
+        if saved_id:
+            try:
+                terminal._reconnect_connection_id = saved_id
+            except Exception:
+                pass
         try:
             matched._terminal_instance = terminal
         except Exception:
@@ -7152,7 +7215,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                              '_daemon_config_fingerprint',
                              '_daemon_metadata_fingerprint',
                              '_resumable_save_active',
-                             '_reconnect_prompt_offered'):
+                             '_reconnect_prompt_offered',
+                             '_save_started_as_edit'):
                     try:
                         delattr(dialog, name)
                     except AttributeError:

@@ -1524,10 +1524,15 @@ class TerminalManager:
         terminal._set_connecting_overlay_visible(True)
 
         try:
+            # A save may have renamed the ssh alias: connection ids are
+            # nickname-derived, so the pre-save object terminal.connection
+            # points at an identity the daemon no longer has.  The save flow
+            # stashes the post-save identity on the terminal; prefer it.
             started = terminal.start_daemon_session(
                 window.client,
                 window.client_bridge,
-                connection_id_for(connection),
+                getattr(terminal, "_reconnect_connection_id", None)
+                or connection_id_for(connection),
             )
         except Exception:
             logger.exception("Failed to start replacement daemon terminal session")

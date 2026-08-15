@@ -384,6 +384,172 @@ def test_retried_partial_daemon_edit_prompts_only_once():
     assert prompts == [active]
 
 
+def test_daemon_rename_prompts_terminal_opened_with_original_nickname():
+    """Renaming the ssh alias still offers reconnect for the open terminal.
+
+    The daemon returns the post-rename identity while the terminal's
+    connection still carries the pre-rename nickname; the match must use the
+    identity the dialog was opened with.
+    """
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="renamed",
+        hostname="demo.example",
+        __changed_fields=("nickname",),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: completed.append(ok)
+    )
+    operation, success, _failure = window.client_bridge.calls[0]
+    operation()
+    success(SimpleNamespace(connection_id="renamed", generation=8, nickname="renamed"))
+
+    assert completed == [True]
+    assert prompts == [active]
+    # The reconnect must reopen the session under the alias the daemon has.
+    assert terminal._reconnect_connection_id == "renamed"
+
+
+def test_reconnect_offer_matches_terminal_via_stashed_identity():
+    """A second rename still finds the terminal after a previous rename.
+
+    The dialog edits the fresh post-rename projection while the terminal's
+    connection still carries the original alias; only the stashed post-save
+    identity bridges them.
+    """
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    terminal._reconnect_connection_id = "renamed"
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = _edit_dialog()
+    dialog.connection = _ActiveConn(id="renamed", nickname="renamed")
+
+    window._offer_reconnect_after_edit_save(dialog, "renamed-again", "renamed-again")
+
+    assert prompts == [active]
+    assert terminal._reconnect_connection_id == "renamed-again"
+
+
+def test_reconnect_terminal_prefers_stashed_post_save_identity(monkeypatch):
+    """The replacement session opens under the stashed post-save identity."""
+    from sshpilot import terminal_manager as tm_module
+
+    window = SimpleNamespace(
+        active_terminals={},
+        client=object(),
+        client_bridge=object(),
+    )
+    manager = tm_module.TerminalManager(window)
+    monkeypatch.setattr(
+        manager,
+        "_ensure_daemon_terminal_ready",
+        lambda: SimpleNamespace(ready=True),
+    )
+    opened = []
+
+    def _terminal(**attrs):
+        terminal = SimpleNamespace(
+            connection=SimpleNamespace(nickname="old", id="old"),
+            _daemon_controller=None,
+            _uninstall_daemon_backend_io=lambda: None,
+            _hide_view_only_indicator=lambda: None,
+            last_error_message=None,
+            connection_state_reason="",
+            _set_disconnected_banner_visible=lambda _v: None,
+            _set_connecting_overlay_visible=lambda _v: None,
+            start_daemon_session=lambda _c, _b, cid: opened.append(cid) or True,
+            apply_theme=lambda: None,
+            queue_terminal_draw=lambda: None,
+        )
+        for name, value in attrs.items():
+            setattr(terminal, name, value)
+        return terminal
+
+    assert manager.reconnect_terminal(
+        _terminal(_reconnect_connection_id="renamed")
+    ) is True
+    assert manager.reconnect_terminal(_terminal()) is True
+    assert opened == ["renamed", "old"]
+
+
+def test_reconnect_offer_prefers_original_identity_over_new_nickname():
+    """A rename prompts the edited connection's terminal, never another
+    terminal whose connection already holds the new nickname."""
+    window = _MutationWindow()
+    edited = _ActiveConn(id="old", nickname="old")
+    other = _ActiveConn(id="new", nickname="new")
+    prompts, terminal_manager = _prompt_collector()
+    # The colliding terminal comes first so a first-match-wins scan of the
+    # post-save nickname would pick the wrong connection.
+    window.active_terminals = {
+        other: SimpleNamespace(is_connected=True),
+        edited: SimpleNamespace(is_connected=True),
+    }
+    window.terminal_manager = terminal_manager
+    dialog = _edit_dialog()
+    dialog.connection = _ActiveConn(id="old", nickname="old")
+
+    window._offer_reconnect_after_edit_save(dialog, "new", "new")
+
+    assert prompts == [edited]
+
+
+def test_retried_partial_create_does_not_prompt():
+    """A retried new-connection save must not offer reconnection.
+
+    The config commit flips ``dialog.is_editing`` to True; the resumed save
+    must still be treated as a create, so no reconnect offer fires even when
+    a terminal matches the returned identity.
+    """
+    window = _MutationWindow()
+    active, terminal = _active_daemon_terminal()
+    prompts, terminal_manager = _prompt_collector()
+    window.active_terminals = {active: terminal}
+    window.terminal_manager = terminal_manager
+    dialog = SimpleNamespace(
+        is_editing=False,
+        connection=None,
+        is_daemon_editor=lambda: True,
+        _daemon_editor_loaded=True,
+        _daemon_generation=None,
+    )
+    metadata = {"tags": ["ops"]}
+    completed = []
+
+    def _fresh_data():
+        return _basic_data(nickname="new", hostname="new.example")
+
+    # Attempt 1: create commits, metadata fails -> no prompt.
+    window.on_connection_saved(dialog, _fresh_data(), metadata, {},
+                               lambda ok, *a, **k: completed.append(ok))
+    mutation, mutation_ok, _ = window.client_bridge.calls[0]
+    result = mutation()
+    mutation_ok(result)
+    assert dialog.is_editing is True
+    window.client_bridge.calls[1][2](RuntimeError("metadata unavailable"))
+    assert completed == [False]
+    assert prompts == []
+
+    # Retry: resumes from the checkpoint, completes -> still no prompt.
+    window.on_connection_saved(dialog, _fresh_data(), metadata, {},
+                               lambda ok, *a, **k: completed.append(ok))
+    metadata_retry, metadata_ok, _ = window.client_bridge.calls[2]
+    metadata_retry()
+    metadata_ok(True)
+
+    assert completed == [False, True]
+    assert prompts == []
+
+
 def test_new_connection_save_does_not_prompt():
     """Creating a connection must not offer reconnection just because Save ran.
 
