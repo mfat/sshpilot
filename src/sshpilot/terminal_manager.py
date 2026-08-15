@@ -1241,7 +1241,11 @@ class TerminalManager:
                 hostname=hostname,
                 username=username,
                 connection_id=stored_id,
-                port=int(getattr(connection, "port", 22) or 22),
+                port=(
+                    int(getattr(connection, "port", 22) or 22)
+                    if bool(data.get("port_explicit"))
+                    else None
+                ),
                 protocol=str(getattr(connection, "protocol", "ssh") or "ssh"),
                 proxy_jump=tuple(getattr(connection, "proxy_jump", ()) or ()),
             )

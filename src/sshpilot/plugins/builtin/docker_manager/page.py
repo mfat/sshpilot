@@ -934,6 +934,25 @@ class DockerConsolePage(
         self._ssh_auth_blocked.discard(nickname)
         return True
 
+    def _clear_daemon_session_password(self, nickname: str) -> None:
+        """Drop a failed temporary SSH credential without deleting persistence."""
+        try:
+            client = self.ctx.daemon_client()
+            if client is None:
+                return
+            from ....api.models.connections import SetSessionConnectionPasswordRequest
+            summary = next(
+                (item for item in client.list_connections()
+                 if getattr(item, "nickname", None) == nickname),
+                None,
+            )
+            if summary is not None:
+                client.clear_session_connection_password(
+                    SetSessionConnectionPasswordRequest(connection_id=summary.id)
+                )
+        except Exception:
+            logger.debug("Docker Console could not clear temporary SSH credential")
+
     def _show_ssh_auth_required(self) -> None:
         for placeholder in (
             self._containers_placeholder,
@@ -1062,6 +1081,7 @@ class DockerConsolePage(
             if not result:
                 if _err is not None:
                     # The probe itself failed (e.g. SSH could not connect).
+                    self._clear_daemon_session_password(nick)
                     self._status(w.describe_docker_failure(str(_err)))
                 self._finish_probe_and_refresh()
                 return

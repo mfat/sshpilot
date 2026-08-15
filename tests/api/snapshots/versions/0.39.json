@@ -548,10 +548,6 @@
       "capability": "plugins.settings.write",
       "status": "daemon-only"
     },
-    "set_session_connection_password": {
-      "capability": "connections.secrets.write",
-      "status": "implemented"
-    },
     "sftp_chmod": {
       "capability": "sftp.mutate",
       "status": "daemon-only"
@@ -817,7 +813,6 @@
     "set_group_color",
     "set_operation_mode",
     "set_plugin_setting",
-    "set_session_connection_password",
     "sftp_chmod",
     "sftp_copy",
     "sftp_directory_size",
@@ -2039,21 +2034,6 @@
       ],
       "return": "None"
     },
-    "set_session_connection_password": {
-      "parameters": [
-        {
-          "kind": "positional_or_keyword",
-          "name": "request",
-          "type": "SetSessionConnectionPasswordRequest"
-        },
-        {
-          "kind": "positional_or_keyword",
-          "name": "password",
-          "type": "bytearray"
-        }
-      ],
-      "return": "bool"
-    },
     "sftp_chmod": {
       "parameters": [
         {
@@ -2530,9 +2510,6 @@
     },
     "connections.save_ssh_config_text": {
       "capability": "connections.config.write"
-    },
-    "connections.set_session_password": {
-      "capability": "connections.secrets.write"
     },
     "connections.snapshot": {
       "capability": "connections.read"
@@ -3072,6 +3049,7 @@
   ],
   "model_exports": [
     "AddTagToConnectionsRequest",
+    "AddTagToConnectionsRequest",
     "AgentKey",
     "AgentKeyList",
     "AgentKeyMutationRequest",
@@ -3250,7 +3228,6 @@
     "SetDaemonLogLevelRequest",
     "SetGroupColorRequest",
     "SetOperationModeRequest",
-    "SetSessionConnectionPasswordRequest",
     "SftpChmodRequest",
     "SftpCopyRequest",
     "SftpCreateFileRequest",
@@ -3874,10 +3851,7 @@
       "seeded",
       "conflict",
       "message",
-      "target_description",
-      "persisted_mode",
-      "rollback_completed",
-      "recovery_required"
+      "target_description"
     ],
     "OperationSummary": [
       "operation_id",
@@ -4066,9 +4040,6 @@
     "SetOperationModeRequest": [
       "mode",
       "seed_isolated_config"
-    ],
-    "SetSessionConnectionPasswordRequest": [
-      "connection_id"
     ],
     "SftpChmodRequest": [
       "service_id",
@@ -4263,10 +4234,7 @@
     "UnsavedHostCheckRequest": [
       "hostname",
       "username",
-      "connection_id",
-      "port",
-      "protocol",
-      "proxy_jump"
+      "connection_id"
     ],
     "UnsavedHostCheckResult": [
       "saved",

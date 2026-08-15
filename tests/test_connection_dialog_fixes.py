@@ -85,29 +85,15 @@ def test_dialog_disk_key_discovery_empty_without_key_manager():
     assert _discover_disk_keys(parent) == []
 
 
-def test_dialog_disk_key_discovery_builds_manager_from_client(monkeypatch):
-    """Without a pre-built manager, a daemon-backed one is constructed."""
-    from sshpilot import key_manager as key_manager_mod
-
-    manager = _FakeKeyManager([SSHKey("/home/alice/.ssh/id_ed25519")])
-    created = []
-
-    def _factory(client, **kwargs):
-        created.append((client, kwargs))
-        return manager
-
-    monkeypatch.setattr(key_manager_mod, "KeyManager", _factory)
+def test_dialog_disk_key_discovery_does_not_construct_before_mode_confirmation():
+    """A client alone is insufficient to create a default-scope key manager."""
     parent = types.SimpleNamespace(
         key_manager=None,
         client=types.SimpleNamespace(),
         _key_scope="isolated",
     )
 
-    assert _discover_disk_keys(parent) == [
-        ("id_ed25519", "/home/alice/.ssh/id_ed25519")
-    ]
-    assert len(created) == 1
-    assert created[0][1]["scope"] == "isolated"
+    assert _discover_disk_keys(parent) == []
 
 
 def test_dialog_disk_key_discovery_swallows_failures():

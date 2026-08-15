@@ -7,34 +7,31 @@ notes remain separate.
 
 No unreleased API surface is currently recorded.
 
-## API 0.39 (current)
+## API 0.40 (current)
 
-### API 0.39 daemon-only retirement repair
+### API 0.40 daemon-only retirement compatibility boundary
 
-- Added protected daemon-session password input for Docker Console's explicit
-  “use once” flow. It is held only in daemon memory; persistent password
-  storage remains a separate explicit operation.
-- Extended operation-mode results with persisted-mode, rollback-complete, and
-  recovery-required state so failed rollback cannot be reported as an ordinary
-  rejection.
-- Extended unsaved-host checks with semantic protocol, port, and ProxyJump
-  inputs. Identity compares daemon-resolved host, case-insensitive hostname,
-  case-sensitive user, effective port, and effective ProxyJump; an internal
-  connection ID is still authoritative when present. Empty users resolve to
-  the local OpenSSH login. Non-SSH destinations do not match by host fields.
-- Rejects new or renamed SSH Host aliases beginning with `-`; imported invalid
-  aliases are treated as unavailable and are never passed to OpenSSH as an
-  option.
-
-- Removed a duplicate `AddTagToConnectionsRequest` export while retaining the
-  same symbol and wire contract.
-
-- Advertised `terminal.external_launch` only when the daemon launch provider
-  implements the typed external-terminal preparation operation.
-- Kept `PROTOCOL_VERSION` at `1.0`; this release records additive typed API
-  and retirement repairs rather than a wire-breaking change.
+- Bumped `API_IMPLEMENTATION_VERSION` because protected command-input
+  transport, session credentials, operation-mode recovery results, and
+  unsaved-host request semantics are not wire-compatible with a 0.39 daemon.
+- A resident daemon advertising API 0.39 is rejected with a restart/recovery
+  result before any incompatible mutation is attempted. The client never
+  falls back to plaintext secret transport or a frontend backend.
+- Added daemon-owned session-credential replacement and explicit clearing;
+  persistent password correction and deletion clear any temporary credential.
+- Preserved omitted CLI ports as `None` in unsaved-host requests so OpenSSH
+  aliases retain configured `Port` values; explicit `-p 22` remains an
+  override, and ephemeral CLI projections do not claim durable IDs.
+- Added `connections.clear_session_password` and documented protected-input
+  lifecycle limits and ownership.
 
 ## Historical API entries
+
+### API 0.39 (historical snapshot)
+
+This snapshot is preserved exactly for compatibility testing. It predates the
+0.40 protected-input, operation-mode-result, and unsaved-host contract changes;
+it is not a current daemon/frontend pairing.
 
 The entries below record superseded implementation stages. They are not
 current production instructions; the current daemon-only contract is above.

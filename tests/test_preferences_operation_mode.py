@@ -95,6 +95,7 @@ def _make_prefs(result=None):
     prefs._refresh_daemon_status_row = lambda: None
     prefs._suppress_operation_mode_toggle = False
     prefs._operation_mode_request_in_flight = False
+    prefs._confirmed_operation_mode = OperationMode.DEFAULT
     return prefs, recorded
 
 

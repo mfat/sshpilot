@@ -129,6 +129,11 @@ DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
 DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
+_COMMAND_INPUT_METHODS = frozenset(
+    {"connections.store_password", "connections.set_session_password"}
+)
+_COMMAND_INPUT_MAX_PENDING = 64
+_COMMAND_INPUT_TTL = 30.0
 _FORWARDED_EVENT_TYPES = frozenset(
     {
         EventType.CONNECTION_CREATED,
@@ -356,7 +361,11 @@ class DaemonServer:
         self._broadcast_publisher = EventPublisher()
         self._broadcast_subscription: Optional[Subscription] = None
         self._command_input_condition = threading.Condition()
-        self._command_inputs: Dict[str, bytearray] = {}
+        # Protected inputs are registered before a request is dispatched and
+        # are owned by the peer that sent that request. This prevents an
+        # unsolicited/late frame from satisfying another client's waiter.
+        self._command_input_pending: Dict[str, tuple[int, float]] = {}
+        self._command_inputs: Dict[str, tuple[int, bytearray]] = {}
         self._terminal_queue: queue.Queue[TerminalOutput] = queue.Queue(maxsize=1024)
         self._terminal_publication_lost: Set[SessionId] = set()
         self._next_event_sequence = 0
@@ -499,6 +508,7 @@ class DaemonServer:
         if self._dispatcher is not None:
             self._dispatcher.begin_shutdown()
         self._stopping.set()
+        self._clear_command_inputs()
         wakeup = self._wakeup_write
         if wakeup is not None:
             try:
@@ -1093,8 +1103,23 @@ class DaemonServer:
                         ErrorCode.UNSUPPORTED_CAPABILITY,
                         "Binary secret transport was not negotiated",
                     )
+                request_id = str(frame.interaction_id)
                 with self._command_input_condition:
-                    self._command_inputs[str(frame.interaction_id)] = bytearray(frame.secret)
+                    expected = self._command_input_pending.get(request_id)
+                    if expected is None or expected[0] != state.token:
+                        raise SshPilotError(
+                            ErrorCode.INVALID_REQUEST,
+                            "The protected command input was not requested by this client",
+                        )
+                    if request_id in self._command_inputs:
+                        raise SshPilotError(
+                            ErrorCode.INVALID_REQUEST,
+                            "The protected command input was already supplied",
+                        )
+                    self._command_inputs[request_id] = (
+                        state.token,
+                        bytearray(frame.secret),
+                    )
                     self._command_input_condition.notify_all()
                 frame.clear()
                 return
@@ -1134,14 +1159,76 @@ class DaemonServer:
             )
 
     def _wait_command_input(self, request_id, timeout: float = 30.0):
-        deadline = time.monotonic() + timeout
+        request_key = str(request_id)
+        deadline = time.monotonic() + min(timeout, _COMMAND_INPUT_TTL)
         with self._command_input_condition:
-            while str(request_id) not in self._command_inputs and not self._stopping.is_set():
+            while request_key not in self._command_inputs and not self._stopping.is_set():
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    self._command_input_pending.pop(request_key, None)
                     return None
                 self._command_input_condition.wait(remaining)
-            return self._command_inputs.pop(str(request_id), None)
+            entry = self._command_inputs.pop(request_key, None)
+            self._command_input_pending.pop(request_key, None)
+            if entry is None:
+                return None
+            _owner, value = entry
+            return value
+
+    def _register_command_input(self, state: _ClientConnection, request_id) -> None:
+        key = str(request_id)
+        with self._command_input_condition:
+            self._expire_command_inputs_locked()
+            if len(self._command_input_pending) >= _COMMAND_INPUT_MAX_PENDING:
+                raise SshPilotError(
+                    ErrorCode.SERVER_BUSY,
+                    "The daemon protected-input queue is full",
+                    retryable=True,
+                )
+            if key in self._command_input_pending:
+                raise SshPilotError(
+                    ErrorCode.INVALID_REQUEST,
+                    "The protected command input request is duplicated",
+                )
+            self._command_input_pending[key] = (
+                state.token,
+                time.monotonic() + _COMMAND_INPUT_TTL,
+            )
+
+    def _cancel_command_input(self, request_id) -> None:
+        key = str(request_id)
+        with self._command_input_condition:
+            self._command_input_pending.pop(key, None)
+            entry = self._command_inputs.pop(key, None)
+            if entry is not None:
+                self._wipe_command_input(entry[1])
+            self._command_input_condition.notify_all()
+
+    def _expire_command_inputs_locked(self) -> None:
+        now = time.monotonic()
+        for key, (_owner, expiry) in tuple(self._command_input_pending.items()):
+            if expiry > now:
+                continue
+            self._command_input_pending.pop(key, None)
+            entry = self._command_inputs.pop(key, None)
+            if entry is not None:
+                self._wipe_command_input(entry[1])
+
+    def _clear_command_inputs(self, owner_token: Optional[int] = None) -> None:
+        with self._command_input_condition:
+            for key, (owner, value) in tuple(self._command_inputs.items()):
+                if owner_token is None or owner == owner_token:
+                    self._command_inputs.pop(key, None)
+                    self._wipe_command_input(value)
+            for key, (owner, _expiry) in tuple(self._command_input_pending.items()):
+                if owner_token is None or owner == owner_token:
+                    self._command_input_pending.pop(key, None)
+            self._command_input_condition.notify_all()
+
+    @staticmethod
+    def _wipe_command_input(value: bytearray) -> None:
+        value[:] = b"\0" * len(value)
+        value.clear()
 
     def _handle_terminal_frame(
         self,
@@ -1216,6 +1303,8 @@ class DaemonServer:
             ):
                 logger.debug("daemon request dispatch")
                 request_context = copy_log_context()
+                if envelope.method in _COMMAND_INPUT_METHODS:
+                    self._register_command_input(state, envelope.request_id)
                 result = dispatcher.dispatch(envelope, state.protocol)
             if isinstance(result, DeferredResult):
                 self._submit_deferred(state, envelope, result, context=request_context)
@@ -1230,8 +1319,12 @@ class DaemonServer:
                 result=result.value,
             )
         except SshPilotError as exc:
+            if "envelope" in locals() and envelope.method in _COMMAND_INPUT_METHODS:
+                self._cancel_command_input(envelope.request_id)
             response = self._error_response(request_id, exc)
         except (TypeError, ValueError):
+            if "envelope" in locals() and envelope.method in _COMMAND_INPUT_METHODS:
+                self._cancel_command_input(envelope.request_id)
             response = self._error_response(
                 request_id,
                 SshPilotError(
@@ -1266,6 +1359,7 @@ class DaemonServer:
         )
         peer_token = state.token
         if executor is None:
+            self._cancel_command_input(request.request_id)
             result.on_rejected()
             self._queue_response(
                 state,
@@ -1394,6 +1488,7 @@ class DaemonServer:
             return
 
         result.on_rejected()
+        self._cancel_command_input(request.request_id)
         self._queue_response(
             state,
             self._error_response(
@@ -1685,6 +1780,7 @@ class DaemonServer:
             key_service.disconnect_client(state.protocol.client_id)
         if broker is not None and state.protocol.client_id is not None:
             broker.disconnect_client(state.protocol.client_id)
+        self._clear_command_inputs(state.token)
         self._note_lifecycle_activity()
 
     def _on_terminal_output(self, output: TerminalOutput) -> None:

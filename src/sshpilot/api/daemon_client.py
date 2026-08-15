@@ -316,6 +316,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_operation_mode": Capability.OPERATION_MODE,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "set_group_color": Capability.CONNECTIONS_GROUPS,
     "place_group": Capability.CONNECTIONS_GROUPS,
@@ -884,6 +885,23 @@ class DaemonClient:
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid session password result")
+        return result
+
+    def clear_session_connection_password(
+        self, request: SetSessionConnectionPasswordRequest
+    ) -> bool:
+        self._require_write_compatibility("clear session password")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        if type(request) is not SetSessionConnectionPasswordRequest:
+            raise TypeError("a session connection password request is required")
+        result = self._request(
+            "connections.clear_session_password",
+            set_session_connection_password_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+            mutation_description="clear session password",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid session password clear result")
         return result
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:
@@ -2836,6 +2854,19 @@ class DaemonClient:
         self._daemon_started_at = handshake.daemon_started_at
         self._development_revision = handshake.development_revision
         self._daemon_api_implementation_version = handshake.api_implementation_version
+        from .errors import DaemonRestartRequiredError
+        from .version import API_IMPLEMENTATION_VERSION
+        if handshake.api_implementation_version != API_IMPLEMENTATION_VERSION:
+            # A resident daemon from the previous implementation can speak
+            # Protocol v1 while disagreeing about protected-input and DTO
+            # contracts. Reject it before normal RPCs; never downgrade a
+            # secret operation or select a frontend backend.
+            error = DaemonRestartRequiredError(
+                "The background daemon uses an incompatible API implementation. "
+                "Restart the daemon/application before continuing."
+            )
+            self._fail_transport(error)
+            raise error
         capabilities = self._request("system.get_capabilities", {})
         try:
             self._capabilities = capabilities_from_wire(capabilities)

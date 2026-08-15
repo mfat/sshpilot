@@ -124,6 +124,48 @@ def test_missing_config_is_created_as_canonical_tree_and_survives_later_write(tm
     assert restarted.status().active_mode is OperationMode.ISOLATED
 
 
+def test_same_mode_request_reconciles_missing_config_to_canonical_tree(tmp_path):
+    repo = _Repository()
+    ssh = tmp_path / "ssh"
+    app = tmp_path / "app"
+    ssh.mkdir()
+    app.mkdir()
+    default = ssh / "config"
+    default.write_text("Host prod\n", encoding="utf-8")
+    config = app / "config.json"
+    service = OperationModeService(
+        repo,
+        config_path=config,
+        default_root=default,
+        isolated_root=app / "ssh_config",
+    )
+
+    result = service.apply(SetOperationModeRequest(mode=OperationMode.DEFAULT))
+
+    assert result.accepted is True
+    tree = json.loads(config.read_text(encoding="utf-8"))
+    assert tree["config_version"] == CONFIG_VERSION
+    assert tree["ssh"]["use_isolated_config"] is False
+    assert {"plugins", "identity", "secrets"} <= set(tree)
+
+
+def test_status_reports_runtime_persisted_split_brain_as_recovery_required(tmp_path):
+    repo = _Repository(isolated=True)
+    service, config, _default, _isolated = _service(tmp_path, repo)
+    config.write_text(
+        json.dumps({"config_version": CONFIG_VERSION, "ssh": {"use_isolated_config": False}}),
+        encoding="utf-8",
+    )
+
+    result = service.status()
+
+    assert result.accepted is False
+    assert result.recovery_required is True
+    assert result.rollback_completed is False
+    assert result.active_mode is OperationMode.ISOLATED
+    assert result.persisted_mode is OperationMode.DEFAULT
+
+
 def test_mode_transaction_serializes_all_settings_writers(tmp_path):
     """A mode publication cannot race a daemon settings read/modify/write.
 

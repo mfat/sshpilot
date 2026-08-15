@@ -423,6 +423,14 @@ def test_record_converts_to_summary():
     assert summary.port == 22
 
 
+def test_core_connection_service_rejects_leading_dash_host_alias():
+    from sshpilot.core.connections.service import ConnectionService
+
+    service = ConnectionService()
+    with pytest.raises(CoreError, match="must not begin"):
+        service.create({"nickname": "-oProxyCommand", "hostname": "host"})
+
+
 def test_unsaved_host_check_uses_daemon_snapshot_identity():
     repo = FakeRepository([_record(record_id="prod", hostname="example.com", username="alice")])
     service = ConnectionApplicationService(repo, client_name="test")
@@ -521,6 +529,44 @@ def test_unsaved_host_empty_user_uses_daemon_effective_login(monkeypatch):
     assert service.check_unsaved_host(
         UnsavedHostCheckRequest(hostname="host.example", username="")
     ).saved is True
+
+
+def test_unsaved_host_omitted_port_does_not_override_ssh_config(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    calls = []
+
+    def fake_effective(host, *_args, **kwargs):
+        calls.append(kwargs)
+        return {"hostname": "alias.example", "user": "alice", "port": "2207"}
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
+    repo = FakeRepository([_record(hostname="alias.example", username="alice", port=2207)])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="alias", username="alice")
+    ).saved is True
+    assert calls == [{"user": "alice", "port": None, "proxy_jump": None}]
+
+
+def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    calls = []
+
+    def fake_effective(host, *_args, **kwargs):
+        calls.append(kwargs)
+        return {"hostname": "alias.example", "user": "alice", "port": "22"}
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
+    repo = FakeRepository([_record(hostname="alias.example", username="alice", port=22)])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="alias", username="alice", port=22)
+    ).saved is True
+    assert calls == [{"user": "alice", "port": 22, "proxy_jump": None}]
 
 
 def test_display_name_update_is_additive_and_keeps_alias_id():

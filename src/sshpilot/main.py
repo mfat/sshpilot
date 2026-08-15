@@ -769,23 +769,18 @@ class SshPilotApplication(Adw.Application):
             )
         window = self.window
         if window is not None and not getattr(window, "_is_quitting", False):
-            window.client = result.client
-            for projection_name in (
-                "connection_manager",
-                "connection_runtime_status",
-            ):
-                projection = getattr(window, projection_name, None)
-                attach_client = getattr(projection, "attach_client", None)
-                if not callable(attach_client):
-                    continue
-                try:
-                    attach_client(result.client)
-                except Exception:
-                    logger.warning(
-                        "Failed to refresh %s after daemon reconnect",
-                        projection_name,
-                        exc_info=True,
-                    )
+            replace_client = getattr(window, "_replace_daemon_client", None)
+            if not callable(replace_client):
+                logger.error("Window cannot replace its daemon client safely")
+                return False
+            try:
+                replace_client(result.client)
+            except Exception:
+                logger.warning(
+                    "Failed to refresh daemon-backed services after reconnect",
+                    exc_info=True,
+                )
+                return False
             welcome = getattr(window, "welcome_view", None)
             if welcome is not None and hasattr(welcome, "set_client"):
                 try:
@@ -799,31 +794,6 @@ class SshPilotApplication(Adw.Application):
                         exc_info=True,
                     )
 
-            # Rebind long-lived Preferences controllers as well.  Preferences
-            # is intentionally reused after being popped, so its controllers
-            # can otherwise retain the client whose transport just failed.
-            # Recreate the thin controllers over the confirmed replacement
-            # client; their daemon-owned snapshots will be refreshed by the
-            # existing attachment path when their pages are built.
-            try:
-                window.secrets_controller = window._build_secrets_controller()
-                window._attach_secrets_interaction_presenter()
-            except Exception:
-                logger.warning(
-                    "Failed to refresh secret services after daemon reconnect",
-                    exc_info=True,
-                )
-            preferences = getattr(window, "_preferences_window", None)
-            if preferences is not None:
-                try:
-                    preferences.set_ssh_overrides_controller(
-                        window._build_ssh_overrides_controller()
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to refresh Preferences SSH overrides after daemon reconnect",
-                        exc_info=True,
-                    )
         if previous is not None and previous is not result.client:
             try:
                 previous.close()

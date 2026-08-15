@@ -13,6 +13,7 @@ def test_connection_service_only_declares_connection_operations():
         "list_connections", "create_connection", "duplicate_connection",
         "delete_connection", "store_connection_password",
         "set_session_connection_password",
+        "clear_session_connection_password",
         "delete_connection_password",
         "store_key_passphrase", "delete_key_passphrase",
         "update_connection_metadata", "add_tag_to_connections", "assign_connection_to_group", "move_connections", "create_group",

@@ -56,6 +56,16 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
+`API_IMPLEMENTATION_VERSION` is currently `0.40`. Version 0.40 is an explicit
+implementation compatibility boundary: protected command input moved secret
+values out of JSON parameters, session-password operations were added, mode
+results expose persistence/recovery state, and unsaved-host requests preserve
+omitted-port provenance. A daemon advertising 0.39 is rejected during
+handshake with a restart/recovery outcome before ordinary requests. The client
+does not downgrade to plaintext secrets or select a frontend backend. A daemon
+with live resources is not killed implicitly; the existing explicit restart
+policy remains responsible for that decision.
+
 ## Non-breaking changes within v1
 
 Subject to review, these can remain Protocol v1:
@@ -142,6 +152,10 @@ tests pass. A schema alone is not support. Clients:
 - **Incompatible protocol versions:** the daemon handshake rejects the pairing
   before ordinary commands with `protocol_version_unsupported`.
 
+- **Incompatible implementation revisions:** the daemon handshake rejects a
+  mismatched `API_IMPLEMENTATION_VERSION` with `api_version_mismatch`; the UI
+  must offer restart/recovery and retain user input where possible.
+
 ## `DaemonClient` compatibility
 
 The reusable connection contract suite exercises the daemon transport and
@@ -191,6 +205,9 @@ When the snapshot changes:
    `python3 scripts/generate_api_artifacts.py`;
 6. increment Protocol v1 only if this policy has first been revised, or create
    Protocol v2 for an incompatible contract.
+
+The checked-in `tests/api/snapshots/versions/0.39.json` is historical and must
+not be regenerated in place. Current changes are recorded in the 0.40 snapshot.
 
 Daemon-owned external reload does not change Protocol v1. It uses the existing
 connection DTOs, opaque IDs, connection event names, and

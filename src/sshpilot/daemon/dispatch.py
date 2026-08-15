@@ -180,6 +180,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.set_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "connections.clear_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.has_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "connections.reveal_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "connections.store_plugin_secret": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -422,6 +423,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "daemon.get_operation_mode",
         "connections.store_password",
         "connections.set_session_password",
+        "connections.clear_session_password",
         "connections.has_password",
         "connections.reveal_password",
         "connections.move",
@@ -664,7 +666,8 @@ class RequestDispatcher:
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
-            "connections.set_session_password": self._handle_set_session_connection_password,
+        "connections.set_session_password": self._handle_set_session_connection_password,
+        "connections.clear_session_password": self._handle_clear_session_connection_password,
             "connections.has_password": self._handle_has_connection_password,
             "connections.reveal_password": self._handle_reveal_connection_password,
             "connections.store_plugin_secret": self._handle_store_plugin_secret,
@@ -1377,6 +1380,25 @@ class RequestDispatcher:
             operation=lambda: self._connections.set_session_connection_password_rpc(
                 typed_request,
                 self._command_input_waiter(request.request_id),
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_request.connection_id,
+        )
+
+    def _handle_clear_session_connection_password(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        from sshpilot.api.transport.codec import (
+            set_session_connection_password_request_from_wire,
+        )
+
+        typed_request = set_session_connection_password_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: self._connections.clear_session_connection_password(
+                typed_request.connection_id
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

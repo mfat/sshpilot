@@ -53,6 +53,7 @@ def test_connection_events_arrive_while_client_is_idle(
     try:
         received = []
         delivered = threading.Event()
+
         subscription = client.subscribe_events(
             lambda event: (received.append(event), delivered.set())
         )
@@ -84,9 +85,13 @@ def test_connection_store_changed_event_reaches_idle_client(tmp_path):
     try:
         received = []
         delivered = threading.Event()
-        subscription = client.subscribe_events(
-            lambda event: (received.append(event), delivered.set())
-        )
+
+        def _on_event(event):
+            received.append(event)
+            if event.type is EventType.CONNECTION_STORE_CHANGED:
+                delivered.set()
+
+        subscription = client.subscribe_events(_on_event)
 
         repo.update_connection("demo", {"hostname": "updated.example"})
 

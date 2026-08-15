@@ -351,7 +351,10 @@ class UnsavedHostCheckRequest:
     hostname: str
     username: str = ""
     connection_id: Optional[str] = None
-    port: int = 22
+    # ``None`` preserves the distinction between an omitted CLI option and an
+    # explicit ``-p 22``.  The daemon must not turn an omitted port into an
+    # OpenSSH override before resolving Host/Include/Match rules.
+    port: Optional[int] = None
     protocol: str = "ssh"
     proxy_jump: Tuple[str, ...] = ()
 
@@ -360,7 +363,7 @@ class UnsavedHostCheckRequest:
             raise ValueError("hostname must be non-empty")
         if type(self.username) is not str or "\x00" in self.username:
             raise ValueError("username is invalid")
-        if type(self.port) is not int or not 1 <= self.port <= 65535:
+        if self.port is not None and (type(self.port) is not int or not 1 <= self.port <= 65535):
             raise ValueError("port must be between 1 and 65535")
         if type(self.protocol) is not str or not self.protocol.strip():
             raise ValueError("protocol must not be empty")

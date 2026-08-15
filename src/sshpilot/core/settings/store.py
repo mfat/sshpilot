@@ -6,42 +6,14 @@ import logging
 import os
 import re
 import tempfile
-import threading
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from ...platform.locking import settings_transaction_lock
 from .defaults import CONFIG_VERSION, get_default_config
 from .migration import ensure_config_defaults
 
 logger = logging.getLogger(__name__)
-
-# Process-wide, per-path locks serializing settings *transactions* (the complete
-# load -> validate -> apply -> save cycle). Multiple daemon services mutate the
-# same ``config.json``; without a shared lock, one writer could clobber another
-# writer's in-memory copy of keys it never touched.
-_SETTINGS_TRANSACTION_LOCKS: Dict[str, threading.RLock] = {}
-_SETTINGS_TRANSACTION_LOCKS_GUARD = threading.Lock()
-
-
-def settings_transaction_lock(path: Path | str) -> threading.RLock:
-    """Return the process-wide reentrant lock for settings transactions on *path*.
-
-    Every GTK-free service that reads-modifies-writes the settings file must
-    hold this lock for its complete load -> validate -> apply -> save cycle so
-    concurrent writers never lose each other's changes.  The lock is reentrant
-    so a service composing nested mutations (e.g. selection -> configuration
-    update) does not deadlock.  It must **not** be held while waiting on
-    protected interactions, running ``bw``/``rbw``/SSH or other slow commands,
-    reading or writing backups, or waiting on UI input.
-    """
-    key = str(Path(path).resolve())
-    with _SETTINGS_TRANSACTION_LOCKS_GUARD:
-        lock = _SETTINGS_TRANSACTION_LOCKS.get(key)
-        if lock is None:
-            lock = threading.RLock()
-            _SETTINGS_TRANSACTION_LOCKS[key] = lock
-        return lock
-
 
 class SettingsFileError(RuntimeError):
     """Raised when a settings file cannot be read as a valid current-version tree.
@@ -179,25 +151,26 @@ def _parse_stored_version(data: Dict[str, Any]) -> int:
 def save_settings(path: Path | str, config: Dict[str, Any]) -> None:
     """Atomically write *config* as JSON to *path*."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = dict(config)
-    payload.setdefault("config_version", CONFIG_VERSION)
-    text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(path.parent), prefix=".config-", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.replace(tmp_name, path)
-    except Exception:
+    with settings_transaction_lock(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(config)
+        payload.setdefault("config_version", CONFIG_VERSION)
+        text = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".config-", suffix=".tmp"
+        )
         try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp_name, path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
 
 def get_nested(config: Dict[str, Any], dotted_key: str, default: Any = None) -> Any:

@@ -84,6 +84,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "delete_connection": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -405,6 +406,15 @@ class ConnectionApplicationService:
             "set_session_connection_password",
             request.connection_id,
             password,
+        ))
+
+    def clear_session_connection_password(self, connection_id: ConnectionId) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return bool(self._provider_call(
+            self._secret_provider,
+            "clear_session_connection_password",
+            connection_id,
         ))
 
     def delete_connection_password_rpc(
@@ -861,8 +871,12 @@ class ConnectionApplicationService:
             for record in self._repository.list_records():
                 if (record.protocol or "ssh").strip().lower() != "ssh":
                     continue
-                saved_identities = self._saved_destination_identities(record)
-                if requested_identity in saved_identities:
+                # The requested destination is resolved once.  Saved records
+                # contribute their daemon-owned semantic fields without
+                # spawning ``ssh -G`` for every nickname/alias in the store.
+                # This keeps the optional save-prompt check bounded and does
+                # not hold configuration serialization across an O(N) probe.
+                if requested_identity in self._saved_destination_identities(record):
                     saved = True
                     break
         return UnsavedHostCheckResult(
@@ -881,7 +895,7 @@ class ConnectionApplicationService:
         self,
         hostname: str,
         username: str,
-        port: int,
+        port: Optional[int],
         proxy_jump: Tuple[str, ...],
     ) -> tuple:
         from .ssh_config_effective import get_effective_ssh_config
@@ -897,9 +911,9 @@ class ConnectionApplicationService:
         resolved_host = str(effective.get("hostname") or hostname).strip()
         resolved_user = str(effective.get("user") or username or getpass.getuser()).strip()
         try:
-            resolved_port = int(str(effective.get("port") or port))
+            resolved_port = int(str(effective.get("port") or port or 22))
         except (TypeError, ValueError):
-            resolved_port = port
+            resolved_port = port or 22
         proxy_value = effective.get("proxyjump") or proxy
         if isinstance(proxy_value, list):
             proxy_value = ",".join(proxy_value)
@@ -912,19 +926,17 @@ class ConnectionApplicationService:
 
     def _saved_destination_identities(self, record: ConnectionRecord) -> set[tuple]:
         proxy_jump = tuple(record.data.get("proxy_jump") or ()) if record.data else ()
-        values = {
-            record.nickname,
-            record.host,
-            record.hostname,
-            *(record.aliases or ()),
-        }
+        # ``hostname`` is the saved destination identity.  Nicknames and
+        # aliases are presentation/configuration labels; resolving every one
+        # with a subprocess made this optional check scale with the entire
+        # repository.  The requested side is resolved by OpenSSH, so an alias
+        # used by the ad-hoc connection still matches a saved concrete target.
+        values = {record.hostname, record.host, *(record.aliases or ())}
+        user = str(record.username or "").strip() or getpass.getuser()
+        port = int(record.port or 22)
+        proxy = ",".join(proxy_jump).casefold() or "none"
         return {
-            self._destination_identity(
-                value,
-                record.username or "",
-                int(record.port or 22),
-                proxy_jump,
-            )
+            (self._normalize_host(str(value)), user, port, proxy)
             for value in values
             if str(value or "").strip()
         }
@@ -1249,6 +1261,11 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository delete failed")
             raise self._persistence_error(request.connection_id) from error
+        self._provider_call(
+            self._secret_provider,
+            "clear_session_connection_password",
+            request.connection_id,
+        )
         return DeleteConnectionResult(
             connection_id=request.connection_id,
             deleted=True,

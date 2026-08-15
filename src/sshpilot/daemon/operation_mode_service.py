@@ -77,11 +77,37 @@ class OperationModeService:
             current = self.active_mode
             target_description = self._description(request.mode)
             if request.mode is current:
+                persisted = self._read_persisted_mode()
+                if persisted is not current:
+                    # A same-mode request is also a persistence reconciliation
+                    # request. Never report the runtime mode as healthy while
+                    # config.json is missing, malformed, or advertises the
+                    # other scope.
+                    try:
+                        self._write_config(self._with_mode(self._read_config(), current))
+                        persisted = current
+                    except Exception as error:
+                        return OperationModeResult(
+                            accepted=False,
+                            active_mode=current,
+                            generation=self._repository.snapshot().generation,
+                            message=(
+                                "The daemon is running in "
+                                f"{current.value} mode, but its persisted operation "
+                                "mode could not be reconciled. Restart or manual "
+                                f"recovery is required: {error}"
+                            ),
+                            target_description=target_description,
+                            persisted_mode=persisted,
+                            rollback_completed=False,
+                            recovery_required=True,
+                        )
                 return OperationModeResult(
                     accepted=True,
                     active_mode=current,
                     generation=self._repository.snapshot().generation,
                     target_description=target_description,
+                    persisted_mode=persisted,
                 )
             blockers = tuple(self._resource_probe() or ())
             if blockers:
@@ -203,15 +229,37 @@ class OperationModeService:
         """Return confirmed daemon mode without inferring it from a path."""
         with self._lock, settings_transaction_lock(self._config_path):
             mode = self.active_mode
+            persisted = self._read_persisted_mode()
+            if persisted is not mode:
+                return OperationModeResult(
+                    accepted=False,
+                    active_mode=mode,
+                    generation=self._repository.snapshot().generation,
+                    message=(
+                        "The daemon runtime and persisted operation modes differ "
+                        f"(runtime={mode.value}, persisted="
+                        f"{persisted.value if persisted else 'unknown'}). "
+                        "Restart or manual recovery is required."
+                    ),
+                    target_description=self._description(mode),
+                    persisted_mode=persisted,
+                    rollback_completed=False,
+                    recovery_required=True,
+                )
             return OperationModeResult(
                 accepted=True,
                 active_mode=mode,
                 generation=self._repository.snapshot().generation,
                 target_description=self._description(mode),
-                persisted_mode=self._read_persisted_mode(),
+                persisted_mode=persisted,
             )
 
     def _read_persisted_mode(self) -> Optional[OperationMode]:
+        # Missing config.json is not equivalent to a healthy DEFAULT setting.
+        # Callers must be able to distinguish an absent canonical settings
+        # tree and persist it before claiming that runtime and disk agree.
+        if not self._config_path.exists():
+            return None
         try:
             value = self._read_config().get("ssh", {}).get("use_isolated_config", False)
         except Exception:

@@ -3466,7 +3466,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Identify a daemon-memory-only password supplied in a protected frame.
 
-**Related methods:** `set_session_connection_password`
+**Related methods:** `clear_session_connection_password`, `set_session_connection_password`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |
@@ -4340,7 +4340,7 @@ Synthetic representation:
 | `hostname` | `str` | Yes | — | No |
 | `username` | `str` | No | `` | No |
 | `connection_id` | `str | None` | No | `null` | No |
-| `port` | `int` | No | `22` | No |
+| `port` | `int | None` | No | `null` | No |
 | `protocol` | `str` | No | `ssh` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
 
@@ -4350,7 +4350,7 @@ Synthetic representation:
 {
   "connection_id": null,
   "hostname": "example.invalid",
-  "port": 22,
+  "port": null,
   "protocol": "ssh",
   "proxy_jump": [],
   "username": ""

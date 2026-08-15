@@ -10,7 +10,9 @@ capability advertisement, the secrecy contract is broken.
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any, List
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -30,6 +32,7 @@ from sshpilot.api.transport.codec import (
     secret_unlock_result_to_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, RequestEnvelope
+from sshpilot.api.transport.secret_frames import SecretFrame, SecretFrameKind
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.daemon.dispatch import (
     ClientProtocolState,
@@ -278,6 +281,84 @@ def test_persistent_connection_password_requires_protected_secret_frame():
     connections.store_daemon_password.assert_called_once()
     assert connections.store_daemon_password.call_args.args[1] == "protected-password"
     assert secret == bytearray()
+
+
+def test_real_daemon_transport_delivers_protected_password_input(daemon_factory):
+    """Exercise JSON registration plus the binary secret frame on a real server."""
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        from sshpilot.api.models.connections import StoreConnectionPasswordRequest
+
+        assert client.store_connection_password(
+            StoreConnectionPasswordRequest(
+                connection_id="demo",
+                password=SENTINEL,
+            )
+        ) is True
+        assert manager.plugin_secrets[("connection", "demo")] == SENTINEL
+    finally:
+        client.close()
+
+
+def test_protected_input_rejects_wrong_owner_and_duplicate_frames():
+    """The server's protected-input registry is peer-owned, not request-id-only."""
+    from sshpilot.daemon.server import DaemonServer
+
+    server = DaemonServer.__new__(DaemonServer)
+    server._command_input_condition = threading.Condition()
+    server._command_input_pending = {}
+    server._command_inputs = {}
+    server._stopping = threading.Event()
+    errors = []
+    server._queue_protocol_error = lambda _state, code, message: errors.append((code, message))
+
+    owner_protocol = _state()
+    wrong_protocol = _state()
+    owner_protocol.client_info = HandshakeRequest(
+        client_name="test",
+        client_version="1.0",
+        supported_protocol_versions=("1.0",),
+        client_capabilities=frozenset(),
+        frontend_type="cli",
+        supported_frame_types=frozenset({"binary-secret-v1"}),
+    )
+    wrong_protocol.client_info = owner_protocol.client_info
+    owner = SimpleNamespace(token=11, protocol=owner_protocol)
+    wrong_owner = SimpleNamespace(token=12, protocol=wrong_protocol)
+    request_id = RequestId("protected-request")
+    server._register_command_input(owner, request_id)
+
+    wrong = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"0" * 16,
+        bytearray(b"wrong-owner"),
+    )
+    server._handle_secret_frame(wrong_owner, wrong)
+    assert wrong.secret == bytearray()
+    assert request_id not in server._command_inputs
+    assert errors and errors[-1][0] is ErrorCode.INVALID_REQUEST
+
+    accepted = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"1" * 16,
+        bytearray(b"accepted"),
+    )
+    server._handle_secret_frame(owner, accepted)
+    assert server._command_inputs[str(request_id)][1] == bytearray(b"accepted")
+
+    duplicate = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"2" * 16,
+        bytearray(b"duplicate"),
+    )
+    server._handle_secret_frame(owner, duplicate)
+    assert duplicate.secret == bytearray()
+    assert errors[-1][0] is ErrorCode.INVALID_REQUEST
+    server._clear_command_inputs()
 
 
 def test_configuration_update_requires_request_params():

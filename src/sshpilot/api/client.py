@@ -258,6 +258,12 @@ class SshPilotClient(Protocol):
         """Provide a daemon-memory-only credential through protected transport."""
         ...
 
+    def clear_session_connection_password(
+        self, request: SetSessionConnectionPasswordRequest
+    ) -> bool:
+        """Forget a daemon-memory-only credential without deleting persistence."""
+        ...
+
     def has_connection_password(self, connection_id: ConnectionId) -> bool:
         ...
 

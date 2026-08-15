@@ -465,6 +465,44 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.secrets_controller = self._build_secrets_controller()
         self._attach_secrets_interaction_presenter()
 
+    def _replace_daemon_client(self, client) -> None:
+        """Atomically rebind every long-lived frontend service to *client*.
+
+        Reconnect used to update the projection and runtime status objects in
+        isolation.  Controllers kept by Preferences, plugins, groups, keys,
+        and secret interaction routing could therefore continue using the
+        closed transport.  This is the one replacement lifecycle used by the
+        application after a transport replacement; initial attachment still
+        uses :meth:`_attach_client_backed_services` directly.
+        """
+        if client is None:
+            raise ValueError("a daemon client is required")
+        if client is getattr(self, "client", None):
+            return
+
+        controller = getattr(self, "_group_mutation_controller", None)
+        if controller is not None:
+            controller.close()
+            self._group_mutation_controller = None
+        presenter = getattr(self, "_secrets_interaction_presenter", None)
+        if presenter is not None:
+            presenter.close()
+            self._secrets_interaction_presenter = None
+
+        # Do not expose DEFAULT-scope key operations while the new daemon's
+        # mode is still unconfirmed. The async status request below recreates
+        # the manager only after the daemon confirms its semantic scope.
+        self.client = client
+        self._confirmed_operation_mode = None
+        self.key_manager = None
+        self._attach_client_backed_services()
+
+        preferences = getattr(self, "_preferences_window", None)
+        if preferences is not None:
+            preferences.set_ssh_overrides_controller(
+                self._build_ssh_overrides_controller()
+            )
+
     def _refresh_operation_mode_scope(self) -> None:
         """Project the daemon-confirmed mode into client-backed UI services."""
         client = self.client

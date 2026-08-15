@@ -34,7 +34,9 @@ class EffectiveConfigChecker:
         self._on_result = on_result
         self._client_provider = client_provider
         self._cache: dict[str, bool] = {}
-        self._queued: set[str] = set()
+        # Store the generation of the pending request, rather than just a
+        # boolean marker. A stale completion must not clear a newer request.
+        self._queued: dict[str, int] = {}
         # Per-nickname generation. A check captures the generation at enqueue
         # time; its result is only cached/published if the generation still
         # matches, so an in-flight compute that finishes after an invalidate can
@@ -60,8 +62,8 @@ class EffectiveConfigChecker:
         with self._lock:
             if nickname in self._cache or nickname in self._queued:
                 return
-            self._queued.add(nickname)
             gen = self._gen.setdefault(nickname, 0)
+            self._queued[nickname] = gen
         self._queue.put((connection, nickname, gen))
         self._ensure_worker()
 
@@ -83,7 +85,7 @@ class EffectiveConfigChecker:
             else:
                 self._cache.pop(nickname, None)
                 self._daemon_gen.pop(nickname, None)
-                self._queued.discard(nickname)
+                self._queued.pop(nickname, None)
                 self._gen[nickname] = self._gen.get(nickname, 0) + 1
         if nickname is None:
             try:
@@ -128,9 +130,13 @@ class EffectiveConfigChecker:
     ) -> bool:
         """Publish only a current local and daemon snapshot generation."""
         with self._lock:
-            self._queued.discard(nickname)
+            queued_generation = self._queued.get(nickname)
             if computed is None or local_generation != self._gen.get(nickname, 0):
+                if queued_generation == local_generation:
+                    self._queued.pop(nickname, None)
                 return False
+            if queued_generation == local_generation:
+                self._queued.pop(nickname, None)
             differs, daemon_generation = computed
             if daemon_generation < self._daemon_gen.get(nickname, -1):
                 return False

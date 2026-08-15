@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.39",
+  "api_implementation_version": "0.40",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -92,6 +92,10 @@
     "claim_terminal_input": {
       "capability": "terminal.input",
       "status": "daemon-only"
+    },
+    "clear_session_connection_password": {
+      "capability": "connections.secrets.write",
+      "status": "implemented"
     },
     "close": {
       "capability": null,
@@ -619,6 +623,9 @@
     },
     "connections.check_unsaved_host": {
       "capability": "connections.read"
+    },
+    "connections.clear_session_password": {
+      "capability": "connections.secrets.write"
     },
     "connections.create": {
       "capability": "connections.write"
@@ -6884,11 +6891,11 @@
           "type": "str | None"
         },
         {
-          "default": 22,
+          "default": null,
           "name": "port",
           "required": false,
           "sensitive": false,
-          "type": "int"
+          "type": "int | None"
         },
         {
           "default": "ssh",

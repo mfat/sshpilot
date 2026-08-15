@@ -1,6 +1,6 @@
 # Client methods
 
-Current API implementation version: `0.39`.
+Current API implementation version: `0.40`.
 Protocol v1 remains `1.0`.
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
@@ -13,6 +13,8 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-method: set_operation_mode -->
 <!-- api-method: get_operation_mode -->
 <!-- api-method: set_plugin_setting -->
+<!-- api-method: clear_session_connection_password -->
+<!-- api-method-contract: clear_session_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method: get_broadcast_command -->
 <!-- api-method: cancel_broadcast_command -->
 <!-- api-method: set_daemon_log_level -->
@@ -25,6 +27,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-daemon-method: broadcast.start capability=broadcast.write -->
 <!-- api-daemon-method: plugins.settings.get capability=plugins.settings.read -->
 <!-- api-daemon-method: plugins.settings.set capability=plugins.settings.write -->
+<!-- api-daemon-method: connections.clear_session_password capability=connections.secrets.write -->
 <!-- api-daemon-method: broadcast.get capability=broadcast.read -->
 <!-- api-daemon-method: broadcast.cancel capability=broadcast.write -->
 <!-- api-daemon-method: terminal.broadcast_input capability=terminal.input -->
@@ -50,6 +53,7 @@ direct core service compositions are test-only and are not client choices.
 | `prepare_external_terminal_launch` | Daemon only | `terminal.external_launch` |
 | `get_effective_config` | Implemented | `connections.config.read` |
 | `store_connection_password` | Implemented | `connections.secrets.write` |
+| `clear_session_connection_password` | Daemon only | `connections.secrets.write` |
 | `has_connection_password` | Daemon only | `connections.secrets.status.read` |
 | `reveal_connection_password` | Daemon only | `connections.secrets.reveal` |
 | `delete_connection_password` | Implemented | `connections.secrets.write` |

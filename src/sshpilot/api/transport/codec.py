@@ -2023,7 +2023,7 @@ def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
         hostname=data["hostname"],
         username=data["username"],
         connection_id=data.get("connection_id"),
-        port=data.get("port", 22),
+        port=data.get("port"),
         protocol=data.get("protocol", "ssh"),
         proxy_jump=tuple(data.get("proxy_jump", ())),
     )

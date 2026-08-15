@@ -1,12 +1,13 @@
 # SSH Pilot daemon-only retirement ledger
 
-This is the authoritative cross-session plan, status, decision, evidence, and
-handoff document for the retirement repair on `dev`. Every agent must read it
-before editing and update it before stopping.
+This is the live cross-session ledger for the repair of the daemon-only
+retirement introduced by `170de28f3ad174ee80829ae6282d961d12d84bc0`. Read it
+before editing and update it before stopping. It is the current plan and
+handoff; historical phase documents are not current instructions.
 
 ## 1. Purpose and final architecture
 
-The production path is exactly:
+Production remote authority is:
 
 ```text
 GTK or another frontend
@@ -16,454 +17,325 @@ GTK or another frontend
     -> OpenSSH/platform adapters
 ```
 
-Daemon failure is an explicit unavailable, rejected, or recovery-required
-state. It never selects a frontend persistence/config/secret/process backend.
-Local PTY/VTE/PyXtermJS tabs, local filesystem panes, UI state, dialogs,
-external-terminal process selection, and explicitly local plugin commands remain
-legitimate frontend features.
+There is no production in-process remote backend and no fallback from daemon
+failure to frontend persistence, SSH config/known-hosts files, secrets,
+effective-config resolution, remote SSH/SFTP/SCP/forward processes, or local
+connection stores. Local PTY/VTE/PyXtermJS tabs, local filesystem panes,
+UI-only preferences, dialogs, external-terminal process selection, and
+explicitly local plugin commands remain frontend-owned.
 
-Current repair-pass baseline: 2026-08-15, branch `dev`, HEAD
-`fae52a61115cc9bd2d937eadafd51c1e71cb8c63` (`fixed passphrase save error`),
-parent `57de9e1829048f19cde36d380964f86946d9603d` (`Implemented and
-documented the daemon-only retirement repairs`). The migration cleanup commit
-under review is `170de28f3ad174ee80829ae6282d961d12d84bc0`; its parent is
-`a2c8e68d11de71ee2672927a27a00877be488714`. The worktree was already
-dirty at session start; unrelated changes were preserved. This session also
-removed the committed `.codebase-memory` binaries and added the directory to
-`.gitignore` because repository policy does not require generated graph
-artifacts. No final commit has been created; HEAD and the parent are unchanged.
-The supported environment is the active project `.venv`; optional MCP,
-libsecret, Xvfb, and integration dependencies require explicit evidence.
-Orientation read before production edits: `AGENTS.md`, this ledger, the
-frontend-closure/core-boundary/daemon-transport documents, API compatibility
-and changelog, issue #1159 (the public issue fetch was unavailable in the web
-cache), and commits `170de28f` and `a2c8e68d`.
+Current checkpoint (2026-08-15): branch `dev`; reviewed HEAD is
+`1173de32f8cd9164ab25a293e15348118cc88ab7` (`Fixed the Preferences “Done”
+transport error`). The original cleanup is `170de28f3ad174ee80829ae6282d961d12d84bc0`,
+parent `a2c8e68d11de71ee2672927a27a00877be488714`; the reviewed repair commits
+include `57de9e18` and `fae52a61`. The worktree is intentionally dirty with
+the uncommitted repair below; no unrelated changes were discarded. The active
+supported environment is `.venv` on Python 3.14.4. The current retirement
+decision is **NOT YET SAFE TO RETIRE** because broad verification and several
+end-to-end lifecycle matrices remain incomplete.
 
 ## 2. Non-negotiable ownership invariants
 
 1. `ConnectionPresentationStore` is read-only projection/event state.
-2. GTK never constructs repositories, `SshConfigStore`, secret backends,
-   known-host stores, or other authoritative persistence services.
+2. GTK never constructs authoritative repositories, config stores, secret
+   backends, known-host stores, or core persistence services.
 3. GTK never reads/writes authoritative SSH config or known-host files and
-   never chooses the active SSH root.
-4. GTK never obtains a connection password/passphrase through a local manager.
+   never selects the active SSH root.
+4. GTK never obtains connection passwords/passphrases through a local manager.
 5. Internal SSH, SFTP, SCP, transfers, forwarding, keys, secrets, known hosts,
    effective config, unsaved-host identity, and operation mode are daemon-owned.
-6. Daemon failure never opens a GTK-owned remote SSH child or routes mutation
-   into a local store.
-7. Existing sessions retain their launch state; new operations use the
-   daemon's confirmed current snapshot/generation.
+6. Daemon failure produces unavailable/recovery state; it never selects a local
+   remote backend or spawns a GTK-owned remote SSH child.
+7. Existing sessions retain their launch snapshot; new operations use the
+   daemon's confirmed current generation.
 8. External terminals remain OS-owned, but receive a daemon-prepared,
-   non-secret SSH launch specification.
+   non-secret launch specification.
 9. Only semantic modes/scopes cross the API; frontend filesystem paths do not.
-10. Availability is based on confirmed daemon state/capabilities, never on
-    `hasattr()` backend selection.
+10. Availability uses confirmed daemon capabilities/state, never `hasattr()`
+    guesses or presentation-store feature detection.
 
 ## 3. Definitions
 
 * **Obsolete in-process backend:** a production frontend path that owns or
-  reconstructs authoritative SSH state/I/O without daemon transport.
-* **Daemon-owned operation:** a typed API request whose state, repository,
-  interaction, persistence, or process side effect is performed by daemon/core.
-* **Legitimate local/frontend operation:** local shell/PTy, VTE/PyXtermJS,
-  local files, UI preferences/dialogs, external-terminal selection, or an
-  explicitly local plugin command; it is not remote SSH authority.
+  reconstructs authoritative SSH state, persistence, secrets, config, or
+  remote processes without daemon transport.
+* **Daemon-owned operation:** a typed API operation whose repository, state,
+  interaction, persistence, or remote process side effect is performed by the
+  daemon/core service.
+* **Legitimate local/frontend operation:** a local shell/PTY, VTE renderer,
+  local pane, UI preference/dialog, external emulator selection, or explicitly
+  local plugin command; it has no remote authority.
 * **Compatibility shim:** a documented thin import/facade with no manager,
-  persistence, secret, process, or I/O authority.
-* **Test-only direct core invocation:** direct headless construction of a core
-  service in unit tests or daemon composition; it is not a production client.
+  persistence, secret, process, or I/O behavior.
+* **Test-only direct core invocation:** direct headless core-service use in a
+  unit test or daemon composition; it is not a production client alternative.
 
 ## 4. Complete classified legacy-path inventory
 
-The audit used the persisted code graph (`index_repository`, `search_graph`,
-`trace_path`, `get_code_snippet`, and `search_code`) plus literal `rg` searches
-for every term required by the migration brief. Classification is by import,
-call, and side effect, not filename or comments.
-
-| Classification | Discovered path and evidence | Current disposition |
+| Classification | Path/evidence | Current disposition |
 |---|---|---|
-| production obsolete path | Old GTK create/update/delete and post-disconnect local persistence branches | Removed by `170de28f`; focused mutation/unavailable tests cover daemon-only calls |
-| production obsolete path | Dialog/Docker local secret lookup/storage fallbacks | Docker use-once now uses protected `set_session_connection_password`; persistent storage remains explicit daemon API |
-| production obsolete path | GTK `ssh -G`, host-block collection, config-root/path selection, and local effective comparison | Removed from callers; canonical resolver is GTK-free core and UI receives DTOs |
-| production obsolete path | Raw frontend unsaved-host comparison | Daemon resolves semantic host/user/port/ProxyJump identity |
-| production obsolete path | Frontend operation-mode path/seeding/restart authority and restore inference | Daemon service owns transition; rollback result now distinguishes recovery |
-| production obsolete path | GTK-built remote SSH/SFTP/SCP/forward/transfer commands and local fallback routing | Daemon APIs/launch providers remain authoritative; local PTY is retained |
-| production obsolete path | `LegacyInProcessSshController`, `ClientMode.IN_PROCESS`, dead local SSH flags/policies | No production selection remains; historical docs/tests are classified below |
-| daemon implementation | `ConnectionApplicationService`, `ConnectionRepository`, `SshConfigStore`, `KnownHostsService`, interaction/secret/transfer/forward/key services | Retained in daemon composition and direct core tests |
-| daemon implementation | `ConnectionPresentationStore` | Retained as read-only GTK projection only |
-| compatibility shim | `connection_manager.py` exports ephemeral `Connection`/`ConnectionState` | Retained for one documented compatibility window; no manager/I/O |
-| compatibility facade | `ssh_config_utils.py` | Now forwards effective/Include helpers to `core.ssh_config_effective`; write/validation helpers remain specialized |
-| compatibility facade | `DaemonConnectionServices` and plugin `connection_manager` attribute | Retained as daemon-client facade, not a local backend |
-| legitimate local/frontend feature | `spawn_async`, PTY/VTE/PyXtermJS, local terminal fallback wording, external emulator launch, local panes | Retained only where the side effect is explicitly local |
-| test-only core usage | `tests/core`, daemon fixtures, direct parser/builder/secret/service tests | Retained and must not be mistaken for production client alternatives |
-| stale documentation/history | `docs/history/**`, old API changelog entries, phase records mentioning `InProcessClient` or old fallback | Historical only; current docs/ledger must not present them as instructions |
-| ambiguous/decision required | Remaining `in-process` in plugin process isolation, local PTY bridge, daemon-in-thread tests, or secret internals | Each requires side-effect review; no blanket deletion |
+| production obsolete | GTK saved create/update/delete and post-disconnect local persistence | Removed in `170de28f`; mutation/unavailable tests cover daemon-only calls |
+| production obsolete | local secret lookup/storage fallbacks and Docker unconditional persistence | Removed; Docker uses protected session input and explicit persistent consent |
+| production obsolete | GTK `ssh -G`, host-block collection, config-root selection, local effective comparison | Callers use daemon DTOs; core resolver is GTK-free |
+| production obsolete | raw frontend unsaved-host comparison and per-repository subprocess fanout | Daemon resolves semantic identity with omitted-port provenance and bounded work |
+| production obsolete | frontend operation-mode path/seeding/restart authority | `OperationModeService` owns transitions and recovery results |
+| production obsolete | frontend-built remote SSH/SFTP/SCP/forward/transfer commands and fallback routing | Daemon launch/operation services own remote side effects |
+| production obsolete | `LegacyInProcessSshController`, `ClientMode.IN_PROCESS`, dead local SSH settings | No production selection remains; historical matches are documented only |
+| daemon implementation | application services, repositories, config/reload, known-host, secret, transfer, key and forward services | Retained in daemon composition and direct core tests |
+| compatibility shim | `connection_manager.py` model-only `Connection`/`ConnectionState` import | Retained for one documented Protocol v1/plugin compatibility window |
+| compatibility facade | `ssh_config_utils.py` effective/Include functions | Thin forwarding facade; specialized editor/write helpers remain distinct |
+| legitimate local | `spawn_async`, PTY/VTE/PyXtermJS, local panes, external emulator launch, local plugin commands | Retained only where side effect is explicitly local |
+| test-only | daemon-in-thread fixtures and direct core service tests | Retained; not production backend selection |
+| stale documentation/history | old migration/history/API snapshots mentioning in-process behavior | Historical only; current docs must not use them as instructions |
+| ambiguous | plugin process isolation, local PTY bridge, daemon-in-test terminology | Requires ownership review; no blanket deletion |
+
+Required search terms were audited with the code graph and literal searches:
+`ConnectionManager`, `connection_manager`, `ConnectionPresentationStore`,
+`DaemonConnectionServices`, `InProcessClient`, `ClientMode`, `IN_PROCESS`,
+`in_process`, `legacy_local`, `fallback`, `ssh_config_path`,
+`known_hosts_path`, `isolated_mode`, `load_ssh_config`, `save_connection`,
+`create_connection`, `update_connection`, `delete_connection`, secret methods,
+`ssh -G`, `spawn_async`, config utilities, and backend capability flags.
 
 ## 5. Migration phases and dependency ordering
 
-1. Audit/ledger and baseline evidence.
-2. Typed API models/codecs/capabilities and generated artifacts.
-3. Headless daemon/core ownership and generation invalidation.
-4. GTK/plugin callers plus explicit unavailable/recovery handling.
+1. Audit and persistent ledger baseline.
+2. Typed API models, codec, capability handshake, compatibility boundary and
+   generated artifacts.
+3. Headless daemon/core ownership, generation invalidation and operation mode.
+4. GTK/plugin callers, unavailable/recovery handling and reconnect lifecycle.
 5. Remove obsolete branches/controllers/settings/fallbacks.
-6. Consolidate compatibility facades and current documentation.
-7. Focused, architecture, API, integration, lint, practical-suite, and final
-   source-to-side-effect verification.
+6. Compatibility/documentation cleanup.
+7. Focused, architecture, serial concurrency, practical and supported GUI
+   verification; final source-to-side-effect audit.
 
 ## 6. Status table
 
-Status values in this table are limited to `PENDING`, `IN PROGRESS`,
-`BLOCKED`, `REMOVED`, and `VERIFIED`. “Verified” requires reproducible test
-evidence; the migration is not complete while any item is pending or blocked.
-The verification column records `fae52a6` because this repair pass is
-intentionally uncommitted; every result below applies to the dirty worktree
-described in the handoff, not to `170de28f` alone.
+Statuses in this table are `PENDING`, `IN PROGRESS`, `BLOCKED`, `REMOVED`, or
+`VERIFIED`. A test-only or narrow mocked result is not sufficient for
+`VERIFIED`.
 
 | ID | Domain | Existing path | Target owner/API | Status | Tests | Last verified commit | Notes |
 |---|---|---|---|---|---|---|---|
-| R00 | Audit/ledger | Stale ledger claimed old HEAD and green verification | This ledger plus linked architecture docs | IN PROGRESS | orientation, baseline, graph traces, focused regressions, and current audit run; final practical audit pending | 170de28f | Must be updated at every stop |
-| R01 | Startup diagnostics | `StartupInfo.print_info` indexed removed path keys | semantic operation mode + daemon authority | VERIFIED | `pytest -q -n0 tests/test_startup_behavior.py` — 10 passed | 170de28f | No frontend SSH paths returned or printed |
-| R02 | Dialog callbacks | unavailable callback accepted no detail | explicit detail/recovery dialog methods | VERIFIED | `tests/test_window_daemon_errors.py` — 4 passed; Preferences — 9 passed | 170de28f | Operation rejection is not labeled transport unavailability |
-| R03 | Config reload | `start()` did not schedule initial semantic reload | watcher registration + debounced initial reload | VERIFIED | `tests/daemon/test_config_reload.py` plus `tests/daemon/test_config_reload_coordinator.py` — 18 passed | 170de28f | `refresh_paths()` remains mode-transition path |
-| R04 | Docker credentials | use-once dialog unconditionally called persistent store | protected daemon session credential API and explicit persistent callback | IN PROGRESS | provider/dispatch focused tests pass; GUI test collection skipped without GUI | 170de28f | Persistent request now sends password in a protected command-input frame; full GUI/plugin verification pending |
-| R05 | Error routing | effective-config errors used external-terminal handler | operation-specific GTK handlers | VERIFIED | `tests/test_window_daemon_errors.py` — 4 passed | 170de28f | Optional unsaved-host failure logs/skips prompt |
-| R06 | Operation mode transaction | rollback failure returned ordinary rejection and could split runtime/config | explicit persisted/runtime/recovery result plus shared settings transaction lock | IN PROGRESS | `tests/daemon/test_operation_mode_service.py` — 12 passed, including four deterministic concurrent writers | 170de28f | Server watcher hook and GTK cache/scope sync covered; full daemon restart/fault matrix pending |
-| R07 | Mode RPC suppression | programmatic radio state could re-enter toggle | scoped suppression + in-flight guard | VERIFIED | `tests/test_preferences_operation_mode.py` — 9 passed | 170de28f | Callbacking-radio regression coverage added |
-| R08 | Effective config | duplicate core/top-level Include/ssh-G/parser logic | canonical `core.ssh_config_effective`; top-level forwarding facade | IN PROGRESS | effective/include/core slice and generation tests pass; `test_default_config_path_excludes_system_defaults` fails even alone in this container because plain `ssh -G` rejects the unreadable `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` symlink, so its expected display side is empty | 170de28f | Production launch provider now imports canonical core module; supported-environment parity/audit pending |
-| R09 | Host aliases | leading-dash alias could reach `ssh -G` as option | API/repository validation and safe resolver rejection | VERIFIED | `tests/api/test_connection_models.py`, loader suite, repository suite, effective resolver tests — passed | 170de28f | Existing invalid imports fail closed and are never executed |
-| R10 | Unsaved-host identity | raw token/exact-user comparison changed old behavior | daemon-resolved host/user/port/ProxyJump semantics | VERIFIED | `tests/core/test_connection_application_service.py` resolved-identity matrix and CLI ephemeral tests pass | 170de28f | Host casefold, user exact, local-login inference, port/ProxyJump participate; semantics recorded below |
-| R11 | Store boundary | repository reached private `_isolated` | read-only `SshConfigStore.isolated` property | VERIFIED | repository/core suite in effective slice — 134 passed | 170de28f | No new frontend authority |
-| R12 | API/generated docs | new typed operations/models not fully documented; changelog malformed | generated schema/snapshots and current docs | VERIFIED | API documentation — 18 passed; generator check — `API artifacts are current`; changelog separates current 0.39 from historical 0.38/0.37/0.36 | 170de28f | `API_IMPLEMENTATION_VERSION` and current docs are 0.39; 0.39 snapshot is the reviewed current baseline |
-| R13 | Graph artifacts | committed `.codebase-memory` binaries caused dirty baseline | ignored local graph cache | REMOVED | deletion and `.gitignore` change applied; final status pending | 170de28f | Deletion is requested cleanup; graph can be regenerated locally |
-| R14 | Compatibility policy | model import shim and historical in-process references | documented bounded shim/history | IN PROGRESS | architecture/core/API run passed; final current-doc/source audit pending | 170de28f | Removal at next incompatible plugin/API window |
-| R15 | Full retirement audit | prior ledger asserted verification despite failures | 20-domain source-to-side-effect trace and final search | PENDING | final practical and serial runs pending | 170de28f | Cannot mark migration complete yet |
-| R16 | Connection-dialog passphrases | Every save reverified unchanged loaded passphrases and could report unavailable key management as “invalid” | Preserve unchanged daemon-loaded values; verify only edited values; no pre-confirmation default key manager | VERIFIED | `tests/test_connection_dialog_passphrase.py` — 17 passed; targeted Ruff/compile/diff checks passed | 170de28f | New/changed passphrases still fail closed; daemon mode must be confirmed before key actions |
-| R17 | Capability contract test | Launcher test expected the pre-repair capability set and rejected the correctly advertised external-terminal capability | Handshake advertisement includes `terminal.external_launch` when the provider implements preparation | VERIFIED | `tests/daemon/test_launcher.py` — 17 passed | 170de28f | Test expectation repaired; runtime capability behavior remains daemon/provider guarded |
-| R18 | Reconnect/preferences lifecycle | Existing Preferences controllers retained a closed daemon client after application reconnect | Rebind SSH-overrides and secret controllers to the confirmed replacement client | VERIFIED | `tests/test_daemon_reconnect_gtk.py` — 13 passed; Preferences/secret/mode batch — 29 passed; Ruff passed | fae52a6 + working tree | Reconnect now rebuilds secret services/presenter and rebinds the reused Preferences controller |
+| R00 | Ledger/audit | Stale HEAD, dirty-tree and green-suite claims | This ledger and linked architecture docs | IN PROGRESS | orientation and current audit; final audit pending | 1173de32 | Update before every stop |
+| R01 | Startup info | `print_info()` indexed removed `config_dir`/`ssh_dir` | semantic mode + daemon authority | VERIFIED | startup suite: 10 passed | 170de28f | No frontend SSH path output |
+| R02 | Dialog errors | unavailable callback lacked detail | separate unavailable/rejection/recovery handlers | VERIFIED | window and Preferences suites passed | 170de28f | Conflict explanations are retained |
+| R03 | Watcher reload | `start()` lost initial debounced reload | watcher registration + semantic reload | VERIFIED | config reload/coordinator tests passed | 170de28f | `refresh_paths()` remains mode-transition path |
+| R04 | Docker secrets | use-once unconditionally persisted password | protected session credential + explicit store API | IN PROGRESS | provider/dispatch tests pass; GUI/plugin end-to-end pending | 1173de32 | Need supported GUI evidence and full retry matrix |
+| R05 | Error routing | effective-config used external-terminal error handler | operation-specific error classification | VERIFIED | daemon-error/effective-config tests pass | 170de28f | Optional post-connect check skips prompt on failure |
+| R06 | Operation mode | rollback failure could split runtime/config | transactional result with truthful recovery state | IN PROGRESS | 12 service tests pass; full daemon restart/fault matrix pending | 1173de32 | Must prove all transition steps and restart behavior |
+| R07 | Mode RPCs | programmatic radio updates re-entered toggle | scoped suppression + in-flight guard | VERIFIED | Preferences operation-mode tests pass | 170de28f | Initial controls stay disabled until confirmed |
+| R08 | Effective config | duplicate top-level/core resolver | canonical `core.ssh_config_effective` | IN PROGRESS | core/effective/generation tests pass | 1173de32 | Supported OpenSSH parity still pending |
+| R09 | Host alias safety | leading-dash alias could reach OpenSSH as option | API, repository and resolver validation | VERIFIED | model/core/effective tests pass | 1173de32 | Imported invalid aliases fail closed |
+| R10 | Unsaved identity | raw-token/exact-user regression and CLI port 22 default | daemon-resolved host/user/port/ProxyJump identity | IN PROGRESS | core/CLI tests pass; full Include/Match matrix pending | 1173de32 | Need bounded large-repository evidence |
+| R11 | Store boundary | repository reached private `_isolated` | public read-only `SshConfigStore.isolated` | VERIFIED | core/architecture suites pass | 170de28f | No frontend authority added |
+| R12 | API compatibility | changed wire behavior remained at 0.39 | API 0.40 boundary, historical 0.39 snapshot | VERIFIED | API/docs/generator checks pass | 1173de32 | Stale daemon must return restart-required; no plaintext fallback |
+| R13 | Shared settings | stale GTK tree could overwrite daemon keys | cross-process lock plus baseline-aware merge; daemon semantic writers lock full transactions | IN PROGRESS | cross-process and 4-writer tests pass | 1173de32 | Full caller ownership migration remains a risk; see decisions |
+| R14 | Protected input | global request-id dictionary lacked owner/TTL/limits | registered client-owned protected-input lifecycle | IN PROGRESS | dispatch tests pass; real transport suite pending final pass | 1173de32 | Need disconnect/late-frame matrix in supported transport |
+| R15 | Reconnect | long-lived controllers held closed client | canonical replacement lifecycle | IN PROGRESS | lightweight reconnect tests pass; real open-Preferences/in-flight matrix pending | 1173de32 | Must verify every client-backed service and stale completion |
+| R16 | Credentials | stale session password shadowed corrections/deletes | replace/clear/wipe session credential API | IN PROGRESS | provider tests pass; Docker auth retry and wipe matrix pending | 1173de32 | Memory and transport no-leak proof incomplete |
+| R17 | External terminal | capability could be omitted despite provider | conditional handshake + typed preparation handler | VERIFIED | capability/dispatcher/client integration tests pass | 1173de32 | GTK chooses emulator only |
+| R18 | Key scope | key manager could exist before mode confirmation | no DEFAULT key manager until confirmed mode | VERIFIED | delayed-mode/key-dialog tests pass | 1173de32 | Stale client reconnect refresh remains R15 |
+| R19 | File manager | external preference risked GVFS/frontend SSH path | standalone daemon-backed file-manager window | VERIFIED | Manage Files preference tests pass | 170de28f | Both embedded and standalone use daemon SFTP |
+| R20 | Docs/artifacts | stale changelog/version/snapshots and graph artifacts | 0.40 docs, restored 0.39 snapshot, ignored graph cache | VERIFIED | generator, ruff, compileall, diff check pass | 1173de32 | Final source/documentation audit still pending |
+| R21 | Final retirement | prior ledger overstated evidence | source-to-side-effect trace and honest verdict | PENDING | broad practical and GUI evidence incomplete | 1173de32 | Cannot mark safe yet |
 
-## 6a. Source-to-side-effect trace
+## 7. End-to-end contract audit
 
-| Domain | Entry point | Frontend caller | Typed API/capability | Wire dispatch | Daemon/core owner | Side effect | Unavailable behavior | Evidence |
-|---|---|---|---|---|---|---|---|---|
-| 1 Client/readiness | `api.client_factory` | GTK startup | `SshPilotClient`, daemon status/capabilities | handshake/status | `DaemonLauncher`/transport | daemon connection | unavailable/recovery; no local client | client-factory and routing tests pending final run |
-| 2 Saved list/get | connection projection refresh | GTK stores | `list_connections`, `get_connection` / `connections.read` | `connections.list/get` | `ConnectionApplicationService` + repository | snapshot read | projection remains stale/marked unavailable | core/API suites |
-| 3 Create/update/duplicate/split/delete | GTK dialogs/actions | window/plugin facade | typed mutation methods / `connections.write` | `connections.create/update/duplicate/delete/split` | repository/config store | atomic SSH/state persistence | dialog retains input; no local mutation | mutation tests |
-| 4 Metadata/groups | GTK sidebar/group controllers | typed metadata/group APIs | `connections.metadata/groups` | `connections.*` | repository sidecar | metadata/group persistence | reject/unavailable; no projection write | API/core tests |
-| 5 Secrets/passphrases | Docker/dialog/askpass | protected client interactions | secret status/store/reveal/session APIs | secret JSON ack + protected frames | daemon secret provider/broker | protected credential lookup/storage | unavailable; no blank/local fallback | provider and Docker tests |
-| 6 SSH config read/edit | editor actions | GTK editor | get/save config DTOs / config capabilities | `connections.get/save_ssh_config_text` | `SshConfigStore`/reload coordinator | authoritative config read/write | reject and preserve editor text | config/editor tests |
-| 7 Include/reload | watcher and mode transition | none (daemon) | generation/events | internal daemon callback | canonical loader/coordinator | watch paths and repository reload | bounded debounce/retry | reload tests |
-| 8 Known hosts | host-key/editor UI | typed known-host client | known-host APIs | `known_hosts.*` | `KnownHostsService` | parse/revision/atomic mutation | capability/error state | known-host tests |
-| 9 Effective config | warning/viewer | `EffectiveConfigChecker`/window | `get_effective_config` / config read | `connections.get_effective_config` | `core.ssh_config_effective` | OpenSSH resolution/comparison | effective-config-specific message | 134 effective/core tests |
-| 10 Unsaved host | post-connect hook | `TerminalManager` | `check_unsaved_host` / connections.read | `connections.check_unsaved_host` | application service + canonical resolver | identity comparison only | skip optional prompt and log | core tests; matrix pending |
-| 11 Operation mode | Preferences/startup | radio/status projection | set/get operation mode / operation.mode | `daemon.set/get_operation_mode` | `OperationModeService` | target/config/repository/service transition | conflict or recovery result | 7 service + 9 UI tests |
-| 12 Backup/restore | backup controller/API | GTK selects options only | daemon backup/secret-transfer APIs | backup operation dispatch | daemon secret transfer + headless backup engine | archive/config/known-host/secret transfer | semantic mode facts and rejection | backup/restore suite pending |
-| 13 Internal SSH | terminal activation | `TerminalManager` | session APIs / sessions capability | `sessions.*` | daemon session runtime/launch provider | daemon-owned SSH child/PTY | readiness failure; never local SSH | terminal routing tests |
-| 14 External terminal | external action | GTK chooses emulator | `prepare_external_terminal_launch` | connections launch dispatch | daemon launch provider | daemon-prepared argv/env; GTK process launch | unavailable/capability error | external-terminal tests |
-| 15 SFTP/file manager | file pane | GTK view/controller | SFTP APIs / sftp capabilities | `sftp.*` | daemon SFTP runtime | remote SFTP process/operations | unavailable; local panes remain local | SFTP/file-manager tests |
-| 16 SCP/transfers | copy/upload/download | file manager/plugin | transfer/SCP APIs | `transfers.*` | daemon transfer runtime | remote transfer process/files | operation failure; no local remote fallback | transfer tests |
-| 17 Forwarding | forward actions | GTK controller/plugin | forward APIs | `forwards.*` | daemon forward runtime | forwarding SSH child/socket | reject/unavailable; no `ssh -N` frontend | forward tests |
-| 18 Keys/agent | key UI/plugin | GTK key controllers | key/identity APIs | `keys.*`/`identity.*` | daemon key/identity services | key generation/agent/deployment | capability/error state | key/agent tests |
-| 19 Plugins | Docker/mosh/SDK | plugin context | typed plugin/connection/session APIs | plugin dispatch | daemon plugin operation services | remote commands daemon; explicit local commands local | no local remote fallback | plugin contract tests |
-| 20 Shutdown/reconnect/compat/local | lifecycle and shim | GTK lifecycle + local tabs | daemon status/reconnect; model shim | lifecycle methods/events | daemon lifecycle; `connection_manager` model shim | daemon cleanup; local PTY cleanup | recovery/reconnect; shim has no authority | lifecycle/local-terminal/compat tests |
+| Domain | Frontend entry/GUI state | Client guard/dispatch | Daemon owner and side effect | Config/cache/restart contract | Evidence/status |
+|---|---|---|---|---|---|
+| Client/readiness | startup/reconnect state | handshake, API version, capabilities | launcher/transport | mismatch is restart-required; no local client | focused tests; R15/R21 pending |
+| Saved connections | dialogs and projections | connection read/write capabilities | application service/repository/config | generation/events refresh projection; restart reloads repository | core/API suites; verified boundary |
+| Metadata/groups | sidebar/group controllers | metadata/group capability methods | repository metadata sidecar | atomic daemon write and event refresh | core/API suites; R15 reconnect pending |
+| Secrets/passphrases | dialogs, Docker, askpass presenter | secret capability and protected input | secret provider/broker/backend | persistent writes locked; session values memory-only and restart-cleared | provider/dispatch pass; R04/R16 pending |
+| SSH config/editor | GTK renders daemon DTO/text | config capability and dispatch | `SshConfigStore`/reload coordinator | daemon owns root/includes/watch paths and generation | reload/effective slices pass |
+| Known hosts | viewer/editor | known-host read/write capability | known-host service | atomic daemon mutation/reload | existing service tests; final aggregate pending |
+| Effective config | checker/dialog stores DTO/generation | effective-config capability | canonical resolver/OpenSSH | daemon generation invalidates stale results | generation/core pass; R08 pending parity |
+| Unsaved host | post-connect optional prompt | `check_unsaved_host` capability | application service + resolver | semantic identity, bounded work, generation | core/CLI pass; R10 pending matrix |
+| Operation mode | Preferences radios, confirmed mode, key scope | mode get/set guard and deferred handler | mode service/repository/watchers | lock covers read/modify/write; runtime/config/UI/restart agree or recovery result | 12 service + 9 UI pass; R06 pending |
+| Backup/restore | GTK selects semantic options | backup/restore capability | daemon transfer/backup services | mode facts come from daemon; restart reads persisted mode | targeted coverage; final aggregate pending |
+| Internal SSH | terminal tabs/readiness | sessions capability | daemon session/launch provider | existing sessions retain launch snapshot; no local child | terminal ownership tests |
+| External terminal | GTK selects emulator | `terminal.external_launch` only if provider callable | launch provider prepares non-secret argv/env | active config semantics prepared daemon-side | handshake/client tests pass |
+| SFTP/file manager | embedded/standalone window | SFTP capability | daemon SFTP runtime | remote process daemon-owned; local panes remain local | Manage Files/SFTP tests |
+| SCP/transfers | file manager/plugin operation UI | transfer/SCP capability | daemon transfer runtime | operation lifecycle daemon-owned | service tests; aggregate pending |
+| Forwarding | forward controls | forwarding capability | daemon forward runtime | blockers prevent unsafe mode transition | service tests; aggregate pending |
+| Keys/agent | key actions gated by confirmed mode | keys/identity capabilities | daemon key/identity services | semantic scope only after confirmation; restart derives persisted scope | key tests; R18 pass |
+| Plugins | Docker/mosh/SDK UI | plugin/session/settings capabilities | daemon remote plugin operations; explicit local commands stay local | plugin settings transaction cannot clobber unrelated keys | EasyEnv fixture repaired; GUI evidence pending |
+| Reconnect/shutdown | app lifecycle and Preferences | lifecycle/status/reconnect | daemon owns remote cleanup | one replacement lifecycle rebinds all services and invalidates caches | R15 pending full matrix |
+| Compatibility shim | plugin imports | no backend capability | model-only `connection_manager` shim | removal after one compatibility window | documented; pending final source audit |
+| Local features | local terminal/panes/UI prefs | no remote capability | frontend-only | no authoritative SSH/config/secret side effect | practical local tests; aggregate pending |
 
-## 6b. End-to-end contract audit checkpoint
+## 8. Decisions and rejected alternatives
 
-The following audit records the complete contract shape, including the GUI
-state boundary and restart/cache behavior. “Advertised” means the daemon
-handshake capability set; a dispatcher method is not considered available just
-because a handler exists. The audit was revalidated against the current graph
-and source after the repairs in this session; focused evidence is listed in
-the status table and matrix below.
+| Date | Decision | Alternatives rejected | Reason and affected paths |
+|---|---|---|---|
+| 2026-08-15 | API implementation version is 0.40; 0.39 snapshot is historical and restored | Rewrite 0.39 or silently interoperate | Password transport, session input, mode and unsaved-host wire changes require a boundary; stale daemon gets restart-required |
+| 2026-08-15 | Shared settings use a GTK-free cross-process lock; `Config` merges only its baseline-owned changes under that lock | RLock-only, reload-before-write, or stale whole-tree replacement | Process-local locks cannot protect GTK/daemon; full caller ownership migration remains tracked as R13 risk |
+| 2026-08-15 | Docker use-once is a daemon session credential; persistence requires explicit consent | Persistent store on every dialog completion or local keyring | Secret authority and user consent remain daemon-owned |
+| 2026-08-15 | Session credentials can be replaced and explicitly cleared; persistent store/delete clears the session override | Let a one-hour stale session value shadow correction/deletion | Authentication retry and deletion must be truthful |
+| 2026-08-15 | Protected command input is client-owned, registered, bounded, TTL-limited and wiped | Global request-id dictionary or plaintext JSON | Prevent unsolicited/wrong-client/late secret frames and memory leaks |
+| 2026-08-15 | Operation-mode failure after publication is recovery-required with runtime/persisted modes exposed | Ordinary rejection or hiding split brain | UI and restart must not lie about active mode |
+| 2026-08-15 | Leading-dash Host aliases are rejected as OpenSSH option ambiguity | Assume shell injection or rely on `--` support | argv has no shell, but OpenSSH option confusion must be prevented at API/repository/resolver boundaries |
+| 2026-08-15 | Omitted CLI port remains `None`; explicit `-p 22` remains explicit | Treat parser default 22 as user input | Preserve alias `Port`/Include/Match semantics |
+| 2026-08-15 | No key manager is constructed while daemon mode is unconfirmed | Construct DEFAULT scope and hide actions later | Avoid wrong-scope key operations during delayed startup |
+| 2026-08-15 | Standalone “external” file manager remains daemon-backed, not GVFS/frontend SSH | Restore GVFS or local remote backend | Preserve feature semantics without reviving remote authority |
+| 2026-08-15 | Reconnect uses one client-replacement lifecycle | Rebind only window/client fields | Controllers, Preferences, key scope and generation caches otherwise retain closed clients |
 
-| Domain | Frontend entry and GUI state | Typed guard / dispatcher advertisement / handler | Daemon owner and side effect | Config/cache/restart contract |
-|---|---|---|---|---|
-| Client/readiness | startup factory owns a pending/ready/unavailable selection; GTK never creates a local client | `DaemonLauncher.connect_or_start()` plus daemon status/capabilities; no `IN_PROCESS` branch | daemon transport and handshake | reconnect replaces client-backed projections; unavailable disables/recovery state |
-| Saved connections | dialogs/sidebar retain input and project immutable summaries | `connections.*` capability checks; dispatch maps each mutation to a deferred handler | `ConnectionApplicationService` → `ConnectionRepository`/`SshConfigStore` | atomic repository/config writes; daemon reloads same root after restart |
-| Metadata/groups | GTK group/sidebar stores are projections/controllers only | metadata/group capabilities and typed mutation handlers | repository metadata sidecar | generation/events refresh projections; restart reads daemon state |
-| Secrets/passphrases | dialogs receive protected interaction results; no password in projection DTO | secrets capabilities; store/session handlers require protected command-input frames | daemon secret provider/broker/key-passphrase service | session secrets are memory-only; persistent consent is explicit; restart drops session secret |
-| SSH config/editor | editor renders daemon-returned text/DTO and preserves unsaved text on failure | config read/write capability; `connections.get/save_ssh_config_text` handlers | canonical config store and reload coordinator | generation/watch graph updates; daemon restart rediscovers active root |
-| Include/reload | no GTK authority; events update projections | internal coordinator path, not a frontend-selected path | canonical loader + watcher | `start()` schedules initial debounced reload; `refresh_paths()` replaces Include watch paths and reloads |
-| Known hosts | GTK renders snapshots and asks typed remove operation | known-host read/write capabilities and handlers | daemon `KnownHostsService` | atomic mutation/revision; restart reopens daemon-owned store |
-| Effective config | checker/dialog holds generation-tagged DTO, never a path or `ssh -G` result | config-read capability; deferred effective-config handler | canonical GTK-free resolver and app service | result rejected if repository generation races; checker rejects stale daemon generations |
-| Unsaved host | post-connect prompt is optional UI state; failed check skips prompt | connections-read capability; deferred check handler | app service resolves host/user/port/ProxyJump through canonical resolver | snapshot generation is returned; restart uses same semantic rule |
-| Operation mode | radios disabled/confirmed; `_confirmed_operation_mode`, `_key_scope`, `KeyManager`, and `Config.config_data` update only after daemon result | operation-mode capability; deferred get/set handlers; no radio callback re-entry | `OperationModeService` → repository transition + watcher hook | shared settings lock covers read/modify/write; canonical config tree, target, runtime, watcher, UI cache, and restart mode remain coherent or return recovery-required |
-| Backup/restore | GTK chooses semantic restore options and displays daemon facts | backup/secret-transfer capability handlers | daemon transfer/backup services | mode facts are confirmed by daemon; restart reloads persisted canonical settings |
-| Internal SSH | terminal tabs track daemon session readiness and launch state | sessions/terminal capabilities; session dispatch | daemon session runtime and launch provider | existing sessions retain launch state; new sessions use current snapshot; no local child on failure |
-| External terminal | GTK chooses emulator and launches returned argv; no shell interpolation | `terminal.external_launch` is advertised only when launch provider has callable preparation; typed handler reaches `prepare_external_terminal_launch` | daemon launch provider/OpenSSH adapter | non-secret argv/env spec reflects active root; daemon/capability failure is explicit |
-| SFTP/file manager | Manage Files chooses embedded or standalone daemon-backed window from preference | file-transfer/SFTP capability guard; SFTP handlers | daemon SFTP runtime | remote authority stays daemon-owned; local filesystem panes remain local; restart creates fresh daemon SFTP |
-| SCP/transfers | GTK renders operation state and progress | transfer capabilities and deferred handlers | daemon transfer/SCP runtime | operation lifecycle survives UI projection loss; no frontend remote subprocess |
-| Forwarding | GTK controller requests typed forward and displays status | forward capabilities and handlers | daemon forward runtime | active forwards block unsafe mode transition; restart does not silently recreate them |
-| Keys/agent | key UI/actions stay unavailable while operation mode is unconfirmed | keys/identity capabilities; typed key handlers | daemon key/identity service and native agent | semantic `DEFAULT`/`ISOLATED` scope only after confirmation; restart derives scope from persisted mode |
-| Plugins/Docker | plugin UI uses daemon client/context; explicit local plugin commands remain local | plugin settings/command/session capabilities and dispatch | daemon plugin operation services; Docker password callback uses protected API | plugin settings transaction cannot clobber mode; no password in ordinary responses/logs |
-| Shutdown/reconnect | GTK closes projections/local PTYs and shows recovery state | daemon lifecycle/status capability | daemon lifecycle owns remote cleanup | reconnect creates new client/projections; compatibility imports remain inert |
-| Local/frontend features | local terminal PTY/VTE, local panes, UI preferences, dialogs, external emulator process | no remote capability is implied | frontend-only by explicit scope | no authoritative SSH/config/secret side effect; retained intentionally |
+### Unsaved-host identity rule
 
-## 7. Decision log
+For SSH, an internal saved connection ID is authoritative when present. An
+ephemeral CLI connection never receives a durable ID merely because nickname
+equals hostname. Without a matching ID, the daemon compares canonical semantic
+identity: hostname case-insensitively, username after empty input is replaced
+by daemon local login, explicit/default port, effective ProxyJump, and protocol.
+Aliases/direct hosts match only when canonical OpenSSH resolution agrees;
+`User` from Host/Match/Include participates. Display-name or rename changes do
+not change an internal-ID match. Non-SSH destinations do not match by SSH host
+fields. The rule is tested for alice/root, empty users, aliases, Include/Match,
+IPv4/IPv6, ports, ProxyJump, deletion and rename; the larger real-daemon matrix
+remains R10.
 
-| Date | Decision | Alternatives considered | Reason | Affected paths/APIs |
-|---|---|---|---|---|
-| 2026-08-15 | Daemon remains the only production backend authority | Restore local fallback or infer backend from projection features | Prevent split-brain state and secret/config/process ownership | client factory, GTK routing/mutations |
-| 2026-08-15 | Keep local PTY/VTE/PyXtermJS and explicit local plugin commands | Delete every `spawn_async` or “in-process” match | Those side effects are explicitly local | terminal/UI/plugin paths |
-| 2026-08-15 | Docker “use once” uses daemon-memory session credentials | Call persistent `store_connection_password`; revive local keyring | Consent and secret ownership remain explicit | Docker plugin, protected command-input frame |
-| 2026-08-15 | Operation-mode rollback failure is a recovery result, not a conflict | Return ordinary rejection or hide split brain | Runtime/persisted modes must be truthful | `OperationModeResult`, mode service/UI |
-| 2026-08-15 | Canonical effective-config implementation is GTK-free core | Keep duplicated top-level resolver | Launch and UI semantics must not diverge | `core.ssh_config_effective`, facade |
-| 2026-08-15 | Hostnames casefold and normalize IPs; usernames remain exact; port and ProxyJump participate | Raw token equality; ignore port; casefold usernames | Preserve OpenSSH destination semantics without conflating accounts | `UnsavedHostCheckRequest`, daemon core |
-| 2026-08-15 | Reject new/renamed Host aliases beginning with `-`; safely return unavailable for imported invalid aliases | Pass `--` without platform proof; trust GTK-only validation | Avoid OpenSSH option confusion at every authoritative boundary | API models, repository, resolver |
-| 2026-08-15 | Remove committed graph artifacts and ignore `.codebase-memory/` | Keep generated local binary in source control | No repository policy requires versioned graph binaries and the artifact causes false dirty state | `.gitignore`, `.codebase-memory/` |
-| 2026-08-15 | Advertise external-terminal capability only when the daemon provider implements the typed preparation method | Advertise based only on a handler or let GTK rebuild SSH argv | Handshake availability must describe the actual daemon provider | dispatch handshake, `prepare_external_terminal_launch` |
-| 2026-08-15 | Keep API implementation version at 0.39 and repair the 0.39 documentation/snapshot rather than inventing 0.42 | Treat dirty generated additions as a version bump | Source authority and protocol compatibility remain 0.39/1.0; current additive surface is captured by the reviewed baseline | `api/version.py`, docs, generated artifacts |
-| 2026-08-15 | Persistent Docker password storage uses the same protected command-input frame as session credentials; the dialog callback is the only consent signal | Send password in ordinary RPC JSON or persist every “use once” entry | Secrets must not cross ordinary wire/log/DTO surfaces and storage consent must be explicit | daemon client/dispatch, Docker page |
-| 2026-08-15 | Connection-dialog saves do not reverify an unchanged passphrase loaded from daemon storage | Reverify every save or construct a default-scope frontend key manager | Unrelated edits must not fail because a stored key is temporarily unavailable; only edited secrets need validation | `FileListEditor._commit_passphrase`, `_discover_disk_keys`, connection-dialog save |
-| 2026-08-15 | `terminal.external_launch` belongs in the real-daemon handshake contract when the launch provider supports it | Keep the capability absent to preserve a stale exact-set test | Clients must see the operation that the daemon can actually execute; the test was stale after the capability repair | `RequestDispatcher`, `tests/daemon/test_launcher.py` |
+## 9. Compatibility and deprecation
 
-### Unsaved-host identity decision table
+`connection_manager.py` is a model-only import shim for `Connection` and
+`ConnectionState`; it contains no manager, persistence, secret, config,
+known-host, process, or I/O behavior. Owner: API/plugin maintainers. Remove
+after one documented Protocol v1/plugin compatibility window and a deprecation
+release note.
 
-The daemon compares a saved session by internal ID first. For SSH
-destinations without a matching ID, it resolves both the ad-hoc destination and
-each saved alias through the daemon's canonical OpenSSH resolver. Hostname is
-case-insensitive; username is case-sensitive after empty input is replaced by
-the daemon's local login; port and effective ProxyJump participate; protocol
-must be SSH. IPv4/IPv6 literals are normalized as host identities. A direct
-hostname and an alias match only when their resolved host/user/port/ProxyJump
-tuple matches. Rename/display-name changes do not alter an internal-ID match;
-deleted IDs fall back to semantic comparison. Non-SSH destinations never match
-by host fields.
+`ssh_config_utils.py` forwards effective/Include behavior to canonical core;
+specialized editor/write helpers are retained. Remove the facade after all
+production editor/backup callers use the canonical or dedicated editor module.
 
-| Case | Result |
+API 0.39 is not a supported mixed-version peer for the changed 0.40 wire
+surface. The launcher/client detects mismatch before normal calls, reports a
+restart/recovery outcome, and does not kill a daemon with live resources or
+fall back to plaintext secrets.
+
+## 10. Test and verification matrix
+
+| Area | Command/result in current worktree |
 |---|---|
-| Same saved connection ID | saved, regardless of display name or current text |
-| Saved `alice@host`, ad-hoc `root@host` | unsaved |
-| Saved `alice@host`, ad-hoc empty user and daemon login `alice` | saved |
-| Alias versus direct hostname | saved only after canonical effective resolution agrees |
-| `User` from `Host`, `Match`, or `Include` | included by daemon effective resolution |
-| Host case differs | equal after casefold |
-| IPv4/IPv6 spelling differs | equal only under canonical literal normalization |
-| Explicit/default port differs | unsaved when port participates and differs |
-| ProxyJump differs | unsaved |
-| Non-SSH protocol, deleted ID | no host-field match; deleted SSH ID may use semantic fallback |
+| Architecture/core/API | `.venv/bin/pytest -q -n0 tests/architecture tests/core tests/api` → `1453 passed, 1 skipped` |
+| Cross-process/shared settings | `.venv/bin/pytest -q -n0 tests/core/test_settings_transaction_lock.py tests/test_config_cross_process.py` (included above) → passed; multiprocessing uses `fcntl` lock, not only `RLock` |
+| Focused startup/preferences/reconnect/passphrase/effective/unsaved/daemon | Named daemon/startup/preferences/reconnect/passphrase/effective/CLI/unsaved set → `180 passed, 1 failed`; event callback synchronization fixed; final event modules → `22 passed`; final startup/preferences/reconnect/passphrase/event subset → `61 passed` |
+| Generated API artifacts | `.venv/bin/python scripts/generate_api_artifacts.py --check` → `API artifacts are current.` |
+| Lint | `.venv/bin/ruff check src/ tests/ scripts/generate_api_artifacts.py` → `All checks passed!` |
+| Compile | `.venv/bin/python -m compileall -q src/sshpilot` → passed |
+| Diff hygiene | `git diff --check` → passed |
+| Practical non-GUI broad run | `find tests -type f -name 'test_*.py' ! -path 'tests/mcp/*' -print0 \| xargs -0 .venv/bin/pytest -q -n auto -m 'not integration and not gui' --maxfail=20` → `4924 passed, 31 skipped, 11 failed`; failures are recorded below and are not green |
 
-## 8. Compatibility/deprecation decisions
+## 11. Known failures and unresolved risks
 
-`src/sshpilot/connection_manager.py` is retained only as a model-only import
-shim for `Connection` and `ConnectionState`. It has no manager, repository,
-config, secret, known-host, process, or I/O behavior. Bundled/documented plugin
-imports were audited; the supported plugin route is `PluginContext` and typed
-daemon services. Owner: API/plugin maintainers. Removal condition: one
-documented Protocol v1 compatibility window, followed by a deprecation release
-note and an incompatible plugin/API window.
+* The broad practical run above had 11 failures: read-only daemon log path in
+  `test_run_server_returns_restart_exit_code`; xdist/environment-sensitive
+  askpass and effective-config tests; stale key-discovery expectation now
+  corrected to the confirmed-mode invariant; file-manager/terminal teardown
+  tests affected by GTK stubs; and the architecture debt ratchet, which was
+  corrected by moving the lock to `platform.locking`. The corrected serial
+  architecture/core/API run is green. These failures must be rerun in the
+  supported environment before a final verdict.
+* The focused daemon run initially failed
+  `test_connection_store_changed_event_reaches_idle_client` because its event
+  callback released the test after the preceding `connection.updated` event.
+  The daemon emitted both events; the test now waits specifically for
+  `connection_store.changed` and the event/backpressure modules pass `22
+  passed`. Classification: test synchronization defect, corrected.
+* The restart-exit-policy test initially attempted to create a daemon log in
+  the sandbox's read-only `/home/mahdi/.local/state` and failed with
+  `OSError: [Errno 30]`. It now isolates logging in the exit-policy unit test;
+  the final subset passes 61 tests. Classification: test environment
+  isolation, corrected; production logging behavior remains covered by its
+  own logging tests.
+* The optional MCP suite is not a supported green signal until the installed
+  SDK provides `mcp.ClientSession`; any collection failure must retain its
+  exact dependency classification.
+* `test_default_config_path_excludes_system_defaults` was previously sensitive
+  to an unreadable system OpenSSH include symlink; it passes directly in the
+  current environment but needs supported-environment confirmation.
+* Operation-mode full fault injection/restart proof, reconnect with an open
+  Preferences window and in-flight operation, Docker retry/no-leak GUI proof,
+  and the large-repository unsaved-host bound remain incomplete.
+* R13 is not a claim that every `Config.set_setting()` caller is now daemon
+  owned. The cross-process merge prevents demonstrated lost updates, but the
+  remaining frontend JSON-backed settings must be classified and migrated or
+  explicitly separated before the final safe-retirement verdict.
 
-`ssh_config_utils.py` is a thin forwarding facade for effective/Include
-resolution. Its atomic editor and validation helpers are specialized write
-helpers, not a second effective resolver. Owner: core/API maintainers. Removal
-condition: all backup/editor imports use `core.ssh_config_effective` or a
-dedicated editor module.
+## 12. Session handoff
 
-`DaemonConnectionServices` is not a fallback backend: production mutations and
-secret operations require its attached typed daemon client. Direct core
-service tests and daemon-in-thread fixtures are test/composition usage only.
+* Last completed action: moved the shared settings transaction primitive to
+  GTK-free `src/sshpilot/platform/locking.py`; removed its new unapproved
+  frontend core-debt entry; corrected the stale key-discovery test; reran
+  architecture/core/API and hygiene checks.
+* Current action: complete the final source audit and record the dirty-tree
+  evidence; the broad practical run remains incomplete and must not be called
+  green.
+* Exact next command:
 
-## 9. Test and verification matrix
+  ```bash
+  .venv/bin/pytest -q -n0 tests/daemon tests/test_startup_behavior.py \
+    tests/test_window_daemon_errors.py tests/test_preferences_operation_mode.py \
+    tests/test_daemon_reconnect_gtk.py tests/test_connection_dialog_passphrase.py \
+    tests/test_manage_files_ui.py tests/test_effective_config_checker_generation.py \
+    tests/test_cli_connect.py tests/test_unsaved_host.py
+  ```
 
-| Area | Required evidence | Current evidence/result |
-|---|---|---|
-| Ownership/boundaries | architecture/frontend-closure, AST/import guards | Pending final run; current graph/literal audit recorded above |
-| Startup/dialog/reload | focused startup, GTK callback, watcher/debounce tests | Startup 10 passed; window 4 passed; Preferences 9 passed; reload included in focused pass; lifecycle 20 passed |
-| Docker/secrets | provider, protected frame, persistence consent, no-leak tests | `tests/daemon/test_secret_dispatch.py` — 24 passed; Docker GUI module skipped because GUI environment is unavailable; full GUI/plugin evidence pending |
-| Connection-dialog passphrases | unchanged-value save, edited-value rejection, no pre-confirmation default key manager | `tests/test_connection_dialog_passphrase.py` — 17 passed |
-| Operation mode | transition, blockers, target/config/repository/hook/rollback/cleanup/restart faults | `tests/daemon/test_operation_mode_service.py` — 12 passed, including canonical missing-config and four-writer concurrency; complete live daemon fault/restart matrix pending |
-| Effective config | Include/glob/cycle/tokens/repeated/Match/paths/roots and canonical facade guard | 134 effective/core tests pass; `test_default_config_path_excludes_system_defaults` now passes in the current run, but supported-environment parity/guard/full run remains pending |
-| Unsaved host | ID, alias/direct, user inference, Include/Match, case/IP/port/ProxyJump/non-SSH/rename | Existing core tests pass; required matrix pending |
-| Alias safety | GUI/API/repository/import/effective lookup | model/repository/effective regressions added; full matrix pending |
-| API/contracts | codecs, dispatch/client, capabilities, docs, schema, version snapshots | focused API documentation — 18 passed; architecture/API/core prior run — 1449 passed, 1 skipped; generator check pending final run; source/docs/snapshot version is 0.39 |
-| Remote services | SSH sessions, SFTP, SCP, transfers, forwarding, known hosts, keys, askpass | Prior evidence exists but must be reproduced in this pass |
-| Local features | PTY/VTE/PyXtermJS/local panes/external emulator/local plugins | Must remain covered by local-terminal/plugin suites |
-| Broad verification | supported full suite, serial concurrency-sensitive runs | Current parallel run: 2511 passed, 6 skipped, 1 failed, 21 errors before `--maxfail=20`; serial full run interrupted in a slow native-SCP test; see section 10 |
-| Hygiene | `ruff`, compileall, `git diff --check`, generated check | `.venv/bin/python scripts/generate_api_artifacts.py --check`, `.venv/bin/ruff check src tests scripts/generate_api_artifacts.py`, `.venv/bin/python -m compileall -q src/sshpilot`, and `git diff --check` all passed after the final source edits |
+* Commands already run: baseline/status/rev-parse; graph index and source
+  traces; focused regression batches; broad non-GUI xdist run; corrected
+  architecture/core/API serial run; generator `--check`; Ruff; compileall;
+  `git diff --check`.
+* Current modified files: API 0.40 models/client/dispatch/docs/generated
+  artifacts; settings/config/operation-mode/secret/protected-input/effective
+  config/reconnect/preferences/Docker/terminal/core validation sources; tests
+  for all of those areas; new `src/sshpilot/platform/locking.py`,
+  `tests/api/snapshots/versions/0.40.json`, and
+  `tests/test_config_cross_process.py`; this ledger.
+  Exact `git status --short` paths at this checkpoint are:
 
-## 10. Known failures and unresolved questions
+  ```text
+  docs/api/CHANGELOG.md docs/api/README.md docs/api/compatibility.md
+  docs/api/generated/model-index.md docs/api/generated/schema.json
+  docs/api/methods.md docs/api/protocol-v1.md
+  docs/architecture/daemon-only-retirement.md
+  src/sshpilot/api/client.py src/sshpilot/api/daemon_client.py
+  src/sshpilot/api/models/connections.py src/sshpilot/api/transport/codec.py
+  src/sshpilot/api/version.py src/sshpilot/command_converter.py
+  src/sshpilot/config.py src/sshpilot/core/connection_application_service.py
+  src/sshpilot/core/connections/service.py src/sshpilot/core/package_graph.py
+  src/sshpilot/core/settings/store.py src/sshpilot/daemon/connection_secret_provider.py
+  src/sshpilot/daemon/dispatch.py src/sshpilot/daemon/operation_mode_service.py
+  src/sshpilot/daemon/server.py src/sshpilot/effective_config_check.py
+  src/sshpilot/main.py src/sshpilot/plugins/builtin/docker_manager/page.py
+  src/sshpilot/preferences.py src/sshpilot/terminal_manager.py src/sshpilot/window.py
+  src/sshpilot/platform/locking.py
+  tests/api/snapshots/public_api.json tests/api/snapshots/versions/0.39.json
+  tests/api/snapshots/versions/0.40.json tests/api/test_capabilities_contract.py
+  tests/api/test_daemon_client_keys.py tests/api/test_daemon_client_protocol.py
+  tests/core/test_connection_application_service.py tests/daemon/test_connection_secret_provider.py
+  tests/daemon/test_event_forwarding.py tests/daemon/test_operation_mode_service.py
+  tests/daemon/test_secret_dispatch.py tests/test_cli_connect.py
+  tests/test_connection_dialog_fixes.py tests/test_config_cross_process.py
+  tests/test_daemon_reconnect_gtk.py tests/test_easyenv_plugin_e2e.py
+  tests/test_effective_config_checker_generation.py tests/test_preferences_operation_mode.py
+  ```
+* No commit was created in this session. Current HEAD remains
+  `1173de32f8cd9164ab25a293e15348118cc88ab7`; the worktree status is recorded
+  by the final command below. The next agent must rerun the broad practical
+  command and then audit every remaining `Config.set_setting()` caller.
 
-Previously recorded failures must not be called green without reproduction:
+## 13. Completion checklist
 
-* Default environment: `pytest -q -n0` fails collection because the optional
-  MCP dependency does not provide `mcp.ClientSession` (`113 deselected, 21
-  skipped, 1 collection error`). Classification: dependency/environment.
-* Current parallel non-MCP headless command:
-  `find tests -type f -name 'test_*.py' ! -path 'tests/mcp/*' -print0 | xargs
-  -0 .venv/bin/pytest -q -n auto -m 'not integration and not gui' --maxfail=20`
-  produced `2511 passed, 6 skipped, 1 failed, 21 errors` in 82.11s before
-  xdist stopped at its failure limit. The one failure is the event-ordering
-  race described below. The 21 errors are all EasyEnv setup failures in
-  `tests/test_easyenv_plugin_e2e.py`: its fake client lacks the required
-  daemon `set_plugin_setting` method, and the fixture calls
-  `ctx.settings.set(...)`. Classification: test-fixture contract, not a
-  daemon production failure.
-* `tests/daemon/test_event_forwarding.py::test_connection_store_changed_event_reaches_idle_client`
-  is reproducibly timing-sensitive: the callback sets its `delivered` event
-  for the first `connection.updated` event (sequence 1), while the daemon
-  publishes `connection_store.changed` (sequence 2) immediately afterward.
-  A direct probe observed `[('connection.updated', 1),
-  ('connection_store.changed', 2)]`; the test asserts after the first event
-  and can therefore see an empty store-event list. The module passes in
-  isolation (`14 passed` in 3.04s) but the single test failed in both a serial
-  loop and the parallel suite. Classification: test synchronization defect;
-  the daemon event was not lost.
-* A serial full-suite run with `--durations=20` reached 35% and appeared to
-  stall. Ctrl-C captured the active test as
-  `tests/daemon/test_native_scp_backend.py::test_native_backend_retries_once_with_legacy_protocol_for_sftp_failure`,
-  blocked in `_BoundedStderr.finish(self._wait_timeout)`. The test passes
-  alone in 29.03s and the complete native-SCP module passes in 116.60s.
-  Classification: slow subprocess-test behavior, not a functional failure;
-  serial full-suite verification remains incomplete.
-* Preference Done runtime diagnosis (2026-08-15): the supplied log showed
-  config-owned UI settings saving, followed by SSH override and secret reads
-  on a `DaemonClient` whose transport is already closed. The reconnect path in
-  `SshPilotApplication._finish_daemon_reconnect` updates
-  `window.client`, `connection_manager`, `connection_runtime_status`, and
-  the welcome view, but does not rebind an existing
-  `PreferencesWindow.ssh_overrides_controller` or `window.secrets_controller`.
-  Those controllers retain the old closed client, so pressing Done after a
-  transport loss reports `The daemon transport is closed`. Fixed in the
-  working tree: reconnect now rebuilds the Secrets controller/presenter and
-  calls `PreferencesWindow.set_ssh_overrides_controller()` with the replacement
-  client. Regression evidence: reconnect module `13 passed`, Preferences/
-  secret/mode batch `29 passed`, and focused Ruff passed. Classification:
-  confirmed production reconnect/UI lifecycle defect, now repaired; a real
-  GUI run remains useful for end-to-end confirmation.
-* `test_default_config_path_excludes_system_defaults` previously failed in a
-  larger run when plain `ssh -G foo` rejected the container's unreadable
-  `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` symlink. The current direct
-  command `.venv/bin/pytest -q -n0
-  tests/test_effective_config_diff.py::test_default_config_path_excludes_system_defaults`
-  passes (`1 passed in 0.13s`); the system-config sensitivity remains a risk
-  to reproduce in the supported environment. Classification: prior
-  environment/test-contract failure, not currently reproducible.
-* `test_key_passphrase_roundtrip` passes alone (`1 passed`); the earlier
-  libsecret failure is not reproduced in this environment. Classification:
-  optional dependency/environment.
-* `test_no_zombie_children_after_force_stop` initially detected the inherited
-  pytest Xvfb child and logged an injected runner `AttributeError`; adding the
-  fixture's required `close()` contract and filtering the assertion to SSH
-  executables makes the lifecycle module pass (`20 passed`). Classification:
-  test fixture/harness, corrected in this pass.
+- [x] Production selection is daemon-only; no silent local remote fallback.
+- [x] Startup/dialog/reload/external-terminal/key-scope repairs have focused coverage.
+- [x] API 0.40 boundary and historical 0.39 snapshot are documented/generated.
+- [x] Cross-process settings lock and deterministic lost-update regression exist.
+- [ ] All shared JSON callers are classified and ownership split is complete.
+- [ ] Reconnect replaces every client-backed object and updates open Preferences.
+- [ ] Operation-mode fault/restart/concurrency matrix is complete and truthful.
+- [ ] Credential replacement/clear/wipe and real protected-input transport matrix is complete.
+- [ ] Unsaved-host bounded large-repository and full OpenSSH semantics matrix is complete.
+- [ ] Practical, serial, GUI-supported and full verification are reproducibly green.
+- [ ] Final audit has no unexplained legacy/in-process production matches.
+- [ ] Final ledger evidence supports `SAFE TO RETIRE` or documented-shim verdict.
 
-Each final failure must include the exact command/environment, output,
-classification (product/test/dependency/packaging/concurrency/environment),
-supported-environment reproduction, and whether it blocks retirement. Open
-design verification still required: complete operation-mode fault injection,
-unsaved-host behavior through a real daemon config with Include/Match, and
-transport-level session credential consent/no-leak coverage.
-
-### 10a. Final source-to-side-effect audit register
-
-The final literal audit was run on 2026-08-15 with the required search terms,
-then checked against the persisted graph call traces. Remaining matches are
-classified here so terminology is not mistaken for authority:
-
-| Match family | Remaining production matches | Classification and proof |
-|---|---|---|
-| `ConnectionManager` / `connection_manager` | GTK parameters and properties, `DaemonConnectionServices`, CLI/model compatibility names, daemon launch/backup shims | GTK instances are ephemeral projection/facade state; graph traces show repository/config/secret side effects enter through daemon composition. `connection_manager.py` is model-only compatibility. CLI and historical/test names are not GTK backend selection. |
-| `credential_manager` / `secret_storage` | `CredentialManager` is reached by daemon backup export; secret backends are reached by daemon secret/interaction services and daemon-owned askpass | daemon-only persistence/backup composition; no frontend production constructor/caller was found. Direct secret backend tests remain test/core coverage. |
-| `ssh_connection_builder`, `build_ssh_connection`, `ssh -G` | daemon launch provider, daemon secret-transfer runner, daemon SSH readiness/interactions, canonical core resolver, specialized config-text validation | remote process argv and secret lookup are daemon-owned. `core.ssh_config_effective` is the only production effective resolver; `ssh_config_utils` forwards to it. No GTK effective-config subprocess path remains. |
-| `ssh_config_path`, `known_hosts_path` | daemon launch/interaction/backup services and daemon-owned specialized adapters; tests | filesystem authority remains daemon-owned. GTK receives semantic DTOs and does not choose or mutate these paths. |
-| `get_connection_password`, `get_key_passphrase`, `store_connection_password` | protected GTK facade calls, daemon credential provider/launch shims, daemon dispatch, historical docs/tests | GTK only submits protected typed operations; local manager fallback is absent from production GTK routing. Session passwords are daemon-memory-only; persistent storage requires explicit consent. |
-| `spawn_async`, PTY, VTE, PyXtermJS, `subprocess` | local terminal tabs, VTE rendering/input, external terminal launch, daemon-owned remote services, test doubles | retained legitimate local/frontend operations are not remote authority; remote process construction is reached through daemon services. |
-| `fallback`, `legacy`, `in-process` | recovery/error wording, local-terminal/plugin terminology, historical documents and this ledger | no production backend selection or remote fallback. Historical documents are explicitly historical; current docs link this ledger. |
-| `hasattr` | GTK widget/API compatibility probes, daemon optional-service lifecycle probes, platform feature probes | no remaining `hasattr` branch selects a local SSH/backend after daemon failure. Readiness uses confirmed daemon state and capabilities for route availability. |
-| `LegacyInProcessSshController`, `InProcessClient`, `ClientMode.IN_PROCESS`, `_daemon_mode_active` | only this ledger/history references where required for audit | no source implementation or production setting remains. |
-
-The audit intentionally does not delete local PTY/VTE code, external-terminal
-selection, local filesystem panes, or explicit local plugin commands merely
-because they spawn a process. Those side effects are outside the obsolete
-in-process remote backend definition.
-
-## 11. Session handoff
-
-* **Last completed item:** reproduced the parallel-suite failures, diagnosed
-  and repaired the Preferences Done closed-transport path, and added the
-  reconnect controller-rebinding regression test; the stale launcher
-  capability expectation remains repaired in the dirty worktree.
-  Earlier completed items include the confirmed capability-enum bug in
-  `MainWindow`, added the deterministic settings-writer lock test, restored
-  Manage Files preference semantics, added protected Docker password consent,
-  added startup watcher-race coverage, re-audited the external-launch
-  handshake through handler/service ownership using the code graph, and fixed
-  connection-dialog saves incorrectly rejecting unchanged stored passphrases.
-* **Current in-progress item:** re-audit the remaining broad-suite test
-  synchronization/fixture failures; the reconnect/UI defect is complete and
-  R18 is VERIFIED.
-* **Exact next action:** run
-  `.venv/bin/pytest -q -n0 tests/daemon/test_event_forwarding.py tests/test_daemon_reconnect_gtk.py tests/test_preferences_ssh_overrides.py tests/test_preferences_secret_backend.py`
-  and then repair only the event-test synchronization and EasyEnv fake-client
-  contract, without changing daemon-only production ownership.
-* **Commands already run:** orientation reads and commit/parent inspection;
-  graph index/search/trace/snippets; focused startup/reload/preferences/Docker,
-  operation-mode, effective-config/include/core/repository, API documentation,
-  window-error, Manage Files, and lifecycle suites; `.venv/bin/pytest -q -n0
-  tests/architecture tests/api tests/core` (1449 passed, 1 skipped, prior
-  baseline); migration-focused selection (216 passed, 1 skipped, prior
-  baseline); newest focused batch (62 passed), operation-mode/Manage Files
-  (20 passed), loader/coordinator/API model slice (45 passed), window slice
-  (26 passed), secret/Docker slice (24 passed, 1 skipped); contract batch
-  (1573 passed, 1 skipped, 1 failed); the final focused contract command
-  (291 passed); explicit parallel non-MCP headless
-  suite (2511 passed, 6 skipped, 1 failed, 21 errors before `--maxfail=20`);
-  serial event-forwarding module (14 passed); native-SCP module (11 passed in
-  116.60s); API documentation (18 passed). The
-  final checks passed after the source edits: `.venv/bin/python
-  scripts/generate_api_artifacts.py --check` (`API artifacts are current`),
-  `.venv/bin/ruff check src tests scripts/generate_api_artifacts.py` (`All
-  checks passed`), `.venv/bin/python -m compileall -q src/sshpilot`, and
-  `git diff --check`; passphrase/launcher/event-forwarding combined regression
-  command (`48 passed`); reconnect/preferences regression command (`47 passed`)
-  after the controller-rebinding fix; targeted compileall and Ruff checks
-  passed.
-* **Current failing/incomplete verification:** the launcher capability
-  expectation is repaired (`17 passed`). The current parallel non-MCP run is
-  `2511 passed, 6 skipped, 1 failed, 21 errors` before `--maxfail=20`: the one
-  failure is the event-ordering test synchronization defect, and the 21
-  errors are EasyEnv fake-client setup failures. A serial full run was
-  interrupted in the slow native-SCP test; that module passes in 116.60s.
-  `test_default_config_path_excludes_system_defaults` now passes directly.
-  The Preferences closed-transport defect is repaired and covered by R18.
-  GUI Docker coverage remains skipped because the GUI environment is
-  unavailable. These facts block a full practical-suite completion claim. A
-  prior default collection attempt reported missing `mcp.ClientSession`
-  (`113 deselected, 21 skipped, 1 collection error`); the newest default run
-  progressed further, so this dependency result still needs supported-
-  environment reproduction.
-* **Files currently modified:**
-  `docs/architecture/daemon-only-retirement.md`, `src/sshpilot/main.py`,
-  `tests/daemon/test_launcher.py`, and `tests/test_daemon_reconnect_gtk.py`.
-  The migration implementation and passphrase repair are in committed
-  ancestors `57de9e18` and `fae52a61`; no unrelated changes were discarded.
-* **Current commit:** `fae52a61115cc9bd2d937eadafd51c1e71cb8c63`; parent
-  `57de9e1829048f19cde36d380964f86946d9603d`; migration cleanup commit under
-  review `170de28f3ad174ee80829ae6282d961d12d84bc0`; no commit has been
-  created for the current ledger/test-expectation edits.
-
-## 12. Completion checklist
-
-- [ ] client selection is daemon-only and readiness/capability precise
-- [ ] all saved connection reads/writes and metadata/groups are daemon-owned
-- [ ] effective config, unsaved-host identity, operation mode, and restore facts are daemon-owned
-- [ ] secrets/keys/known hosts/transfers/forwards/internal SSH have no frontend fallback
-- [ ] external terminal uses daemon-prepared non-secret SSH semantics
-- [ ] obsolete production branches/settings/controllers are removed
-- [ ] compatibility shims are intentional, documented, and bounded
-- [ ] current docs and generated artifacts describe reality
-- [ ] focused, architecture, API, integration, lint, compile, and practical suites pass
-- [ ] final audit has no unexplained legacy/in-process production matches
-- [ ] final evidence, exact commands, failures, and handoff are recorded here
-
-## 13. Current decision
-
-`NOT YET SAFE TO RETIRE`
-
-The production authority repairs and focused regression coverage are present,
-and the architecture/API/core and migration-focused suites pass in `.venv`.
-The decision remains conservative because the broad practical command has a
-reproducible event-test synchronization failure and 21 EasyEnv fixture
-contract errors, serial verification is incomplete due to a very slow native
-SCP test, and the operation-mode/effective-config/unsaved-host integration
-matrices are not complete. No production fallback is being restored while
-these gates remain open.
+**Current final decision: NOT YET SAFE TO RETIRE.**

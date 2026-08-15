@@ -31,6 +31,7 @@ ALLOWED_EDGES = {
         "sshpilot.api",  # API model layer is shared language (GTK-free leaf)
         "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # path helpers used by CLI
+        "sshpilot.platform.locking",  # shared settings transaction lock
         "sshpilot.ssh_config_document",  # GI-free lossless config document
         "sshpilot.ssh_config_formatter",  # GI-free managed-option registry
         "sshpilot.identity",  # GI-free identity-provider contract
@@ -47,6 +48,7 @@ ALLOWED_EDGES = {
         "sshpilot.core",
         "sshpilot.runtime_identity",
         "sshpilot.platform.paths",  # GI-free path helpers (headless composition)
+        "sshpilot.platform.locking",  # shared settings transaction lock
         # Daemon may import selected top-level headless helpers; GTK and
         # GObject adapters are forbidden. Registered GObject-adapter debt is
         # tracked in tests/core/test_dependency_boundary.py::DAEMON_DEBT.
