@@ -223,6 +223,37 @@ def test_noop_daemon_save_with_active_terminal_prompts_reconnect():
     assert terminal.connection is expected
 
 
+def test_noop_daemon_save_supplies_connection_id_for_secret_worker():
+    """A password/passphrase-only edit has no changed config fields, so the
+    fast no-RPC path fires. The secret-save worker still needs an
+    authoritative connection_id from the completion result — without it,
+    ConnectionDialog._store_secrets_then_save raises "Daemon secret save has
+    no authoritative mutation result" (regression: the fast path used to call
+    complete_save(True) with no result at all)."""
+    from sshpilot.api.models.connections import ConnectionMutationResult
+
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    results = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        __changed_fields=(),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: results.append((ok, args))
+    )
+
+    assert len(results) == 1
+    ok, args = results[0]
+    assert ok is True
+    assert args, "completion must receive a mutation result, not just ok=True"
+    mutation_result = args[0]
+    assert isinstance(mutation_result, ConnectionMutationResult)
+    assert mutation_result.connection_id == "demo"
+
+
 def test_daemon_reconnect_matches_authoritative_connection_id():
     window = _MutationWindow()
     class _ActiveConnection:

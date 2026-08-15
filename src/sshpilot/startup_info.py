@@ -287,9 +287,23 @@ class StartupInfo:
         registry = _daemon_read(reader, "registry")
         configuration = _daemon_read(reader, "configuration")
 
+        def _backend_entry(name):
+            backends = getattr(registry, "backends", ()) if registry is not None else ()
+            for backend in backends:
+                if getattr(backend, "name", "") == name:
+                    available = bool(getattr(backend, "available", False))
+                    accessible = available and not getattr(backend, "needs_unlock", False) \
+                        and not getattr(backend, "locked", False)
+                    entry = {'available': available, 'accessible': accessible}
+                    diagnostic = getattr(backend, "diagnostic", "")
+                    if diagnostic:
+                        entry['error'] = diagnostic
+                    return entry
+            return {'available': None, 'accessible': False}
+
         storage = {
-            'libsecret': {'available': None, 'accessible': False},
-            'keyring': {'available': None, 'accessible': False},
+            'libsecret': _backend_entry('libsecret'),
+            'keyring': _backend_entry('keyring'),
         }
         if registry is not None:
             storage['available_backends'] = [

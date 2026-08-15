@@ -6885,6 +6885,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     ) -> None:
         from .api import SshPilotError
         from .api.models.connections import (
+            ConnectionMutationResult,
             EDITABLE_CONFIG_FIELDS,
             ForwardingRule,
             forwarding_rule_to_dict,
@@ -6988,7 +6989,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if not connection_id:
                     connection_id = connection_id_for(dialog.connection)
                 if delta_available and not changed_fields:
-                    complete_save(True)
+                    # Nothing in the config changed, but a password/passphrase
+                    # save still needs an authoritative connection_id — the
+                    # secret worker cannot infer one from ``ok=True`` alone.
+                    unchanged_result = ConnectionMutationResult(
+                        connection_id=str(connection_id),
+                        nickname=(connection_data.get('nickname')
+                                  or getattr(dialog.connection, 'nickname', '')
+                                  or str(connection_id)),
+                        generation=int(getattr(dialog, '_daemon_generation', None) or 0),
+                        changed=False,
+                        changed_fields=(),
+                    )
+                    complete_save(True, unchanged_result)
                     if was_editing:
                         try:
                             new_connection = self._rebind_terminals_after_save(
