@@ -246,6 +246,53 @@ def test_filelisteditor_defers_passphrase_when_unlocked(monkeypatch):
     assert ed.pending_passphrase_operations() == [('store', '/k', 'secret')]
 
 
+def test_unchanged_loaded_passphrase_is_not_reverified_on_save():
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._verify = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("unchanged passphrase must not be reverified")
+    )
+    entry = DummyEntry("stored-secret")
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=entry,
+        _pass_path="/k",
+        _pass_norm="/k",
+        _pass_initial="stored-secret",
+    )]
+
+    assert ed._commit_passphrase(entry, "/k", "/k") is True
+    assert ed.pending_passphrase_operations() == []
+
+
+def test_new_passphrase_is_still_rejected_when_verification_fails():
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._verify = lambda *_args: False
+    entry = DummyEntry("new-secret")
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=entry,
+        _pass_path="/k",
+        _pass_norm="/k",
+        _pass_initial="old-secret",
+    )]
+
+    assert ed._commit_passphrase(entry, "/k", "/k") is False
+    assert ed.pending_passphrase_operations() is None
+
+
+def test_key_discovery_does_not_construct_default_manager_before_mode_confirmation():
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = types.SimpleNamespace(
+        client=object(), key_manager=None, _confirmed_operation_mode=None
+    )
+
+    assert dialog._discover_disk_keys() == []
+
+
 def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
     import sshpilot.secret_unlock_dialog as unlock_dialog

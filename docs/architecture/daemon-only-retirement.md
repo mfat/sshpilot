@@ -134,6 +134,7 @@ described in the handoff, not to `170de28f` alone.
 | R13 | Graph artifacts | committed `.codebase-memory` binaries caused dirty baseline | ignored local graph cache | REMOVED | deletion and `.gitignore` change applied; final status pending | 170de28f | Deletion is requested cleanup; graph can be regenerated locally |
 | R14 | Compatibility policy | model import shim and historical in-process references | documented bounded shim/history | IN PROGRESS | architecture/core/API run passed; final current-doc/source audit pending | 170de28f | Removal at next incompatible plugin/API window |
 | R15 | Full retirement audit | prior ledger asserted verification despite failures | 20-domain source-to-side-effect trace and final search | PENDING | final practical and serial runs pending | 170de28f | Cannot mark migration complete yet |
+| R16 | Connection-dialog passphrases | Every save reverified unchanged loaded passphrases and could report unavailable key management as “invalid” | Preserve unchanged daemon-loaded values; verify only edited values; no pre-confirmation default key manager | VERIFIED | `tests/test_connection_dialog_passphrase.py` — 17 passed; targeted Ruff/compile/diff checks passed | 170de28f | New/changed passphrases still fail closed; daemon mode must be confirmed before key actions |
 
 ## 6a. Source-to-side-effect trace
 
@@ -207,6 +208,7 @@ the status table and matrix below.
 | 2026-08-15 | Advertise external-terminal capability only when the daemon provider implements the typed preparation method | Advertise based only on a handler or let GTK rebuild SSH argv | Handshake availability must describe the actual daemon provider | dispatch handshake, `prepare_external_terminal_launch` |
 | 2026-08-15 | Keep API implementation version at 0.39 and repair the 0.39 documentation/snapshot rather than inventing 0.42 | Treat dirty generated additions as a version bump | Source authority and protocol compatibility remain 0.39/1.0; current additive surface is captured by the reviewed baseline | `api/version.py`, docs, generated artifacts |
 | 2026-08-15 | Persistent Docker password storage uses the same protected command-input frame as session credentials; the dialog callback is the only consent signal | Send password in ordinary RPC JSON or persist every “use once” entry | Secrets must not cross ordinary wire/log/DTO surfaces and storage consent must be explicit | daemon client/dispatch, Docker page |
+| 2026-08-15 | Connection-dialog saves do not reverify an unchanged passphrase loaded from daemon storage | Reverify every save or construct a default-scope frontend key manager | Unrelated edits must not fail because a stored key is temporarily unavailable; only edited secrets need validation | `FileListEditor._commit_passphrase`, `_discover_disk_keys`, connection-dialog save |
 
 ### Unsaved-host identity decision table
 
@@ -261,6 +263,7 @@ service tests and daemon-in-thread fixtures are test/composition usage only.
 | Ownership/boundaries | architecture/frontend-closure, AST/import guards | Pending final run; current graph/literal audit recorded above |
 | Startup/dialog/reload | focused startup, GTK callback, watcher/debounce tests | Startup 10 passed; window 4 passed; Preferences 9 passed; reload included in focused pass; lifecycle 20 passed |
 | Docker/secrets | provider, protected frame, persistence consent, no-leak tests | `tests/daemon/test_secret_dispatch.py` — 24 passed; Docker GUI module skipped because GUI environment is unavailable; full GUI/plugin evidence pending |
+| Connection-dialog passphrases | unchanged-value save, edited-value rejection, no pre-confirmation default key manager | `tests/test_connection_dialog_passphrase.py` — 17 passed |
 | Operation mode | transition, blockers, target/config/repository/hook/rollback/cleanup/restart faults | `tests/daemon/test_operation_mode_service.py` — 12 passed, including canonical missing-config and four-writer concurrency; complete live daemon fault/restart matrix pending |
 | Effective config | Include/glob/cycle/tokens/repeated/Match/paths/roots and canonical facade guard | 134 effective/core tests pass; default-path regression is blocked by malformed/unreadable container system SSH config; parity/guard/full run pending |
 | Unsaved host | ID, alias/direct, user inference, Include/Match, case/IP/port/ProxyJump/non-SSH/rename | Existing core tests pass; required matrix pending |
@@ -338,8 +341,9 @@ in-process remote backend definition.
 * **Last completed item:** repaired the confirmed capability-enum bug in
   `MainWindow`, added the deterministic settings-writer lock test, restored
   Manage Files preference semantics, added protected Docker password consent,
-  added startup watcher-race coverage, and re-audited the external-launch
-  handshake through handler/service ownership using the code graph.
+  added startup watcher-race coverage, re-audited the external-launch
+  handshake through handler/service ownership using the code graph, and fixed
+  connection-dialog saves incorrectly rejecting unchanged stored passphrases.
 * **Current in-progress item:** final hygiene and verification after the
   effective-config environment failure was reproduced precisely.
 * **Exact next action:** run the following command in the supported project
@@ -395,7 +399,7 @@ in-process remote backend definition.
   `src/sshpilot/core/{connection_application_service.py,ssh_config_effective.py}`;
   `src/sshpilot/core/connections/{repository.py,ssh_config_loader.py,ssh_config_store.py}`;
   `src/sshpilot/daemon/{config_reload.py,connection_launch_provider.py,connection_secret_provider.py,dispatch.py,operation_mode_service.py,server.py}`;
-  `src/sshpilot/{effective_config_check.py,preferences.py,ssh_config_utils.py,startup_info.py,terminal_manager.py,window.py,window_file_manager.py}`;
+  `src/sshpilot/{connection_dialog.py,effective_config_check.py,preferences.py,ssh_config_utils.py,startup_info.py,terminal_manager.py,window.py,window_file_manager.py}`;
   `src/sshpilot/plugins/builtin/docker_manager/page.py`;
   `tests/api/snapshots/public_api.json`, `tests/api/snapshots/versions/0.39.json`;
   `tests/api/{test_capabilities_contract.py,test_connection_models.py}`;
@@ -404,7 +408,7 @@ in-process remote backend definition.
   `tests/daemon/{test_config_reload.py,test_connection_mutations.py,test_connection_secret_provider.py,test_lifecycle_phase13_3.py,test_operation_mode_service.py,test_secret_dispatch.py}`;
   `tests/daemon/test_config_reload_coordinator.py`,
   `tests/test_effective_config_checker_generation.py`,
-  `tests/{test_effective_config_diff.py,test_gui_docker_password.py,test_manage_files_ui.py,test_preferences_operation_mode.py,test_startup_behavior.py,test_window_client_composition.py,test_window_daemon_errors.py}`.
+  `tests/{test_connection_dialog_passphrase.py,test_effective_config_diff.py,test_gui_docker_password.py,test_manage_files_ui.py,test_preferences_operation_mode.py,test_startup_behavior.py,test_window_client_composition.py,test_window_daemon_errors.py}`.
 * **Current commit:** `170de28f3ad174ee80829ae6282d961d12d84bc0`; no commit has
   been created for this repair pass. Current modified/deleted files are the
   paths reported by `git status --short`; no unrelated changes were discarded.

@@ -1335,6 +1335,18 @@ class FileListEditor(Adw.PreferencesGroup):
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
         text = pass_entry.get_text()
+        # A passphrase loaded from the daemon is already an authoritative
+        # stored value.  Saving an unrelated connection field must not ask
+        # OpenSSH to re-verify that value: the key may have been rotated,
+        # temporarily unavailable, or the dialog may have been opened while
+        # daemon mode confirmation was still pending.  Only a new/edited value
+        # needs validation before it is queued for protected storage.
+        for row in getattr(self, '_rows', ()):
+            if getattr(row, '_pass_entry', None) is pass_entry:
+                if text == (getattr(row, '_pass_initial', '') or ''):
+                    pass_entry.remove_css_class('error')
+                    return True
+                break
         if text and callable(self._verify):
             secret = bytearray(text.encode("utf-8"))
             try:
@@ -2008,19 +2020,10 @@ class ConnectionDialog(
                 parent = None
         key_manager = getattr(parent, 'key_manager', None)
         if key_manager is None:
-            client = getattr(parent, 'client', None)
-            if client is not None:
-                try:
-                    from .api.models.keys import KeyStoreScope
-                    from .key_manager import KeyManager
-
-                    key_manager = KeyManager(
-                        client,
-                        scope=getattr(parent, '_key_scope', KeyStoreScope.DEFAULT),
-                    )
-                except Exception:
-                    logger.debug("daemon key manager unavailable", exc_info=True)
-                    key_manager = None
+            # Do not construct a DEFAULT-scope manager while the daemon's
+            # semantic operation mode is still unconfirmed.  The main window
+            # creates the correctly scoped manager only after confirmation.
+            return []
         if key_manager is None:
             return []
         out = []
