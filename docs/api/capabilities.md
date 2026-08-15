@@ -10,6 +10,7 @@ Absence never enables a frontend fallback.
 <!-- api-capability: broadcast.events -->
 <!-- api-capability: plugins.settings.read -->
 <!-- api-capability: plugins.settings.write -->
+<!-- api-capability: operation.mode -->
 
 Capabilities report implemented runtime support. The existence of a method,
 event identifier, or schema does not imply support. Clients must check optional
@@ -19,12 +20,10 @@ The existing `daemon.control` capability also covers the additive
 `daemon.set_log_level` method. It changes the daemon's managed handler levels;
 it does not expose daemon log files over the API.
 
-`InProcessClient` advertises exactly the three connection capabilities. The
-daemon additionally advertises session lifecycle, narrow terminal/interaction
-capabilities, and Phase 10 SFTP/transfer/forward capabilities when the
-corresponding runtimes are available and the client negotiated the required
-binary frames; `DaemonClient` returns that negotiated response rather than a
-hard-coded local assumption.
+The daemon advertises connection, terminal, interaction, SFTP, transfer and
+forward capabilities when the corresponding runtimes are available and the
+client negotiated the required binary frames. `DaemonClient` returns that
+negotiated response rather than a hard-coded local assumption.
 
 Stable IDs do not add a capability: `ConnectionId` was already opaque, all
 current providers emit the stable form, and clients must not branch on its
@@ -95,12 +94,12 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 
 | Identifier | Meaning | Provider/status | Related methods | Related events | Dependencies | Introduced |
 | --- | --- | --- | --- | --- | --- | --- |
-| `connections.read` | Read saved connection DTO snapshots | `InProcessClient` and daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | `ConnectionRepository` / `ConnectionApplicationService` on daemon; compatibility adapter for in-process clients | v1 |
-| `connections.events` | Subscribe to live connection lifecycle events | `InProcessClient` and daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
-| `connections.write` | Create, duplicate, update, and delete saved connections | `InProcessClient` and daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | `ConnectionRepository` / `ConnectionApplicationService` on daemon; compatibility adapter for in-process clients | v1 |
-| `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented; in-process unsupported | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
-| `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented; in-process unsupported | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
-| `sessions.command` | Open a session that runs an explicit remote command inside the connection (for example `docker exec -it <container> sh` or `docker logs -f <container>`) instead of a plain interactive shell | Daemon: Implemented; in-process unsupported | `open_session` with `remote_command` | Session lifecycle events | `SessionRuntime`, `DaemonConnectionLaunchProvider` (argv `ssh <alias> <remote_command>`) | v1 / API 0.30 |
+| `connections.read` | Read saved connection DTO snapshots | Daemon: Implemented | `list_connections`, `get_connection`; wire `connections.list`, `connections.get` | None required | `ConnectionRepository` / `ConnectionApplicationService` on daemon | v1 |
+| `connections.events` | Subscribe to live connection lifecycle events | Daemon: Implemented | `subscribe_events` | `connection.created`, `connection.updated`, `connection.deleted` | Typed event codec and bounded delivery queues | v1 |
+| `connections.write` | Create, duplicate, update, and delete saved connections | Daemon: Implemented | `create_connection`, `duplicate_connection`, `update_connection`, `delete_connection`; wire `connections.create`, `connections.duplicate`, `connections.update`, `connections.delete` | `connection.created`, `connection.updated`, `connection.deleted` | `ConnectionRepository` / `ConnectionApplicationService` on daemon | v1 |
+| `sessions.read` | List and inspect daemon-lifetime session records | Daemon: Implemented | `list_sessions`, `get_session` | Session lifecycle events | `SessionRuntime` | v1 / API 0.6 |
+| `sessions.write` | Open, logically attach/detach, and close sessions | Daemon: Implemented | `open_session`, `attach_session`, `detach_session`, `close_session` | Session lifecycle events | `SessionRuntime` and process-runner boundary | v1 / API 0.6 |
+| `sessions.command` | Open a session that runs an explicit remote command inside the connection (for example `docker exec -it <container> sh` or `docker logs -f <container>`) instead of a plain interactive shell | Daemon: Implemented | `open_session` with `remote_command` | Session lifecycle events | `SessionRuntime`, `DaemonConnectionLaunchProvider` (argv `ssh <alias> <remote_command>`) | v1 / API 0.30 |
 | `sessions.events` | Receive daemon session lifecycle events | Daemon: Implemented | `subscribe_events` | `session.created`, `session.state_changed`, `session.exited`, `session.closed` | Existing bounded event multiplexing | v1 / API 0.6 |
 | `terminal` | Legacy broad terminal identifier | Deprecated and never advertised | None | None | Replaced by narrow capabilities | v1 |
 | `terminal.attach` | Legacy attach identifier | Deprecated and never advertised | None | None | Attachment remains under `sessions.write` | v1 |
@@ -147,16 +146,15 @@ used because GTK would otherwise have no truthful live-refresh guarantee.
 | `connections.config.read` | Read full editor state including filesystem paths | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_READ` capability | v1 |
 | `connections.config.write` | Write connection config fields beyond nickname/host/user/port | Schema only; no client method | None | None defined | Gated by `CONNECTIONS_CONFIG_WRITE` capability | v1 |
 | `connections.secrets.write` | Create, update, and delete passwords, passphrases, and plugin secrets through authorized daemon RPCs | Daemon: Implemented | `store_connection_password`, `delete_connection_password`, `store_key_passphrase`, `delete_key_passphrase`; wire store/delete methods | None defined | Gated by `CONNECTIONS_SECRETS_WRITE` capability | v1 |
-| `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | `InProcessClient` and daemon: Implemented | `update_connection_metadata`, `add_tag_to_connections`; wire `connections.update_metadata`, `connections.metadata.add_tag` | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
-| `connections.groups` | Assign and reorder connections within groups | `InProcessClient` and daemon: Implemented | `assign_connection_to_group`, `create_group`, `delete_group`, `rename_group`; wire `connections.assign_to_group`, `connections.create_group`, `connections.delete_group`, `connections.rename_group` | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
-| `connections.split` | Split a connection block from a multi-host group | `InProcessClient` and daemon: Implemented | `split_connection`; wire `connections.split` | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
+| `connections.metadata.write` | Write non-SSH metadata (tags, aliases, WoL settings) | Daemon: Implemented | `update_connection_metadata`, `add_tag_to_connections`; wire `connections.update_metadata`, `connections.metadata.add_tag` | None defined | Gated by `CONNECTIONS_METADATA_WRITE` capability | v1 |
+| `connections.groups` | Assign and reorder connections within groups | Daemon: Implemented | `assign_connection_to_group`, `create_group`, `delete_group`, `rename_group`; wire `connections.assign_to_group`, `connections.create_group`, `connections.delete_group`, `connections.rename_group` | None defined | Gated by `CONNECTIONS_GROUPS` capability | v1 |
+| `connections.split` | Split a connection block from a multi-host group | Daemon: Implemented | `split_connection`; wire `connections.split` | None defined | Gated by `CONNECTIONS_SPLIT` capability | v1 |
 
 <!-- api-capability: connections.read -->
 ## `connections.read`
 
-Implemented and contract-tested across both clients. The providers return
-equivalent secret-free connection summaries/details. `InProcessClient` also
-translates manager connection signals into frontend-neutral events.
+Implemented and contract-tested over the daemon transport. The provider
+returns secret-free connection summaries/details and repository events.
 
 <!-- api-capability: connections.events -->
 ## `connections.events`
@@ -251,7 +249,7 @@ strictly limited to 1–1000.
 
 Daemon-only bounded replay. The JSON response carries retained-range and
 truncation metadata; replay bytes use the same binary output frames as live
-data. `InProcessClient` remains unsupported.
+data.
 
 <!-- api-capability: interactions -->
 ## `interactions`
@@ -306,7 +304,7 @@ the narrow `sftp.read` / `sftp.write` / `sftp.events` / `sftp.metadata` /
 ## `sftp.read`
 
 Daemon-only listing of SFTP services and remote directories when the SFTP
-runtime is present. `InProcessClient` returns `unsupported_capability`.
+runtime is present.
 
 <!-- api-capability: sftp.write -->
 ## `sftp.write`
@@ -634,3 +632,8 @@ presence.
 Capabilities should represent meaningful feature groups. Do not create one for
 every trivial method; add one when clients need to negotiate a coherent optional
 feature.
+<!-- api-capability: terminal.external_launch -->
+## `terminal.external_launch`
+
+The daemon prepares a non-secret SSH launch specification for a frontend-owned
+external terminal. Secret autofill is not supported.

@@ -58,14 +58,10 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         config['file_manager'] = file_manager_defaults.copy()
         updated = True
     else:
-        if 'force_internal' not in file_manager_cfg:
-            file_manager_cfg['force_internal'] = bool(
-                file_manager_defaults.get('force_internal', False)
-            )
-            updated = True
-        elif not isinstance(file_manager_cfg['force_internal'], bool):
-            file_manager_cfg['force_internal'] = bool(file_manager_cfg['force_internal'])
-            updated = True
+        for obsolete_key in ('force_internal', 'first_run_prompt_shown'):
+            if obsolete_key in file_manager_cfg:
+                file_manager_cfg.pop(obsolete_key, None)
+                updated = True
 
         if 'open_externally' not in file_manager_cfg:
             file_manager_cfg['open_externally'] = bool(
@@ -74,17 +70,6 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
             updated = True
         elif not isinstance(file_manager_cfg['open_externally'], bool):
             file_manager_cfg['open_externally'] = bool(file_manager_cfg['open_externally'])
-            updated = True
-
-        if 'first_run_prompt_shown' not in file_manager_cfg:
-            file_manager_cfg['first_run_prompt_shown'] = bool(
-                file_manager_defaults.get('first_run_prompt_shown', False)
-            )
-            updated = True
-        elif not isinstance(file_manager_cfg['first_run_prompt_shown'], bool):
-            file_manager_cfg['first_run_prompt_shown'] = bool(
-                file_manager_cfg['first_run_prompt_shown']
-            )
             updated = True
 
         def _ensure_non_negative_int(key: str) -> None:

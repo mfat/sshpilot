@@ -44,7 +44,6 @@ APPROVED_BACKEND_OPS = frozenset(
         (("providers/system_agent.py", "subprocess"), "M7"),
         (("secret_storage.py", "SecretManager"), "M5"),
         (("secret_storage.py", "subprocess"), "M5"),
-        (("sftp_utils.py", "subprocess"), "frontend"),
         (("ssh_config_utils.py", "ssh_binary"), "M7"),
         (("ssh_config_utils.py", "subprocess"), "M7"),
         (("ssh_multiplex.py", "ssh_binary"), "M7"),

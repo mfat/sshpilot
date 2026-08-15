@@ -3,6 +3,8 @@ Backup and Restore Manager for sshPilot
 Handles import/export of SSH and application configuration
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
@@ -10,10 +12,18 @@ import os
 import shlex
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple, List
+from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple, List
 
-from .platform_utils import get_config_dir, get_ssh_dir, is_flatpak
-from .config import Config, CONFIG_VERSION
+from .platform.paths import get_config_dir, get_ssh_dir
+from .core.settings import CONFIG_VERSION
+
+if TYPE_CHECKING:
+    from .config import Config
+
+
+def is_flatpak() -> bool:
+    """Return whether the current daemon/runtime is inside Flatpak."""
+    return os.environ.get("FLATPAK_ID") is not None or os.path.exists("/.flatpak-info")
 
 logger = logging.getLogger(__name__)
 

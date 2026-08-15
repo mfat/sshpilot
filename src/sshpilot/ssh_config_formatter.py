@@ -1,8 +1,8 @@
 """Serialization of connection data to ssh_config text.
 
-Pure functions — no filesystem, no GObject, no manager state. The
-ConnectionManager owns reading/writing files (atomic writes, signals) and
-delegates rendering here:
+Pure functions — no filesystem, no GObject, no manager state. The daemon
+repository owns reading/writing files (atomic writes, signals) and delegates
+rendering here:
 
 - ``format_ssh_config_entry(data)`` renders a complete Host block from a
   connection-data dict (managed directives + extra_ssh_config verbatim).

@@ -48,11 +48,12 @@ the file, process, secret, or service represented by that DTO.
 | Identity provider state, agent inspection, effective identities, and native deployment | `IdentityStateService` and `DaemonIdentityService` | `identity.*` APIs; GTK receives safe metadata and operation snapshots only |
 | Authorized-key documents and file replacement | `SftpServiceRuntime` plus `DaemonIdentityService` | Typed bounded file reads/replacements; GTK stages and presents document edits |
 
-`ConnectionManager`, `GroupManager`, `SecretManager`, `BackupManager`, and
-other GObject or compatibility adapters may remain behind explicit compatibility
-routes. They are not the authoritative production owners when the daemon route
-is selected. Production GTK controllers use `SshPilotClient` and do not
-instantiate backend services or perform backend I/O.
+`ConnectionPresentationStore` is the only connection object retained by GTK;
+it is a read-only DTO projection. The old stateful `ConnectionManager` is gone
+from production and survives only as a model-only import shim for the bounded
+compatibility window. `BackupManager` and the other core services are composed
+inside the daemon, never instantiated by GTK. Production GTK controllers use
+`SshPilotClient` and do not perform backend I/O.
 
 ## Current subsystem ownership
 
@@ -201,10 +202,11 @@ overrides. Preferences calls `get_global_ssh_overrides`,
 compose or persist a competing `ssh_overrides` list. Updates are normalized,
 revision-checked, transaction-locked, and atomically persisted.
 
-Per-host behavior remains in OpenSSH configuration. Use `ssh -G` when code must
-inspect effective configuration, and preserve `Include`, `Match`, `ProxyJump`,
-`ProxyCommand`, identity, certificate, forwarding, host-key, and authentication
-semantics supplied by OpenSSH.
+Per-host behavior remains in OpenSSH configuration. The daemon invokes `ssh -G`
+when it must inspect effective configuration and returns normalized comparison
+DTOs; GTK never chooses `-F`, reads the config root, or runs that probe. Preserve
+`Include`, `Match`, `ProxyJump`, `ProxyCommand`, identity, certificate,
+forwarding, host-key, and authentication semantics supplied by OpenSSH.
 
 ## Shared long-running operations
 

@@ -276,6 +276,11 @@ class ConfigurationReloadCoordinator:
                 daemon=True,
             )
             self._thread.start()
+
+    def refresh_paths(self) -> None:
+        """Refresh the watched Include graph after a daemon-owned mode switch."""
+        paths = set(self.backend.discover_paths())
+        self.watcher.replace_paths(paths)
         logger.info(
             "Daemon external configuration watcher active paths=%d",
             len(paths),

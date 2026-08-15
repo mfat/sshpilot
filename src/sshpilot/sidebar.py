@@ -2345,11 +2345,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Open the effective-config viewer for this connection."""
         try:
             window = self.get_root()
-            cm = getattr(window, 'connection_manager', None)
-            if cm is None:
-                return
-            from .effective_config_dialog import EffectiveConfigDialog
-            EffectiveConfigDialog.for_connection(window, self.connection, cm)
+            opener = getattr(window, "show_effective_config_for_connection", None)
+            if callable(opener):
+                opener(self.connection)
         except Exception:
             logger.debug("Failed to open effective config viewer from row", exc_info=True)
 

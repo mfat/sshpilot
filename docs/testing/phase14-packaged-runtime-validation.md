@@ -1,5 +1,9 @@
 # Phase 14 packaged runtime validation
 
+> Historical validation record. The mode-environment check below records the
+> packaging state of that release; current operation mode is daemon-owned and
+> is not selected by a frontend environment variable.
+
 ## Status
 
 ```text
@@ -7,7 +11,7 @@ Packaged runtime: PASS (Flatpak Flathub io.github.mfat.sshpilot 5.7.2)
 ```
 
 Installed from Flathub (`flatpak install --user flathub io.github.mfat.sshpilot`)
-and launched under `xvfb-run` with isolated app HOME + `SSHPILOT_CLIENT_MODE=daemon`.
+and launched under `xvfb-run` with an isolated app HOME and daemon runtime.
 
 Evidence: `/tmp/phase14-baseline/flatpak_e2e_evidence.json`
 

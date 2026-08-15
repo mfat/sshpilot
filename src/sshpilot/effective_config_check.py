@@ -1,18 +1,16 @@
-"""Background, cached check of connections against their effective SSH config.
+"""Background, cached check of daemon-provided effective SSH comparisons.
 
-The sidebar shows a warning icon on a connection whose host block does not match
-what SSH actually resolves (a ``Host *`` global, a directive before the first
-``Host`` block, or an included file overrides/adds settings). Running ``ssh -G``
-is too slow for the row/menu build path, so this service:
+The sidebar shows a warning icon on a connection whose authored host block does
+not match what the daemon's OpenSSH resolver returns. The GTK worker only calls
+the typed daemon API, so it never selects a config root or runs OpenSSH itself.
+This service:
 
 - caches each connection's result until :meth:`invalidate`,
 - computes off the main thread on a single persistent worker (throttled — one
   connection at a time),
 - reads (:meth:`status`) are O(1) dict lookups, so the sidebar hot path does no
   work,
-- fast-paths the common case: if the config has no global-scope directives at
-  all, nothing can override a host, so every connection matches without a
-  per-host ``ssh -G`` (that fact is probed once per config and cached).
+- rejects stale results when a connection or daemon generation changes.
 
 Results are delivered back on the GTK main thread via ``GLib.idle_add``.
 """
@@ -20,9 +18,7 @@ Results are delivered back on the GTK main thread via ``GLib.idle_add``.
 from __future__ import annotations
 
 import logging
-import os
 import queue
-import tempfile
 import threading
 from typing import Callable, Optional
 
@@ -32,14 +28,13 @@ logger = logging.getLogger(__name__)
 
 # A host name no real ``Host`` block should match, used to probe whether the
 # config carries any global-scope directives (it still matches ``Host *``).
-_PROBE_HOST = "sshpilot-effective-config-probe-donotmatch"
-
-
 class EffectiveConfigChecker:
     def __init__(self, connection_manager,
-                 on_result: Optional[Callable[[str, bool], None]] = None) -> None:
-        self._cm = connection_manager
+                 on_result: Optional[Callable[[str, bool], None]] = None,
+                 client_provider: Optional[Callable[[], object]] = None) -> None:
+        del connection_manager  # retained for constructor compatibility only
         self._on_result = on_result
+        self._client_provider = client_provider
         self._cache: dict[str, bool] = {}
         self._queued: set[str] = set()
         # Per-nickname generation. A check captures the generation at enqueue
@@ -47,8 +42,6 @@ class EffectiveConfigChecker:
         # matches, so an in-flight compute that finishes after an invalidate can
         # never overwrite the cache with a stale value.
         self._gen: dict[str, int] = {}
-        self._globals_present: Optional[bool] = None  # probed lazily, per config
-        self._globals_gen = 0  # bumped on full invalidate; guards the probe cache
         self._lock = threading.Lock()
         self._queue: "queue.Queue" = queue.Queue()
         self._thread: Optional[threading.Thread] = None
@@ -85,8 +78,6 @@ class EffectiveConfigChecker:
             if nickname is None:
                 self._cache.clear()
                 self._queued.clear()
-                self._globals_present = None  # config changed -> re-probe
-                self._globals_gen += 1        # cancel any in-flight probe
                 for key in self._gen:
                     self._gen[key] += 1
             else:
@@ -130,71 +121,19 @@ class EffectiveConfigChecker:
                 GLib.idle_add(self._on_result, nickname, differs)
 
     def _compute(self, connection) -> Optional[bool]:
-        # Fast path: no global-scope directives anywhere -> nothing overrides a
-        # host, so it matches without a per-host ssh -G.
-        if not self._config_has_globals():
-            return False
-        host = getattr(connection, 'nickname', '') or ''
-        if not host:
+        """Ask the daemon for the generation-tagged effective-config result."""
+        if self._client_provider is None:
             return None
-        from .effective_config_dialog import saved_connection_block
-        from .ssh_config_utils import diff_effective_config
-        own_block = saved_connection_block(self._cm, connection)
         try:
-            root_config = connection._resolve_config_override_path()
+            client = self._client_provider()
+            if client is None:
+                return None
+            from .api.connection_identity import connection_id_for
+
+            result = client.get_effective_config(connection_id_for(connection))
+            if not result.available:
+                return None
+            return bool(result.has_diff)
         except Exception:
-            root_config = None
-        result = diff_effective_config(host, root_config, own_block)
-        return None if result is None else bool(result.get('has_diff'))
-
-    def _config_has_globals(self) -> bool:
-        # Wildcard/negated Host blocks (Host *, Host prod-*, Host !x) are tracked
-        # in rules and may match some connection, so force per-host checking —
-        # the sentinel probe alone would miss host-specific patterns it doesn't
-        # happen to match. The probe is only needed for the untracked case:
-        # directives before the first Host block.
-        if getattr(self._cm, 'rules', None):
-            return True
-        with self._lock:
-            cached = self._globals_present
-            gen = self._globals_gen
-        if cached is not None:
-            return cached
-        present = self._probe_globals()
-        with self._lock:
-            # Only cache if no invalidate happened while probing (else the probe
-            # ran against a now-stale config); this call still returns its own
-            # result and the next one re-probes.
-            if gen == self._globals_gen:
-                self._globals_present = present
-        return present
-
-    def _probe_globals(self) -> bool:
-        """Does the config carry any global-scope directive?
-
-        Compares the effective config of a sentinel host (which no specific
-        ``Host`` block matches) between the real config and an empty one. A
-        difference means there is a ``Host *`` block or a directive before the
-        first ``Host`` — i.e. something that applies to every host. Errors are
-        treated as "yes" so the correct (per-host) path runs.
-        """
-        from .ssh_config_utils import get_effective_ssh_config, _effective_config_lines
-        root = getattr(self._cm, 'ssh_config_path', None)
-        if not root:
-            return True
-        empty_fd, empty_path = tempfile.mkstemp(prefix='.sshpilot-empty-', suffix='.conf')
-        try:
-            os.close(empty_fd)
-            with_root = get_effective_ssh_config(_PROBE_HOST, config_file=root)
-            defaults = get_effective_ssh_config(_PROBE_HOST, config_file=empty_path)
-        except Exception:
-            logger.debug("globals probe failed", exc_info=True)
-            return True
-        finally:
-            try:
-                os.unlink(empty_path)
-            except OSError:
-                pass
-        if not with_root or not defaults:
-            return True
-        return _effective_config_lines(with_root) != _effective_config_lines(defaults)
+            logger.debug("daemon effective-config check failed", exc_info=True)
+            return None

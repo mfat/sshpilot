@@ -56,19 +56,18 @@ The broker confirms authentication through OpenSSH's owned ControlMaster
 status channel, then calls the selected backend and clears the staged value.
 Failure, cancellation, exit, or shutdown clears it without storage.
 
-Locked KDBX/Bitwarden master-password prompts remain a distinct local backend
-unlock concern. Phase 8 never sends a backend master password as an SSH
+Locked KDBX/Bitwarden master-password prompts remain a distinct daemon-owned
+secret-backend unlock concern. Phase 8 never sends a backend master password as an SSH
 password/passphrase response; failed automatic lookup falls back to direct
 typed SSH credential entry.
 
-### Phase 9.1 GTK ownership
+### GTK ownership
 
-For the **daemon SSH route**, GTK resolves route and daemon readiness before any
-vault unlock prompt. Unlock is backend unlock only — GTK must not retrieve the
-SSH password/passphrase into process memory merely because the vault was
-unlocked. The daemon interaction broker remains authoritative for SSH secrets.
-The **legacy local** route keeps GTK askpass/secret preparation. Daemon
-readiness failure must not trigger legacy secret preparation or local SSH spawn.
+GTK resolves daemon readiness before any vault unlock prompt. Unlock is backend
+unlock only — GTK must not retrieve the SSH password/passphrase into process
+memory merely because the vault was unlocked. The daemon interaction broker
+remains authoritative for SSH secrets. If it is unavailable, the operation
+stays unavailable; GTK never prepares a local secret or spawns local SSH.
 
 ## Host keys
 

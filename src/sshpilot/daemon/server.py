@@ -194,6 +194,7 @@ class CoreServices:
     secrets: Any = None
     identity: Any = None
     operations: Any = None
+    operation_mode: Any = None
     scp_backend: Any = None
     plugin_settings: Any = None
 
@@ -318,6 +319,8 @@ class DaemonServer:
         self._secrets_service: Any = None
         self._identity_service: Any = None
         self._operation_runtime: Any = None
+        self._operation_mode_service: Any = None
+        self._readiness_manager: Optional[Any] = None
         self._session_runtime: Optional[SessionRuntime] = None
         self._sftp_runtime: Optional[SftpServiceRuntime] = None
         self._transfer_runtime: Optional[TransferRuntime] = None
@@ -534,7 +537,7 @@ class DaemonServer:
         selector = selectors.DefaultSelector()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         gate_terminal_evidence = False
-        self._readiness_manager: Optional[Any] = None
+        self._readiness_manager = None
         try:
             old_umask = os.umask(0o177)
             try:
@@ -579,6 +582,7 @@ class DaemonServer:
                 self._secrets_service = core.secrets
                 self._identity_service = core.identity
                 self._operation_runtime = core.operations
+                self._operation_mode_service = core.operation_mode
                 scp_backend = core.scp_backend
                 plugin_settings = core.plugin_settings
             else:
@@ -758,6 +762,7 @@ class DaemonServer:
                 secrets_service=self._secrets_service,
                 identity_service=self._identity_service,
                 operation_runtime=self._operation_runtime,
+                operation_mode=self._operation_mode_service,
                 broadcast_service=self._broadcast_service,
                 plugin_settings=plugin_settings,
                 command_input_waiter=self._wait_command_input,
@@ -825,6 +830,40 @@ class DaemonServer:
                 poll_interval=self.configuration_poll_interval,
             )
             self._configuration_reload.start()
+        if self._operation_mode_service is not None:
+            self._operation_mode_service.set_runtime_hooks(
+                resource_probe=self._operation_mode_blockers,
+                on_committed=self._refresh_configuration_paths,
+            )
+
+    def _operation_mode_blockers(self) -> tuple[str, ...]:
+        """Return live resources that cannot safely survive a root switch."""
+        counts = self.collect_resource_counts()
+        blockers = []
+        if counts.sessions_active:
+            blockers.append("sessions")
+        if counts.sftp_active:
+            blockers.append("sftp")
+        if counts.transfers_queued or counts.transfers_starting or counts.transfers_running:
+            blockers.append("transfers")
+        if counts.forwards_active:
+            blockers.append("forwards")
+        if counts.interactions_pending:
+            blockers.append("interactions")
+        runtime = self._operation_runtime
+        records = getattr(runtime, "_records", {}) if runtime is not None else {}
+        if any(
+            getattr(getattr(item, "state", None), "value", None)
+            in {"queued", "running"}
+            for item in records.values()
+        ):
+            blockers.append("operations")
+        return tuple(blockers)
+
+    def _refresh_configuration_paths(self) -> None:
+        coordinator = self._configuration_reload
+        if coordinator is not None:
+            coordinator.refresh_paths()
 
     def _build_readiness_manager(self) -> Optional[Any]:
         """Construct the OpenSSH diagnostics readiness owner for this instance.
@@ -1928,6 +1967,7 @@ class DaemonServer:
         connection_service = self._connection_service
         self._connection_service = None
         self._session_runtime = None
+        self._operation_mode_service = None
         self._sftp_runtime = None
         self._transfer_runtime = None
         self._forward_runtime = None

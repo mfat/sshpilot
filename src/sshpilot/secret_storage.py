@@ -17,7 +17,7 @@ Built-in backends:
   Vaultwarden, and any account, since which server/account it talks to is the CLI's
   own config + the optional ``BITWARDENCLI_APPDATA_DIR`` profile). *Session-backed*:
   must be unlocked before secrets are readable. The ``BW_SESSION`` token from unlock is
-  kept in-process and exported to the env so the ``--askpass`` subprocess can read
+  kept in the daemon process and exported only to daemon-owned helper environments
   non-interactively; the whole vault is cached in memory on unlock so lookups need no
   further ``bw`` spawn.
 - ``agent`` — the "don't store secrets" choice: a null backend that persists
@@ -45,7 +45,7 @@ Operations:
   ``bw`` on PATH), operations resolve to nothing/False **and a warning is logged** —
   the failure is surfaced, not silent.
 
-The module is GTK-free so it can be imported by the ``--askpass`` subprocess; it
+The module is GTK-free so it can be imported by daemon-owned helper processes; it
 lazily imports ``Secret`` and ``keyring``.
 
 **Backward compatibility:** the ``SecretSpec`` builders reproduce the exact
@@ -780,7 +780,7 @@ class BitwardenBackend(SecretBackend):
     """Bitwarden backend driving the ``bw`` CLI.
 
     *Session-backed*: :meth:`unlock` runs ``bw unlock`` and caches the returned
-    ``BW_SESSION`` token (in-process **and** in ``os.environ`` so the ``--askpass``
+    ``BW_SESSION`` token (in-process **and** in ``os.environ`` for daemon-owned
     subprocess, which inherits the env, can read non-interactively). The token is kept
     until :meth:`lock` / shutdown, or until ``secrets.session_timeout`` minutes of idle
     (propagated as ``SSHPILOT_SECRET_SESSION_TIMEOUT`` seconds; ``0`` = no timeout, the
@@ -1774,7 +1774,7 @@ class KdbxBackend(SecretBackend):
     KDBX is a static encrypted file (no session in the format); we keep a per-launch in-memory
     "session" purely for usability: :meth:`unlock` opens the file with the master password (+
     optional key file), caches the opened DB, and exports the derived ``transformed_key`` as
-    ``SSHPILOT_KDBX_KEY`` so the ``--askpass`` subprocess can open the file fast (no re-running
+    ``SSHPILOT_KDBX_KEY`` so a daemon-owned helper can open the file fast (no re-running
     Argon2) without re-prompting — the same env posture as Bitwarden's ``BW_SESSION``. The
     database/keyfile paths come from the env (``SSHPILOT_KDBX_DATABASE``/``_KEYFILE``), set from
     config by the connection manager / Preferences. Entries live in a dedicated ``sshPilot``

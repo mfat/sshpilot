@@ -25,7 +25,7 @@ except Exception:
 # instantiates a local SecretManager (the legacy libsecret/keyring probe is gone).
 
 from . import __version__
-from .platform_utils import is_macos, is_flatpak, get_config_dir, get_ssh_dir, get_sshpass_path
+from .platform_utils import is_macos, is_flatpak, get_sshpass_path
 
 
 logger = logging.getLogger(__name__)
@@ -64,8 +64,10 @@ class StartupInfo:
     CHECK_FAIL = "[FAIL]"
     CHECK_INFO = "[INFO]"
     
-    def __init__(self, isolated: bool = False, verbose: bool = False, config=None):
+    def __init__(self, isolated: bool = False, verbose: bool = False, config=None,
+                 confirmed_mode=None):
         self.isolated = isolated
+        self.confirmed_mode = confirmed_mode
         # The concise (non-verbose) summary only reads the SSH version and the
         # storage backend label, so the extra tool/keyring probes are gathered
         # only when they'll actually be printed — they otherwise cost subprocess
@@ -324,26 +326,10 @@ class StartupInfo:
     
     def _get_config_info(self):
         """Get configuration information"""
-        config_dir = get_config_dir()
-        ssh_dir = get_ssh_dir()
-        
-        # SSH config file location
-        if self.isolated:
-            ssh_config_file = os.path.join(config_dir, "config")
-        else:
-            ssh_config_file = os.path.join(ssh_dir, "config")
-        
-        # App config file location
-        app_config_file = os.path.join(config_dir, "config.json")
-        
+        mode = getattr(self.confirmed_mode, "value", self.confirmed_mode)
         return {
-            'isolated_mode': self.isolated,
-            'ssh_config_file': ssh_config_file,
-            'ssh_config_exists': os.path.exists(ssh_config_file),
-            'app_config_file': app_config_file,
-            'app_config_exists': os.path.exists(app_config_file),
-            'config_dir': config_dir,
-            'ssh_dir': ssh_dir,
+            'operation_mode': mode or 'unavailable',
+            'config_authority': 'daemon',
         }
     
     def print_info(self):
@@ -456,17 +442,8 @@ class StartupInfo:
         print(f"{self.CHECK_INFO} Configuration")
         print(self.SECTION_LINE)
         config = self.info['config']
-        print(f"  Isolated mode: {'Yes' if config['isolated_mode'] else 'No'}")
-        print(f"  SSH config file: {config['ssh_config_file']}")
-        if config['ssh_config_exists']:
-            print(f"    Status: {self.CHECK_OK} exists")
-        else:
-            print(f"    Status: {self.CHECK_INFO} will be created on first use")
-        print(f"  App config file: {config['app_config_file']}")
-        if config['app_config_exists']:
-            print(f"    Status: {self.CHECK_OK} exists")
-        else:
-            print(f"    Status: {self.CHECK_INFO} will be created on first use")
+        print(f"  Operation mode: {config['operation_mode']}")
+        print(f"  SSH configuration authority: {config['config_authority']}")
         print(f"  Config directory: {config['config_dir']}")
         print(f"  SSH directory: {config['ssh_dir']}")
         print()
@@ -511,14 +488,14 @@ class StartupInfo:
         
         # Log config info
         config = self.info['config']
-        logger.info(f"Isolated mode: {'Yes' if config['isolated_mode'] else 'No'}")
-        logger.info(f"SSH config file: {config['ssh_config_file']}")
-        logger.info(f"App config file: {config['app_config_file']}")
+        logger.info("Operation mode: %s (authority: %s)",
+                    config['operation_mode'], config['config_authority'])
         
         logger.info("=" * 60)
 
 
-def print_startup_info(isolated: bool = False, verbose: bool = False, config=None):
+def print_startup_info(isolated: bool = False, verbose: bool = False, config=None,
+                       confirmed_mode=None):
     """
     Emit startup information.
 
@@ -528,10 +505,15 @@ def print_startup_info(isolated: bool = False, verbose: bool = False, config=Non
             (~40 lines) to stdout — useful for bug reports. When False, only
             log a single-line summary at INFO so default startup output stays
             concise. Re-run with ``--verbose`` to get the full diagnostic.
-        config: Existing Config instance to reuse for the backend lookup,
-            avoiding an extra config.json read.
+        config: Existing Config instance retained for non-SSH diagnostics.
+        confirmed_mode: Daemon-confirmed semantic operation mode, if ready.
     """
-    info = StartupInfo(isolated=isolated, verbose=verbose, config=config)
+    info = StartupInfo(
+        isolated=isolated,
+        verbose=verbose,
+        config=config,
+        confirmed_mode=confirmed_mode,
+    )
 
     if verbose:
         info.print_info()
@@ -595,6 +577,5 @@ def print_startup_info(isolated: bool = False, verbose: bool = False, config=Non
     logger.info("  Storage:   %s · SSH: %s", backend, ssh_str)
 
     # Only call out non-default modes so happy-path startup stays clean.
-    if _get('config', 'isolated_mode'):
-        logger.info("  Mode:      isolated SSH configuration")
-
+    logger.info("  Mode:      %s (authority: daemon)",
+                _get('config', 'operation_mode', default='unavailable'))

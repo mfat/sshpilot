@@ -190,6 +190,9 @@ class SshPilotApplication(Adw.Application):
         # but defensively normalise here too.
         self.verbose_override = verbose and not quiet
         self.quiet_override = quiet and not verbose
+        # ``--isolated`` is a semantic startup request.  It is submitted to
+        # the daemon after the typed client is ready; GTK must not use it (or
+        # config.json) to select an SSH filesystem path.
         self.isolated_mode = isolated
         # App-launched daemons inherit this so ``--verbose`` reaches sshpilotd
         # (stdout/stderr are redirected to DEVNULL; file logging uses the flag).
@@ -271,10 +274,8 @@ class SshPilotApplication(Adw.Application):
             # Apply color overrides
             self.apply_color_overrides(cfg)
 
-            configured_isolated = bool(cfg.get_setting('ssh.use_isolated_config', False))
-            self.isolated_mode = bool(isolated or configured_isolated)
         except Exception:
-            self.isolated_mode = bool(isolated)
+            pass
 
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -423,6 +424,11 @@ class SshPilotApplication(Adw.Application):
                     isolated=self.isolated_mode,
                     verbose=self.verbose_override,
                     config=self.config,
+                    confirmed_mode=getattr(
+                        getattr(self, "window", None),
+                        "_confirmed_operation_mode",
+                        None,
+                    ),
                 ),
                 False,
             )[1]
@@ -467,17 +473,6 @@ class SshPilotApplication(Adw.Application):
                 self.window.present()
             except Exception:
                 pass
-
-        # Start the in-process passphrase-prompt server so SSH askpass prompts
-        # render as modal children of the main window instead of stray helper
-        # windows that can hide behind it on Wayland. start() is idempotent.
-        try:
-            win = self.window or self.props.active_window
-            if win is not None:
-                from . import askpass_server
-                askpass_server.start(win)
-        except Exception as exc:
-            logger.debug(f"Failed to start askpass prompt server: {exc}")
 
         # If a session-backed secret backend (Bitwarden/Vaultwarden) is selected and
         # locked, prompt to unlock it now (password dialog + spinner) so the vault is
@@ -1042,13 +1037,6 @@ class SshPilotApplication(Adw.Application):
                         logger.exception("Plugin %r protocol unwind failed", pid)
         except Exception:
             pass
-
-        # Stop the askpass prompt server and unlink its socket.
-        try:
-            from . import askpass_server
-            askpass_server.stop()
-        except Exception as exc:
-            logger.debug(f"Failed to stop askpass prompt server: {exc}")
 
         # Tear down any open embedded file-manager tabs synchronously, before
         # the window/interpreter are finalized. Their widgets carry Python
@@ -1997,14 +1985,6 @@ def _enable_fatal_gtk_warnings():
 
 def main():
     """Main entry point"""
-    # Fast-path: handle --askpass before starting the GTK application.
-    # This is reached when the app is invoked via a console-script entry point
-    # (e.g. Homebrew pip-installed binary) where run.py is not used.
-    if len(sys.argv) > 1 and sys.argv[1] == '--askpass':
-        from .askpass_utils import run_askpass_and_write
-        prompt = sys.argv[2] if len(sys.argv) > 2 else ""
-        sys.exit(run_askpass_and_write(prompt))
-
     from .cli_connect import parse_sshpilot_cli
 
     # Pre-parse so logging / isolated mode are configured before Gtk starts.

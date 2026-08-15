@@ -149,7 +149,8 @@ idempotent.
 caps pending GTK bytes. The experimental `DaemonTerminalWidget` uses VTE as a
 pure emulator through `feed()`; VTE does not own or spawn the child. It sends
 commit bytes and dimensions back through the client APIs. The normal VTE and
-PyXtermJS launch paths remain unchanged and in-process by default.
+PyXtermJS rendering/input paths remain frontend-local; the remote child and SSH
+launch remain daemon-owned.
 
 Typed host-key/password/passphrase interactions are described in
 [interaction broker](interaction-broker.md) and

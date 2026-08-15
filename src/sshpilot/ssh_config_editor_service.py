@@ -15,8 +15,6 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 from sshpilot.api.models.connections import SaveSshConfigTextRequest
 
-from .ssh_config_utils import validate_ssh_config_text
-
 logger = logging.getLogger(__name__)
 
 
@@ -63,17 +61,10 @@ class DaemonSshConfigTextService:
         """Save the edited text through the daemon's hardened write path.
 
         ``make_backup`` is accepted for interface parity; the daemon always
-        performs the one-shot ``.bak`` backup. The existing pre-save ``ssh -G``
-        dry run is kept so a broken config never reaches the daemon (and never
-        blocks a save when ``ssh`` is unavailable — matching the old editor).
+        performs the one-shot ``.bak`` backup and validates/reloads the edited
+        document before publishing it.
         """
         del make_backup
-
-        error = validate_ssh_config_text(text)
-        if error:
-            return self._failed_future(
-                ValueError(f"Not saved — invalid SSH config:\n\n{error}")
-            )
 
         def _do():
             result = self._client.save_ssh_config_text(

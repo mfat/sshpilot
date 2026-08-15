@@ -25,12 +25,15 @@ platform documentation that versions with the code:
 
 Start with [architecture.md](architecture.md), then follow its links to the
 specific subsystem reference under [architecture/](architecture/). The
-frontend-neutral migration and final frontend closure are complete; the active
-architecture describes current ownership and boundaries.
+daemon-only retirement is the active architecture workstream; current
+ownership and boundaries are recorded in the linked ledger below.
+
+The active cross-session retirement ledger for the remaining obsolete
+in-process backend paths is [daemon-only-retirement.md](architecture/daemon-only-retirement.md).
 
 ### Current public API
 
-Use [api/README.md](api/README.md) for the maintained Protocol 1.0/API 0.29
+Use [api/README.md](api/README.md) for the maintained Protocol 1.0/API 0.39
 contract, with generated models and schemas linked from that overview.
 
 ### Historical migration records

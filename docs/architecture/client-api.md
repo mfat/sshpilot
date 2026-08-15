@@ -23,12 +23,8 @@ capabilities, sends typed requests, receives typed responses/events, and
 streams terminal and protected-secret data through their dedicated binary
 frames.
 
-`InProcessClient` is the in-process compatibility/test transport. It supports
-the connection capabilities it advertises and translates the existing
-in-process domain events for contract consumers. It is not a second production
-implementation of daemon-owned remote operations and is not the production GTK
-backend route for terminal, SFTP, transfer, forwarding, interaction, plugin,
-or secret operations.
+Direct core service composition is retained for daemon unit tests. It is not a
+client implementation and is never selected by a production frontend.
 
 The client implementations share the same frontend-neutral models and error
 semantics. Unsupported capabilities produce `unsupported_capability`; clients

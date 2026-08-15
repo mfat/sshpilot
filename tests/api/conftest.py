@@ -11,9 +11,9 @@ def fake_repo():
     return make_test_repository()
 
 
-@pytest.fixture(params=("in-process", "daemon"))
+@pytest.fixture(params=("direct-core", "daemon"))
 def client_backend(request):
-    """Run shared public contracts against both production client adapters."""
+    """Run contracts against the daemon transport and direct core composition."""
 
     return request.param
 
@@ -28,7 +28,7 @@ def client_factory(client_backend, tmp_path):
     def _factory(repo=None, **kwargs):
         if repo is None:
             repo = make_test_repository()
-        if client_backend == "in-process":
+        if client_backend == "direct-core":
             client = ConnectionApplicationService(repo, **kwargs)
         else:
             socket_dir = tmp_path / f"daemon-{len(servers)}"

@@ -1,16 +1,9 @@
-"""Operation-mode (isolated SSH config) toggle regression tests.
-
-The legacy in-process ``ConnectionManager.set_isolated_mode`` was retired;
-the daemon resolves the SSH config root from ``ssh.use_isolated_config`` only
-when the daemon itself launches. The toggle must persist the setting and, on
-confirming a restart, restart the daemon (so it re-reads the setting) before
-restarting the app — an app-only ``os.execv`` leaves the old daemon running.
-"""
+"""Operation-mode preference tests use the typed daemon API."""
 
 from types import SimpleNamespace
 
 import sshpilot.api.daemon_client as daemon_client_mod
-import sshpilot.platform_utils as platform_utils
+from sshpilot.api.models.daemon import OperationMode
 from sshpilot.preferences import PreferencesWindow
 
 
@@ -20,6 +13,9 @@ class _Radio:
 
     def get_active(self):
         return self._active
+
+    def set_active(self, active):
+        self._active = bool(active)
 
 
 class _Button:
@@ -32,7 +28,37 @@ class _Row:
         pass
 
 
-def _make_prefs():
+class _Bridge:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def submit(self, operation, *, on_success, on_error):
+        try:
+            self.requests.append(operation)
+            on_success(operation())
+        except Exception as error:
+            on_error(error)
+
+
+class _ModeClient:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def set_operation_mode(self, request):
+        self.requests.append(request)
+        return self.result
+
+    def get_capabilities(self):
+        return SimpleNamespace(supports=lambda _capability: True)
+
+
+def _make_prefs(result=None):
+    if result is None:
+        result = SimpleNamespace(
+            accepted=True, active_mode=OperationMode.DEFAULT, message=""
+        )
     recorded = {}
     config = SimpleNamespace(
         set_setting=lambda key, value: recorded.__setitem__(key, value),
@@ -40,47 +66,40 @@ def _make_prefs():
     prefs = PreferencesWindow.__new__(PreferencesWindow)
     prefs.config = config
     prefs.isolated_mode_radio = _Radio(active=True)
+    prefs.default_mode_radio = _Radio(active=False)
     prefs.default_mode_row = _Row()
     prefs.isolated_mode_row = _Row()
-    prefs.restart_bodies = []
-    prefs._prompt_operation_mode_restart = lambda body: prefs.restart_bodies.append(body)
+    prefs.parent_window = SimpleNamespace()
+    prefs.client = _ModeClient(result)
+    prefs.client_bridge = _Bridge(result)
     prefs._refresh_daemon_status_row = lambda: None
     return prefs, recorded
 
 
-def test_operation_mode_toggle_persists_setting_and_requests_restart():
-    prefs, recorded = _make_prefs()
+def test_operation_mode_toggle_uses_daemon_and_does_not_write_local_mode():
+    result = SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    prefs, recorded = _make_prefs(result)
 
     PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
 
-    assert recorded.get("ssh.use_isolated_config") is True
-    assert prefs.restart_bodies == [
-        "Restart SSH Pilot to fully apply the new operation mode."
-    ]
+    assert recorded == {}
+    assert prefs.client.requests[0].mode is OperationMode.ISOLATED
+    assert prefs.isolated_mode_radio.get_active() is True
 
 
-def test_operation_mode_toggle_does_not_require_legacy_manager_mutation():
-    prefs, recorded = _make_prefs()
-    # The read-only presentation store has no set_isolated_mode; the toggle
-    # must not reach for the retired legacy manager API.
-    prefs.parent_window = SimpleNamespace(
-        connection_manager=SimpleNamespace(),
+def test_operation_mode_failure_restores_frontend_radio_state():
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="sessions are active",
     )
+    prefs, recorded = _make_prefs(result)
 
     PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
 
-    assert recorded.get("ssh.use_isolated_config") is True
-    assert prefs.restart_bodies
-
-
-def test_daemon_restart_after_operation_mode_change_restarts_app(monkeypatch):
-    calls = []
-    monkeypatch.setattr(platform_utils, "restart_app", lambda: calls.append("app"))
-    prefs, _ = _make_prefs()
-
-    prefs._restart_app_after_mode_change()
-
-    assert calls == ["app"]
+    assert recorded == {}
+    assert prefs.isolated_mode_radio.get_active() is False
+    assert prefs.default_mode_radio.get_active() is True
 
 
 class _FakeDaemonClient:
@@ -99,49 +118,6 @@ class _FakeDaemonClient:
 
     def close(self):
         self.closed = True
-
-
-def test_operation_mode_restart_restarts_daemon_then_app(monkeypatch):
-    app_restarts = []
-    monkeypatch.setattr(platform_utils, "restart_app", lambda: app_restarts.append("app"))
-    fake = _FakeDaemonClient(
-        SimpleNamespace(accepted=True, confirmation=None, will_lose=())
-    )
-    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
-    prefs, _ = _make_prefs()
-
-    prefs._request_daemon_restart(on_complete=prefs._restart_app_after_mode_change)
-
-    assert fake.status_checked is True
-    assert len(fake.restart_calls) == 1
-    assert fake.restart_calls[0].force is False
-    assert fake.closed is True
-    assert app_restarts == ["app"]
-
-
-def test_operation_mode_restart_requires_confirmation_for_live_resources(
-    monkeypatch,
-):
-    # With live resources and no force token, the daemon restart must be held
-    # for confirmation; the app must not restart until the user forces it.
-    app_restarts = []
-    monkeypatch.setattr(platform_utils, "restart_app", lambda: app_restarts.append("app"))
-    fake = _FakeDaemonClient(
-        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
-    )
-    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
-
-    dialog = _DialogStub()
-    monkeypatch.setattr("sshpilot.preferences.Adw.AlertDialog", lambda *a, **kw: dialog)
-    prefs, _ = _make_prefs()
-
-    prefs._request_daemon_restart(on_complete=prefs._restart_app_after_mode_change)
-
-    assert len(fake.restart_calls) == 1
-    assert fake.restart_calls[0].force is False
-    assert fake.closed is True
-    assert dialog.presented is True
-    assert app_restarts == []
 
 
 class _DialogStub:

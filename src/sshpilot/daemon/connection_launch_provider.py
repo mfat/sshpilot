@@ -3,15 +3,12 @@
 The core ``ConnectionApplicationService`` delegates launch preparation to an
 injected launch provider; this module is the daemon's implementation. It
 resolves connections through a headless ``ConnectionRecord`` resolver and
-builds commands with the legacy launch machinery:
-
-* SSH builds go through ``ssh_connection_builder`` (M7 debt);
-* app settings come from ``config.Config`` (M4 debt);
-* non-SSH protocol launches go through the plugin registry (M8 debt).
+uses the shared OpenSSH/plugin launch builders with daemon-owned settings and
+credential seams.
 
 The provider never receives a filesystem path from the client; the record's
 ``source``/``config_root`` fields (daemon-owned persistence metadata) feed the
-compatibility view only so ``ssh -F`` resolves the correct root config.
+daemon launch view so OpenSSH resolves the correct root config.
 """
 
 from __future__ import annotations
@@ -378,14 +375,17 @@ class DaemonConnectionLaunchProvider:
         return record
 
     def _manager_shim(self, connection: HeadlessConnectionView) -> Any:
-        """Legacy ``connection_manager`` surface the builder still reads.
+        """Daemon credential seam consumed by the shared launch builder.
 
         Only the secret-lookup and passphrase methods are required by the
         native auth resolution; everything else is optional via ``getattr``.
+        It is created inside the daemon and never exposes a frontend manager.
         """
         secret_provider = self._secret_provider
 
         class _ManagerShim:
+            secret_lookup_authoritative = True
+
             def get_connection_password(self, _conn):
                 if secret_provider is None:
                     return None
@@ -830,7 +830,7 @@ class DaemonConnectionLaunchProvider:
         ctx = PluginContext.for_spawn(
             plugin_id=plugin_id,
             app_config=self._get_app_config(),
-            connection_manager=None,
+            connection_manager=self._manager_shim(connection),
             protocol_registry=registry,
         )
         try:

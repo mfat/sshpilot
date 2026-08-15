@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
-from .platform_utils import get_config_dir, is_macos
+from .platform_utils import is_macos
 from .i18n import N_, available_languages
 from .file_manager_integration import (
     has_internal_file_manager,
@@ -177,7 +177,6 @@ def _install_group_display_preview_css():
 from .file_manager_integration import (  # noqa: E402,F401
     macos_third_party_terminal_available,
     should_hide_external_terminal_options,
-    should_show_force_internal_file_manager_toggle,
     should_hide_file_manager_options,
 )
 
@@ -261,7 +260,6 @@ class PreferencesWindow(Adw.NavigationPage):
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
         self._user_initiated_encoding_change = False
-        self.force_internal_file_manager_row = None
         self.open_file_manager_externally_row = None
 
         self._config_signal_id = None
@@ -1793,9 +1791,8 @@ class PreferencesWindow(Adw.NavigationPage):
         # Isolated mode row
         self.isolated_mode_row = Adw.ActionRow()
         self.isolated_mode_row.set_title(_("Isolated Mode"))
-        config_path = get_config_dir()
         self.isolated_mode_row.set_subtitle(
-            _("SSH Pilot stores its configuration file in {path}/").format(path=config_path)
+            _("SSH Pilot uses a daemon-owned isolated SSH configuration scope.")
         )
         self.isolated_mode_radio = Gtk.CheckButton()
 
@@ -1811,16 +1808,49 @@ class PreferencesWindow(Adw.NavigationPage):
         self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
         operation_group.add(self.isolated_mode_row)
 
-        use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
-        self.isolated_mode_radio.set_active(use_isolated)
-        self.default_mode_radio.set_active(not use_isolated)
+        # The daemon reports the active mode asynchronously; start disabled
+        # until that semantic state is confirmed by the client.
+        self.isolated_mode_radio.set_active(False)
+        self.default_mode_radio.set_active(True)
 
         self.default_mode_radio.connect('toggled', self.on_operation_mode_toggled)
         self.isolated_mode_radio.connect('toggled', self.on_operation_mode_toggled)
 
         self._update_operation_mode_styles()
+        self._request_confirmed_operation_mode()
 
         advanced_page.add(operation_group)
+
+    def _request_confirmed_operation_mode(self) -> None:
+        """Set the radio state only from a daemon-confirmed mode result."""
+        owner = getattr(self, "parent_window", None)
+        client = getattr(owner, "client", None)
+        bridge = getattr(owner, "client_bridge", None)
+        if client is None or bridge is None:
+            self.default_mode_radio.set_sensitive(False)
+            self.isolated_mode_radio.set_sensitive(False)
+            return
+        try:
+            from .api.capabilities import Capability
+            if not client.get_capabilities().supports(Capability.OPERATION_MODE):
+                raise RuntimeError("operation.mode capability is unavailable")
+
+            def _apply(result):
+                isolated = result.active_mode.value == "isolated"
+                self.isolated_mode_radio.set_active(isolated)
+                self.default_mode_radio.set_active(not isolated)
+                self.default_mode_radio.set_sensitive(True)
+                self.isolated_mode_radio.set_sensitive(True)
+
+            bridge.submit(client.get_operation_mode, on_success=_apply,
+                          on_error=lambda error: self._operation_mode_unavailable(error))
+        except Exception as error:
+            self._operation_mode_unavailable(error)
+
+    def _operation_mode_unavailable(self, error) -> None:
+        logger.warning("Operation mode state unavailable: %s", error)
+        self.default_mode_radio.set_sensitive(False)
+        self.isolated_mode_radio.set_sensitive(False)
 
     def _add_advanced_behavior_group(self, advanced_page):
         """Add the Application Behavior group to the Advanced page."""
@@ -2410,22 +2440,6 @@ class PreferencesWindow(Adw.NavigationPage):
             file_manager_group.set_description(
                 _("These preferences only affect sshPilot's built-in SFTP file manager.")
             )
-
-            self.force_internal_file_manager_row = None
-            if should_show_force_internal_file_manager_toggle():
-                self.force_internal_file_manager_row = Adw.SwitchRow()
-                self.force_internal_file_manager_row.set_title(_("Always Use Built-in File Manager"))
-                self.force_internal_file_manager_row.set_subtitle(
-                    _("Use the in-app file manager even when system integrations are available")
-                )
-                self.force_internal_file_manager_row.set_active(
-                    bool(self.config.get_setting('file_manager.force_internal', False))
-                )
-                self.force_internal_file_manager_row.connect(
-                    'notify::active', self.on_force_internal_file_manager_changed
-                )
-
-                file_manager_group.add(self.force_internal_file_manager_row)
 
             self.open_file_manager_externally_row = Adw.SwitchRow()
             self.open_file_manager_externally_row.set_title(_("Open File Manager in Separate Window"))
@@ -5422,11 +5436,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     bool(self.controlmaster_row.get_active()),
                 )
 
-            if getattr(self, 'force_internal_file_manager_row', None) is not None:
-                self.config.set_setting(
-                    'file_manager.force_internal',
-                    bool(self.force_internal_file_manager_row.get_active()),
-                )
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.open_externally',
@@ -5518,10 +5527,6 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.controlmaster_row.set_active(False)
 
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
-            default_force_internal = bool(file_manager_defaults.get('force_internal', False))
-            self.config.set_setting('file_manager.force_internal', default_force_internal)
-            if getattr(self, 'force_internal_file_manager_row', None) is not None:
-                self.force_internal_file_manager_row.set_active(default_force_internal)
             default_open_external = bool(file_manager_defaults.get('open_externally', False))
             self.config.set_setting('file_manager.open_externally', default_open_external)
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
@@ -5581,51 +5586,66 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error(f"Failed to reset advanced SSH settings: {e}")
 
     def on_operation_mode_toggled(self, button):
-        """Handle switching between default and isolated SSH modes"""
+        """Request a daemon-owned live switch between SSH configuration scopes."""
         try:
             if not button.get_active():
                 return
 
-            use_isolated = self.isolated_mode_radio.get_active()
+            from .api.models.daemon import OperationMode, SetOperationModeRequest
 
-            self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
+            requested = (
+                OperationMode.ISOLATED
+                if self.isolated_mode_radio.get_active()
+                else OperationMode.DEFAULT
+            )
+            owner = getattr(self, "parent_window", None)
+            client = getattr(self, "client", None) or getattr(owner, "client", None)
+            bridge = getattr(self, "client_bridge", None) or getattr(owner, "client_bridge", None)
+            try:
+                from .api.capabilities import Capability
+                mode_supported = (
+                    client is not None
+                    and client.get_capabilities().supports(Capability.OPERATION_MODE)
+                )
+            except Exception:
+                mode_supported = False
+            if client is None or bridge is None or not mode_supported:
+                if owner is not None and hasattr(owner, "_show_daemon_unavailable_dialog"):
+                    owner._show_daemon_unavailable_dialog()
+                return
 
-            self._update_operation_mode_styles()
+            def _restore(active_mode=None):
+                if active_mode is None:
+                    self._request_confirmed_operation_mode()
+                    return
+                isolated = active_mode is OperationMode.ISOLATED
+                for radio, active in (
+                    (self.isolated_mode_radio, isolated),
+                    (self.default_mode_radio, not isolated),
+                ):
+                    setter = getattr(radio, "set_active", None)
+                    if callable(setter):
+                        setter(active)
 
-            self._prompt_operation_mode_restart(
-                _("Restart SSH Pilot to fully apply the new operation mode."))
+            def _on_success(result):
+                if not result.accepted:
+                    _restore(getattr(result, "active_mode", None))
+                    if owner is not None and hasattr(owner, "_show_daemon_unavailable_dialog"):
+                        owner._show_daemon_unavailable_dialog(result.message)
+                    return
+                isolated = result.active_mode is OperationMode.ISOLATED
+                self.isolated_mode_radio.set_active(isolated)
+                self.default_mode_radio.set_active(not isolated)
+                self._update_operation_mode_styles()
+
+            bridge.submit(
+                lambda: client.set_operation_mode(SetOperationModeRequest(mode=requested)),
+                on_success=_on_success,
+                on_error=lambda error: (_restore(), logger.error("Operation mode unavailable: %s", error)),
+            )
 
         except Exception as e:
             logger.error(f"Failed to toggle isolated SSH mode: {e}")
-
-    def _prompt_operation_mode_restart(self, body):
-        """Restart dialog for an operation-mode change.
-
-        The SSH config root is daemon-owned and resolved from
-        ``ssh.use_isolated_config`` only when the daemon launches, so the
-        daemon must restart too; ``restart_app()`` alone (``os.execv``) would
-        leave the old daemon running and the mode would not change.
-        """
-        dlg = Adw.AlertDialog(heading=_("Restart Required"), body=body)
-        dlg.add_response('later', _("Later"))
-        dlg.add_response('restart', _("Restart Now"))
-        dlg.set_default_response('restart')
-        dlg.set_close_response('later')
-        dlg.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
-
-        def _on_response(_d, response):
-            if response == 'restart':
-                self._request_daemon_restart(
-                    on_complete=self._restart_app_after_mode_change,
-                )
-
-        dlg.connect('response', _on_response)
-        dlg.present(self)
-
-    def _restart_app_after_mode_change(self):
-        from .platform_utils import restart_app
-
-        restart_app()
 
     def _update_operation_mode_styles(self):
         """Ensure neither operation mode row appears disabled."""
@@ -6089,16 +6109,10 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("Internal file manager check failed: %s", exc)
             return False
 
-        try:
-            from .sftp_utils import should_use_in_app_file_manager  # pylint: disable=import-outside-toplevel
-
-            return bool(should_use_in_app_file_manager())
-        except Exception as exc:  # pragma: no cover - defensive capability detection
-            logger.debug("Failed to determine internal file manager usage: %s", exc)
-            try:
-                return bool(self.config.get_setting('file_manager.force_internal', False))
-            except Exception:
-                return False
+        # Remote SFTP is always daemon-owned; GVFS is not an alternate SSH
+        # backend. The preference remains only as presentation compatibility
+        # for the separate-window UI.
+        return True
 
     def _update_external_file_manager_row(self) -> None:
         """Sync the external window preference with the current availability."""
@@ -6112,15 +6126,6 @@ class PreferencesWindow(Adw.NavigationPage):
 
         if not use_internal and row.get_active():
             row.set_active(False)
-
-    def on_force_internal_file_manager_changed(self, switch, *args):
-        """Persist the preference for forcing the in-app file manager."""
-        try:
-            active = bool(switch.get_active())
-            self.config.set_setting('file_manager.force_internal', active)
-            self._update_external_file_manager_row()
-        except Exception as exc:
-            logger.error("Failed to update file manager preference: %s", exc)
 
     def on_sidebar_flat_rows_changed(self, switch, *args):
         """Persist flat vs card styling for sidebar connection rows."""

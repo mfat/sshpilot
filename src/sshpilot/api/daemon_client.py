@@ -38,6 +38,9 @@ from .models.common import (
 from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
+    EffectiveConfigComparison,
+    UnsavedHostCheckRequest,
+    UnsavedHostCheckResult,
     ConnectionMutationResult,
     ConnectionSummary,
     CreateConnectionRequest,
@@ -69,6 +72,8 @@ from .models.daemon import (
     RestartDaemonRequest,
     SetDaemonLogLevelRequest,
     StopDaemonRequest,
+    OperationModeResult,
+    SetOperationModeRequest,
 )
 from .models.interactions import (
     InteractionClaim,
@@ -130,6 +135,7 @@ from .models.sessions import (
 from .models.terminal import (
     BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
+    ExternalTerminalLaunchSpec,
     ReleaseTerminalInputRequest,
     ReplayRequest,
     ReplayResult,
@@ -165,6 +171,10 @@ from .transport.codec import (
     close_sftp_request_to_wire,
     connection_details_from_wire,
     connection_editor_details_from_wire,
+    effective_config_comparison_from_wire,
+    unsaved_host_check_request_to_wire,
+    unsaved_host_check_result_from_wire,
+    external_terminal_launch_spec_from_wire,
     connection_summary_from_wire,
     ssh_config_text_from_wire,
     connection_store_snapshot_from_wire,
@@ -173,6 +183,8 @@ from .transport.codec import (
     daemon_diagnostics_from_wire,
     daemon_status_from_wire,
     daemon_stop_result_from_wire,
+    operation_mode_result_from_wire,
+    set_operation_mode_request_to_wire,
     decode_envelope,
     delete_connection_password_request_to_wire,
     delete_key_passphrase_request_to_wire,
@@ -296,7 +308,12 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_daemon_diagnostics": Capability.DAEMON_STATUS,
     "get_daemon_status": Capability.DAEMON_STATUS,
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
+    "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "check_unsaved_host": Capability.CONNECTIONS_READ,
+    "set_operation_mode": Capability.OPERATION_MODE,
+    "get_operation_mode": Capability.OPERATION_MODE,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "set_group_color": Capability.CONNECTIONS_GROUPS,
     "place_group": Capability.CONNECTIONS_GROUPS,
@@ -690,6 +707,31 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection editor details")
 
+    def get_effective_config(
+        self, connection_id: ConnectionId
+    ) -> EffectiveConfigComparison:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("connections.get_effective_config", {"connection_id": connection_id})
+        try:
+            return effective_config_comparison_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid effective SSH configuration")
+
+    def check_unsaved_host(
+        self, request: UnsavedHostCheckRequest
+    ) -> UnsavedHostCheckResult:
+        self._require_capability(Capability.CONNECTIONS_READ)
+        if type(request) is not UnsavedHostCheckRequest:
+            raise TypeError("request must be an UnsavedHostCheckRequest instance")
+        result = self._request(
+            "connections.check_unsaved_host",
+            unsaved_host_check_request_to_wire(request),
+        )
+        try:
+            return unsaved_host_check_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid destination check")
+
     def get_ssh_config_text(self) -> SshConfigText:
         """Load the daemon-selected active SSH config text for the raw editor."""
 
@@ -699,6 +741,21 @@ class DaemonClient:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid SSH config text")
+
+    def prepare_external_terminal_launch(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        self._require_capability(Capability.EXTERNAL_TERMINAL_LAUNCH)
+        result = self._request(
+            "connections.prepare_external_terminal_launch",
+            {"connection_id": connection_id},
+        )
+        try:
+            return external_terminal_launch_spec_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid external terminal launch spec"
+            )
 
     def save_ssh_config_text(self, request: SaveSshConfigTextRequest) -> SshConfigText:
         """Save raw SSH config text through the daemon's hardened write path."""
@@ -1094,6 +1151,27 @@ class DaemonClient:
             return daemon_diagnostics_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid diagnostics")
+
+    def set_operation_mode(
+        self, request: SetOperationModeRequest
+    ) -> OperationModeResult:
+        self._require_capability(Capability.OPERATION_MODE)
+        result = self._request(
+            "daemon.set_operation_mode",
+            set_operation_mode_request_to_wire(request),
+        )
+        try:
+            return operation_mode_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation mode result")
+
+    def get_operation_mode(self) -> OperationModeResult:
+        self._require_capability(Capability.OPERATION_MODE)
+        result = self._request("daemon.get_operation_mode", {})
+        try:
+            return operation_mode_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation mode status")
 
     def set_daemon_log_level(self, request: SetDaemonLogLevelRequest) -> None:
         self._require_capability(Capability.DAEMON_CONTROL)

@@ -1,5 +1,11 @@
 # Phase 13.3 production path smoke
 
+> Historical evidence. The current production contract is documented in
+> [Architecture](../architecture.md) and the
+> [daemon-only retirement ledger](../architecture/daemon-only-retirement.md);
+> the old `ConnectionManager` labels in this record are historical test names,
+> not current ownership instructions.
+
 Isolated HOME: `/tmp/sshpilot-phase13-smoke-stv_ykmu`
 Evidence directory: `/tmp/sshpilot-phase13-smoke-stv_ykmu/evidence`
 
@@ -88,4 +94,3 @@ READY FOR FINAL RELEASE HARDENING
 ```
 
 Generated at 2026-07-30T22:38:48Z
-

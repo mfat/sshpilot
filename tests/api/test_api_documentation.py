@@ -86,7 +86,7 @@ def test_runtime_capability_markers_match_the_provider(
         Capability.CONNECTIONS_SECRETS_WRITE.value,
         Capability.CONNECTIONS_METADATA_WRITE.value,
         Capability.CONNECTIONS_GROUPS.value,
-        Capability.CONNECTIONS_SPLIT.value,
+                Capability.CONNECTIONS_SPLIT.value,
     }
     if client_backend == "daemon":
         expected.update(

@@ -229,26 +229,3 @@ def test_stale_manager_events_ignored(monkeypatch):
     win._clear_progress_toast = MagicMock()
     win._on_connection_error(stale_manager, "error")
     win._clear_progress_toast.assert_not_called()
-
-
-def test_should_offer_password_retry_uses_connection_password():
-    _ensure_cairo_stub()
-    from sshpilot.file_manager_window import FileManagerWindow
-
-    win = FileManagerWindow.__new__(FileManagerWindow)
-    conn = MagicMock()
-    conn.auth_method = 0
-    win._connection = conn
-    win._manager = MagicMock()
-    win._manager._password = None
-    win._host = "remote-host"
-    win._username = "user"
-
-    mock_cm = MagicMock()
-    mock_cm.get_connection_password.return_value = "saved_secret"
-    win._connection_manager = mock_cm
-
-    assert win._should_offer_password_retry() is True
-    mock_cm.get_connection_password.assert_called_once_with(conn)
-
-

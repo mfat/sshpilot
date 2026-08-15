@@ -128,7 +128,6 @@ def _make_prefs(config, controller):
     prefs.compression_row = _Switch(active=False)
     prefs.verbosity_row = _Spin(value=0)
     prefs.debug_enabled_row = _Switch(active=False)
-    prefs.force_internal_file_manager_row = _Switch(active=False)
     prefs.open_file_manager_externally_row = _Switch(active=False)
     prefs.sftp_keepalive_interval_row = _Spin(value=0)
     prefs.sftp_keepalive_count_row = _Spin(value=0)

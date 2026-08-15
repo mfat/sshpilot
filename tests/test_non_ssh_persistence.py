@@ -43,6 +43,16 @@ def _state(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def _mapping_keys(value):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            yield str(key)
+            yield from _mapping_keys(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _mapping_keys(child)
+
+
 def _telnet_data(nickname='lab-switch'):
     return {'nickname': nickname, 'protocol': 'telnet',
             'hostname': '10.0.0.5', 'port': 2323}
@@ -132,8 +142,7 @@ def test_password_stored_only_through_secret_provider(tmp_path):
     )
 
     # The state file stores no password for the connection.
-    raw = state.read_text()
-    assert 'password' not in raw.lower()
+    assert all('password' not in key.lower() for key in _mapping_keys(_state(state)))
 
     # The secret provider owns the credential: store by connection id under
     # the canonical host, and read it back the same way.

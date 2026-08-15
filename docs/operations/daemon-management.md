@@ -70,13 +70,11 @@ perform **bounded availability reconnect**:
 
 Supervisors may also respawn on exit status `75` (`RESTART_EXIT_CODE`) when a
 restart was requested.
-## Environment overrides
+## Environment
 
-| Variable | Effect |
-| --- | --- |
-| `SSHPILOT_CLIENT_MODE=daemon` | Force daemon client selection for diagnostics/tests |
-| `SSHPILOT_CLIENT_MODE=in_process` | Force the compatibility in-process client for tests |
-| `XDG_RUNTIME_DIR` | Base directory for `sshpilot/sshpilotd.sock` |
+`XDG_RUNTIME_DIR` is the base directory for `sshpilot/sshpilotd.sock`.
+Production client selection is always daemon-only; a failed selection is an
+explicit unavailable/recovery state.
 
 See [daemon-diagnostics.md](daemon-diagnostics.md) and
 [upgrade-and-recovery.md](upgrade-and-recovery.md).

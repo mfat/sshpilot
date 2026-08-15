@@ -32,9 +32,6 @@ sys.path.insert(0, str(ROOT / "src"))
 os.environ.setdefault("DISPLAY", ":1")
 os.environ["SSHPILOT_GUI_TESTS"] = "1"
 os.environ["LANGUAGE"] = "en"
-# Do not force SSHPILOT_CLIENT_MODE here — GuiApp may briefly select the user
-# daemon before we inject the ephemeral smoke daemon. Mode is set after boot.
-os.environ.pop("SSHPILOT_CLIENT_MODE", None)
 os.environ.setdefault("GSK_RENDERER", "cairo")
 os.environ.setdefault("GDK_BACKEND", "x11")
 os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
@@ -120,7 +117,7 @@ def run_smoke() -> int:
 
     from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.api import DaemonClient
-    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.api.client_factory import ClientSelection
     from sshpilot.api.models import (
         CancelTransferRequest,
         CloseForwardRequest,
@@ -184,8 +181,6 @@ def run_smoke() -> int:
     win.config.set_setting("terminal.daemon_app_close_policy", "detach")
     win.config.set_setting("terminal.daemon_restore_sessions", True)
     win.config.set_setting("terminal.daemon_auto_attach", True)
-    win.config.set_setting("file_manager.force_internal", True)
-    win.config.set_setting("file_manager.first_run_prompt_shown", True)
     win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
 
     iso_ssh = Path(os.environ["XDG_CONFIG_HOME"]) / "sshpilot"
@@ -216,7 +211,7 @@ def run_smoke() -> int:
             timeout=60,
         )
         win._apply_client_selection(
-            ClientSelection(client=ctx.daemon_client, mode=ClientMode.DAEMON)
+            ClientSelection(client=ctx.daemon_client)
         )
         ctx.gui.pump(400)
         client_ok = type(win.client).__name__ == "DaemonClient"
@@ -1218,7 +1213,7 @@ def run_smoke() -> int:
         )
         client = ctx.daemon_client
         win._apply_client_selection(
-            ClientSelection(client=client, mode=ClientMode.DAEMON)
+            ClientSelection(client=client)
         )
         ctx.gui.pump(800)
 

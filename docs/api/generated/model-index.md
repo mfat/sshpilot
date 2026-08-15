@@ -1401,6 +1401,42 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: EffectiveConfigComparison -->
+## `EffectiveConfigComparison`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Daemon-owned authored-vs-effective OpenSSH comparison.
+
+**Related methods:** `get_effective_config`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `connection_id` | `str` | Yes | — | No |
+| `host` | `str` | Yes | — | No |
+| `available` | `bool` | Yes | — | No |
+| `has_diff` | `bool` | No | `false` | No |
+| `changes` | `tuple[dict[str, Any], ...]` | No | `[]` | No |
+| `own` | `tuple[str, ...]` | No | `[]` | No |
+| `full` | `tuple[str, ...]` | No | `[]` | No |
+| `generation` | `int` | No | `0` | No |
+
+Synthetic representation:
+
+```json
+{
+  "available": false,
+  "changes": [],
+  "connection_id": "production",
+  "full": [],
+  "generation": 0,
+  "has_diff": false,
+  "host": "example",
+  "own": []
+}
+```
+
 <!-- api-model: ErrorData -->
 ## `ErrorData`
 
@@ -1489,6 +1525,34 @@ Synthetic representation:
   "payload": "<sensitive value omitted>",
   "protocol_version": {},
   "sequence": 0
+}
+```
+
+<!-- api-model: ExternalTerminalLaunchSpec -->
+## `ExternalTerminalLaunchSpec`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Daemon-prepared, non-secret launch data for an external terminal.
+
+**Related methods:** `prepare_external_terminal_launch`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `argv` | `tuple[str, ...]` | Yes | — | No |
+| `environment` | `tuple[tuple[str, str], ...]` | No | `[]` | No |
+| `display_name` | `str` | No | `` | No |
+| `secret_autofill_supported` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "argv": [],
+  "display_name": "",
+  "environment": [],
+  "secret_autofill_supported": false
 }
 ```
 
@@ -2438,6 +2502,40 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: OperationModeResult -->
+## `OperationModeResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Confirmed mode state or an explicit, non-destructive rejection.
+
+**Related methods:** `get_operation_mode`, `set_operation_mode`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `accepted` | `bool` | Yes | — | No |
+| `active_mode` | `OperationMode` | Yes | — | No |
+| `generation` | `int` | Yes | — | No |
+| `seeded` | `bool` | No | `false` | No |
+| `conflict` | `bool` | No | `false` | No |
+| `message` | `str` | No | `` | No |
+| `target_description` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "accepted": {},
+  "active_mode": {},
+  "conflict": false,
+  "generation": {},
+  "message": "",
+  "seeded": false,
+  "target_description": ""
+}
+```
+
 <!-- api-model: OperationSummary -->
 ## `OperationSummary`
 
@@ -3331,6 +3429,30 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SetOperationModeRequest -->
+## `SetOperationModeRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Request a serialized, live SSH configuration-scope transition.
+
+**Related methods:** `set_operation_mode`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `mode` | `OperationMode` | Yes | — | No |
+| `seed_isolated_config` | `bool` | No | `false` | No |
+
+Synthetic representation:
+
+```json
+{
+  "mode": {},
+  "seed_isolated_config": false
+}
+```
+
 <!-- api-model: SftpChmodRequest -->
 ## `SftpChmodRequest`
 
@@ -4172,6 +4294,60 @@ Synthetic representation:
   "started_at": null,
   "state": {},
   "total_bytes": null
+}
+```
+
+<!-- api-model: UnsavedHostCheckRequest -->
+## `UnsavedHostCheckRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Semantic destination facts for daemon-owned save-prompt detection.
+
+**Related methods:** `check_unsaved_host`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `hostname` | `str` | Yes | — | No |
+| `username` | `str` | No | `` | No |
+| `connection_id` | `str | None` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connection_id": null,
+  "hostname": "example.invalid",
+  "username": ""
+}
+```
+
+<!-- api-model: UnsavedHostCheckResult -->
+## `UnsavedHostCheckResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Authoritative result for whether a destination is already saved.
+
+**Related methods:** `check_unsaved_host`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `saved` | `bool` | Yes | — | No |
+| `hostname` | `str` | Yes | — | No |
+| `username` | `str` | Yes | — | No |
+| `generation` | `int` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "generation": 0,
+  "hostname": "example.invalid",
+  "saved": false,
+  "username": "user"
 }
 ```
 

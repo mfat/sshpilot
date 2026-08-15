@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from gi.repository import GLib
 
@@ -690,7 +690,12 @@ def _applescript_string(value: str) -> str:
     return '"' + escaped + '"'
 
 
-def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
+def open_system_terminal(
+    terminal_command: List[str],
+    ssh_command: str,
+    *,
+    environment: Optional[Dict[str, str]] = None,
+) -> bool:
     """Launch a terminal emulator running *ssh_command*.
 
     *ssh_command* is a shell command line (built with ``shlex.join``, so its own
@@ -712,6 +717,9 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
 
     # Keep the shell reading input after ssh exits, so errors stay on screen.
     keep_open = f'{ssh_command}; exec bash'
+    launch_environment = os.environ.copy()
+    if environment:
+        launch_environment.update(environment)
     try:
         if is_macos():
             app = None
@@ -747,7 +755,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                 elif app_lower in ['alacritty', 'kitty']:
                     cmd = ['open', '-a', app, '--args', '-e', 'bash', '-lc', keep_open]
                     # Launch terminal and then activate it
-                    subprocess.Popen(cmd, start_new_session=True)
+                    subprocess.Popen(cmd, start_new_session=True, env=launch_environment)
                     time.sleep(0.5)  # Give the app time to launch
                     activate_script = f'tell application "{app}" to activate'
                     subprocess.Popen(['osascript', '-e', activate_script])
@@ -755,7 +763,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                 elif app_lower == 'ghostty':
                     cmd = ['open', '-na', app, '--args', '-e', ssh_command]
                     # Launch terminal and then activate it
-                    subprocess.Popen(cmd, start_new_session=True)
+                    subprocess.Popen(cmd, start_new_session=True, env=launch_environment)
                     time.sleep(0.5)  # Give the app time to launch
                     activate_script = f'tell application "{app}" to activate'
                     subprocess.Popen(['osascript', '-e', activate_script])
@@ -763,7 +771,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                 else:
                     cmd = ['open', '-a', app, '--args', 'bash', '-lc', keep_open]
                     # Launch terminal and then activate it
-                    subprocess.Popen(cmd, start_new_session=True)
+                    subprocess.Popen(cmd, start_new_session=True, env=launch_environment)
                     time.sleep(0.5)  # Give the app time to launch
                     activate_script = f'tell application "{app}" to activate'
                     subprocess.Popen(['osascript', '-e', activate_script])
@@ -792,7 +800,7 @@ def open_system_terminal(terminal_command: List[str], ssh_command: str) -> bool:
                 cmd = terminal_command + [ssh_command]
 
         logger.info(f"Launching system terminal: {' '.join(cmd)}")
-        subprocess.Popen(cmd, start_new_session=True)
+        subprocess.Popen(cmd, start_new_session=True, env=launch_environment)
 
         # Try to bring the terminal to front on Linux
         if not is_macos():

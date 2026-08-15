@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.32",
+  "api_implementation_version": "0.39",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -76,6 +76,10 @@
     "cancel_transfer": {
       "capability": "transfers.write",
       "status": "daemon-only"
+    },
+    "check_unsaved_host": {
+      "capability": "connections.read",
+      "status": "implemented"
     },
     "claim_forward": {
       "capability": "forwards.write",
@@ -177,6 +181,10 @@
       "capability": "daemon.status",
       "status": "daemon-only"
     },
+    "get_effective_config": {
+      "capability": "connections.config.read",
+      "status": "implemented"
+    },
     "get_forward": {
       "capability": "forwards.read",
       "status": "daemon-only"
@@ -199,6 +207,10 @@
     },
     "get_operation": {
       "capability": "operations.read",
+      "status": "daemon-only"
+    },
+    "get_operation_mode": {
+      "capability": "operation.mode",
       "status": "daemon-only"
     },
     "get_plugin_secret": {
@@ -333,6 +345,10 @@
       "capability": "sftp.write",
       "status": "daemon-only"
     },
+    "prepare_external_terminal_launch": {
+      "capability": "terminal.external_launch",
+      "status": "implemented"
+    },
     "preview_backup": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
@@ -431,6 +447,10 @@
     },
     "set_daemon_log_level": {
       "capability": "daemon.control",
+      "status": "daemon-only"
+    },
+    "set_operation_mode": {
+      "capability": "operation.mode",
       "status": "daemon-only"
     },
     "set_plugin_setting": {
@@ -593,6 +613,9 @@
     "connections.assign_to_group": {
       "capability": "connections.groups"
     },
+    "connections.check_unsaved_host": {
+      "capability": "connections.read"
+    },
     "connections.create": {
       "capability": "connections.write"
     },
@@ -623,6 +646,9 @@
     "connections.get_editor": {
       "capability": "connections.config.read"
     },
+    "connections.get_effective_config": {
+      "capability": "connections.config.read"
+    },
     "connections.get_plugin_secret": {
       "capability": "connections.secrets.reveal"
     },
@@ -649,6 +675,9 @@
     },
     "connections.move": {
       "capability": "connections.groups"
+    },
+    "connections.prepare_external_terminal_launch": {
+      "capability": "terminal.external_launch"
     },
     "connections.rename_group": {
       "capability": "connections.groups"
@@ -686,11 +715,17 @@
     "daemon.diagnostics": {
       "capability": "daemon.status"
     },
+    "daemon.get_operation_mode": {
+      "capability": "operation.mode"
+    },
     "daemon.restart": {
       "capability": "daemon.control"
     },
     "daemon.set_log_level": {
       "capability": "daemon.control"
+    },
+    "daemon.set_operation_mode": {
+      "capability": "operation.mode"
     },
     "daemon.status": {
       "capability": "daemon.status"
@@ -1061,6 +1096,7 @@
       "connections.write",
       "connections.config.read",
       "connections.config.write",
+      "operation.mode",
       "connections.secrets.write",
       "connections.secrets.status.read",
       "connections.secrets.reveal",
@@ -1077,6 +1113,7 @@
       "terminal.input",
       "terminal.resize",
       "terminal.replay",
+      "terminal.external_launch",
       "interactions",
       "interactions.read",
       "interactions.respond",
@@ -1372,6 +1409,10 @@
       "sftp_directory_size",
       "sftp_remove_tree",
       "sftp_copy_tree"
+    ],
+    "OperationMode": [
+      "default",
+      "isolated"
     ],
     "OperationState": [
       "queued",
@@ -3230,6 +3271,67 @@
       ],
       "status": "Implemented"
     },
+    "EffectiveConfigComparison": {
+      "fields": [
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "host",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "available",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "has_diff",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": [],
+          "name": "changes",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[dict[str, Any], ...]"
+        },
+        {
+          "default": [],
+          "name": "own",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "full",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": 0,
+          "name": "generation",
+          "required": false,
+          "sensitive": false,
+          "type": "int"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ErrorData": {
       "fields": [
         {
@@ -3339,6 +3441,39 @@
           "required": false,
           "sensitive": true,
           "type": "Mapping[str, Any]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ExternalTerminalLaunchSpec": {
+      "fields": [
+        {
+          "default": null,
+          "name": "argv",
+          "required": true,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "environment",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[tuple[str, str], ...]"
+        },
+        {
+          "default": "",
+          "name": "display_name",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "secret_autofill_supported",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -4532,6 +4667,60 @@
       ],
       "status": "Implemented"
     },
+    "OperationModeResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "accepted",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "active_mode",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationMode"
+        },
+        {
+          "default": null,
+          "name": "generation",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
+        },
+        {
+          "default": false,
+          "name": "seeded",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": false,
+          "name": "conflict",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": "",
+          "name": "message",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "target_description",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
     "OperationSummary": {
       "fields": [
         {
@@ -5530,6 +5719,25 @@
           "required": true,
           "sensitive": false,
           "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SetOperationModeRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "mode",
+          "required": true,
+          "sensitive": false,
+          "type": "OperationMode"
+        },
+        {
+          "default": false,
+          "name": "seed_isolated_config",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
         }
       ],
       "status": "Implemented"
@@ -6608,6 +6816,65 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "UnsavedHostCheckRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "",
+          "name": "username",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "connection_id",
+          "required": false,
+          "sensitive": false,
+          "type": "str | None"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "UnsavedHostCheckResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "saved",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "hostname",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "username",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "generation",
+          "required": true,
+          "sensitive": false,
+          "type": "int"
         }
       ],
       "status": "Implemented"

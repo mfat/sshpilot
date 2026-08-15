@@ -1,6 +1,8 @@
-# Frontend closure audit
+# Historical frontend closure audit
 
-Status: **closed** at the Phase 7 completion commit.
+Status: **historical**. This Phase 7 inventory is retained as migration
+evidence. The current ownership plan and status are maintained in
+[daemon-only-retirement.md](daemon-only-retirement.md).
 
 This is the Phase 7 inventory of production GTK entry points.  The matrix
 records the ownership boundary, rather than treating the current location of
@@ -23,7 +25,7 @@ no current product path.
 | Local shell tab | `TerminalWidget.setup_local_shell` | None | Local shell is intentionally owned by the terminal presentation | `tests/test_terminal_session_controller.py` | legitimate frontend-only | It is a local presentation feature and does not own SSH Pilot state or a remote operation. |
 | Terminal broadcast | `TerminalManager`, broadcast action handlers | `broadcast_terminal_input`, `broadcast_command` / `sessions.broadcast` | `BroadcastService`, session runtime | `tests/daemon/test_broadcast_service.py`, `tests/test_daemon_broadcast_ownership.py` | API/daemon owned | GTK selects targets and renders results only. |
 | SFTP connect, browse, stat, mkdir, rename, delete, upload, download | `SftpServiceController`, file-manager panes | `sftp_*`, transfer operations / `sftp.*`, `transfers.*` | `SftpRuntime`, transfer service | `tests/daemon/test_sftp_*`, `tests/integration/test_sftp_phase10.py` | API/daemon owned | `DaemonSftpManager` is the only in-app backend; unavailable daemon mode raises. |
-| External GVFS/file-manager presentation | `file_manager_integration`, `sftp_utils.open_remote_in_file_manager` | None | OS file manager/GVFS | `tests/test_file_manager_integration.py` | legitimate frontend-only | The process is an OS presentation integration; it does not become an SSH Pilot-owned SFTP backend. |
+| External file-manager presentation | `file_manager_integration` | daemon-prepared internal SFTP window | daemon SFTP service | file-manager backend tests | historical/changed | The obsolete frontend GVFS/SSH route was removed; remote file-manager views use the daemon SFTP backend. |
 | SCP upload/download and transfer cancellation | `ScpWindow`, `ScpWindowController` | `start_scp_transfer`, `cancel_transfer`, `get_operation` / `scp.*`, `operations.*` | Native SCP backend and operation runtime | `tests/daemon/test_native_scp_backend.py`, `tests/test_scp_daemon_routing.py` | API/daemon owned | The GTK transfer dialog has no direct SCP process ownership. |
 | Port forwarding open/close | `ForwardServiceController`, connection dialog | `open_forward`, `close_forward`, `list_forwards` / `forwards.*` | Forward service/runtime | `tests/daemon/test_forward_*`, `tests/integration/test_forward_phase10.py` | API/daemon owned | Rule validation may use pure core helpers; runtime ownership is daemon-side. |
 | Key listing, generation, fingerprint, passphrase verification | `KeyController`, `KeyManager`, `SshCopyIdWindow` | `list_keys`, `generate_key`, `verify_key_passphrase` / `keys.*` | Daemon key service and protected interaction broker | `tests/daemon/test_key_*`, `tests/test_key_manager_daemon.py` | API/daemon owned | GTK never runs `ssh-keygen` or reads private key material to implement the operation. |
@@ -86,6 +88,7 @@ checked by the closure guard.  It intentionally contains one row per public
 identity; the prose matrix above remains the human-readable operation audit.
 
 <!-- plugin-facade-classification:start -->
+`PluginContext.daemon_client` | `API/daemon owned`
 `PluginContext.for_spawn` | `API/daemon owned`
 `PluginContext.register_protocol` | `API/daemon owned`
 `PluginContext.add_connection` | `API/daemon owned`
@@ -140,7 +143,7 @@ identity; the prose matrix above remains the human-readable operation audit.
 <!-- plugin-facade-classification:end -->
 
 Supporting implementation identities are synchronized separately because they
-are not part of the 53 public facade count:
+are not part of the public facade count:
 
 <!-- plugin-supporting-classification:start -->
 `PluginHost.list_sessions` | `API/daemon owned`
@@ -194,8 +197,8 @@ compatibility methods are inert no-ops.
 ## Required Phase 7 report
 
 <!-- phase7-plugin-report:start -->
-plugin capabilities audited: 51
-api/daemon owned: 29
+plugin capabilities audited: 52
+api/daemon owned: 30
 legitimate frontend/platform-local: 20
 dead/unreachable compatibility: 2
 migration-required public identities: 0

@@ -15,42 +15,8 @@ gi.require_version("Gtk", "4.0")
 from gi.repository import GLib, Gtk
 
 from .platform_utils import is_flatpak, is_macos
-from .sftp_utils import open_remote_in_file_manager
 
 logger = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=1)
-def has_native_gvfs_support() -> bool:
-    """Return True when the platform supports GVFS based file management."""
-
-    if is_macos() or is_flatpak():
-        return False
-
-    try:
-        gi.require_version("Gio", "2.0")
-        from gi.repository import Gio  # noqa: F401  # pylint: disable=unused-import
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Gio not available for GVFS integration: %s", exc)
-        return False
-
-    if shutil.which("gio") or shutil.which("gvfs-mount"):
-        return True
-
-    gvfs_paths = [
-        f"/run/user/{os.getuid()}/gvfs",
-        f"/var/run/user/{os.getuid()}/gvfs",
-        os.path.expanduser("~/.gvfs"),
-    ]
-
-    for path in gvfs_paths:
-        try:
-            if os.path.isdir(path):
-                return True
-        except Exception:  # pragma: no cover - filesystem quirks
-            continue
-
-    return False
 
 
 @lru_cache(maxsize=1)
@@ -113,32 +79,12 @@ def should_hide_external_terminal_options() -> bool:
     )
 
 
-def should_show_force_internal_file_manager_toggle() -> bool:
-    """Return True when the built-in toggle for forcing the internal manager should be shown."""
-
-    try:
-        if is_macos():
-            return False
-        return bool(has_native_gvfs_support())
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("Failed to determine GVFS availability: %s", exc)
-        return False
-
 
 def should_hide_file_manager_options() -> bool:
-    """Check if file manager options should be hidden.
-
-    File manager UI should only be hidden when neither the native GVFS
-    integration nor the built-in manager are available. This allows the
-    Manage Files button to remain visible on platforms like macOS or Flatpak
-    where the new in-app manager is preferred.
-    """
+    """Return whether the daemon-backed in-app file manager is unavailable."""
 
     try:
-        if has_native_gvfs_support():
-            return False
-        if has_internal_file_manager():
-            return False
+        return not has_internal_file_manager()
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("File manager capability detection failed: %s", exc)
     return True
@@ -404,19 +350,6 @@ def launch_remote_file_manager(
     ssh_config: Optional[dict] = None,
 ) -> Tuple[bool, Optional[str], Optional[Any]]:
     """Launch the appropriate file manager for the supplied connection."""
-
-    if has_native_gvfs_support():
-        success, error_msg = open_remote_in_file_manager(
-            user=user,
-            host=host,
-            port=port,
-            error_callback=error_callback,
-            parent_window=parent_window,
-            connection=connection,
-            connection_manager=connection_manager,
-            ssh_config=ssh_config,
-        )
-        return success, error_msg, None
 
     if has_internal_file_manager():
         try:

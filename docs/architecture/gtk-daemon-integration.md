@@ -19,7 +19,7 @@ To ensure clear separation of concerns and prevent direct `DaemonClient` calls f
 ## 2. Responsibilities of `GtkRuntimeCoordinator`
 
 1. **Client & Bridge Lifecycle**:
-   - Holds references to the active frontend-neutral client (`DaemonClient` or in-process fallback) and `GtkClientBridge`.
+   - Holds references to the active daemon client and `GtkClientBridge`.
    - Subscribes to daemon events (`sessions.*`, `sftp.*`, `transfers.*`, `forwards.*`, `interactions.*`).
 2. **Resource Mappings**:
    - Maintains explicit mappings:
@@ -43,4 +43,5 @@ To ensure clear separation of concerns and prevent direct `DaemonClient` calls f
 - **No OpenSSH Command Building in GTK**: GTK views/controllers must never assemble `ssh`, `scp`, or `sftp` command lines directly when running in daemon mode.
 - **No Subprocess Ownership**: GTK widgets do not spawn or monitor local child PTY processes when connected to a daemon session.
 - **No Direct Thread Mutations**: No background thread may mutate GTK widget properties directly. All deliveries must pass through `GtkClientBridge` / `GLib.idle_add`.
-- **No Stale Fallbacks**: Daemon connection failures must present clear errors rather than silently falling back to unmanaged local SSH sessions unless explicitly requested by legacy user settings.
+- **No Stale Fallbacks**: Daemon connection failures present clear errors and
+  recovery actions; they never select an unmanaged local SSH session.

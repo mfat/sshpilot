@@ -7,7 +7,7 @@ these documents describe the concrete contract.
 
 ## Reference
 
-These topic guides describe the current Protocol 1.0/API 0.29 contract:
+These topic guides describe the current Protocol 1.0/API 0.39 contract:
 
 - [Daemon lifecycle](daemon-lifecycle.md)
 - [Sessions](sessions.md)
@@ -41,8 +41,7 @@ These topic guides describe the current Protocol 1.0/API 0.29 contract:
 
 ## Current runtime baseline
 
-`InProcessClient` advertises connection read/event/write support.
-`DaemonClient` additionally negotiates daemon-lifetime session lifecycle,
+`DaemonClient` negotiates connection read/event/write, daemon-lifetime session lifecycle,
 binary PTY terminal streaming, typed authentication/trust interactions, SFTP,
 transfers, and port forwarding over a secure per-user Unix socket.
 
@@ -52,7 +51,7 @@ secret APIs are included where listed by the current capabilities and methods
 references; unsupported capabilities remain explicit and never trigger a
 frontend fallback.
 
-The public API implementation version is `0.29`; the wire protocol remains
+The public API implementation version is `0.39`; the wire protocol remains
 `1.0`.
 
 The API package is GTK-free. Compatibility shims over existing managers are

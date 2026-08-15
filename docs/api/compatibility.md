@@ -2,6 +2,17 @@
 
 SSH Pilot uses a deliberately simple policy:
 
+## Frontend compatibility imports
+
+The obsolete stateful `sshpilot.connection_manager.ConnectionManager` backend
+is retired. `sshpilot.connection_manager` remains for one documented v1
+compatibility window as a minimal import shim exporting only the ephemeral
+`Connection` and `ConnectionState` models. It performs no persistence, SSH
+configuration, known-hosts, secret, or process I/O. New code must use the typed
+`SshPilotClient` API for saved connections and protected operations. The shim
+is scheduled for removal at the next incompatible application/plugin API
+window, with a deprecation release note before then.
+
 ## Phase 11: Daemon lifecycle and management
 
 Phase 11 adds daemon lifecycle states, idle shutdown, management RPCs, client
@@ -133,8 +144,8 @@ tests pass. A schema alone is not support. Clients:
 
 ## `DaemonClient` compatibility
 
-The reusable connection contract suite runs against both `DaemonClient` and
-`InProcessClient`. It compares:
+The reusable connection contract suite exercises the daemon transport and
+direct core service composition separately. It compares:
 
 - connection reads and writes, capabilities, mutation/not-found errors, and DTO values;
 - secret exclusion and Host-alias connection identity;
@@ -144,12 +155,11 @@ The reusable connection contract suite runs against both `DaemonClient` and
 Daemon-only handshake, framing, correlation, timeout, socket security,
 lifecycle, event multiplexing, bounded event/byte backpressure, mutation
 ambiguity, and multi-client sequence rules have focused transport tests.
-Connection event parity is covered under `connections.events`. Typed
-authentication/trust interactions are daemon-only and capability-gated in API
+Connection events are daemon-owned and covered under `connections.events`.
+Typed authentication/trust interactions are daemon-only and capability-gated in API
 0.9; unrestricted prompt parity remains out of scope. Terminal byte/replay
-contracts are daemon-only and capability-gated in API 0.8. Session lifecycle is intentionally
-daemon-only: `InProcessClient` continues to return
-`unsupported_capability`, while daemon integration contracts cover lifecycle,
+contracts are daemon-only and capability-gated in API 0.8. Session lifecycle is
+daemon-only; daemon integration contracts cover lifecycle,
 attachment, multi-client event, shutdown, and process-ownership semantics.
 API 0.8 adds optional terminal DTO fields and a negotiated binary frame while
 retaining Protocol v1 control compatibility. Old clients do not advertise

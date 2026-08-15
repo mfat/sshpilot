@@ -42,7 +42,6 @@ src/sshpilot/rbw_setup.py
 src/sshpilot/scp_utils.py
 src/sshpilot/scp_window.py
 src/sshpilot/secret_unlock_dialog.py
-src/sshpilot/sftp_utils.py
 src/sshpilot/shortcut_editor.py
 src/sshpilot/shutdown.py
 src/sshpilot/sidebar.py

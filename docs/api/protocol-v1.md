@@ -4,14 +4,13 @@
 
 ## Purpose
 
-Protocol v1 defines the frontend-neutral contract used both in-process and over
-the local daemon transport. It covers Python calling semantics, deliberate
+Protocol v1 defines the frontend-neutral contract used by frontends over the
+local daemon transport. It covers Python calling semantics, deliberate
 DTOs, capabilities, events, structured errors, and the local wire envelope.
 
 ## Scope
 
-`InProcessClient` implements connection reads and in-process connection events.
-`DaemonClient` additionally implements daemon-lifetime session control,
+`DaemonClient` implements connection reads/events and daemon-lifetime session control,
 lifecycle events, SFTP services, transfers, and port forwards over the same
 secure per-user Unix-domain socket. Capability-gated clients may also use
 daemon-owned Unix PTYs, the binary terminal stream, and typed
@@ -43,7 +42,7 @@ current ownership and final evidence.
 | Identifier | Current value | Meaning |
 | --- | --- | --- |
 | `PROTOCOL_VERSION` | `1.0` | Public contract family and compatibility semantics |
-| `API_IMPLEMENTATION_VERSION` | `0.29` | Version of the Python API implementation |
+| `API_IMPLEMENTATION_VERSION` | `0.39` | Version of the Python API implementation |
 
 `get_capabilities()` returns both values plus `ClientInfo`, `CoreInfo`, and a
 `CompatibilityResult`. `DaemonClient` first sends `system.handshake`, selects
@@ -148,8 +147,8 @@ See [stable connection identity](../architecture/connection-identity.md).
 - Timestamps are timezone-aware `datetime` values. Session summaries serialize
   them using RFC 3339/ISO 8601 UTC form, for example
   `2030-01-01T00:00:00Z`.
-- Tuple and frozen-set fields are immutable Python collections in-process and
-  encoded as JSON arrays without implying mutable core state.
+- Tuple and frozen-set fields are immutable Python collections at the Python
+  boundary and encoded as JSON arrays without implying mutable core state.
 - Sequences are non-negative integers. `CoreEvent.sequence` is daemon-global;
   terminal sequence is a per-session absolute byte offset beginning at zero.
 - Protocol v1 envelope and connection/capability DTO codecs reject unknown fields
@@ -170,12 +169,10 @@ rendering. See [terminal streaming](../architecture/terminal-streaming.md).
 ## Ordering
 
 - `list_connections()` preserves the order returned by the daemon's
-  `ConnectionRepository` / `ConnectionApplicationService` snapshot; an
-  in-process compatibility client may adapt an existing manager.
+  `ConnectionRepository` / `ConnectionApplicationService` snapshot.
 - `get_connection()` returns one current snapshot.
-- In-process events use one monotonically increasing sequence per client,
-  starting at zero.
-- Events are accepted into one serial FIFO. The first active publisher drains
+- Events are accepted into one serial FIFO. The daemon assigns the sequence
+  and the first active publisher drains
   it; concurrent publishers wait, and all subscribers observe sequence order.
 - Re-entrant publication queues behind the current subscriber snapshot without
   recursively growing the callback stack.
@@ -266,11 +263,11 @@ pending waits. Exactly one response, cancellation, or expiry wins.
   access secret providers directly.
 - Internal persistence records, GTK/GObject objects, PTYs, subprocesses, and
   file descriptors are never public DTOs.
-- Protocol v1 supports same-process access and same-user local Unix sockets.
-  Remote access is out of scope.
+- Protocol v1 supports same-user local Unix sockets. Remote access is out of
+  scope.
 
 ## Transport independence
 
-Public DTOs remain independent of in-process calls, Unix-domain sockets,
+Public DTOs remain independent of transport calls, Unix-domain sockets,
 Windows named pipes, WebSocket, Tauri, GTK, and HTTP. The current transport
 implementation is Linux/Unix `AF_UNIX`; other transports remain future work.

@@ -145,6 +145,8 @@ class ConnectionRepositoryProtocol(Protocol):
 
     def reload(self) -> ConnectionStoreSnapshot: ...
 
+    def transition_ssh_config(self, ssh_store: SshConfigStore, isolated: bool) -> ConnectionStoreSnapshot: ...
+
     def add_listener(self, callback: ChangeListener) -> None: ...
 
     def remove_listener(self, callback: ChangeListener) -> None: ...
@@ -301,7 +303,7 @@ class ConnectionRepository:
         with self._lock:
             paths = {self._state_path}
             loaded = self._ssh_store.load()
-            paths.update(Path(p) for p in loaded.source_paths)
+            paths.update(Path(p) for p in (loaded.watch_paths or loaded.source_paths))
             return frozenset(paths)
 
     @property
@@ -309,11 +311,41 @@ class ConnectionRepository:
         """Return the daemon-selected SSH root for reload stability checks."""
         return Path(self._ssh_store.root_path)
 
+    @property
+    def ssh_config_isolated(self) -> bool:
+        """Whether this daemon repository uses its isolated SSH root."""
+        return bool(getattr(self._ssh_store, "_isolated", False))
+
     def reload(self) -> ConnectionStoreSnapshot:
         """Re-read authoritative sources; publish a change only when semantics differ."""
         with self._mutation_scope():
             before = self._build_snapshot_locked()
             self._load_state_locked()
+            after = self._build_snapshot_locked()
+            return self._notify(before, after)
+
+    def transition_ssh_config(
+        self, ssh_store: SshConfigStore, isolated: bool
+    ) -> ConnectionStoreSnapshot:
+        """Atomically replace the active daemon SSH config store and reload."""
+        if not isinstance(ssh_store, SshConfigStore):
+            raise TypeError("an SshConfigStore is required")
+        with self._mutation_scope():
+            before = self._build_snapshot_locked()
+            old_store = self._ssh_store
+            old_isolated = self._isolated
+            try:
+                # Load before publication so malformed or inaccessible target
+                # configuration cannot leave a partially switched authority.
+                ssh_store.load()
+                self._ssh_store = ssh_store
+                self._isolated = bool(isolated)
+                self._load_state_locked()
+            except Exception:
+                self._ssh_store = old_store
+                self._isolated = old_isolated
+                self._load_state_locked()
+                raise
             after = self._build_snapshot_locked()
             return self._notify(before, after)
 

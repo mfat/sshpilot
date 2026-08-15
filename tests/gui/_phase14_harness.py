@@ -60,7 +60,7 @@ class Phase14Harness:
 
         from sshpilot.core.connection_application_service import ConnectionApplicationService
         from sshpilot.api import DaemonClient
-        from sshpilot.api.client_factory import ClientMode, ClientSelection
+        from sshpilot.api.client_factory import ClientSelection
         from sshpilot.daemon import DaemonServer
         from sshpilot.gtk_client_bridge import GtkClientBridge
 
@@ -84,10 +84,7 @@ class Phase14Harness:
         win.config.set_setting("terminal.daemon_app_close_policy", "ask")
         win.config.set_setting("terminal.daemon_restore_sessions", True)
         win.config.set_setting("terminal.daemon_auto_attach", True)
-        win.config.set_setting("file_manager.force_internal", True)
-        win.config.set_setting("file_manager.first_run_prompt_shown", True)
         win.config.set_setting("ssh.strict_host_key_checking", "accept-new")
-        os.environ["SSHPILOT_CLIENT_MODE"] = "daemon"
 
         iso = Path(os.environ["XDG_CONFIG_HOME"]) / "sshpilot"
         iso.mkdir(parents=True, exist_ok=True)
@@ -129,7 +126,7 @@ class Phase14Harness:
                     pass
         win._api_client_selection_request = None
         win._api_client_selection_pending = False
-        selection = ClientSelection(client=self.daemon_client, mode=ClientMode.DAEMON)
+        selection = ClientSelection(client=self.daemon_client)
         win._apply_client_selection(selection)
         app._api_client_selection = selection
         self.gui.pump(300)
@@ -201,7 +198,7 @@ class Phase14Harness:
 
         from tests._gui_harness import GuiApp
         from sshpilot.api import DaemonClient
-        from sshpilot.api.client_factory import ClientMode, ClientSelection
+        from sshpilot.api.client_factory import ClientSelection
         from sshpilot.gtk_client_bridge import GtkClientBridge
 
         app_id = application_id or (
@@ -238,7 +235,7 @@ class Phase14Harness:
             client_id=f"client:phase14-gtk-{secrets.token_hex(2)}",
             timeout=60,
         )
-        selection = ClientSelection(client=self.daemon_client, mode=ClientMode.DAEMON)
+        selection = ClientSelection(client=self.daemon_client)
         win._apply_client_selection(selection)
         self.gui.app._api_client_selection = selection
         self.gui.pump(300)
@@ -347,12 +344,12 @@ class Phase14Harness:
                 pass
         self.pump(200)
         # Re-assert daemon client after connection writes (welcome/reconnect
-        # races must not silently demote to in-process).
+        # races must not silently demote to a local backend).
         if type(win.client).__name__ != "DaemonClient":
-            from sshpilot.api.client_factory import ClientMode, ClientSelection
+            from sshpilot.api.client_factory import ClientSelection
 
             win._apply_client_selection(
-                ClientSelection(client=self.daemon_client, mode=ClientMode.DAEMON)
+                ClientSelection(client=self.daemon_client)
             )
             self.pump(100)
         return conn
@@ -862,12 +859,12 @@ class Phase14Harness:
         win = self.gui.window
         # Ensure client injection survived restore/restart.
         if type(getattr(win, "client", None)).__name__ != "DaemonClient":
-            from sshpilot.api.client_factory import ClientMode, ClientSelection
+            from sshpilot.api.client_factory import ClientSelection
 
             if self.daemon_client is not None:
                 win._apply_client_selection(
                     ClientSelection(
-                        client=self.daemon_client, mode=ClientMode.DAEMON
+                        client=self.daemon_client
                     )
                 )
                 self.pump(200)

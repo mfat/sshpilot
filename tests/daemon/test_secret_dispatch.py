@@ -1,5 +1,5 @@
 """Daemon secret RPC tests: dispatch routing, capability advertisement,
-codec wire mapping, InProcessClient parity and sentinel secrecy through the
+codec wire mapping and sentinel secrecy through the
 serialized transport surface.
 
 Sentinel secrets are the same values the service tests use; if any of them

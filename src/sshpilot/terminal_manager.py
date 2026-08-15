@@ -834,11 +834,6 @@ class TerminalManager:
         if response_id == "disconnect" and connection in window.active_terminals:
             terminal = window.active_terminals[connection]
             terminal.disconnect()
-            if getattr(window, "_pending_delete_connection", None) is connection:
-                try:
-                    window.connection_manager.remove_connection(connection)
-                finally:
-                    window._pending_delete_connection = None
 
     def disconnect_from_host(self, connection):
         window = self.window
@@ -1207,7 +1202,9 @@ class TerminalManager:
             if not data.get(CLI_CONNECT_FLAG):
                 return
 
-            from .unsaved_host import SavePromptDismissals, is_unsaved_host
+            from .api.connection_identity import connection_id_for
+            from .api.models.connections import UnsavedHostCheckRequest
+            from .unsaved_host import SavePromptDismissals, connection_destination
 
             window = self.window
             app = window.get_application() if hasattr(window, "get_application") else None
@@ -1217,35 +1214,62 @@ class TerminalManager:
                 if app is not None:
                     app.save_prompt_dismissals = dismissals
 
-            mgr = getattr(window, "connection_manager", None)
-            cfg_path = getattr(mgr, "ssh_config_path", None) if mgr else None
-            if dismissals.is_connection_dismissed(connection, config_file=cfg_path):
+            hostname, username = connection_destination(connection)
+            if dismissals.is_dismissed(hostname, username):
                 return
-            if not is_unsaved_host(connection, mgr, config_file=cfg_path):
+            if (getattr(connection, "protocol", "ssh") or "ssh") != "ssh":
                 return
 
-            def _on_save(term):
-                try:
-                    window.show_connection_dialog(term.connection, as_new=True)
-                except Exception:
-                    logger.debug("Failed to open save connection dialog", exc_info=True)
+            bridge = getattr(window, "client_bridge", None)
+            client = getattr(window, "client", None)
+            if bridge is None or client is None:
+                window._show_daemon_unavailable_dialog()
+                return
+            try:
+                stored_id = connection_id_for(connection)
+            except Exception:
+                stored_id = None
 
-            def _on_dismiss(term):
-                try:
-                    dismissals.dismiss_connection(term.connection, config_file=cfg_path)
-                except Exception:
-                    logger.debug("Failed to record save-prompt dismissal", exc_info=True)
+            request = UnsavedHostCheckRequest(
+                hostname=hostname,
+                username=username,
+                connection_id=stored_id,
+            )
 
-            if hasattr(terminal, "show_save_connection_prompt"):
-                # Delay the reveal so the revealer is mapped by the time it
-                # fires; otherwise GTK skips the slide-up animation.
-                from gi.repository import GLib
+            def _after_check(result):
+                if result.saved:
+                    return
 
-                def _reveal():
-                    terminal.show_save_connection_prompt(on_save=_on_save, on_dismiss=_on_dismiss)
-                    return False
+                def _on_save(term):
+                    try:
+                        window.show_connection_dialog(term.connection, as_new=True)
+                    except Exception:
+                        logger.debug("Failed to open save connection dialog", exc_info=True)
 
-                GLib.timeout_add(600, _reveal)
+                def _on_dismiss(term):
+                    try:
+                        dismissals.dismiss_connection(term.connection)
+                    except Exception:
+                        logger.debug("Failed to record save-prompt dismissal", exc_info=True)
+
+                if hasattr(terminal, "show_save_connection_prompt"):
+                    # Delay the reveal so the revealer is mapped by the time it
+                    # fires; otherwise GTK skips the slide-up animation.
+                    from gi.repository import GLib
+
+                    def _reveal():
+                        terminal.show_save_connection_prompt(
+                            on_save=_on_save, on_dismiss=_on_dismiss
+                        )
+                        return False
+
+                    GLib.timeout_add(600, _reveal)
+
+            bridge.submit(
+                lambda: client.check_unsaved_host(request),
+                on_success=_after_check,
+                on_error=lambda error: window._show_daemon_unavailable_dialog(),
+            )
         except Exception:
             logger.debug("Save-connection offer skipped", exc_info=True)
 

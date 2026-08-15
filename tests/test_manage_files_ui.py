@@ -42,21 +42,11 @@ def reload_module(name):
 
 def prepare_actions(monkeypatch):
     setup_gi(monkeypatch)
-    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
-    def open_remote_in_file_manager(*args, **kwargs):
-        return True, None
-    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
-    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
     return reload_module("sshpilot.actions")
 
 
 def prepare_file_manager_integration(monkeypatch):
     setup_gi(monkeypatch)
-    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
-    def open_remote_in_file_manager(*args, **kwargs):
-        return True, None
-    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
-    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
     return reload_module("sshpilot.file_manager_integration")
 
 
@@ -126,30 +116,18 @@ def test_should_hide_file_manager_options(monkeypatch):
     # should_hide_file_manager_options moved to file_manager_integration (it's
     # re-exported from preferences); patch its deps where the function lives.
     fmi = prepare_file_manager_integration(monkeypatch)
-    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: False)
     monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
     assert fmi.should_hide_file_manager_options()
 
     monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: True)
     assert not fmi.should_hide_file_manager_options()
 
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
-    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: True)
-    assert not fmi.should_hide_file_manager_options()
-
-
-def test_launch_remote_file_manager_prefers_gvfs(monkeypatch):
+def test_launch_remote_file_manager_always_uses_daemon_internal_backend(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    calls = {}
-
-    def fake_open_remote_in_file_manager(**kwargs):
-        calls["kwargs"] = kwargs
-        return True, None
-
-    monkeypatch.setattr(integration, "open_remote_in_file_manager", fake_open_remote_in_file_manager)
-    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: True)
-    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
+    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
+    sentinel = object()
+    monkeypatch.setattr(integration, "open_internal_file_manager", lambda **_kwargs: sentinel)
 
     success, error, window = integration.launch_remote_file_manager(
         user="alice",
@@ -160,15 +138,12 @@ def test_launch_remote_file_manager_prefers_gvfs(monkeypatch):
 
     assert success
     assert error is None
-    assert window is None
-    assert calls["kwargs"]["user"] == "alice"
-    assert calls["kwargs"]["port"] == 2022
+    assert window is sentinel
 
 
 def test_launch_remote_file_manager_uses_internal(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: False)
     monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
 
     sentinel = object()
@@ -178,11 +153,7 @@ def test_launch_remote_file_manager_uses_internal(monkeypatch):
         captured["kwargs"] = kwargs
         return sentinel
 
-    def fail_remote(**_kwargs):
-        raise AssertionError("GVFS backend should not be used when native support is disabled")
-
     monkeypatch.setattr(integration, "open_internal_file_manager", fake_open_internal_file_manager)
-    monkeypatch.setattr(integration, "open_remote_in_file_manager", fail_remote)
 
     success, error, window = integration.launch_remote_file_manager(
         user="bob",
@@ -206,7 +177,6 @@ def test_launch_remote_file_manager_uses_internal(monkeypatch):
 def test_launch_remote_file_manager_no_backend(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: False)
     monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
 
     captured = {}

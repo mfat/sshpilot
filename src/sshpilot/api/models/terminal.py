@@ -14,6 +14,45 @@ MAX_TERMINAL_BROADCAST_COMMAND_BYTES = 65_536
 
 
 @dataclass(frozen=True)
+class ExternalTerminalLaunchSpec:
+    """Daemon-prepared, non-secret launch data for an external terminal."""
+
+    argv: Tuple[str, ...]
+    environment: Tuple[Tuple[str, str], ...] = ()
+    display_name: str = ""
+    secret_autofill_supported: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.argv) is not tuple or not self.argv:
+            raise ValueError("external terminal argv must be a non-empty tuple")
+        for argument in self.argv:
+            if type(argument) is not str or not argument or "\x00" in argument:
+                raise ValueError("external terminal argv contains an invalid value")
+        if type(self.environment) is not tuple:
+            raise TypeError("external terminal environment must be a tuple")
+        names = set()
+        for item in self.environment:
+            if type(item) is not tuple or len(item) != 2:
+                raise ValueError("external terminal environment entries are pairs")
+            name, value = item
+            if (
+                type(name) is not str
+                or not name
+                or "\x00" in name
+                or type(value) is not str
+                or "\x00" in value
+            ):
+                raise ValueError("external terminal environment contains an invalid value")
+            if name in names:
+                raise ValueError("external terminal environment contains duplicates")
+            names.add(name)
+        if type(self.display_name) is not str or "\x00" in self.display_name:
+            raise ValueError("external terminal display name is invalid")
+        if type(self.secret_autofill_supported) is not bool:
+            raise TypeError("secret_autofill_supported must be a boolean")
+
+
+@dataclass(frozen=True)
 class TerminalDimensions:
     rows: int
     columns: int

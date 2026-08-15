@@ -5,6 +5,33 @@ notes remain separate.
 
 ## Unreleased
 
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.37` after adding the daemon-only
+  client method contract for operation-mode transitions.
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.38` for the daemon-owned
+  `daemon.get_operation_mode` status operation used by restore safety UI.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.36`; `PROTOCOL_VERSION` stays
+  `1.0`. Added daemon-owned `daemon.set_operation_mode`, with semantic
+  Default/Isolated requests, secure target preparation, live resource
+  preconditions, rollback, confirmed mode and generation in the result.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.35`; `PROTOCOL_VERSION` stays
+  `1.0`. Added daemon-owned `connections.check_unsaved_host`, which compares
+  semantic destination facts against the authoritative connection snapshot
+  without exposing SSH config paths or running OpenSSH in the frontend.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.34`; `PROTOCOL_VERSION` stays
+  `1.0`. Added daemon-owned `connections.get_effective_config`, returning a
+  generation-tagged authored-versus-effective OpenSSH comparison. Frontends no
+  longer run `ssh -G` or select the active config root for this decision.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.33`; `PROTOCOL_VERSION` stays
+  `1.0`. Added the daemon-owned `connections.prepare_external_terminal_launch`
+  operation and `ExternalTerminalLaunchSpec`. External terminal launch argv is
+  prepared from the daemon's active SSH configuration; only an approved agent
+  socket environment addition may cross the API, and secret autofill is
+  intentionally unsupported.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.31`; `PROTOCOL_VERSION` stays
   `1.0`. Added optional `force_tty` to open-session requests. When set, the
   daemon forces a remote TTY allocation (`ssh -t`) so interactive remote
@@ -682,3 +709,7 @@ interactive insertion continues to honor the `insert_only` preference.
 - Added the optional `display_name` presentation field to connection summaries
   and mutation results. SSH connection IDs remain their OpenSSH aliases; this
   additive field does not expose the internal UUID identity.
+# API 0.39 — 2026-08-15
+
+- Exported the daemon-owned operation-mode DTOs from the public model package;
+  Protocol v1 remains compatible.

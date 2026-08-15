@@ -14,15 +14,13 @@ implementations.
 5. Add or update event types, typed payloads, ordering, and delivery rules.
 6. Add structured error codes and safe details where needed.
 7. Implement core behaviour while preserving the single native SSH/auth path.
-8. Update `InProcessClient`.
-9. Update both `InProcessClient` and `DaemonClient`, or keep the operation
-   schema-only and return `unsupported_capability` consistently.
-10. Add reusable contract tests, not implementation-only assertions.
-11. Update state-transition documentation and transition tests.
-12. Update the method/model/event/error/capability references.
-13. Update [CHANGELOG.md](CHANGELOG.md).
-14. Review compatibility and protocol-version impact.
-15. Regenerate and review the structural artifacts.
+8. Update the daemon dispatcher and `DaemonClient`.
+9. Add reusable contract tests, not implementation-only assertions.
+10. Update state-transition documentation and transition tests.
+11. Update the method/model/event/error/capability references.
+12. Update [CHANGELOG.md](CHANGELOG.md).
+13. Review compatibility and protocol-version impact.
+14. Regenerate and review the structural artifacts.
 
 ## API change checklist
 
@@ -36,7 +34,6 @@ implementations.
 - [ ] Events are added or updated
 - [ ] Ordering, delivery, cancellation, timeout, and threading are defined
 - [ ] State transitions are documented
-- [ ] `InProcessClient` is updated
 - [ ] `DaemonClient` is updated or a backlog item is recorded
 - [ ] Contract tests are updated
 - [ ] API documentation is updated
@@ -72,7 +69,7 @@ The client-mode environment variable is a process-local selection override, not
 configuration state:
 
 ```bash
-SSHPILOT_CLIENT_MODE=daemon python3 run.py
+python3 run.py
 ```
 
 The generator writes:
@@ -191,7 +188,7 @@ When regenerating API artifacts after claim/release or multi-attachment changes,
 ### Phase 9.3 testing notes
 
 - GUI tests (`SSHPILOT_GUI_TESTS=1`) isolate `HOME`/`XDG_*` **and**
-  `XDG_RUNTIME_DIR`, and force `SSHPILOT_CLIENT_MODE=in_process`. They must
+  `XDG_RUNTIME_DIR` and use an owned daemon socket. They must
   never attach to the developer user socket under `/run/user/$UID/sshpilot/`.
 - Daemon-specific GUI cases start an owned `DaemonServer` on a unique temp
   socket, assert `server_instance_id` / `threads_alive()`, and tear down

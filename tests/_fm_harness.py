@@ -6,7 +6,89 @@ from typing import Optional
 
 import pytest
 
-from tests.test_sftp_utils_in_app_manager import setup_gi
+
+
+def setup_gi(monkeypatch):
+    """Install the small GTK surface needed by daemon file-manager tests."""
+    gi = types.ModuleType("gi")
+
+    def require_version(*args, **kwargs):
+        pass
+
+    gi.require_version = require_version
+    repository = types.ModuleType("repository")
+    gi.repository = repository
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", repository)
+    class DummyWidget:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __bool__(self):
+            return True
+
+        def __call__(self, *args, **kwargs):
+            return None
+
+        def __getattr__(self, _name):
+            return lambda *args, **kwargs: DummyWidget()
+
+        def connect(self, *args, **kwargs):
+            return None
+
+        def __iter__(self):
+            return iter(())
+
+        @classmethod
+        def new_from_icon_name(cls, *_args, **_kwargs):
+            return cls()
+
+    gtk = types.ModuleType("Gtk")
+    for name in (
+        "Box", "Label", "ProgressBar", "Button", "Entry", "Stack",
+        "ListView", "GridView", "SingleSelection", "StringObject",
+        "DropTarget", "ToggleButton", "Window", "ApplicationWindow",
+    ):
+        setattr(gtk, name, DummyWidget)
+    gtk.Application = types.SimpleNamespace(get_default=lambda: DummyWidget())
+    gtk.Orientation = types.SimpleNamespace(VERTICAL=0, HORIZONTAL=1)
+    gtk.Align = types.SimpleNamespace(START=0, CENTER=1)
+    from gtk_template_stub import install_template_stub
+    install_template_stub(gtk)
+    repository.Gtk = gtk
+    monkeypatch.setitem(sys.modules, "gi.repository.Gtk", gtk)
+
+    adw = types.ModuleType("Adw")
+    for name in ("Window", "ApplicationWindow", "HeaderBar", "ToastOverlay", "ToolbarView", "MessageDialog"):
+        setattr(adw, name, DummyWidget)
+    adw.Toast = types.SimpleNamespace(new=lambda *_args, **_kwargs: DummyWidget())
+    repository.Adw = adw
+    monkeypatch.setitem(sys.modules, "gi.repository.Adw", adw)
+
+    glib = types.ModuleType("GLib")
+    glib.idle_add = lambda fn, *args, **kwargs: (fn(*args, **kwargs), 1)[1]
+    glib.timeout_add = lambda _interval, fn, *args, **kwargs: (fn(*args, **kwargs), 1)[1]
+    glib.source_remove = lambda *_args, **_kwargs: None
+    glib.Error = Exception
+    repository.GLib = glib
+    monkeypatch.setitem(sys.modules, "gi.repository.GLib", glib)
+
+    for name in ("Pango", "PangoFT2", "Gio", "Gdk", "Vte"):
+        module = types.ModuleType(name)
+        repository.__dict__[name] = module
+        monkeypatch.setitem(sys.modules, f"gi.repository.{name}", module)
+    repository.Pango.EllipsizeMode = types.SimpleNamespace(END=0, MIDDLE=1)
+    repository.Pango.WrapMode = types.SimpleNamespace(WORD_CHAR=0)
+    repository.Gio.SimpleAction = DummyWidget
+    repository.Gio.File = DummyWidget
+    repository.Gdk.DragAction = types.SimpleNamespace(COPY=1)
+    repository.Vte.Terminal = DummyWidget
+
+    gobject = types.ModuleType("GObject")
+    gobject.GObject = DummyWidget
+    gobject.SignalFlags = types.SimpleNamespace(RUN_FIRST=0, RUN_LAST=1)
+    repository.GObject = gobject
+    monkeypatch.setitem(sys.modules, "gi.repository.GObject", gobject)
 
 
 class DummyPolicy:

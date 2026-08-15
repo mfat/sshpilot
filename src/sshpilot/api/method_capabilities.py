@@ -28,6 +28,8 @@ UNSUPPORTED_CLIENT_METHOD_CAPABILITIES = {
     "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
     "restart_daemon": Capability.DAEMON_CONTROL,
     "set_daemon_log_level": Capability.DAEMON_CONTROL,
+    "set_operation_mode": Capability.OPERATION_MODE,
+    "get_operation_mode": Capability.OPERATION_MODE,
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "has_connection_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "has_key_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,

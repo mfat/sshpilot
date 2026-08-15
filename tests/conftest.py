@@ -303,8 +303,9 @@ def _gui_app_session(tmp_path_factory):
     """Boot the real app once per session in a hermetic temp HOME/XDG/runtime.
 
     Isolates the GUI suite from the developer's user daemon socket by giving
-    every session its own ``XDG_RUNTIME_DIR`` and forcing in-process client
-    mode. Individual tests that need a daemon start an owned ``DaemonServer``
+    every session its own ``XDG_RUNTIME_DIR``. The production application
+    starts or connects to the daemon on that isolated runtime path. Individual
+    tests that need a specifically owned daemon start an owned ``DaemonServer``
     on a unique temp socket and inject it via ``_apply_client_selection``.
     """
     from tests._gui_harness import GuiApp, requires_gui
@@ -320,7 +321,6 @@ def _gui_app_session(tmp_path_factory):
         'XDG_STATE_HOME',
         'XDG_CACHE_HOME',
         'XDG_RUNTIME_DIR',
-        'SSHPILOT_CLIENT_MODE',
     )
     saved = {k: os.environ.get(k) for k in keys}
     os.environ['HOME'] = str(cfg)
@@ -329,22 +329,13 @@ def _gui_app_session(tmp_path_factory):
     os.environ['XDG_STATE_HOME'] = str(cfg / 'state')
     os.environ['XDG_CACHE_HOME'] = str(cfg / 'cache')
     os.environ['XDG_RUNTIME_DIR'] = str(runtime)
-    # Default GUI harness stays in-process so tests never attach to a user
-    # daemon that happens to be listening on the real runtime socket.
-    os.environ['SSHPILOT_CLIENT_MODE'] = 'core_service'
-
     app = GuiApp()
     app.boot()
-    # Sanity: the session app must not be holding a live daemon client against
-    # the developer's socket (contamination would make timeouts non-deterministic).
+    # Sanity: the session app must use the daemon on the isolated runtime path.
     from sshpilot.api.daemon_client import DaemonClient
 
-    selection = getattr(app.app, '_api_client_selection', None)
-    assert selection is None or selection.mode is None, (
-        f"GUI harness must boot in-process, got {selection!r}"
-    )
-    assert not isinstance(getattr(app.window, 'client', None), DaemonClient), (
-        "GUI harness connected a DaemonClient at boot; runtime isolation failed"
+    assert isinstance(getattr(app.window, 'client', None), DaemonClient), (
+        "GUI harness did not connect the mandatory daemon on its isolated runtime"
     )
     try:
         yield app

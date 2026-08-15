@@ -267,6 +267,7 @@ def _production_core_services():
     from .key_service import DaemonKeyService
     from .known_hosts_service import KnownHostsService
     from .server import CoreServices
+    from .operation_mode_service import OperationModeService
 
     def _resolve_key_root(scope):
         from sshpilot.api.models.keys import KeyStoreScope
@@ -286,6 +287,12 @@ def _production_core_services():
         state_path=get_config_dir() / "connections.json",
         legacy_config_path=get_config_dir() / "config.json",
         isolated=isolated,
+    )
+    operation_mode = OperationModeService(
+        repository,
+        config_path=get_config_dir() / "config.json",
+        default_root=get_ssh_dir() / "config",
+        isolated_root=get_config_dir() / "ssh_config",
     )
     def _build_ssh_overrides_service():
         from sshpilot.core.ssh_overrides_service import SshOverridesService
@@ -368,6 +375,7 @@ def _production_core_services():
         secrets=secrets_service,
         identity=identity_service,
         operations=operation_runtime,
+        operation_mode=operation_mode,
         plugin_settings=PluginSettingsService(get_config_dir() / "config.json"),
     )
 

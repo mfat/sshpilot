@@ -484,16 +484,6 @@ class DockerConsolePage(
                 return connection
         return None
 
-    def _host_user_for(self, nickname: str) -> tuple[Optional[str], str]:
-        """(host, username) used as the keyring identity for the sudo password —
-        the same host/username the SSH login password is keyed by."""
-        conn = self._connection_for(nickname)
-        if conn is None:
-            return nickname, ""
-        host = (getattr(conn, "hostname", None) or getattr(conn, "host", None)
-                or nickname)
-        return host, (getattr(conn, "username", None) or "")
-
     def _client(self) -> Optional[DockerClient]:
         nick = self._current_nickname()
         if not nick:
@@ -846,47 +836,70 @@ class DockerConsolePage(
 
         ``ctx.run_command`` is deliberately non-interactive, so password-mode
         connections cannot fall back to the terminal prompt used by a normal
-        SSH tab.  Prompt here on the GTK thread and put the session password on
-        the connection; the shared native auth resolver then feeds it through
-        the normal sshpass FIFO path.
+        SSH tab. Prompt here on the GTK thread and store the value through the
+        protected daemon API; the shared native auth resolver then feeds it
+        through the normal sshpass FIFO path.
         """
         if self._is_local(nickname):
             self._ssh_auth_blocked.discard(nickname)
             return True
-        connection = self._connection_for(nickname)
-        if connection is None:
-            return True
-        try:
-            password_mode = int(getattr(connection, "auth_method", 0) or 0) == 1
-        except (TypeError, ValueError):
-            password_mode = False
-        if not password_mode or getattr(connection, "password", None):
-            self._ssh_auth_blocked.discard(nickname)
-            return True
 
-        manager = getattr(self.ctx, "connection_manager", None)
-        if manager is not None:
-            try:
-                if manager.get_connection_password(connection):
-                    self._ssh_auth_blocked.discard(nickname)
-                    return True
-            except Exception:
-                logger.debug("Docker Console password lookup failed", exc_info=True)
+        client = self.ctx.daemon_client()
+        if client is None:
+            self._ssh_auth_blocked.add(nickname)
+            return False
+        try:
+            from ....api.capabilities import Capability
+            if not client.get_capabilities().supports(
+                Capability.CONNECTIONS_SECRETS_STATUS_READ
+            ) or not client.get_capabilities().supports(
+                Capability.CONNECTIONS_SECRETS_WRITE
+            ):
+                raise RuntimeError("daemon secret capability is unavailable")
+            summary = next(
+                (item for item in client.list_connections()
+                 if getattr(item, "nickname", None) == nickname),
+                None,
+            )
+            if summary is None:
+                raise RuntimeError(f"connection {nickname!r} is unavailable")
+            details = client.get_connection(summary.id)
+            if getattr(details, "authentication_method", None).value != "password":
+                self._ssh_auth_blocked.discard(nickname)
+                return True
+            if client.has_connection_password(details.id):
+                self._ssh_auth_blocked.discard(nickname)
+                return True
+        except Exception:
+            logger.debug("Docker Console daemon password status failed", exc_info=True)
+            self._ssh_auth_blocked.add(nickname)
+            return False
 
         from ....window import show_ssh_password_dialog
 
         password = show_ssh_password_dialog(
             from_widget=self,
-            connection=connection,
-            connection_manager=manager,
+            display_name=getattr(details, "display_name", nickname),
+            host=getattr(details, "hostname", None) or getattr(details, "host", None),
+            username=getattr(details, "username", None),
             heading=_("SSH password required"),
             body=_("“{name}” uses password authentication.\n\n"
                    "Enter the SSH login password to open Docker Console:").format(name=nickname),
+            allow_store=False,
         )
         if not password:
             self._ssh_auth_blocked.add(nickname)
             return False
-        connection.password = password
+        try:
+            from ....api.models.connections import StoreConnectionPasswordRequest
+            if not client.store_connection_password(
+                StoreConnectionPasswordRequest(connection_id=details.id, password=password)
+            ):
+                raise RuntimeError("daemon rejected the SSH password")
+        except Exception:
+            logger.debug("Docker Console daemon password storage failed", exc_info=True)
+            self._ssh_auth_blocked.add(nickname)
+            return False
         self._ssh_auth_blocked.discard(nickname)
         return True
 
@@ -1065,14 +1078,13 @@ class DockerConsolePage(
         if DockerClient.is_sudo_denied_error(sudo_text):
             self._status("This user isn't allowed to use sudo on this host")
             return True, "not_sudoers", None
-        # sudo needs a password — try a session snapshot, then keyring.
-        keyring_pw = "" if session_pw else self._lookup_stored_sudo(nick)
-        pw = session_pw or keyring_pw
+        # Sudo credentials are session-only plugin state. The plugin never
+        # reads or writes a frontend secret store; a daemon operation may still
+        # use the verified value for the current command/session.
+        pw = session_pw
         if pw and self._verify_sudo(rc, nick, runtime, pw):
             self._status("Sudo password accepted")
             return True, "password", pw
-        if keyring_pw and pw == keyring_pw:
-            self._clear_stored_sudo(nick)
         self._status("Sudo needs a password")
         return True, "needs_password", None
 
@@ -1097,45 +1109,18 @@ class DockerConsolePage(
         ok, _unused = DockerConsolePage._check_sudo(rc, nick, runtime, password)
         return ok
 
-    def _lookup_stored_sudo(self, nick: str) -> str:
-        host, user = self._host_user_for(nick)
-        if not host:
-            return ""
-        try:
-            from ....askpass_utils import lookup_sudo_password
-            return lookup_sudo_password(host, user)
-        except Exception:
-            return ""
-
-    def _clear_stored_sudo(self, nick: str) -> None:
-        host, user = self._host_user_for(nick)
-        if not host:
-            return
-        try:
-            from ....askpass_utils import clear_sudo_password
-            clear_sudo_password(host, user)
-        except Exception:
-            pass
-
     def _prompt_for_sudo_password(self, nick: str, runtime: str,
                                   *, load_gen: Optional[int] = None) -> None:
         """Ask for the host's sudo password (GUI), verify it, then enable sudo.
         Runs on the UI thread; verification is offloaded to a worker."""
-        host, user = self._host_user_for(nick)
         from ....window import show_ssh_password_dialog
-        from ....askpass_utils import store_sudo_password
-
-        on_store = (lambda p: store_sudo_password(host, user, p)) if host else None
         password = show_ssh_password_dialog(
             from_widget=self,
             display_name=nick,
-            host=host,
-            username=user,
             heading=_("Sudo password required"),
             body=_("“{name}” needs a sudo password to access Docker.\n\n"
                    "Enter your sudo password:").format(name=nick),
-            store_label="Save sudo password",
-            on_store=on_store,
+            allow_store=False,
         )
         if load_gen is not None and load_gen != self._load_gen:
             return  # host changed while the dialog was open
@@ -1160,13 +1145,11 @@ class DockerConsolePage(
                 self.ctx.settings.set(f"sudo:{nick}", True)
                 self._set_sudo_check(True)
             elif result == "not_sudoers":
-                self._clear_stored_sudo(nick)
                 self._disable_sudo(nick)
                 self._toast("Your user isn't allowed to run Docker with sudo on this host.")
             else:
-                # Wrong password — drop any stale keyring entry so it doesn't
-                # silently autofill the bad value next time, and back off sudo.
-                self._clear_stored_sudo(nick)
+                # Wrong password — drop the session value and back off sudo.
+                self._sudo_passwords.pop(nick, None)
                 self._disable_sudo(nick)
                 self._toast("Sudo password incorrect.")
             self._finish_probe_and_refresh()

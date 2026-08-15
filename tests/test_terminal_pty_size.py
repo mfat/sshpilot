@@ -38,8 +38,8 @@ class DummyTerminal:
         self.pty = pty
         self.calls.append(("attach", pty))
 
-    def spawn_async(self, *args):
-        self.calls.append(("spawn", args))
+    def spawn_async(self, *args, **kwargs):
+        self.calls.append(("spawn", args, kwargs))
 
 
 def _backend(monkeypatch, rows=30, columns=100):
@@ -64,23 +64,24 @@ def _backend(monkeypatch, rows=30, columns=100):
     return backend, terminal, ptys, calls
 
 
-def test_backend_sets_pty_size_before_spawn(monkeypatch):
+def test_backend_delegates_pty_creation_and_sizing_to_vte(monkeypatch):
     backend, terminal, ptys, calls = _backend(monkeypatch)
 
     backend.spawn_async(["ssh", "host"])
 
-    assert ptys[0].size == (30, 100)
-    assert terminal.pty is ptys[0]
-    assert [call[0] for call in calls] == ["create", "size", "attach", "spawn"]
+    assert ptys == []
+    assert calls[0][0] == "spawn"
+    assert calls[0][2]["argv"] == ["ssh", "host"]
 
 
-def test_backend_does_not_resize_default_dimensions(monkeypatch):
+def test_backend_delegates_default_dimensions_to_vte(monkeypatch):
     backend, terminal, ptys, calls = _backend(monkeypatch, 24, 80)
 
     backend.spawn_async(["/bin/sh"])
 
-    assert ptys[0].size is None
-    assert [call[0] for call in calls] == ["create", "attach", "spawn"]
+    assert ptys == []
+    assert calls[0][0] == "spawn"
+    assert calls[0][2]["argv"] == ["/bin/sh"]
 
 
 def test_backend_reuses_attached_pty(monkeypatch):

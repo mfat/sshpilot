@@ -51,7 +51,8 @@ entries are rewritten, not accumulated.
     `RuntimeHandle` → `DaemonClient`.
   - `tests/mcp/test_runtime_policy.py`: headless policy/handle tests that
     run in the minimal environment (no ``mcp`` SDK).
-  - `tests/mcp/test_runtime_server_smoke.py`: in-process protocol smoke test
+  - `tests/mcp/test_runtime_server_smoke.py`: direct in-process protocol smoke
+    test only; production runtime access remains daemon-client based
     (handshake, typed-tool enumeration, READ round-trip, MUTATE
     confirmation/policy refusals) driven over the official SDK's memory
     streams.

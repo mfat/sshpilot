@@ -936,13 +936,11 @@ class Config(GObject.Object):
             return max(0, min(4, coerced))
 
         return {
-            'force_internal': _get_bool('force_internal'),
             'open_externally': _get_bool('open_externally'),
             'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
             'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
             'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
             'icon_size_level': _get_icon_size_level(),
-            'first_run_prompt_shown': _get_bool('first_run_prompt_shown'),
         }
 
     def get_security_config(self) -> Dict[str, Any]:

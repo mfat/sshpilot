@@ -921,6 +921,11 @@ class _DaemonSshRunner:
         manager = self._manager
 
         class _Shim:
+            # Production daemon launches must never stage secrets into the
+            # compatibility askpass environment; the interaction broker owns
+            # the child credential channel.
+            secret_lookup_authoritative = True
+
             def get_connection_password(self, _conn):
                 try:
                     from sshpilot.credential_model import (

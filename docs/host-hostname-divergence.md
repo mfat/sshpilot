@@ -1,8 +1,8 @@
 # `Connection.host` / `Connection.hostname` divergence
 
-Status: **RESOLVED** on branch `fix/connection-manager-cleanup` (2026-07).
-The unified rule now lives in a single place — `Connection._apply_common_fields`
-(`src/sshpilot/connection_manager.py`, search for "Unified resolution"):
+Status: **HISTORICAL / RESOLVED**. The old stateful connection manager was
+retired in the daemon-only migration. The current ephemeral projection applies
+the same separation in `src/sshpilot/connection_model.py`:
 **`host` is always the Host alias (falling back to the nickname); `hostname` is
 the HostName value or `''`** — identical for construction and in-place update.
 `update_connection`'s host-token refresh also syncs `connection.host` to the new
@@ -40,11 +40,11 @@ So a connection's attributes silently change meaning after its first edit.
 ## Where the two rules live
 
 - **Construction rule** — `Connection.__init__`,
-  `src/sshpilot/connection_manager.py:295-299`:
+  `src/sshpilot/connection_model.py`:
   `hostname = data['hostname'] or ''`; `host = data['host']` (falling back to
   nickname). Alias and address stay separate.
 - **Update rule** — `Connection._update_properties_from_data`,
-  `src/sshpilot/connection_manager.py:762-773`:
+  `src/sshpilot/connection_model.py`:
   if `hostname` is non-empty, `host` is **overwritten with it** (:764-766);
   if the `hostname` key is absent, `hostname` is **mirrored from host** (:768-769).
 - The rest of the field set was consolidated into `_apply_common_fields`
@@ -80,7 +80,6 @@ High risk — a pre/post-edit value swap plausibly changes behavior:
 - **Keyring legacy-probe candidate lists** (a `host`↔`hostname` collapse can
   drop the candidate a legacy password was stored under → lookup miss):
   `src/sshpilot/credential_model.py:77`,
-  `src/sshpilot/sftp_utils.py:283-288,471-477`,
   `src/sshpilot/file_manager_window.py:397-402`,
   `src/sshpilot/window_dialogs.py:220-226`,
   `src/sshpilot/ssh_connection_builder.py:37-39,477`.

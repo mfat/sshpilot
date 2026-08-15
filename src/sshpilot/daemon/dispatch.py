@@ -74,6 +74,12 @@ from sshpilot.api.transport.codec import (
     close_sftp_request_from_wire,
     connection_details_to_wire,
     connection_editor_details_to_wire,
+    effective_config_comparison_to_wire,
+    set_operation_mode_request_from_wire,
+    operation_mode_result_to_wire,
+    unsaved_host_check_request_from_wire,
+    unsaved_host_check_result_to_wire,
+    external_terminal_launch_spec_to_wire,
     connection_mutation_result_to_wire,
     connection_store_snapshot_to_wire,
     set_group_color_request_from_wire,
@@ -165,7 +171,12 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
     "connections.get_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.check_unsaved_host": Capability.CONNECTIONS_READ,
+    "daemon.set_operation_mode": Capability.OPERATION_MODE,
+    "daemon.get_operation_mode": Capability.OPERATION_MODE,
     "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.has_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
@@ -579,6 +590,7 @@ class RequestDispatcher:
         secrets_service: Any = None,
         identity_service: Any = None,
         operation_runtime: Any = None,
+        operation_mode: Any = None,
         broadcast_service: Any = None,
         plugin_settings: Any = None,
         command_input_waiter: Optional[Callable[..., Any]] = None,
@@ -596,6 +608,7 @@ class RequestDispatcher:
         self._secrets_service = secrets_service
         self._identity_service = identity_service
         self._operation_runtime = operation_runtime
+        self._operation_mode = operation_mode
         self._broadcast_service = broadcast_service
         self._plugin_settings = plugin_settings
         self._command_input_waiter = command_input_waiter
@@ -636,7 +649,12 @@ class RequestDispatcher:
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
             "connections.get_editor": self._handle_get_connection_editor,
+            "connections.get_effective_config": self._handle_get_effective_config,
+            "connections.check_unsaved_host": self._handle_check_unsaved_host,
+            "daemon.set_operation_mode": self._handle_set_operation_mode,
+            "daemon.get_operation_mode": self._handle_get_operation_mode,
             "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
+            "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
             "connections.has_password": self._handle_has_connection_password,
@@ -920,6 +938,7 @@ class RequestDispatcher:
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
+                operation_mode=self._operation_mode is not None,
                 broadcast=self._broadcast_service is not None,
                 plugin_settings=self._plugin_settings is not None,
             ),
@@ -1155,6 +1174,77 @@ class RequestDispatcher:
             connection_id=typed_id,
         )
 
+    def _handle_get_effective_config(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError("connections.get_effective_config requires connection_id")
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: effective_config_comparison_to_wire(
+                self._connections.get_effective_config(typed_id)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_id,
+        )
+
+    def _handle_check_unsaved_host(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        typed_request = unsaved_host_check_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: unsaved_host_check_result_to_wire(
+                self._connections.check_unsaved_host(typed_request)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_set_operation_mode(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        service = self._operation_mode
+        if service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Operation mode management is unavailable",
+            )
+        typed_request = set_operation_mode_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: operation_mode_result_to_wire(service.apply(typed_request)),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_get_operation_mode(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if request.params:
+            raise ValueError("daemon.get_operation_mode takes no parameters")
+        service = self._operation_mode
+        if service is None:
+            raise SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Operation mode management is unavailable",
+            )
+        return DeferredResult(
+            operation=lambda: operation_mode_result_to_wire(service.status()),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
     def _handle_get_ssh_config_text(
         self,
         request: RequestEnvelope,
@@ -1180,6 +1270,28 @@ class RequestDispatcher:
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,
+        )
+
+    def _handle_prepare_external_terminal_launch(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError(
+                "connections.prepare_external_terminal_launch requires connection_id"
+            )
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: external_terminal_launch_spec_to_wire(
+                self._connections.prepare_external_terminal_launch(typed_id)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_id,
         )
 
     def _handle_store_connection_password(
@@ -2849,6 +2961,7 @@ class RequestDispatcher:
                 secrets=self._secrets_service is not None,
                 identity=self._identity_service is not None,
                 operations=self._operation_runtime is not None,
+                operation_mode=self._operation_mode is not None,
                 broadcast=self._broadcast_service is not None,
                 plugin_settings=self._plugin_settings is not None,
             ),
@@ -2886,6 +2999,7 @@ class RequestDispatcher:
         secrets: bool = False,
         identity: bool = False,
         operations: bool = False,
+        operation_mode: bool = False,
         broadcast: bool = False,
         plugin_settings: bool = False,
     ) -> FrozenSet[Capability]:
@@ -3025,6 +3139,8 @@ class RequestDispatcher:
                     Capability.OPERATIONS_CONTROL,
                 }
             )
+        if operation_mode:
+            daemon_capabilities |= frozenset({Capability.OPERATION_MODE})
         if broadcast:
             daemon_capabilities |= frozenset(
                 {

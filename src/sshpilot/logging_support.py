@@ -66,7 +66,6 @@ _SSH_CATEGORY_PREFIXES = (
     "sshpilot.sshcopyid_window",
     "sshpilot.sshpilot_agent",
     "sshpilot.scp_utils",
-    "sshpilot.sftp_utils",
     "sshpilot.known_hosts_editor",
 )
 

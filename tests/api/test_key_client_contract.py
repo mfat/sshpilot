@@ -63,7 +63,7 @@ def test_daemon_client_registers_key_methods():
         assert name not in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 
 
-def _in_process_client():
+def _direct_core_service():
     return ConnectionApplicationService(make_test_repository(), client_name="test")
 
 
@@ -85,25 +85,25 @@ def _in_process_client():
         ),
     ],
 )
-def test_in_process_client_raises_canonical_unsupported(method, args):
-    client = _in_process_client()
+def test_direct_core_service_raises_canonical_unsupported(method, args):
+    client = _direct_core_service()
     with pytest.raises(SshPilotError) as excinfo:
         getattr(client, method)(*args)
     assert excinfo.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
 
 
-def test_in_process_client_never_advertises_key_capabilities():
-    client = _in_process_client()
+def test_direct_core_service_never_advertises_key_capabilities():
+    client = _direct_core_service()
     capabilities = client.get_capabilities()
     assert not capabilities.supports(Capability.KEYS_READ)
     assert not capabilities.supports(Capability.KEYS_WRITE)
 
 
-def test_in_process_client_does_no_local_key_io():
-    # The canonical unsupported error means the in-process client must not
+def test_direct_core_service_does_no_local_key_io():
+    # The canonical unsupported error means direct core composition must not
     # scan, generate, or read key files (no KeyService construction or path
     # derivation). The error must be raised without touching the filesystem.
-    client = _in_process_client()
+    client = _direct_core_service()
     with pytest.raises(SshPilotError) as excinfo:
         client.list_keys(ListKeysRequest())
     assert excinfo.value.code is ErrorCode.UNSUPPORTED_CAPABILITY

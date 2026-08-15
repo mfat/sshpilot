@@ -17,24 +17,6 @@ def prefer_daemon_extended_services(
     return True
 
 
-def allow_daemon_sftp(*args, **kwargs) -> bool:
-    """Compatibility query: GTK-owned OpenSSH SFTP is never permitted."""
-    del args, kwargs
-    return False
-
-
-def allow_legacy_scp(*args, **kwargs) -> bool:
-    """GTK-owned SCP transfer workers are never permitted."""
-    del args, kwargs
-    return False
-
-
-def allow_legacy_local_forward(*args, **kwargs) -> bool:
-    """GTK-owned forwarding processes are never permitted."""
-    del args, kwargs
-    return False
-
-
 def resolve_file_manager_route(*args, **kwargs) -> ExtendedServiceRoute:
     del args, kwargs
     return ExtendedServiceRoute.DAEMON

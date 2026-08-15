@@ -56,12 +56,11 @@ Originating client owns close. Forwards persist after GTK disconnect.
 Observers may list/get but cannot close. Daemon shutdown terminates all.
 Daemon restart loses all forwards.
 
-## Legacy gating
+## Availability
 
-Plugin `ensure_local_forward` prefers the daemon. Silent fallback to a
-ControlMaster/`ssh -N` child is removed. Explicit
-`forwards.legacy_local_process` (or in-process client mode) is required for
-GTK-owned forward processes.
+Plugin `ensure_local_forward` uses the daemon forward API. A missing daemon or
+capability is reported as unavailable; no ControlMaster/`ssh -N` child or
+frontend-owned forwarding process is selected.
 
 ## Phase 10.1 validation (exercised)
 
