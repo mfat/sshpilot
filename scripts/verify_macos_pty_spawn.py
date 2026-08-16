@@ -242,10 +242,20 @@ def main() -> int:
                 "PATH": f"{fake_bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
             }
         )
+        print(f"daemon PATH (as launched): {environment['PATH']}", file=sys.stderr)
         log_path = temp / "daemon.log"
         with log_path.open("w+") as log_file:
+            # --verbose: on a failure this script dumps daemon.log to stderr
+            # (see the except block below). Without DEBUG level, that dump
+            # can't show which "ssh" the daemon's own subprocess calls
+            # actually resolved to — the readiness probe logs
+            # ("ssh readiness probe/capability for <path>: ...") are the
+            # only direct evidence of whether PATH-shadowing (see
+            # _write_fake_ssh) is actually reaching the daemon's env in a
+            # packaged build, as opposed to a real system ssh silently
+            # taking over.
             process = subprocess.Popen(
-                [str(executable), "--daemon", "--socket", str(socket_path)],
+                [str(executable), "--daemon", "--verbose", "--socket", str(socket_path)],
                 stdin=subprocess.DEVNULL,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,
