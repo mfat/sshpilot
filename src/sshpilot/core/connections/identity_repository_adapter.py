@@ -200,7 +200,18 @@ def reconcile_identity_state(
     identities = []
     for identity in state.identities:
         if identity.tombstone:
-            identities.append(identity)
+            # Check if this tombstone should be resurrected (exact alias + anchor match)
+            match = next((item for item in matches if item.old.uuid == identity.uuid), None)
+            if match is not None:
+                # Resurrect: update projection, clear tombstone flag and retired_generation
+                identities.append(replace(
+                    identity,
+                    projection=match.new_projection,
+                    tombstone=False,
+                    retired_generation=None,
+                ))
+            else:
+                identities.append(identity)
             continue
         match = next((item for item in matches if item.old.uuid == identity.uuid), None)
         if match is not None:

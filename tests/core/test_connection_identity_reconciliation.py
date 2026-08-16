@@ -333,7 +333,8 @@ def test_source_and_unrelated_projection_metadata_are_not_identity():
     assert result.matched[0].old.uuid == "u1"
 
 
-def test_tombstones_never_resurrect():
+def test_tombstones_do_not_resurrect_for_different_alias():
+    """Tombstoned entries only resurrect when exact alias matches, not for renames."""
     deleted = old("old", projection("gone"))
     tombstone = IdentityRegistryEntry(
         uuid=deleted.uuid,
@@ -341,6 +342,7 @@ def test_tombstones_never_resurrect():
         display_name=deleted.display_name,
         tombstone=True,
     )
+    # Different alias "new" does not resurrect tombstone with alias "gone"
     result = reconcile([tombstone], [projection("new")])
     assert result.matched == ()
     assert result.deleted == ()
@@ -1427,3 +1429,151 @@ def test_actual_loader_restart_preserves_ambiguity_after_alias_reorder(tmp_path)
     assert not result.deleted
     assert [entry.uuid for entry in result.ambiguous[0].old] == ["u1", "u2"]
     assert [item.alias for item in result.ambiguous[0].new] == ["new-b", "new-a"]
+
+
+def test_tombstone_resurrects_when_exact_alias_returns():
+    """Tombstoned identity should resurrect when its exact alias reappears.
+
+    This scenario occurs during mode switching:
+    1. Default mode has Host "prod" with display_name "Production Server"
+    2. Switch to isolated mode (different hosts) - "prod" is tombstoned
+    3. Switch back to default mode - "prod" returns
+    4. The original identity should resurrect with display_name preserved
+    """
+    # Step 1: Start with an identity for "prod" with custom display_name
+    original = old("prod-uuid", projection("prod", hostname="prod.example.com"), name="Production Server")
+
+    # Step 2: Simulate switch to isolated mode - different hosts, "prod" disappears
+    # Use different hostname to ensure no destination anchor match
+    isolated_result = reconcile(
+        [original],
+        [projection("isolated-host", hostname="isolated.local")],
+    )
+    assert isolated_result.deleted[0].uuid == "prod-uuid"
+    assert isolated_result.created[0].uuid == "created-1"
+
+    # Create tombstoned state after isolated mode
+    tombstoned = IdentityRegistryEntry(
+        uuid="prod-uuid",
+        projection=original.projection,
+        display_name="Production Server",
+        tombstone=True,
+    )
+    isolated_identity = isolated_result.created[0]
+
+    # Step 3: Switch back to default mode - "prod" returns
+    return_result = reconcile(
+        [tombstoned, isolated_identity],
+        [projection("prod", hostname="prod.example.com")],  # Original alias returns
+        ids=("new-uuid",),
+    )
+
+    # Step 4: The tombstoned identity should resurrect (match), not create new
+    assert len(return_result.matched) == 1
+    assert return_result.matched[0].old.uuid == "prod-uuid"
+    assert return_result.matched[0].old.display_name == "Production Server"
+    assert return_result.matched[0].reason is MatchReason.EXACT_ALIAS
+    assert return_result.created == ()
+    assert return_result.deleted[0].uuid == "created-1"  # isolated host deleted
+
+
+def test_tombstone_resurrection_preserves_display_name_through_mode_cycle():
+    """Full mode-switch cycle: default -> isolated -> default preserves names."""
+    # Default mode identity with unique hostname
+    default_identity = old(
+        "u1",
+        projection("prod", hostname="prod.example.com"),
+        name="My Production DB",
+    )
+
+    # Switch to isolated: different projections (different hostname), default identity tombstoned
+    to_isolated = reconcile(
+        [default_identity],
+        [projection("test-server", hostname="test.local")],
+    )
+    assert to_isolated.deleted[0].uuid == "u1"
+
+    # Create the tombstoned version and new isolated identity
+    tombstoned = IdentityRegistryEntry(
+        uuid="u1",
+        projection=default_identity.projection,
+        display_name="My Production DB",
+        tombstone=True,
+    )
+    isolated_entry = to_isolated.created[0]
+
+    # Switch back to default: original projection returns
+    back_to_default = reconcile(
+        [tombstoned, isolated_entry],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("unused",),
+    )
+
+    # Original identity should be resurrected with display_name intact
+    assert len(back_to_default.matched) == 1
+    match = back_to_default.matched[0]
+    assert match.old.uuid == "u1"
+    assert match.old.display_name == "My Production DB"
+    # Isolated entry should be deleted since its alias doesn't exist
+    assert len(back_to_default.deleted) == 1
+    assert back_to_default.deleted[0].uuid == "created-1"
+
+
+def test_tombstone_resurrects_when_both_anchors_unavailable():
+    """Tombstone with unavailable anchor resurrects when new anchor also unavailable."""
+    # Both projections have no hostname, so destination_anchor is None
+    original = old(
+        "u1",
+        projection("prod", hostname=None),
+        name="Production Server",
+    )
+
+    # Delete the identity (tombstone it)
+    tombstoned = IdentityRegistryEntry(
+        uuid="u1",
+        projection=original.projection,
+        display_name="Production Server",
+        tombstone=True,
+    )
+
+    # New projection with same alias but also no hostname
+    result = reconcile(
+        [tombstoned],
+        [projection("prod", hostname=None)],
+        ids=("new-uuid",),
+    )
+
+    # Should resurrect since both anchors are unavailable (None == None)
+    assert len(result.matched) == 1
+    assert result.matched[0].old.uuid == "u1"
+    assert result.matched[0].old.display_name == "Production Server"
+    assert result.created == ()
+
+
+def test_tombstone_not_resurrected_when_anchors_differ():
+    """Tombstone is NOT resurrected when destination anchors differ."""
+    # Original connection to server-a
+    original = old(
+        "u1",
+        projection("myserver", hostname="server-a.example.com"),
+        name="Old Server",
+    )
+
+    tombstoned = IdentityRegistryEntry(
+        uuid="u1",
+        projection=original.projection,
+        display_name="Old Server",
+        tombstone=True,
+    )
+
+    # New connection with same alias but to a different server
+    result = reconcile(
+        [tombstoned],
+        [projection("myserver", hostname="server-b.example.com")],
+        ids=("new-uuid",),
+    )
+
+    # Should NOT resurrect - this is a new connection to a different server
+    assert result.matched == ()
+    assert result.created[0].uuid == "new-uuid"
+    assert result.created[0].display_name == "myserver"  # Falls back to alias

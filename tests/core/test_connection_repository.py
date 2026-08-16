@@ -422,10 +422,13 @@ def test_temporary_include_disappearance_preserves_dormant_decorations(tmp_path)
         "Root",
         "Included",
     ]
-    # The disappeared identity was retired; a later alias reuse is a new
-    # UUID and cannot resurrect the old group or metadata ownership.
+    # The identity is resurrected when its alias and destination anchor match.
+    # Metadata is preserved (keyed by UUID), but group membership references
+    # were already removed when the identity was tombstoned and are not
+    # automatically re-added.
     assert snapshot.groups[0].connection_ids == ()
-    assert snapshot.metadata == ()
+    assert len(snapshot.metadata) == 1
+    assert snapshot.metadata[0].connection_id == "Included"
     assert read_identity_state_v2(state).version == 2
 
 
