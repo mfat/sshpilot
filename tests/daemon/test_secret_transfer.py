@@ -1082,7 +1082,7 @@ def test_daemon_import_ssh_backup_restores_connection_store(monkeypatch, tmp_pat
         fake_mgr, connection_id="some-connection", remote_dir="/backups",
         entry_id="remote/backup.spbk",
         options={"mode": "merge"},
-        connections_source=lambda: [],
+        connections_source=list,
         settings_path=target_config_dir / "config.json",
         manifest=manifest,
         connection_store_restore=target_repo.restore_connection_store,
@@ -1116,7 +1116,7 @@ def test_daemon_export_backup_fails_when_connection_store_snapshot_raises(monkey
         destination=str(dest),
         options={"app_settings": True, "ssh_config": True, "known_hosts": False,
                  "secrets": False, "private_keys": False},
-        connections_source=lambda: [],
+        connections_source=list,
         settings_path=config_dir / "config.json",
         connection_store_snapshot=_raise,
     )

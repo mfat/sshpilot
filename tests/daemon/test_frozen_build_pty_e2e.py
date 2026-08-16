@@ -60,7 +60,7 @@ def test_frozen_pty_spawn_execs_real_command_end_to_end(tmp_path, monkeypatch):
         username="alice",
         port=22,
     )
-    handle = runner.start(
+    _handle = runner.start(
         spec,
         lambda info: exit_info.append(info),
         output.extend,

@@ -20,7 +20,6 @@ from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
-from sshpilot.core.errors import CoreError  # noqa: E402
 
 
 def _repo(tmp_path, ssh_text: str = ""):

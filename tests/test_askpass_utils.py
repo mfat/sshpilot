@@ -339,7 +339,7 @@ def test_frozen_build_native_askpass_script_dispatches_via_internal_flag(monkeyp
 
     script_path = askpass_utils.force_regenerate_askpass_script()
 
-    with open(script_path, "r", encoding="utf-8") as f:
+    with open(script_path, encoding="utf-8") as f:
         content = f.read()
 
     assert content == '#!/bin/sh\nexec "/fake/SSHPilot" --internal-native-askpass "$@"\n'
