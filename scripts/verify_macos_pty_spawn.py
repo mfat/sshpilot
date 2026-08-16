@@ -56,7 +56,7 @@ def _bundle_executable(bundle: Path) -> Path:
 
 
 def _write_fake_ssh(bin_dir: Path) -> None:
-    """A stand-in remote host: ignores all argv, prints one marker.
+    """A stand-in remote host: ignores most argv, prints one marker.
 
     What matters here isn't ssh's argv contract, only that *some* real
     process gets exec'd by the daemon's PTY child helper and its output
@@ -67,10 +67,50 @@ def _write_fake_ssh(bin_dir: Path) -> None:
     record evicted) before this script ever attaches — a race real ssh
     sessions don't have, since a real connection always takes measurably
     longer than one client round-trip.
+
+    Before the daemon ever spawns the interactive login it shadows here,
+    it shells out to the same ``ssh`` on PATH several times for
+    config/capability queries: identity-file discovery and the session
+    readiness probe both run ``ssh -G ...``, and the readiness probe also
+    runs ``ssh -V``. Real ssh answers those near-instantly. A naive stand-in
+    that always sleeps would turn each of those into a multi-second stall —
+    stacking up to eat the whole PTY-output polling deadline before the
+    real login invocation (the one this script cares about) ever runs. Only
+    that plain, flag-free invocation prints the marker and lingers.
+
+    That readiness probe's ``ssh -G ... -E <file>`` succeeding (exit 0, and
+    the daemon pre-creates ``<file>`` itself before the probe even runs) is
+    enough for the daemon to believe this stand-in supports the private
+    ``-v -E`` diagnostics pair it instruments real logins with — which then
+    arrive here as extra ``-v -E <file>`` argv on the real login invocation
+    too. The daemon treats that file as the authoritative evidence stream
+    for the session and won't promote it to authenticated without a
+    recognized line in it, so this stand-in writes one real OpenSSH would
+    have (see ``_AUTHENTICATED_RE`` in ``core/ssh_diagnostics.py``) before
+    printing the marker.
     """
     bin_dir.mkdir(parents=True, exist_ok=True)
     fake_ssh = bin_dir / "ssh"
-    fake_ssh.write_text(f'#!/bin/sh\nprintf {_PTY_MARKER.decode()}\nsleep 5\n')
+    fake_ssh.write_text(
+        "#!/bin/sh\n"
+        "diag=\"\"\n"
+        "prev=\"\"\n"
+        "for arg in \"$@\"; do\n"
+        "  case \"$arg\" in\n"
+        "    -G|-V) exit 0 ;;\n"
+        "  esac\n"
+        "  if [ \"$prev\" = \"-E\" ]; then\n"
+        "    diag=\"$arg\"\n"
+        "  fi\n"
+        "  prev=\"$arg\"\n"
+        "done\n"
+        "if [ -n \"$diag\" ]; then\n"
+        "  printf 'debug1: Authenticated to sshpilot-pty-smoke "
+        "([127.0.0.1]:22) using \"password\".\\n' >> \"$diag\"\n"
+        "fi\n"
+        f"printf {_PTY_MARKER.decode()}\n"
+        "sleep 5\n"
+    )
     mode = fake_ssh.stat().st_mode
     fake_ssh.chmod(mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -120,6 +160,18 @@ def _verify_pty_spawn(client: DaemonClient) -> None:
     )
     try:
         output = bytearray()
+        # subscribe_terminal MUST be called before attach_session: the daemon
+        # bundles the initial replay (from_sequence=0) with the attach
+        # response itself, delivered on the client's terminal dispatch thread
+        # the moment that response arrives. A callback registered afterwards
+        # races that delivery and reliably loses it — the client drops
+        # terminal output for sessions with no registered subscriber rather
+        # than queuing it — so attaching first silently discards the very
+        # output this check exists to observe. The callback itself receives a
+        # TerminalOutput event, not raw bytes; extending straight from it
+        # raises TypeError on every delivery, silently swallowed by the
+        # dispatch thread — its own way of never observing the marker.
+        client.subscribe_terminal(session.id, lambda event: output.extend(event.data))
         client.attach_session(
             AttachSessionRequest(
                 session_id=session.id,
@@ -128,7 +180,6 @@ def _verify_pty_spawn(client: DaemonClient) -> None:
                 from_sequence=0,
             )
         )
-        client.subscribe_terminal(session.id, output.extend)
 
         deadline = time.monotonic() + 20.0
         while _PTY_MARKER not in output and time.monotonic() < deadline:
