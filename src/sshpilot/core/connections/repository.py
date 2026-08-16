@@ -398,17 +398,23 @@ class ConnectionRepository:
             before = self._build_snapshot_locked()
             old_store = self._ssh_store
             old_isolated = self._isolated
+            target_isolated = bool(isolated)
+            mode_changed = old_isolated != target_isolated
             try:
                 # Load before publication so malformed or inaccessible target
                 # configuration cannot leave a partially switched authority.
                 ssh_store.load()
                 self._ssh_store = ssh_store
-                self._isolated = bool(isolated)
-                self._load_state_locked()
+                self._isolated = target_isolated
+                self._load_state_locked(
+                    allow_tombstone_resurrection=mode_changed,
+                )
             except Exception:
                 self._ssh_store = old_store
                 self._isolated = old_isolated
-                self._load_state_locked()
+                self._load_state_locked(
+                    allow_tombstone_resurrection=mode_changed,
+                )
                 raise
             after = self._build_snapshot_locked()
             return self._notify(before, after)
@@ -501,7 +507,11 @@ class ConnectionRepository:
             return read_connection_state(self._state_path), False
         return read_legacy_connection_state(self._legacy_config_path), True
 
-    def _load_state_locked(self) -> None:
+    def _load_state_locked(
+        self,
+        *,
+        allow_tombstone_resurrection: bool = False,
+    ) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
         self._loaded_ssh_config = ssh_config
@@ -537,6 +547,7 @@ class ConnectionRepository:
                         state,
                         projections,
                         ssh_config_revision=ssh_config.root_revision,
+                        allow_tombstone_resurrection=allow_tombstone_resurrection,
                     )
                     write_identity_state_v2(self._state_path, state)
                 self._identity_state = state

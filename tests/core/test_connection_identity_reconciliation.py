@@ -73,12 +73,19 @@ def old(uuid: str, item: ConnectionIdentityProjection, name: str = "Saved"):
     return IdentityRegistryEntry(uuid=uuid, projection=item, display_name=name)
 
 
-def reconcile(old_entries, new_projections, ids=("created-1", "created-2", "created-3")):
+def reconcile(
+    old_entries,
+    new_projections,
+    ids=("created-1", "created-2", "created-3"),
+    *,
+    allow_tombstone_resurrection=False,
+):
     values = iter(ids)
     return reconcile_identities(
         old_entries,
         new_projections,
         uuid_factory=lambda: next(values),
+        allow_tombstone_resurrection=allow_tombstone_resurrection,
     )
 
 
@@ -1466,6 +1473,7 @@ def test_tombstone_resurrects_when_exact_alias_returns():
         [tombstoned, isolated_identity],
         [projection("prod", hostname="prod.example.com")],  # Original alias returns
         ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
     )
 
     # Step 4: The tombstoned identity should resurrect (match), not create new
@@ -1507,6 +1515,7 @@ def test_tombstone_resurrection_preserves_display_name_through_mode_cycle():
         [tombstoned, isolated_entry],
         [projection("prod", hostname="prod.example.com")],
         ids=("unused",),
+        allow_tombstone_resurrection=True,
     )
 
     # Original identity should be resurrected with display_name intact
@@ -1519,16 +1528,13 @@ def test_tombstone_resurrection_preserves_display_name_through_mode_cycle():
     assert back_to_default.deleted[0].uuid == "created-1"
 
 
-def test_tombstone_resurrects_when_both_anchors_unavailable():
-    """Tombstone with unavailable anchor resurrects when new anchor also unavailable."""
-    # Both projections have no hostname, so destination_anchor is None
+def test_tombstone_does_not_resurrect_without_trustworthy_anchor():
+    """Alias equality alone must not resurrect a retired identity."""
     original = old(
         "u1",
         projection("prod", hostname=None),
         name="Production Server",
     )
-
-    # Delete the identity (tombstone it)
     tombstoned = IdentityRegistryEntry(
         uuid="u1",
         projection=original.projection,
@@ -1536,18 +1542,15 @@ def test_tombstone_resurrects_when_both_anchors_unavailable():
         tombstone=True,
     )
 
-    # New projection with same alias but also no hostname
     result = reconcile(
         [tombstoned],
         [projection("prod", hostname=None)],
         ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
     )
 
-    # Should resurrect since both anchors are unavailable (None == None)
-    assert len(result.matched) == 1
-    assert result.matched[0].old.uuid == "u1"
-    assert result.matched[0].old.display_name == "Production Server"
-    assert result.created == ()
+    assert result.matched == ()
+    assert [entry.uuid for entry in result.created] == ["new-uuid"]
 
 
 def test_tombstone_not_resurrected_when_anchors_differ():
@@ -1571,9 +1574,35 @@ def test_tombstone_not_resurrected_when_anchors_differ():
         [tombstoned],
         [projection("myserver", hostname="server-b.example.com")],
         ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
     )
 
     # Should NOT resurrect - this is a new connection to a different server
     assert result.matched == ()
     assert result.created[0].uuid == "new-uuid"
     assert result.created[0].display_name == "myserver"  # Falls back to alias
+
+
+def test_duplicate_matching_tombstones_are_not_guessed():
+    first = IdentityRegistryEntry(
+        uuid="old-1",
+        projection=projection("prod", hostname="prod.example.com"),
+        display_name="First Production",
+        tombstone=True,
+    )
+    second = IdentityRegistryEntry(
+        uuid="old-2",
+        projection=projection("prod", hostname="prod.example.com"),
+        display_name="Second Production",
+        tombstone=True,
+    )
+
+    result = reconcile(
+        [first, second],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
+    )
+
+    assert result.matched == ()
+    assert [entry.uuid for entry in result.created] == ["new-uuid"]
