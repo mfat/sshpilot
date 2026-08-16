@@ -229,6 +229,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._config_changed_handler = None
         self._startup_tasks_scheduled = False
         self._startup_complete = False
+        self._initial_connection_list_focus_done = False
         self._pending_focus_operations = []
         if hasattr(self.config, 'connect'):
             try:
@@ -5637,6 +5638,25 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Rebuild presentation state after an authoritative store refresh."""
         self.group_manager.bind_connections(manager.connections)
         self.rebuild_connection_list()
+        if not self._initial_connection_list_focus_done:
+            # The daemon-backed client attaches asynchronously (client_bridge
+            # selection + connection store fetch), so this reset — not window
+            # construction — is the first point the connection list actually
+            # has rows. The fixed 100ms/700ms startup timers in __init__ can
+            # fire before the daemon responds and find nothing to focus; this
+            # is what makes "focus the first row on startup" work regardless
+            # of how long that took. Only the first reset ever counts, so a
+            # later reconnect/refresh never steals focus from the user.
+            self._initial_connection_list_focus_done = True
+            startup_behavior = 'welcome'
+            try:
+                startup_behavior = self.config.get_setting(
+                    'app-startup-behavior', 'welcome'
+                )
+            except Exception:
+                pass
+            if startup_behavior != 'terminal':
+                self._focus_connection_list_first_row()
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""
