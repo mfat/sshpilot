@@ -6,6 +6,7 @@ import os
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
 import sshpilot.secret_storage as ss
+import sshpilot.core.connections.repository as bm_repository
 from sshpilot.secret_storage import password_spec, sudo_password_spec
 from sshpilot.backup_archive import read_spbk
 
@@ -1010,3 +1011,104 @@ def test_export_to_backend_mirrors_only_when_secrets_on(monkeypatch, tmp_path):
                           options={**base, "secrets": False}, mirror_to=mirror2)
     assert mgr.last_mirror_counts is None
     assert mirror2.stored == []
+
+
+# --- connection_store wiring seam --------------------------------------------
+
+class _FakeConnectionStore:
+    """Stand-in for ConnectionRepository's snapshot_for_backup/restore_connection_store."""
+
+    def __init__(self, section=None, warnings=()):
+        self._section = section or {"version": 1, "connections": [], "groups": [],
+                                     "root_connection_ids": [], "metadata": []}
+        self._warnings = tuple(warnings)
+        self.restore_calls = []
+
+    def snapshot_for_backup(self):
+        return self._section
+
+    def restore_connection_store(self, section, *, mode="merge"):
+        self.restore_calls.append((section, mode))
+        return bm_repository.ConnectionStoreRestoreResult(warnings=self._warnings)
+
+
+def test_build_export_data_includes_connection_store_when_app_settings_enabled(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    store = _FakeConnectionStore(section={"version": 1, "connections": [{"id": "x"}],
+                                           "groups": [], "root_connection_ids": [], "metadata": []})
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]), connection_store=store)
+
+    included = mgr._build_export_data()
+    assert included["connection_store"]["connections"] == [{"id": "x"}]
+
+    excluded = mgr._build_export_data({"app_settings": False, "ssh_config": False,
+                                        "known_hosts": False, "secrets": False,
+                                        "private_keys": False})
+    assert "connection_store" not in excluded
+
+
+def test_apply_parsed_restores_connection_store_with_correct_mode_and_warnings(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
+    config = ModeConfig(config_file, isolated=False)
+    store = _FakeConnectionStore(warnings=("a non-fatal warning",))
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
+        connection_store=store,
+    )
+    manifest = {
+        "version": 1,
+        "backup_options": {"app_settings": True, "ssh_config": True, "known_hosts": True,
+                            "secrets": False, "private_keys": False},
+        "ssh_config": "Host x\n",
+        "known_hosts": None,
+        "app_config": {"ssh": {"use_isolated_config": False}},
+        "connection_store": {"version": 1, "connections": [], "groups": [],
+                              "root_connection_ids": [], "metadata": []},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="merge", create_backup=False)
+
+    assert success, error
+    assert len(store.restore_calls) == 1
+    _, mode_used = store.restore_calls[0]
+    assert mode_used == "merge"
+    assert mgr.last_connection_store_warnings == ["a non-fatal warning"]
+
+
+def test_apply_parsed_without_connection_store_section_still_succeeds(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
+    config = ModeConfig(config_file, isolated=False)
+    store = _FakeConnectionStore()
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
+        connection_store=store,
+    )
+    manifest = {
+        "version": 1,
+        "backup_options": {"app_settings": True, "ssh_config": True, "known_hosts": True,
+                            "secrets": False, "private_keys": False},
+        "ssh_config": "Host x\n",
+        "known_hosts": None,
+        "app_config": {"ssh": {"use_isolated_config": False}},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="merge", create_backup=False)
+
+    assert success, error
+    assert store.restore_calls == []
