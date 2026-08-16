@@ -139,10 +139,7 @@ def test_connect_size_changed_polls_via_tick_callback_not_char_size():
     (confirmed via GObject.list_properties) — that notify never fires
     either. GTK4 also removed the public size-allocate signal entirely.
     Polling once per rendered frame via add_tick_callback is the only
-    mechanism GTK4 actually offers for observing VTE's real grid size, and
-    is what's left to notice the remote PTY (and anything reading it, e.g.
-    tmux) needs a fresh size — the callback must fire only on an actual
-    change, not every tick."""
+    mechanism GTK4 actually offers for observing VTE's real grid size."""
     backend = object.__new__(VTETerminalBackend)
     backend.vte = DummyTickEmitter()
 
@@ -151,22 +148,47 @@ def test_connect_size_changed_polls_via_tick_callback_not_char_size():
 
     assert backend.vte._callback is not None
 
-    # No change yet: first tick only establishes the baseline, no callback.
-    backend.vte.fire_tick()
-    assert calls == []
-
-    # Same size again: still no spurious callback.
-    backend.vte.fire_tick()
-    assert calls == []
-
-    # Widget actually resized: exactly one callback fires.
-    backend.vte.rows, backend.vte.columns = 50, 200
+    # The first observed size fires too (see the dedicated test below for
+    # why) — establish it, then confirm a repeat tick at the same size is
+    # not a spurious duplicate.
     backend.vte.fire_tick()
     assert len(calls) == 1
+    backend.vte.fire_tick()
+    assert len(calls) == 1
+
+    # Widget actually resized: exactly one more callback fires.
+    backend.vte.rows, backend.vte.columns = 50, 200
+    backend.vte.fire_tick()
+    assert len(calls) == 2
 
     # Settled at the new size: no further callback until it changes again.
     backend.vte.fire_tick()
-    assert len(calls) == 1
+    assert len(calls) == 2
 
     backend.disconnect(handler)
     assert backend.vte._callback is None
+
+
+def test_connect_size_changed_fires_on_the_first_tick_too():
+    """Regression: an earlier version of this fix treated tick #1 as "just
+    establishing a baseline" and never fired on it — implicitly assuming
+    whatever size was read synchronously at session-open time (before
+    layout/allocation may have settled on a fresh tab) still matched
+    reality by the time polling started. When layout was still one or more
+    frames behind session-open, the daemon was told a size the widget had
+    already outgrown, nothing ever detected a "change" from that wrong
+    baseline (the widget's size doesn't drift on its own), and a fullscreen
+    program (top, tmux) rendered into the stale corner until the user
+    manually resized the window — the only thing that produced a real
+    before/after delta for the old logic to notice. The very first tick
+    must report whatever size it observes, unconditionally."""
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = DummyTickEmitter()
+    backend.vte.rows, backend.vte.columns = 36, 99  # already its "final" size
+
+    calls = []
+    backend.connect_size_changed(lambda *args: calls.append(args))
+
+    backend.vte.fire_tick()
+
+    assert len(calls) == 1

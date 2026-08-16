@@ -946,8 +946,19 @@ class VTETerminalBackend:
         widget's real allocated size is polling once per rendered frame via
         ``Gtk.Widget.add_tick_callback`` — it only runs while the widget is
         mapped (so it's free while the tab isn't visible), and comparing
-        two cached ints per tick is cheap. *callback* only fires on an
-        actual change, not on every tick.
+        two cached ints per tick is cheap.
+
+        The very first tick fires *callback* too, not just later changes:
+        skipping it (treating tick #1 as "just the baseline") assumed
+        whatever size was read synchronously at session-open time — before
+        layout/allocation may have settled — still matched reality once
+        polling started. When it didn't (layout settling is a frame or more
+        behind session-open on a fresh tab), the daemon was told a size the
+        widget had already outgrown, nothing ever detected a "change" from
+        that wrong baseline, and a fullscreen program (top, tmux) stayed
+        rendering into the stale corner until the user manually resized the
+        window — resize being the only thing that produced a real
+        before/after delta for this poll to notice.
         """
         state = {"size": None}
 
@@ -956,9 +967,9 @@ class VTETerminalBackend:
                 size = (widget.get_row_count(), widget.get_column_count())
             except Exception:
                 return GLib.SOURCE_CONTINUE
-            if state["size"] is not None and size != state["size"]:
+            if size != state["size"]:
+                state["size"] = size
                 callback(widget, 0, 0)
-            state["size"] = size
             return GLib.SOURCE_CONTINUE
 
         tick_id = self.vte.add_tick_callback(_on_tick)

@@ -108,10 +108,14 @@ class DaemonTerminalWidget(Gtk.Box):
             size = (widget.get_row_count(), widget.get_column_count())
         except Exception:
             return GLib.SOURCE_CONTINUE
+        # Fires on the first observed size too, not just later changes —
+        # see VTETerminalBackend.connect_size_changed for why skipping the
+        # first tick left a fullscreen program (top, tmux) stuck rendering
+        # into a stale corner until the user manually resized the window.
         state = self._size_poll_state
-        if state["size"] is not None and size != state["size"]:
+        if size != state["size"]:
+            state["size"] = size
             self._on_size_changed(widget)
-        state["size"] = size
         return GLib.SOURCE_CONTINUE
 
     def _on_size_changed(self, _terminal, _pspec=None) -> None:
