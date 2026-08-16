@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.8.3" date="2026-08-16">
+      <description>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.8.2" date="2026-08-16">
       <description>
         <p>Bug fixes and improvements</p>
