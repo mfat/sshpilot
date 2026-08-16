@@ -855,6 +855,16 @@ class VTETerminalBackend:
         self._native_context_callback = None
 
     def disconnect(self, handler_id: Any) -> None:
+        if (
+            isinstance(handler_id, tuple)
+            and len(handler_id) == 2
+            and handler_id[0] == "tick-callback"
+        ):
+            try:
+                self.vte.remove_tick_callback(handler_id[1])
+            except Exception:
+                logger.debug("Failed to remove VTE tick callback", exc_info=True)
+            return
         if isinstance(handler_id, (tuple, list)):
             for one_id in handler_id:
                 self.disconnect(one_id)
@@ -919,21 +929,40 @@ class VTETerminalBackend:
     def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Fire *callback* when the terminal's column/row grid changes size.
 
-        Deliberately NOT VTE's own "char-size-changed" signal: that fires
-        only on font-metric changes (e.g. zoom), never when the widget
-        itself is resized. Wiring the daemon SSH resize path to it meant
-        the remote PTY (and anything reading it, e.g. tmux) stayed stuck at
-        whatever size the session opened with, no matter how big the
-        window/pane grew afterwards (GH #1164). column-count/row-count are
-        the properties VTE actually recomputes on a widget resize.
-        """
-        def _on_dimension_changed(widget, _pspec):
-            callback(widget, 0, 0)
+        Not VTE's own "char-size-changed" signal: per VTE's docs that fires
+        only on cell/font-metric changes (e.g. zoom), never when the widget
+        itself is resized. A first fix tried ``notify::column-count`` /
+        ``notify::row-count`` instead — but those are not real GObject
+        properties on Vte.Terminal (confirmed via
+        ``GObject.list_properties``), so that notify never fires either.
+        GTK4 also removed the public "size-allocate" signal entirely (it is
+        now a private vfunc, ``GtkWidgetClass.size_allocate``, with no
+        signal to connect to from Python). Any of these silently leaves the
+        remote PTY (and anything reading it, e.g. tmux) stuck at whatever
+        size the session opened with, no matter how big the window/pane
+        grew afterwards (GH #1164).
 
-        return (
-            self.vte.connect("notify::column-count", _on_dimension_changed),
-            self.vte.connect("notify::row-count", _on_dimension_changed),
-        )
+        The only mechanism GTK4 actually offers for observing an opaque
+        widget's real allocated size is polling once per rendered frame via
+        ``Gtk.Widget.add_tick_callback`` — it only runs while the widget is
+        mapped (so it's free while the tab isn't visible), and comparing
+        two cached ints per tick is cheap. *callback* only fires on an
+        actual change, not on every tick.
+        """
+        state = {"size": None}
+
+        def _on_tick(widget, _frame_clock):
+            try:
+                size = (widget.get_row_count(), widget.get_column_count())
+            except Exception:
+                return GLib.SOURCE_CONTINUE
+            if state["size"] is not None and size != state["size"]:
+                callback(widget, 0, 0)
+            state["size"] = size
+            return GLib.SOURCE_CONTINUE
+
+        tick_id = self.vte.add_tick_callback(_on_tick)
+        return ("tick-callback", tick_id)
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         return self.vte.connect("contents-changed", callback)

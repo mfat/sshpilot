@@ -95,50 +95,78 @@ def test_backend_reuses_attached_pty(monkeypatch):
     assert [call[0] for call in calls] == ["spawn"]
 
 
-class DummySignalEmitter:
-    """Minimal GObject.connect()/disconnect() stand-in that also lets a test
-    fire a named signal to every connected handler."""
+class DummyTickEmitter:
+    """Minimal Gtk.Widget.add_tick_callback()/remove_tick_callback() stand-in.
+
+    ``fire_tick()`` drives the registered callback the way GTK would once
+    per rendered frame; the test controls row/column counts directly.
+    """
 
     def __init__(self):
-        self.handlers = {}
+        self.rows = 24
+        self.columns = 80
+        self._callback = None
         self._next_id = 1
+        self._id = None
 
-    def connect(self, signal, callback):
-        handler_id = self._next_id
+    def add_tick_callback(self, callback):
+        self._callback = callback
+        self._id = self._next_id
         self._next_id += 1
-        self.handlers[handler_id] = (signal, callback)
-        return handler_id
+        return self._id
 
-    def disconnect(self, handler_id):
-        self.handlers.pop(handler_id, None)
+    def remove_tick_callback(self, tick_id):
+        if tick_id == self._id:
+            self._callback = None
+            self._id = None
 
-    def emit_signal(self, signal, *args):
-        for sig, callback in list(self.handlers.values()):
-            if sig == signal:
-                callback(self, *args)
+    def get_row_count(self):
+        return self.rows
+
+    def get_column_count(self):
+        return self.columns
+
+    def fire_tick(self):
+        if self._callback is not None:
+            self._callback(self, None)
 
 
-def test_connect_size_changed_uses_column_row_count_not_char_size():
+def test_connect_size_changed_polls_via_tick_callback_not_char_size():
     """Regression (GH #1164): VTE's "char-size-changed" only fires on
-    font-metric changes (zoom) — never on a widget resize. Wiring daemon
-    terminal resize to it left the remote PTY (and anything reading it,
-    e.g. tmux) stuck at whatever size the session opened with, no matter
-    how big the window/pane grew afterwards. Must connect to
-    notify::column-count / notify::row-count, which VTE actually
-    recomputes when the widget is resized."""
+    font-metric changes (zoom) — never on a widget resize (confirmed by
+    VTE's own docs). A first fix tried notify::column-count/row-count
+    instead, but those aren't real GObject properties on Vte.Terminal
+    (confirmed via GObject.list_properties) — that notify never fires
+    either. GTK4 also removed the public size-allocate signal entirely.
+    Polling once per rendered frame via add_tick_callback is the only
+    mechanism GTK4 actually offers for observing VTE's real grid size, and
+    is what's left to notice the remote PTY (and anything reading it, e.g.
+    tmux) needs a fresh size — the callback must fire only on an actual
+    change, not every tick."""
     backend = object.__new__(VTETerminalBackend)
-    backend.vte = DummySignalEmitter()
+    backend.vte = DummyTickEmitter()
 
     calls = []
     handler = backend.connect_size_changed(lambda *args: calls.append(args))
 
-    connected_signals = {signal for signal, _cb in backend.vte.handlers.values()}
-    assert connected_signals == {"notify::column-count", "notify::row-count"}
-    assert "char-size-changed" not in connected_signals
+    assert backend.vte._callback is not None
 
-    backend.vte.emit_signal("notify::column-count", object())
-    backend.vte.emit_signal("notify::row-count", object())
-    assert len(calls) == 2
+    # No change yet: first tick only establishes the baseline, no callback.
+    backend.vte.fire_tick()
+    assert calls == []
+
+    # Same size again: still no spurious callback.
+    backend.vte.fire_tick()
+    assert calls == []
+
+    # Widget actually resized: exactly one callback fires.
+    backend.vte.rows, backend.vte.columns = 50, 200
+    backend.vte.fire_tick()
+    assert len(calls) == 1
+
+    # Settled at the new size: no further callback until it changes again.
+    backend.vte.fire_tick()
+    assert len(calls) == 1
 
     backend.disconnect(handler)
-    assert backend.vte.handlers == {}
+    assert backend.vte._callback is None
