@@ -170,6 +170,15 @@ class BaseTerminalBackend(Protocol):
         needing rows/columns must use :meth:`get_size`.
         """
 
+    def invalidate_size_tracking(self) -> None:
+        """Force the next size poll to re-report, even at an unchanged size.
+
+        No-op by default; overridden by backends that cache the last polled
+        size (see ``VTETerminalBackend``) so a caller can force a redelivery
+        after a resize was observed but dropped for an unrelated reason
+        (e.g. no input ownership yet).
+        """
+
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Connect a notification emitted after displayed content changes."""
 
@@ -855,6 +864,20 @@ class VTETerminalBackend:
         self._native_context_callback = None
 
     def disconnect(self, handler_id: Any) -> None:
+        if (
+            isinstance(handler_id, tuple)
+            and len(handler_id) == 2
+            and handler_id[0] == "tick-callback"
+        ):
+            try:
+                self.vte.remove_tick_callback(handler_id[1])
+            except Exception:
+                logger.debug("Failed to remove VTE tick callback", exc_info=True)
+            return
+        if isinstance(handler_id, (tuple, list)):
+            for one_id in handler_id:
+                self.disconnect(one_id)
+            return
         try:
             if handler_id:
                 self.vte.disconnect(handler_id)
@@ -913,7 +936,71 @@ class VTETerminalBackend:
         return self.vte.connect("commit", callback)
 
     def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
-        return self.vte.connect("char-size-changed", callback)
+        """Fire *callback* when the terminal's column/row grid changes size.
+
+        Not VTE's own "char-size-changed" signal: per VTE's docs that fires
+        only on cell/font-metric changes (e.g. zoom), never when the widget
+        itself is resized. A first fix tried ``notify::column-count`` /
+        ``notify::row-count`` instead — but those are not real GObject
+        properties on Vte.Terminal (confirmed via
+        ``GObject.list_properties``), so that notify never fires either.
+        GTK4 also removed the public "size-allocate" signal entirely (it is
+        now a private vfunc, ``GtkWidgetClass.size_allocate``, with no
+        signal to connect to from Python). Any of these silently leaves the
+        remote PTY (and anything reading it, e.g. tmux) stuck at whatever
+        size the session opened with, no matter how big the window/pane
+        grew afterwards (GH #1164).
+
+        The only mechanism GTK4 actually offers for observing an opaque
+        widget's real allocated size is polling once per rendered frame via
+        ``Gtk.Widget.add_tick_callback`` — it only runs while the widget is
+        mapped (so it's free while the tab isn't visible), and comparing
+        two cached ints per tick is cheap.
+
+        The very first tick fires *callback* too, not just later changes:
+        skipping it (treating tick #1 as "just the baseline") assumed
+        whatever size was read synchronously at session-open time — before
+        layout/allocation may have settled — still matched reality once
+        polling started. When it didn't (layout settling is a frame or more
+        behind session-open on a fresh tab), the daemon was told a size the
+        widget had already outgrown, nothing ever detected a "change" from
+        that wrong baseline, and a fullscreen program (top, tmux) stayed
+        rendering into the stale corner until the user manually resized the
+        window — resize being the only thing that produced a real
+        before/after delta for this poll to notice.
+        """
+        state = {"size": None}
+        self._size_poll_state = state
+
+        def _on_tick(widget, _frame_clock):
+            try:
+                size = (widget.get_row_count(), widget.get_column_count())
+            except Exception:
+                return GLib.SOURCE_CONTINUE
+            if size != state["size"]:
+                state["size"] = size
+                callback(widget, 0, 0)
+            return GLib.SOURCE_CONTINUE
+
+        tick_id = self.vte.add_tick_callback(_on_tick)
+        return ("tick-callback", tick_id)
+
+    def invalidate_size_tracking(self) -> None:
+        """Clear the cached last-polled size so the next tick redelivers it.
+
+        Covers the race where the grid already settled at its true
+        post-layout size before a caller could act on a report (e.g.
+        daemon input ownership wasn't granted yet when the tick fired), so
+        ``connect_size_changed``'s own change-detection never saw a further
+        delta to report and only a later, genuine window resize produced
+        one. Forcing the cached size back to ``None`` makes the very next
+        tick redeliver unconditionally, which self-heals regardless of
+        exactly when layout settles relative to ownership being granted
+        (GH #1164 follow-up).
+        """
+        state = getattr(self, "_size_poll_state", None)
+        if state is not None:
+            state["size"] = None
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         return self.vte.connect("contents-changed", callback)

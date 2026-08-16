@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from .runtime_identity import new_terminal_id
-from gi.repository import Gtk, Vte
+from gi.repository import GLib, Gtk, Vte
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
 from .terminal_session_controller import (
@@ -51,7 +51,18 @@ class DaemonTerminalWidget(Gtk.Box):
             on_error=self._on_error,
         )
         self._terminal.connect("commit", self._on_commit)
-        self._terminal.connect("char-size-changed", self._on_size_changed)
+        # Not "char-size-changed" (VTE docs: fires only on font/cell-metric
+        # changes, e.g. zoom, never on a widget resize) and not
+        # notify::column-count/row-count (not real GObject properties on
+        # Vte.Terminal — that notify never fires). GTK4 also removed the
+        # public size-allocate signal. Polling once per rendered frame via
+        # add_tick_callback is the only mechanism GTK4 offers for observing
+        # VTE's actual grid size — it only runs while mapped, and this only
+        # invokes _on_size_changed on an actual change. Leaving this
+        # unresolved left the remote PTY stuck at its opening size
+        # regardless of how big the window grew (GH #1164).
+        self._size_poll_state = {"size": None}
+        self._terminal.add_tick_callback(self._on_size_tick)
 
     @property
     def terminal(self):
@@ -92,7 +103,22 @@ class DaemonTerminalWidget(Gtk.Box):
             return
         self._controller.send_input(text.encode("utf-8"))
 
-    def _on_size_changed(self, _terminal, _width, _height) -> None:
+    def _on_size_tick(self, widget, _frame_clock) -> bool:
+        try:
+            size = (widget.get_row_count(), widget.get_column_count())
+        except Exception:
+            return GLib.SOURCE_CONTINUE
+        # Fires on the first observed size too, not just later changes —
+        # see VTETerminalBackend.connect_size_changed for why skipping the
+        # first tick left a fullscreen program (top, tmux) stuck rendering
+        # into a stale corner until the user manually resized the window.
+        state = self._size_poll_state
+        if size != state["size"]:
+            state["size"] = size
+            self._on_size_changed(widget)
+        return GLib.SOURCE_CONTINUE
+
+    def _on_size_changed(self, _terminal, _pspec=None) -> None:
         if self._closed:
             return
         from .api.models.terminal import TerminalDimensions

@@ -343,6 +343,9 @@ class _SessionRecord:
     authenticated: bool = False
     diagnostic_failure_detail: Optional[str] = None
     diagnostic_result: Optional[SshDiagnosticResult] = None
+    # Serializes handle.resize() dispatch for this session — see
+    # SessionRuntime._dispatch_resize.
+    resize_dispatch_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 _ALLOWED_TRANSITIONS = {
@@ -689,10 +692,33 @@ class SessionRuntime:
             diagnostic_failed = False
             finish_readiness = False
             terminate_after_start = False
+            needs_resize_catchup = False
             with self._lock:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
                     record.started_at = self._clock()
+                    # A resize requested while the handle was still starting
+                    # (self._runner.start(spec, ...) above can block for the
+                    # length of the SSH handshake, longer on distant hosts)
+                    # only updates record.launch_spec — resize_terminal() has
+                    # no live handle to call yet. That update would otherwise
+                    # be silently orphaned once this handle is published: the
+                    # PTY stays at whatever size `spec` (read before the
+                    # blocking start) had, and only a later, genuine further
+                    # resize would ever reach it. Catch up now — dispatched
+                    # through _dispatch_resize (not a value snapshotted here)
+                    # so a resize_terminal() call racing this exact handoff
+                    # can never be overwritten by this older catch-up: every
+                    # dispatch re-reads record.launch_spec.dimensions at the
+                    # moment it actually runs, so whichever dispatch runs
+                    # last always applies the true latest size regardless of
+                    # which one was decided first.
+                    if (
+                        record.launch_spec is not None
+                        and record.launch_spec.dimensions is not None
+                        and record.launch_spec.dimensions != spec.dimensions
+                    ):
+                        needs_resize_catchup = True
                     promote = False
                     if diagnostic_gated:
                         result = record.diagnostic_result
@@ -759,6 +785,15 @@ class SessionRuntime:
                     # the freshly spawned handle.
                     terminate_after_start = True
             self._publish(events)
+            if needs_resize_catchup:
+                try:
+                    self._dispatch_resize(session_id)
+                except Exception:
+                    logger.debug(
+                        "Startup resize catch-up failed for %r",
+                        session_id,
+                        exc_info=True,
+                    )
             if notify_authenticated and self._authenticated_callback is not None:
                 self._authenticated_callback(session_id)
             for output in deferred_outputs:
@@ -1289,6 +1324,55 @@ class SessionRuntime:
             )
         return record.process_handle
 
+    def _dispatch_resize(self, session_id: SessionId) -> bool:
+        """Serialize handle.resize() dispatch and always apply the freshest
+        known desired size.
+
+        Two different call sites can each decide a resize is needed for the
+        same session — a live resize_terminal() request, and the startup
+        handoff catching up on one that raced record.process_handle being
+        published (see start_session). Both act on record.launch_spec at a
+        different moment; without serialization, the one that finishes its
+        decision *first* could still end up calling handle.resize() *last*
+        (thread scheduling gives no ordering guarantee), silently
+        overwriting the fresher size with a stale one.
+
+        Dispatch is instead serialized per-session, and every dispatch
+        re-reads record.launch_spec.dimensions only once it holds that
+        lock — never a value captured earlier by its caller. Every writer
+        updates record.launch_spec under self._lock before triggering a
+        dispatch, so whichever dispatch attempt is the last to enter this
+        critical section always observes (and applies) the true latest
+        value, regardless of which caller decided to dispatch first.
+
+        Returns True once a resize() call was attempted (it may still
+        raise — the caller decides how to handle that), False if there was
+        nothing to dispatch to.
+        """
+        with self._lock:
+            record = self._records.get(session_id)
+            if record is None:
+                return False
+            dispatch_lock = record.resize_dispatch_lock
+        with dispatch_lock:
+            with self._lock:
+                record = self._records.get(session_id)
+                if record is None:
+                    return False
+                handle = record.process_handle
+                dimensions = (
+                    record.launch_spec.dimensions
+                    if record.launch_spec is not None
+                    else None
+                )
+            if handle is None or dimensions is None:
+                return False
+            resize = getattr(handle, "resize", None)
+            if not callable(resize):
+                return False
+            resize(dimensions)
+            return True
+
     def resize_terminal(
         self,
         request: ResizeTerminalRequest,
@@ -1319,39 +1403,39 @@ class SessionRuntime:
                     "The attachment does not own terminal resize",
                     session_id=request.session_id,
                 )
-            if record.process_handle is None:
-                spec = record.launch_spec
-                if spec is None or record.state not in {
-                    SessionState.CREATED,
-                    SessionState.STARTING,
-                }:
-                    raise SshPilotError(
-                        ErrorCode.TERMINAL_UNAVAILABLE,
-                        "The session does not own a resizable terminal",
-                        session_id=request.session_id,
-                    )
-                record.launch_spec = SessionLaunchSpec(
-                    session_id=spec.session_id,
-                    connection_id=spec.connection_id,
-                    protocol=spec.protocol,
-                    hostname=spec.hostname,
-                    username=spec.username,
-                    port=spec.port,
-                    dimensions=request.dimensions,
-                    remote_command=spec.remote_command,
-                    force_tty=spec.force_tty,
+            spec = record.launch_spec
+            has_handle = record.process_handle is not None
+            if spec is None or (
+                not has_handle
+                and record.state not in {SessionState.CREATED, SessionState.STARTING}
+            ):
+                raise SshPilotError(
+                    ErrorCode.TERMINAL_UNAVAILABLE,
+                    "The session does not own a resizable terminal",
+                    session_id=request.session_id,
                 )
-                return
-            handle = record.process_handle
-        resize = getattr(handle, "resize", None)
-        if not callable(resize):
-            raise SshPilotError(
-                ErrorCode.TERMINAL_UNAVAILABLE,
-                "The session does not own a resizable terminal",
-                session_id=request.session_id,
+            # record.launch_spec.dimensions is the single authoritative
+            # desired size a dispatch re-reads fresh from (_dispatch_resize)
+            # — update it unconditionally, whether or not a handle exists
+            # yet, so a concurrent dispatch can never apply a value older
+            # than this request.
+            record.launch_spec = SessionLaunchSpec(
+                session_id=spec.session_id,
+                connection_id=spec.connection_id,
+                protocol=spec.protocol,
+                hostname=spec.hostname,
+                username=spec.username,
+                port=spec.port,
+                dimensions=request.dimensions,
+                remote_command=spec.remote_command,
+                force_tty=spec.force_tty,
             )
+            if not has_handle:
+                # No live handle yet — start_session's catch-up will
+                # dispatch this once one is published.
+                return
         try:
-            resize(request.dimensions)
+            dispatched = self._dispatch_resize(request.session_id)
         except RuntimeError:
             raise SshPilotError(
                 ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
@@ -1359,6 +1443,12 @@ class SessionRuntime:
                 retryable=True,
                 session_id=request.session_id,
             ) from None
+        if not dispatched:
+            raise SshPilotError(
+                ErrorCode.TERMINAL_UNAVAILABLE,
+                "The session does not own a resizable terminal",
+                session_id=request.session_id,
+            )
 
     def claim_input(
         self,

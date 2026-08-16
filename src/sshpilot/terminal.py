@@ -948,6 +948,10 @@ class TerminalWidget(Gtk.Box):
             def _claimed(_value):
                 self._daemon_controller._tab_state.input_owner = True
                 self._hide_view_only_indicator()
+                # Resize was silently dropped (no ownership) for as long as
+                # this attachment was view-only; sync the daemon to our
+                # actual current size now that we can resize again.
+                self._resync_daemon_terminal_size()
 
             def _failed(error):
                 logger.info(
@@ -1245,6 +1249,26 @@ class TerminalWidget(Gtk.Box):
             columns=max(1, min(1000, columns)),
         )
 
+    def _resync_daemon_terminal_size(self):
+        """Push the current widget size to the daemon and re-arm polling.
+
+        Called when input ownership is newly granted. A single synchronous
+        read here can still race GTK's own layout pass (the widget may not
+        have finished settling into its real on-screen size yet), so this
+        also invalidates the backend's tick-poll cache — that guarantees a
+        redelivery on the very next frame even if this read was stale,
+        without waiting for an actual further resize to produce one
+        (GH #1164 follow-up).
+        """
+        try:
+            self._daemon_controller.resize(self._daemon_terminal_dimensions())
+        except Exception as e:
+            logger.debug(f"Failed to sync daemon terminal size: {e}")
+        backend = getattr(self, 'backend', None)
+        invalidate = getattr(backend, 'invalidate_size_tracking', None)
+        if callable(invalidate):
+            invalidate()
+
     def _on_daemon_commit(self, terminal, text, size):
         """Handle backend input commit for daemon terminals."""
         if not self._daemon_controller or not self.has_input_ownership:
@@ -1541,6 +1565,18 @@ class TerminalWidget(Gtk.Box):
                     self._show_view_only_indicator()
                 else:
                     self._hide_view_only_indicator()
+                    if not old_connected:
+                        # Input ownership (required to resize — see
+                        # _on_daemon_size_changed) may only just have been
+                        # granted by this same attach result. The widget can
+                        # already have grown to its real on-screen size while
+                        # ownership was still pending, and every resize
+                        # signal during that window was silently dropped for
+                        # lack of ownership (GH #1164 follow-up) — with no
+                        # catch-up, the remote PTY/tmux stays at whatever
+                        # size the session opened with. Sync now that we may
+                        # actually resize.
+                        self._resync_daemon_terminal_size()
 
                 # Emit connection-established if newly connected
                 if not old_connected:

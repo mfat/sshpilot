@@ -16,6 +16,7 @@ from sshpilot.api.models.sessions import (
     SessionExitInfo,
     SessionState,
 )
+from sshpilot.api.models.terminal import ResizeTerminalRequest, TerminalDimensions
 from sshpilot.api.session_identity import new_session_id
 from sshpilot.daemon.session_runtime import (
     SessionRuntime,
@@ -250,6 +251,330 @@ def test_open_session_carries_remote_command_into_launch_spec(runtime_parts):
     finally:
         runtime2.shutdown()
         core2.close()
+
+
+class _BlockingResizableHandle(ControlledHandle):
+    """A handle that records every ``resize()`` call it receives."""
+
+    def __init__(self, on_exit):
+        super().__init__(on_exit, exit_on_terminate=False)
+        self.resizes = []
+
+    def resize(self, dimensions):
+        self.resizes.append(dimensions)
+
+
+class _BlockingTerminalRunner(ControlledRunner):
+    """Terminal-capable runner whose ``start()`` blocks until released.
+
+    Reproduces the startup window during which ``record.process_handle``
+    is still ``None`` while ``self._runner.start(spec, ...)`` is in
+    flight — the longer that call blocks (a distant host's SSH handshake
+    takes far longer than a local one), the wider the window for a resize
+    to race the handoff.
+    """
+
+    terminal_capable = True
+
+    def __init__(self, *, started_event, release_event):
+        super().__init__()
+        self._started_event = started_event
+        self._release_event = release_event
+
+    def start(self, spec, on_exit, on_output=None, on_eof=None):
+        self.specs.append(spec)
+        self._started_event.set()
+        assert self._release_event.wait(timeout=5), "test deadlocked"
+        handle = _BlockingResizableHandle(on_exit)
+        self.handles.append(handle)
+        return handle
+
+
+def test_resize_during_blocking_startup_reaches_the_published_handle():
+    """Regression: a resize requested while the session is still STARTING
+    and ``runner.start()`` hasn't returned yet must not be silently dropped.
+
+    ``resize_terminal()`` has no live handle to call while
+    ``record.process_handle`` is still ``None``, so it can only update
+    ``record.launch_spec`` and return. ``start_session()`` had already read
+    ``spec = record.launch_spec`` *before* calling the (blocking)
+    ``runner.start(spec, ...)``, so that spec object never saw the update.
+    Once the handle was published, nothing reconciled the two — the PTY
+    stayed at whatever size ``spec`` had when the runner call started, and
+    only a later, genuine further resize (nothing here, since the widget
+    doesn't grow again on its own) would ever reach it. This is exactly the
+    GH #1164 symptom reported on a distant host: the wider that host's SSH
+    handshake makes the STARTING window, the more likely a resize sent as
+    soon as the tab is connected lands inside it.
+    """
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo)
+    started_event = threading.Event()
+    release_event = threading.Event()
+    runner = _BlockingTerminalRunner(
+        started_event=started_event, release_event=release_event
+    )
+    runtime = SessionRuntime(core, runner=runner)
+    try:
+        client_id = ClientId("client:a")
+        prepared = runtime.prepare_open_session(
+            OpenSessionRequest(
+                connection_id=core.list_connections()[0].id,
+                dimensions=TerminalDimensions(rows=24, columns=80),
+            ),
+            client_id=client_id,
+        )
+        attach_result = runtime.attach_session(
+            AttachSessionRequest(session_id=prepared.id, request_input=True),
+            client_id=client_id,
+        )
+
+        worker = threading.Thread(
+            target=runtime.start_session, args=(prepared.id,)
+        )
+        worker.start()
+        try:
+            assert started_event.wait(timeout=5), "runner.start() never entered"
+
+            # Fires while record.process_handle is still None.
+            runtime.resize_terminal(
+                ResizeTerminalRequest(
+                    session_id=prepared.id,
+                    attachment_id=attach_result.attachment.id,
+                    dimensions=TerminalDimensions(rows=50, columns=200),
+                ),
+                client_id=client_id,
+            )
+        finally:
+            release_event.set()
+            worker.join(timeout=5)
+            assert not worker.is_alive()
+
+        assert runner.specs[0].dimensions == TerminalDimensions(
+            rows=24, columns=80
+        )
+        handle = runner.handles[0]
+        assert handle.resizes == [
+            TerminalDimensions(rows=50, columns=200)
+        ]
+    finally:
+        runtime.shutdown()
+        core.close()
+
+
+def test_newer_resize_after_publication_is_not_overwritten_by_a_delayed_startup_catchup():
+    """Regression: the startup catch-up and a live resize_terminal() call
+    can both decide to dispatch a resize for the same session once
+    record.process_handle is published. Whichever *decided* first is not
+    necessarily the one whose handle.resize() call executes first — a
+    naive implementation that snapshots its desired dimensions once and
+    applies them outside any further coordination could have its
+    (older, stale) snapshot physically land *after* a newer resize's own
+    call, silently reverting the terminal to a smaller size.
+
+    This drives that exact interleaving deterministically: the startup
+    catch-up is parked right as it starts dispatching (before it reads
+    the dimensions it will send), a newer resize_terminal() call is sent
+    and fully applied while it's parked, and only then is the catch-up
+    released. The final applied size must be the newer one — proving
+    dispatch always re-reads the current desired size rather than acting
+    on a value decided earlier.
+    """
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo)
+    started_event = threading.Event()
+    release_event = threading.Event()
+    runner = _BlockingTerminalRunner(
+        started_event=started_event, release_event=release_event
+    )
+    runtime = SessionRuntime(core, runner=runner)
+    try:
+        client_id = ClientId("client:a")
+        prepared = runtime.prepare_open_session(
+            OpenSessionRequest(
+                connection_id=core.list_connections()[0].id,
+                dimensions=TerminalDimensions(rows=24, columns=80),
+            ),
+            client_id=client_id,
+        )
+        attach_result = runtime.attach_session(
+            AttachSessionRequest(session_id=prepared.id, request_input=True),
+            client_id=client_id,
+        )
+
+        worker = threading.Thread(
+            target=runtime.start_session, args=(prepared.id,)
+        )
+        worker.start()
+        assert started_event.wait(timeout=5), "runner.start() never entered"
+
+        # Decided while record.process_handle is still None -- this is
+        # what the startup catch-up will (eventually) act on.
+        runtime.resize_terminal(
+            ResizeTerminalRequest(
+                session_id=prepared.id,
+                attachment_id=attach_result.attachment.id,
+                dimensions=TerminalDimensions(rows=50, columns=200),
+            ),
+            client_id=client_id,
+        )
+
+        # Park the *first* call into _dispatch_resize (the startup
+        # catch-up, triggered as soon as the handle is published) right
+        # before it does its work, so a second, newer resize can
+        # complete first.
+        entered_first_dispatch = threading.Event()
+        release_first_dispatch = threading.Event()
+        call_count = {"n": 0}
+        original_dispatch = runtime._dispatch_resize
+
+        def _tracking_dispatch(session_id):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                entered_first_dispatch.set()
+                assert release_first_dispatch.wait(timeout=5), "test deadlocked"
+            return original_dispatch(session_id)
+
+        runtime._dispatch_resize = _tracking_dispatch
+
+        release_event.set()  # let runner.start() return and publish the handle
+        assert entered_first_dispatch.wait(timeout=5), (
+            "startup catch-up dispatch never started"
+        )
+
+        # A newer resize arrives and is fully applied while the startup
+        # catch-up (decided on the older 50x200 size) is still parked.
+        runtime.resize_terminal(
+            ResizeTerminalRequest(
+                session_id=prepared.id,
+                attachment_id=attach_result.attachment.id,
+                dimensions=TerminalDimensions(rows=55, columns=220),
+            ),
+            client_id=client_id,
+        )
+
+        release_first_dispatch.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+
+        handle = runner.handles[0]
+        assert handle.resizes, "no resize ever reached the handle"
+        assert handle.resizes[-1] == TerminalDimensions(rows=55, columns=220)
+    finally:
+        runtime.shutdown()
+        core.close()
+
+
+class _SlowFirstResizeHandle(ControlledHandle):
+    """A resize-capable handle whose first ``resize()`` call blocks.
+
+    Simulates a genuinely slow (e.g. I/O-bound) resize implementation —
+    not a test-only hook in ``SessionRuntime`` itself — to prove
+    ``_dispatch_resize``'s per-session lock is held across the *entire*
+    read-then-apply pair, not just the read: a second dispatch attempt
+    that starts while the first is still inside ``resize()`` must
+    genuinely block on the lock, not race ahead of it.
+    """
+
+    def __init__(self, on_exit, *, entered_event, release_event):
+        super().__init__(on_exit, exit_on_terminate=False)
+        self.resizes = []
+        self._entered_event = entered_event
+        self._release_event = release_event
+        self._first = True
+
+    def resize(self, dimensions):
+        if self._first:
+            self._first = False
+            self._entered_event.set()
+            assert self._release_event.wait(timeout=5), "test deadlocked"
+        self.resizes.append(dimensions)
+
+
+def test_dispatch_resize_serializes_through_the_actual_resize_call():
+    """Regression: dispatch must stay locked for the whole read-then-apply
+    pair, not release the lock as soon as it has read the desired size.
+    If it didn't, a second dispatch could read *and apply* a value while
+    the first is still mid-call, and whichever of the two ``resize()``
+    calls physically finishes last would win — independent of which one
+    was decided last. Here the first dispatch's ``resize()`` call itself
+    blocks; a second dispatch started while it's blocked must wait for
+    the lock, and once unblocked, both calls must land in decision order
+    with the second one carrying the size that was current when *it*
+    ran, not a value staled by waiting.
+    """
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo)
+    entered_event = threading.Event()
+    release_event = threading.Event()
+    handles = []
+
+    class _Runner(ControlledRunner):
+        terminal_capable = True
+
+        def start(self, spec, on_exit, on_output=None, on_eof=None):
+            self.specs.append(spec)
+            handle = _SlowFirstResizeHandle(
+                on_exit, entered_event=entered_event, release_event=release_event
+            )
+            handles.append(handle)
+            return handle
+
+    runtime = SessionRuntime(core, runner=_Runner())
+    try:
+        client_id = ClientId("client:a")
+        opened = runtime.open_session(
+            OpenSessionRequest(
+                connection_id=core.list_connections()[0].id,
+                dimensions=TerminalDimensions(rows=24, columns=80),
+            ),
+            client_id=client_id,
+        )
+        attach_result = runtime.attach_session(
+            AttachSessionRequest(session_id=opened.id, request_input=True),
+            client_id=client_id,
+        )
+
+        first = threading.Thread(
+            target=runtime.resize_terminal,
+            args=(
+                ResizeTerminalRequest(
+                    session_id=opened.id,
+                    attachment_id=attach_result.attachment.id,
+                    dimensions=TerminalDimensions(rows=50, columns=200),
+                ),
+            ),
+            kwargs={"client_id": client_id},
+        )
+        first.start()
+        assert entered_event.wait(timeout=5), "first resize() never entered"
+
+        second = threading.Thread(
+            target=runtime.resize_terminal,
+            args=(
+                ResizeTerminalRequest(
+                    session_id=opened.id,
+                    attachment_id=attach_result.attachment.id,
+                    dimensions=TerminalDimensions(rows=55, columns=220),
+                ),
+            ),
+            kwargs={"client_id": client_id},
+        )
+        second.start()
+
+        release_event.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert not first.is_alive() and not second.is_alive()
+
+        handle = handles[0]
+        assert handle.resizes == [
+            TerminalDimensions(rows=50, columns=200),
+            TerminalDimensions(rows=55, columns=220),
+        ]
+    finally:
+        runtime.shutdown()
+        core.close()
 
 
 def test_prepare_and_finish_close_keep_runner_work_out_of_prepare(runtime_parts):

@@ -175,7 +175,7 @@ def test_daemon_terminal_streams_without_blocking_gtk(gui, tmp_path):
         before = widget.received_bytes
         widget._on_commit(widget._terminal, "x", 1)
         assert _pump_until(gui, lambda: widget.received_bytes > before)
-        widget._on_size_changed(widget._terminal, 80, 24)
+        widget._on_size_changed(widget._terminal)
     finally:
         widget.close()
         window.close()
