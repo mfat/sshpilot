@@ -616,3 +616,202 @@ def test_restore_connection_store_warns_on_missing_root_reference(tmp_path):
 
     assert any("ghost-ssh" in w for w in result.warnings)
     assert repo.snapshot().root_connection_ids == ()
+
+
+# ---------------------------------------------------------------------------
+# Finding 1: protocol-specific non-SSH launch configuration must round-trip
+# ---------------------------------------------------------------------------
+
+
+def _serial_data(nickname="serial-dev"):
+    return {
+        "nickname": nickname,
+        "protocol": "serial",
+        "device": "/dev/ttyUSB0",
+        "baud": 115200,
+        "flow": "hard",
+        "databits": 8,
+        "parity": "none",
+        "stopbits": 1,
+    }
+
+
+def test_snapshot_for_backup_and_restore_preserve_serial_protocol_fields(tmp_path):
+    source, _, _ = _repo(tmp_path / "source")
+    source.create_connection(_serial_data())
+    section = source.snapshot_for_backup()
+
+    target, _, _ = _repo(tmp_path / "target")
+    target.restore_connection_store(section, mode="merge")
+
+    record = target.get_record("serial-dev")
+    assert record is not None
+    assert record.data.get("device") == "/dev/ttyUSB0"
+    assert record.data.get("baud") == 115200
+    assert record.data.get("flow") == "hard"
+    assert record.data.get("databits") == 8
+    assert record.data.get("parity") == "none"
+    assert record.data.get("stopbits") == 1
+
+
+def test_snapshot_for_backup_excludes_password_like_fields_from_plugin_data(tmp_path):
+    repo, _, _ = _repo(tmp_path)
+    payload = _serial_data("serial-secret")
+    payload["password"] = "hunter2"
+    payload["api_token"] = "abc123"
+    repo.create_connection(payload)
+
+    section = repo.snapshot_for_backup()
+
+    entry = next(c for c in section["connections"] if c["id"] == "serial-secret")
+    plugin_data = entry.get("plugin_data") or {}
+    assert "password" not in plugin_data
+    assert "api_token" not in plugin_data
+    assert "password" not in str(section)
+    assert "hunter2" not in str(section)
+    assert "abc123" not in str(section)
+
+
+# ---------------------------------------------------------------------------
+# Finding 2: group ordering and replace-mode membership semantics
+# ---------------------------------------------------------------------------
+
+
+def test_restore_connection_store_preserves_group_order_with_multiple_siblings(tmp_path):
+    repo, _, _ = _repo(tmp_path)
+    repo.create_group("Alpha")
+    repo.create_group("Beta")
+    # Target's current sibling order is Alpha(0), Beta(1) — the backup below
+    # declares the opposite relative order.
+    section = {
+        "version": 1,
+        "connections": [],
+        "groups": [
+            {"id": "beta-src", "name": "Beta", "parent_id": None,
+             "order": 0, "color": "", "connection_ids": []},
+            {"id": "alpha-src", "name": "Alpha", "parent_id": None,
+             "order": 1, "color": "", "connection_ids": []},
+        ],
+        "root_connection_ids": [],
+        "metadata": [],
+    }
+
+    repo.restore_connection_store(section, mode="merge")
+
+    snap = repo.snapshot()
+    assert [g.name for g in snap.groups] == ["Beta", "Alpha"]
+
+
+def test_restore_connection_store_replace_mode_matches_backup_membership_exactly(tmp_path):
+    """Reproduces the reported bug: a connection moved from one persisting
+    group to another in the backup must end up in ONLY the new group after
+    a replace-mode restore — not in both."""
+    repo, _, _ = _repo(tmp_path)
+    repo.create_connection(_telnet_data("server-a"))
+    repo.create_connection(_telnet_data("server-b"))
+    prod = repo.create_group("Prod")
+    qa = repo.create_group("QA")
+    from sshpilot.api.models.connection_store import MoveConnectionsRequest
+
+    repo.move_connections(
+        MoveConnectionsRequest(connection_ids=("server-a",), target_group_id=prod.id)
+    )
+    repo.move_connections(
+        MoveConnectionsRequest(connection_ids=("server-b",), target_group_id=qa.id)
+    )
+
+    # Backup: Prod now has server-b, QA now has server-a (swapped).
+    section = {
+        "version": 1,
+        "connections": [
+            {"id": "server-a", "protocol": "telnet", "nickname": "server-a",
+             "hostname": "10.0.0.5", "username": "", "port": 2323, "display_name": ""},
+            {"id": "server-b", "protocol": "telnet", "nickname": "server-b",
+             "hostname": "10.0.0.5", "username": "", "port": 2323, "display_name": ""},
+        ],
+        "groups": [
+            {"id": "prod-src", "name": "Prod", "parent_id": None,
+             "order": 0, "color": "", "connection_ids": ["server-b"]},
+            {"id": "qa-src", "name": "QA", "parent_id": None,
+             "order": 1, "color": "", "connection_ids": ["server-a"]},
+        ],
+        "root_connection_ids": [],
+        "metadata": [],
+    }
+
+    repo.restore_connection_store(section, mode="replace")
+
+    snap = repo.snapshot()
+    memberships = {g.name: set(g.connection_ids) for g in snap.groups}
+    assert memberships == {"Prod": {"server-b"}, "QA": {"server-a"}}
+
+
+def test_restore_connection_store_merge_mode_stays_additive_not_exclusive(tmp_path):
+    """Merge mode must remain non-destructive: a connection's pre-existing
+    group membership must survive even when the backup places it in a
+    different group too."""
+    repo, _, _ = _repo(tmp_path)
+    repo.create_connection(_telnet_data("shared"))
+    prod = repo.create_group("Prod")
+    from sshpilot.api.models.connection_store import MoveConnectionsRequest
+
+    repo.move_connections(
+        MoveConnectionsRequest(connection_ids=("shared",), target_group_id=prod.id)
+    )
+    section = {
+        "version": 1,
+        "connections": [
+            {"id": "shared", "protocol": "telnet", "nickname": "shared",
+             "hostname": "10.0.0.5", "username": "", "port": 2323, "display_name": ""},
+        ],
+        "groups": [
+            {"id": "qa-src", "name": "QA", "parent_id": None,
+             "order": 0, "color": "", "connection_ids": ["shared"]},
+        ],
+        "root_connection_ids": [],
+        "metadata": [],
+    }
+
+    repo.restore_connection_store(section, mode="merge")
+
+    snap = repo.snapshot()
+    memberships = {g.name for g in snap.groups if "shared" in g.connection_ids}
+    assert memberships == {"Prod", "QA"}
+
+
+@pytest.mark.parametrize(
+    "protocol,fields",
+    [
+        (
+            "docker",
+            {"container": "web-1", "command": "/bin/bash", "runtime": "docker",
+             "docker_host": "unix:///var/run/docker.sock", "user": "root",
+             "workdir": "/app"},
+        ),
+        (
+            "kubernetes",
+            {"pod": "web-0", "container": "app", "namespace": "prod",
+             "kube_context": "prod-cluster", "kubeconfig": "/home/u/.kube/config",
+             "command": "/bin/sh"},
+        ),
+        (
+            "mosh",
+            {"keyfile": "/home/u/.ssh/id_ed25519", "extra_ssh_opts": "-o Foo=bar",
+             "predict": "adaptive", "mosh_port": 60001},
+        ),
+    ],
+)
+def test_snapshot_for_backup_and_restore_preserve_protocol_fields(tmp_path, protocol, fields):
+    source, _, _ = _repo(tmp_path / "source")
+    payload = {"nickname": "plugin-conn", "protocol": protocol, "hostname": "10.0.0.9"}
+    payload.update(fields)
+    source.create_connection(payload)
+    section = source.snapshot_for_backup()
+
+    target, _, _ = _repo(tmp_path / "target")
+    target.restore_connection_store(section, mode="merge")
+
+    record = target.get_record("plugin-conn")
+    assert record is not None
+    for key, value in fields.items():
+        assert record.data.get(key) == value

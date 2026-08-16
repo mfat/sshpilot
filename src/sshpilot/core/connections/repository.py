@@ -130,6 +130,48 @@ class LegacyMigrationResult:
 # warning) any section whose version it does not understand.
 CONNECTION_STORE_SECTION_VERSION = 1
 
+# Portable, non-secret launch configuration for built-in non-SSH protocols,
+# beyond the generic id/nickname/hostname/username/port/display_name fields
+# already captured above. Declared here (core) rather than discovered from
+# ``sshpilot.plugins`` at runtime: the dependency-direction boundary
+# (``tests/core/test_dependency_boundary.py``) forbids ``core`` from importing
+# the plugin package, so this list is a deliberately duplicated, centralized
+# allowlist for the built-in protocols only — it must be kept in sync by hand
+# with each plugin's own ``connection_fields()`` declaration
+# (``src/sshpilot/plugins/builtin/*/__init__.py``). A third-party/dynamically
+# loaded protocol gets no portable-field backup support until it's added here;
+# its connections still round-trip with the generic fields only.
+_PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "serial": ("device", "baud", "flow", "databits", "parity", "stopbits"),
+    "docker": ("container", "command", "runtime", "docker_host", "user", "workdir"),
+    "kubernetes": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
+    "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
+}
+
+# Defense-in-depth secret filter mirroring the GTK client's own
+# ``_SENSITIVE_PARTS`` convention (``sshpilot/gtk/daemon_connection_services.py``):
+# no field in ``_PORTABLE_PROTOCOL_FIELDS`` currently matches this today, but
+# a hand-crafted backup file or a future plugin field must never be able to
+# smuggle a secret into the logical connection_store through ``plugin_data``.
+_SENSITIVE_DATA_PARTS = ("password", "passphrase", "secret", "token", "credential", "private_key")
+
+
+def _is_sensitive_field_name(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in _SENSITIVE_DATA_PARTS)
+
+
+def _portable_plugin_data(protocol: str, data: Mapping[str, Any]) -> Dict[str, Any]:
+    """The subset of ``record.data`` that is safe, portable, protocol-declared
+    launch configuration — never arbitrary/unknown keys, never anything
+    matching a secret-like field name."""
+    allowed = _PORTABLE_PROTOCOL_FIELDS.get(protocol, ())
+    return {
+        key: data[key]
+        for key in allowed
+        if key in data and not _is_sensitive_field_name(key)
+    }
+
 
 @dataclass(frozen=True)
 class ConnectionStoreRestoreResult:
@@ -2355,22 +2397,32 @@ class ConnectionRepository:
         """
         with self._lock:
             snap = self._build_snapshot_locked()
+            records_by_id = {
+                record.id: record for record in self._service.ordered_records()
+            }
+
+        def _connection_entry(c: ConnectionSummary) -> Dict[str, Any]:
+            entry: Dict[str, Any] = {
+                "id": str(c.id),
+                "protocol": c.protocol,
+                "nickname": c.nickname,
+                "hostname": c.hostname,
+                "username": c.username,
+                "port": c.port,
+                "display_name": (
+                    "" if c.display_name == c.nickname else c.display_name
+                ),
+            }
+            record = records_by_id.get(str(c.id))
+            if record is not None and c.protocol != "ssh":
+                plugin_data = _portable_plugin_data(c.protocol, record.data)
+                if plugin_data:
+                    entry["plugin_data"] = plugin_data
+            return entry
+
         return {
             "version": CONNECTION_STORE_SECTION_VERSION,
-            "connections": [
-                {
-                    "id": str(c.id),
-                    "protocol": c.protocol,
-                    "nickname": c.nickname,
-                    "hostname": c.hostname,
-                    "username": c.username,
-                    "port": c.port,
-                    "display_name": (
-                        "" if c.display_name == c.nickname else c.display_name
-                    ),
-                }
-                for c in snap.connections
-            ],
+            "connections": [_connection_entry(c) for c in snap.connections],
             "groups": [
                 {
                     "id": str(g.id),
@@ -2444,17 +2496,24 @@ class ConnectionRepository:
     ) -> None:
         cid = str(entry["id"])
         existing = self._service.get(cid)
+        protocol = str(entry.get("protocol") or "telnet")
         payload: Dict[str, Any] = {
             "id": cid,
             "nickname": str(entry.get("nickname") or cid),
             "hostname": str(entry.get("hostname") or ""),
             "username": str(entry.get("username") or ""),
             "port": int(entry.get("port") or 22),
-            "protocol": str(entry.get("protocol") or "telnet"),
+            "protocol": protocol,
         }
         display_name = str(entry.get("display_name") or "").strip()
         if display_name:
             payload["display_name"] = display_name
+        raw_plugin_data = entry.get("plugin_data")
+        if isinstance(raw_plugin_data, Mapping):
+            # Re-filter on restore too: never trust a hand-crafted or
+            # cross-version backup file to have applied the same allowlist/
+            # security filter used on export.
+            payload.update(_portable_plugin_data(protocol, raw_plugin_data))
         if existing is None:
             try:
                 payload["generation"] = 1
@@ -2539,6 +2598,31 @@ class ConnectionRepository:
                             f"Could not remove group {group.id!r}: {error}"
                         )
 
+        # Apply the backup's sibling order (user-visible state that must
+        # survive the round trip) among the groups it describes. Siblings not
+        # mentioned in the backup are left wherever place_group's insertion
+        # puts them relative to this batch — this only guarantees the
+        # relative order *among backup-described siblings*, in both modes.
+        by_parent: Dict[Optional[str], List[Tuple[int, str, str]]] = {}
+        for imported_id, local_id in id_map.items():
+            entry = by_id[imported_id]
+            parent_imported_id = entry.get("parent_id")
+            mapped_parent = (
+                id_map.get(str(parent_imported_id)) if parent_imported_id else None
+            )
+            order_value = entry.get("order")
+            order_value = order_value if isinstance(order_value, int) else 0
+            by_parent.setdefault(mapped_parent, []).append(
+                (order_value, str(entry.get("name") or ""), local_id)
+            )
+        for parent_id, siblings in by_parent.items():
+            siblings.sort(key=lambda item: (item[0], item[1]))
+            for index, (_, _, local_id) in enumerate(siblings):
+                try:
+                    self._service.place_group(local_id, parent_id, index)
+                except Exception as error:
+                    warnings.append(f"Could not order group {local_id!r}: {error}")
+
         return id_map
 
     def _restore_membership_and_order_locked(
@@ -2547,8 +2631,41 @@ class ConnectionRepository:
         imported_root: List[Any],
         id_map: Dict[str, str],
         *,
+        mode: str,
+        imported_connection_ids: set,
         warnings: List[str],
     ) -> None:
+        if mode == "replace":
+            # Evict stale membership from groups the backup persists: a
+            # connection the backup describes must end up in exactly the
+            # group(s) the backup states, not additionally in whatever
+            # group(s) it happened to occupy locally beforehand. Scoped to
+            # connections the backup actually describes (imported_connection_
+            # ids) — a local-only connection outside the backup's scope keeps
+            # its existing membership untouched, since the backup takes no
+            # position on it. (Multi-group membership the backup itself
+            # declares survives: a connection stays "stale" for a group only
+            # when that group's own backup-declared members omit it.)
+            for entry in imported_groups:
+                local_group_id = id_map.get(str(entry["id"]))
+                if local_group_id is None:
+                    continue
+                desired = {str(cid) for cid in (entry.get("connection_ids") or [])}
+                local_group = next(
+                    (g for g in self._service.list_groups() if g.id == local_group_id),
+                    None,
+                )
+                if local_group is None:
+                    continue
+                stale = (set(local_group.connection_ids) - desired) & imported_connection_ids
+                for cid in stale:
+                    try:
+                        self._service.remove_connection_from_group(cid, local_group_id)
+                    except Exception as error:
+                        warnings.append(
+                            f"Could not remove stale membership for {cid!r}: {error}"
+                        )
+
         for entry in imported_groups:
             local_group_id = id_map.get(str(entry["id"]))
             if local_group_id is None:
@@ -2698,7 +2815,9 @@ class ConnectionRepository:
                     imported_groups, mode=mode, warnings=warnings
                 )
                 self._restore_membership_and_order_locked(
-                    imported_groups, imported_root, id_map, warnings=warnings
+                    imported_groups, imported_root, id_map,
+                    mode=mode, imported_connection_ids=imported_ids,
+                    warnings=warnings,
                 )
                 self._restore_metadata_locked(
                     imported_metadata, imported_ids, mode=mode, warnings=warnings

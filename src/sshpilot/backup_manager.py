@@ -528,13 +528,16 @@ class BackupManager:
         # a raw copy of connections.json, and gated by the same option that
         # already controls the (now-stale, post-migration) app_config groups/
         # metadata sections.
+        #
+        # Unlike the SSH-config/known_hosts/app_config reads above, a failure
+        # here is NOT caught-and-continued: this is the authoritative record
+        # of non-SSH connections/groups/membership, and a backup that quietly
+        # omits it would report success while silently missing that state.
+        # Every caller of this method (export_configuration, export_backup,
+        # export_to_backend) already wraps it in a try/except that converts
+        # an exception into a clean (False, error) / FAILED result.
         if options['app_settings'] and self.connection_store is not None:
-            try:
-                export_data['connection_store'] = (
-                    self.connection_store.snapshot_for_backup()
-                )
-            except Exception as e:
-                logger.warning(f"Could not export connection store: {e}")
+            export_data['connection_store'] = self.connection_store.snapshot_for_backup()
 
         return export_data
 
@@ -837,14 +840,20 @@ class BackupManager:
                     )
                     self.last_connection_store_warnings = list(result.warnings)
                 except Exception as e:
-                    # A failed connection-store restore never fails the whole
-                    # import — SSH config/app settings/secrets already
-                    # succeeded; surface it as a warning instead, matching the
-                    # adjacent SSH-config reload hook below.
-                    logger.warning(f"Failed to restore connection store: {e}")
-                    self.last_connection_store_warnings = [
-                        f"Could not restore non-SSH connections/groups/metadata: {e}"
-                    ]
+                    # A *present, valid-shaped* connection_store section that
+                    # fails to restore is an operational failure, not a
+                    # compatibility no-op — this is the authoritative record
+                    # of non-SSH connections/groups/membership, so the import
+                    # must not report ordinary success while silently
+                    # dropping it. (An unsupported-version section is not an
+                    # exception at all: restore_connection_store() returns a
+                    # normal result with a warning for that case, handled
+                    # above like any other non-fatal warning — this branch is
+                    # only reached for a genuine restore failure.)
+                    logger.error(f"Failed to restore connection store: {e}")
+                    success = False
+                    error = f"Could not restore non-SSH connections/groups/metadata: {e}"
+                    self.last_connection_store_warnings = [error]
 
         if success and self.connection_manager:
             try:

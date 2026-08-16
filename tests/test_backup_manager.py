@@ -1032,6 +1032,17 @@ class _FakeConnectionStore:
         return bm_repository.ConnectionStoreRestoreResult(warnings=self._warnings)
 
 
+class _RaisingConnectionStore:
+    """Stand-in whose snapshot/restore calls always raise — for proving
+    authoritative connection-store failures are not silently swallowed."""
+
+    def snapshot_for_backup(self):
+        raise RuntimeError("simulated connection-store snapshot failure")
+
+    def restore_connection_store(self, section, *, mode="merge"):
+        raise RuntimeError("simulated connection-store restore failure")
+
+
 def test_build_export_data_includes_connection_store_when_app_settings_enabled(monkeypatch, tmp_path):
     monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
     store = _FakeConnectionStore(section={"version": 1, "connections": [{"id": "x"}],
@@ -1112,3 +1123,131 @@ def test_apply_parsed_without_connection_store_section_still_succeeds(monkeypatc
 
     assert success, error
     assert store.restore_calls == []
+
+
+# --- connection_store failure must not fail open -----------------------------
+
+
+def test_export_configuration_fails_when_connection_store_snapshot_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]), connection_store=_RaisingConnectionStore())
+
+    success, error = mgr.export_configuration(str(tmp_path / "out.json"))
+
+    assert success is False
+    assert error
+
+
+def test_export_backup_fails_when_connection_store_snapshot_raises(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]), connection_store=_RaisingConnectionStore())
+
+    success, error = mgr.export_backup(str(tmp_path / "out.spbk"))
+
+    assert success is False
+    assert error
+    assert not (tmp_path / "out.spbk").exists()
+
+
+def test_apply_parsed_fails_when_connection_store_restore_raises_for_present_section(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
+    config = ModeConfig(config_file, isolated=False)
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
+        connection_store=_RaisingConnectionStore(),
+    )
+    manifest = {
+        "version": 1,
+        "backup_options": {"app_settings": True, "ssh_config": True, "known_hosts": True,
+                            "secrets": False, "private_keys": False},
+        "ssh_config": "Host x\n",
+        "known_hosts": None,
+        "app_config": {"ssh": {"use_isolated_config": False}},
+        "connection_store": {"version": 1, "connections": [], "groups": [],
+                              "root_connection_ids": [], "metadata": []},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="merge", create_backup=False)
+
+    assert success is False
+    assert error
+
+
+def test_apply_parsed_succeeds_when_connection_store_absent_even_with_raising_restore_fn(monkeypatch, tmp_path):
+    """Backward compat: an archive with no connection_store section must keep
+    importing successfully even when the restore callable would raise if
+    called — proving it is simply never invoked, not silently tolerated."""
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
+    config = ModeConfig(config_file, isolated=False)
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
+        connection_store=_RaisingConnectionStore(),
+    )
+    manifest = {
+        "version": 1,
+        "backup_options": {"app_settings": True, "ssh_config": True, "known_hosts": True,
+                            "secrets": False, "private_keys": False},
+        "ssh_config": "Host x\n",
+        "known_hosts": None,
+        "app_config": {"ssh": {"use_isolated_config": False}},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="merge", create_backup=False)
+
+    assert success, error
+
+
+def test_apply_parsed_treats_unsupported_version_result_as_non_fatal(monkeypatch, tmp_path):
+    """Documents the intended compatibility policy: an unsupported future
+    connection_store schema version is a warning/skip, never a failure —
+    distinct from an outright restore exception."""
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+    config_file = config_dir / "config.json"
+    config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
+    config = ModeConfig(config_file, isolated=False)
+    store = _FakeConnectionStore(
+        warnings=("connection_store section version is unsupported; skipped",)
+    )
+    mgr = bm.BackupManager(
+        config,
+        FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
+        connection_store=store,
+    )
+    manifest = {
+        "version": 1,
+        "backup_options": {"app_settings": True, "ssh_config": True, "known_hosts": True,
+                            "secrets": False, "private_keys": False},
+        "ssh_config": "Host x\n",
+        "known_hosts": None,
+        "app_config": {"ssh": {"use_isolated_config": False}},
+        "connection_store": {"version": 999, "connections": [], "groups": [],
+                              "root_connection_ids": [], "metadata": []},
+    }
+
+    success, error = mgr._apply_parsed(manifest, mode="merge", create_backup=False)
+
+    assert success, error
+    assert mgr.last_connection_store_warnings == [
+        "connection_store section version is unsupported; skipped"
+    ]

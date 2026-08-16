@@ -1089,3 +1089,85 @@ def test_daemon_import_ssh_backup_restores_connection_store(monkeypatch, tmp_pat
     )
     assert result.status == SecretOperationState.SUCCESS, result.message
     assert "ssh-target-switch" in {c.id for c in target_repo.snapshot().connections}
+
+
+# ---------------------------------------------------------------------------
+# connection_store failures must not report ordinary success at the daemon
+# level either — proving the fix propagates end-to-end, not just inside
+# BackupManager.
+# ---------------------------------------------------------------------------
+
+
+def test_daemon_export_backup_fails_when_connection_store_snapshot_raises(monkeypatch, tmp_path):
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+
+    def _raise():
+        raise RuntimeError("simulated snapshot failure")
+
+    fake_mgr = FakeMgr()
+    dest = tmp_path / "out.spbk"
+    result = daemon_export_backup(
+        fake_mgr,
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": True, "known_hosts": False,
+                 "secrets": False, "private_keys": False},
+        connections_source=lambda: [],
+        settings_path=config_dir / "config.json",
+        connection_store_snapshot=_raise,
+    )
+
+    assert result.status == SecretOperationState.FAILED, result.message
+    assert not dest.exists()
+
+
+def test_daemon_import_backup_fails_when_connection_store_restore_raises_for_present_section(
+    monkeypatch, tmp_path
+):
+    source_config_dir = tmp_path / "source_config"
+    source_ssh_dir = tmp_path / "source_ssh"
+    source_config_dir.mkdir()
+    source_ssh_dir.mkdir()
+    source_repo = _connection_store_repo(source_config_dir, source_ssh_dir)
+    source_repo.create_connection(
+        {"nickname": "will-fail", "protocol": "telnet", "hostname": "10.0.0.50"}
+    )
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(source_config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(source_ssh_dir))
+
+    fake_mgr = FakeMgr()
+    dest = tmp_path / "backup.spbk"
+    export_result = daemon_export_backup(
+        fake_mgr,
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": True, "known_hosts": False,
+                 "secrets": False, "private_keys": False},
+        connections_source=source_repo.list_records,
+        settings_path=source_config_dir / "config.json",
+        connection_store_snapshot=source_repo.snapshot_for_backup,
+    )
+    assert export_result.status == SecretOperationState.SUCCESS, export_result.message
+
+    target_config_dir = tmp_path / "target_config"
+    target_ssh_dir = tmp_path / "target_ssh"
+    target_config_dir.mkdir()
+    target_ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(target_config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(target_ssh_dir))
+
+    def _raise(section, *, mode="merge"):
+        raise RuntimeError("simulated restore failure")
+
+    import_result = daemon_import_backup(
+        fake_mgr,
+        source=str(dest),
+        options={"mode": "merge"},
+        settings_path=target_config_dir / "config.json",
+        connection_store_restore=_raise,
+    )
+
+    assert import_result.status == SecretOperationState.FAILED, import_result.message
