@@ -1,5 +1,8 @@
 # Phase 13.2 — Runtime failure analysis
 
+> Historical validation record. The in-process broker references below describe
+> the phase's test harness and are not a current production backend path.
+
 Baseline SHA: `f621d7c6`. Fresh smoke log:
 `/tmp/phase13-2-baseline/fresh-smoke-run.log` (also
 `phase13-1-smoke-daemon4-complete.log`, `phase13-1-smoke-daemon5.log`).

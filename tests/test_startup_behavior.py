@@ -137,15 +137,34 @@ def _storage_info(verbose=True, config=None):
 
 
 def test_startup_info_storage_unavailable_without_daemon():
-    """Without a daemon client/controller the storage section reports unavailable —
+    """Without a daemon client/controller the storage section reports unreachable —
     it never falls back to instantiating a local SecretManager."""
     storage = _storage_info()
+    assert storage['metadata_status'] == 'unreachable'
     assert storage['effective_backend'] == 'none'
     assert storage['available_backends'] == []
     assert storage['selected_backend'] == 'none'
     assert storage['session_locked'] is False
     assert storage['libsecret']['accessible'] is False
     assert storage['keyring']['accessible'] is False
+
+
+def test_startup_info_storage_pending_while_client_selection_in_progress():
+    """While the async daemon client selection hasn't settled yet, the source
+    (really the window) has no secrets_controller/client attached at all — this
+    must be reported as "pending"/unknown, never fabricated as "unavailable".
+    Regression: startup diagnostics used to fire on a single GLib.idle_add
+    immediately after window construction, well before
+    MainWindow._apply_client_selection runs, so the Secure Storage section
+    always printed "libsecret: not available" even when libsecret was fine."""
+
+    class FakeConfigSource:
+        _api_client_selection_pending = True
+
+    storage = _storage_info(config=FakeConfigSource())
+    assert storage['metadata_status'] == 'pending'
+    assert storage['libsecret']['available'] is None
+    assert storage['keyring']['available'] is None
 
 
 def test_startup_info_storage_reads_through_daemon_controller():
@@ -261,4 +280,71 @@ def test_startup_info_has_no_secret_storage_import():
             f"startup_info.py:{node.lineno} imports secret_storage"
         )
 
+
+def test_verbose_startup_info_reports_semantic_daemon_config_without_paths(capsys):
+    """The verbose path must match the semantic-only config DTO."""
+    from sshpilot.startup_info import StartupInfo
+
+    info = StartupInfo.__new__(StartupInfo)
+    info.info = {
+        "version": {"version": "test"},
+        "platform": {"system": "Linux", "distro": "test", "architecture": "x86_64", "flatpak": False},
+        "python": {"version": "3", "implementation": "CPython"},
+        "libraries": {},
+        "tools": {
+            "ssh": {"available": False},
+            "sshpass": {"available": False, "executable": False},
+            "ssh_askpass": {"available": False},
+        },
+        "storage": {"effective_backend": "none", "libsecret": {}, "keyring": {}},
+        "config": {"operation_mode": "isolated", "config_authority": "daemon"},
+    }
+
+    info.print_info()
+    output = capsys.readouterr().out
+    assert "Operation mode: isolated" in output
+    assert "SSH configuration authority: daemon" in output
+    assert "Config directory:" not in output
+    assert "SSH directory:" not in output
+
+
+def test_startup_diagnostics_run_off_the_main_thread():
+    """print_startup_info() reads the secret backend registry through a
+    blocking daemon RPC (SecretBackendsController.load_registry()); building
+    that registry can shell out to e.g. `bw login --check`, observed taking
+    3+ seconds. Calling it directly from the GLib timeout callback used to
+    freeze the whole GTK main loop for that long — nothing in it touches
+    widgets, so it must run on a background thread instead."""
+    import threading
+
+    import pytest
+
+    pytest.importorskip("gi")
+    from sshpilot import main as main_module
+
+    call_thread = []
+    ready = threading.Event()
+
+    def fake_print_startup_info(**_kwargs):
+        call_thread.append(threading.current_thread())
+        ready.set()
+
+    orig = main_module.print_startup_info
+    main_module.print_startup_info = fake_print_startup_info
+    try:
+        app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+        app.isolated_mode = False
+        app.verbose_override = False
+        app.window = types.SimpleNamespace(
+            _api_client_selection_pending=False,
+            _confirmed_operation_mode=None,
+        )
+
+        calling_thread = threading.current_thread()
+        app._schedule_startup_diagnostics()
+
+        assert ready.wait(2), "print_startup_info was never called"
+        assert call_thread[0] is not calling_thread
+    finally:
+        main_module.print_startup_info = orig
 

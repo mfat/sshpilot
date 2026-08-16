@@ -342,6 +342,7 @@ def test_production_daemon_export_discovers_both_saved_connections(
             "secrets": True,
             "private_keys": False,
         },
+        owner_client_id="client-1",
     )
     assert result.status.value == "success", result.message
     assert result.counts["credentials"] == 2

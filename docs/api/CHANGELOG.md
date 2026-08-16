@@ -5,6 +5,74 @@ notes remain separate.
 
 ## Unreleased
 
+- Daemon-only retirement repairs now preserve protected broadcast input
+  registration, truthful operation-mode recovery, atomic reconnect publication,
+  and cross-process shared-settings transactions. These are implementation
+  correctness fixes within the current 0.40 contract; no downgrade or
+  frontend backend fallback is supported.
+
+## API 0.40 (current)
+
+### API 0.40 daemon-only retirement compatibility boundary
+
+- Bumped `API_IMPLEMENTATION_VERSION` because protected command-input
+  transport, session credentials, operation-mode recovery results, and
+  unsaved-host request semantics are not wire-compatible with a 0.39 daemon.
+- A resident daemon advertising API 0.39 is rejected with a restart/recovery
+  result before any incompatible mutation is attempted. The client never
+  falls back to plaintext secret transport or a frontend backend.
+- Added daemon-owned session-credential replacement and explicit clearing;
+  persistent password correction and deletion clear any temporary credential.
+- Preserved omitted CLI ports as `None` in unsaved-host requests so OpenSSH
+  aliases retain configured `Port` values; explicit `-p 22` remains an
+  override, and ephemeral CLI projections do not claim durable IDs.
+- Added `connections.clear_session_password` and documented protected-input
+  lifecycle limits and ownership.
+
+## Historical API entries
+
+### API 0.39 (historical snapshot)
+
+This snapshot is preserved exactly for compatibility testing. It predates the
+0.40 protected-input, operation-mode-result, and unsaved-host contract changes;
+it is not a current daemon/frontend pairing.
+
+The entries below record superseded implementation stages. They are not
+current production instructions; the current daemon-only contract is above.
+
+### API 0.38
+
+- Added the daemon-owned `daemon.get_operation_mode` status operation used by
+  restore-safety UI.
+
+### API 0.37
+
+- Added the daemon-only client method contract for operation-mode transitions.
+
+### API 0.36
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.36`; `PROTOCOL_VERSION` stays
+  `1.0`. Added daemon-owned `daemon.set_operation_mode`, with semantic
+  Default/Isolated requests, secure target preparation, live resource
+  preconditions, rollback, confirmed mode and generation in the result.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.35`; `PROTOCOL_VERSION` stays
+  `1.0`. Added daemon-owned `connections.check_unsaved_host`, which compares
+  semantic destination facts against the authoritative connection snapshot
+  without exposing SSH config paths or running OpenSSH in the frontend.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.34`; `PROTOCOL_VERSION` stays
+  `1.0`. Added daemon-owned `connections.get_effective_config`, returning a
+  generation-tagged authored-versus-effective OpenSSH comparison. Frontends no
+  longer run `ssh -G` or select the active config root for this decision.
+
+- Bumped `API_IMPLEMENTATION_VERSION` to `0.33`; `PROTOCOL_VERSION` stays
+  `1.0`. Added the daemon-owned `connections.prepare_external_terminal_launch`
+  operation and `ExternalTerminalLaunchSpec`. External terminal launch argv is
+  prepared from the daemon's active SSH configuration; only an approved agent
+  socket environment addition may cross the API, and secret autofill is
+  intentionally unsupported.
+
 - Bumped `API_IMPLEMENTATION_VERSION` to `0.31`; `PROTOCOL_VERSION` stays
   `1.0`. Added optional `force_tty` to open-session requests. When set, the
   daemon forces a remote TTY allocation (`ssh -t`) so interactive remote
@@ -677,8 +745,3 @@ interactive insertion continues to honor the `insert_only` preference.
 - SFTP, forwarding, plugin, or secret client operations
 - Remote access, TCP/WebSocket transport, named pipes, and terminal/session
   event transport
-## 0.32
-
-- Added the optional `display_name` presentation field to connection summaries
-  and mutation results. SSH connection IDs remain their OpenSSH aliases; this
-  additive field does not expose the internal UUID identity.

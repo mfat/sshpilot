@@ -85,6 +85,9 @@ from ..models.connections import (
     ConnectionDetails,
     ConnectionEditorCapabilities,
     ConnectionEditorDetails,
+    EffectiveConfigComparison,
+    UnsavedHostCheckRequest,
+    UnsavedHostCheckResult,
     ConnectionHealth,
     ConnectionSummary,
     ConnectionValidationError,
@@ -103,6 +106,7 @@ from ..models.connections import (
     SplitConnectionRequest,
     SshConfigText,
     StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
     StoreKeyPassphraseRequest,
     UNSET,
@@ -119,6 +123,9 @@ from ..models.daemon import (
     DaemonStopResult,
     RestartDaemonRequest,
     SetDaemonLogLevelRequest,
+    OperationMode,
+    OperationModeResult,
+    SetOperationModeRequest,
     StopDaemonRequest,
 )
 from ..models.sessions import (
@@ -138,6 +145,7 @@ from ..models.sessions import (
 from ..models.terminal import (
     BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
+    ExternalTerminalLaunchSpec,
     ReleaseTerminalInputRequest,
     ReplayBounds,
     ReplayRequest,
@@ -1941,6 +1949,113 @@ _EDITOR_DETAIL_FIELDS = frozenset(
 )
 
 
+def effective_config_comparison_to_wire(
+    value: EffectiveConfigComparison,
+) -> Dict[str, Any]:
+    if not isinstance(value, EffectiveConfigComparison):
+        raise TypeError("value must be an EffectiveConfigComparison")
+    return {
+        "connection_id": value.connection_id,
+        "host": value.host,
+        "available": value.available,
+        "has_diff": value.has_diff,
+        "changes": [dict(item) for item in value.changes],
+        "own": list(value.own),
+        "full": list(value.full),
+        "generation": value.generation,
+    }
+
+
+def effective_config_comparison_from_wire(
+    value: Any,
+) -> EffectiveConfigComparison:
+    data = _strict_fields(
+        value,
+        required={
+            "connection_id", "host", "available", "has_diff", "changes",
+            "own", "full", "generation",
+        },
+        context="effective config comparison",
+    )
+    if type(data["changes"]) is not list:
+        raise ValueError("effective config changes must be a list")
+    if any(type(item) is not dict for item in data["changes"]):
+        raise ValueError("effective config changes must contain objects")
+    if type(data["own"]) is not list or type(data["full"]) is not list:
+        raise ValueError("effective config lines must be lists")
+    return EffectiveConfigComparison(
+        connection_id=data["connection_id"],
+        host=data["host"],
+        available=data["available"],
+        has_diff=data["has_diff"],
+        changes=tuple(dict(item) for item in data["changes"]),
+        own=tuple(data["own"]),
+        full=tuple(data["full"]),
+        generation=data["generation"],
+    )
+
+
+def unsaved_host_check_request_to_wire(
+    value: UnsavedHostCheckRequest,
+) -> Dict[str, Any]:
+    if not isinstance(value, UnsavedHostCheckRequest):
+        raise TypeError("value must be an UnsavedHostCheckRequest")
+    result = {
+        "hostname": value.hostname,
+        "username": value.username,
+        "port": value.port,
+        "protocol": value.protocol,
+        "proxy_jump": list(value.proxy_jump),
+    }
+    if value.connection_id is not None:
+        result["connection_id"] = value.connection_id
+    return result
+
+
+def unsaved_host_check_request_from_wire(value: Any) -> UnsavedHostCheckRequest:
+    data = _strict_fields(
+        value,
+        required={"hostname", "username"},
+        optional={"connection_id", "port", "protocol", "proxy_jump"},
+        context="unsaved host check request",
+    )
+    return UnsavedHostCheckRequest(
+        hostname=data["hostname"],
+        username=data["username"],
+        connection_id=data.get("connection_id"),
+        port=data.get("port"),
+        protocol=data.get("protocol", "ssh"),
+        proxy_jump=tuple(data.get("proxy_jump", ())),
+    )
+
+
+def unsaved_host_check_result_to_wire(
+    value: UnsavedHostCheckResult,
+) -> Dict[str, Any]:
+    if not isinstance(value, UnsavedHostCheckResult):
+        raise TypeError("value must be an UnsavedHostCheckResult")
+    return {
+        "saved": value.saved,
+        "hostname": value.hostname,
+        "username": value.username,
+        "generation": value.generation,
+    }
+
+
+def unsaved_host_check_result_from_wire(value: Any) -> UnsavedHostCheckResult:
+    data = _strict_fields(
+        value,
+        required={"saved", "hostname", "username", "generation"},
+        context="unsaved host check result",
+    )
+    return UnsavedHostCheckResult(
+        saved=data["saved"],
+        hostname=data["hostname"],
+        username=data["username"],
+        generation=data["generation"],
+    )
+
+
 def connection_editor_details_to_wire(
     details: ConnectionEditorDetails,
 ) -> Dict[str, Any]:
@@ -2386,6 +2501,27 @@ def store_connection_password_request_from_wire(
             "previous username",
             allow_empty=True,
         ),
+    )
+
+
+def set_session_connection_password_request_to_wire(
+    request: SetSessionConnectionPasswordRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetSessionConnectionPasswordRequest:
+        raise TypeError("session connection password request is required")
+    return {"connection_id": request.connection_id}
+
+
+def set_session_connection_password_request_from_wire(
+    value: Any,
+) -> SetSessionConnectionPasswordRequest:
+    data = _strict_fields(
+        value,
+        required={"connection_id"},
+        context="session connection password request",
+    )
+    return SetSessionConnectionPasswordRequest(
+        connection_id=ConnectionId(_identifier(data["connection_id"], "connection id"))
     )
 
 
@@ -3014,6 +3150,44 @@ def attach_session_result_from_wire(value: Any) -> AttachSessionResult:
             "replay truncated",
         ),
         eof=_boolean(data.get("eof", False), "terminal eof"),
+    )
+
+
+def external_terminal_launch_spec_to_wire(
+    value: ExternalTerminalLaunchSpec,
+) -> Dict[str, Any]:
+    if not isinstance(value, ExternalTerminalLaunchSpec):
+        raise TypeError("value must be an ExternalTerminalLaunchSpec")
+    return {
+        "argv": list(value.argv),
+        "environment": [[name, item] for name, item in value.environment],
+        "display_name": value.display_name,
+        "secret_autofill_supported": value.secret_autofill_supported,
+    }
+
+
+def external_terminal_launch_spec_from_wire(
+    value: Any,
+) -> ExternalTerminalLaunchSpec:
+    data = _strict_fields(
+        value,
+        required={"argv", "environment", "display_name", "secret_autofill_supported"},
+        context="external terminal launch spec",
+    )
+    if type(data["argv"]) is not list:
+        raise ValueError("external terminal argv must be a list")
+    if type(data["environment"]) is not list:
+        raise ValueError("external terminal environment must be a list")
+    environment = []
+    for item in data["environment"]:
+        if type(item) is not list or len(item) != 2:
+            raise ValueError("external terminal environment entries are pairs")
+        environment.append((item[0], item[1]))
+    return ExternalTerminalLaunchSpec(
+        argv=tuple(data["argv"]),
+        environment=tuple(environment),
+        display_name=data["display_name"],
+        secret_autofill_supported=data["secret_autofill_supported"],
     )
 
 
@@ -4899,6 +5073,93 @@ def set_daemon_log_level_request_from_wire(value: Any) -> SetDaemonLogLevelReque
     except (TypeError, ValueError):
         raise ValueError("daemon log level must be warning, info, or debug") from None
     return SetDaemonLogLevelRequest(level=level)
+
+
+def set_operation_mode_request_to_wire(
+    request: SetOperationModeRequest,
+) -> Dict[str, Any]:
+    if type(request) is not SetOperationModeRequest:
+        raise TypeError("set operation mode request is required")
+    return {
+        "mode": request.mode.value,
+        "seed_isolated_config": request.seed_isolated_config,
+    }
+
+
+def set_operation_mode_request_from_wire(value: Any) -> SetOperationModeRequest:
+    data = _strict_fields(
+        value,
+        required={"mode"},
+        optional={"seed_isolated_config"},
+        context="set operation mode request",
+    )
+    try:
+        mode = OperationMode(data["mode"])
+    except (TypeError, ValueError):
+        raise ValueError("operation mode must be default or isolated") from None
+    seed = data.get("seed_isolated_config", False)
+    if type(seed) is not bool:
+        raise ValueError("seed_isolated_config must be a boolean")
+    return SetOperationModeRequest(mode=mode, seed_isolated_config=seed)
+
+
+def operation_mode_result_to_wire(result: OperationModeResult) -> Dict[str, Any]:
+    if type(result) is not OperationModeResult:
+        raise TypeError("operation mode result is required")
+    return {
+        "accepted": result.accepted,
+        "active_mode": result.active_mode.value,
+        "generation": result.generation,
+        "seeded": result.seeded,
+        "conflict": result.conflict,
+        "message": result.message,
+        "target_description": result.target_description,
+        "persisted_mode": result.persisted_mode.value if result.persisted_mode else None,
+        "rollback_completed": result.rollback_completed,
+        "recovery_required": result.recovery_required,
+    }
+
+
+def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
+    data = _strict_fields(
+        value,
+        required={"accepted", "active_mode", "generation", "seeded", "conflict", "message", "target_description"},
+        optional={"persisted_mode", "rollback_completed", "recovery_required"},
+        context="operation mode result",
+    )
+    try:
+        mode = OperationMode(data["active_mode"])
+    except (TypeError, ValueError):
+        raise ValueError("operation mode result contains an unknown mode") from None
+    persisted_raw = data.get("persisted_mode")
+    if persisted_raw is None:
+        persisted_mode = None
+    else:
+        try:
+            persisted_mode = OperationMode(persisted_raw)
+        except (TypeError, ValueError):
+            raise ValueError("operation mode result contains an unknown persisted mode") from None
+    recovery_required = data.get("recovery_required", False)
+    recovery_required = _boolean(recovery_required, "recovery_required")
+    # These fields were added to the 0.40 operation-mode result.  A daemon
+    # that reports recovery without the additive rollback flag must still
+    # decode to a truthful model; the invariant requires rollback_completed to
+    # be false whenever recovery is required.
+    rollback_completed = data.get("rollback_completed", not recovery_required)
+    return OperationModeResult(
+        accepted=_boolean(data["accepted"], "accepted"),
+        active_mode=mode,
+        generation=_integer(data["generation"], "generation"),
+        seeded=_boolean(data["seeded"], "seeded"),
+        conflict=_boolean(data["conflict"], "conflict"),
+        # Successful status responses intentionally use an empty explanation;
+        # rejection/recovery responses carry a user-facing message.
+        message=_text(data["message"], "message", allow_empty=True),
+        target_description=_text(data["target_description"], "target description"),
+        persisted_mode=persisted_mode,
+        rollback_completed=_boolean(rollback_completed, "rollback_completed"),
+        recovery_required=recovery_required,
+    )
 
 
 def daemon_stop_result_to_wire(result: DaemonStopResult) -> Dict[str, Any]:

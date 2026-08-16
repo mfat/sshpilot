@@ -1246,10 +1246,12 @@ class FileListEditor(Adw.PreferencesGroup):
         parent = getattr(self, '_parent_window', None)
         client = getattr(parent, 'client', None)
         use_daemon = (
-            getattr(parent, '_daemon_mode_active', lambda: False)()
-            and client is not None
-            and hasattr(client, 'reveal_key_passphrase')
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'reveal_key_passphrase', None))
         )
+        if not use_daemon:
+            return
 
         def _apply(value):
             try:
@@ -1268,16 +1270,14 @@ class FileListEditor(Adw.PreferencesGroup):
 
         def worker():
             try:
-                if use_daemon:
-                    secret = client.reveal_key_passphrase(norm)
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                else:
-                    value = self._connection_manager.get_key_passphrase(norm) or ''
+                secret = client.reveal_key_passphrase(norm)
+                try:
+                    value = secret.decode('utf-8')
+                finally:
+                    secret[:] = b'\0' * len(secret)
+                    secret.clear()
             except Exception:
+                logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
                 value = False
             GLib.idle_add(_apply, value)
 
@@ -1296,10 +1296,13 @@ class FileListEditor(Adw.PreferencesGroup):
         parent = getattr(self, '_parent_window', None)
         client = getattr(parent, 'client', None)
         use_daemon = (
-            getattr(parent, '_daemon_mode_active', lambda: False)()
-            and client is not None
-            and hasattr(client, 'reveal_key_passphrase')
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'reveal_key_passphrase', None))
         )
+        if not use_daemon:
+            row._pass_reveal_pending = False
+            return
 
         def apply(value):
             try:
@@ -1316,16 +1319,14 @@ class FileListEditor(Adw.PreferencesGroup):
         def worker():
             value = ''
             try:
-                if use_daemon:
-                    secret = client.reveal_key_passphrase(norm)
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                else:
-                    value = self._connection_manager.get_key_passphrase(norm) or ''
+                secret = client.reveal_key_passphrase(norm)
+                try:
+                    value = secret.decode('utf-8')
+                finally:
+                    secret[:] = b'\0' * len(secret)
+                    secret.clear()
             except Exception:
+                logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
                 value = ''
             GLib.idle_add(apply, value)
 
@@ -1334,6 +1335,18 @@ class FileListEditor(Adw.PreferencesGroup):
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
         text = pass_entry.get_text()
+        # A passphrase loaded from the daemon is already an authoritative
+        # stored value.  Saving an unrelated connection field must not ask
+        # OpenSSH to re-verify that value: the key may have been rotated,
+        # temporarily unavailable, or the dialog may have been opened while
+        # daemon mode confirmation was still pending.  Only a new/edited value
+        # needs validation before it is queued for protected storage.
+        for row in getattr(self, '_rows', ()):
+            if getattr(row, '_pass_entry', None) is pass_entry:
+                if text == (getattr(row, '_pass_initial', '') or ''):
+                    pass_entry.remove_css_class('error')
+                    return True
+                break
         if text and callable(self._verify):
             secret = bytearray(text.encode("utf-8"))
             try:
@@ -2007,19 +2020,10 @@ class ConnectionDialog(
                 parent = None
         key_manager = getattr(parent, 'key_manager', None)
         if key_manager is None:
-            client = getattr(parent, 'client', None)
-            if client is not None:
-                try:
-                    from .api.models.keys import KeyStoreScope
-                    from .key_manager import KeyManager
-
-                    key_manager = KeyManager(
-                        client,
-                        scope=getattr(parent, '_key_scope', KeyStoreScope.DEFAULT),
-                    )
-                except Exception:
-                    logger.debug("daemon key manager unavailable", exc_info=True)
-                    key_manager = None
+            # Do not construct a DEFAULT-scope manager while the daemon's
+            # semantic operation mode is still unconfirmed.  The main window
+            # creates the correctly scoped manager only after confirmation.
+            return []
         if key_manager is None:
             return []
         out = []
@@ -2237,14 +2241,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
 
         parent = getattr(self, 'parent_window', None)
-        mgr = getattr(parent, 'connection_manager', None)
         client = getattr(parent, 'client', None)
         use_daemon = (
-            getattr(parent, '_daemon_mode_active', lambda: False)()
-            and client is not None
-            and hasattr(client, 'reveal_connection_password')
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'reveal_connection_password', None))
         )
-        if not use_daemon and not mgr:
+        if not use_daemon:
             return
 
         def _apply(value):
@@ -2262,19 +2265,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         def worker():
             try:
-                if use_daemon:
-                    from .api.connection_identity import connection_id_for
-                    secret = client.reveal_connection_password(
-                        connection_id_for(self.connection)
-                    )
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                else:
-                    value = mgr.get_connection_password(self.connection) or ''
+                from .api.connection_identity import connection_id_for
+                secret = client.reveal_connection_password(
+                    connection_id_for(self.connection)
+                )
+                try:
+                    value = secret.decode('utf-8')
+                finally:
+                    secret[:] = b'\0' * len(secret)
+                    secret.clear()
             except Exception:
+                logger.warning("Daemon connection password reveal unavailable", exc_info=True)
                 value = False
             GLib.idle_add(_apply, value)
 
@@ -2291,13 +2292,16 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             return
         self._password_reveal_pending = True
         parent = getattr(self, 'parent_window', None)
-        mgr = getattr(parent, 'connection_manager', None)
         client = getattr(parent, 'client', None)
         use_daemon = (
-            getattr(parent, '_daemon_mode_active', lambda: False)()
-            and client is not None
-            and hasattr(client, 'reveal_connection_password')
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'reveal_connection_password', None))
         )
+        if not use_daemon:
+            self._password_reveal_pending = False
+            self.show_error(_("Secure storage is unavailable."))
+            return
 
         def apply(value):
             try:
@@ -2314,19 +2318,17 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         def worker():
             value = ''
             try:
-                if use_daemon:
-                    from .api.connection_identity import connection_id_for
-                    secret = client.reveal_connection_password(
-                        connection_id_for(self.connection)
-                    )
-                    try:
-                        value = secret.decode('utf-8')
-                    finally:
-                        secret[:] = b'\0' * len(secret)
-                        secret.clear()
-                else:
-                    value = mgr.get_connection_password(self.connection) or ''
+                from .api.connection_identity import connection_id_for
+                secret = client.reveal_connection_password(
+                    connection_id_for(self.connection)
+                )
+                try:
+                    value = secret.decode('utf-8')
+                finally:
+                    secret[:] = b'\0' * len(secret)
+                    secret.clear()
             except Exception:
+                logger.warning("Daemon connection password reveal unavailable", exc_info=True)
                 value = ''
             GLib.idle_add(apply, value)
 
@@ -3854,12 +3856,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         parent = getattr(self, 'parent_window', None)
         client = getattr(parent, 'client', None)
         bridge = getattr(parent, 'client_bridge', None)
+        try:
+            from .api.capabilities import Capability
+            secret_write_supported = (
+                client is not None
+                and client.get_capabilities().supports(Capability.CONNECTIONS_SECRETS_WRITE)
+            )
+        except Exception:
+            secret_write_supported = False
         use_daemon = (
             connection_data.get('protocol', 'ssh') == 'ssh'
-            and getattr(parent, '_daemon_mode_active', lambda: False)()
+            and callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
             and bridge is not None
-            and client is not None
-            and hasattr(client, 'store_connection_password')
+            and secret_write_supported
         )
         if not use_daemon:
             self._set_secret_save_busy(False)

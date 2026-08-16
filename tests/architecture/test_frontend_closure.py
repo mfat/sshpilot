@@ -38,7 +38,6 @@ COMPATIBILITY_MODULES = frozenset(
         "credential_model.py",
         "providers/system_agent.py",
         "secret_storage.py",
-        "sftp_utils.py",
         "ssh_config_utils.py",
         "ssh_multiplex.py",
     }
@@ -74,6 +73,7 @@ PLUGIN_API_LOCAL_FUNCTIONS = frozenset(
 # process/legacy-edge scan above instead.
 PLUGIN_FACADE_SURFACE = {
     # PluginContext
+    "PluginContext.daemon_client": "API/daemon owned",
     "PluginContext.for_spawn": "API/daemon owned",
     "PluginContext.register_protocol": "API/daemon owned",
     "PluginContext.add_connection": "API/daemon owned",

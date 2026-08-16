@@ -36,6 +36,7 @@ build-deb-local.sh
 *.log
 .pytest_cache/
 .ruff_cache/
+.codebase-memory/
 
 # Local assistant/editor instructions (not published)
 CLAUDE.md

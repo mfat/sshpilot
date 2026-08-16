@@ -610,6 +610,15 @@ class PluginContext:
         self.files = _FilesFacade(self._data_dir)
         self.http = _HttpFacade()
 
+    def daemon_client(self) -> Optional[Any]:
+        """Return the live typed daemon client, or ``None`` if unavailable.
+
+        Plugin UI code must use this path for authoritative SSH state and
+        protected secret operations.  The compatibility connection manager is
+        not a backend authority.
+        """
+        return self._host.daemon_client() if self._host is not None else None
+
     @classmethod
     def for_spawn(cls, *, plugin_id: str, app_config: Any,
                   connection_manager: Any, protocol_registry: Any) -> "PluginContext":

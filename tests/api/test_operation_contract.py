@@ -14,7 +14,10 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
     is_valid_operation_transition,
 )
+from sshpilot.api.models.daemon import OperationMode, OperationModeResult
 from sshpilot.api.transport.codec import (
+    operation_mode_result_from_wire,
+    operation_mode_result_to_wire,
     operation_id_request_from_wire,
     operation_id_request_to_wire,
     operation_summary_from_wire,
@@ -87,3 +90,37 @@ def test_operation_transition_contract_remains_minimal():
     assert is_valid_operation_transition(OperationState.RUNNING, OperationState.CANCELLED)
     assert not is_valid_operation_transition(OperationState.QUEUED, OperationState.SUCCEEDED)
     assert not is_valid_operation_transition(OperationState.FAILED, OperationState.RUNNING)
+
+
+def test_recovery_mode_result_without_additive_rollback_flag_stays_truthful():
+    wire = operation_mode_result_to_wire(
+        OperationModeResult(
+            accepted=False,
+            active_mode=OperationMode.DEFAULT,
+            generation=3,
+            message="recovery required",
+            target_description="Default user SSH configuration",
+            recovery_required=True,
+            rollback_completed=False,
+        )
+    )
+    wire.pop("rollback_completed")
+
+    restored = operation_mode_result_from_wire(wire)
+
+    assert restored.recovery_required is True
+    assert restored.rollback_completed is False
+
+
+def test_successful_operation_mode_status_allows_empty_message():
+    result = OperationModeResult(
+        accepted=True,
+        active_mode=OperationMode.DEFAULT,
+        generation=4,
+        target_description="Default user SSH configuration",
+    )
+
+    restored = operation_mode_result_from_wire(operation_mode_result_to_wire(result))
+
+    assert restored.accepted is True
+    assert restored.message == ""

@@ -325,10 +325,12 @@ def test_command_blocks_active_terminal_routes_daemon_input_through_widget():
 def test_command_blocks_specific_terminal_routes_daemon_input_through_widget():
     terminal = _daemon_terminal()
     panel = command_blocks.CommandBlocksPanel.__new__(command_blocks.CommandBlocksPanel)
+    panel.window = Mock()
+    panel.window._get_active_terminal_widget.return_value = terminal
     panel.store = Mock()
     panel.store._config.get_setting.return_value = False
 
-    panel._feed_specific_terminal("whoami", terminal, "command-id")
+    panel._feed_terminal("whoami", "command-id")
 
     terminal._daemon_controller.send_input.assert_called_once_with(b"whoami\n")
     terminal.backend.feed_child_data.assert_not_called()

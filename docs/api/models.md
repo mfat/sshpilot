@@ -46,7 +46,7 @@ prompt text, session IDs, connection IDs, or timestamps.
 | --- | --- | --- |
 | `ClientInfo` | Frontend name/version and optional ID | Implemented through `get_capabilities` |
 | `CoreInfo` | Core name/version/implementation | Implemented through `get_capabilities` |
-| `CompatibilityResult` | Compatibility decision and safe message | Implemented; currently always compatible v1 in-process |
+| `CompatibilityResult` | Compatibility decision and safe message | Implemented for daemon Protocol v1 handshake |
 | `Capabilities` | Version, endpoint, compatibility, and supported-set result | Implemented |
 | `CoreEvent` | Typed payload plus sequence/timestamp/correlation | Implemented for connection and session lifecycle events |
 

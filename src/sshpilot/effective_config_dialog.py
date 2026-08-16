@@ -1,7 +1,7 @@
 """Unified effective-SSH-config viewer.
 
 The default summary explains each changed setting in plain language. An optional
-full comparison shows the host block and the effective ``ssh -G`` output side by
+full comparison shows daemon-returned authored and effective values side by
 side. Both the post-save warning and connection context menu use this window.
 """
 
@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import difflib
 import logging
-import os
-import tempfile
-import threading
 from gettext import gettext as _
 from typing import Dict, List, Optional, Tuple
 
@@ -55,114 +52,6 @@ def _friendly_key(key: str) -> str:
 def _span(values: List[str], color: str) -> str:
     text = ', '.join(values) if values else _('(none)')
     return f'<span foreground="{color}">{GLib.markup_escape_text(text)}</span>'
-
-
-def connection_config_data(connection) -> dict:
-    """Build the format_ssh_config_entry input for a connection's own block.
-
-    Shared by the viewer launcher and the background effective-config checker so
-    both diff the exact same host block.
-    """
-    return {
-        'nickname': getattr(connection, 'nickname', '') or getattr(connection, 'host', ''),
-        'hostname': getattr(connection, 'hostname', '') or getattr(connection, 'host', ''),
-        'username': getattr(connection, 'username', ''),
-        'port': getattr(connection, 'port', 22),
-        'auth_method': getattr(connection, 'auth_method', 0),
-        'key_select_mode': getattr(connection, 'key_select_mode', 0),
-        'keyfile': getattr(connection, 'keyfile', ''),
-        'identity_files': getattr(connection, 'identity_files', None) or [],
-        'certificate': getattr(connection, 'certificate', ''),
-        'certificate_files': getattr(connection, 'certificate_files', None) or [],
-        'x11_forwarding': getattr(connection, 'x11_forwarding', False),
-        'proxy_jump': getattr(connection, 'proxy_jump', []) or [],
-        'forward_agent': getattr(connection, 'forward_agent', False),
-        'local_command': getattr(connection, 'local_command', ''),
-        'remote_command': getattr(connection, 'remote_command', ''),
-        'forwarding_rules': getattr(connection, 'forwarding_rules', []) or [],
-        'extra_ssh_config': getattr(connection, 'extra_ssh_config', ''),
-        # Agent / hardware-key sources and auth flags the writer also emits —
-        # omitting them makes the rebuilt block differ from the real one.
-        'identity_agent': getattr(connection, 'identity_agent', '') or '',
-        'add_keys_to_agent': getattr(connection, 'add_keys_to_agent', '') or '',
-        'pkcs11_provider': getattr(connection, 'pkcs11_provider', '') or '',
-        'security_key_provider': getattr(connection, 'security_key_provider', '') or '',
-        'pubkey_auth_no': getattr(connection, 'pubkey_auth_no', False),
-        'pre_command': getattr(connection, 'pre_command', '') or '',
-        'password': getattr(connection, 'password', '') or '',
-    }
-
-
-def saved_connection_block(connection_manager, connection, *,
-                           host: Optional[str] = None,
-                           fallback_data: Optional[dict] = None) -> str:
-    """Return a saved connection's authored Host block.
-
-    Reading the stanza back from its source file makes the saved block the
-    canonical side of the comparison. Reformat from connection data only when
-    the stanza cannot be read (for example while creating a new connection).
-    """
-    nickname = host or getattr(connection, 'nickname', '') or ''
-    try:
-        # Every concrete stanza for the alias (ssh merges repeated Host blocks),
-        # not just the first — otherwise later directives read as global additions.
-        collector = getattr(connection_manager, 'collect_host_block_lines', None)
-        if callable(collector):
-            lines = collector(nickname)
-        else:
-            from .ssh_config_utils import collect_host_block_lines
-
-            root_config = getattr(
-                connection, '_resolve_config_override_path', lambda: None
-            )()
-            lines = collect_host_block_lines(nickname, root_config)
-        if lines:
-            return '\n'.join(lines)
-    except Exception:
-        logger.debug("Could not read saved Host block for %s", nickname,
-                     exc_info=True)
-
-    data = (
-        fallback_data
-        if fallback_data is not None
-        else connection_config_data(connection)
-    )
-    formatter = getattr(connection_manager, 'format_ssh_config_entry', None)
-    if callable(formatter):
-        return formatter(data)
-    from .ssh_config_formatter import format_ssh_config_entry
-    return format_ssh_config_entry(data)
-
-
-def _compute(host: str, own_block: str, root_config: Optional[str],
-             is_new: bool) -> Optional[dict]:
-    """Resolve own-block vs. effective config (blocking; run off the main thread).
-
-    For a saved host the real root config already contains its block, so we diff
-    against it directly. For a not-yet-saved host we synthesize a config that is
-    the current block followed by ``Include <root>``, so ssh still applies the
-    root's ``Host *`` globals without a stale saved block skewing the result.
-    """
-    from .ssh_config_utils import diff_effective_config
-
-    tmp_path = None
-    try:
-        full_config = root_config
-        if is_new and root_config:
-            fd, tmp_path = tempfile.mkstemp(prefix='.sshpilot-eff-', suffix='.conf')
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                f.write(f"{own_block}\nInclude {root_config}\n")
-            full_config = tmp_path
-        return diff_effective_config(host, full_config, own_block)
-    except Exception:
-        logger.debug("effective-config computation failed", exc_info=True)
-        return None
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
 
 
 def _diff_rows(own: List[str], full: List[str],
@@ -211,24 +100,6 @@ class EffectiveConfigDialog(Adw.Window):
     """Summary and full views of host-block vs. effective SSH configuration."""
 
     __gtype_name__ = "SshPilotEffectiveConfigDialog"
-
-    @classmethod
-    def for_connection(cls, parent, connection, connection_manager):
-        """Open the viewer for a saved connection (e.g. from the sidebar menu).
-
-        Builds the host's own block from the connection object and resolves the
-        root config the real connection uses, then presents the two-pane viewer.
-        """
-        host = getattr(connection, 'nickname', '') or getattr(connection, 'host', '')
-        own_block = saved_connection_block(connection_manager, connection)
-        try:
-            root_config = connection._resolve_config_override_path()
-        except Exception:
-            root_config = None
-        dialog = cls(parent, host=host,
-                     own_block=own_block, root_config=root_config, is_new=False)
-        dialog.present()
-        return dialog
 
     @classmethod
     def for_result(cls, parent, host: str, result: dict):
@@ -280,17 +151,9 @@ class EffectiveConfigDialog(Adw.Window):
         if result is not None:
             self._on_computed(result)
         else:
-            self._show_spinner()
-            threading.Thread(
-                target=self._work, args=(host, own_block, root_config, is_new),
-                name="effcfg-dialog", daemon=True,
-            ).start()
+            self._on_computed(None)
 
     # ---- computation -------------------------------------------------------
-
-    def _work(self, host, own_block, root_config, is_new):
-        result = _compute(host, own_block, root_config, is_new)
-        GLib.idle_add(self._on_computed, result)
 
     def _on_computed(self, result):
         self._computed = True
@@ -421,10 +284,9 @@ class EffectiveConfigDialog(Adw.Window):
     def _render_full_comparison(self):
         rows = _diff_rows(self._own_lines, self._full_lines, full_mode=True)
         # Highlight only the differences the summary reports. Both columns are
-        # ssh -G resolutions (compiled defaults included on the left, the
-        # system-wide config on the right), so untouched defaults like a
-        # distro's gssapiauthentication can differ between columns without
-        # being a difference in the user's own configuration.
+        # The daemon reports only the authored/effective comparison, so the
+        # renderer can highlight changed directives without knowing filesystem
+        # paths or reproducing OpenSSH resolution.
         changed_keys = {str(c.get('key') or '') for c in self._changes}
 
         def _line_key(line: str) -> str:
@@ -486,7 +348,7 @@ class EffectiveConfigDialog(Adw.Window):
         label = Gtk.Label()
         label.set_xalign(0.0)
         label.set_wrap(True)
-        # ssh -G emits long comma-separated algorithm lists with no spaces.
+        # Effective values can contain long comma-separated algorithm lists.
         # WORD wrapping treats each as one enormous token and makes the window
         # grow horizontally when full comparison is enabled. Permit character
         # breaks and cap the label's natural width so the existing window size

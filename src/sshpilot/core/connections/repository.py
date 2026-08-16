@@ -48,6 +48,7 @@ from ...api.models.connections import (
     SshConfigText,
     MAX_DISPLAY_NAME_LENGTH,
 )
+from ...api.models.common import validate_ssh_host_alias
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, GroupRecord
 from .identity_repository_adapter import (
@@ -144,6 +145,8 @@ class ConnectionRepositoryProtocol(Protocol):
     def discover_paths(self) -> frozenset: ...
 
     def reload(self) -> ConnectionStoreSnapshot: ...
+
+    def transition_ssh_config(self, ssh_store: SshConfigStore, isolated: bool) -> ConnectionStoreSnapshot: ...
 
     def add_listener(self, callback: ChangeListener) -> None: ...
 
@@ -301,7 +304,7 @@ class ConnectionRepository:
         with self._lock:
             paths = {self._state_path}
             loaded = self._ssh_store.load()
-            paths.update(Path(p) for p in loaded.source_paths)
+            paths.update(Path(p) for p in (loaded.watch_paths or loaded.source_paths))
             return frozenset(paths)
 
     @property
@@ -309,11 +312,41 @@ class ConnectionRepository:
         """Return the daemon-selected SSH root for reload stability checks."""
         return Path(self._ssh_store.root_path)
 
+    @property
+    def ssh_config_isolated(self) -> bool:
+        """Whether this daemon repository uses its isolated SSH root."""
+        return self._ssh_store.isolated
+
     def reload(self) -> ConnectionStoreSnapshot:
         """Re-read authoritative sources; publish a change only when semantics differ."""
         with self._mutation_scope():
             before = self._build_snapshot_locked()
             self._load_state_locked()
+            after = self._build_snapshot_locked()
+            return self._notify(before, after)
+
+    def transition_ssh_config(
+        self, ssh_store: SshConfigStore, isolated: bool
+    ) -> ConnectionStoreSnapshot:
+        """Atomically replace the active daemon SSH config store and reload."""
+        if not isinstance(ssh_store, SshConfigStore):
+            raise TypeError("an SshConfigStore is required")
+        with self._mutation_scope():
+            before = self._build_snapshot_locked()
+            old_store = self._ssh_store
+            old_isolated = self._isolated
+            try:
+                # Load before publication so malformed or inaccessible target
+                # configuration cannot leave a partially switched authority.
+                ssh_store.load()
+                self._ssh_store = ssh_store
+                self._isolated = bool(isolated)
+                self._load_state_locked()
+            except Exception:
+                self._ssh_store = old_store
+                self._isolated = old_isolated
+                self._load_state_locked()
+                raise
             after = self._build_snapshot_locked()
             return self._notify(before, after)
 
@@ -1549,12 +1582,10 @@ class ConnectionRepository:
             ) from rollback_error
 
     def _validate_new_nickname(self, nickname: str) -> str:
-        nickname = (nickname or "").strip()
-        if not nickname:
-            raise CoreError(
-                ErrorCode.VALIDATION_ERROR,
-                "A nickname is required",
-            )
+        try:
+            nickname = validate_ssh_host_alias(nickname)
+        except ValueError as error:
+            raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
         existing = {c.id for c in self._service.ordered_records()}
         if nickname in existing:
             raise CoreError(
@@ -1569,6 +1600,10 @@ class ConnectionRepository:
             disk_before = self._capture_transaction_files_locked(self._ssh_store.root_path)
             payload = dict(data)
             payload.pop("uuid", None)
+            try:
+                validate_ssh_host_alias(str(payload.get("nickname") or ""))
+            except ValueError as error:
+                raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
             protocol = str(payload.get("protocol") or "ssh").strip() or "ssh"
             try:
                 if protocol == "ssh":
@@ -1641,6 +1676,11 @@ class ConnectionRepository:
                 payload.get("protocol") or existing.protocol or "ssh"
             ).strip() or "ssh"
             new_nick = str(payload.get("nickname") or "").strip()
+            if new_nick:
+                try:
+                    validate_ssh_host_alias(new_nick)
+                except ValueError as error:
+                    raise CoreError(ErrorCode.VALIDATION_ERROR, str(error)) from error
             if new_nick and new_nick != connection_id:
                 self._validate_new_nickname(new_nick)
             try:

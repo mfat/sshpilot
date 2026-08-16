@@ -60,6 +60,19 @@ def test_resolve_user_at_host_is_ephemeral():
     assert resolved.connection.data.get(CLI_CONNECT_FLAG) is True
     assert resolved.ssh_argv == ['ssh', 'root@example.com']
     assert list(resolved.connection.ssh_cmd) == ['ssh', 'root@example.com']
+    assert resolved.connection.data["port_explicit"] is False
+
+
+def test_cli_port_provenance_distinguishes_omitted_and_explicit_default():
+    mgr = SimpleNamespace(find_connection_by_nickname=lambda name: None)
+
+    omitted = resolve_cli_connect(['alice@alias'], mgr).connection
+    explicit = resolve_cli_connect(['-p', '22', 'alice@alias'], mgr).connection
+
+    assert omitted.port == 22
+    assert omitted.data["port_explicit"] is False
+    assert explicit.port == 22
+    assert explicit.data["port_explicit"] is True
 
 
 def test_validate_rejects_scp_and_empty():

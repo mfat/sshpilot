@@ -67,6 +67,15 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
     {
         # -- error mapping (presentation) -------------------------------
         ("backup_manager.py", "errors", "CoreError"),
+        ("backup_manager.py", "settings", "CONFIG_VERSION"),
+        # -- legacy SSH-config facade; effective behavior is canonical core --
+        ("ssh_config_utils.py", "ssh_config_effective", "SSHConfigPathDiscovery"),
+        ("ssh_config_utils.py", "ssh_config_effective", "collect_host_block_lines"),
+        ("ssh_config_utils.py", "ssh_config_effective", "discover_ssh_config_paths"),
+        ("ssh_config_utils.py", "ssh_config_effective", "diff_effective_config"),
+        ("ssh_config_utils.py", "ssh_config_effective", "expand_ssh_tokens"),
+        ("ssh_config_utils.py", "ssh_config_effective", "get_effective_ssh_config"),
+        ("ssh_config_utils.py", "ssh_config_effective", "resolve_ssh_config_files"),
         # -- connection field validation --------------------------------
         ("ssh_connection_validator.py", "validation.connection", "SSHConnectionValidator"),
         ("ssh_connection_validator.py", "validation.connection", "ValidationResult"),
@@ -149,13 +158,11 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("log_viewer.py", "resolve_socket_path"),
         ("daemon_quit_policy.py", "resolve_socket_path"),
         # Daemon-adjacent cleanup of stale askpass sockets.
-        ("askpass_server.py", "sweep_stale_askpass_sockets"),
         # Shared rule for the per-user runtime tree the daemon sockets,
         # askpass sockets, and ControlMaster sockets all live under —
         # centralizing keeps the three sites from diverging (an unguarded
         # makedirs under a lax umask once blocked daemon launches with
         # unsafe_socket).
-        ("askpass_server.py", "ensure_private_runtime_directory"),
         ("ssh_multiplex.py", "ensure_private_runtime_directory"),
         # App-side daemon bootstrap / launch errors (frontend-owned boundary).
         ("main.py", "DaemonLauncher"),
@@ -195,7 +202,6 @@ BACKEND_OPS: dict[tuple[str, str], str] = {
     ("askpass_utils.py", "ssh_binary"): "M7",
     ("providers/system_agent.py", "subprocess"): "M7",
     ("providers/system_agent.py", "ssh_binary"): "M7",
-    ("sftp_utils.py", "subprocess"): "frontend",
     ("ssh_config_utils.py", "subprocess"): "M7",
     ("ssh_config_utils.py", "ssh_binary"): "M7",
     ("ssh_multiplex.py", "subprocess"): "M7",

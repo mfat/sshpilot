@@ -232,6 +232,22 @@ class FakeBroker:
         value = self._secrets.pop(0)
         return SimpleNamespace(secret=bytearray(value.encode("utf-8")))
 
+    def request_client_secret(self, *, owner_client_id, **kwargs) -> Any:
+        summary = self.create(**kwargs)
+        result = self.wait_for_result(summary.id)
+        return None if result is None else result.secret
+
+    def request_client_secret_with_remember(self, *, owner_client_id, **kwargs) -> Any:
+        from sshpilot.api.models import RememberPolicy
+
+        summary = self.create(**kwargs)
+        result = self.wait_for_result(summary.id)
+        if result is None:
+            return None, RememberPolicy.DO_NOT_STORE
+        return result.secret, getattr(
+            result, "remember_policy", RememberPolicy.DO_NOT_STORE
+        )
+
 
 def _write_settings(path: Path, secrets: Optional[Dict[str, Any]] = None) -> Path:
     config = {
@@ -558,7 +574,7 @@ def test_state_reports_lock_and_login(tmp_path):
 
 def test_unlock_returns_login_required_for_unauthenticated_vault(tmp_path):
     service, *_ = _make_service(tmp_path, secrets={"backend": "bitwarden"})
-    result = service.unlock()
+    result = service.unlock(owner_client_id="client-1")
     assert result.kind == UnlockResultKind.LOGIN_REQUIRED
 
 
@@ -569,9 +585,50 @@ def test_unlock_prompts_and_unlocks(tmp_path):
         expected_secrets=[SENTINEL_MASTER],
     )
     backends["bitwarden"]._needs_login = False
-    result = service.unlock()
+    result = service.unlock(owner_client_id="client-1")
     assert result.kind == UnlockResultKind.UNLOCKED
     assert backends["bitwarden"]._unlocked is True
+
+
+class _OwnerOnlyBroker:
+    """Implements only request_client_secret_with_remember — no create()/
+    wait_for_result(). If the service ever regresses to calling those
+    directly (the old bug: an interaction visible to no client, since
+    nothing registered a direct-scope owner), this raises AttributeError
+    instead of silently degrading back to the invisible-interaction bug."""
+
+    def __init__(self, secret: str, owner_client_id) -> None:
+        self._secret = secret
+        self._owner_client_id = owner_client_id
+        self.calls: List[Any] = []
+
+    def request_client_secret_with_remember(self, *, owner_client_id, **kwargs):
+        from sshpilot.api.models import RememberPolicy
+
+        assert owner_client_id == self._owner_client_id
+        self.calls.append(kwargs)
+        return bytearray(self._secret.encode("utf-8")), RememberPolicy.DO_NOT_STORE
+
+
+def test_unlock_routes_through_the_client_scoped_broker_api(tmp_path):
+    """Regression: unlock()'s prompt used to call broker.create() +
+    wait_for_result() directly, which never registers a direct-scope owner —
+    the daemon server then has no client to forward the interaction event
+    to, so it silently expires and no dialog is ever shown, however many
+    clients are connected. Using a broker that only implements
+    request_client_secret_with_remember proves unlock() goes through the
+    owner-registering path exclusively."""
+    broker = _OwnerOnlyBroker(SENTINEL_MASTER, "client-42")
+    service, manager, backends, _broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        broker=broker,
+    )
+    backends["bitwarden"]._needs_login = False
+    result = service.unlock(owner_client_id="client-42")
+    assert result.kind == UnlockResultKind.UNLOCKED
+    assert backends["bitwarden"]._unlocked is True
+    assert len(broker.calls) == 1
 
 
 def test_unlock_uses_remembered_password_when_policy_on(tmp_path):
@@ -591,7 +648,7 @@ def test_unlock_uses_remembered_password_when_policy_on(tmp_path):
         secrets={"backend": "bitwarden", "remember_in_keyring": True},
         expected_secrets=[],
     )
-    result = service.unlock()
+    result = service.unlock(owner_client_id="client-1")
     assert result.kind == UnlockResultKind.UNLOCKED
     # No protected interaction was opened: the remembered password was used.
     assert manager._backends["bitwarden"]._unlocked is True
@@ -608,7 +665,7 @@ def test_bitwarden_password_login_flow(tmp_path):
         expected_secrets=[SENTINEL_MASTER],
     )
     backends["bitwarden"]._needs_login = True
-    status = service.bitwarden_login("alice@example.com")
+    status = service.bitwarden_login("alice@example.com", owner_client_id="client-1")
     assert status.logged_in is True
     assert status.unlocked is True
     calls = backends["bitwarden"].calls
@@ -628,7 +685,7 @@ def test_bitwarden_login_2fa_prompts_for_code(tmp_path):
     bw.login_results[("login_with_password", "alice@example.com", "0", SENTINEL_2FA, None)] = (
         True, "", False,
     )
-    status = service.bitwarden_login("alice@example.com", twofa_method="0")
+    status = service.bitwarden_login("alice@example.com", twofa_method="0", owner_client_id="client-1")
     assert status.logged_in is True
     assert status.twofa_required is False
 
@@ -646,7 +703,7 @@ def test_bitwarden_auth_challenge_retries_with_client_secret(tmp_path):
     bw.login_results[
         ("login_with_password", "alice@example.com", None, None, SENTINEL_CHALLENGE)
     ] = (True, "", False)
-    status = service.bitwarden_login("alice@example.com")
+    status = service.bitwarden_login("alice@example.com", owner_client_id="client-1")
     assert status.logged_in is True
     # The retry carried the protected client secret to the backend.
     assert any(
@@ -673,7 +730,7 @@ def test_bitwarden_api_key_login_prompts_for_secret(tmp_path):
         secrets={"backend": "bitwarden", "session_timeout": 0},
         expected_secrets=[SENTINEL_CLIENT_SECRET],
     )
-    status = service.bitwarden_api_key_login("user.abc123")
+    status = service.bitwarden_api_key_login("user.abc123", owner_client_id="client-1")
     assert status.logged_in is True
     assert SENTINEL_CLIENT_SECRET not in _all_strings(status.to_dict())
 
@@ -694,7 +751,7 @@ def test_bitwarden_unlock_sync_lock_logout(tmp_path):
         expected_secrets=[SENTINEL_MASTER],
     )
     backends["bitwarden"]._needs_login = False
-    assert service.bitwarden_unlock().unlocked is True
+    assert service.bitwarden_unlock(owner_client_id="client-1").unlocked is True
     service.bitwarden_sync()
     status = service.bitwarden_lock()
     assert status.unlocked is False
@@ -736,7 +793,7 @@ def test_keepassxc_create_database(tmp_path):
         secrets={"backend": "keepassxc", "session_timeout": 0},
         expected_secrets=[SENTINEL_MASTER],
     )
-    result = service.keepassxc_create_database("/home/u/vault.kdbx")
+    result = service.keepassxc_create_database("/home/u/vault.kdbx", owner_client_id="client-1")
     assert result.state == SecretOperationState.SUCCESS
     calls = backends["keepassxc"].calls
     assert any(
@@ -752,7 +809,7 @@ def test_keepassxc_unlock_and_lock(tmp_path):
         secrets={"backend": "keepassxc", "session_timeout": 0},
         expected_secrets=[SENTINEL_MASTER],
     )
-    assert service.keepassxc_unlock().state == SecretOperationState.SUCCESS
+    assert service.keepassxc_unlock(owner_client_id="client-1").state == SecretOperationState.SUCCESS
     assert backends["keepassxc"]._unlocked is True
     result = service.keepassxc_lock()
     assert result.state == SecretOperationState.SUCCESS
@@ -779,7 +836,7 @@ def test_remember_master_password_stores_in_keyring_and_toggles_policy(tmp_path)
         secrets={"backend": "bitwarden", "session_timeout": 0},
         expected_secrets=[SENTINEL_MASTER],
     )
-    result = service.remember_master_password()
+    result = service.remember_master_password(owner_client_id="client-1")
     assert result.state == SecretOperationState.SUCCESS
     assert service.get_configuration().remember_in_keyring is True
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
@@ -850,7 +907,7 @@ def test_remember_master_password_rolls_back_when_policy_toggle_fails(
 
     monkeypatch.setattr(
         "sshpilot.daemon.secret_backend_service.save_settings", _failing_save)
-    result = service.remember_master_password()
+    result = service.remember_master_password(owner_client_id="client-1")
     assert result.state == SecretOperationState.FAILED
     # Best-effort rollback removed the stored value again.
     assert keyring.data.get("bitwarden-master:default") is None
@@ -878,7 +935,7 @@ def test_remember_master_password_fails_when_keyring_store_fails(tmp_path):
         secrets={"backend": "bitwarden", "session_timeout": 0},
         expected_secrets=[SENTINEL_MASTER],
     )
-    result = service.remember_master_password()
+    result = service.remember_master_password(owner_client_id="client-1")
     assert result.state == SecretOperationState.FAILED
     assert service.get_configuration().remember_in_keyring is False
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
@@ -961,13 +1018,13 @@ def test_sentinel_secrets_never_cross_public_surface(tmp_path):
         surfaces.extend(_all_strings(b.to_dict()))
     surfaces.extend(_all_strings(service.get_state().to_dict()))
     surfaces.extend(_all_strings(service.bitwarden_status().to_dict()))
-    surfaces.extend(_all_strings(service.bitwarden_login("alice@example.com", twofa_method="0").to_dict()))
-    surfaces.extend(_all_strings(service.bitwarden_api_key_login("user.abc").to_dict()))
+    surfaces.extend(_all_strings(service.bitwarden_login("alice@example.com", twofa_method="0", owner_client_id="client-1").to_dict()))
+    surfaces.extend(_all_strings(service.bitwarden_api_key_login("user.abc", owner_client_id="client-1").to_dict()))
     surfaces.extend(_all_strings(service.bitwarden_sso_login().to_dict()))
-    surfaces.extend(_all_strings(service.bitwarden_unlock().to_dict()))
+    surfaces.extend(_all_strings(service.bitwarden_unlock(owner_client_id="client-1").to_dict()))
     surfaces.extend(_all_strings(service.rbw_status().to_dict()))
     surfaces.extend(_all_strings(service.lock().to_dict()))
-    surfaces.extend(_all_strings(service.unlock().to_dict()))
+    surfaces.extend(_all_strings(service.unlock(owner_client_id="client-1").to_dict()))
     surfaces.extend(_all_strings(service.keepassxc_lock().to_dict()))
     surfaces.extend(_all_strings(service.forget_master_password().to_dict()))
 
@@ -983,7 +1040,7 @@ def test_unlock_result_never_carries_secret(tmp_path):
         expected_secrets=[SENTINEL_MASTER],
     )
     backends["bitwarden"]._needs_login = False
-    result = service.unlock()
+    result = service.unlock(owner_client_id="client-1")
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
     assert result.kind == UnlockResultKind.UNLOCKED
 
@@ -1007,6 +1064,11 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
             return SimpleNamespace(
                 secret=bytearray(self._secrets.pop(0).encode("utf-8")))
 
+        def request_client_secret(self, *, owner_client_id, **kwargs):
+            summary = self.create(**kwargs)
+            result = self.wait_for_result(summary.id)
+            return None if result is None else result.secret
+
     calls = []
 
     def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest):
@@ -1029,7 +1091,8 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
     service, _manager, _backends, _broker, _ = _make_service(
         tmp_path, broker=broker)
     result = service.import_backup(
-        source="/tmp/never-written.spbk", options={"encrypted": True})
+        source="/tmp/never-written.spbk", options={"encrypted": True},
+        owner_client_id="client-1")
     assert result.status == SecretOperationState.SUCCESS
     # Prompted once per attempt, each a distinct protected interaction; the
     # wrong passphrase never leaked into the returned result.
@@ -1056,6 +1119,11 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
         def wait_for_result(self, _interaction_id):
             return SimpleNamespace(secret=bytearray(b"still-wrong"))
 
+        def request_client_secret(self, *, owner_client_id, **kwargs):
+            summary = self.create(**kwargs)
+            result = self.wait_for_result(summary.id)
+            return None if result is None else result.secret
+
     def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest):
         return SecretTransferResult(
             operation="import", path=source, counts={}, warnings=(),
@@ -1069,7 +1137,8 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
     service, _manager, _backends, _broker, _ = _make_service(
         tmp_path, broker=broker)
     result = service.import_backup(
-        source="/tmp/never-written.spbk", options={"encrypted": True})
+        source="/tmp/never-written.spbk", options={"encrypted": True},
+        owner_client_id="client-1")
     assert result.status == SecretOperationState.FAILED
     assert broker.prompts == service._MAX_IMPORT_PASSPHRASE_ATTEMPTS
     assert "still-wrong" not in _all_strings(result.to_dict())

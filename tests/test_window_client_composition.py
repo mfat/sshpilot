@@ -15,12 +15,14 @@ pytest.importorskip("gi")
 
 from sshpilot import window as window_module  # noqa: E402
 from sshpilot.api.models.keys import KeyStoreScope  # noqa: E402
+from sshpilot.api.models.daemon import OperationMode  # noqa: E402
 from sshpilot.key_manager import KeyManager  # noqa: E402
 
 
 def _make_window():
     window = window_module.MainWindow.__new__(window_module.MainWindow)
     window._key_scope = KeyStoreScope.DEFAULT
+    window._confirmed_operation_mode = OperationMode.DEFAULT
     window.client = None
     window.client_bridge = None
     window.key_manager = None
@@ -46,6 +48,85 @@ def test_client_present_attaches_stores_and_builds_key_manager():
     window.plugin_connection_services.attach_client.assert_called_once_with(window.client)
     assert isinstance(window.key_manager, KeyManager)
     assert window.key_manager._scope is KeyStoreScope.DEFAULT
+
+
+def test_unconfirmed_mode_does_not_construct_default_key_manager():
+    window = _make_window()
+    window._confirmed_operation_mode = None
+    window.client = object()
+
+    window._attach_client_backed_services()
+
+    assert window.key_manager is None
+
+
+def test_confirmed_mode_updates_scope_key_manager_and_config_cache():
+    window = _make_window()
+    window.client = object()
+    window.config = types.SimpleNamespace(
+        config_data={"config_version": 3, "ssh": {"use_isolated_config": False}}
+    )
+
+    window._apply_confirmed_operation_mode(OperationMode.ISOLATED)
+
+    assert window._confirmed_operation_mode is OperationMode.ISOLATED
+    assert window._key_scope is KeyStoreScope.ISOLATED
+    assert window.key_manager._scope is KeyStoreScope.ISOLATED
+    assert window.config.config_data["ssh"]["use_isolated_config"] is True
+
+    def set_setting(key, value):
+        target = window.config.config_data
+        parts = key.split(".")
+        for part in parts[:-1]:
+            target = target.setdefault(part, {})
+        target[parts[-1]] = value
+
+    window.config.set_setting = set_setting
+    window.config.set_setting("terminal.theme", "light")
+    assert window.config.config_data["ssh"]["use_isolated_config"] is True
+
+
+def test_delayed_mode_confirmation_keeps_key_actions_unavailable():
+    window = _make_window()
+    window._confirmed_operation_mode = None
+    window.key_manager = None
+    window.config = types.SimpleNamespace(
+        config_data={"ssh": {"use_isolated_config": False}}
+    )
+
+    class DelayedClient:
+        def get_capabilities(self):
+            return types.SimpleNamespace(supports=lambda _capability: True)
+
+        def get_operation_mode(self):
+            raise AssertionError("the test bridge owns completion")
+
+    class DelayedBridge:
+        def __init__(self):
+            self.success = None
+            self.error = None
+
+        def submit(self, _operation, *, on_success, on_error):
+            self.success = on_success
+            self.error = on_error
+
+    bridge = DelayedBridge()
+    window.client = DelayedClient()
+    window.client_bridge = bridge
+
+    window._refresh_operation_mode_scope()
+
+    assert window.key_manager is None
+    assert window._confirmed_operation_mode is None
+    assert bridge.success is not None
+
+    bridge.success(
+        types.SimpleNamespace(active_mode=OperationMode.ISOLATED)
+    )
+
+    assert window._confirmed_operation_mode is OperationMode.ISOLATED
+    assert window._key_scope is KeyStoreScope.ISOLATED
+    assert window.key_manager._scope is KeyStoreScope.ISOLATED
 
 
 def test_isolated_scope_builds_isolated_key_manager():

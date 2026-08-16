@@ -13,6 +13,8 @@ logged, serialized to the API, or included in ``repr``.
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import Any, Callable, Dict, Optional
 
 from ..api.models.connections import ConnectionId
@@ -40,6 +42,9 @@ class DaemonConnectionSecretProvider:
 
             secret_manager_factory = get_secret_manager
         self._secret_manager_factory = secret_manager_factory
+        self._session_passwords: Dict[ConnectionId, tuple[float, str]] = {}
+        self._session_password_lock = threading.RLock()
+        self._session_password_ttl = 3600.0
 
     # -- connection passwords ------------------------------------------------
 
@@ -61,6 +66,14 @@ class DaemonConnectionSecretProvider:
         record = self._record(connection_id)
         if record is None:
             return None
+        now = time.monotonic()
+        with self._session_password_lock:
+            session_value = self._session_passwords.get(connection_id)
+            if session_value is not None:
+                expires, value = session_value
+                if expires > now:
+                    return value
+                self._session_passwords.pop(connection_id, None)
         user = _string(record.username)
         if not user:
             return None
@@ -83,6 +96,36 @@ class DaemonConnectionSecretProvider:
                         pass
                 return value
         return None
+
+    def set_session_connection_password(
+        self, connection_id: ConnectionId, password: bytearray
+    ) -> bool:
+        """Keep a credential in daemon memory only until expiry/restart."""
+        try:
+            record = self._record(connection_id)
+            if record is None or type(password) is not bytearray:
+                return False
+            value = password.decode("utf-8")
+            if not value or "\x00" in value:
+                return False
+            with self._session_password_lock:
+                self._session_passwords[connection_id] = (
+                    time.monotonic() + self._session_password_ttl,
+                    value,
+                )
+            return True
+        except UnicodeDecodeError:
+            return False
+        finally:
+            if isinstance(password, bytearray):
+                password[:] = b"\0" * len(password)
+                password.clear()
+
+    def clear_session_connection_password(self, connection_id: ConnectionId) -> bool:
+        """Forget a daemon-memory-only credential without touching persistence."""
+        with self._session_password_lock:
+            self._session_passwords.pop(connection_id, None)
+        return True
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:
         return self.lookup_connection_password(connection_id) is not None
@@ -129,6 +172,8 @@ class DaemonConnectionSecretProvider:
                     manager.delete(password_spec(host, cleanup_user))
                 except Exception:
                     pass
+        if stored:
+            self.clear_session_connection_password(connection_id)
         return bool(stored)
 
     def delete_connection_password(
@@ -163,6 +208,7 @@ class DaemonConnectionSecretProvider:
                 except Exception:
                     pass
         # Idempotent by contract: an absent credential satisfies the request.
+        self.clear_session_connection_password(connection_id)
         return True
 
     # -- key passphrases ------------------------------------------------------

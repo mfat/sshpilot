@@ -109,7 +109,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
 ):
     from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.api import DaemonClient
-    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.api.client_factory import ClientSelection
     from sshpilot.daemon import DaemonServer
     from sshpilot.gtk_client_bridge import GtkClientBridge
 
@@ -158,7 +158,7 @@ def test_real_window_daemon_read_keeps_gtk_main_context_responsive(
         # intentionally blocked connections.list (single request gate).
         window.config.set_setting("terminal.daemon_restore_sessions", False)
         window._apply_client_selection(
-            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+            ClientSelection(client=daemon_client)
         )
         assert entered.wait(1)
 
@@ -216,7 +216,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
 
     from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.api import DaemonClient
-    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.api.client_factory import ClientSelection
     from sshpilot.daemon import DaemonServer
     from sshpilot.gtk_client_bridge import GtkClientBridge
 
@@ -290,7 +290,7 @@ def test_real_window_refreshes_after_idle_daemon_connection_event(
     window.client_bridge = bridge
     try:
         window._apply_client_selection(
-            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+            ClientSelection(client=daemon_client)
         )
         assert _wait_until(lambda: len(calls) >= 1)
 
@@ -357,7 +357,7 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
 
     from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.api import DaemonClient
-    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.api.client_factory import ClientSelection
     from sshpilot.config import Config
     import sshpilot.connection_manager as connection_manager_module
     from sshpilot.connection_manager import ConnectionManager
@@ -469,7 +469,7 @@ def test_real_window_refreshes_after_daemon_owned_external_config_reload(
     window.client_bridge = bridge
     try:
         window._apply_client_selection(
-            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+            ClientSelection(client=daemon_client)
         )
         assert window.connection_manager.identity_migration_enabled is False
         root.write_text(
@@ -517,7 +517,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
 
     from sshpilot.core.connection_application_service import ConnectionApplicationService
     from sshpilot.api import DaemonClient
-    from sshpilot.api.client_factory import ClientMode, ClientSelection
+    from sshpilot.api.client_factory import ClientSelection
     from sshpilot.api.models.sessions import SessionExitInfo, SessionState
     from sshpilot.daemon import DaemonServer
     from sshpilot.daemon.session_runtime import SessionRuntime
@@ -622,7 +622,7 @@ def test_real_gtk_session_open_is_non_blocking_and_observes_events(
     window.client_bridge = bridge
     try:
         window._apply_client_selection(
-            ClientSelection(client=daemon_client, mode=ClientMode.DAEMON)
+            ClientSelection(client=daemon_client)
         )
         connection_id = manager.connection.nickname
         if _repeat == 4:

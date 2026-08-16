@@ -109,6 +109,7 @@ def _scripted_server(tmp_path, capabilities, action):
                                 "daemon_capabilities": list(capabilities),
                                 "compatibility_status": "compatible",
                                 "server_instance_id": "server-1",
+                                "api_implementation_version": API_IMPLEMENTATION_VERSION,
                             },
                         )
                     )
@@ -147,6 +148,10 @@ def _scripted_server(tmp_path, capabilities, action):
             )
             assert release.wait(3)
             action(peer)
+        except (EOFError, OSError):
+            # Capability-gated clients may reject the scripted handshake and
+            # close before the helper reaches the action.
+            return
         finally:
             peer.close()
             listener.close()

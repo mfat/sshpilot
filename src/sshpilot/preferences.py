@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from gettext import gettext as _
 
-from .platform_utils import get_config_dir, is_macos
+from .platform_utils import is_macos
 from .i18n import N_, available_languages
 from .file_manager_integration import (
     has_internal_file_manager,
@@ -30,6 +30,21 @@ gi.require_version('Adw', '1')
 from gi.repository import Gtk, Gdk, Adw, Pango, GLib, Gio
 
 logger = logging.getLogger(__name__)
+
+
+# Presentation-only values used while daemon-owned SSH overrides are
+# unavailable. They must never be written back to Config.
+_UNAVAILABLE_SSH_OVERRIDE_VALUES = {
+    "connect_timeout": 0,
+    "connection_attempts": 0,
+    "server_alive_interval": 0,
+    "server_alive_count_max": 0,
+    "strict_host_key_checking": "accept-new",
+    "batch_mode": False,
+    "compression": False,
+    "verbosity": 0,
+    "debug_enabled": False,
+}
 
 
 _GROUP_PREVIEW_CSS_INSTALLED = False
@@ -177,7 +192,6 @@ def _install_group_display_preview_css():
 from .file_manager_integration import (  # noqa: E402,F401
     macos_third_party_terminal_available,
     should_hide_external_terminal_options,
-    should_show_force_internal_file_manager_toggle,
     should_hide_file_manager_options,
 )
 
@@ -251,6 +265,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self.parent_window = parent_window
         self.config = config
         self.ssh_overrides_controller = ssh_overrides_controller
+        self._ssh_overrides_unavailable = False
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
@@ -261,7 +276,6 @@ class PreferencesWindow(Adw.NavigationPage):
         self._encoding_codes = []
         self._suppress_encoding_config_handler = False
         self._user_initiated_encoding_change = False
-        self.force_internal_file_manager_row = None
         self.open_file_manager_externally_row = None
 
         self._config_signal_id = None
@@ -271,6 +285,9 @@ class PreferencesWindow(Adw.NavigationPage):
         self._secret_backend_selection_sync = False
         self._secrets_page_probes_done = False
         self._secrets_page_id = self._page_id("Security & Credentials")
+        self._confirmed_operation_mode = None
+        self._operation_mode_request_in_flight = False
+        self._suppress_operation_mode_toggle = False
 
         self.pages = {}
         self._page_builders = {}
@@ -1793,9 +1810,8 @@ class PreferencesWindow(Adw.NavigationPage):
         # Isolated mode row
         self.isolated_mode_row = Adw.ActionRow()
         self.isolated_mode_row.set_title(_("Isolated Mode"))
-        config_path = get_config_dir()
         self.isolated_mode_row.set_subtitle(
-            _("SSH Pilot stores its configuration file in {path}/").format(path=config_path)
+            _("SSH Pilot uses a daemon-owned isolated SSH configuration scope.")
         )
         self.isolated_mode_radio = Gtk.CheckButton()
 
@@ -1811,16 +1827,105 @@ class PreferencesWindow(Adw.NavigationPage):
         self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
         operation_group.add(self.isolated_mode_row)
 
-        use_isolated = bool(self.config.get_setting('ssh.use_isolated_config', False))
-        self.isolated_mode_radio.set_active(use_isolated)
-        self.default_mode_radio.set_active(not use_isolated)
+        # The daemon reports the active mode asynchronously; start disabled
+        # until that semantic state is confirmed by the client.
+        self._set_operation_mode_controls_sensitive(False)
+        self._set_operation_mode_radios(False)
 
         self.default_mode_radio.connect('toggled', self.on_operation_mode_toggled)
         self.isolated_mode_radio.connect('toggled', self.on_operation_mode_toggled)
 
         self._update_operation_mode_styles()
+        self._request_confirmed_operation_mode()
 
         advanced_page.add(operation_group)
+
+    def _request_confirmed_operation_mode(self) -> None:
+        """Set the radio state only from a daemon-confirmed mode result."""
+        # Preferences pages are built lazily. Reconnect can rebind an already
+        # preloaded window before the Advanced page (and its radios) exists.
+        # Defer the request until the page builder creates the controls.
+        if not hasattr(self, "default_mode_radio") or not hasattr(
+            self, "isolated_mode_radio"
+        ):
+            return
+        owner = getattr(self, "parent_window", None)
+        client = getattr(owner, "client", None)
+        bridge = getattr(owner, "client_bridge", None)
+        generation = getattr(owner, "_daemon_client_generation", 0)
+        if client is None or bridge is None:
+            self.default_mode_radio.set_sensitive(False)
+            self.isolated_mode_radio.set_sensitive(False)
+            return
+        try:
+            from .api.capabilities import Capability
+            if not client.get_capabilities().supports(Capability.OPERATION_MODE):
+                raise RuntimeError("operation.mode capability is unavailable")
+
+            def _apply(result):
+                if (
+                    getattr(owner, "client", None) is not client
+                    or getattr(owner, "_daemon_client_generation", 0) != generation
+                ):
+                    logger.debug("Ignoring stale Preferences operation-mode result")
+                    return
+                if not getattr(result, "accepted", True):
+                    message = getattr(
+                        result,
+                        "message",
+                        "The daemon could not confirm operation mode",
+                    )
+                    if getattr(result, "recovery_required", False):
+                        if owner is not None and hasattr(owner, "_show_operation_mode_recovery"):
+                            owner._show_operation_mode_recovery(message)
+                    elif owner is not None and hasattr(owner, "_show_operation_mode_rejection"):
+                        owner._show_operation_mode_rejection(message)
+                    else:
+                        self._operation_mode_unavailable(message)
+                    return
+                self._confirmed_operation_mode = result.active_mode
+                isolated = result.active_mode.value == "isolated"
+                self._set_operation_mode_radios(isolated)
+                self._set_operation_mode_controls_sensitive(True)
+
+            bridge.submit(client.get_operation_mode, on_success=_apply,
+                          on_error=lambda error: self._operation_mode_unavailable(error))
+        except Exception as error:
+            self._operation_mode_unavailable(error)
+
+    def reset_operation_mode_confirmation(self) -> None:
+        """Invalidate mode state after the parent swaps daemon transports."""
+        self._confirmed_operation_mode = None
+        self._operation_mode_request_in_flight = False
+        self._set_operation_mode_controls_sensitive(False)
+        self._set_operation_mode_radios(False)
+        self._request_confirmed_operation_mode()
+
+    def _operation_mode_unavailable(self, error) -> None:
+        logger.warning("Operation mode state unavailable: %s", error)
+        self._set_operation_mode_controls_sensitive(False)
+
+    def _set_operation_mode_radios(self, isolated: bool) -> None:
+        """Apply confirmed state without treating GTK signal feedback as input."""
+        if not hasattr(self, "default_mode_radio") or not hasattr(
+            self, "isolated_mode_radio"
+        ):
+            return
+        self._suppress_operation_mode_toggle = True
+        try:
+            self.isolated_mode_radio.set_active(bool(isolated))
+            self.default_mode_radio.set_active(not isolated)
+        finally:
+            self._suppress_operation_mode_toggle = False
+
+    def _set_operation_mode_controls_sensitive(self, sensitive: bool) -> None:
+        for radio in (
+            getattr(self, "default_mode_radio", None),
+            getattr(self, "isolated_mode_radio", None),
+        ):
+            setter = getattr(radio, "set_sensitive", None)
+            if callable(setter):
+                setter(bool(sensitive))
 
     def _add_advanced_behavior_group(self, advanced_page):
         """Add the Application Behavior group to the Advanced page."""
@@ -2165,7 +2270,9 @@ class PreferencesWindow(Adw.NavigationPage):
 
         The daemon-backed controller is authoritative when injected; the page
         then reflects daemon state instead of the local config cache. Without a
-        controller (legacy construction) the local config view is used.
+        controller, or when the daemon is unavailable, disabled presentation
+        placeholders are used. The local Config cache is never authoritative
+        for these fields.
         """
         if self.ssh_overrides_controller is not None:
             try:
@@ -2181,31 +2288,44 @@ class PreferencesWindow(Adw.NavigationPage):
                     "verbosity": snapshot.verbosity,
                     "debug_enabled": snapshot.debug_enabled,
                 }
-            except Exception:
-                logger.warning(
-                    "Failed to load global SSH overrides", exc_info=True
+            except Exception as error:
+                logger.debug(
+                    "Global SSH overrides unavailable (%s)",
+                    type(error).__name__,
                 )
+                self._ssh_overrides_unavailable = True
+                self._set_ssh_override_controls_sensitive(False)
 
-        def _config_int(key, default=0):
-            try:
-                value = int(self.config.get_setting(key, None))
-            except (TypeError, ValueError):
-                value = default
-            return value if value >= 0 else default
+        return dict(_UNAVAILABLE_SSH_OVERRIDE_VALUES)
 
-        return {
-            "connect_timeout": _config_int('ssh.connection_timeout'),
-            "connection_attempts": _config_int('ssh.connection_attempts'),
-            "server_alive_interval": _config_int('ssh.keepalive_interval'),
-            "server_alive_count_max": _config_int('ssh.keepalive_count_max'),
-            "strict_host_key_checking": str(
-                self.config.get_setting('ssh.strict_host_key_checking', 'accept-new')
-            ),
-            "batch_mode": bool(self.config.get_setting('ssh.batch_mode', False)),
-            "compression": bool(self.config.get_setting('ssh.compression', False)),
-            "verbosity": _config_int('ssh.verbosity'),
-            "debug_enabled": bool(self.config.get_setting('ssh.debug_enabled', False)),
-        }
+    def _ssh_override_rows(self):
+        """Return already-built daemon-owned SSH override rows."""
+        names = (
+            "connect_timeout_row",
+            "connection_attempts_row",
+            "keepalive_interval_row",
+            "keepalive_count_row",
+            "strict_host_row",
+            "batch_mode_row",
+            "compression_row",
+            "verbosity_row",
+            "debug_enabled_row",
+        )
+        return tuple(
+            row for name in names if (row := getattr(self, name, None)) is not None
+        )
+
+    def _set_ssh_override_controls_sensitive(self, sensitive: bool) -> None:
+        for row in self._ssh_override_rows():
+            setter = getattr(row, "set_sensitive", None)
+            if callable(setter):
+                setter(bool(sensitive))
+
+    def mark_daemon_unavailable(self) -> None:
+        """Detach stale daemon state and disable SSH override editing."""
+        self.ssh_overrides_controller = None
+        self._ssh_overrides_unavailable = True
+        self._set_ssh_override_controls_sensitive(False)
 
     def set_ssh_overrides_controller(self, controller):
         """Attach the daemon SSH-overrides controller after Preferences exists.
@@ -2217,24 +2337,19 @@ class PreferencesWindow(Adw.NavigationPage):
         an already-built page from the authoritative daemon snapshot.
         """
         self.ssh_overrides_controller = controller
+        self._ssh_overrides_unavailable = controller is None
         if controller is None or not hasattr(self, 'connect_timeout_row'):
             return
 
-        rows = (
-            self.connect_timeout_row,
-            self.connection_attempts_row,
-            self.keepalive_interval_row,
-            self.keepalive_count_row,
-            self.strict_host_row,
-            self.batch_mode_row,
-            self.compression_row,
-            self.verbosity_row,
-            self.debug_enabled_row,
-        )
+        rows = self._ssh_override_rows()
         try:
             snapshot = controller.load()
         except Exception:
-            logger.warning("Failed to attach global SSH overrides controller", exc_info=True)
+            logger.debug(
+                "Global SSH overrides controller unavailable during attach",
+                exc_info=True,
+            )
+            self._ssh_overrides_unavailable = True
             for row in rows:
                 row.set_sensitive(False)
             return
@@ -2410,22 +2525,6 @@ class PreferencesWindow(Adw.NavigationPage):
             file_manager_group.set_description(
                 _("These preferences only affect sshPilot's built-in SFTP file manager.")
             )
-
-            self.force_internal_file_manager_row = None
-            if should_show_force_internal_file_manager_toggle():
-                self.force_internal_file_manager_row = Adw.SwitchRow()
-                self.force_internal_file_manager_row.set_title(_("Always Use Built-in File Manager"))
-                self.force_internal_file_manager_row.set_subtitle(
-                    _("Use the in-app file manager even when system integrations are available")
-                )
-                self.force_internal_file_manager_row.set_active(
-                    bool(self.config.get_setting('file_manager.force_internal', False))
-                )
-                self.force_internal_file_manager_row.connect(
-                    'notify::active', self.on_force_internal_file_manager_changed
-                )
-
-                file_manager_group.add(self.force_internal_file_manager_row)
 
             self.open_file_manager_externally_row = Adw.SwitchRow()
             self.open_file_manager_externally_row.set_title(_("Open File Manager in Separate Window"))
@@ -3185,6 +3284,17 @@ class PreferencesWindow(Adw.NavigationPage):
                     else set(self._secret_backend_ids)
                 )
                 return
+            # Checked before _update_secret_rows_visibility(), which refreshes the
+            # "Forget" row on its own background thread (_refresh_forget_master_row):
+            # that thread's controller.load_state() call would otherwise race this
+            # one on the same guarded controller, and the loser's RuntimeError(
+            # "a secret backend operation is already in progress") was silently
+            # swallowed as "no unlock needed" — skipping the unlock prompt on a
+            # backend that actually needed it, on nearly every switch.
+            needs_unlock = (
+                name not in ('bitwarden', 'rbw')
+                and self._selected_needs_unlock_from_state()
+            )
             self._update_secret_rows_visibility(name)
             logger.info("Secret storage backend set to: %s", name)
 
@@ -3207,7 +3317,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 ensure_rbw_ready(self, _done)
                 return
             # A session-backed backend must be unlocked before it can store/read.
-            if self._selected_needs_unlock_from_state():
+            if needs_unlock:
                 try:
                     from .secret_unlock_dialog import prompt_unlock
 
@@ -3218,16 +3328,34 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Failed to update secret storage backend: %s", exc)
 
     def _selected_needs_unlock_from_state(self):
-        """Whether the daemon reports the selected backend needs unlocking."""
+        """Whether the daemon reports the selected backend needs unlocking.
+
+        Runs synchronously on the main thread, so this is a short, bounded
+        retry (not the 10s background-thread one in
+        _refresh_forget_master_row) — just enough to ride out a controller
+        already held by an unrelated concurrent probe (e.g. the page-open
+        Bitwarden/rbw availability check) without freezing the UI for long.
+        Silently returning False here (the old behavior on any exception)
+        meant a backend that genuinely needed unlocking looked unlocked,
+        and the unlock prompt was skipped.
+        """
         controller = self._resolve_secrets_controller()
         if controller is None:
             return False
-        try:
-            state = controller.load_state()
-            return bool(getattr(state, 'needs_unlock', False))
-        except Exception:
-            logger.debug("secret backend state query failed", exc_info=True)
-            return False
+        for attempt in range(8):
+            try:
+                state = controller.load_state()
+                return bool(getattr(state, 'needs_unlock', False))
+            except RuntimeError:
+                if attempt < 7:
+                    time.sleep(0.15)
+                    continue
+                logger.debug("secret backend state query still busy", exc_info=True)
+                return False
+            except Exception:
+                logger.debug("secret backend state query failed", exc_info=True)
+                return False
+        return False
 
     def _setup_bitwarden_backend_async(self, on_done):
         """Probe Bitwarden off the main thread, then unlock or run setup as needed."""
@@ -3777,17 +3905,31 @@ class PreferencesWindow(Adw.NavigationPage):
                     def _force(_d, resp, token=result.confirmation):
                         if resp != 'force':
                             return
+                        accepted = False
+                        error_body = None
+                        forced = None
                         try:
                             forced = DaemonClient(timeout=2.0)
-                            try:
-                                forced.restart_daemon(
-                                    RestartDaemonRequest(force=True, confirmation=token)
+                            forced_result = forced.restart_daemon(
+                                RestartDaemonRequest(force=True, confirmation=token)
+                            )
+                            accepted = bool(forced_result.accepted)
+                            if not accepted:
+                                error_body = forced_result.message or _(
+                                    "The daemon rejected the forced restart."
                                 )
-                            finally:
-                                forced.close()
                         except Exception as exc:
                             logger.error("Forced daemon restart failed: %s", exc)
-                        on_complete()
+                            error_body = str(exc)
+                        finally:
+                            if forced is not None:
+                                forced.close()
+                        if accepted:
+                            on_complete()
+                        else:
+                            self._show_daemon_restart_error(
+                                error_body or _("The daemon rejected the forced restart.")
+                            )
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
@@ -3799,15 +3941,19 @@ class PreferencesWindow(Adw.NavigationPage):
                 client.close()
         except Exception as exc:
             logger.error("Daemon restart failed: %s", exc)
-            err = Adw.AlertDialog(
-                heading=_("Could not restart daemon"),
-                body=str(exc),
-            )
-            err.add_response('ok', _("OK"))
-            err.set_default_response('ok')
-            err.set_close_response('ok')
-            err.present(self)
+            self._show_daemon_restart_error(str(exc))
         self._refresh_daemon_status_row()
+
+    def _show_daemon_restart_error(self, body: str) -> None:
+        """Present the safe, non-fatal error dialog for a failed daemon restart."""
+        err = Adw.AlertDialog(
+            heading=_("Could not restart daemon"),
+            body=body,
+        )
+        err.add_response('ok', _("OK"))
+        err.set_default_response('ok')
+        err.set_close_response('ok')
+        err.present(self)
 
     def _schedule_daemon_reconnect_after_restart(self) -> None:
         """Ask the running application to spawn/reconnect after an explicit restart."""
@@ -5378,6 +5524,10 @@ class PreferencesWindow(Adw.NavigationPage):
             controller = self.ssh_overrides_controller
             page_built = hasattr(self, 'connect_timeout_row')
 
+            if page_built and getattr(self, "_ssh_overrides_unavailable", False):
+                logger.info("Cannot save SSH overrides while the daemon is unavailable")
+                return False
+
             # 0. Refresh the legacy cache from the authoritative file before
             #    any Config-owned write.  A stale cache would rewrite an older
             #    SSH-overrides revision back to disk on the first set_setting,
@@ -5404,11 +5554,6 @@ class PreferencesWindow(Adw.NavigationPage):
                     bool(self.controlmaster_row.get_active()),
                 )
 
-            if getattr(self, 'force_internal_file_manager_row', None) is not None:
-                self.config.set_setting(
-                    'file_manager.force_internal',
-                    bool(self.force_internal_file_manager_row.get_active()),
-                )
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
                 self.config.set_setting(
                     'file_manager.open_externally',
@@ -5435,7 +5580,18 @@ class PreferencesWindow(Adw.NavigationPage):
                 try:
                     controller.update(self._collect_ssh_override_patch())
                 except Exception as exc:
-                    logger.error(f"Failed to save global SSH overrides: {exc}")
+                    code = getattr(getattr(exc, "code", None), "value", None)
+                    if code in {"transport_closed", "transport_timeout", "daemon_unavailable"}:
+                        self.mark_daemon_unavailable()
+                        logger.info(
+                            "Cannot save SSH overrides while the daemon is unavailable"
+                        )
+                    else:
+                        logger.error(
+                            "Failed to save global SSH overrides type=%s code=%s",
+                            type(exc).__name__,
+                            code,
+                        )
                     return False
 
             # 3. Refresh the legacy cache from the authoritative file so a
@@ -5500,10 +5656,6 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.controlmaster_row.set_active(False)
 
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
-            default_force_internal = bool(file_manager_defaults.get('force_internal', False))
-            self.config.set_setting('file_manager.force_internal', default_force_internal)
-            if getattr(self, 'force_internal_file_manager_row', None) is not None:
-                self.force_internal_file_manager_row.set_active(default_force_internal)
             default_open_external = bool(file_manager_defaults.get('open_externally', False))
             self.config.set_setting('file_manager.open_externally', default_open_external)
             if getattr(self, 'open_file_manager_externally_row', None) is not None:
@@ -5563,51 +5715,99 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error(f"Failed to reset advanced SSH settings: {e}")
 
     def on_operation_mode_toggled(self, button):
-        """Handle switching between default and isolated SSH modes"""
+        """Request a daemon-owned live switch between SSH configuration scopes."""
         try:
+            if getattr(self, "_suppress_operation_mode_toggle", False):
+                return
             if not button.get_active():
                 return
+            if getattr(self, "_operation_mode_request_in_flight", False):
+                return
 
-            use_isolated = self.isolated_mode_radio.get_active()
+            from .api.models.daemon import OperationMode, SetOperationModeRequest
 
-            self.config.set_setting('ssh.use_isolated_config', bool(use_isolated))
+            requested = (
+                OperationMode.ISOLATED
+                if self.isolated_mode_radio.get_active()
+                else OperationMode.DEFAULT
+            )
+            owner = getattr(self, "parent_window", None)
+            client = getattr(self, "client", None) or getattr(owner, "client", None)
+            bridge = getattr(self, "client_bridge", None) or getattr(owner, "client_bridge", None)
+            try:
+                from .api.capabilities import Capability
+                mode_supported = (
+                    client is not None
+                    and client.get_capabilities().supports(Capability.OPERATION_MODE)
+                )
+            except Exception:
+                mode_supported = False
+            if client is None or bridge is None or not mode_supported:
+                if owner is not None and hasattr(owner, "_show_daemon_unavailable_dialog"):
+                    owner._show_daemon_unavailable_dialog()
+                return
 
-            self._update_operation_mode_styles()
+            self._operation_mode_request_in_flight = True
+            self._set_operation_mode_controls_sensitive(False)
+            previous_mode = self._confirmed_operation_mode
+            if previous_mode is None:
+                raise RuntimeError("operation mode has not been confirmed by the daemon")
 
-            self._prompt_operation_mode_restart(
-                _("Restart SSH Pilot to fully apply the new operation mode."))
-
-        except Exception as e:
-            logger.error(f"Failed to toggle isolated SSH mode: {e}")
-
-    def _prompt_operation_mode_restart(self, body):
-        """Restart dialog for an operation-mode change.
-
-        The SSH config root is daemon-owned and resolved from
-        ``ssh.use_isolated_config`` only when the daemon launches, so the
-        daemon must restart too; ``restart_app()`` alone (``os.execv``) would
-        leave the old daemon running and the mode would not change.
-        """
-        dlg = Adw.AlertDialog(heading=_("Restart Required"), body=body)
-        dlg.add_response('later', _("Later"))
-        dlg.add_response('restart', _("Restart Now"))
-        dlg.set_default_response('restart')
-        dlg.set_close_response('later')
-        dlg.set_response_appearance('restart', Adw.ResponseAppearance.SUGGESTED)
-
-        def _on_response(_d, response):
-            if response == 'restart':
-                self._request_daemon_restart(
-                    on_complete=self._restart_app_after_mode_change,
+            def _restore():
+                # A rejected/recovery result is not a new confirmation. Keep
+                # the last mode confirmed by this Preferences instance.
+                self._set_operation_mode_radios(
+                    previous_mode is OperationMode.ISOLATED
                 )
 
-        dlg.connect('response', _on_response)
-        dlg.present(self)
+            def _on_success(result):
+                try:
+                    if not result.accepted:
+                        _restore()
+                        if owner is not None and getattr(result, "recovery_required", False):
+                            if hasattr(owner, "_show_operation_mode_recovery"):
+                                owner._show_operation_mode_recovery(result.message)
+                        elif owner is not None and hasattr(owner, "_show_operation_mode_rejection"):
+                            owner._show_operation_mode_rejection(result.message)
+                        return
+                    isolated = result.active_mode is OperationMode.ISOLATED
+                    self._set_operation_mode_radios(isolated)
+                    self._confirmed_operation_mode = result.active_mode
+                    if owner is not None:
+                        apply_mode = getattr(owner, "_apply_confirmed_operation_mode", None)
+                        if callable(apply_mode):
+                            apply_mode(result.active_mode)
+                    self._update_operation_mode_styles()
+                finally:
+                    self._operation_mode_request_in_flight = False
+                    self._set_operation_mode_controls_sensitive(
+                        bool(result.accepted) and not getattr(result, "recovery_required", False)
+                    )
 
-    def _restart_app_after_mode_change(self):
-        from .platform_utils import restart_app
+            def _on_error(error):
+                try:
+                    _restore()
+                    if owner is not None and hasattr(owner, "_show_daemon_unavailable_dialog"):
+                        owner._show_daemon_unavailable_dialog(error)
+                    else:
+                        logger.error("Operation mode unavailable: %s", error)
+                finally:
+                    self._operation_mode_request_in_flight = False
+                    # A transport failure is not a rejected transition. Keep
+                    # both controls unavailable until a daemon status result
+                    # confirms that retrying is safe.
+                    self._set_operation_mode_controls_sensitive(False)
 
-        restart_app()
+            bridge.submit(
+                lambda: client.set_operation_mode(SetOperationModeRequest(mode=requested)),
+                on_success=_on_success,
+                on_error=_on_error,
+            )
+
+        except Exception as e:
+            self._operation_mode_request_in_flight = False
+            self._set_operation_mode_controls_sensitive(False)
+            logger.error(f"Failed to toggle isolated SSH mode: {e}")
 
     def _update_operation_mode_styles(self):
         """Ensure neither operation mode row appears disabled."""
@@ -6071,16 +6271,10 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.debug("Internal file manager check failed: %s", exc)
             return False
 
-        try:
-            from .sftp_utils import should_use_in_app_file_manager  # pylint: disable=import-outside-toplevel
-
-            return bool(should_use_in_app_file_manager())
-        except Exception as exc:  # pragma: no cover - defensive capability detection
-            logger.debug("Failed to determine internal file manager usage: %s", exc)
-            try:
-                return bool(self.config.get_setting('file_manager.force_internal', False))
-            except Exception:
-                return False
+        # Remote SFTP is always daemon-owned; GVFS is not an alternate SSH
+        # backend. The preference remains only as presentation compatibility
+        # for the separate-window UI.
+        return True
 
     def _update_external_file_manager_row(self) -> None:
         """Sync the external window preference with the current availability."""
@@ -6094,15 +6288,6 @@ class PreferencesWindow(Adw.NavigationPage):
 
         if not use_internal and row.get_active():
             row.set_active(False)
-
-    def on_force_internal_file_manager_changed(self, switch, *args):
-        """Persist the preference for forcing the in-app file manager."""
-        try:
-            active = bool(switch.get_active())
-            self.config.set_setting('file_manager.force_internal', active)
-            self._update_external_file_manager_row()
-        except Exception as exc:
-            logger.error("Failed to update file manager preference: %s", exc)
 
     def on_sidebar_flat_rows_changed(self, switch, *args):
         """Persist flat vs card styling for sidebar connection rows."""
@@ -6241,7 +6426,14 @@ class PreferencesWindow(Adw.NavigationPage):
             client = getattr(selection, 'client', None)
         if bridge is None:
             bridge = getattr(application, '_api_client_bridge', None)
-        if client is not None and bridge is not None and hasattr(client, 'set_daemon_log_level'):
+        from .api.capabilities import Capability
+        try:
+            supports_daemon_control = client is not None and client.get_capabilities().supports(
+                Capability.DAEMON_CONTROL
+            )
+        except Exception:
+            supports_daemon_control = False
+        if client is not None and bridge is not None and supports_daemon_control:
             try:
                 from .api.models.daemon import DaemonLogLevel, SetDaemonLogLevelRequest
 

@@ -8,10 +8,12 @@ import logging
 import os
 import shutil
 import tempfile
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 
 from gi.repository import Gio, GLib, GObject
+from .platform.locking import settings_transaction_lock
 from .platform_utils import get_config_dir
 from sshpilot.core.settings import (
     CONFIG_VERSION as _CORE_CONFIG_VERSION,
@@ -53,6 +55,9 @@ class Config(GObject.Object):
         # JSON config is used either as primary or as fallback store
         self.config_file = os.path.join(get_config_dir(), 'config.json')
         self.config_data = self.load_json_config()
+        # config.json is also mutated by the daemon. Track the tree observed
+        # at load time so frontend saves can merge only their changed keys.
+        self._config_snapshot = deepcopy(self.config_data)
         
         # Load built-in themes
         self.terminal_themes = self.load_builtin_themes()
@@ -131,6 +136,7 @@ class Config(GObject.Object):
         """
         config = self.read_json_config_strict()
         self.config_data = config
+        self._config_snapshot = deepcopy(config)
         return config
 
     def save_json_config(
@@ -141,52 +147,59 @@ class Config(GObject.Object):
     ) -> bool:
         """Atomically save configuration JSON with restrictive permissions."""
         try:
+            explicit = config_data is not None
             if config_data is None:
                 config_data = self.config_data
 
-            directory = os.path.dirname(self.config_file) or '.'
-            os.makedirs(directory, mode=0o700, exist_ok=True)
-            try:
-                os.chmod(directory, 0o700)
-            except OSError:
-                pass
-            if os.path.lexists(self.config_file) and os.path.islink(self.config_file):
-                raise OSError("refusing to replace a symlinked configuration file")
+            with settings_transaction_lock(self.config_file):
+                if not explicit:
+                    config_data = self._merge_config_changes_with_disk(config_data)
 
-            backup_file = f"{self.config_file}.bak"
-            if os.path.exists(self.config_file) and not os.path.exists(backup_file):
-                shutil.copy2(self.config_file, backup_file)
-                os.chmod(backup_file, 0o600)
-
-            fd, temporary = tempfile.mkstemp(
-                dir=directory,
-                prefix='.sshpilot-config-',
-                suffix='.tmp',
-            )
-            try:
-                os.fchmod(fd, 0o600)
-                with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-                    json.dump(config_data, handle, indent=2)
-                    handle.write('\n')
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                os.replace(temporary, self.config_file)
-            except Exception:
+                directory = os.path.dirname(self.config_file) or '.'
+                os.makedirs(directory, mode=0o700, exist_ok=True)
                 try:
-                    os.unlink(temporary)
+                    os.chmod(directory, 0o700)
                 except OSError:
                     pass
-                raise
+                if os.path.lexists(self.config_file) and os.path.islink(self.config_file):
+                    raise OSError("refusing to replace a symlinked configuration file")
 
-            os.chmod(self.config_file, 0o600)
-            try:
-                directory_fd = os.open(directory, os.O_RDONLY)
+                backup_file = f"{self.config_file}.bak"
+                if os.path.exists(self.config_file) and not os.path.exists(backup_file):
+                    shutil.copy2(self.config_file, backup_file)
+                    os.chmod(backup_file, 0o600)
+
+                fd, temporary = tempfile.mkstemp(
+                    dir=directory,
+                    prefix='.sshpilot-config-',
+                    suffix='.tmp',
+                )
                 try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            except OSError:
-                pass
+                    os.fchmod(fd, 0o600)
+                    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                        json.dump(config_data, handle, indent=2)
+                        handle.write('\n')
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    os.replace(temporary, self.config_file)
+                except Exception:
+                    try:
+                        os.unlink(temporary)
+                    except OSError:
+                        pass
+                    raise
+
+                os.chmod(self.config_file, 0o600)
+                try:
+                    directory_fd = os.open(directory, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
+                except OSError:
+                    pass
+                self.config_data = config_data
+                self._config_snapshot = deepcopy(config_data)
 
             logger.debug("Configuration saved to JSON file")
             return True
@@ -195,6 +208,46 @@ class Config(GObject.Object):
             if raise_on_error:
                 raise
             return False
+
+    def _merge_config_changes_with_disk(self, current: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply this process's changed keys to the latest daemon tree.
+
+        The lock is held by :meth:`save_json_config`. This is a semantic
+        patch merge, not a reload-before-write workaround: the baseline and
+        changed tree identify exactly which keys this frontend changed, while
+        unrelated daemon keys are retained from the locked current file.
+        """
+        baseline = getattr(self, "_config_snapshot", None)
+        if not isinstance(baseline, dict) or not os.path.exists(self.config_file):
+            return current
+        try:
+            with open(self.config_file, encoding='utf-8') as handle:
+                latest = json.load(handle)
+            if not isinstance(latest, dict):
+                return current
+        except (OSError, ValueError):
+            return current
+
+        def merge(base, changed, target):
+            if isinstance(base, dict) and isinstance(changed, dict) and isinstance(target, dict):
+                for key in set(base) | set(changed):
+                    if key not in changed:
+                        target.pop(key, None)
+                    elif key not in base:
+                        target[key] = deepcopy(changed[key])
+                    elif base[key] != changed[key]:
+                        if isinstance(base[key], dict) and isinstance(changed[key], dict):
+                            child = target.get(key)
+                            if not isinstance(child, dict):
+                                child = {}
+                                target[key] = child
+                            merge(base[key], changed[key], child)
+                        else:
+                            target[key] = deepcopy(changed[key])
+                return target
+            return deepcopy(changed)
+
+        return merge(baseline, current, latest)
 
     # Shortcut helpers (get_shortcut_overrides / get_shortcut_override /
     # set_shortcut_override) live further down — the canonical versions read
@@ -936,13 +989,11 @@ class Config(GObject.Object):
             return max(0, min(4, coerced))
 
         return {
-            'force_internal': _get_bool('force_internal'),
             'open_externally': _get_bool('open_externally'),
             'sftp_keepalive_interval': _get_non_negative_int('sftp_keepalive_interval'),
             'sftp_keepalive_count_max': _get_non_negative_int('sftp_keepalive_count_max'),
             'sftp_connect_timeout': _get_non_negative_int('sftp_connect_timeout'),
             'icon_size_level': _get_icon_size_level(),
-            'first_run_prompt_shown': _get_bool('first_run_prompt_shown'),
         }
 
     def get_security_config(self) -> Dict[str, Any]:

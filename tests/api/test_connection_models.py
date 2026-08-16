@@ -60,3 +60,9 @@ def test_create_connection_request_accepts_and_validates_config_patch():
     assert req.config_patch["proxy_jump"] == ["jump.example.com"]
 
 
+def test_ssh_host_aliases_cannot_begin_with_option_dash():
+    with pytest.raises(ValueError, match="begin with"):
+        CreateConnectionRequest(nickname="-G", hostname="example.com")
+    with pytest.raises(ValueError, match="begin with"):
+        UpdateConnectionRequest(nickname="--target")
+

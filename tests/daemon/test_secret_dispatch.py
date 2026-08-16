@@ -1,5 +1,5 @@
 """Daemon secret RPC tests: dispatch routing, capability advertisement,
-codec wire mapping, InProcessClient parity and sentinel secrecy through the
+codec wire mapping and sentinel secrecy through the
 serialized transport surface.
 
 Sentinel secrets are the same values the service tests use; if any of them
@@ -10,7 +10,10 @@ capability advertisement, the secrecy contract is broken.
 from __future__ import annotations
 
 import json
+import threading
+import time
 from typing import Any, List
+from types import SimpleNamespace
 from unittest import mock
 
 import pytest
@@ -30,6 +33,7 @@ from sshpilot.api.transport.codec import (
     secret_unlock_result_to_wire,
 )
 from sshpilot.api.transport.envelopes import HandshakeRequest, RequestEnvelope
+from sshpilot.api.transport.secret_frames import SecretFrame, SecretFrameKind
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.daemon.dispatch import (
     ClientProtocolState,
@@ -255,6 +259,183 @@ def test_configuration_get_returns_deferred_result():
     assert wire["revision"] == "abc123"
 
 
+def test_persistent_connection_password_requires_protected_secret_frame():
+    connections = mock.Mock()
+    connections.store_daemon_password.return_value = True
+    secret = bytearray(b"protected-password")
+    dispatcher = RequestDispatcher(
+        ConnectionApplicationService(mock.Mock(), client_name="test"),
+        command_input_waiter=lambda _request_id: secret,
+    )
+    dispatcher._connections.store_daemon_password = connections.store_daemon_password
+
+    result = dispatcher.dispatch(
+        _envelope(
+            "connections.store_password",
+            {"connection_id": "saved"},
+        ),
+        _state(),
+    )
+
+    assert isinstance(result, DeferredResult)
+    assert result.operation() is True
+    connections.store_daemon_password.assert_called_once()
+    assert connections.store_daemon_password.call_args.args[1] == "protected-password"
+    assert secret == bytearray()
+
+
+def test_real_daemon_transport_delivers_protected_password_input(daemon_factory):
+    """Exercise JSON registration plus the binary secret frame on a real server."""
+    server, manager = daemon_factory()
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        from sshpilot.api.models.connections import StoreConnectionPasswordRequest
+
+        assert client.store_connection_password(
+            StoreConnectionPasswordRequest(
+                connection_id="demo",
+                password=SENTINEL,
+            )
+        ) is True
+        assert manager.plugin_secrets[("connection", "demo")] == SENTINEL
+    finally:
+        client.close()
+
+
+def test_protected_input_rejects_wrong_owner_and_duplicate_frames():
+    """The server's protected-input registry is peer-owned, not request-id-only."""
+    from sshpilot.daemon.server import DaemonServer
+
+    server = DaemonServer.__new__(DaemonServer)
+    server._command_input_condition = threading.Condition()
+    server._command_input_pending = {}
+    server._command_inputs = {}
+    server._stopping = threading.Event()
+    errors = []
+    server._queue_protocol_error = lambda _state, code, message: errors.append((code, message))
+
+    owner_protocol = _state()
+    wrong_protocol = _state()
+    owner_protocol.client_info = HandshakeRequest(
+        client_name="test",
+        client_version="1.0",
+        supported_protocol_versions=("1.0",),
+        client_capabilities=frozenset(),
+        frontend_type="cli",
+        supported_frame_types=frozenset({"binary-secret-v1"}),
+    )
+    wrong_protocol.client_info = owner_protocol.client_info
+    owner = SimpleNamespace(token=11, protocol=owner_protocol)
+    wrong_owner = SimpleNamespace(token=12, protocol=wrong_protocol)
+    request_id = RequestId("protected-request")
+    server._register_command_input(owner, request_id)
+
+    wrong = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"0" * 16,
+        bytearray(b"wrong-owner"),
+    )
+    server._handle_secret_frame(wrong_owner, wrong)
+    assert wrong.secret == bytearray()
+    assert request_id not in server._command_inputs
+    assert errors and errors[-1][0] is ErrorCode.INVALID_REQUEST
+
+    accepted = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"1" * 16,
+        bytearray(b"accepted"),
+    )
+    server._handle_secret_frame(owner, accepted)
+    assert server._command_inputs[str(request_id)][1] == bytearray(b"accepted")
+
+    duplicate = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"2" * 16,
+        bytearray(b"duplicate"),
+    )
+    server._handle_secret_frame(owner, duplicate)
+    assert duplicate.secret == bytearray()
+    assert errors[-1][0] is ErrorCode.INVALID_REQUEST
+    server._clear_command_inputs()
+
+
+def test_protected_input_rejects_oversize_and_expires_without_secret_leak(monkeypatch):
+    from sshpilot.daemon import server as server_module
+    from sshpilot.daemon.server import DaemonServer
+
+    server = DaemonServer.__new__(DaemonServer)
+    server._command_input_condition = threading.Condition()
+    server._command_input_pending = {}
+    server._command_inputs = {}
+    server._stopping = threading.Event()
+    errors = []
+    server._queue_protocol_error = lambda _state, code, message: errors.append(
+        (code, message)
+    )
+    protocol = _state()
+    protocol.client_info = HandshakeRequest(
+        client_name="test",
+        client_version="1.0",
+        supported_protocol_versions=("1.0",),
+        client_capabilities=frozenset(),
+        frontend_type="cli",
+        supported_frame_types=frozenset({"binary-secret-v1"}),
+    )
+    owner = SimpleNamespace(token=22, protocol=protocol)
+    request_id = RequestId("bounded-request")
+    server._register_command_input(owner, request_id)
+    monkeypatch.setattr(server_module, "_COMMAND_INPUT_MAX_BYTES", 8)
+    secret = b"never-log-this"
+    frame = SecretFrame(
+        SecretFrameKind.COMMAND_INPUT,
+        request_id,
+        b"0" * 16,
+        bytearray(secret),
+    )
+    server._handle_secret_frame(owner, frame)
+    assert frame.secret == bytearray()
+    assert request_id not in server._command_inputs
+    assert errors[-1][0] is ErrorCode.FRAME_TOO_LARGE
+    assert "never-log-this" not in errors[-1][1]
+
+    expired_id = RequestId("expired-request")
+    monkeypatch.setattr(server_module, "_COMMAND_INPUT_TTL", 0.001)
+    server._register_command_input(owner, expired_id)
+    time.sleep(0.01)
+    with server._command_input_condition:
+        server._expire_command_inputs_locked()
+    assert str(expired_id) not in server._command_input_pending
+
+
+def test_disconnect_wakes_protected_input_waiter_immediately():
+    from sshpilot.daemon.server import DaemonServer
+
+    server = DaemonServer.__new__(DaemonServer)
+    server._command_input_condition = threading.Condition()
+    server._command_input_pending = {}
+    server._command_inputs = {}
+    server._stopping = threading.Event()
+    owner = SimpleNamespace(token=31)
+    request_id = RequestId("disconnect-request")
+    server._register_command_input(owner, request_id)
+    started = time.monotonic()
+    result = []
+    waiter = threading.Thread(
+        target=lambda: result.append(server._wait_command_input(request_id, timeout=30)),
+        daemon=True,
+    )
+    waiter.start()
+    time.sleep(0.01)
+    server._clear_command_inputs(owner.token)
+    waiter.join(0.5)
+    assert not waiter.is_alive()
+    assert result == [None]
+    assert time.monotonic() - started < 1
+
+
 def test_configuration_update_requires_request_params():
     dispatcher, service = _dispatcher()
     with pytest.raises(SshPilotError) as excinfo:
@@ -321,6 +502,70 @@ def test_selection_update_passes_expected_revision():
     assert wire["selected_backend"] == "bitwarden"
 
 
+def test_interactive_secret_methods_use_a_dedicated_command_key():
+    """Regression: every secrets.* handler used to share ``command_key`` with
+    plain configuration/connection RPCs (daemon.get_operation_mode,
+    connections.reveal_password, connections.snapshot, ...) through
+    ``_defer()``'s hard-coded ``CONFIGURATION_COMMAND_KEY``. The bounded
+    command executor serializes same-key work onto one worker regardless of
+    pool size, so a pending ``secrets.unlock`` — which can legitimately wait
+    up to ``DEFAULT_SECRET_INTERACTION_TIMEOUT`` (120s) for the user to type
+    a master password — head-of-line blocked every unrelated configuration
+    RPC for the whole wait, which then hit their own short client timeout and
+    tore down the transport as if the daemon had died (observed live: a kdbx
+    unlock in progress made ``daemon.get_operation_mode`` and
+    ``connections.reveal_password`` time out and reconnect in a loop that
+    never recovered). These methods must use a separate key so they can
+    never block unrelated daemon RPCs."""
+    from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
+    from sshpilot.daemon.dispatch import SECRET_INTERACTIVE_COMMAND_KEY
+
+    dispatcher, service = _dispatcher()
+
+    interactive = [
+        ("secrets.unlock", {}),
+        ("secrets.bitwarden.login", {"email": "user@example.com"}),
+        ("secrets.bitwarden.api_key_login", {"client_id": "id"}),
+        ("secrets.bitwarden.sso_login", {}),
+        ("secrets.bitwarden.unlock", {}),
+        ("secrets.rbw.unlock", {}),
+        ("secrets.keepassxc.create_database", {"path": "/tmp/x.kdbx"}),
+        ("secrets.keepassxc.unlock", {}),
+        ("secrets.remember_master_password", {}),
+        (
+            "secrets.transfer.export",
+            {
+                "destination": "/tmp/x.spbk",
+                "connection_ids": [],
+                "options": {},
+                "mirror_logins": False,
+            },
+        ),
+        ("secrets.transfer.import", {"source": "/tmp/x.spbk", "options": {}}),
+        ("secrets.transfer.preview", {"source": "/tmp/x.spbk"}),
+    ]
+    for method, params in interactive:
+        result = dispatcher.dispatch(_envelope(method, params), _state())
+        assert isinstance(result, DeferredResult), method
+        assert result.command_key == SECRET_INTERACTIVE_COMMAND_KEY, method
+        assert result.command_key != CONFIGURATION_COMMAND_KEY, method
+
+    # Fast metadata reads never block on user interaction — they must stay on
+    # the shared configuration key (no reason to isolate them, and isolating
+    # them would just move the head-of-line risk onto each other).
+    non_interactive = [
+        ("secrets.configuration.get", {}),
+        ("secrets.backends.get", {}),
+        ("secrets.state.get", {}),
+        ("secrets.bitwarden.status", {}),
+        ("secrets.lock", {}),
+    ]
+    for method, params in non_interactive:
+        result = dispatcher.dispatch(_envelope(method, params), _state())
+        assert isinstance(result, DeferredResult), method
+        assert result.command_key == CONFIGURATION_COMMAND_KEY, method
+
+
 def test_draining_rejects_operate_but_allows_reads():
     assert "secrets.unlock" in DRAIN_REJECTED_METHODS
     assert "secrets.transfer.export" in DRAIN_REJECTED_METHODS
@@ -377,7 +622,9 @@ def test_preview_backup_delegates_to_service():
     wire = result.operation()
     assert wire["kind"] == "spbk"
     assert wire["included"]["secrets"] is True
-    service.preview_backup.assert_called_once_with(source="/tmp/x.spbk")
+    service.preview_backup.assert_called_once_with(
+        source="/tmp/x.spbk", owner_client_id="client-1"
+    )
 
 
 def test_preview_bitwarden_and_ssh_delegate_to_service():
@@ -587,6 +834,9 @@ def test_real_daemon_login_params_are_identifiers_only(tmp_path):
             return mock.Mock(id="inter-cancel")
 
         def wait_for_result(self, interaction_id):
+            return None
+
+        def request_client_secret(self, *, owner_client_id, **kwargs):
             return None
 
     socket_path = tmp_path / "secrets2.sock"

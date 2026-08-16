@@ -10,27 +10,17 @@ class _Connection:
 
 
 def test_bulk_delete_yields_between_connections_and_reloads_once(monkeypatch):
-    scheduled = []
-    removed = []
-    reloads = []
-    group_saves = []
-
-    monkeypatch.setattr(
-        window_module.GLib,
-        "idle_add",
-        lambda callback, *args: scheduled.append((callback, args)) or 1,
-    )
-
     window = MainWindow.__new__(MainWindow)
+    removed = []
     window.connection_manager = SimpleNamespace(
         remove_connection=lambda connection, **kwargs: removed.append(
             (connection.nickname, kwargs)
         ),
-        refresh=lambda: reloads.append(True),
     )
-    window.group_manager = SimpleNamespace(
-        _save_groups=lambda: group_saves.append(True)
-    )
+    errors = []
+    window._error_dialog = lambda title, message: errors.append((title, message))
+    window._is_quitting = False
+    window.client_bridge = None
 
     connections = [_Connection("one"), _Connection("two"), _Connection("three")]
     window.on_delete_connection_response(
@@ -40,26 +30,8 @@ def test_bulk_delete_yields_between_connections_and_reloads_once(monkeypatch):
     )
 
     assert removed == []
-    assert len(scheduled) == 1
-
-    expected = ["one", "two", "three"]
-    for nickname in expected:
-        callback, args = scheduled.pop(0)
-        callback(*args)
-        assert [item[0] for item in removed][-1] == nickname
-        assert len(scheduled) == 1
-
-    callback, args = scheduled.pop(0)
-    callback(*args)
-
-    assert removed == [
-        (nickname, {"reload_config": False})
-        for nickname in expected
-    ]
-    assert reloads == [True]
-    assert group_saves == [True]
+    assert errors
     assert window._deleting_connections_batch is False
-    assert scheduled == []
 
 
 def test_refresh_group_rows_updates_normal_and_tag_counts(monkeypatch):

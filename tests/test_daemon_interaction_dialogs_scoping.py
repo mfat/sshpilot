@@ -35,6 +35,7 @@ from sshpilot.api.models import (
     InteractionType,
     PasswordPrompt,
     PresencePrompt,
+    RememberPolicy,
     SecretDecision,
     SessionId,
 )
@@ -780,3 +781,126 @@ def test_runner_binds_presenter_and_password_flows(monkeypatch, immediate_idle):
     assert runner._interaction_dialogs is None
     assert dialogs._closed
     runner.cancel()
+
+
+# ---------------------------------------------------------------------------
+# C. SecretsInteractionPresenter renders a dedicated master-password dialog,
+#    not the SSH host-login one (kdbx/Bitwarden unlock).
+# ---------------------------------------------------------------------------
+
+
+def _master_password_summary(hostname: str = "keepassxc"):
+    """A secret-session PASSWORD interaction as produced by
+    ``SecretBackendService._prompt_for_master_password`` — ``hostname`` is the
+    bare backend name (never a free-text sentence) and ``username`` is empty."""
+    now = datetime.now(timezone.utc)
+    return InteractionSummary(
+        id=new_interaction_id(),
+        session_id=SessionId("secret-session-1"),
+        connection_id=ConnectionId("secret-1"),
+        type=InteractionType.PASSWORD,
+        state=InteractionState.PENDING,
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+        attempt=1,
+        prompt=PasswordPrompt(
+            username="Secret backend",
+            hostname=hostname,
+            port=22,
+            attempt=1,
+            can_remember=True,
+            stored_secret_available=False,
+        ),
+    )
+
+
+def test_master_password_prompt_uses_dedicated_dialog_not_ssh_dialog(monkeypatch):
+    """Regression: this used to fall through to the base class's
+    ``_present_shared_password``, which reuses ``show_ssh_password_dialog``
+    with ``username="Secret backend"`` / ``hostname=<free-text message>`` —
+    rendering a garbled "Enter your password for Secret backend@Enter the
+    master password to unlock keepassxc." instead of a recognizable prompt."""
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    client = _FakeClient()
+    calls = {}
+
+    def fake_show(**kwargs):
+        calls.update(kwargs)
+        return "hunter2"
+
+    monkeypatch.setattr("sshpilot.window_dialogs.show_ssh_password_dialog", fake_show)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
+    summary = _master_password_summary("keepassxc")
+
+    dialogs._present_secret(summary, parent=SimpleNamespace())
+
+    assert calls["heading"] == "Unlock KeePassXC"
+    assert calls["display_name"] == "KeePassXC"
+    assert "Secret backend" not in str(calls)
+    assert client.secrets[-1][2] == b"hunter2"
+    assert client.responded[-1].remember_policy is RememberPolicy.DO_NOT_STORE
+    dialogs.close()
+
+
+def test_secret_session_event_is_claimed_and_presented_end_to_end(
+    monkeypatch, immediate_idle
+):
+    """Drive the real delivery path — client.emit() -> _on_transport_event ->
+    GLib.idle_add -> _handle_event -> claim_interaction -> present — instead
+    of calling _present_secret directly. Every other SecretsInteractionPresenter
+    test in this file skips straight to _present_secret, so none of them would
+    catch a break in event delivery, subscription, or the is_secret_service_session
+    filter itself. This is the one test that would."""
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
+    client = _FakeClient()
+
+    def fake_show(**_kwargs):
+        return "hunter2"
+
+    monkeypatch.setattr("sshpilot.window_dialogs.show_ssh_password_dialog", fake_show)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    parent = _FakeWindow(visible=True)
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=parent)
+    summary = _master_password_summary("keepassxc")
+
+    client.emit(summary)
+
+    assert client.claims == [summary.id], "claim_interaction was never called"
+    assert client.secrets and client.secrets[-1][2] == b"hunter2"
+    dialogs.close()
+
+
+def test_master_password_remember_checkbox_sets_store_after_success(monkeypatch):
+    """Checking "Remember master password" must flow through as
+    RememberPolicy on the same interaction response — no second prompt."""
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    client = _FakeClient()
+
+    def fake_show(*, on_store=None, **_kwargs):
+        if on_store is not None:
+            on_store("hunter2")
+        return "hunter2"
+
+    monkeypatch.setattr("sshpilot.window_dialogs.show_ssh_password_dialog", fake_show)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
+    summary = _master_password_summary("keepassxc")
+
+    dialogs._present_secret(summary, parent=SimpleNamespace())
+
+    assert client.responded[-1].remember_policy is RememberPolicy.STORE_AFTER_SUCCESS
+    dialogs.close()

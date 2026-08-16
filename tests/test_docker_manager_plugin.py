@@ -1129,13 +1129,11 @@ def test_resolve_sudo_not_sudoers():
     assert page._resolve_sudo(rc, "web", "docker") == (True, "not_sudoers", None)
 
 
-def test_resolve_sudo_clears_stale_keyring_on_failed_verify(monkeypatch):
+def test_resolve_sudo_does_not_use_a_frontend_secret_store():
     _gtk_or_skip()
     from sshpilot.plugins.builtin.docker_manager.page import DockerConsolePage
 
     page = DockerConsolePage(_sudo_ctx({}), initial_host="web")
-    cleared = []
-
     def rc(nick, command, *, timeout=None, input=None):
         if command.startswith("sudo -n"):
             return FakeResult(exit_code=1, stderr="sudo: a password is required")
@@ -1143,13 +1141,7 @@ def test_resolve_sudo_clears_stale_keyring_on_failed_verify(monkeypatch):
             return FakeResult(exit_code=1, stderr="Sorry, try again.")
         return FakeResult()
 
-    monkeypatch.setattr(
-        page, "_lookup_stored_sudo", lambda nick: "stale")
-    monkeypatch.setattr(
-        page, "_clear_stored_sudo", lambda nick: cleared.append(nick))
-
     assert page._resolve_sudo(rc, "web", "docker") == (True, "needs_password", None)
-    assert cleared == ["web"]
 
 
 @pytest.mark.parametrize("text,expected", [

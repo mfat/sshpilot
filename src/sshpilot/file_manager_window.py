@@ -377,36 +377,12 @@ class FileManagerWindow(Adw.Window):
         self._password_dialog_shown = False
         self._password_retry_count = 0
         connection = self._connection
-        connection_manager = self._connection_manager
         username = self._username
         host = self._host
 
-        # Initialize SFTP manager and connect signals
+        # The daemon owns SSH/SFTP authentication and interaction state.
+        # Do not read a password from the projection or a compatibility manager.
         initial_password = None
-        if connection is not None:
-            initial_password = getattr(connection, "password", None) or None
-
-        # Check for saved password before attempting connection
-        # This matches the logic in _connect_impl to ensure we find passwords
-        if not initial_password and connection_manager is not None:
-            # Try multiple host identifiers to match storage logic
-            lookup_hosts = []
-            if connection is not None:
-                hostname = getattr(connection, "hostname", None)
-                host_attr = getattr(connection, "host", None)
-                nickname_attr = getattr(connection, "nickname", None)
-
-                if hostname:
-                    lookup_hosts.append(hostname)
-                if host_attr and host_attr not in lookup_hosts:
-                    lookup_hosts.append(host_attr)
-                if nickname_attr and nickname_attr not in lookup_hosts:
-                    lookup_hosts.append(nickname_attr)
-
-            if not lookup_hosts:
-                lookup_hosts = [host]
-
-
         daemon_client = self._daemon_client
         bridge = self._bridge
         connection_id = self._connection_id
@@ -418,7 +394,7 @@ class FileManagerWindow(Adw.Window):
             self._port,
             password=initial_password,
             connection=connection,
-            connection_manager=connection_manager,
+            connection_manager=self._connection_manager,
             ssh_config=self._ssh_config,
             daemon_client=daemon_client,
             bridge=bridge,
@@ -433,7 +409,6 @@ class FileManagerWindow(Adw.Window):
             for signal_name, handler in [
                 ("connected", self._on_connected),
                 ("connection-error", self._on_connection_error),
-                ("authentication-required", self._on_authentication_required),
                 ("progress", self._on_progress),
                 ("operation-error", self._on_operation_error),
                 ("directory-loaded", self._on_directory_loaded),
@@ -460,8 +435,8 @@ class FileManagerWindow(Adw.Window):
         except (AttributeError, RuntimeError, GLib.Error):
             pass
 
-        # Headless SFTP worker + askpass (rides a live ControlMaster if any).
-        # Password/MFA prompts go through askpass — no pre-connect GUI dialog.
+        # The daemon owns the SFTP service and all authentication interaction.
+        # Password/MFA prompts are delivered through the daemon interaction UI.
         try:
             self._connect_sftp()
         except Exception as exc:
@@ -474,13 +449,6 @@ class FileManagerWindow(Adw.Window):
         already opened one; otherwise authenticates via askpass on the
         worker itself — no MasterSession.
         """
-        connection = self._connection
-        manager_password = getattr(self._manager, "_password", None)
-        if connection is not None and manager_password:
-            try:
-                connection.password = manager_password
-            except Exception:
-                pass
         self._manager.connect_to_server()
 
     def _dialog_parent(self) -> Gtk.Widget:
@@ -580,149 +548,6 @@ class FileManagerWindow(Adw.Window):
         self._teardown_backend()
         if self._host:
             self._start_connection()
-
-    def _should_offer_password_retry(self) -> bool:
-        """Whether a password retype dialog can recover from auth failure.
-
-        Covers explicit password auth and combined auth where a saved/session
-        password was (or can be) supplied via askpass.
-        """
-        connection = self._connection
-        if connection is None:
-            return False
-        try:
-            from .sftp_utils import _is_password_auth_enabled
-            if _is_password_auth_enabled(connection):
-                return True
-        except Exception:
-            pass
-        if getattr(self._manager, '_password', None):
-            return True
-        try:
-            if int(getattr(connection, 'auth_method', 0) or 0) == 1:
-                return True
-        except Exception:
-            pass
-        manager = self._connection_manager
-        if manager is None:
-            return False
-        try:
-            if hasattr(manager, 'get_connection_password'):
-                if manager.get_connection_password(connection):
-                    return True
-        except Exception:
-            pass
-        try:
-            host = (
-                getattr(connection, 'hostname', None)
-                or getattr(connection, 'host', None)
-                or self._host
-            )
-            user = getattr(connection, 'username', None) or self._username
-            if host and user and hasattr(manager, 'get_password'):
-                return bool(manager.get_password(host, user))
-        except Exception:
-            pass
-        return False
-
-    def _on_authentication_required(self, _manager, error_message: str) -> None:
-        """Re-prompt for password when askpass's stored/session secret was rejected."""
-        def show_password_dialog():
-            try:
-                self._clear_progress_toast()
-
-                if not self._should_offer_password_retry():
-                    self._on_connection_error(
-                        _manager,
-                        error_message or _('Authentication failed'),
-                    )
-                    return False
-
-                # The staged in-memory password was rejected — drop it (from
-                # both the connection and the backend, which re-applies it on
-                # every connect) so it can't shadow the keyring on later auths.
-                try:
-                    if self._connection is not None:
-                        self._connection.password = None
-                    if self._manager is not None:
-                        self._manager._password = None
-                except Exception:
-                    pass
-
-                if self._password_dialog_shown:
-                    return False
-
-                if self._password_retry_count >= self._max_password_retries:
-                    self._on_connection_error(
-                        _manager,
-                        _(
-                            'Authentication failed after {n} attempts. '
-                            'Please check your password.'
-                        ).format(n=self._max_password_retries),
-                    )
-                    return False
-
-                self._password_dialog_shown = True
-                self._password_retry_count += 1
-
-                username = getattr(self._manager, '_username', None) or self._username
-                host = getattr(self._manager, '_host', None) or self._host
-                nickname = (
-                    getattr(self._connection, 'nickname', None)
-                    if self._connection
-                    else None
-                )
-                display_name = nickname or f'{username}@{host}'
-                from .window_dialogs import show_ssh_password_dialog
-
-                password = show_ssh_password_dialog(
-                    from_widget=self,
-                    connection=self._connection,
-                    host=host,
-                    username=username,
-                    display_name=display_name,
-                    connection_manager=self._connection_manager,
-                    heading=_('Password Required'),
-                    body=_(
-                        'Authentication failed for {name}.\n\n'
-                        'Enter the correct password to continue:'
-                    ).format(name=display_name),
-                )
-                self._password_dialog_shown = False
-
-                if password:
-                    try:
-                        if self._manager is not None:
-                            self._manager.connect_to_server(password=password)
-                        else:
-                            self._on_connection_error(
-                                None, _('Connection was closed'),
-                            )
-                    except Exception as exc:
-                        logger.error('Error reconnecting after password prompt: %s', exc)
-                        self._on_connection_error(
-                            self._manager, f'Failed to connect: {exc}',
-                        )
-                else:
-                    self._password_retry_count = 0
-                    self._on_connection_error(
-                        self._manager, _('Authentication cancelled'),
-                    )
-                return False
-            except Exception as exc:
-                logger.error(
-                    'File manager password retry dialog failed: %s',
-                    exc,
-                    exc_info=True,
-                )
-                self._password_dialog_shown = False
-                self._on_connection_error(
-                    _manager,
-                    error_message or _('Authentication failed'),
-                )
-                return False
-
-        GLib.idle_add(show_password_dialog)
 
     def _switch_remote_host(self, connection) -> None:
         """Point the remote pane at another host: tear down the current
@@ -2991,8 +2816,8 @@ def launch_file_manager_window(
         ``parent``.  This allows callers to request a free-floating window even
         when a parent reference is supplied.
     nickname, connection, connection_manager, ssh_config
-        Optional context propagated to :class:`FileManagerWindow` so it can
-        reuse saved credentials and SSH preferences.
+        Optional presentation context propagated to
+        :class:`FileManagerWindow`; authoritative SSH state is daemon-owned.
     """
 
     app = Gtk.Application.get_default()

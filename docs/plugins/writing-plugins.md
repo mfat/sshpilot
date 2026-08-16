@@ -342,7 +342,8 @@ use the shared helper documented in **[PLUGIN_SDK.md § Advanced UI — credenti
 
 `from sshpilot.window import show_ssh_password_dialog` — call on the **UI thread
 only** (or inside `ctx.run_on_ui_thread`). Pass `from_widget=your_page_widget`
-and `connection_manager=ctx.connection_manager` so **Store password** works.
+and disable storage in the dialog; if persistence is required, use the typed
+daemon client from `ctx.daemon_client()` and its protected secret operation.
 
 ### Background work & clean shutdown
 

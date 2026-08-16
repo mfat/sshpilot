@@ -1,10 +1,19 @@
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from sshpilot.api import EventType
 from sshpilot.api.events import CoreEvent
 from sshpilot.api.models import ConnectionId, ConnectionSummary
 from sshpilot.api.models.common import RequestId, SessionId
+from sshpilot.api.models.interactions import (
+    InteractionId,
+    InteractionState,
+    InteractionSummary,
+    InteractionType,
+    PasswordPrompt,
+)
+from sshpilot.api.models.common import ClientId
 from sshpilot.api.transport.envelopes import SuccessResponseEnvelope
 from sshpilot.api.transport.terminal_frames import TerminalFrame, TerminalFrameKind
 from sshpilot.api.version import PROTOCOL_VERSION
@@ -53,6 +62,32 @@ def _event(sequence):
     )
 
 
+def _interaction_event(sequence):
+    created_at = datetime.now(timezone.utc)
+    summary = InteractionSummary(
+        id=InteractionId("interaction-1"),
+        session_id=SessionId("session-1"),
+        connection_id=ConnectionId("demo"),
+        type=InteractionType.PASSWORD,
+        state=InteractionState.PENDING,
+        created_at=created_at,
+        expires_at=created_at + timedelta(seconds=30),
+        attempt=1,
+        prompt=PasswordPrompt(
+            username="alice",
+            hostname="example.test",
+            port=22,
+            attempt=1,
+            can_remember=False,
+            stored_secret_available=False,
+        ),
+    )
+    return CoreEvent(
+        type=EventType.INTERACTION_CREATED,
+        payload=summary,
+        sequence=sequence,
+        session_id=SessionId("session-1"),
+    )
 def _handshaken_state(file_descriptor, *, send_limit=None):
     state = _ClientConnection(
         _FakeSocket(file_descriptor, send_limit=send_limit)
@@ -91,7 +126,7 @@ def test_event_queue_overflow_disconnects_only_the_slow_peer(tmp_path):
     assert tuple(server._clients.values()) == (healthy,)
 
 
-def test_event_is_encoded_once_and_shared_by_healthy_peers(tmp_path):
+def test_event_is_encoded_per_peer_with_peer_scoped_sequence(tmp_path):
     server = DaemonServer(
         lambda: None,
         socket_path=tmp_path / "sshpilotd.sock",
@@ -104,9 +139,37 @@ def test_event_is_encoded_once_and_shared_by_healthy_peers(tmp_path):
 
     server._on_core_event(_event(99))
 
-    assert first.output[0].data is second.output[0].data
+    # Event sequences are scoped to each peer because interaction events may
+    # be filtered by ownership. Healthy peers with the same visibility still
+    # receive byte-equivalent envelopes, but they do not share mutable frame
+    # state or rely on one daemon-global continuity stream.
+    assert first.output[0].data == second.output[0].data
     assert incomplete.output == deque()
     assert first.queued_event_count == second.queued_event_count == 1
+
+
+def test_filtered_interaction_does_not_create_peer_continuity_gap(tmp_path):
+    server = DaemonServer(
+        lambda: None,
+        socket_path=tmp_path / "sshpilotd.sock",
+    )
+    owner = _handshaken_state(10)
+    observer = _handshaken_state(11)
+    owner.protocol.client_id = ClientId("owner")
+    observer.protocol.client_id = ClientId("observer")
+    server._clients = {10: owner, 11: observer}
+    server._accepting_core_events = True
+    server._client_can_interact = lambda _session, client_id: str(client_id) == "owner"
+
+    server._on_core_event(_interaction_event(0))
+    server._on_core_event(_event(1))
+
+    # The observer did not receive the ownership-filtered interaction event,
+    # so its next visible event must still be contiguous at sequence zero.
+    assert owner.protocol.next_event_sequence == 2
+    assert observer.protocol.next_event_sequence == 1
+    assert len(owner.output) == 2
+    assert len(observer.output) == 1
 
 
 def test_partial_writes_resume_without_interleaving_frames(tmp_path):

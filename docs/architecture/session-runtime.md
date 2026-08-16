@@ -212,7 +212,8 @@ but does not cancel an already accepted open or close operation.
 
 ## GTK scope
 
-Normal VTE/PyXtermJS launch remains unchanged and in-process. Experimental
+Normal VTE/PyXtermJS rendering remains frontend-local. Remote session launch
+remains daemon-owned. Experimental
 daemon composition has a development/test diagnostic hook that submits
 `open_session` through the application-scoped `GtkClientBridge`, records
 session events after `GLib.idle_add`, and suppresses callbacks after window

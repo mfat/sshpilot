@@ -141,6 +141,7 @@ def _bare_user_host_data(username: str, host: str) -> dict:
         "hostname": host,
         "username": username,
         "port": 22,
+        "port_explicit": False,
         "auth_method": 0,
         "key_select_mode": 0,
         "unparsed_args": [],
@@ -154,6 +155,7 @@ def _empty_connection_data() -> dict:
         "hostname": "",
         "username": "",
         "port": 22,
+        "port_explicit": False,
         "auth_method": 0,
         "key_select_mode": 0,
         "keyfile": "",
@@ -176,6 +178,7 @@ def _apply_o_option(data: dict, key: str, value: str) -> None:
     elif key_lower == 'port':
         try:
             data["port"] = int(value)
+            data["port_explicit"] = True
         except ValueError:
             pass
     elif key_lower == 'identityfile':
@@ -236,6 +239,8 @@ def _try_parse_int_option(data: dict, field: str, raw: str) -> bool:
     """Set *field* from *raw* if it parses as an int. Returns True on success."""
     try:
         data[field] = int(raw)
+        if field == "port":
+            data["port_explicit"] = True
         return True
     except ValueError:
         return False

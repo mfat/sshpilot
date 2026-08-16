@@ -2,6 +2,17 @@
 
 SSH Pilot uses a deliberately simple policy:
 
+## Frontend compatibility imports
+
+The obsolete stateful `sshpilot.connection_manager.ConnectionManager` backend
+is retired. `sshpilot.connection_manager` remains for one documented v1
+compatibility window as a minimal import shim exporting only the ephemeral
+`Connection` and `ConnectionState` models. It performs no persistence, SSH
+configuration, known-hosts, secret, or process I/O. New code must use the typed
+`SshPilotClient` API for saved connections and protected operations. The shim
+is scheduled for removal at the next incompatible application/plugin API
+window, with a deprecation release note before then.
+
 ## Phase 11: Daemon lifecycle and management
 
 Phase 11 adds daemon lifecycle states, idle shutdown, management RPCs, client
@@ -44,6 +55,16 @@ The current `PROTOCOL_VERSION` string is `1.0`. The daemon selects exact
 supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
+
+`API_IMPLEMENTATION_VERSION` is currently `0.40`. Version 0.40 is an explicit
+implementation compatibility boundary: protected command input moved secret
+values out of JSON parameters, session-password operations were added, mode
+results expose persistence/recovery state, and unsaved-host requests preserve
+omitted-port provenance. A daemon advertising 0.39 is rejected during
+handshake with a restart/recovery outcome before ordinary requests. The client
+does not downgrade to plaintext secrets or select a frontend backend. A daemon
+with live resources is not killed implicitly; the existing explicit restart
+policy remains responsible for that decision.
 
 ## Non-breaking changes within v1
 
@@ -131,10 +152,14 @@ tests pass. A schema alone is not support. Clients:
 - **Incompatible protocol versions:** the daemon handshake rejects the pairing
   before ordinary commands with `protocol_version_unsupported`.
 
+- **Incompatible implementation revisions:** the daemon handshake rejects a
+  mismatched `API_IMPLEMENTATION_VERSION` with `api_version_mismatch`; the UI
+  must offer restart/recovery and retain user input where possible.
+
 ## `DaemonClient` compatibility
 
-The reusable connection contract suite runs against both `DaemonClient` and
-`InProcessClient`. It compares:
+The reusable connection contract suite exercises the daemon transport and
+direct core service composition separately. It compares:
 
 - connection reads and writes, capabilities, mutation/not-found errors, and DTO values;
 - secret exclusion and Host-alias connection identity;
@@ -144,12 +169,11 @@ The reusable connection contract suite runs against both `DaemonClient` and
 Daemon-only handshake, framing, correlation, timeout, socket security,
 lifecycle, event multiplexing, bounded event/byte backpressure, mutation
 ambiguity, and multi-client sequence rules have focused transport tests.
-Connection event parity is covered under `connections.events`. Typed
-authentication/trust interactions are daemon-only and capability-gated in API
+Connection events are daemon-owned and covered under `connections.events`.
+Typed authentication/trust interactions are daemon-only and capability-gated in API
 0.9; unrestricted prompt parity remains out of scope. Terminal byte/replay
-contracts are daemon-only and capability-gated in API 0.8. Session lifecycle is intentionally
-daemon-only: `InProcessClient` continues to return
-`unsupported_capability`, while daemon integration contracts cover lifecycle,
+contracts are daemon-only and capability-gated in API 0.8. Session lifecycle is
+daemon-only; daemon integration contracts cover lifecycle,
 attachment, multi-client event, shutdown, and process-ownership semantics.
 API 0.8 adds optional terminal DTO fields and a negotiated binary frame while
 retaining Protocol v1 control compatibility. Old clients do not advertise
@@ -181,6 +205,9 @@ When the snapshot changes:
    `python3 scripts/generate_api_artifacts.py`;
 6. increment Protocol v1 only if this policy has first been revised, or create
    Protocol v2 for an incompatible contract.
+
+The checked-in `tests/api/snapshots/versions/0.39.json` is historical and must
+not be regenerated in place. Current changes are recorded in the 0.40 snapshot.
 
 Daemon-owned external reload does not change Protocol v1. It uses the existing
 connection DTOs, opaque IDs, connection event names, and

@@ -59,6 +59,7 @@ class LoadedSshConfiguration:
     rules: Tuple[Mapping[str, Any], ...]
     source_paths: frozenset
     root_revision: str
+    watch_paths: frozenset = frozenset()
 
 
 def _config_error(message: str) -> CoreError:
@@ -105,6 +106,7 @@ def _resolve_config_files(
     *,
     max_depth: int = _MAX_INCLUDE_DEPTH,
     content_overrides: Optional[Mapping[Path, bytes]] = None,
+    watch_paths: Optional[set[Path]] = None,
 ) -> List[Path]:
     """Resolve *root_path* and its recursive Includes into ordered files.
 
@@ -141,6 +143,8 @@ def _resolve_config_files(
 
     def _resolve(path: Path, depth: int, stack: List[Path]) -> None:
         abs_path = path.resolve()
+        if watch_paths is not None:
+            watch_paths.add(abs_path)
         if abs_path in stack:
             return  # include cycle
         if depth > max_depth:
@@ -175,9 +179,24 @@ def _resolve_config_files(
                 ))
                 if not os.path.isabs(expanded):
                     expanded = os.path.join(base_dir, expanded)
+                expanded = os.path.abspath(expanded)
+                if watch_paths is not None:
+                    if glob.has_magic(expanded):
+                        candidate = expanded
+                        while glob.has_magic(candidate):
+                            parent = os.path.dirname(candidate)
+                            if parent == candidate:
+                                break
+                            candidate = parent
+                        watch_paths.add(Path(candidate))
+                    else:
+                        watch_paths.add(Path(expanded))
+                        watch_paths.add(Path(expanded).parent)
                 for matched in sorted(glob.glob(expanded)):
                     matched_path = Path(matched)
                     if matched_path.is_dir():
+                        if watch_paths is not None:
+                            watch_paths.add(matched_path.resolve())
                         for fname in sorted(glob.glob(os.path.join(matched, "*"))):
                             _resolve(Path(fname), depth + 1, stack)
                     else:
@@ -377,6 +396,11 @@ def _parse_host_config(
         return None
 
     host = host_token
+    # ``ssh -G <host>`` receives this token as an argv element.  OpenSSH may
+    # interpret a leading dash as another option, so imported configuration
+    # must fail closed instead of materialising an unsafe connection.
+    if host.startswith("-"):
+        raise _config_error("SSH configuration contains an invalid Host alias")
     has_explicit_hostname = (
         "hostname" in config and str(config["hostname"]).strip() != ""
     )
@@ -744,8 +768,13 @@ def load_ssh_configuration(
     never produced.
     """
     root = Path(root_path)
+    watch_paths: set[Path] = set()
     try:
-        files = _resolve_config_files(root, content_overrides=_content_overrides)
+        files = _resolve_config_files(
+            root,
+            content_overrides=_content_overrides,
+            watch_paths=watch_paths,
+        )
     except CoreError:
         raise
     except OSError as exc:
@@ -807,6 +836,8 @@ def load_ssh_configuration(
         cleaned = [t.strip() for t in tokens if t and t.strip()]
         if not cleaned:
             return
+        if any(token.startswith("-") for token in cleaned):
+            raise _config_error("SSH configuration contains an invalid Host alias")
         if any("*" in t or "?" in t or t.startswith("!") for t in cleaned):
             host_cfg = dict(config)
             host_cfg["host"] = cleaned[0]
@@ -929,4 +960,5 @@ def load_ssh_configuration(
         rules=tuple(rules),
         source_paths=frozenset(files),
         root_revision=_compute_revision(files, _content_overrides),
+        watch_paths=frozenset(watch_paths or files),
     )

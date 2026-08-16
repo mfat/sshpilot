@@ -166,8 +166,8 @@ class RemoteFileEditorWindow(Adw.Window):
         self._sftp_manager = sftp_manager
         self._daemon_file_service = daemon_file_service
         self._file_manager_window = file_manager_window
-        # Optional pre-save check (e.g. `ssh -G` for the SSH config). Returns an
-        # error string to block the save, or None to allow it.
+        # Optional owner-provided validation for ordinary local files. The SSH
+        # config editor validates through its daemon file service.
         self._pre_save_validator = pre_save_validator
         # Optional owner notification after a successful save (local atomic
         # write or daemon-backed write). File monitors are not sufficient for
@@ -1009,8 +1009,9 @@ class RemoteFileEditorWindow(Adw.Window):
         start, end = self._buffer.get_bounds()
         text = self._buffer.get_text(start, end, False)
 
-        # Optional syntax validation (e.g. `ssh -G` for the SSH config) so a
-        # broken file is never written.
+        # Optional owner-provided validation for ordinary local files. The SSH
+        # config editor delegates validation and atomic publication to its
+        # daemon file service.
         if self._is_local and self._pre_save_validator is not None:
             error = self._pre_save_validator(text)
             if error:
@@ -1040,9 +1041,8 @@ class RemoteFileEditorWindow(Adw.Window):
             return
 
         try:
-            # Atomic temp+replace so a crash/full disk can't truncate the file
-            # (critical for ~/.ssh/config). mode=None preserves the file's
-            # existing permissions (e.g. keeps a 0600 config at 0600).
+            # Atomic temp+replace for ordinary local files. The authoritative
+            # SSH config path is never handled by this branch.
             from .ssh_config_utils import atomic_write_text
             atomic_write_text(str(self._temp_file), text)
             self._file_modified_time = self._temp_file.stat().st_mtime

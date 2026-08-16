@@ -190,6 +190,9 @@ class SshPilotApplication(Adw.Application):
         # but defensively normalise here too.
         self.verbose_override = verbose and not quiet
         self.quiet_override = quiet and not verbose
+        # ``--isolated`` is a semantic startup request.  It is submitted to
+        # the daemon after the typed client is ready; GTK must not use it (or
+        # config.json) to select an SSH filesystem path.
         self.isolated_mode = isolated
         # App-launched daemons inherit this so ``--verbose`` reaches sshpilotd
         # (stdout/stderr are redirected to DEVNULL; file logging uses the flag).
@@ -271,10 +274,8 @@ class SshPilotApplication(Adw.Application):
             # Apply color overrides
             self.apply_color_overrides(cfg)
 
-            configured_isolated = bool(cfg.get_setting('ssh.use_isolated_config', False))
-            self.isolated_mode = bool(isolated or configured_isolated)
         except Exception:
-            self.isolated_mode = bool(isolated)
+            pass
 
         # Create actions with keyboard shortcuts
         # Use platform-specific shortcuts for better macOS compatibility
@@ -414,22 +415,58 @@ class SshPilotApplication(Adw.Application):
         # Initialize window reference
         self.window = None
 
-        # Emit startup diagnostics once the main loop is running (i.e. after the
-        # window is created/presented), reusing the app Config so the backend
-        # lookup doesn't re-read config.json.
-        GLib.idle_add(
-            lambda: (
-                print_startup_info(
-                    isolated=self.isolated_mode,
-                    verbose=self.verbose_override,
-                    config=self.config,
-                ),
-                False,
-            )[1]
-        )
+        # Emit startup diagnostics once the daemon client selection has settled
+        # (see _schedule_startup_diagnostics). The secrets diagnostic reads the
+        # daemon through the window's secrets_controller/client — the app
+        # Config object has neither, so the window is passed, not self.config.
+        GLib.idle_add(lambda: (self._schedule_startup_diagnostics(), False)[1])
 
         logger.info("sshPilot application initialized")
-    
+
+    def _schedule_startup_diagnostics(self, retries_left: int = 25) -> None:
+        """Print startup diagnostics once the daemon client selection settles.
+
+        Client selection (``MainWindow._begin_daemon_client_selection``) runs
+        asynchronously, so ``window.secrets_controller``/``window.client`` are
+        not populated on the first main-loop iteration. Printing immediately
+        used to make the Secure Storage section fabricate "not available" for
+        a daemon that was simply still connecting. Poll briefly (~5s) for the
+        selection to finish; startup_info reports an explicit "unknown" state
+        rather than a false negative if it never does.
+        """
+        window = getattr(self, "window", None)
+        pending = (
+            True if window is None
+            else bool(getattr(window, "_api_client_selection_pending", False))
+        )
+        if pending and retries_left > 0:
+            GLib.timeout_add(
+                200,
+                lambda: (
+                    self._schedule_startup_diagnostics(retries_left - 1),
+                    False,
+                )[1],
+            )
+            return
+        # print_startup_info() reads the secret backend registry through a
+        # blocking daemon RPC (SecretBackendsController.load_registry());
+        # building that registry can shell out to e.g. `bw login --check`,
+        # which alone has been observed to take 3+ seconds. Called directly
+        # from this GLib timeout callback that froze the whole GTK main loop
+        # for the duration — nothing here touches widgets, so run it off the
+        # main thread instead.
+        confirmed_mode = getattr(window, "_confirmed_operation_mode", None)
+        threading.Thread(
+            target=print_startup_info,
+            kwargs=dict(
+                isolated=self.isolated_mode,
+                verbose=self.verbose_override,
+                config=window,
+                confirmed_mode=confirmed_mode,
+            ),
+            daemon=True,
+        ).start()
+
     def _load_app_style(self):
         """Load the bundled application stylesheet once, at APPLICATION priority."""
         display = Gdk.Display.get_default()
@@ -468,17 +505,6 @@ class SshPilotApplication(Adw.Application):
             except Exception:
                 pass
 
-        # Start the in-process passphrase-prompt server so SSH askpass prompts
-        # render as modal children of the main window instead of stray helper
-        # windows that can hide behind it on Wayland. start() is idempotent.
-        try:
-            win = self.window or self.props.active_window
-            if win is not None:
-                from . import askpass_server
-                askpass_server.start(win)
-        except Exception as exc:
-            logger.debug(f"Failed to start askpass prompt server: {exc}")
-
         # If a session-backed secret backend (Bitwarden/Vaultwarden) is selected and
         # locked, prompt to unlock it now (password dialog + spinner) so the vault is
         # ready before the first connection. Scheduled on idle so it runs after the
@@ -497,17 +523,22 @@ class SshPilotApplication(Adw.Application):
         except Exception as exc:
             logger.debug(f"Failed to schedule PyXterm prewarm: {exc}")
 
-    def install_api_event_subscription(self, client) -> None:
-        """Subscribe once for the application-scoped daemon client."""
+    def install_api_event_subscription(self, client) -> bool:
+        """Subscribe once for the application-scoped daemon client.
+
+        Returns ``False`` when the candidate client cannot be subscribed, so
+        reconnect can abort before publishing a mixed client graph.
+        """
 
         self.clear_api_event_subscription()
 
         set_lost = getattr(client, "set_on_transport_lost", None)
         if callable(set_lost):
             set_lost(
-                lambda error: GLib.idle_add(
+                lambda error, source_client=client: GLib.idle_add(
                     self._on_daemon_transport_lost,
                     error,
+                    source_client,
                 )
             )
 
@@ -534,9 +565,13 @@ class SshPilotApplication(Adw.Application):
         except Exception as error:
             self._api_event_subscription = None
             logger.warning(
-                "Application API event subscription failed type=%s",
+                "Application API event subscription failed type=%s code=%s detail=%s",
                 type(error).__name__,
+                getattr(getattr(error, "code", None), "value", None),
+                getattr(error, "message", str(error)),
             )
+            return False
+        return True
 
     def _daemon_reconnect_suppressed(self) -> bool:
         """True when reconnect must not run (intentional terminate / quit)."""
@@ -591,8 +626,19 @@ class SshPilotApplication(Adw.Application):
                 exc_info=True,
             )
 
-    def _on_daemon_transport_lost(self, error) -> bool:
+    def _on_daemon_transport_lost(self, error, source_client=None) -> bool:
         """Schedule a bounded daemon reconnect after unexpected transport loss."""
+
+        if source_client is not None:
+            window = self.window
+            selected = getattr(self, "_api_client_selection", None)
+            current_clients = (
+                getattr(selected, "client", None),
+                getattr(window, "client", None) if window is not None else None,
+            )
+            if not any(source_client is current for current in current_clients):
+                logger.debug("Ignoring transport loss from stale daemon client")
+                return False
 
         if self._daemon_reconnect_suppressed():
             code = getattr(getattr(error, "code", None), "value", None)
@@ -603,11 +649,16 @@ class SshPilotApplication(Adw.Application):
             )
             return False
         code = getattr(getattr(error, "code", None), "value", None)
+        detail = getattr(error, "message", None)
         logger.warning(
-            "Daemon transport lost code=%s; scheduling reconnect",
+            "Daemon transport lost code=%s detail=%s; scheduling reconnect",
             code or type(error).__name__,
+            detail or "unspecified",
         )
         window = self.window
+        mark_unavailable = getattr(window, "_mark_daemon_unavailable", None)
+        if callable(mark_unavailable):
+            mark_unavailable()
         runtime_status = (
             getattr(window, "connection_runtime_status", None)
             if window is not None
@@ -764,33 +815,42 @@ class SshPilotApplication(Adw.Application):
         existing = getattr(self, "_api_client_selection", None)
         if existing is not None:
             previous = getattr(existing, "client", None)
-        self._api_client_selection = selection
         try:
-            self.install_api_event_subscription(result.client)
+            subscribed = self.install_api_event_subscription(result.client)
+            if subscribed is False:
+                raise RuntimeError("candidate daemon event subscription failed")
         except Exception:
-            logger.debug(
+            logger.warning(
                 "Failed to reinstall API events after daemon reconnect",
                 exc_info=True,
             )
+            try:
+                result.client.close()
+            except Exception:
+                pass
+            return False
         window = self.window
         if window is not None and not getattr(window, "_is_quitting", False):
-            window.client = result.client
-            for projection_name in (
-                "connection_manager",
-                "connection_runtime_status",
-            ):
-                projection = getattr(window, projection_name, None)
-                attach_client = getattr(projection, "attach_client", None)
-                if not callable(attach_client):
-                    continue
+            replace_client = getattr(window, "_replace_daemon_client", None)
+            if not callable(replace_client):
+                logger.error("Window cannot replace its daemon client safely")
                 try:
-                    attach_client(result.client)
+                    result.client.close()
                 except Exception:
-                    logger.warning(
-                        "Failed to refresh %s after daemon reconnect",
-                        projection_name,
-                        exc_info=True,
-                    )
+                    pass
+                return False
+            try:
+                replace_client(result.client)
+            except Exception:
+                logger.warning(
+                    "Failed to refresh daemon-backed services after reconnect",
+                    exc_info=True,
+                )
+                try:
+                    result.client.close()
+                except Exception:
+                    pass
+                return False
             welcome = getattr(window, "welcome_view", None)
             if welcome is not None and hasattr(welcome, "set_client"):
                 try:
@@ -803,6 +863,11 @@ class SshPilotApplication(Adw.Application):
                         "Failed to refresh welcome client after reconnect",
                         exc_info=True,
                     )
+
+        # Publish only after every dependent frontend service accepted the
+        # replacement. This prevents a mixed old/new client selection.
+        self._api_client_selection = selection
+
         if previous is not None and previous is not result.client:
             try:
                 previous.close()
@@ -1042,13 +1107,6 @@ class SshPilotApplication(Adw.Application):
                         logger.exception("Plugin %r protocol unwind failed", pid)
         except Exception:
             pass
-
-        # Stop the askpass prompt server and unlink its socket.
-        try:
-            from . import askpass_server
-            askpass_server.stop()
-        except Exception as exc:
-            logger.debug(f"Failed to stop askpass prompt server: {exc}")
 
         # Tear down any open embedded file-manager tabs synchronously, before
         # the window/interpreter are finalized. Their widgets carry Python
@@ -1997,14 +2055,6 @@ def _enable_fatal_gtk_warnings():
 
 def main():
     """Main entry point"""
-    # Fast-path: handle --askpass before starting the GTK application.
-    # This is reached when the app is invoked via a console-script entry point
-    # (e.g. Homebrew pip-installed binary) where run.py is not used.
-    if len(sys.argv) > 1 and sys.argv[1] == '--askpass':
-        from .askpass_utils import run_askpass_and_write
-        prompt = sys.argv[2] if len(sys.argv) > 2 else ""
-        sys.exit(run_askpass_and_write(prompt))
-
     from .cli_connect import parse_sshpilot_cli
 
     # Pre-parse so logging / isolated mode are configured before Gtk starts.

@@ -20,6 +20,8 @@ instances: every read, mutation, and event flows through a
 from __future__ import annotations
 
 import logging
+import getpass
+import ipaddress
 import re
 import threading
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -35,6 +37,9 @@ from ..api.models.connections import (
     ConnectionId,
     ConnectionMutationResult,
     ConnectionSummary,
+    EffectiveConfigComparison,
+    UnsavedHostCheckRequest,
+    UnsavedHostCheckResult,
     CreateConnectionRequest,
     DeleteConnectionRequest,
     DeleteConnectionResult,
@@ -50,6 +55,7 @@ from ..api.models.settings import (
     GlobalSshOverrides,
     UpdateGlobalSshOverridesRequest,
 )
+from ..api.models.terminal import ExternalTerminalLaunchSpec
 from ..api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from .connections.models import ConnectionRecord
 from .connections.repository import (
@@ -67,13 +73,18 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_capabilities": None,
     "get_connection": Capability.CONNECTIONS_READ,
     "get_connection_editor": Capability.CONNECTIONS_CONFIG_READ,
+    "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
+    "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "store_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
     "delete_key_passphrase": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -133,6 +144,8 @@ class ConnectionApplicationService:
             Capability.CONNECTIONS_GROUPS,
             Capability.CONNECTIONS_SPLIT,
         }
+        if callable(getattr(launch_provider, "prepare_terminal_launch", None)):
+            supported.add(Capability.EXTERNAL_TERMINAL_LAUNCH)
         if ssh_overrides is not None:
             supported.update(
                 {
@@ -159,6 +172,13 @@ class ConnectionApplicationService:
 
     def get_capabilities(self) -> Capabilities:
         return self._capabilities
+
+    @property
+    def supports_external_terminal_launch(self) -> bool:
+        """Whether the composed daemon has a real external-launch provider."""
+        return callable(
+            getattr(self._launch_provider, "prepare_terminal_launch", None)
+        )
 
     # ------------------------------------------------------------------
     # Launch / secret providers (implementation lives outside core)
@@ -196,6 +216,30 @@ class ConnectionApplicationService:
                 connection_id=connection_id,
             )
         return result
+
+    def prepare_external_terminal_launch(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        """Prepare external-terminal SSH semantics without returning secrets."""
+        self._assert_command_thread()
+        argv, environment = self.prepare_daemon_terminal_launch(
+            connection_id,
+            interaction_policy="none",
+        )
+        approved_environment = tuple(
+            sorted(
+                (name, value)
+                for name, value in environment.items()
+                if name == "SSH_AUTH_SOCK"
+            )
+        )
+        details = self.get_connection(connection_id)
+        return ExternalTerminalLaunchSpec(
+            argv=tuple(argv),
+            environment=approved_environment,
+            display_name=details.nickname,
+            secret_autofill_supported=False,
+        )
 
     def prepare_daemon_scp_target(self, connection_id: ConnectionId) -> str:
         self._assert_command_thread()
@@ -353,6 +397,25 @@ class ConnectionApplicationService:
             previous_host=request.previous_host,
             previous_username=request.previous_username,
         )
+
+    def set_session_connection_password_rpc(self, request: Any, password: bytearray) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return bool(self._provider_call(
+            self._secret_provider,
+            "set_session_connection_password",
+            request.connection_id,
+            password,
+        ))
+
+    def clear_session_connection_password(self, connection_id: ConnectionId) -> bool:
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        return bool(self._provider_call(
+            self._secret_provider,
+            "clear_session_connection_password",
+            connection_id,
+        ))
 
     def delete_connection_password_rpc(
         self, request: Any
@@ -725,6 +788,169 @@ class ConnectionApplicationService:
             )
         return self._record_to_editor_details(record)
 
+    def get_effective_config(
+        self, connection_id: ConnectionId
+    ) -> EffectiveConfigComparison:
+        """Resolve authored and effective OpenSSH configuration in the daemon."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        record = self._repository.get_editor_record(connection_id)
+        if record is None:
+            raise SshPilotError(
+                ErrorCode.CONNECTION_NOT_FOUND,
+                "The requested connection does not exist",
+                connection_id=connection_id,
+            )
+        from ..ssh_config_formatter import format_ssh_config_entry
+        from .ssh_config_effective import collect_host_block_lines, diff_effective_config
+
+        before_generation = self._repository.snapshot().generation
+        root = str(self._repository.root_config_path)
+        config_file = root if self._repository.ssh_config_isolated else None
+        own_lines = collect_host_block_lines(record.nickname, config_file)
+        own_block = "\n".join(own_lines)
+        if not own_block:
+            own_block = format_ssh_config_entry(record.to_dict())
+        try:
+            result = diff_effective_config(record.nickname, config_file, own_block)
+        except Exception:
+            logger.debug("Daemon effective-config resolution failed", exc_info=True)
+            result = None
+        after_generation = self._repository.snapshot().generation
+        # A reload/mode transition raced the resolver.  Never publish a
+        # comparison tagged with the pre-transition snapshot.
+        if before_generation != after_generation:
+            result = None
+        if not result:
+            return EffectiveConfigComparison(
+                connection_id=connection_id,
+                host=record.nickname,
+                available=False,
+                generation=max(0, int(after_generation)),
+            )
+        return EffectiveConfigComparison(
+            connection_id=connection_id,
+            host=record.nickname,
+            available=True,
+            has_diff=bool(result.get("has_diff")),
+            changes=tuple(dict(item) for item in (result.get("changes") or ())),
+            own=tuple(result.get("own") or ()),
+            full=tuple(result.get("full") or ()),
+            generation=max(0, int(after_generation)),
+        )
+
+    def check_unsaved_host(
+        self, request: UnsavedHostCheckRequest
+    ) -> UnsavedHostCheckResult:
+        """Compare a destination against daemon-owned saved identities.
+
+        A destination is saved when its internal id exists, or when the
+        normalized destination token (hostname, authored host alias, or
+        connection alias) and explicit username match a saved record. This
+        rule intentionally does not rerun OpenSSH in GTK or infer identity
+        from presentation-store paths.
+        """
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_READ)
+        if type(request) is not UnsavedHostCheckRequest:
+            raise SshPilotError(ErrorCode.INVALID_REQUEST, "A destination check request is required")
+        hostname = request.hostname.strip()
+        username = request.username.strip()
+        snapshot = self._repository.snapshot()
+        saved = bool(
+            request.connection_id
+            and any(item.id == request.connection_id for item in snapshot.connections)
+        )
+        if not saved and request.protocol.strip().lower() == "ssh":
+            requested_identity = self._destination_identity(
+                hostname,
+                username,
+                request.port,
+                request.proxy_jump,
+            )
+            for record in self._repository.list_records():
+                if (record.protocol or "ssh").strip().lower() != "ssh":
+                    continue
+                # The requested destination is resolved once.  Saved records
+                # contribute their daemon-owned semantic fields without
+                # spawning ``ssh -G`` for every nickname/alias in the store.
+                # This keeps the optional save-prompt check bounded and does
+                # not hold configuration serialization across an O(N) probe.
+                if requested_identity in self._saved_destination_identities(record):
+                    saved = True
+                    break
+        return UnsavedHostCheckResult(
+            saved=saved,
+            hostname=hostname.casefold(),
+            username=username,
+            generation=max(0, int(snapshot.generation)),
+        )
+
+    def _active_config_file(self) -> Optional[str]:
+        root = getattr(self._repository, "root_config_path", None)
+        isolated = bool(getattr(self._repository, "ssh_config_isolated", False))
+        return str(root) if root is not None and isolated else None
+
+    def _destination_identity(
+        self,
+        hostname: str,
+        username: str,
+        port: Optional[int],
+        proxy_jump: Tuple[str, ...],
+    ) -> tuple:
+        from .ssh_config_effective import get_effective_ssh_config
+
+        proxy = ",".join(proxy_jump)
+        effective = get_effective_ssh_config(
+            hostname,
+            self._active_config_file(),
+            user=username or None,
+            port=port,
+            proxy_jump=proxy or None,
+        )
+        resolved_host = str(effective.get("hostname") or hostname).strip()
+        resolved_user = str(effective.get("user") or username or getpass.getuser()).strip()
+        try:
+            resolved_port = int(str(effective.get("port") or port or 22))
+        except (TypeError, ValueError):
+            resolved_port = port or 22
+        proxy_value = effective.get("proxyjump") or proxy
+        if isinstance(proxy_value, list):
+            proxy_value = ",".join(proxy_value)
+        return (
+            self._normalize_host(resolved_host),
+            resolved_user,
+            resolved_port,
+            str(proxy_value or "none").casefold(),
+        )
+
+    def _saved_destination_identities(self, record: ConnectionRecord) -> set[tuple]:
+        proxy_jump = tuple(record.data.get("proxy_jump") or ()) if record.data else ()
+        # ``hostname`` is the saved destination identity.  Nicknames and
+        # aliases are presentation/configuration labels; resolving every one
+        # with a subprocess made this optional check scale with the entire
+        # repository.  The requested side is resolved by OpenSSH, so an alias
+        # used by the ad-hoc connection still matches a saved concrete target.
+        values = {record.hostname, record.host, *(record.aliases or ())}
+        user = str(record.username or "").strip() or getpass.getuser()
+        port = int(record.port or 22)
+        proxy = ",".join(proxy_jump).casefold() or "none"
+        return {
+            (self._normalize_host(str(value)), user, port, proxy)
+            for value in values
+            if str(value or "").strip()
+        }
+
+    @staticmethod
+    def _normalize_host(value: str) -> str:
+        value = value.strip().casefold()
+        if value.startswith("[") and value.endswith("]"):
+            value = value[1:-1]
+        try:
+            return ipaddress.ip_address(value).compressed.casefold()
+        except ValueError:
+            return value.rstrip(".")
+
     def get_ssh_config_text(self) -> SshConfigText:
         """Return the daemon-selected active SSH config text for the raw editor."""
 
@@ -1035,6 +1261,11 @@ class ConnectionApplicationService:
         except Exception as error:
             logger.exception("Repository delete failed")
             raise self._persistence_error(request.connection_id) from error
+        self._provider_call(
+            self._secret_provider,
+            "clear_session_connection_password",
+            request.connection_id,
+        )
         return DeleteConnectionResult(
             connection_id=request.connection_id,
             deleted=True,

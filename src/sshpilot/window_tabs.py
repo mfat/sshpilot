@@ -577,11 +577,6 @@ class WindowTabsMixin:
             if conn is None:
                 return
             from .file_manager_integration import create_internal_file_manager_tab
-            ssh_config = None
-            try:
-                ssh_config = self.config.get_ssh_config()
-            except Exception:
-                ssh_config = None
             host_value = _get_connection_host(conn) or _get_connection_alias(conn)
             port_value = getattr(conn, 'port', 22)
             widget, controller = create_internal_file_manager_tab(
@@ -592,7 +587,6 @@ class WindowTabsMixin:
                 parent_window=self,
                 connection=conn,
                 connection_manager=self.connection_manager,
-                ssh_config=ssh_config,
             )
             self._track_internal_file_manager_window(controller, widget=widget)
             child.set_file_panel(
@@ -777,7 +771,7 @@ class WindowTabsMixin:
     def _launch_external_file_manager(self, connection) -> None:
         """Open a standalone (external) file manager window for connection.
 
-        Same path used by the file_manager.open_externally preference.
+        Open a standalone window backed by the daemon-owned SFTP service.
         """
         nickname = (
             getattr(connection, 'nickname', None)
@@ -789,14 +783,6 @@ class WindowTabsMixin:
         username = getattr(connection, 'username', '') or ''
         port_value = getattr(connection, 'port', 22)
         effective_port = port_value if port_value and port_value != 22 else None
-
-        ssh_config = None
-        if hasattr(self, 'config') and self.config is not None:
-            try:
-                ssh_config = self.config.get_ssh_config()
-            except Exception as exc:
-                logger.debug("Failed to read SSH configuration for file manager: %s", exc)
-                ssh_config = None
 
         def error_callback(error_msg):
             message = error_msg or "Failed to open file manager"
@@ -812,7 +798,6 @@ class WindowTabsMixin:
             error_callback=error_callback,
             connection=connection,
             connection_manager=self.connection_manager,
-            ssh_config=ssh_config,
         )
 
         if success:

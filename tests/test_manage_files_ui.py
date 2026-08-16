@@ -42,21 +42,11 @@ def reload_module(name):
 
 def prepare_actions(monkeypatch):
     setup_gi(monkeypatch)
-    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
-    def open_remote_in_file_manager(*args, **kwargs):
-        return True, None
-    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
-    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
     return reload_module("sshpilot.actions")
 
 
 def prepare_file_manager_integration(monkeypatch):
     setup_gi(monkeypatch)
-    sftp_stub = types.ModuleType("sshpilot.sftp_utils")
-    def open_remote_in_file_manager(*args, **kwargs):
-        return True, None
-    sftp_stub.open_remote_in_file_manager = open_remote_in_file_manager
-    monkeypatch.setitem(sys.modules, "sshpilot.sftp_utils", sftp_stub)
     return reload_module("sshpilot.file_manager_integration")
 
 
@@ -126,30 +116,18 @@ def test_should_hide_file_manager_options(monkeypatch):
     # should_hide_file_manager_options moved to file_manager_integration (it's
     # re-exported from preferences); patch its deps where the function lives.
     fmi = prepare_file_manager_integration(monkeypatch)
-    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: False)
     monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
     assert fmi.should_hide_file_manager_options()
 
     monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: True)
     assert not fmi.should_hide_file_manager_options()
 
-    monkeypatch.setattr(fmi, "has_internal_file_manager", lambda: False)
-    monkeypatch.setattr(fmi, "has_native_gvfs_support", lambda: True)
-    assert not fmi.should_hide_file_manager_options()
-
-
-def test_launch_remote_file_manager_prefers_gvfs(monkeypatch):
+def test_launch_remote_file_manager_always_uses_daemon_internal_backend(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    calls = {}
-
-    def fake_open_remote_in_file_manager(**kwargs):
-        calls["kwargs"] = kwargs
-        return True, None
-
-    monkeypatch.setattr(integration, "open_remote_in_file_manager", fake_open_remote_in_file_manager)
-    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: True)
-    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
+    monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
+    sentinel = object()
+    monkeypatch.setattr(integration, "open_internal_file_manager", lambda **_kwargs: sentinel)
 
     success, error, window = integration.launch_remote_file_manager(
         user="alice",
@@ -160,15 +138,12 @@ def test_launch_remote_file_manager_prefers_gvfs(monkeypatch):
 
     assert success
     assert error is None
-    assert window is None
-    assert calls["kwargs"]["user"] == "alice"
-    assert calls["kwargs"]["port"] == 2022
+    assert window is sentinel
 
 
 def test_launch_remote_file_manager_uses_internal(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: False)
     monkeypatch.setattr(integration, "has_internal_file_manager", lambda: True)
 
     sentinel = object()
@@ -178,11 +153,7 @@ def test_launch_remote_file_manager_uses_internal(monkeypatch):
         captured["kwargs"] = kwargs
         return sentinel
 
-    def fail_remote(**_kwargs):
-        raise AssertionError("GVFS backend should not be used when native support is disabled")
-
     monkeypatch.setattr(integration, "open_internal_file_manager", fake_open_internal_file_manager)
-    monkeypatch.setattr(integration, "open_remote_in_file_manager", fail_remote)
 
     success, error, window = integration.launch_remote_file_manager(
         user="bob",
@@ -206,7 +177,6 @@ def test_launch_remote_file_manager_uses_internal(monkeypatch):
 def test_launch_remote_file_manager_no_backend(monkeypatch):
     integration = prepare_file_manager_integration(monkeypatch)
 
-    monkeypatch.setattr(integration, "has_native_gvfs_support", lambda: False)
     monkeypatch.setattr(integration, "has_internal_file_manager", lambda: False)
 
     captured = {}
@@ -224,3 +194,79 @@ def test_launch_remote_file_manager_no_backend(monkeypatch):
     assert "No compatible" in error
     assert captured["message"] == error
     assert window is None
+
+
+def test_manage_files_entry_honors_external_window_preference(monkeypatch):
+    setup_gi(monkeypatch)
+    module = reload_module("sshpilot.window_file_manager")
+    connection = type(
+        "Connection",
+        (),
+        {"nickname": "Example", "hostname": "example.com", "username": "alice", "port": 22},
+    )()
+    calls = []
+
+    class Config:
+        def get_setting(self, key, default=None):
+            assert key == "file_manager.open_externally"
+            return True
+
+    fake = type("Window", (), {})()
+    fake.config = Config()
+    fake._open_manage_files_now_for_connection = lambda conn: module.WindowFileManagerMixin._open_manage_files_now_for_connection(fake, conn)
+    fake._launch_external_file_manager = lambda conn: calls.append(("external", conn))
+    fake._create_file_manager_placeholder_tab = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("external preference must not create an embedded tab")
+    )
+    monkeypatch.setattr(module, "capabilities_for", lambda _connection: {module.Capability.FILE_TRANSFER})
+
+    module.WindowFileManagerMixin._open_manage_files_for_connection(fake, connection)
+
+    assert calls == [("external", connection)]
+
+
+def test_manage_files_entry_honors_embedded_window_preference(monkeypatch):
+    setup_gi(monkeypatch)
+    module = reload_module("sshpilot.window_file_manager")
+    connection = type(
+        "Connection",
+        (),
+        {"nickname": "Example", "hostname": "example.com", "username": "alice", "port": 22},
+    )()
+    calls = []
+
+    class Config:
+        def get_setting(self, key, default=None):
+            assert key == "file_manager.open_externally"
+            return False
+
+    fake = type("Window", (), {})()
+    fake.config = Config()
+    fake._open_manage_files_now_for_connection = lambda conn: module.WindowFileManagerMixin._open_manage_files_now_for_connection(fake, conn)
+    fake.connection_manager = object()
+    fake._create_file_manager_placeholder_tab = lambda *_args: {
+        "page": None,
+        "container": None,
+    }
+    fake._placeholder_is_open = lambda _placeholder: True
+    fake._register_file_manager_tab = lambda *_args, **_kwargs: calls.append("embedded")
+    fake._handle_file_manager_placeholder_error = lambda *_args: None
+    fake._show_manage_files_error = lambda *_args: None
+    fake._launch_external_file_manager = lambda _conn: calls.append("external")
+    monkeypatch.setattr(module, "capabilities_for", lambda _connection: {module.Capability.FILE_TRANSFER})
+    monkeypatch.setattr(module, "has_internal_file_manager", lambda: True)
+    monkeypatch.setattr(
+        module.GLib,
+        "timeout_add",
+        lambda _delay, callback: (callback(), True)[1],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        module,
+        "create_internal_file_manager_tab",
+        lambda **_kwargs: (object(), object()),
+    )
+
+    module.WindowFileManagerMixin._open_manage_files_for_connection(fake, connection)
+
+    assert calls == ["embedded"]

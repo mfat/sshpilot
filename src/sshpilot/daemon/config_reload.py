@@ -269,6 +269,10 @@ class ConfigurationReloadCoordinator:
         paths = self.backend.discover_paths()
         self.watcher.replace_paths(paths)
         self.watcher.start(self._on_change)
+        logger.info(
+            "Daemon external configuration watcher active paths=%d",
+            len(paths),
+        )
         with self._condition:
             self._thread = threading.Thread(
                 target=self._run,
@@ -276,6 +280,15 @@ class ConfigurationReloadCoordinator:
                 daemon=True,
             )
             self._thread.start()
+        # A file can change between discovery and watcher registration.  The
+        # initial semantic pass closes that construction-to-watch race and
+        # ensures startup uses the same reload path as later watcher changes.
+        self.request_reload()
+
+    def refresh_paths(self) -> None:
+        """Refresh the watched Include graph after a daemon-owned mode switch."""
+        paths = set(self.backend.discover_paths())
+        self.watcher.replace_paths(paths)
         logger.info(
             "Daemon external configuration watcher active paths=%d",
             len(paths),

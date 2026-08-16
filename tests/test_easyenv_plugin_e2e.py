@@ -170,6 +170,13 @@ class FakeClient:
         self._recipes = [{"uuid": "ubuntu-24-04", "title": "Ubuntu 24.04 LTS"},
                          {"uuid": "python-dev", "title": "Python Dev Env"}]
         self._ws = {}  # uuid -> workspace dict (with boxes)
+        self._plugin_settings = {}
+
+    def get_plugin_setting(self, plugin_id, key, default=None):
+        return self._plugin_settings.get((plugin_id, key), default)
+
+    def set_plugin_setting(self, plugin_id, key, value):
+        self._plugin_settings[(plugin_id, key)] = value
 
     def accounts(self): return self._accounts
     def recipes(self, term=""): return self._recipes
@@ -203,7 +210,10 @@ def env(tmp_path, monkeypatch):
     config = FakeConfig()
     cm = FakeCM(tmp_path, config)
     host = PluginHost(connection_manager=cm)
-    host.bind_window(FakeWindow(cm))
+    fake = FakeClient()
+    fake_window = FakeWindow(cm)
+    fake_window.client = fake
+    host.bind_window(fake_window)
     host.dispatch_app_started()
 
     spec = importlib.util.spec_from_file_location("easyenv_e2e", EXAMPLE)
@@ -214,7 +224,6 @@ def env(tmp_path, monkeypatch):
                         protocol_registry=registry_mod.protocol_registry(), host=host)
     plugin = mod.Plugin()
     plugin.activate(ctx)
-    fake = FakeClient()
     plugin._client = lambda: fake          # inject the fake REST client
     ctx.settings.set("account_uuid", "acct-1")
     return cm, host, plugin, fake, mod
@@ -396,7 +405,7 @@ def test_update_on_restart_refreshes_host_and_password(env):
 def test_signin_selects_account_and_stores_token(env):
     cm, host, plugin, fake, _mod = env
     plugin._after_signin(fake.accounts())
-    assert cm.config.get_setting("plugins.easyenv-workspaces.account_uuid") == "acct-1"
+    assert fake._plugin_settings[("easyenv-workspaces", "account_uuid")] == "acct-1"
 
 
 def test_open_starts_stopped_workspace_then_materializes(env):

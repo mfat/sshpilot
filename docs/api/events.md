@@ -7,10 +7,10 @@ IDs.
 <!-- api-event-semantics: serial-fifo-v1 -->
 <!-- api-event: broadcast.output -->
 
-`InProcessClient` uses one publisher-global FIFO ordering point. Sequence
-allocation and queue insertion are atomic, and exactly one publishing thread
-drains the queue. Therefore every subscriber observes accepted events in
-strictly increasing sequence order, including when publishers run concurrently.
+The daemon uses one publisher-global FIFO ordering point. Sequence allocation
+and queue insertion are atomic, and exactly one publishing thread drains the
+queue. Therefore every subscriber observes accepted events in strictly
+increasing sequence order, including when publishers run concurrently.
 The first active publisher is the dispatcher; a concurrent publisher waits
 until its event has been delivered and its callbacks can run on that active
 dispatcher thread rather than the concurrent caller's thread.
@@ -31,8 +31,8 @@ subscriber that is absent or already closed does not receive prior events.
 
 <!-- api-daemon-event-semantics: global-sequence-bounded-v1 -->
 
-The daemon subscribes to its `InProcessClient` connection publisher, its owned
-`SessionRuntime` publisher, and its owned `InteractionBroker` publisher. It
+The daemon subscribes to its connection repository, its owned `SessionRuntime`
+publisher, and its owned `InteractionBroker` publisher. It
 accepts three connection events, four session lifecycle events, and two safe
 interaction lifecycle events. It replaces each source publisher's process-local
 sequence with one daemon-global sequence that begins at `0`.
@@ -78,9 +78,9 @@ local `error.occurred` continuity notification where delivery remains possible.
 
 | Event | Runtime status | Capability | Trigger | Payload |
 | --- | --- | --- | --- | --- |
-| `connection.created` | Implemented in-process and daemon | `connections.events` | Manager `connection-added` signal | `ConnectionSummary` |
-| `connection.updated` | Implemented in-process and daemon | `connections.events` | Manager `connection-updated` signal | `ConnectionSummary` |
-| `connection.deleted` | Implemented in-process and daemon | `connections.events` | Manager `connection-removed` signal | `ConnectionSummary` |
+| `connection.created` | Daemon implemented | `connections.events` | Repository commit | `ConnectionSummary` |
+| `connection.updated` | Daemon implemented | `connections.events` | Repository commit | `ConnectionSummary` |
+| `connection.deleted` | Daemon implemented | `connections.events` | Repository commit | `ConnectionSummary` |
 | `session.created` | Daemon implemented | `sessions.events` | Session record allocation | `SessionSummary` |
 | `session.state_changed` | Daemon implemented | `sessions.events` | Accepted lifecycle transition other than exit/close | `SessionSummary` |
 | `session.output` | Legacy schema only; not emitted | `terminal.output` | None | Terminal bytes use dedicated binary frames |
@@ -111,17 +111,16 @@ local `error.occurred` continuity notification where delivery remains possible.
 <!-- api-event: connection.created -->
 ## `connection.created`
 
-- **Status / introduced:** Implemented in-process and over daemon transport / v1
+- **Status / introduced:** Implemented over daemon transport / v1
 - **Trigger / payload:** A successful repository/application-service
   persistence change; `ConnectionSummary`.
 - **Related IDs:** `connection_id` is populated and equals payload `id`.
-- **Ordering / delivery:** In-process publisher-global serial FIFO; over IPC,
-  daemon-global sequence and bounded at-most-once live delivery.
+- **Ordering / delivery:** Daemon-global sequence and bounded at-most-once live
+  delivery.
 - **Coalescing / dropping:** Not coalesced. Absent/new subscribers miss prior
   events. Queue overflow disconnects the affected daemon peer.
-- **Compatibility:** In-process adapters may derive the event from legacy
-  manager signals, but the daemon repository is authoritative on the daemon
-  route.
+- **Compatibility:** Direct core tests may derive the event from service
+  notifications, but the daemon repository is authoritative in production.
 
 <!-- api-event: connection.updated -->
 ## `connection.updated`
@@ -404,11 +403,6 @@ Keep the returned `Subscription` and call `unsubscribe()` or `close()`.
 Context-manager use is supported and cleanup is idempotent. Unsubscription
 during an event affects later events; the current event still reaches the
 subscriber snapshot captured when it was accepted.
-
-`InProcessClient.close()` disconnects its manager signal handlers, rejects new
-publication/subscription, and deactivates subscription handles. An event
-already being delivered, plus events accepted into its FIFO, finish in order;
-callbacks are then released. Closing from inside a callback does not deadlock.
 
 `DaemonClient.close()` first rejects requests and event acceptance, closes the
 socket to wake the sole reader, wakes pending requests, stops the event handoff,

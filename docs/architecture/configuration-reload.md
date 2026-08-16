@@ -1,8 +1,8 @@
 # Daemon-owned external configuration reload
 
-The daemon has one authoritative persistence owner: `sshpilotd`.
-GTK keeps `ConnectionManager.identity_migration_enabled` disabled and never
-repairs connection identities while a `DaemonClient` is selected.
+The daemon has one authoritative persistence owner: `sshpilotd`. GTK keeps only
+the read-only `ConnectionPresentationStore` projection and never repairs
+connection identities or reloads files itself.
 
 ## Watch and execution model
 
@@ -32,7 +32,7 @@ work remain live.
 
 ## Transaction and diff
 
-`ConnectionManager` has a re-entrant authoritative-state transaction. Reloads
+`ConnectionRepository` has a re-entrant authoritative-state transaction. Reloads
 build a new connection collection with object reuse disabled, then publish the
 new visible collection only after parsing succeeds. Readers therefore see either
 the prior committed collection or the new one. Malformed input preserves the

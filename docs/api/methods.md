@@ -1,13 +1,20 @@
 # Client methods
 
-Current API implementation version: `0.29`.
+Current API implementation version: `0.40`.
 Protocol v1 remains `1.0`.
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 <!-- api-method: start_broadcast_command -->
 <!-- api-method: subscribe_broadcast_output -->
 <!-- api-method: get_plugin_setting -->
+<!-- api-method: prepare_external_terminal_launch -->
+<!-- api-method: get_effective_config -->
+<!-- api-method: check_unsaved_host -->
+<!-- api-method: set_operation_mode -->
+<!-- api-method: get_operation_mode -->
 <!-- api-method: set_plugin_setting -->
+<!-- api-method: clear_session_connection_password -->
+<!-- api-method-contract: clear_session_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method: get_broadcast_command -->
 <!-- api-method: cancel_broadcast_command -->
 <!-- api-method: set_daemon_log_level -->
@@ -20,13 +27,13 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-daemon-method: broadcast.start capability=broadcast.write -->
 <!-- api-daemon-method: plugins.settings.get capability=plugins.settings.read -->
 <!-- api-daemon-method: plugins.settings.set capability=plugins.settings.write -->
+<!-- api-daemon-method: connections.clear_session_password capability=connections.secrets.write -->
 <!-- api-daemon-method: broadcast.get capability=broadcast.read -->
 <!-- api-daemon-method: broadcast.cancel capability=broadcast.write -->
 <!-- api-daemon-method: terminal.broadcast_input capability=terminal.input -->
 
-`SshPilotClient` is synchronous. Both clients implement connection CRUD.
-Session lifecycle methods are daemon-only; `InProcessClient` returns
-`unsupported_capability` for the corresponding `sessions.*` capability.
+`SshPilotClient` is synchronous. Production uses the daemon transport only;
+direct core service compositions are test-only and are not client choices.
 
 ## Runtime summary
 
@@ -40,7 +47,13 @@ Session lifecycle methods are daemon-only; `InProcessClient` returns
 | `update_connection` | Implemented | `connections.write` |
 | `delete_connection` | Implemented | `connections.write` |
 | `get_connection_editor` | Implemented | `connections.config.read` |
+| `set_operation_mode` | Daemon only | `operation.mode` |
+| `get_operation_mode` | Daemon only | `operation.mode` |
+| `check_unsaved_host` | Implemented | `connections.read` |
+| `prepare_external_terminal_launch` | Daemon only | `terminal.external_launch` |
+| `get_effective_config` | Implemented | `connections.config.read` |
 | `store_connection_password` | Implemented | `connections.secrets.write` |
+| `clear_session_connection_password` | Daemon only | `connections.secrets.write` |
 | `has_connection_password` | Daemon only | `connections.secrets.status.read` |
 | `reveal_connection_password` | Daemon only | `connections.secrets.reveal` |
 | `delete_connection_password` | Implemented | `connections.secrets.write` |
@@ -141,6 +154,11 @@ Session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: get_plugin_secret status=daemon-only capability=connections.secrets.reveal -->
 <!-- api-method-contract: get_plugin_setting status=daemon-only capability=plugins.settings.read -->
 <!-- api-method-contract: get_ssh_config_text status=implemented capability=connections.config.read -->
+<!-- api-method-contract: prepare_external_terminal_launch status=implemented capability=terminal.external_launch -->
+<!-- api-method-contract: get_effective_config status=implemented capability=connections.config.read -->
+<!-- api-method-contract: check_unsaved_host status=implemented capability=connections.read -->
+<!-- api-method-contract: set_operation_mode status=daemon-only capability=operation.mode -->
+<!-- api-method-contract: get_operation_mode status=daemon-only capability=operation.mode -->
 <!-- api-method-contract: save_ssh_config_text status=implemented capability=connections.config.write -->
 <!-- api-method-contract: get_forward status=daemon-only capability=forwards.read -->
 <!-- api-method-contract: get_interaction status=daemon-only capability=interactions.read -->
@@ -186,6 +204,7 @@ Session lifecycle methods are daemon-only; `InProcessClient` returns
 <!-- api-method-contract: start_scp_transfer status=daemon-only capability=transfers.scp -->
 <!-- api-method-contract: start_transfer status=daemon-only capability=transfers.write -->
 <!-- api-method-contract: store_connection_password status=implemented capability=connections.secrets.write -->
+<!-- api-method-contract: set_session_connection_password status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: store_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: delete_key_passphrase status=implemented capability=connections.secrets.write -->
 <!-- api-method-contract: claim_terminal_input status=daemon-only capability=terminal.input -->
@@ -411,6 +430,11 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get capability=connections.read -->
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
 <!-- api-daemon-method: connections.get_ssh_config_text capability=connections.config.read -->
+<!-- api-daemon-method: connections.prepare_external_terminal_launch capability=terminal.external_launch -->
+<!-- api-daemon-method: connections.get_effective_config capability=connections.config.read -->
+<!-- api-daemon-method: connections.check_unsaved_host capability=connections.read -->
+<!-- api-daemon-method: daemon.set_operation_mode capability=operation.mode -->
+<!-- api-daemon-method: daemon.get_operation_mode capability=operation.mode -->
 <!-- api-daemon-method: connections.save_ssh_config_text capability=connections.config.write -->
 <!-- api-daemon-method: connections.get_plugin_secret capability=connections.secrets.reveal -->
 <!-- api-daemon-method: connections.list capability=connections.read -->
@@ -420,6 +444,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.reveal_passphrase capability=connections.secrets.reveal -->
 <!-- api-daemon-method: connections.store_passphrase capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_password capability=connections.secrets.write -->
+<!-- api-daemon-method: connections.set_session_password capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.store_plugin_secret capability=connections.secrets.write -->
 <!-- api-daemon-method: connections.update capability=connections.write -->
 <!-- api-daemon-method: connections.update_metadata capability=connections.metadata.write -->
@@ -554,8 +579,9 @@ one-use `binary-secret-v2` frame and never an ordinary JSON method.
 - **Purpose:** Discover versions, endpoint identity, compatibility, and
   supported feature groups.
 - **Parameters / return:** No parameters; returns `Capabilities`.
-- **Errors:** In-process has no expected failure. Daemon construction performs
-  handshake and may return documented transport/protocol errors.
+- **Errors:** Direct core invocation has no transport failure. Daemon
+  construction performs a handshake and may return documented
+  transport/protocol errors.
 - **Events:** None.
 - **Cancellation / ordering:** Immediate, not cancellable; returns the same
   immutable value object for the client's lifetime.
@@ -576,19 +602,17 @@ if capabilities.supports(Capability.CONNECTIONS_READ):
 - **Status / introduced:** Implemented / Protocol v1
 - **Capability / purpose:** `connections.read`; return secret-free summaries.
 - **Parameters / return:** No parameters; returns `list[ConnectionSummary]`.
-- **Errors:** `invalid_request` if the in-process client is closed or off its
-  owner thread; `internal_error` for mapped manager failures; daemon calls may
+- **Errors:** `invalid_request` after client close; `internal_error` for mapped
+  daemon failures; daemon calls may
   also return documented transport/protocol lifecycle errors.
 - **Events:** None directly.
-- **Cancellation / ordering:** Not cancellable; preserves manager order. The
+- **Cancellation / ordering:** Not cancellable; preserves repository order. The
   GTK bridge cannot cancel a wire request already in progress, but its request
   token suppresses stale or destroyed-widget delivery.
-- **Threading:** `InProcessClient` requires its owner thread. `DaemonClient`
-  serializes synchronous requests and uses a finite timeout. Experimental GTK
-  daemon mode invokes this method through one application-scoped worker and
-  posts presentation updates with `GLib.idle_add`; normal in-process GTK calls
-  remain on the owner/main thread.
-- **Side effects / security:** Reads current manager state. It returns DTOs, not
+- **Threading:** `DaemonClient` serializes synchronous requests and uses a
+  finite timeout. GTK invokes this method through one application-scoped
+  worker and posts presentation updates with `GLib.idle_add`.
+- **Side effects / security:** Reads the current daemon snapshot. It returns DTOs, not
   persistence or GObject instances, and omits secrets and sensitive paths.
 
 ```python
@@ -607,7 +631,7 @@ for connection in client.list_connections():
 - **Errors:** `connection_not_found`, `invalid_request`, or `internal_error`.
 - **Events:** None directly.
 - **Cancellation / ordering:** Not cancellable; one point-in-time result.
-- **Threading:** In-process calls use the owner thread; daemon calls are
+- **Threading:** Direct core calls use the owner thread; daemon calls are
   serialized over the persistent socket.
 - **Side effects / security:** Reads manager state. The identifier is opaque;
   returned authentication fields are booleans/enums and never secret values.
@@ -630,7 +654,7 @@ details = client.get_connection(summary.id)
   or `internal_error`.
 - **Events:** None directly.
 - **Cancellation / ordering:** Not cancellable; one point-in-time result.
-- **Threading:** In-process calls use the owner thread; daemon calls are
+- **Threading:** Direct core calls use the owner thread; daemon calls are
   serialized over the persistent socket.
 - **Side effects / security:** Reads manager state. Contains filesystem paths
   and complete configuration; not safe for untrusted consumers.
@@ -654,7 +678,7 @@ print(editor.identity_files, editor.forwarding_rules)
   or `internal_error`. Messages are generic and never embed filesystem paths.
 - **Events:** None directly.
 - **Cancellation / ordering:** Not cancellable; one point-in-time result.
-- **Threading:** In-process calls use the owner thread; daemon calls are
+- **Threading:** Direct core calls use the owner thread; daemon calls are
   serialized over the persistent socket.
 - **Side effects / security:** Read-only. The returned text may contain the
   user's complete SSH configuration, so the result is excluded from model
@@ -682,7 +706,7 @@ print(ssh_config.display_name, ssh_config.revision, ssh_config.writable)
   `connection.deleted` events for the reloaded configuration, plus the
   coherent `connection_store.changed` event.
 - **Cancellation / ordering:** Not cancellable; one committed write.
-- **Threading:** In-process calls use the owner thread; daemon calls are
+- **Threading:** Direct core calls use the owner thread; daemon calls are
   serialized over the persistent socket.
 - **Side effects / security:** The text is written exactly as provided (no
   reformatting) to the daemon-selected file only. A failed reload rolls the
@@ -708,7 +732,7 @@ print(result.revision)
   failure after send becomes `mutation_ambiguous`.
 - **Events:** Exactly one `connection.created` after a successful persistence
   change. Response and event may be observed in either order.
-- **Cancellation / ordering / threading:** In-process calls use the owner
+- **Cancellation / ordering / threading:** Direct core calls use the owner
   thread. Daemon requests are serialized and are never automatically retried.
 - **Side effects / security:** Persists only the request's basic metadata
   through `ConnectionRepository` and `ConnectionApplicationService`. The request
@@ -911,6 +935,28 @@ client.delete_connection(DeleteConnectionRequest(connection_id))
 ```python
 client.store_connection_password(
     StoreConnectionPasswordRequest(connection_id, password)
+)
+```
+
+<!-- api-method: set_session_connection_password -->
+## `set_session_connection_password`
+
+- **Status / introduced:** Implemented / Protocol v1
+- **Capability / purpose:** `connections.secrets.write`; retain a password for
+  the current daemon session without persisting it.
+- **Parameters / return:** `SetSessionConnectionPasswordRequest`
+  (connection_id) plus a protected mutable password input; returns `bool`.
+- **Errors:** Transport/protocol errors and connection validation errors.
+- **Side effects / security:** The password is delivered only through the
+  protected command-input frame and is held in daemon memory with a bounded
+  session lifetime. It is never written to the repository, returned in a DTO,
+  placed in argv/environment, or logged. Persistent storage remains a separate
+  explicit `store_connection_password` operation.
+
+```python
+client.set_session_connection_password(
+    SetSessionConnectionPasswordRequest(connection_id),
+    bytearray(password.encode()),
 )
 ```
 
@@ -1307,7 +1353,7 @@ Requests bounded closure of one runtime forward.
 - **Status / introduced:** Daemon-only / Protocol v1, API 0.11.
 - **Capability / purpose:** `daemon.status`; return lifecycle state, versions,
   resource counts, and idle/shutdown diagnostics without secrets.
-- **Errors:** `unsupported_capability` from `InProcessClient`; transport errors.
+- **Errors:** `unsupported_capability` or daemon transport errors.
 
 <!-- api-method: get_daemon_diagnostics -->
 ## `get_daemon_diagnostics`
@@ -1337,7 +1383,7 @@ Requests bounded closure of one runtime forward.
 - **Capability / purpose:** `sessions.read`; return one creation-ordered,
   secret-free snapshot including retained closed records.
 - **Parameters / return:** None; returns `list[SessionSummary]`.
-- **Errors:** `unsupported_capability` from `InProcessClient`; daemon
+- **Errors:** `unsupported_capability` or daemon
   transport/protocol lifecycle errors.
 - **Threading:** Synchronous; GTK diagnostics submit it through
   `GtkClientBridge`.
@@ -1602,8 +1648,7 @@ client.respond_to_interaction(response)
 <!-- api-method: subscribe_events -->
 ## `subscribe_events`
 
-- **Status / introduced:** Implemented across `InProcessClient` and
-  `DaemonClient` / Protocol v1
+- **Status / introduced:** Implemented by `DaemonClient` / Protocol v1
 - **Capability / purpose:** `connections.events` for the implemented
   connection lifecycle stream; subscribe to events that the provider can emit.
 - **Parameters / return:** Callable accepting one `CoreEvent`; returns
@@ -1616,7 +1661,7 @@ client.respond_to_interaction(response)
 - **Cancellation / ordering:** `unsubscribe()`/`close()` is the cancellation
   mechanism and is idempotent. Callbacks run in registration order through a
   publisher-global serial FIFO.
-- **Threading:** Registration is thread-safe. In-process publication uses the
+- **Threading:** Registration is thread-safe. Direct core publication uses the
   active serial publisher thread. `DaemonClient` callbacks use one dedicated
   serial event dispatcher, never the socket reader, so a slow subscriber cannot
   block response processing. Re-entrant events queue without recursion.
@@ -2523,7 +2568,7 @@ result = client.forget_master_password()
 - **Cancellation / ordering:** Idempotent. Existing callbacks are removed.
 - **Threading:** No owner-thread assertion exists, although production callers
   should close from their composition/GTK owner thread.
-- **Side effects / security:** In-process disconnects registered manager
+- **Side effects / security:** Direct core teardown unregisters service
   signals. Daemon shutdown closes only that client's socket. Neither closes
   saved connections, SSH processes, or secrets.
 

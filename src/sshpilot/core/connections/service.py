@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from ..errors import CoreError, ErrorCode
+from ...api.models.common import validate_ssh_host_alias
 from ..validation import SSHConnectionValidator
 from .models import (
     ConnectionRecord,
@@ -215,7 +216,12 @@ class ConnectionService:
         errors: List[str] = []
         if not nickname:
             errors.append("Connection name is required")
-        elif nickname.lower() in {n.lower() for n in self.existing_nicknames()}:
+        else:
+            try:
+                validate_ssh_host_alias(nickname)
+            except ValueError as error:
+                errors.append(str(error))
+        if nickname and nickname.lower() in {n.lower() for n in self.existing_nicknames()}:
             errors.append("Nickname already exists")
         for result in (
             self._validator.validate_hostname(hostname) if hostname else None,
@@ -298,6 +304,10 @@ class ConnectionService:
                 nick = str(payload["nickname"]).strip()
                 if not nick:
                     raise _validation_error("Connection name is required")
+                try:
+                    validate_ssh_host_alias(nick)
+                except ValueError as error:
+                    raise _validation_error(str(error)) from error
                 lowered = nick.lower()
                 for other_id, other in self._connections.items():
                     if other_id != connection_id and other.nickname.lower() == lowered:

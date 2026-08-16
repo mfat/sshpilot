@@ -246,6 +246,53 @@ def test_filelisteditor_defers_passphrase_when_unlocked(monkeypatch):
     assert ed.pending_passphrase_operations() == [('store', '/k', 'secret')]
 
 
+def test_unchanged_loaded_passphrase_is_not_reverified_on_save():
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._verify = lambda *_args: (_ for _ in ()).throw(
+        AssertionError("unchanged passphrase must not be reverified")
+    )
+    entry = DummyEntry("stored-secret")
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=entry,
+        _pass_path="/k",
+        _pass_norm="/k",
+        _pass_initial="stored-secret",
+    )]
+
+    assert ed._commit_passphrase(entry, "/k", "/k") is True
+    assert ed.pending_passphrase_operations() == []
+
+
+def test_new_passphrase_is_still_rejected_when_verification_fails():
+    from sshpilot.connection_dialog import FileListEditor
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._with_passphrase = True
+    ed._verify = lambda *_args: False
+    entry = DummyEntry("new-secret")
+    ed._rows = [types.SimpleNamespace(
+        _pass_entry=entry,
+        _pass_path="/k",
+        _pass_norm="/k",
+        _pass_initial="old-secret",
+    )]
+
+    assert ed._commit_passphrase(entry, "/k", "/k") is False
+    assert ed.pending_passphrase_operations() is None
+
+
+def test_key_discovery_does_not_construct_default_manager_before_mode_confirmation():
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = types.SimpleNamespace(
+        client=object(), key_manager=None, _confirmed_operation_mode=None
+    )
+
+    assert dialog._discover_disk_keys() == []
+
+
 def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
     import sshpilot.secret_unlock_dialog as unlock_dialog
@@ -253,6 +300,9 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
     calls = []
 
     class Client:
+        def get_capabilities(self):
+            return types.SimpleNamespace(supports=lambda _capability: True)
+
         def store_connection_password(self, request):
             calls.append(('password', request.password))
             return True
@@ -301,7 +351,7 @@ def test_connection_secret_save_runs_backend_io_in_worker(monkeypatch):
                 selected_backend='bitwarden', needs_unlock=False, login_required=False
             )
         ),
-        _daemon_mode_active=lambda: True,
+        _daemon_ready=lambda: True,
     )
     dialog.key_editor = types.SimpleNamespace(
         pending_passphrase_operations=lambda: [('store', '/key', 'key-secret')])
@@ -362,6 +412,9 @@ def test_daemon_key_passphrase_save_uses_protected_key_manager(monkeypatch):
             return True
 
     class Client:
+        def get_capabilities(self):
+            return types.SimpleNamespace(supports=lambda _capability: True)
+
         def store_connection_password(self, _request):
             return True
 
@@ -399,7 +452,7 @@ def test_daemon_key_passphrase_save_uses_protected_key_manager(monkeypatch):
         client=Client(),
         client_bridge=object(),
         key_manager=KeyManager(),
-        _daemon_mode_active=lambda: True,
+        _daemon_ready=lambda: True,
     )
     dialog = ConnectionDialog.__new__(ConnectionDialog)
     dialog.parent_window = parent
@@ -437,6 +490,9 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
     import sshpilot.secret_unlock_dialog as unlock_dialog
 
     class Client:
+        def get_capabilities(self):
+            return types.SimpleNamespace(supports=lambda _capability: True)
+
         def store_connection_password(self, _request):
             return True
 
@@ -477,7 +533,7 @@ def test_deleting_unstored_password_is_not_an_error(monkeypatch):
                 selected_backend='bitwarden', needs_unlock=False, login_required=False
             )
         ),
-        _daemon_mode_active=lambda: True,
+        _daemon_ready=lambda: True,
     )
     dialog._save_mutation_result = types.SimpleNamespace(connection_id='conn-1')
     dialog.key_editor = None
@@ -607,7 +663,7 @@ def test_daemon_editor_loads_password_from_protected_reveal(monkeypatch):
         connection_manager=object(),  # read-only projection, no secret access
         client=client,
         client_bridge=Bridge(),
-        _daemon_mode_active=lambda: True,
+        _daemon_ready=lambda: True,
     )
 
     dialog = ConnectionDialog.__new__(ConnectionDialog)
@@ -647,52 +703,25 @@ def test_daemon_editor_loads_password_from_protected_reveal(monkeypatch):
     assert dialog._orig_password == "hunter2"
 
 
-def test_local_editor_loads_password_from_manager(monkeypatch):
-    import sshpilot.connection_dialog as dialog_module
-
+def test_unavailable_editor_does_not_read_password_from_projection_manager():
     class Manager:
-        def get_connection_password(self, connection):
-            return "local-secret"
+        def get_connection_password(self, _connection):
+            raise AssertionError("frontend manager secret lookup is obsolete")
 
     parent = types.SimpleNamespace(
         connection_manager=Manager(),
         client=None,
         client_bridge=None,
-        _daemon_mode_active=lambda: False,
+        _daemon_ready=lambda: False,
     )
-
     dialog = ConnectionDialog.__new__(ConnectionDialog)
     dialog.parent_window = parent
-    dialog.connection = types.SimpleNamespace(
-        nickname="web", username="root",
-    )
+    dialog.connection = types.SimpleNamespace(nickname="web", username="root")
     dialog.password_row = DummyEntry("")
-
-    idle_calls = []
-    pending_threads = []
-
-    class DeferredThread:
-        def __init__(self, target, daemon=False):
-            self.target = target
-
-        def start(self):
-            pending_threads.append(self)
-
-    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
-    monkeypatch.setattr(
-        dialog_module.GLib,
-        "idle_add",
-        lambda callback, *args: idle_calls.append((callback, args)),
-    )
 
     dialog._load_password_async()
 
-    assert len(pending_threads) == 1
-    pending_threads[0].target()
-    callback, (pw,) = idle_calls[0]
-    callback(pw)
-    assert dialog.password_row.get_text() == "local-secret"
-    assert dialog._orig_password == "local-secret"
+    assert dialog.password_row.get_text() == ""
 
 
 def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
@@ -715,7 +744,7 @@ def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
         connection_manager=object(),  # read-only projection, no secret access
         client=client,
         client_bridge=Bridge(),
-        _daemon_mode_active=lambda: True,
+        _daemon_ready=lambda: True,
     )
 
     ed = FileListEditor.__new__(FileListEditor)
@@ -756,51 +785,25 @@ def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
     assert row._pass_saved is True
 
 
-def test_local_editor_loads_passphrase_from_manager(monkeypatch):
-    import sshpilot.connection_dialog as dialog_module
+def test_unavailable_editor_does_not_read_passphrase_from_projection_manager():
     from sshpilot.connection_dialog import FileListEditor
 
     class Manager:
-        def get_key_passphrase(self, key_path):
-            return "local-key-secret"
+        def get_key_passphrase(self, _key_path):
+            raise AssertionError("frontend manager secret lookup is obsolete")
 
     parent = types.SimpleNamespace(
         connection_manager=Manager(),
         client=None,
         client_bridge=None,
-        _daemon_mode_active=lambda: False,
+        _daemon_ready=lambda: False,
     )
-
     ed = FileListEditor.__new__(FileListEditor)
     ed._connection_manager = parent.connection_manager
     ed._parent_window = parent
-
     entry = DummyEntry("")
     row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry)
-    norm = "/home/demo/.ssh/id_ed25519"
 
-    idle_calls = []
-    pending_threads = []
+    ed._load_passphrase_async(entry, row, "/home/demo/.ssh/id_ed25519")
 
-    class DeferredThread:
-        def __init__(self, target, daemon=False):
-            self.target = target
-
-        def start(self):
-            pending_threads.append(self)
-
-    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
-    monkeypatch.setattr(
-        dialog_module.GLib,
-        "idle_add",
-        lambda callback, *args: idle_calls.append((callback, args)),
-    )
-
-    ed._load_passphrase_async(entry, row, norm)
-
-    assert len(pending_threads) == 1
-    pending_threads[0].target()
-    callback, (value,) = idle_calls[0]
-    callback(value)
-    assert entry.get_text() == "local-key-secret"
-    assert row._pass_initial == "local-key-secret"
+    assert entry.get_text() == ""

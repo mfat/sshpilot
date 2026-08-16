@@ -149,6 +149,41 @@ def test_plugin_connection_payload_round_trips_through_daemon(daemon_factory):
     client.close()
 
 
+def test_external_terminal_launch_is_advertised_and_reaches_daemon_handler(
+    daemon_factory,
+):
+    server, manager = daemon_factory(start=False)
+
+    class LaunchProvider:
+        def prepare_terminal_launch(
+            self,
+            connection_id,
+            *,
+            interaction_policy="none",
+            remote_command=None,
+            force_tty=False,
+        ):
+            assert str(connection_id) == "demo"
+            assert interaction_policy == "none"
+            return ("/usr/bin/ssh", "demo"), {"SSH_AUTH_SOCK": "/run/agent.sock"}
+
+    server._core_factory = lambda: ConnectionApplicationService(
+        manager,
+        launch_provider=LaunchProvider(),
+        client_name="sshpilotd",
+        allow_cross_thread_commands=True,
+    )
+    server.start_in_thread()
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        assert Capability.EXTERNAL_TERMINAL_LAUNCH in client.get_capabilities().supported
+        spec = client.prepare_external_terminal_launch("demo")
+        assert spec.argv == ("/usr/bin/ssh", "demo")
+        assert spec.environment == (("SSH_AUTH_SOCK", "/run/agent.sock"),)
+    finally:
+        client.close()
+
+
 def test_duplicate_connection_routes_through_daemon_owner(daemon_factory):
     server, manager = daemon_factory()
     client = DaemonClient(socket_path=server.socket_path)

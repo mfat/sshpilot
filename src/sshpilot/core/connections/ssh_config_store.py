@@ -327,6 +327,11 @@ class SshConfigStore:
     def root_path(self) -> Path:
         return self._root_path
 
+    @property
+    def isolated(self) -> bool:
+        """Whether this daemon-owned store represents the isolated scope."""
+        return self._isolated
+
     # -- loading -----------------------------------------------------------
 
     def load(self) -> LoadedSshConfiguration:

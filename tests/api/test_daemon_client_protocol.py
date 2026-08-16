@@ -12,6 +12,8 @@ from sshpilot.api.models import (
 )
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION
 from sshpilot.api.transport import (
+    ErrorData,
+    ErrorResponseEnvelope,
     EventEnvelope,
     SuccessResponseEnvelope,
     decode_envelope,
@@ -120,6 +122,11 @@ def _connected_protocol_server(
             )
             assert release.wait(2)
             action(peer)
+        except (EOFError, OSError):
+            # A client that rejects the handshake closes deliberately; the
+            # helper must not turn that expected protocol outcome into an
+            # unhandled background-thread warning.
+            return
         finally:
             peer.close()
             listener.close()
@@ -151,6 +158,37 @@ def test_daemon_client_rejects_unknown_response_id(tmp_path):
         DaemonClient(socket_path=socket_path)
 
     assert caught.value.code is ErrorCode.PROTOCOL_ERROR
+    thread.join(2)
+
+
+def test_daemon_client_surfaces_unsolicited_protocol_rejection(tmp_path):
+    socket_path = tmp_path / "protocol-rejection.sock"
+
+    def _action(peer):
+        peer.sendall(
+            encode_frame(
+                encode_envelope(
+                    ErrorResponseEnvelope(
+                        "1.0",
+                        "protocol",
+                        ErrorData(
+                            ErrorCode.PROTOCOL_ERROR,
+                            "The binary terminal frame is not permitted",
+                        ),
+                    )
+                )
+            )
+        )
+
+    thread, release = _connected_protocol_server(socket_path, _action)
+    client = DaemonClient(socket_path=socket_path, client_version="test")
+    failures = []
+    client.set_on_transport_lost(failures.append)
+    release.set()
+    assert _wait_until(lambda: bool(failures))
+    assert failures[0].code is ErrorCode.PROTOCOL_ERROR
+    assert "binary terminal frame" in failures[0].message
+    client.close()
     thread.join(2)
 
 
@@ -187,9 +225,10 @@ def test_daemon_client_accepts_event_envelopes_without_confusing_correlation(tmp
                 "core_version": "test",
                 "selected_protocol_version": "1.0",
                 "daemon_capabilities": ["connections.read"],
-                "compatibility_status": "compatible",
-                "server_instance_id": "server-1",
-            },
+                    "compatibility_status": "compatible",
+                    "server_instance_id": "server-1",
+                    "api_implementation_version": API_IMPLEMENTATION_VERSION,
+                },
         )
         peer.sendall(
             encode_frame(encode_envelope(event))
@@ -328,8 +367,6 @@ def test_group_place_rejected_when_daemon_api_implementation_is_older(tmp_path):
     ``groups.place`` RPC, which old strict daemons would not recognize, so the
     write is rejected client-side with the canonical restart error before any
     wire request is sent — no retry, no local fallback."""
-    from sshpilot.api.models.connection_store import GroupId, PlaceGroupRequest
-
     old_api = "0.16"
     assert old_api != API_IMPLEMENTATION_VERSION
 
@@ -340,7 +377,7 @@ def test_group_place_rejected_when_daemon_api_implementation_is_older(tmp_path):
         peer.settimeout(0.5)
         try:
             requests.append(decode_envelope(receive_frame(peer)))
-        except TimeoutError:
+        except (TimeoutError, EOFError):
             pass
 
     thread, release = _connected_protocol_server(
@@ -354,24 +391,13 @@ def test_group_place_rejected_when_daemon_api_implementation_is_older(tmp_path):
             "connections.groups",
         ],
     )
-    client = DaemonClient(socket_path=socket_path, client_version="test")
-    release.set()
-
     with pytest.raises(SshPilotError) as caught:
-        client.place_group(
-            PlaceGroupRequest(
-                group_id=GroupId("g"),
-                parent_id=None,
-                index=0,
-                expected_generation=1,
-            )
-        )
+        DaemonClient(socket_path=socket_path, client_version="test")
     assert caught.value.code is ErrorCode.API_VERSION_MISMATCH
-    assert caught.value.retryable is False
+    release.set()
 
     thread.join(2)
     assert requests == []
-    client.close()
 
 
 def test_recursive_remove_rejected_when_daemon_api_implementation_is_older(tmp_path):
@@ -382,8 +408,6 @@ def test_recursive_remove_rejected_when_daemon_api_implementation_is_older(tmp_p
     RPC, which old strict daemons would not recognize, so the recursive write
     is rejected client-side with the canonical restart error before any wire
     request is sent."""
-    from sshpilot.api.models.operations import SftpPathRequest
-
     old_api = "0.18"
     assert old_api != API_IMPLEMENTATION_VERSION
 
@@ -408,26 +432,17 @@ def test_recursive_remove_rejected_when_daemon_api_implementation_is_older(tmp_p
             "sftp.mutate",
         ],
     )
-    client = DaemonClient(socket_path=socket_path, client_version="test")
-    release.set()
-
     with pytest.raises(SshPilotError) as caught:
-        client.sftp_remove(
-            SftpPathRequest(service_id="sftp-1", path="/tree", recursive=True)
-        )
+        DaemonClient(socket_path=socket_path, client_version="test")
     assert caught.value.code is ErrorCode.API_VERSION_MISMATCH
-    assert caught.value.retryable is False
+    release.set()
 
     thread.join(2)
     assert requests == []
-    client.close()
 
 
-def test_non_recursive_remove_allowed_when_daemon_api_implementation_is_older(tmp_path):
-    """A plain ``sftp.remove`` (no ``recursive`` field) stays compatible with an
-    old API implementation: only the recursive write introduces a new wire
-    field, so only that write is gated."""
-    from sshpilot.api.models.operations import SftpPathRequest
+def test_non_recursive_remove_also_requires_a_current_daemon(tmp_path):
+    """All normal RPCs stop at the explicit stale-daemon boundary."""
     from sshpilot.api.transport import decode_envelope
 
     old_api = "0.18"
@@ -459,13 +474,10 @@ def test_non_recursive_remove_allowed_when_daemon_api_implementation_is_older(tm
             "sftp.mutate",
         ],
     )
-    client = DaemonClient(socket_path=socket_path, client_version="test")
+    with pytest.raises(SshPilotError) as caught:
+        DaemonClient(socket_path=socket_path, client_version="test")
+    assert caught.value.code is ErrorCode.API_VERSION_MISMATCH
     release.set()
 
-    client.sftp_remove(SftpPathRequest(service_id="sftp-1", path="/file"))
-
     thread.join(2)
-    assert len(requests) == 1
-    assert requests[0].method == "sftp.remove"
-    assert "recursive" not in requests[0].params
-    client.close()
+    assert requests == []

@@ -38,6 +38,9 @@ from .models.common import (
 from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
+    EffectiveConfigComparison,
+    UnsavedHostCheckRequest,
+    UnsavedHostCheckResult,
     ConnectionMutationResult,
     ConnectionSummary,
     CreateConnectionRequest,
@@ -47,6 +50,7 @@ from .models.connections import (
     DeleteKeyPassphraseRequest,
     SaveSshConfigTextRequest,
     StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
     StoreKeyPassphraseRequest,
     SshConfigText,
     UpdateConnectionRequest,
@@ -69,6 +73,8 @@ from .models.daemon import (
     RestartDaemonRequest,
     SetDaemonLogLevelRequest,
     StopDaemonRequest,
+    OperationModeResult,
+    SetOperationModeRequest,
 )
 from .models.interactions import (
     InteractionClaim,
@@ -130,6 +136,7 @@ from .models.sessions import (
 from .models.terminal import (
     BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
+    ExternalTerminalLaunchSpec,
     ReleaseTerminalInputRequest,
     ReplayRequest,
     ReplayResult,
@@ -165,6 +172,10 @@ from .transport.codec import (
     close_sftp_request_to_wire,
     connection_details_from_wire,
     connection_editor_details_from_wire,
+    effective_config_comparison_from_wire,
+    unsaved_host_check_request_to_wire,
+    unsaved_host_check_result_from_wire,
+    external_terminal_launch_spec_from_wire,
     connection_summary_from_wire,
     ssh_config_text_from_wire,
     connection_store_snapshot_from_wire,
@@ -173,6 +184,8 @@ from .transport.codec import (
     daemon_diagnostics_from_wire,
     daemon_status_from_wire,
     daemon_stop_result_from_wire,
+    operation_mode_result_from_wire,
+    set_operation_mode_request_to_wire,
     decode_envelope,
     delete_connection_password_request_to_wire,
     delete_key_passphrase_request_to_wire,
@@ -233,6 +246,7 @@ from .transport.codec import (
     start_transfer_request_to_wire,
     stop_daemon_request_to_wire,
     store_connection_password_request_to_wire,
+    set_session_connection_password_request_to_wire,
     store_key_passphrase_request_to_wire,
     transfer_summary_from_wire,
     add_tag_to_connections_request_to_wire,
@@ -283,6 +297,13 @@ DEFAULT_REQUEST_TIMEOUT = 5.0
 # then run native ssh-keygen.  Keep this narrower than a global timeout change
 # while allowing the daemon's bounded operation to finish normally.
 KEY_GENERATION_REQUEST_TIMEOUT = 185.0
+# Secret-backend RPCs that can block on a protected interaction (master
+# password / 2FA / API key prompt) — see
+# ``SecretBackendService.DEFAULT_SECRET_INTERACTION_TIMEOUT`` (120s) on the
+# daemon side. Without this, the client's 5s default kills the transport
+# while the daemon is legitimately still waiting on the user, which then
+# looks like a dead daemon and drives a reconnect loop that never recovers.
+SECRET_INTERACTION_REQUEST_TIMEOUT = 130.0
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
@@ -296,7 +317,13 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_daemon_diagnostics": Capability.DAEMON_STATUS,
     "get_daemon_status": Capability.DAEMON_STATUS,
     "get_connection_store_snapshot": Capability.CONNECTIONS_READ,
+    "get_effective_config": Capability.CONNECTIONS_CONFIG_READ,
+    "check_unsaved_host": Capability.CONNECTIONS_READ,
+    "set_operation_mode": Capability.OPERATION_MODE,
+    "get_operation_mode": Capability.OPERATION_MODE,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
+    "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "set_group_color": Capability.CONNECTIONS_GROUPS,
     "place_group": Capability.CONNECTIONS_GROUPS,
@@ -324,6 +351,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "respond_to_interaction": Capability.INTERACTIONS_RESPOND,
     "send_interaction_secret": Capability.INTERACTIONS_RESPOND,
     "has_connection_password": Capability.CONNECTIONS_SECRETS_STATUS_READ,
+    "set_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "has_key_passphrase": Capability.CONNECTIONS_SECRETS_STATUS_READ,
     "reveal_connection_password": Capability.CONNECTIONS_SECRETS_REVEAL,
     "reveal_key_passphrase": Capability.CONNECTIONS_SECRETS_REVEAL,
@@ -690,6 +718,31 @@ class DaemonClient:
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection editor details")
 
+    def get_effective_config(
+        self, connection_id: ConnectionId
+    ) -> EffectiveConfigComparison:
+        self._require_capability(Capability.CONNECTIONS_CONFIG_READ)
+        result = self._request("connections.get_effective_config", {"connection_id": connection_id})
+        try:
+            return effective_config_comparison_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned invalid effective SSH configuration")
+
+    def check_unsaved_host(
+        self, request: UnsavedHostCheckRequest
+    ) -> UnsavedHostCheckResult:
+        self._require_capability(Capability.CONNECTIONS_READ)
+        if type(request) is not UnsavedHostCheckRequest:
+            raise TypeError("request must be an UnsavedHostCheckRequest instance")
+        result = self._request(
+            "connections.check_unsaved_host",
+            unsaved_host_check_request_to_wire(request),
+        )
+        try:
+            return unsaved_host_check_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid destination check")
+
     def get_ssh_config_text(self) -> SshConfigText:
         """Load the daemon-selected active SSH config text for the raw editor."""
 
@@ -699,6 +752,21 @@ class DaemonClient:
             return ssh_config_text_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid SSH config text")
+
+    def prepare_external_terminal_launch(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        self._require_capability(Capability.EXTERNAL_TERMINAL_LAUNCH)
+        result = self._request(
+            "connections.prepare_external_terminal_launch",
+            {"connection_id": connection_id},
+        )
+        try:
+            return external_terminal_launch_spec_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol(
+                "The daemon returned an invalid external terminal launch spec"
+            )
 
     def save_ssh_config_text(self, request: SaveSshConfigTextRequest) -> SshConfigText:
         """Save raw SSH config text through the daemon's hardened write path."""
@@ -790,13 +858,57 @@ class DaemonClient:
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
         self._require_write_compatibility("store password")
         self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        payload = store_connection_password_request_to_wire(request)
+        password = bytearray(request.password.encode("utf-8"))
+        payload.pop("password", None)
         result = self._request(
             "connections.store_password",
-            store_connection_password_request_to_wire(request),
+            payload,
             mutation_connection_id=request.connection_id,
+            mutation_description="store password",
+            secret_input=password,
         )
         if type(result) is not bool:
             self._fail_protocol("The daemon returned an invalid password store result")
+        return result
+
+    def set_session_connection_password(
+        self,
+        request: SetSessionConnectionPasswordRequest,
+        password: bytearray,
+    ) -> bool:
+        self._require_write_compatibility("set session password")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        if type(request) is not SetSessionConnectionPasswordRequest:
+            raise TypeError("a session connection password request is required")
+        if type(password) is not bytearray:
+            raise TypeError("session password must be a bytearray")
+        result = self._request(
+            "connections.set_session_password",
+            set_session_connection_password_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+            mutation_description="set session password",
+            secret_input=password,
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid session password result")
+        return result
+
+    def clear_session_connection_password(
+        self, request: SetSessionConnectionPasswordRequest
+    ) -> bool:
+        self._require_write_compatibility("clear session password")
+        self._require_capability(Capability.CONNECTIONS_SECRETS_WRITE)
+        if type(request) is not SetSessionConnectionPasswordRequest:
+            raise TypeError("a session connection password request is required")
+        result = self._request(
+            "connections.clear_session_password",
+            set_session_connection_password_request_to_wire(request),
+            mutation_connection_id=request.connection_id,
+            mutation_description="clear session password",
+        )
+        if type(result) is not bool:
+            self._fail_protocol("The daemon returned an invalid session password clear result")
         return result
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:
@@ -1094,6 +1206,30 @@ class DaemonClient:
             return daemon_diagnostics_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid diagnostics")
+
+    def set_operation_mode(
+        self, request: SetOperationModeRequest
+    ) -> OperationModeResult:
+        self._require_capability(Capability.OPERATION_MODE)
+        result = self._request(
+            "daemon.set_operation_mode",
+            set_operation_mode_request_to_wire(request),
+        )
+        try:
+            return operation_mode_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid operation mode result")
+
+    def get_operation_mode(self) -> OperationModeResult:
+        self._require_capability(Capability.OPERATION_MODE)
+        result = self._request("daemon.get_operation_mode", {})
+        try:
+            return operation_mode_result_from_wire(result)
+        except (TypeError, ValueError) as error:
+            self._fail_protocol(
+                "The daemon returned an invalid operation mode status: "
+                f"{error}"
+            )
 
     def set_daemon_log_level(self, request: SetDaemonLogLevelRequest) -> None:
         self._require_capability(Capability.DAEMON_CONTROL)
@@ -1679,7 +1815,9 @@ class DaemonClient:
 
     def unlock_secrets(self):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.unlock", {})
+        result = self._request(
+            "secrets.unlock", {}, request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT
+        )
         try:
             from sshpilot.api.transport.codec import secret_unlock_result_from_wire
 
@@ -1722,7 +1860,11 @@ class DaemonClient:
         params = {"email": email or ""}
         if twofa_method:
             params["twofa_method"] = twofa_method
-        result = self._request("secrets.bitwarden.login", params)
+        result = self._request(
+            "secrets.bitwarden.login",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1732,7 +1874,11 @@ class DaemonClient:
 
     def bitwarden_api_key_login(self, client_id: str):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.bitwarden.api_key_login", {"client_id": client_id or ""})
+        result = self._request(
+            "secrets.bitwarden.api_key_login",
+            {"client_id": client_id or ""},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1745,7 +1891,11 @@ class DaemonClient:
         params = {}
         if identifier:
             params["identifier"] = identifier
-        result = self._request("secrets.bitwarden.sso_login", params)
+        result = self._request(
+            "secrets.bitwarden.sso_login",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1755,7 +1905,11 @@ class DaemonClient:
 
     def bitwarden_unlock(self):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.bitwarden.unlock", {})
+        result = self._request(
+            "secrets.bitwarden.unlock",
+            {},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1817,7 +1971,9 @@ class DaemonClient:
 
     def rbw_unlock(self):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.rbw.unlock", {})
+        result = self._request(
+            "secrets.rbw.unlock", {}, request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT
+        )
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
 
@@ -1851,7 +2007,11 @@ class DaemonClient:
         params = {"path": path or ""}
         if keyfile:
             params["keyfile"] = keyfile
-        result = self._request("secrets.keepassxc.create_database", params)
+        result = self._request(
+            "secrets.keepassxc.create_database",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
 
@@ -1862,7 +2022,11 @@ class DaemonClient:
     def keepassxc_unlock(self):
         """Unlock the selected KeePass database. The daemon prompts for the password."""
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.keepassxc.unlock", {})
+        result = self._request(
+            "secrets.keepassxc.unlock",
+            {},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
 
@@ -1883,7 +2047,11 @@ class DaemonClient:
     def remember_master_password(self):
         """Save the selected vault's master password in the OS keyring."""
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.remember_master_password", {})
+        result = self._request(
+            "secrets.remember_master_password",
+            {},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
 
@@ -2728,6 +2896,19 @@ class DaemonClient:
         self._daemon_started_at = handshake.daemon_started_at
         self._development_revision = handshake.development_revision
         self._daemon_api_implementation_version = handshake.api_implementation_version
+        from .errors import DaemonRestartRequiredError
+        from .version import API_IMPLEMENTATION_VERSION
+        if handshake.api_implementation_version != API_IMPLEMENTATION_VERSION:
+            # A resident daemon from the previous implementation can speak
+            # Protocol v1 while disagreeing about protected-input and DTO
+            # contracts. Reject it before normal RPCs; never downgrade a
+            # secret operation or select a frontend backend.
+            error = DaemonRestartRequiredError(
+                "The background daemon uses an incompatible API implementation. "
+                "Restart the daemon/application before continuing."
+            )
+            self._fail_transport(error)
+            raise error
         capabilities = self._request("system.get_capabilities", {})
         try:
             self._capabilities = capabilities_from_wire(capabilities)
@@ -3030,6 +3211,17 @@ class DaemonClient:
             expected_version = self._selected_protocol_version or PROTOCOL_VERSION
             if envelope.protocol_version != expected_version:
                 self._fail_protocol_from_reader("The daemon response uses an unexpected protocol")
+                return
+            if (
+                isinstance(envelope, ErrorResponseEnvelope)
+                and str(envelope.request_id) == "protocol"
+            ):
+                # The daemon uses the reserved request id for an unsolicited
+                # protocol rejection. Surface its sanitized explanation
+                # instead of treating it as an unrelated unknown response.
+                self._fail_protocol_from_reader(
+                    f"{envelope.error.code.value}: {envelope.error.message}"
+                )
                 return
             with self._state_lock:
                 pending = self._pending_requests.pop(

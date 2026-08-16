@@ -65,13 +65,12 @@ control RPC cannot stall GTK behind welcome `connections.list`.
 ## Client selection and startup
 
 The production application uses the daemon client for backend operations.
-`SSHPILOT_CLIENT_MODE` is a process-local compatibility/diagnostic override;
-an explicit in-process client is limited to its advertised compatibility/test
-surface and does not provide a frontend remote-operation backend.
+Production client selection is daemon-only. Test harnesses may compose core
+services directly, but that composition is not a frontend backend or a
+runtime selection mode.
 
 ```bash
-SSHPILOT_CLIENT_MODE=daemon python3 run.py
-SSHPILOT_CLIENT_MODE=in_process python3 run.py   # explicit; wins over Stage C
+python3 run.py
 ```
 
 The environment value is not persisted as an application preference. A daemon
@@ -194,7 +193,7 @@ race-hardened activation path.
 
 ## Connection event forwarding
 
-The daemon subscribes once to the existing `InProcessClient` event publisher,
+The daemon subscribes once to the existing connection event publisher,
 which already maps manager signals into typed, secret-free
 `ConnectionSummary` payloads. The transport does not subscribe to persistence
 or duplicate DTO mapping.

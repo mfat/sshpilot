@@ -36,8 +36,8 @@ class TerminalManager:
             except Exception:
                 logger.error("Failed to align terminal backend", exc_info=True)
 
-    def refresh_backends(self) -> None:
-        """Ensure all existing terminals use the configured backend."""
+    def _iter_all_terminals(self):
+        """Every known terminal widget, de-duplicated (connection map, active map, tab view)."""
         seen = set()
         collections = []
         connection_terms = getattr(self.window, "connection_to_terminals", None)
@@ -50,8 +50,8 @@ class TerminalManager:
             for term in list(group):
                 if term in seen:
                     continue
-                self._ensure_backend_alignment(term)
                 seen.add(term)
+                yield term
         tab_view = getattr(self.window, "tab_view", None)
         if tab_view is not None and hasattr(tab_view, "get_n_pages"):
             try:
@@ -62,10 +62,31 @@ class TerminalManager:
                     term = page.get_child()
                     if term is None or term in seen:
                         continue
-                    self._ensure_backend_alignment(term)
                     seen.add(term)
+                    yield term
             except Exception:
-                logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
+                logger.debug("Failed to iterate tab view while enumerating terminals", exc_info=True)
+
+    def refresh_backends(self) -> None:
+        """Ensure all existing terminals use the configured backend."""
+        for term in self._iter_all_terminals():
+            self._ensure_backend_alignment(term)
+
+    def rebind_client(self, client) -> None:
+        """Push a replaced daemon client into every live terminal's session controller.
+
+        The daemon owns session/attachment state across a transport reconnect —
+        only each terminal's cached client handle needs to move. Without this,
+        a deferred callback for an in-flight terminal (e.g. a session-opened
+        success racing the old transport's shutdown) still calls through the
+        closed old client and raises "The client is closed" uncaught."""
+        for term in self._iter_all_terminals():
+            rebind = getattr(term, "rebind_daemon_client", None)
+            if callable(rebind):
+                try:
+                    rebind(client)
+                except Exception:
+                    logger.error("Failed to rebind terminal to new daemon client", exc_info=True)
 
     # Connecting/disconnecting hosts
     def _maybe_unlock_secrets_then(self, retry, _allow_reprompt: bool = True) -> bool:
@@ -834,11 +855,6 @@ class TerminalManager:
         if response_id == "disconnect" and connection in window.active_terminals:
             terminal = window.active_terminals[connection]
             terminal.disconnect()
-            if getattr(window, "_pending_delete_connection", None) is connection:
-                try:
-                    window.connection_manager.remove_connection(connection)
-                finally:
-                    window._pending_delete_connection = None
 
     def disconnect_from_host(self, connection):
         window = self.window
@@ -1207,7 +1223,9 @@ class TerminalManager:
             if not data.get(CLI_CONNECT_FLAG):
                 return
 
-            from .unsaved_host import SavePromptDismissals, is_unsaved_host
+            from .api.connection_identity import connection_id_for
+            from .api.models.connections import UnsavedHostCheckRequest
+            from .unsaved_host import SavePromptDismissals, connection_destination
 
             window = self.window
             app = window.get_application() if hasattr(window, "get_application") else None
@@ -1217,35 +1235,78 @@ class TerminalManager:
                 if app is not None:
                     app.save_prompt_dismissals = dismissals
 
-            mgr = getattr(window, "connection_manager", None)
-            cfg_path = getattr(mgr, "ssh_config_path", None) if mgr else None
-            if dismissals.is_connection_dismissed(connection, config_file=cfg_path):
+            hostname, username = connection_destination(connection)
+            if dismissals.is_dismissed(hostname, username):
                 return
-            if not is_unsaved_host(connection, mgr, config_file=cfg_path):
+            if (getattr(connection, "protocol", "ssh") or "ssh") != "ssh":
                 return
 
-            def _on_save(term):
+            bridge = getattr(window, "client_bridge", None)
+            client = getattr(window, "client", None)
+            if bridge is None or client is None:
+                window._show_daemon_unavailable_dialog()
+                return
+            # A CLI-created projection receives ``id == nickname`` for UI
+            # compatibility, but that is not a durable daemon identity.  Do
+            # not let a hostname-shaped nickname short-circuit the
+            # authoritative host/user comparison.
+            if data.get(CLI_CONNECT_FLAG):
+                stored_id = None
+            else:
                 try:
-                    window.show_connection_dialog(term.connection, as_new=True)
+                    stored_id = connection_id_for(connection)
                 except Exception:
-                    logger.debug("Failed to open save connection dialog", exc_info=True)
+                    stored_id = None
 
-            def _on_dismiss(term):
-                try:
-                    dismissals.dismiss_connection(term.connection, config_file=cfg_path)
-                except Exception:
-                    logger.debug("Failed to record save-prompt dismissal", exc_info=True)
+            request = UnsavedHostCheckRequest(
+                hostname=hostname,
+                username=username,
+                connection_id=stored_id,
+                port=(
+                    int(getattr(connection, "port", 22) or 22)
+                    if bool(data.get("port_explicit"))
+                    else None
+                ),
+                protocol=str(getattr(connection, "protocol", "ssh") or "ssh"),
+                proxy_jump=tuple(getattr(connection, "proxy_jump", ()) or ()),
+            )
 
-            if hasattr(terminal, "show_save_connection_prompt"):
-                # Delay the reveal so the revealer is mapped by the time it
-                # fires; otherwise GTK skips the slide-up animation.
-                from gi.repository import GLib
+            def _after_check(result):
+                if result.saved:
+                    return
 
-                def _reveal():
-                    terminal.show_save_connection_prompt(on_save=_on_save, on_dismiss=_on_dismiss)
-                    return False
+                def _on_save(term):
+                    try:
+                        window.show_connection_dialog(term.connection, as_new=True)
+                    except Exception:
+                        logger.debug("Failed to open save connection dialog", exc_info=True)
 
-                GLib.timeout_add(600, _reveal)
+                def _on_dismiss(term):
+                    try:
+                        dismissals.dismiss_connection(term.connection)
+                    except Exception:
+                        logger.debug("Failed to record save-prompt dismissal", exc_info=True)
+
+                if hasattr(terminal, "show_save_connection_prompt"):
+                    # Delay the reveal so the revealer is mapped by the time it
+                    # fires; otherwise GTK skips the slide-up animation.
+                    from gi.repository import GLib
+
+                    def _reveal():
+                        terminal.show_save_connection_prompt(
+                            on_save=_on_save, on_dismiss=_on_dismiss
+                        )
+                        return False
+
+                    GLib.timeout_add(600, _reveal)
+
+            bridge.submit(
+                lambda: client.check_unsaved_host(request),
+                on_success=_after_check,
+                on_error=lambda error: logger.info(
+                    "Optional unsaved-host check skipped after daemon error: %s", error
+                ),
+            )
         except Exception:
             logger.debug("Save-connection offer skipped", exc_info=True)
 

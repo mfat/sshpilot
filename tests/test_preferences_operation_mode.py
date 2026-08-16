@@ -1,16 +1,9 @@
-"""Operation-mode (isolated SSH config) toggle regression tests.
-
-The legacy in-process ``ConnectionManager.set_isolated_mode`` was retired;
-the daemon resolves the SSH config root from ``ssh.use_isolated_config`` only
-when the daemon itself launches. The toggle must persist the setting and, on
-confirming a restart, restart the daemon (so it re-reads the setting) before
-restarting the app — an app-only ``os.execv`` leaves the old daemon running.
-"""
+"""Operation-mode preference tests use the typed daemon API."""
 
 from types import SimpleNamespace
 
 import sshpilot.api.daemon_client as daemon_client_mod
-import sshpilot.platform_utils as platform_utils
+from sshpilot.api.models.daemon import OperationMode
 from sshpilot.preferences import PreferencesWindow
 
 
@@ -20,6 +13,24 @@ class _Radio:
 
     def get_active(self):
         return self._active
+
+    def set_active(self, active):
+        self._active = bool(active)
+
+    def set_sensitive(self, _sensitive):
+        pass
+
+
+class _CallbackRadio(_Radio):
+    def __init__(self, active, callback):
+        super().__init__(active)
+        self._callback = callback
+
+    def set_active(self, active):
+        changed = self._active != bool(active)
+        super().set_active(active)
+        if changed:
+            self._callback(self)
 
 
 class _Button:
@@ -32,7 +43,40 @@ class _Row:
         pass
 
 
-def _make_prefs():
+class _Bridge:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def submit(self, operation, *, on_success, on_error):
+        try:
+            self.requests.append(operation)
+            on_success(operation())
+        except Exception as error:
+            on_error(error)
+
+
+class _ModeClient:
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    def set_operation_mode(self, request):
+        self.requests.append(request)
+        return self.result
+
+    def get_operation_mode(self):
+        return self.result
+
+    def get_capabilities(self):
+        return SimpleNamespace(supports=lambda _capability: True)
+
+
+def _make_prefs(result=None):
+    if result is None:
+        result = SimpleNamespace(
+            accepted=True, active_mode=OperationMode.DEFAULT, message=""
+        )
     recorded = {}
     config = SimpleNamespace(
         set_setting=lambda key, value: recorded.__setitem__(key, value),
@@ -40,47 +84,100 @@ def _make_prefs():
     prefs = PreferencesWindow.__new__(PreferencesWindow)
     prefs.config = config
     prefs.isolated_mode_radio = _Radio(active=True)
+    prefs.default_mode_radio = _Radio(active=False)
     prefs.default_mode_row = _Row()
     prefs.isolated_mode_row = _Row()
-    prefs.restart_bodies = []
-    prefs._prompt_operation_mode_restart = lambda body: prefs.restart_bodies.append(body)
+    prefs.parent_window = SimpleNamespace()
+    prefs.client = _ModeClient(result)
+    prefs.client_bridge = _Bridge(result)
+    prefs.parent_window.client = prefs.client
+    prefs.parent_window.client_bridge = prefs.client_bridge
     prefs._refresh_daemon_status_row = lambda: None
+    prefs._suppress_operation_mode_toggle = False
+    prefs._operation_mode_request_in_flight = False
+    prefs._confirmed_operation_mode = OperationMode.DEFAULT
     return prefs, recorded
 
 
-def test_operation_mode_toggle_persists_setting_and_requests_restart():
-    prefs, recorded = _make_prefs()
+def test_reconnect_reset_is_safe_before_operation_mode_page_is_built():
+    """Preloaded Preferences may not have operation-mode radio widgets yet."""
+    prefs = PreferencesWindow.__new__(PreferencesWindow)
+    prefs._confirmed_operation_mode = OperationMode.ISOLATED
+    prefs._operation_mode_request_in_flight = True
+
+    prefs.reset_operation_mode_confirmation()
+
+    assert prefs._confirmed_operation_mode is None
+    assert prefs._operation_mode_request_in_flight is False
+
+
+def test_operation_mode_toggle_uses_daemon_and_does_not_write_local_mode():
+    result = SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    prefs, recorded = _make_prefs(result)
 
     PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
 
-    assert recorded.get("ssh.use_isolated_config") is True
-    assert prefs.restart_bodies == [
-        "Restart SSH Pilot to fully apply the new operation mode."
-    ]
+    assert recorded == {}
+    assert prefs.client.requests[0].mode is OperationMode.ISOLATED
+    assert prefs.isolated_mode_radio.get_active() is True
 
 
-def test_operation_mode_toggle_does_not_require_legacy_manager_mutation():
-    prefs, recorded = _make_prefs()
-    # The read-only presentation store has no set_isolated_mode; the toggle
-    # must not reach for the retired legacy manager API.
-    prefs.parent_window = SimpleNamespace(
-        connection_manager=SimpleNamespace(),
+def test_operation_mode_failure_restores_frontend_radio_state():
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="sessions are active",
     )
+    prefs, recorded = _make_prefs(result)
 
     PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
 
-    assert recorded.get("ssh.use_isolated_config") is True
-    assert prefs.restart_bodies
+    assert recorded == {}
+    assert prefs.isolated_mode_radio.get_active() is False
+    assert prefs.default_mode_radio.get_active() is True
 
 
-def test_daemon_restart_after_operation_mode_change_restarts_app(monkeypatch):
-    calls = []
-    monkeypatch.setattr(platform_utils, "restart_app", lambda: calls.append("app"))
-    prefs, _ = _make_prefs()
+def test_confirmed_initial_projection_does_not_mutate_mode():
+    prefs, _recorded = _make_prefs(
+        SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    )
+    PreferencesWindow._request_confirmed_operation_mode(prefs)
+    assert prefs.client.requests == []
+    assert prefs.isolated_mode_radio.get_active() is True
 
-    prefs._restart_app_after_mode_change()
 
-    assert calls == ["app"]
+def test_successful_toggle_applies_radio_state_without_a_second_request():
+    prefs, _recorded = _make_prefs(
+        SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    )
+    prefs.isolated_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert len(prefs.client.requests) == 1
+    assert prefs.isolated_mode_radio.get_active() is True
+
+
+def test_rejected_toggle_restoration_does_not_send_compensating_request():
+    prefs, _recorded = _make_prefs(
+        SimpleNamespace(
+            accepted=False,
+            active_mode=OperationMode.DEFAULT,
+            message="sessions are active",
+        )
+    )
+    prefs.parent_window._show_operation_mode_rejection = lambda detail: setattr(
+        prefs, "rejection_detail", detail
+    )
+    prefs.isolated_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert len(prefs.client.requests) == 1
+    assert prefs.default_mode_radio.get_active() is True
+    assert prefs.rejection_detail == "sessions are active"
 
 
 class _FakeDaemonClient:
@@ -99,49 +196,6 @@ class _FakeDaemonClient:
 
     def close(self):
         self.closed = True
-
-
-def test_operation_mode_restart_restarts_daemon_then_app(monkeypatch):
-    app_restarts = []
-    monkeypatch.setattr(platform_utils, "restart_app", lambda: app_restarts.append("app"))
-    fake = _FakeDaemonClient(
-        SimpleNamespace(accepted=True, confirmation=None, will_lose=())
-    )
-    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
-    prefs, _ = _make_prefs()
-
-    prefs._request_daemon_restart(on_complete=prefs._restart_app_after_mode_change)
-
-    assert fake.status_checked is True
-    assert len(fake.restart_calls) == 1
-    assert fake.restart_calls[0].force is False
-    assert fake.closed is True
-    assert app_restarts == ["app"]
-
-
-def test_operation_mode_restart_requires_confirmation_for_live_resources(
-    monkeypatch,
-):
-    # With live resources and no force token, the daemon restart must be held
-    # for confirmation; the app must not restart until the user forces it.
-    app_restarts = []
-    monkeypatch.setattr(platform_utils, "restart_app", lambda: app_restarts.append("app"))
-    fake = _FakeDaemonClient(
-        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
-    )
-    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
-
-    dialog = _DialogStub()
-    monkeypatch.setattr("sshpilot.preferences.Adw.AlertDialog", lambda *a, **kw: dialog)
-    prefs, _ = _make_prefs()
-
-    prefs._request_daemon_restart(on_complete=prefs._restart_app_after_mode_change)
-
-    assert len(fake.restart_calls) == 1
-    assert fake.restart_calls[0].force is False
-    assert fake.closed is True
-    assert dialog.presented is True
-    assert app_restarts == []
 
 
 class _DialogStub:
@@ -165,3 +219,165 @@ class _DialogStub:
 
     def present(self, *a):
         self.presented = True
+
+
+class _AlertDialogStub:
+    """Adw.AlertDialog stand-in that records and lets tests emit responses."""
+
+    def __init__(self):
+        self.presented = False
+        self._response_handlers = []
+
+    def add_response(self, *a):
+        pass
+
+    def set_response_appearance(self, *a):
+        pass
+
+    def set_default_response(self, *a):
+        pass
+
+    def set_close_response(self, *a):
+        pass
+
+    def connect(self, signal, handler, *args):
+        if signal == 'response':
+            self._response_handlers.append((handler, args))
+
+    def present(self, *a):
+        self.presented = True
+
+    def emit_response(self, response, *args):
+        for handler, user_args in self._response_handlers:
+            handler(self, response, *(args + user_args))
+
+
+def _alert_dialog_factory(instances):
+    def _make(*a, **kw):
+        dialog = _AlertDialogStub()
+        instances.append(dialog)
+        return dialog
+
+    return _make
+
+
+def _forced_aware_restart(fake, forced):
+    """Two-phase restart fake: non-force probes return the first result,
+    forced calls return `forced`."""
+    first = fake._restart_result
+
+    def _restart(request):
+        fake.restart_calls.append(request)
+        if request.force:
+            return forced
+        return first
+
+    return _restart
+
+
+def _request_restart_via_force_dialog(monkeypatch, fake, forced=None):
+    """Run ``_request_daemon_restart`` with a live-resources daemon and return
+    the confirmation dialog plus any recorded completions."""
+    if forced is not None:
+        fake.restart_daemon = _forced_aware_restart(fake, forced)
+    completions = []
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+    dialogs = []
+    monkeypatch.setattr(
+        "sshpilot.preferences.Adw.AlertDialog", _alert_dialog_factory(dialogs)
+    )
+    prefs, _ = _make_prefs()
+
+    prefs._request_daemon_restart(on_complete=lambda: completions.append("done"))
+
+    assert dialogs, "expected the live-resources confirmation dialog"
+    return dialogs, completions, fake
+
+
+def test_forced_restart_accepted_runs_completion_once(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+    dialogs, completions, fake = _request_restart_via_force_dialog(
+        monkeypatch,
+        fake,
+        forced=SimpleNamespace(
+            accepted=True, confirmation=None, will_lose=(), message=""
+        ),
+    )
+
+    dialogs[0].emit_response('force')
+
+    assert completions == ["done"]
+    assert len(fake.restart_calls) == 2
+    assert fake.restart_calls[1].force is True
+    assert fake.closed is True
+    assert dialogs[0].presented is True
+
+
+def test_forced_restart_exception_does_not_run_completion(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+
+    def _restart(request):
+        fake.restart_calls.append(request)
+        if request.force:
+            raise RuntimeError("forced restart rpc failed")
+        return SimpleNamespace(
+            accepted=False, confirmation="token", will_lose=("session",)
+        )
+
+    fake.restart_daemon = _restart
+    dialogs, completions, fake = _request_restart_via_force_dialog(monkeypatch, fake)
+
+    dialogs[0].emit_response('force')
+
+    assert completions == []
+    assert len(fake.restart_calls) == 2
+    assert fake.restart_calls[1].force is True
+    assert fake.closed is True
+    # The safe error dialog must be shown, and the confirmation dialog closed.
+    assert len(dialogs) == 2
+    assert dialogs[-1].presented is True
+
+
+def test_forced_restart_rejected_does_not_run_completion(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+    dialogs, completions, fake = _request_restart_via_force_dialog(
+        monkeypatch,
+        fake,
+        forced=SimpleNamespace(
+            accepted=False,
+            confirmation=None,
+            will_lose=(),
+            message="Restart refused",
+        ),
+    )
+
+    dialogs[0].emit_response('force')
+
+    assert completions == []
+    assert len(fake.restart_calls) == 2
+    assert fake.restart_calls[1].force is True
+    assert fake.closed is True
+    assert len(dialogs) == 2
+    assert dialogs[-1].presented is True
+
+
+def test_forced_restart_cancelled_skips_forced_rpc_and_completion(monkeypatch):
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))
+    )
+    dialogs, completions, fake = _request_restart_via_force_dialog(monkeypatch, fake)
+
+    dialogs[0].emit_response('cancel')
+
+    assert completions == []
+    # Only the initial non-force probe ran; no forced restart RPC.
+    assert len(fake.restart_calls) == 1
+    assert fake.restart_calls[0].force is False
+    assert fake.closed is True
+    assert len(dialogs) == 1

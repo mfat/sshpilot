@@ -33,7 +33,7 @@ src/sshpilot/core/
 | `sshpilot.daemon` | Runtime ownership (sessions, transfers, broker) |
 | `sshpilot.platform.*` | OS adapters (libsecret `gi` load is isolated here) |
 | `sshpilot.gtk.*` | GTK contribution surfaces / interaction provider |
-| `sshpilot.connection_manager.ConnectionManager` | GObject adapter over `ConnectionService` |
+| `sshpilot.connection_manager` | Deprecated model-only import shim (`Connection`, `ConnectionState`) |
 | `sshpilot.ssh_connection_builder` | Runtime askpass/env adapter over `core.ssh` |
 | `sshpilot.askpass_utils` | Process askpass helper; classifies via `core.interaction` |
 
@@ -47,13 +47,14 @@ the current API contract see [`docs/api/`](../api/).
 1. Core never displays dialogs or loads GI directly. It is the bottom layer: it
    must not import `sshpilot.daemon` or `sshpilot.gtk`. Core's own coupling to
    compatibility helpers (`config`, `ssh_connection_builder`, `plugins`) is
-   registered debt (`CORE_DEBT`) and is bounded by the dependency ratchet; it
-   must not grow or become a frontend ownership path.
+registered debt (`CORE_DEBT`) and is bounded by the dependency ratchet; it
+must not grow or become a frontend ownership path. The retired stateful
+connection manager is not part of the production composition.
 2. GTK collects input, calls core/API, renders state, maps `CoreError` to Adw UI.
 3. **GTK must not instantiate stateful core services or use core modules to
    perform authoritative I/O.** A module being GTK-free does not mean GTK
    should own an instance of it; the daemon owns all authoritative state and
-   I/O. `ConnectionManager`, `SecretManager`, `KeyService`, the known-hosts
+   I/O. The retired `ConnectionManager`, `SecretManager`, `KeyService`, the known-hosts
    file (M2 **complete** — the editor routes through the daemon client), key
    discovery/generation and `.pub` reads (M1 **complete** — `KeyManager` is a
    client adapter), backup apply, and the SSH command builders are
@@ -90,7 +91,8 @@ Two AST test modules enforce rules 1, 3, 4, 5 and the package direction:
   - core/api/daemon import no UI prefixes,
   - core imports only core/api/runtime_identity/platform.paths (plus `CORE_DEBT`),
   - daemon imports only daemon/api/core/headless helpers (plus `DAEMON_DEBT`),
-    rejecting **GObject adapters** such as `Config`, `ConnectionManager`,
+    rejecting **GObject adapters** such as `Config` and `GroupManager`, plus the
+    retired `ConnectionManager`,
     `GroupManager` and `platform_utils`.
 
 The registries are exact, reviewed architecture exceptions: a new backend

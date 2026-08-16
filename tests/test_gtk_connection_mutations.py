@@ -91,7 +91,7 @@ class _ProjectionWindow:
 
 
 class _MutationWindow:
-    _daemon_mode_active = MainWindow._daemon_mode_active
+    _daemon_ready = MainWindow._daemon_ready
     _rebind_terminals_after_save = MainWindow._rebind_terminals_after_save
     _offer_reconnect_after_edit_save = MainWindow._offer_reconnect_after_edit_save
     _normalise_daemon_editor_value = staticmethod(
@@ -221,6 +221,37 @@ def test_noop_daemon_save_with_active_terminal_prompts_reconnect():
     assert prompts == [expected]
     assert window.active_terminals == {expected: terminal}
     assert terminal.connection is expected
+
+
+def test_noop_daemon_save_supplies_connection_id_for_secret_worker():
+    """A password/passphrase-only edit has no changed config fields, so the
+    fast no-RPC path fires. The secret-save worker still needs an
+    authoritative connection_id from the completion result — without it,
+    ConnectionDialog._store_secrets_then_save raises "Daemon secret save has
+    no authoritative mutation result" (regression: the fast path used to call
+    complete_save(True) with no result at all)."""
+    from sshpilot.api.models.connections import ConnectionMutationResult
+
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    results = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        __changed_fields=(),
+    )
+
+    window._save_connection_via_client(
+        dialog, data, lambda ok, *args, **kwargs: results.append((ok, args))
+    )
+
+    assert len(results) == 1
+    ok, args = results[0]
+    assert ok is True
+    assert args, "completion must receive a mutation result, not just ok=True"
+    mutation_result = args[0]
+    assert isinstance(mutation_result, ConnectionMutationResult)
+    assert mutation_result.connection_id == "demo"
 
 
 def test_daemon_reconnect_matches_authoritative_connection_id():
@@ -707,17 +738,19 @@ def test_new_connection_save_does_not_prompt():
     assert prompts == []
 
 
-def test_local_edit_with_active_terminal_prompts_once():
-    """The in-process (non-daemon) save path offers reconnection too."""
+def test_unavailable_daemon_edit_does_not_mutate_local_state():
+    """A missing daemon rejects SSH save instead of using local persistence."""
     window = _MutationWindow()
-    window._app._api_client_selection = SimpleNamespace(client=None)
+    window.client_bridge = None
     active = _ActiveConn(nickname="demo", id="demo")
     terminal = _TerminalStub(is_connected=True)
     prompts, terminal_manager = _prompt_collector()
     window.active_terminals = {active: terminal}
     window.terminal_manager = terminal_manager
     window.connection_manager = SimpleNamespace(
-        apply_connection_update=lambda conn, data: True,
+        apply_connection_update=lambda conn, data: (_ for _ in ()).throw(
+            AssertionError("local persistence must not run")
+        ),
         get_metadata=lambda name: {},
         refresh=lambda: None,
     )
@@ -734,8 +767,8 @@ def test_local_edit_with_active_terminal_prompts_once():
     window.on_connection_saved(dialog, data, None, None,
                                lambda ok, *a, **k: completed.append(ok))
 
-    assert completed == [True]
-    assert prompts == [active]
+    assert completed == [False]
+    assert prompts == []
 
 
 def test_prompt_reconnect_uses_neutral_wording_and_default_response(monkeypatch):
@@ -844,11 +877,9 @@ def test_daemon_mutation_result_changed_field_controls_prompt():
     assert unchanged.changed is False
 
 
-def test_daemon_mode_detection_matches_current_mode_less_selection():
+def test_daemon_readiness_uses_transport_objects_not_selection_mode():
     window = _MutationWindow()
-    window._app._api_client_selection = SimpleNamespace(client=window.client)
-
-    assert window._daemon_mode_active() is True
+    assert window._daemon_ready() is True
 
 
 def _basic_data(**overrides):
@@ -1594,15 +1625,15 @@ def test_daemon_editor_close_with_retry_scheduled_submits_nothing(monkeypatch):
     assert dialog._editor_load_failed is False
 
 
-def test_daemon_editor_fetch_not_run_outside_daemon_mode():
+def test_daemon_editor_fetch_requires_daemon_transport():
     window = _MutationWindow()
-    window._app._api_client_selection.client = None
+    window.client_bridge = None
     window.client.editor = SimpleNamespace(generation=7)
     dialog = _EditorDialog()
 
     window._fetch_daemon_editor_generation(dialog, SimpleNamespace(nickname="demo"))
 
-    assert window.client_bridge.calls == []
+    assert dialog._daemon_editor_loaded is False
     assert dialog._daemon_generation is None
     assert dialog._daemon_editor_loaded is False
 

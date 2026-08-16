@@ -230,6 +230,18 @@ class DaemonTerminalSessionController:
         """Exit details once the daemon session has exited, if reported."""
         return self._tab_state.exit_info
 
+    def set_client(self, client) -> None:
+        """Rebind to a replaced daemon client after a transport reconnect.
+
+        The daemon owns session/attachment state, so it survives a transport
+        swap — only this controller's client handle needs to move. Without
+        this, a deferred callback that fires after reconnect (e.g. a
+        session-opened success racing the old transport's shutdown) still
+        calls through the closed client and raises "The client is closed"
+        (``subscribe_terminal``/``attach_session`` etc.) uncaught.
+        """
+        self._client = client
+
     def open(
         self,
         connection_id: ConnectionId,
@@ -720,49 +732,6 @@ class DaemonTerminalSessionController:
             "Daemon terminal session operation failed: %s",
             getattr(getattr(error, "code", None), "value", "internal_error"),
         )
-
-
-class LegacyInProcessSshController:
-    """Marker/stub for legacy VTE spawn_async path.
-
-    Legacy path stays entirely in TerminalWidget spawn - this is just a type marker.
-    """
-
-    def __init__(self, connection_id: ConnectionId) -> None:
-        self._connection_id = connection_id
-
-    def open(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    def attach(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    def detach(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    def close(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    def send_input(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    def resize(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    def subscribe_output(self, *args, **kwargs) -> None:
-        raise NotImplementedError("Legacy controller uses VTE spawn_async in TerminalWidget")
-
-    @property
-    def tab_state(self) -> DaemonTerminalTabState:
-        raise NotImplementedError("Legacy controller has no daemon tab state")
-
-    @property
-    def state(self) -> TerminalSessionState:
-        raise NotImplementedError("Legacy controller has no daemon session state")
-
-    @property
-    def input_owner(self) -> bool:
-        raise NotImplementedError("Legacy controller has no daemon input ownership")
 
 
 def required_daemon_terminal_capabilities() -> frozenset[Capability]:

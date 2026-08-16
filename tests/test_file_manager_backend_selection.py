@@ -6,7 +6,6 @@ from tests._fm_harness import _load_file_manager_module
 
 
 def test_factory_rejects_missing_daemon_backend(monkeypatch):
-    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "core_service")
     _load_file_manager_module(monkeypatch)
     import sshpilot.file_manager as fm
     with pytest.raises(RuntimeError, match="daemon SFTP service is required"):

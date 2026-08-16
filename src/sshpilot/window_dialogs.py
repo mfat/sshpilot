@@ -20,8 +20,6 @@ from typing import Any, Optional
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from gettext import gettext as _
 
-from .platform_utils import get_config_dir
-
 logger = logging.getLogger(__name__)
 
 # Minimum content width for export/import backup dialogs.
@@ -371,6 +369,9 @@ def _show_password_passphrase_dialog(
         store_label = default_store_label
     if allow_store is None:
         allow_store = prompt_type in ("password", "passphrase")
+    # Persistence is an explicit daemon/plugin callback. A GTK dialog never
+    # writes a secret through a local manager or secret helper.
+    allow_store = bool(allow_store and on_store is not None)
 
     dialog = Adw.Dialog()
     dialog.set_title(heading)
@@ -456,35 +457,11 @@ def _show_password_passphrase_dialog(
                             on_store(entered)
                         except Exception as e:
                             logger.debug("Failed to store via on_store hook: %s", e)
-                    elif prompt_type == "passphrase" and key_path:
-                        try:
-                            from .askpass_utils import store_passphrase
-                            store_passphrase(key_path, entered)
-                        except Exception as e:
-                            logger.debug("Failed to store passphrase: %s", e)
-                    elif prompt_type == "password" and connection_manager:
-                        try:
-                            if connection is not None and hasattr(
-                                connection_manager, "store_connection_password"
-                            ):
-                                connection_manager.store_connection_password(
-                                    connection, entered, username=username
-                                )
-                            elif host and username:
-                                from .credential_model import canonical_password_host
-                                canonical = canonical_password_host(
-                                    {
-                                        "hostname": host,
-                                        "host": host,
-                                        "username": username,
-                                    }
-                                )
-                                store_host = canonical or host
-                                connection_manager.store_password(
-                                    store_host, username, entered
-                                )
-                        except Exception as e:
-                            logger.debug("Failed to store password: %s", e)
+                    elif prompt_type == "password":
+                        # Secret persistence must be supplied by the daemon
+                        # interaction path via ``on_store``. There is no GTK
+                        # connection-manager fallback.
+                        logger.debug("Password entered without a daemon store callback")
             else:
                 password_result[0] = None
         else:
@@ -1837,11 +1814,9 @@ class WindowConfigDialogsMixin:
                     restore_group.add(row)
                 page.add(restore_group)
 
-            backup_dir = os.path.join(get_config_dir(), 'backups')
             notice_group = Adw.PreferencesGroup()
             notice_group.set_description(
-                _("A backup will be created automatically before importing.\n"
-                  "Backup location: {path}").format(path=backup_dir))
+                _("A protected backup will be created automatically before importing."))
             page.add(notice_group)
 
             def on_import(_btn):
@@ -1878,32 +1853,60 @@ class WindowConfigDialogsMixin:
             logger.error(f"Failed to show import mode dialog: {e}")
 
     def _guard_default_mode_replace(self, mode: str, will_replace_ssh: bool, proceed):
-        """Before a Replace that overwrites the GLOBAL ``~/.ssh/config`` (default mode), make the
-        blast radius explicit — that file is shared with ssh/scp/git/rsync and everything else.
-        In isolated mode (sshPilot's own config file) or for Merge, proceed without the prompt."""
-        isolated = bool(getattr(self.connection_manager, 'isolated_mode', False))
-        if mode != 'replace' or not will_replace_ssh or isolated:
+        """Ask the daemon whether a replace targets shared user SSH state."""
+        if mode != 'replace' or not will_replace_ssh:
             proceed()
             return
-        ssh_path = getattr(self.connection_manager, 'ssh_config_path', '') \
-            or os.path.expanduser('~/.ssh/config')
-        warn = Adw.MessageDialog(
-            transient_for=self, modal=True, heading=_("Replace your global SSH config?"),
-            body=_("Replace mode will overwrite {path} entirely. That file is shared with ssh, "
-                   "scp, git and every other SSH tool on this machine — any Host blocks, "
-                   "Include and Match rules not managed by sshPilot will be lost.\n\n"
-                   "Choose Merge instead to add hosts without overwriting, or continue to "
-                   "replace. A backup is saved first either way.").format(path=ssh_path))
-        warn.add_response('cancel', _('Cancel'))
-        warn.add_response('replace', _('Replace Anyway'))
-        warn.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
-        warn.set_close_response('cancel')
+        owner = getattr(self, 'parent_window', None) or self
+        client = getattr(self, 'client', None) or getattr(owner, 'client', None)
+        bridge = getattr(self, 'client_bridge', None) or getattr(owner, 'client_bridge', None)
+        try:
+            from .api.capabilities import Capability
+            mode_supported = (
+                client is not None
+                and client.get_capabilities().supports(Capability.OPERATION_MODE)
+            )
+        except Exception:
+            mode_supported = False
+        if client is None or bridge is None or not mode_supported:
+            self._simple_dialog(
+                _("Import Unavailable"),
+                _("The daemon is unavailable, so SSH restore safety could not be verified."),
+            )
+            return
 
-        def on_warn(dlg, resp):
-            if resp == 'replace':
+        def _on_status(status):
+            from .api.models.daemon import OperationMode
+
+            if status.active_mode is not OperationMode.DEFAULT:
                 proceed()
-        warn.connect('response', on_warn)
-        warn.present()
+                return
+            warn = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Replace your global SSH config?"),
+                body=_(
+                    "Replace mode will overwrite the Default user SSH configuration "
+                    "entirely. That configuration is shared with ssh, scp, git and "
+                    "other SSH tools; unmanaged Host, Include and Match rules may be "
+                    "lost. Choose Merge instead to add hosts without overwriting."
+                ),
+            )
+            warn.add_response('cancel', _('Cancel'))
+            warn.add_response('replace', _('Replace Anyway'))
+            warn.set_response_appearance('replace', Adw.ResponseAppearance.DESTRUCTIVE)
+            warn.set_close_response('cancel')
+            warn.connect('response', lambda _dlg, resp: proceed() if resp == 'replace' else None)
+            warn.present()
+
+        bridge.submit(
+            client.get_operation_mode,
+            on_success=_on_status,
+            on_error=lambda _error: self._simple_dialog(
+                _("Import Unavailable"),
+                _("The daemon is unavailable, so SSH restore safety could not be verified."),
+            ),
+        )
 
     def _run_after_vault_unlock_for_secrets(self, proceed, *, needed: bool,
                                             cancelled_heading: str):
@@ -2083,7 +2086,7 @@ class WindowConfigDialogsMixin:
         def on_success_response(dialog, response):
             if response == 'restart':
                 try:
-                    self.config.config_data = self.config.load_json_config()
+                    self.config.reload_json_cache_strict()
                     if self.connection_manager:
                         self.connection_manager.refresh()
                     if self.group_manager:

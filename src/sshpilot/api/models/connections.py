@@ -3,9 +3,9 @@
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, FrozenSet, Mapping, Optional, Tuple, Union
+from typing import Any, Dict, FrozenSet, Mapping, Optional, Tuple, Union
 
-from .common import ConnectionId, SessionId, require_identifier
+from .common import ConnectionId, SessionId, require_identifier, validate_ssh_host_alias
 from .connection_store import validate_safe_metadata
 
 MAX_DISPLAY_NAME_LENGTH = 512
@@ -316,6 +316,84 @@ class ConnectionMutationResult:
 
 
 @dataclass(frozen=True)
+class EffectiveConfigComparison:
+    """Daemon-owned authored-vs-effective OpenSSH comparison."""
+
+    connection_id: str
+    host: str
+    available: bool
+    has_diff: bool = False
+    changes: Tuple[Dict[str, Any], ...] = ()
+    own: Tuple[str, ...] = ()
+    full: Tuple[str, ...] = ()
+    generation: int = 0
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+        if type(self.host) is not str or "\x00" in self.host:
+            raise ValueError("effective config host is invalid")
+        if type(self.available) is not bool or type(self.has_diff) is not bool:
+            raise TypeError("effective config flags must be booleans")
+        if type(self.changes) is not tuple:
+            raise TypeError("effective config changes must be a tuple")
+        if type(self.own) is not tuple or type(self.full) is not tuple:
+            raise TypeError("effective config lines must be tuples")
+        if any(type(line) is not str or "\x00" in line for line in (*self.own, *self.full)):
+            raise ValueError("effective config lines are invalid")
+        if self.generation < 0:
+            raise ValueError("effective config generation must not be negative")
+
+
+@dataclass(frozen=True)
+class UnsavedHostCheckRequest:
+    """Semantic destination facts for daemon-owned save-prompt detection."""
+
+    hostname: str
+    username: str = ""
+    connection_id: Optional[str] = None
+    # ``None`` preserves the distinction between an omitted CLI option and an
+    # explicit ``-p 22``.  The daemon must not turn an omitted port into an
+    # OpenSSH override before resolving Host/Include/Match rules.
+    port: Optional[int] = None
+    protocol: str = "ssh"
+    proxy_jump: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.hostname) is not str or not self.hostname.strip() or "\x00" in self.hostname:
+            raise ValueError("hostname must be non-empty")
+        if type(self.username) is not str or "\x00" in self.username:
+            raise ValueError("username is invalid")
+        if self.port is not None and (type(self.port) is not int or not 1 <= self.port <= 65535):
+            raise ValueError("port must be between 1 and 65535")
+        if type(self.protocol) is not str or not self.protocol.strip():
+            raise ValueError("protocol must not be empty")
+        if type(self.proxy_jump) is not tuple:
+            raise TypeError("proxy_jump must be a tuple")
+        if any(type(item) is not str or not item.strip() or "\x00" in item for item in self.proxy_jump):
+            raise ValueError("proxy_jump contains an invalid destination")
+        if self.connection_id is not None:
+            require_identifier(self.connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class UnsavedHostCheckResult:
+    """Authoritative result for whether a destination is already saved."""
+
+    saved: bool
+    hostname: str
+    username: str
+    generation: int
+
+    def __post_init__(self) -> None:
+        if type(self.saved) is not bool:
+            raise TypeError("saved must be a boolean")
+        if type(self.hostname) is not str or type(self.username) is not str:
+            raise TypeError("destination identity must be text")
+        if self.generation < 0:
+            raise ValueError("generation must not be negative")
+
+
+@dataclass(frozen=True)
 class ConnectionEditorDetails(ConnectionDetails):
     """Full editor state for local authenticated clients.
 
@@ -366,6 +444,16 @@ class StoreConnectionPasswordRequest:
     previous_hostname: str = ""
     previous_host: str = ""
     previous_username: str = ""
+
+    def __post_init__(self) -> None:
+        require_identifier(self.connection_id, "connection id")
+
+
+@dataclass(frozen=True)
+class SetSessionConnectionPasswordRequest:
+    """Identify a daemon-memory-only password supplied in a protected frame."""
+
+    connection_id: ConnectionId
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
@@ -489,8 +577,7 @@ class CreateConnectionRequest:
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if type(self.nickname) is not str or not self.nickname.strip():
-            raise ValueError("connection nickname must not be empty")
+        validate_ssh_host_alias(self.nickname)
         if type(self.hostname) is not str:
             raise TypeError("connection hostname must be a string")
         if type(self.username) is not str:
@@ -552,6 +639,8 @@ class UpdateConnectionRequest:
             type(self.nickname) is not str or not self.nickname.strip()
         ):
             raise ValueError("connection nickname must not be empty")
+        if self.nickname is not None and self.nickname is not UNSET:
+            validate_ssh_host_alias(self.nickname)
         if self.hostname is not None and self.hostname is not UNSET and type(self.hostname) is not str:
             raise TypeError("connection hostname must be a string")
         if self.username is not None and self.username is not UNSET and type(self.username) is not str:

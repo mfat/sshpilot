@@ -1,4 +1,4 @@
-"""SSH overrides public client contract tests (in-process parity)."""
+"""SSH overrides public contract tests for direct core and daemon paths."""
 
 import pytest
 
@@ -47,7 +47,7 @@ def test_daemon_client_registers_ssh_overrides_methods():
         assert name not in UNSUPPORTED_CLIENT_METHOD_CAPABILITIES
 
 
-def _in_process_client(tmp_path, *, with_service=True):
+def _direct_core_service(tmp_path, *, with_service=True):
     service = (
         SshOverridesService(tmp_path / "config.json")
         if with_service
@@ -74,16 +74,16 @@ def _full_snapshot_values(snapshot):
     }
 
 
-def test_in_process_client_reads_global_overrides(tmp_path):
-    client = _in_process_client(tmp_path)
+def test_direct_core_service_reads_global_overrides(tmp_path):
+    client = _direct_core_service(tmp_path)
     snapshot = client.get_global_ssh_overrides()
     assert isinstance(snapshot, GlobalSshOverrides)
     assert snapshot.connect_timeout == 0
     assert snapshot.strict_host_key_checking == "accept-new"
 
 
-def test_in_process_client_updates_global_overrides(tmp_path):
-    client = _in_process_client(tmp_path)
+def test_direct_core_service_updates_global_overrides(tmp_path):
+    client = _direct_core_service(tmp_path)
     before = client.get_global_ssh_overrides()
     updated = client.update_global_ssh_overrides(
         UpdateGlobalSshOverridesRequest(
@@ -100,8 +100,8 @@ def test_in_process_client_updates_global_overrides(tmp_path):
     assert _full_snapshot_values(again) == _full_snapshot_values(updated)
 
 
-def test_in_process_client_reset_restores_defaults(tmp_path):
-    client = _in_process_client(tmp_path)
+def test_direct_core_service_reset_restores_defaults(tmp_path):
+    client = _direct_core_service(tmp_path)
     before = client.get_global_ssh_overrides()
     changed = client.update_global_ssh_overrides(
         UpdateGlobalSshOverridesRequest(
@@ -117,8 +117,8 @@ def test_in_process_client_reset_restores_defaults(tmp_path):
     assert reset.batch_mode is False
 
 
-def test_in_process_client_rejects_stale_revision(tmp_path):
-    client = _in_process_client(tmp_path)
+def test_direct_core_service_rejects_stale_revision(tmp_path):
+    client = _direct_core_service(tmp_path)
     with pytest.raises(SshPilotError) as excinfo:
         client.update_global_ssh_overrides(
             UpdateGlobalSshOverridesRequest(
@@ -129,28 +129,28 @@ def test_in_process_client_rejects_stale_revision(tmp_path):
     assert excinfo.value.code is ErrorCode.VALIDATION_FAILED
 
 
-def test_in_process_client_without_service_raises_canonical_unsupported(tmp_path):
-    client = _in_process_client(tmp_path, with_service=False)
+def test_direct_core_service_without_service_raises_canonical_unsupported(tmp_path):
+    client = _direct_core_service(tmp_path, with_service=False)
     with pytest.raises(SshPilotError) as excinfo:
         client.get_global_ssh_overrides()
     assert excinfo.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
 
 
-def test_in_process_client_without_service_never_advertises(tmp_path):
-    client = _in_process_client(tmp_path, with_service=False)
+def test_direct_core_service_without_service_never_advertises(tmp_path):
+    client = _direct_core_service(tmp_path, with_service=False)
     capabilities = client.get_capabilities()
     assert not capabilities.supports(Capability.SSH_OVERRIDES_READ)
     assert not capabilities.supports(Capability.SSH_OVERRIDES_WRITE)
 
 
-def test_in_process_client_with_service_advertises(tmp_path):
-    client = _in_process_client(tmp_path, with_service=True)
+def test_direct_core_service_with_service_advertises(tmp_path):
+    client = _direct_core_service(tmp_path, with_service=True)
     capabilities = client.get_capabilities()
     assert capabilities.supports(Capability.SSH_OVERRIDES_READ)
     assert capabilities.supports(Capability.SSH_OVERRIDES_WRITE)
 
 
-def test_in_process_update_rejects_wrong_request_type(tmp_path):
-    client = _in_process_client(tmp_path)
+def test_direct_core_update_rejects_wrong_request_type(tmp_path):
+    client = _direct_core_service(tmp_path)
     with pytest.raises(TypeError):
         client.update_global_ssh_overrides({"connect_timeout": 5})

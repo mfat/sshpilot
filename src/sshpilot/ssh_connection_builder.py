@@ -20,20 +20,6 @@ from .askpass_utils import (
     lookup_passphrase,
 )
 from .core.ssh import ProcessSpec, build_ssh_process_spec  # noqa: F401 — re-export
-from .platform_utils import get_config_dir
-
-
-def frontend_ssh_config_override(app_config: Optional[any]) -> Optional[str]:
-    """Return the isolated root config for DTO-based frontend command paths."""
-
-    try:
-        if app_config is not None and app_config.get_setting(
-            "ssh.use_isolated_config", False
-        ):
-            return os.path.join(get_config_dir(), "ssh_config")
-    except Exception:
-        pass
-    return None
 
 
 def _askpass_env_for_connection(
@@ -42,6 +28,7 @@ def _askpass_env_for_connection(
     require: str = "prefer",
     session_password: Optional[str] = None,
     session_passphrase: Optional[str] = None,
+    secret_lookup_authoritative: bool = False,
 ) -> Dict[str, str]:
     """Build askpass env, advertising login-password host/user when known."""
     try:
@@ -60,9 +47,16 @@ def _askpass_env_for_connection(
                 getattr(connection, 'nickname', None),
             ) if h
         ]
-    # The helper looks passwords up in the secret backend by host/user; only
-    # stage a temp file when that lookup can't serve this exact password
-    # (i.e. it's truly in-memory). Keyring-backed connects never touch disk.
+    # The daemon interaction broker owns secrets for production launches. Do
+    # not stage a daemon-resolved secret into a file or child environment;
+    # prepare_launch replaces this compatibility environment with its private
+    # broker socket before starting OpenSSH.
+    if secret_lookup_authoritative:
+        session_password = None
+        session_passphrase = None
+    # Direct core helpers may still stage a one-shot value for their isolated
+    # tests/legacy utility contract. Production daemon callers set the flag
+    # above and never take this branch.
     if session_password and user:
         try:
             from .askpass_utils import lookup_ssh_password
@@ -265,7 +259,11 @@ def resolve_native_auth(
             # In-memory password may not be in the backend yet — stage a one-shot
             # file; keyring-backed passwords are looked up by host/user in askpass.
             env = _askpass_env_for_connection(
-                connection, session_password=stored_password,
+                connection,
+                session_password=stored_password,
+                secret_lookup_authoritative=bool(
+                    getattr(connection_manager, "secret_lookup_authoritative", False)
+                ),
             )
             logger.debug("resolve_native_auth: password method -> askpass")
             return NativeAuth(
@@ -319,6 +317,9 @@ def resolve_native_auth(
                 connection,
                 session_password=stored_password,
                 session_passphrase=session_passphrase,
+                secret_lookup_authoritative=bool(
+                    getattr(connection_manager, "secret_lookup_authoritative", False)
+                ),
             )
             logger.debug(
                 "resolve_native_auth: combined auth -> agent key + askpass "
@@ -333,11 +334,18 @@ def resolve_native_auth(
                 connection,
                 session_password=stored_password,
                 session_passphrase=session_passphrase,
+                secret_lookup_authoritative=bool(
+                    getattr(connection_manager, "secret_lookup_authoritative", False)
+                ),
             )
         else:
             env = get_ssh_env_with_askpass(
                 require="prefer",
-                session_passphrase=session_passphrase,
+                session_passphrase=(
+                    None
+                    if getattr(connection_manager, "secret_lookup_authoritative", False)
+                    else session_passphrase
+                ),
             )
         logger.debug("resolve_native_auth: key auth, askpass autofill (saved passphrase)")
         return NativeAuth(
@@ -347,7 +355,11 @@ def resolve_native_auth(
 
     if stored_password:
         env = _askpass_env_for_connection(
-            connection, session_password=stored_password,
+            connection,
+            session_password=stored_password,
+            secret_lookup_authoritative=bool(
+                getattr(connection_manager, "secret_lookup_authoritative", False)
+            ),
         )
         logger.debug(
             "resolve_native_auth: key auth, saved password -> askpass "
@@ -383,7 +395,9 @@ def build_native_command(
     binary = {'scp': 'scp', 'sftp': 'sftp', 'ssh-copy-id': 'ssh-copy-id'}.get(command_type, 'ssh')
     cmd = [binary]
 
-    config_override = config_file or frontend_ssh_config_override(app_config)
+    # The daemon launch view resolves the authoritative config override.  A
+    # frontend Config object is never consulted for an SSH filesystem path.
+    config_override = config_file
     if config_override is None and hasattr(connection, '_resolve_config_override_path'):
         try:
             config_override = connection._resolve_config_override_path()

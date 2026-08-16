@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from sshpilot.api import DaemonClient, ErrorCode, EventType
+from sshpilot.api import Capability, DaemonClient, ErrorCode, EventType
 from sshpilot.api.models import ConnectionSummary
 from sshpilot.api.models.connection_store import ConnectionStoreSnapshot
 from sshpilot.daemon import DaemonServer
@@ -53,6 +53,7 @@ def test_connection_events_arrive_while_client_is_idle(
     try:
         received = []
         delivered = threading.Event()
+
         subscription = client.subscribe_events(
             lambda event: (received.append(event), delivered.set())
         )
@@ -84,9 +85,13 @@ def test_connection_store_changed_event_reaches_idle_client(tmp_path):
     try:
         received = []
         delivered = threading.Event()
-        subscription = client.subscribe_events(
-            lambda event: (received.append(event), delivered.set())
-        )
+
+        def _on_event(event):
+            received.append(event)
+            if event.type is EventType.CONNECTION_STORE_CHANGED:
+                delivered.set()
+
+        subscription = client.subscribe_events(_on_event)
 
         repo.update_connection("demo", {"hostname": "updated.example"})
 
@@ -99,6 +104,29 @@ def test_connection_store_changed_event_reaches_idle_client(tmp_path):
         assert type(store_events[0].payload) is ConnectionStoreSnapshot
         assert store_events[0].payload.connections[0].hostname == "updated.example"
         subscription.close()
+    finally:
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
+
+
+def test_startup_request_burst_survives_idle_lifecycle_event(tmp_path):
+    """The normal startup RPC burst must not trip the event protocol guard."""
+
+    server, _repo = _make_daemon(tmp_path)
+    client = DaemonClient(socket_path=server.socket_path)
+    try:
+        client.list_connections()
+        client.list_sessions()
+        if client.get_capabilities().supports(Capability.OPERATION_MODE):
+            client.get_operation_mode()
+        if client.get_capabilities().supports(Capability.SSH_OVERRIDES_READ):
+            client.get_global_ssh_overrides()
+
+        # The lifecycle policy may publish ``idle`` as the last request makes
+        # the daemon quiescent. Allow the reader/event threads to process it.
+        assert _wait_until(lambda: not client.transport_failed, timeout=1.0)
+        assert client.is_closed is False
     finally:
         client.close()
         server.shutdown()

@@ -14,6 +14,9 @@ from .terminal_events import (
 from .models.connections import (
     ConnectionDetails,
     ConnectionEditorDetails,
+    EffectiveConfigComparison,
+    UnsavedHostCheckRequest,
+    UnsavedHostCheckResult,
     ConnectionMutationResult,
     ConnectionSummary,
     CreateConnectionRequest,
@@ -21,6 +24,7 @@ from .models.connections import (
     DeleteConnectionRequest,
     DeleteConnectionResult,
     StoreConnectionPasswordRequest,
+    SetSessionConnectionPasswordRequest,
     DeleteKeyPassphraseRequest,
     SaveSshConfigTextRequest,
     SplitConnectionRequest,
@@ -97,6 +101,7 @@ from .models.sessions import (
 from .models.terminal import (
     BroadcastTerminalInputRequest,
     ClaimTerminalInputRequest,
+    ExternalTerminalLaunchSpec,
     ReleaseTerminalInputRequest,
     ReplayRequest,
     ReplayResult,
@@ -148,6 +153,8 @@ from .models.daemon import (
     SetDaemonLogLevelRequest,
     RestartDaemonRequest,
     StopDaemonRequest,
+    OperationModeResult,
+    SetOperationModeRequest,
 )
 from .models.settings import (
     GlobalSshOverrides,
@@ -159,6 +166,14 @@ class SshPilotClient(Protocol):
     """Synchronous commands plus a frontend-neutral event subscription."""
 
     def get_capabilities(self) -> Capabilities:
+        ...
+
+    def set_operation_mode(
+        self, request: SetOperationModeRequest
+    ) -> OperationModeResult:
+        ...
+
+    def get_operation_mode(self) -> OperationModeResult:
         ...
 
     def start_broadcast_command(self, request):
@@ -193,7 +208,22 @@ class SshPilotClient(Protocol):
     ) -> ConnectionEditorDetails:
         ...
 
+    def get_effective_config(
+        self, connection_id: ConnectionId
+    ) -> EffectiveConfigComparison:
+        ...
+
+    def check_unsaved_host(
+        self, request: UnsavedHostCheckRequest
+    ) -> UnsavedHostCheckResult:
+        ...
+
     def get_ssh_config_text(self) -> SshConfigText:
+        ...
+
+    def prepare_external_terminal_launch(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
         ...
 
     def save_ssh_config_text(
@@ -220,6 +250,18 @@ class SshPilotClient(Protocol):
         ...
 
     def store_connection_password(self, request: StoreConnectionPasswordRequest) -> bool:
+        ...
+
+    def set_session_connection_password(
+        self, request: SetSessionConnectionPasswordRequest, password: bytearray
+    ) -> bool:
+        """Provide a daemon-memory-only credential through protected transport."""
+        ...
+
+    def clear_session_connection_password(
+        self, request: SetSessionConnectionPasswordRequest
+    ) -> bool:
+        """Forget a daemon-memory-only credential without deleting persistence."""
         ...
 
     def has_connection_password(self, connection_id: ConnectionId) -> bool:

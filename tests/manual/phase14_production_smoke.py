@@ -37,7 +37,6 @@ for key, sub in (
     os.environ[key] = str(path)
 os.environ.pop("SSHPILOT_DAEMON_SOCKET", None)
 os.environ["SSHPILOT_GUI_TESTS"] = "1"
-os.environ["SSHPILOT_CLIENT_MODE"] = "daemon"
 os.environ.setdefault("GSK_RENDERER", "cairo")
 os.environ.setdefault("GDK_BACKEND", "x11")
 os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")

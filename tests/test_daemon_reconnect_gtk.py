@@ -34,14 +34,14 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     from sshpilot import main as main_module
 
     app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
-    connection_projection = MagicMock()
-    runtime_projection = MagicMock()
+    preferences = MagicMock()
+    replace_client = MagicMock()
     app.window = SimpleNamespace(
         _is_quitting=False,
         client=None,
         welcome_view=None,
-        connection_manager=connection_projection,
-        connection_runtime_status=runtime_projection,
+        _preferences_window=preferences,
+        _replace_daemon_client=replace_client,
     )
     app._api_client_bridge = None
     app._api_client_selection = None
@@ -94,11 +94,10 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
 
     app.request_daemon_reconnect(reason="test", immediate=True)
 
-    assert app.window.client is new_client
+    assert app.window.client is None
     assert app._api_client_selection.client is new_client
     assert installed == [new_client]
-    connection_projection.attach_client.assert_called_once_with(new_client)
-    runtime_projection.attach_client.assert_called_once_with(new_client)
+    replace_client.assert_called_once_with(new_client)
     assert app._daemon_reconnect_in_progress is False
 
 
@@ -107,12 +106,14 @@ def test_transport_loss_clears_stale_runtime_status_before_reconnect():
     from sshpilot.api.errors import ErrorCode, SshPilotError
 
     runtime_projection = MagicMock()
+    mark_unavailable = MagicMock()
     app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
     app.window = SimpleNamespace(
         _is_quitting=False,
         _daemon_shutdown_intent=None,
         _daemon_quit_decision=None,
         connection_runtime_status=runtime_projection,
+        _mark_daemon_unavailable=mark_unavailable,
     )
     app._daemon_shutdown_intent = None
     app._daemon_quit_decision = None
@@ -123,10 +124,42 @@ def test_transport_loss_clears_stale_runtime_status_before_reconnect():
     )
 
     runtime_projection.close.assert_called_once_with()
+    mark_unavailable.assert_called_once_with()
     app.request_daemon_reconnect.assert_called_once_with(
         reason="transport_loss",
         immediate=False,
     )
+
+
+def test_stale_client_transport_loss_after_reconnect_is_ignored():
+    from sshpilot import main as main_module
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    old_client = object()
+    current_client = object()
+    mark_unavailable = MagicMock()
+    runtime_projection = MagicMock()
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        client=current_client,
+        _mark_daemon_unavailable=mark_unavailable,
+        connection_runtime_status=runtime_projection,
+    )
+    app._api_client_selection = SimpleNamespace(client=current_client)
+    app._daemon_shutdown_intent = None
+    app._daemon_quit_decision = None
+    app.request_daemon_reconnect = MagicMock()
+
+    handled = app._on_daemon_transport_lost(
+        SshPilotError(ErrorCode.PROTOCOL_ERROR, "stale transport"),
+        old_client,
+    )
+
+    assert handled is False
+    app.request_daemon_reconnect.assert_not_called()
+    mark_unavailable.assert_not_called()
+    runtime_projection.close.assert_not_called()
 
 
 def test_preferences_schedules_reconnect_after_restart(monkeypatch):
@@ -581,10 +614,13 @@ def test_in_flight_reconnect_discarded_after_terminate_intent(monkeypatch):
     assert getattr(app, "_api_client_selection", None) is None
 
 
-def test_run_server_returns_restart_exit_code():
+def test_run_server_returns_restart_exit_code(monkeypatch):
     from sshpilot.daemon.cli import run_server
     from sshpilot.daemon.lifecycle_policy import RESTART_EXIT_CODE
 
+    # This is an exit-policy unit test.  Keep it independent of the host's
+    # daemon log directory, which may be read-only in CI/sandbox runs.
+    monkeypatch.setattr("sshpilot.daemon.cli._configure_logging", lambda *_args, **_kwargs: None)
     code = run_server(
         serve_forever=lambda: None,
         shutdown=lambda: None,

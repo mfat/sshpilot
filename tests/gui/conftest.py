@@ -21,7 +21,6 @@ def phase14_harness(tmp_path, monkeypatch):
     monkeypatch.delenv("G_DEBUG", raising=False)
     # Force serial-friendly isolation (one HOME / daemon / OpenSSH per test).
     monkeypatch.setenv("SSHPILOT_GUI_TESTS", "1")
-    monkeypatch.setenv("SSHPILOT_CLIENT_MODE", "daemon")
 
     from tests.gui._phase14_harness import Phase14Harness, make_isolated_home
 

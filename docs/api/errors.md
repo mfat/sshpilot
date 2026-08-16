@@ -85,15 +85,14 @@ the validated internal envelope.
 ## `unsupported_capability`
 
 The requested feature group is unavailable. Safe details contain only the
-stable `capability` string. `InProcessClient` uses this for all declared but
+stable `capability` string. The daemon client uses this for all declared but
 unsupported commands.
 
 <!-- api-error: invalid_request -->
 ## `invalid_request`
 
 The call cannot be accepted in the current client lifecycle or calling context.
-Current examples are commands made after close, commands made off the
-in-process owner thread, and subscribing after close.
+Current examples are commands made after close and subscribing after close.
 
 <!-- api-error: validation_failed -->
 ## `validation_failed`
@@ -501,8 +500,9 @@ to the frontend. Experimental GTK composition treats this as authority for one
 bounded on-demand launch attempt. Protocol incompatibility, malformed
 handshake, unsafe socket state, or a missing expected capability are distinct
 local launcher categories and do not trigger a restart. Any daemon-selection
-failure falls back once to in-process mode with a fixed safe notification;
-these composition categories do not change the Protocol v1 error-code surface.
+failure remains an unavailable/recovery state; it never selects a local
+backend. These composition categories do not change the Protocol v1 error-code
+surface.
 
 <!-- api-error: stale_editor -->
 ## `stale_editor`

@@ -39,6 +39,7 @@ from sshpilot.api.models.connections import (  # noqa: E402
     ConnectionSummary,
     GroupReference,
     UpdateConnectionRequest,
+    UnsavedHostCheckRequest,
 )
 from sshpilot.api.capabilities import Capability  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
@@ -422,6 +423,152 @@ def test_record_converts_to_summary():
     assert summary.port == 22
 
 
+def test_core_connection_service_rejects_leading_dash_host_alias():
+    from sshpilot.core.connections.service import ConnectionService
+
+    service = ConnectionService()
+    with pytest.raises(CoreError, match="must not begin"):
+        service.create({"nickname": "-oProxyCommand", "hostname": "host"})
+
+
+def test_unsaved_host_check_uses_daemon_snapshot_identity():
+    repo = FakeRepository([_record(record_id="prod", hostname="example.com", username="alice")])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    saved = service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="EXAMPLE.COM", username="alice")
+    )
+    different_user = service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="example.com", username="root")
+    )
+    same_id = service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="arbitrary", connection_id="prod")
+    )
+
+    assert saved.saved is True
+    assert different_user.saved is False
+    assert same_id.saved is True
+    assert saved.generation == 0
+
+
+def test_unsaved_host_check_uses_daemon_resolved_identity_matrix(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    resolved = {
+        "prod": {"hostname": "EXAMPLE.COM", "user": "alice", "port": "2222", "proxyjump": "jump"},
+        "example.com": {"hostname": "example.com", "user": "alice", "port": "2222", "proxyjump": "jump"},
+        "other": {"hostname": "other.example", "user": "alice", "port": "2222", "proxyjump": "jump"},
+    }
+
+    def fake_effective(host, *_args, **kwargs):
+        value = dict(resolved.get(host.casefold(), {}))
+        if kwargs.get("user"):
+            value["user"] = kwargs["user"]
+        if kwargs.get("port") is not None:
+            value["port"] = str(kwargs["port"])
+        if kwargs.get("proxy_jump"):
+            value["proxyjump"] = kwargs["proxy_jump"]
+        return value
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
+    repo = FakeRepository(
+        [
+            _record(
+                record_id="prod-id",
+                hostname="example.com",
+                username="alice",
+                port=2222,
+                data={"proxy_jump": ["jump"]},
+            ),
+            _record(
+                record_id="serial-id",
+                hostname="example.com",
+                username="alice",
+                protocol="serial",
+            ),
+        ]
+    )
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(
+            hostname="example.com", username="alice", port=2222, proxy_jump=("jump",)
+        )
+    ).saved is True
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(
+            hostname="EXAMPLE.COM", username="alice", port=2223, proxy_jump=("jump",)
+        )
+    ).saved is False
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(
+            hostname="other", username="alice", port=2222, proxy_jump=("jump",)
+        )
+    ).saved is False
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="example.com", username="alice", protocol="serial")
+    ).saved is False
+
+
+def test_unsaved_host_empty_user_uses_daemon_effective_login(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    monkeypatch.setattr(
+        ssh_config_effective,
+        "get_effective_ssh_config",
+        lambda host, *_args, **_kwargs: {
+            "hostname": "host.example",
+            "user": "local-user",
+            "port": "22",
+            "proxyjump": "none",
+        },
+    )
+    repo = FakeRepository([_record(hostname="host.example", username="local-user")])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="host.example", username="")
+    ).saved is True
+
+
+def test_unsaved_host_omitted_port_does_not_override_ssh_config(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    calls = []
+
+    def fake_effective(host, *_args, **kwargs):
+        calls.append(kwargs)
+        return {"hostname": "alias.example", "user": "alice", "port": "2207"}
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
+    repo = FakeRepository([_record(hostname="alias.example", username="alice", port=2207)])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="alias", username="alice")
+    ).saved is True
+    assert calls == [{"user": "alice", "port": None, "proxy_jump": None}]
+
+
+def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
+    from sshpilot.core import ssh_config_effective
+
+    calls = []
+
+    def fake_effective(host, *_args, **kwargs):
+        calls.append(kwargs)
+        return {"hostname": "alias.example", "user": "alice", "port": "22"}
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
+    repo = FakeRepository([_record(hostname="alias.example", username="alice", port=22)])
+    service = ConnectionApplicationService(repo, client_name="test")
+
+    assert service.check_unsaved_host(
+        UnsavedHostCheckRequest(hostname="alias", username="alice", port=22)
+    ).saved is True
+    assert calls == [{"user": "alice", "port": 22, "proxy_jump": None}]
+
+
 def test_display_name_update_is_additive_and_keeps_alias_id():
     repo = FakeRepository([_record()])
     service = ConnectionApplicationService(repo, client_name="test")
@@ -505,6 +652,27 @@ def test_launch_provider_delegation():
     )
     argv = service.prepare_daemon_terminal_launch(ConnectionId("web"))
     assert argv == ("ssh", ["-p", "22", "web@example.com"])
+
+
+def test_external_terminal_launch_is_daemon_prepared_and_non_secret():
+    class LaunchProvider:
+        def prepare_terminal_launch(
+            self, connection_id, *, interaction_policy="none", remote_command=None, force_tty=False
+        ):
+            assert interaction_policy == "none"
+            return ("/usr/bin/ssh", "-F", "/daemon/isolated/ssh_config", "web") , {
+                "SSH_AUTH_SOCK": "/run/user/1000/ssh-agent.sock",
+                "SSH_ASKPASS": "/should-not-cross",
+            }
+
+    service = ConnectionApplicationService(
+        FakeRepository([_record()]), launch_provider=LaunchProvider(), client_name="test"
+    )
+    spec = service.prepare_external_terminal_launch(ConnectionId("web"))
+    assert spec.argv == ("/usr/bin/ssh", "-F", "/daemon/isolated/ssh_config", "web")
+    assert spec.environment == (("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock"),)
+    assert spec.secret_autofill_supported is False
+    assert "password" not in repr(spec).lower()
 
 
 def test_missing_launch_provider_raises_startup_error():

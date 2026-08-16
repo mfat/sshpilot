@@ -142,7 +142,6 @@ def get_default_config() -> Dict[str, Any]:
             'agent_preload_lifetime': 0,  # ssh-add -t <secs>; 0 = no expiry
         },
         'file_manager': {
-            'force_internal': False,
             'open_externally': False,
             'sftp_keepalive_interval': 30,
             'sftp_keepalive_count_max': 5,
@@ -151,11 +150,6 @@ def get_default_config() -> Dict[str, Any]:
             # in [0, 4]; index into the per-view size tables in
             # file_manager_window.py. Default 1 = list 24px / grid 72px.
             'icon_size_level': 1,
-            # Set the first time the user is offered a choice between
-            # built-in and system file managers (or skipped because only
-            # built-in is available on the current platform). Prevents
-            # re-prompting on subsequent "Manage Files" clicks.
-            'first_run_prompt_shown': False,
         },
         'security': {
             'store_passwords': True,

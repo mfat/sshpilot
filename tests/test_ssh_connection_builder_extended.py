@@ -466,28 +466,6 @@ def test_build_native_command_plain_ssh():
     assert 'IdentityAgent=none' not in cmd
 
 
-def test_build_native_command_uses_isolated_config_for_daemon_dto(monkeypatch):
-    import sshpilot.ssh_connection_builder as scb
-
-    monkeypatch.setattr(scb, "get_config_dir", lambda: "/tmp/sshpilot-config")
-    connection = ConnectionDetails(
-        id="demo",
-        nickname="demo",
-        host="demo.example",
-        hostname="demo.example",
-        username="alice",
-        port=22,
-    )
-    config = _ConfigStub(settings={"ssh.use_isolated_config": True})
-
-    assert build_native_command(connection, config) == [
-        "ssh",
-        "-F",
-        "/tmp/sshpilot-config/ssh_config",
-        "demo",
-    ]
-
-
 def test_build_native_command_binary_selection():
     conn = Connection({'host': 'b.example', 'hostname': 'b.example'})
     assert build_native_command(conn, command_type='scp')[0] == 'scp'

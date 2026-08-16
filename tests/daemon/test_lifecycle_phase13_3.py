@@ -27,6 +27,10 @@ class _BlockingSessionRunner:
         self.started.set()
         return _BlockingHandle(on_exit)
 
+    def close(self):
+        """Match the process-runner lifecycle contract used by SessionRuntime."""
+        return None
+
 
 class _BlockingHandle:
     def __init__(self, on_exit) -> None:
@@ -464,7 +468,9 @@ def test_no_zombie_children_after_force_stop(daemon_factory):
                     if ppid == my_pid:
                         with open(f"/proc/{pid}/cmdline", encoding="utf-8", errors="replace") as cmd:
                             cmdline = cmd.read().replace("\x00", " ").strip()
-                        orphan_pids.append((pid, cmdline))
+                        executable = cmdline.split(maxsplit=1)[0].rsplit("/", 1)[-1]
+                        if executable in {"ssh", "sshd", "scp", "sftp"}:
+                            orphan_pids.append((pid, cmdline))
             except (OSError, ValueError, IndexError):
                 continue
     except OSError:

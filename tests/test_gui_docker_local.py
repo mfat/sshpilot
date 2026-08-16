@@ -24,6 +24,7 @@ def _local_ctx():
     ctx = types.SimpleNamespace(
         connection_manager=types.SimpleNamespace(
             find_connection_by_nickname=lambda nickname: None),
+        daemon_client=lambda: None,
         run_command=lambda *args, **kwargs:
             pytest.fail("Local target must not use remote SSH command API"),
         run_local_command=lambda command, **kwargs:

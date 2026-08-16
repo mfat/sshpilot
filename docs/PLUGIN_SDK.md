@@ -258,11 +258,13 @@ password = show_ssh_password_dialog(
     display_name=info.nickname,
     host=info.host,
     username=info.username,
-    connection_manager=self.ctx.connection_manager,  # enables "Store password"
+    allow_store=False,  # persist only through a typed daemon secret request
 )
 if not password:
     return
-# Use password for your flow, or persist via ctx.secrets / connection fields.
+# Use the password for your flow. If persistence is needed, use the typed
+# daemon client returned by ``ctx.daemon_client()`` and its protected secret
+# operation; never mutate ``ctx.connection_manager`` or a projection object.
 ```
 
 Why this helper exists: on Wayland the dialog must be transient for

@@ -18,6 +18,63 @@ class DaemonLogLevel(str, Enum):
     DEBUG = "debug"
 
 
+class OperationMode(str, Enum):
+    """Daemon-owned SSH configuration scope."""
+
+    DEFAULT = "default"
+    ISOLATED = "isolated"
+
+
+@dataclass(frozen=True)
+class SetOperationModeRequest:
+    """Request a serialized, live SSH configuration-scope transition."""
+
+    mode: OperationMode
+    seed_isolated_config: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.mode, OperationMode):
+            raise TypeError("operation mode must be an OperationMode")
+        if type(self.seed_isolated_config) is not bool:
+            raise TypeError("seed_isolated_config must be a boolean")
+
+
+@dataclass(frozen=True)
+class OperationModeResult:
+    """Confirmed mode state or an explicit transition/recovery outcome."""
+
+    accepted: bool
+    active_mode: OperationMode
+    generation: int
+    seeded: bool = False
+    conflict: bool = False
+    message: str = ""
+    target_description: str = ""
+    persisted_mode: Optional[OperationMode] = None
+    rollback_completed: bool = True
+    recovery_required: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.accepted) is not bool or type(self.seeded) is not bool:
+            raise TypeError("operation result flags must be booleans")
+        if type(self.conflict) is not bool:
+            raise TypeError("conflict must be a boolean")
+        if self.persisted_mode is not None and not isinstance(
+            self.persisted_mode, OperationMode
+        ):
+            raise TypeError("persisted_mode must be an OperationMode or None")
+        if type(self.rollback_completed) is not bool or type(self.recovery_required) is not bool:
+            raise TypeError("rollback and recovery flags must be booleans")
+        if self.recovery_required and self.rollback_completed:
+            raise ValueError("a recoverable result must report incomplete rollback")
+        if not isinstance(self.active_mode, OperationMode):
+            raise TypeError("active_mode must be an OperationMode")
+        if type(self.generation) is not int or self.generation < 0:
+            raise ValueError("generation must be a non-negative integer")
+        if any(type(value) is not str for value in (self.message, self.target_description)):
+            raise TypeError("operation result text must be strings")
+
+
 @dataclass(frozen=True)
 class SetDaemonLogLevelRequest:
     """Typed control request for the daemon's managed logging handlers."""

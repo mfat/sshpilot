@@ -47,10 +47,9 @@ logger = logging.getLogger(__name__)
 _ASKPASS_DIR = None
 _ASKPASS_SCRIPT = None
 
-# Address + auth token of the main app's in-process passphrase-prompt IPC server.
-# Set by sshpilot.askpass_server.start() (main process) and advertised to SSH
-# children via get_ssh_env_with_askpass(). Plain strings only — read from worker
-# threads, so this must never import or touch GTK.
+# Optional private askpass state used only by direct daemon/core compatibility
+# helpers. Production daemon SSH launches replace it with InteractionBroker's
+# per-operation socket before any child is started.
 _ASKPASS_SOCKET = None
 _ASKPASS_TOKEN = None
 
@@ -58,11 +57,10 @@ _SCHEMA = None
 
 
 def set_askpass_ipc(socket_path: "str | None", token: "str | None") -> None:
-    """Publish (or clear) the main app's passphrase-prompt IPC endpoint.
+    """Publish (or clear) a compatibility askpass endpoint.
 
-    Called by the main process once its Unix-socket server is listening so that
-    every SSH child it spawns can be told where to route passphrase prompts.
-    Pass ``(None, None)`` on shutdown to stop advertising it.
+    No GTK production code calls this function. It remains for direct helper
+    tests and is scrubbed from every daemon-owned launch environment.
     """
 
     global _ASKPASS_SOCKET, _ASKPASS_TOKEN
@@ -1390,38 +1388,27 @@ def clear_passphrase(key_path: str) -> bool:
     return removed_any
 
 
+# Daemon privileged-file operations use a separate sudo credential namespace.
+# GTK callers must not use these helpers; the daemon supplies the lookup/store
+# callbacks to its protected interaction service.
 def store_sudo_password(host: str, username: str, password: str) -> bool:
-    """Store a host's **sudo** password via the selected secret backend.
-
-    Routed through :class:`SecretManager` (like SSH passwords/passphrases) so it
-    honours the user's chosen backend instead of always hitting libsecret/keyring.
-    Kept under its own ``type=sudo_password`` schema (see ``sudo_password_spec``)
-    so it never collides with the SSH login password."""
     if not host:
         return False
-
     from .secret_storage import get_secret_manager, sudo_password_spec
-
     return get_secret_manager().store(sudo_password_spec(host, username), password)
 
 
 def lookup_sudo_password(host: str, username: str) -> str:
-    """Look up a host's stored sudo password ("" if none) via the secret backend."""
     if not host:
         return ""
-
     from .secret_storage import get_secret_manager, sudo_password_spec
-
     return get_secret_manager().lookup(sudo_password_spec(host, username)) or ""
 
 
 def clear_sudo_password(host: str, username: str) -> bool:
-    """Remove a host's stored sudo password (e.g. when it proves wrong)."""
     if not host:
         return False
-
     from .secret_storage import get_secret_manager, sudo_password_spec
-
     return get_secret_manager().delete(sudo_password_spec(host, username))
 
 
@@ -1446,9 +1433,9 @@ def is_sudo_denied_error(text: str) -> bool:
 def ensure_passphrase_askpass() -> str:
     """Ensure the askpass shell wrapper exists and return its path.
 
-    Generates a tiny ``askpass.sh`` that re-invokes the running application
-    with ``--askpass``, guaranteeing passphrase lookup runs in the exact same
-    Python environment (and therefore has access to keyring/libsecret).
+    Generates a self-contained helper for direct GTK-free core compatibility
+    tests. Production daemon launches replace this helper with the private
+    ``InteractionBroker`` helper before starting OpenSSH.
     """
     global _ASKPASS_DIR, _ASKPASS_SCRIPT
 
@@ -1472,28 +1459,17 @@ def ensure_passphrase_askpass() -> str:
     script_path = os.path.join(_ASKPASS_DIR, "askpass.sh")
     logger.debug(f"Generating askpass shell wrapper at {script_path}")
 
-    if getattr(sys, 'frozen', False):
-        # PyInstaller bundle: sys.executable IS the compiled binary.
-        # run.py intercepts --askpass before GTK initialisation.
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(f'#!/bin/sh\nexec "{sys.executable}" --askpass "$@"\n')
-    else:
-        # Homebrew / source / Flatpak.
-        # sys.argv[0] may be a shell shim (Homebrew), not a Python file,
-        # so we cannot call `python sys.argv[0] --askpass`.  Instead we write
-        # a tiny Python helper into the same temp dir; it adds the package
-        # parent to sys.path explicitly and calls handle_askpass_cli directly.
-        pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        helper_path = os.path.join(_ASKPASS_DIR, "askpass_helper.py")
-        with open(helper_path, "w", encoding="utf-8") as f:
-            f.write("import sys\n")
-            f.write(f"sys.path.insert(0, {pkg_parent!r})\n")
-            f.write("from sshpilot.askpass_utils import run_askpass_and_write\n")
-            f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
-            f.write("sys.exit(run_askpass_and_write(prompt))\n")
-        os.chmod(helper_path, 0o600)
-        with open(script_path, "w", encoding="utf-8") as f:
-            f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    helper_path = os.path.join(_ASKPASS_DIR, "askpass_helper.py")
+    with open(helper_path, "w", encoding="utf-8") as f:
+        f.write("import sys\n")
+        f.write(f"sys.path.insert(0, {pkg_parent!r})\n")
+        f.write("from sshpilot.askpass_utils import run_askpass_and_write\n")
+        f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
+        f.write("sys.exit(run_askpass_and_write(prompt))\n")
+    os.chmod(helper_path, 0o600)
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
 
     script_mode = os.stat(script_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
     os.chmod(script_path, script_mode)
