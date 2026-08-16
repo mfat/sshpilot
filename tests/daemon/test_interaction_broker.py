@@ -339,7 +339,86 @@ def test_frozen_build_askpass_helper_dispatches_via_internal_flag(monkeypatch) -
         instance.close()
 
     assert content == '#!/bin/sh\nexec "/fake/SSHPilot" --internal-askpass "$@"\n'
-    assert ".py" not in content
+
+
+@pytest.mark.integration
+def test_frozen_build_askpass_helper_round_trips_a_real_secret(tmp_path, monkeypatch) -> None:
+    """Real end-to-end companion to the PTY spawn regression test: does the
+    frozen-build askpass wrapper script, executed for real (not mocked),
+    actually deliver a brokered secret? Uses the same self-dispatching fake
+    frozen launcher as the PTY test — sys.executable here is that launcher,
+    so the daemon's own askpass wrapper script really does
+    "exec $LAUNCHER --internal-askpass", which must reach run.py's real
+    --internal-askpass dispatch and the real daemon.askpass_helper.main().
+    """
+    from tests.helpers.fake_frozen_launcher import write_fake_frozen_launcher
+
+    launcher = write_fake_frozen_launcher(tmp_path)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(launcher), raising=False)
+
+    instance = InteractionBroker(secret_timeout=2, host_key_timeout=2)
+    try:
+        monkeypatch.setattr(
+            instance, "_effective_ssh_config", lambda _argv, _environment=None: {}
+        )
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {
+                    "HOME": "/tmp",
+                    "PATH": os.environ.get("PATH", ""),
+                    "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
+                },
+            ),
+        )
+        assert environment["SSH_ASKPASS"] == str(instance._askpass_helper_path)
+
+        helper = subprocess.Popen(
+            (environment["SSH_ASKPASS"], "alice@example.test's password:"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        deadline = time.monotonic() + 5
+        interactions = []
+        while time.monotonic() < deadline:
+            interactions = instance.list(CLIENT_A)
+            if interactions:
+                break
+            time.sleep(0.01)
+        assert len(interactions) == 1
+        interaction = interactions[0]
+        claim = instance.claim(interaction.id, CLIENT_A)
+        instance.respond(
+            InteractionDecisionRequest(
+                interaction_id=interaction.id,
+                secret_decision=SecretDecision.SUBMIT,
+            ),
+            CLIENT_A,
+        )
+        instance.submit_secret(
+            SecretFrame(
+                kind=SecretFrameKind.RESPONSE,
+                interaction_id=interaction.id,
+                nonce=bytes.fromhex(claim.nonce),
+                secret=bytearray(b"brokered-value"),
+            ),
+            CLIENT_A,
+        )
+        stdout, stderr = helper.communicate(timeout=5)
+        assert helper.returncode == 0, stderr
+        assert stdout == b"brokered-value\n"
+    finally:
+        instance.close()
 
 
 def test_prepare_launch_brokers_interactions_without_saved_secret(
