@@ -16,6 +16,7 @@ from sshpilot.api.models.sessions import (
     SessionExitInfo,
     SessionState,
 )
+from sshpilot.api.models.terminal import ResizeTerminalRequest, TerminalDimensions
 from sshpilot.api.session_identity import new_session_id
 from sshpilot.daemon.session_runtime import (
     SessionRuntime,
@@ -250,6 +251,115 @@ def test_open_session_carries_remote_command_into_launch_spec(runtime_parts):
     finally:
         runtime2.shutdown()
         core2.close()
+
+
+class _BlockingResizableHandle(ControlledHandle):
+    """A handle that records every ``resize()`` call it receives."""
+
+    def __init__(self, on_exit):
+        super().__init__(on_exit, exit_on_terminate=False)
+        self.resizes = []
+
+    def resize(self, dimensions):
+        self.resizes.append(dimensions)
+
+
+class _BlockingTerminalRunner(ControlledRunner):
+    """Terminal-capable runner whose ``start()`` blocks until released.
+
+    Reproduces the startup window during which ``record.process_handle``
+    is still ``None`` while ``self._runner.start(spec, ...)`` is in
+    flight — the longer that call blocks (a distant host's SSH handshake
+    takes far longer than a local one), the wider the window for a resize
+    to race the handoff.
+    """
+
+    terminal_capable = True
+
+    def __init__(self, *, started_event, release_event):
+        super().__init__()
+        self._started_event = started_event
+        self._release_event = release_event
+
+    def start(self, spec, on_exit, on_output=None, on_eof=None):
+        self.specs.append(spec)
+        self._started_event.set()
+        assert self._release_event.wait(timeout=5), "test deadlocked"
+        handle = _BlockingResizableHandle(on_exit)
+        self.handles.append(handle)
+        return handle
+
+
+def test_resize_during_blocking_startup_reaches_the_published_handle():
+    """Regression: a resize requested while the session is still STARTING
+    and ``runner.start()`` hasn't returned yet must not be silently dropped.
+
+    ``resize_terminal()`` has no live handle to call while
+    ``record.process_handle`` is still ``None``, so it can only update
+    ``record.launch_spec`` and return. ``start_session()`` had already read
+    ``spec = record.launch_spec`` *before* calling the (blocking)
+    ``runner.start(spec, ...)``, so that spec object never saw the update.
+    Once the handle was published, nothing reconciled the two — the PTY
+    stayed at whatever size ``spec`` had when the runner call started, and
+    only a later, genuine further resize (nothing here, since the widget
+    doesn't grow again on its own) would ever reach it. This is exactly the
+    GH #1164 symptom reported on a distant host: the wider that host's SSH
+    handshake makes the STARTING window, the more likely a resize sent as
+    soon as the tab is connected lands inside it.
+    """
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo)
+    started_event = threading.Event()
+    release_event = threading.Event()
+    runner = _BlockingTerminalRunner(
+        started_event=started_event, release_event=release_event
+    )
+    runtime = SessionRuntime(core, runner=runner)
+    try:
+        client_id = ClientId("client:a")
+        prepared = runtime.prepare_open_session(
+            OpenSessionRequest(
+                connection_id=core.list_connections()[0].id,
+                dimensions=TerminalDimensions(rows=24, columns=80),
+            ),
+            client_id=client_id,
+        )
+        attach_result = runtime.attach_session(
+            AttachSessionRequest(session_id=prepared.id, request_input=True),
+            client_id=client_id,
+        )
+
+        worker = threading.Thread(
+            target=runtime.start_session, args=(prepared.id,)
+        )
+        worker.start()
+        try:
+            assert started_event.wait(timeout=5), "runner.start() never entered"
+
+            # Fires while record.process_handle is still None.
+            runtime.resize_terminal(
+                ResizeTerminalRequest(
+                    session_id=prepared.id,
+                    attachment_id=attach_result.attachment.id,
+                    dimensions=TerminalDimensions(rows=50, columns=200),
+                ),
+                client_id=client_id,
+            )
+        finally:
+            release_event.set()
+            worker.join(timeout=5)
+            assert not worker.is_alive()
+
+        assert runner.specs[0].dimensions == TerminalDimensions(
+            rows=24, columns=80
+        )
+        handle = runner.handles[0]
+        assert handle.resizes == [
+            TerminalDimensions(rows=50, columns=200)
+        ]
+    finally:
+        runtime.shutdown()
+        core.close()
 
 
 def test_prepare_and_finish_close_keep_runner_work_out_of_prepare(runtime_parts):

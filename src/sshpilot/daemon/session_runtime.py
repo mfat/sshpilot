@@ -689,10 +689,26 @@ class SessionRuntime:
             diagnostic_failed = False
             finish_readiness = False
             terminate_after_start = False
+            catchup_dimensions: Optional[TerminalDimensions] = None
             with self._lock:
                 if record.state is SessionState.STARTING:
                     record.process_handle = handle
                     record.started_at = self._clock()
+                    # A resize requested while the handle was still starting
+                    # (self._runner.start(spec, ...) above can block for the
+                    # length of the SSH handshake, longer on distant hosts)
+                    # only updates record.launch_spec — resize_terminal() has
+                    # no live handle to call yet. That update would otherwise
+                    # be silently orphaned once this handle is published: the
+                    # PTY stays at whatever size `spec` (read before the
+                    # blocking start) had, and only a later, genuine further
+                    # resize would ever reach it. Catch up now.
+                    if (
+                        record.launch_spec is not None
+                        and record.launch_spec.dimensions is not None
+                        and record.launch_spec.dimensions != spec.dimensions
+                    ):
+                        catchup_dimensions = record.launch_spec.dimensions
                     promote = False
                     if diagnostic_gated:
                         result = record.diagnostic_result
@@ -759,6 +775,17 @@ class SessionRuntime:
                     # the freshly spawned handle.
                     terminate_after_start = True
             self._publish(events)
+            if catchup_dimensions is not None:
+                resize = getattr(handle, "resize", None)
+                if callable(resize):
+                    try:
+                        resize(catchup_dimensions)
+                    except Exception:
+                        logger.debug(
+                            "Startup resize catch-up failed for %r",
+                            session_id,
+                            exc_info=True,
+                        )
             if notify_authenticated and self._authenticated_callback is not None:
                 self._authenticated_callback(session_id)
             for output in deferred_outputs:
