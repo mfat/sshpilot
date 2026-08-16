@@ -161,35 +161,41 @@ def _verify_pty_spawn(client: DaemonClient) -> None:
     try:
         output = bytearray()
         # subscribe_terminal MUST be called before attach_session: the daemon
-        # bundles the initial replay (from_sequence=0) with the attach
-        # response itself, delivered on the client's terminal dispatch thread
-        # the moment that response arrives. A callback registered afterwards
-        # races that delivery and reliably loses it — the client drops
-        # terminal output for sessions with no registered subscriber rather
-        # than queuing it — so attaching first silently discards the very
-        # output this check exists to observe. The callback itself receives a
-        # TerminalOutput event, not raw bytes; extending straight from it
-        # raises TypeError on every delivery, silently swallowed by the
-        # dispatch thread — its own way of never observing the marker.
-        client.subscribe_terminal(session.id, lambda event: output.extend(event.data))
-        client.attach_session(
-            AttachSessionRequest(
-                session_id=session.id,
-                request_input=False,
-                want_terminal_output=True,
-                from_sequence=0,
-            )
+        # queues the attach RPC response and the initial replay
+        # (from_sequence=0) frames back-to-back on the same connection, and
+        # the client's terminal dispatch thread looks up subscribers at
+        # delivery time — a callback registered afterwards races that
+        # delivery and reliably loses, since frames for a session with no
+        # registered subscriber are dropped, not queued. Attaching first
+        # silently discards the very output this check exists to observe.
+        # The callback itself receives a TerminalOutput event, not raw
+        # bytes; extending straight from it raises TypeError on every
+        # delivery, silently swallowed by the dispatch thread — its own way
+        # of never observing the marker.
+        subscription = client.subscribe_terminal(
+            session.id, lambda event: output.extend(event.data)
         )
-
-        deadline = time.monotonic() + 20.0
-        while _PTY_MARKER not in output and time.monotonic() < deadline:
-            time.sleep(0.1)
-        if _PTY_MARKER not in output:
-            raise RuntimeError(
-                "bundled daemon never delivered PTY output for a session — "
-                "the frozen build's PTY spawn is likely broken again (GH #1166); "
-                f"captured={bytes(output)!r}"
+        try:
+            client.attach_session(
+                AttachSessionRequest(
+                    session_id=session.id,
+                    request_input=False,
+                    want_terminal_output=True,
+                    from_sequence=0,
+                )
             )
+
+            deadline = time.monotonic() + 20.0
+            while _PTY_MARKER not in output and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if _PTY_MARKER not in output:
+                raise RuntimeError(
+                    "bundled daemon never delivered PTY output for a session — "
+                    "the frozen build's PTY spawn is likely broken again (GH #1166); "
+                    f"captured={bytes(output)!r}"
+                )
+        finally:
+            subscription.close()
     finally:
         client.close_session(CloseSessionRequest(session_id=session.id))
 
