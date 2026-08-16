@@ -124,6 +124,15 @@ jobs:
         run: |
           .venv-homebrew/bin/python scripts/verify_macos_daemon_bundle.py dist/SSHPilot.app
 
+      # Manual dispatch only: proves a session's PTY actually spawns and
+      # communicates through the real daemon/PTY path (GH #1166) — the
+      # handshake check above passed on the broken 5.8.3 build, since only
+      # session spawning was broken, not the daemon connection itself.
+      - name: Smoke-test packaged PTY spawn (GH #1166)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          .venv-homebrew/bin/python scripts/verify_macos_pty_spawn.py dist/SSHPilot.app
+
       - name: Compress app bundle for artifact upload
         run: |
           ditto -c -k --sequesterRsrc --keepParent dist/SSHPilot.app dist/SSHPilot.app.zip
