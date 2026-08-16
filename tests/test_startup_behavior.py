@@ -307,3 +307,44 @@ def test_verbose_startup_info_reports_semantic_daemon_config_without_paths(capsy
     assert "Config directory:" not in output
     assert "SSH directory:" not in output
 
+
+def test_startup_diagnostics_run_off_the_main_thread():
+    """print_startup_info() reads the secret backend registry through a
+    blocking daemon RPC (SecretBackendsController.load_registry()); building
+    that registry can shell out to e.g. `bw login --check`, observed taking
+    3+ seconds. Calling it directly from the GLib timeout callback used to
+    freeze the whole GTK main loop for that long — nothing in it touches
+    widgets, so it must run on a background thread instead."""
+    import threading
+
+    import pytest
+
+    pytest.importorskip("gi")
+    from sshpilot import main as main_module
+
+    call_thread = []
+    ready = threading.Event()
+
+    def fake_print_startup_info(**_kwargs):
+        call_thread.append(threading.current_thread())
+        ready.set()
+
+    orig = main_module.print_startup_info
+    main_module.print_startup_info = fake_print_startup_info
+    try:
+        app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+        app.isolated_mode = False
+        app.verbose_override = False
+        app.window = types.SimpleNamespace(
+            _api_client_selection_pending=False,
+            _confirmed_operation_mode=None,
+        )
+
+        calling_thread = threading.current_thread()
+        app._schedule_startup_diagnostics()
+
+        assert ready.wait(2), "print_startup_info was never called"
+        assert call_thread[0] is not calling_thread
+    finally:
+        main_module.print_startup_info = orig
+
