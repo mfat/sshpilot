@@ -51,7 +51,12 @@ class DaemonTerminalWidget(Gtk.Box):
             on_error=self._on_error,
         )
         self._terminal.connect("commit", self._on_commit)
-        self._terminal.connect("char-size-changed", self._on_size_changed)
+        # Not "char-size-changed": that only fires on font-metric changes
+        # (zoom), never on a widget resize, which left the remote PTY stuck
+        # at its opening size regardless of how big the window grew (GH
+        # #1164). column-count/row-count are what VTE recomputes on resize.
+        self._terminal.connect("notify::column-count", self._on_size_changed)
+        self._terminal.connect("notify::row-count", self._on_size_changed)
 
     @property
     def terminal(self):
@@ -92,7 +97,7 @@ class DaemonTerminalWidget(Gtk.Box):
             return
         self._controller.send_input(text.encode("utf-8"))
 
-    def _on_size_changed(self, _terminal, _width, _height) -> None:
+    def _on_size_changed(self, _terminal, _pspec=None) -> None:
         if self._closed:
             return
         from .api.models.terminal import TerminalDimensions

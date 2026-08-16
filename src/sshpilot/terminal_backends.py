@@ -855,6 +855,10 @@ class VTETerminalBackend:
         self._native_context_callback = None
 
     def disconnect(self, handler_id: Any) -> None:
+        if isinstance(handler_id, (tuple, list)):
+            for one_id in handler_id:
+                self.disconnect(one_id)
+            return
         try:
             if handler_id:
                 self.vte.disconnect(handler_id)
@@ -913,7 +917,23 @@ class VTETerminalBackend:
         return self.vte.connect("commit", callback)
 
     def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
-        return self.vte.connect("char-size-changed", callback)
+        """Fire *callback* when the terminal's column/row grid changes size.
+
+        Deliberately NOT VTE's own "char-size-changed" signal: that fires
+        only on font-metric changes (e.g. zoom), never when the widget
+        itself is resized. Wiring the daemon SSH resize path to it meant
+        the remote PTY (and anything reading it, e.g. tmux) stayed stuck at
+        whatever size the session opened with, no matter how big the
+        window/pane grew afterwards (GH #1164). column-count/row-count are
+        the properties VTE actually recomputes on a widget resize.
+        """
+        def _on_dimension_changed(widget, _pspec):
+            callback(widget, 0, 0)
+
+        return (
+            self.vte.connect("notify::column-count", _on_dimension_changed),
+            self.vte.connect("notify::row-count", _on_dimension_changed),
+        )
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         return self.vte.connect("contents-changed", callback)
