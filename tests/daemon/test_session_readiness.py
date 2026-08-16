@@ -455,6 +455,41 @@ def test_exit_before_authentication_does_not_claim_running():
     core.close()
 
 
+def test_exit_before_authentication_with_zero_output_and_clean_code_still_fails():
+    """A session that exits from STARTING with exit_code=0 but *no PTY output
+    at all* must not be silently treated as an expected/clean close — it has
+    never proven it did anything useful. This is the exact shape of GH #1166
+    (frozen macOS build: ssh never actually launched, so the session exited
+    "cleanly" a moment later with zero output and no diagnostic verdict)."""
+    repo = make_test_repository()
+    core = ConnectionApplicationService(repo, client_name="diag-silent-exit")
+    runner = _EvidenceTerminalRunner()
+    readiness = _FakeReadiness(engaged=True)
+    runtime = SessionRuntime(core, runner=runner, readiness_manager=readiness)
+    states: list[str] = []
+    runtime.subscribe_events(
+        lambda event: states.append(getattr(event.payload, "state", None))
+    )
+
+    prepared = _prepared(core, runtime)
+    runtime.start_session(prepared.id)
+    assert runner.started.wait(1)
+    assert runner.handle is not None
+    # No runner.emit(...) call: the session never produces any terminal
+    # output before exiting, unlike a genuinely clean "user typed exit".
+    runner.handle.exit(SessionExitInfo(exit_code=0, reason="process_exit"))
+    runner.handle._on_eof()
+
+    assert SessionState.RUNNING not in states
+    closed = runtime.get_session(prepared.id)
+    assert closed.state is SessionState.CLOSED
+    assert closed.failure is not None
+    assert closed.failure.message == "The session ended before it produced any output"
+
+    runtime.shutdown()
+    core.close()
+
+
 def test_gated_session_without_result_stays_alive_until_marker():
     """A diagnostics-gated session must not have its process reaped while the
     decisive verdict is still outstanding (regression for the over-eager

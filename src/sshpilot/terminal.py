@@ -1625,8 +1625,19 @@ class TerminalWidget(Gtk.Box):
             exit_code = getattr(exit_info, 'exit_code', None) if exit_info else None
             signal = getattr(exit_info, 'signal', None) if exit_info else None
 
-            if exit_info is not None and exit_code == 0 and not signal:
+            if (
+                exit_info is not None
+                and exit_code == 0
+                and not signal
+                and self.last_error_message is None
+            ):
                 # Clean exit: close the tab (mirrors _handle_child_exit_cleanup).
+                # The last_error_message guard matters because a session can
+                # reach CLOSED via FAILED (session_runtime classified it as a
+                # real failure and _on_connection_failed already recorded a
+                # banner) — exit_code is still 0 in that case, and without
+                # this guard the tab would vanish and silently hide the
+                # banner that was just shown.
                 root = self.get_root() if hasattr(self, 'get_root') else None
                 if root and hasattr(root, 'tab_view'):
                     # Safe lookup: this terminal may be embedded in a

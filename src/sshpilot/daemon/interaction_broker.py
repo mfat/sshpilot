@@ -1292,25 +1292,42 @@ class InteractionBroker:
         shutil.rmtree(self._private_dir, ignore_errors=True)
 
     def _write_helper_launcher(self) -> None:
-        # Inline the helper module so the OpenSSH askpass child does not depend
-        # on PYTHONPATH or an installed sshpilot package (ssh may spawn with a
-        # reduced environment; import failures look like missing secrets).
-        helper_source = Path(__file__).with_name("askpass_helper.py").read_text(
-            encoding="utf-8"
-        )
-        lines = []
-        skipping_main_guard = False
-        for line in helper_source.splitlines():
-            if line.startswith("if __name__"):
-                skipping_main_guard = True
-                continue
-            if skipping_main_guard:
-                if line and not line.startswith((" ", "\t")):
-                    skipping_main_guard = False
-                else:
+        if getattr(sys, "frozen", False):
+            # sys.executable is this application's own binary in a frozen
+            # (PyInstaller) build, not a Python interpreter: a shebang of
+            # "#!{sys.executable}" followed by inlined Python source (the
+            # non-frozen branch below) would make OpenSSH's exec of this
+            # script just relaunch the GUI instead of running the askpass
+            # helper. Route through /bin/sh so the interpreter-argument
+            # splitting is portable, and re-invoke this binary with the
+            # internal dispatch flag handled in run.py — the daemon's own
+            # source tree is already inside the bundle, so nothing needs
+            # inlining here.
+            source = (
+                "#!/bin/sh\n"
+                f'exec "{sys.executable}" --internal-askpass "$@"\n'
+            )
+        else:
+            # Inline the helper module so the OpenSSH askpass child does not
+            # depend on PYTHONPATH or an installed sshpilot package (ssh may
+            # spawn with a reduced environment; import failures look like
+            # missing secrets).
+            helper_source = Path(__file__).with_name("askpass_helper.py").read_text(
+                encoding="utf-8"
+            )
+            lines = []
+            skipping_main_guard = False
+            for line in helper_source.splitlines():
+                if line.startswith("if __name__"):
+                    skipping_main_guard = True
                     continue
-            lines.append(line)
-        source = f"#!{sys.executable}\n" + "\n".join(lines) + "\nraise SystemExit(main())\n"
+                if skipping_main_guard:
+                    if line and not line.startswith((" ", "\t")):
+                        skipping_main_guard = False
+                    else:
+                        continue
+                lines.append(line)
+            source = f"#!{sys.executable}\n" + "\n".join(lines) + "\nraise SystemExit(main())\n"
         descriptor = os.open(
             self._askpass_helper_path,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,

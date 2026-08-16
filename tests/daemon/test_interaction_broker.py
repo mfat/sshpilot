@@ -3,6 +3,7 @@ import os
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -319,6 +320,26 @@ def test_private_askpass_helper_delivers_only_one_brokered_secret(
     assert helper.returncode == 0
     assert stdout == b"brokered-value\n"
     assert stderr == b""
+
+
+def test_frozen_build_askpass_helper_dispatches_via_internal_flag(monkeypatch) -> None:
+    # sys.executable is this application's own binary in a frozen build, not
+    # a Python interpreter: a "#!{sys.executable}" shebang over inlined
+    # Python source (the non-frozen branch, exercised above) would make
+    # OpenSSH's exec of SSH_ASKPASS just relaunch the GUI instead of running
+    # the askpass helper — this is what actually caused GH #1166 for any
+    # password/passphrase connection once the PTY spawn itself is fixed.
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/fake/SSHPilot", raising=False)
+
+    instance = InteractionBroker(secret_timeout=2, host_key_timeout=2)
+    try:
+        content = instance._askpass_helper_path.read_text(encoding="utf-8")
+    finally:
+        instance.close()
+
+    assert content == '#!/bin/sh\nexec "/fake/SSHPilot" --internal-askpass "$@"\n'
+    assert ".py" not in content
 
 
 def test_prepare_launch_brokers_interactions_without_saved_secret(

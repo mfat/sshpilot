@@ -321,3 +321,31 @@ def test_handle_askpass_cli_session_backend_falls_back_to_local(monkeypatch):
 
     prompt = "Enter passphrase for key '/home/u/.ssh/id_ed25519':"
     assert askpass_utils.handle_askpass_cli(prompt) == "vialocal"
+
+
+def test_frozen_build_native_askpass_script_dispatches_via_internal_flag(monkeypatch):
+    # sys.executable is this application's own binary in a frozen build, not
+    # a Python interpreter — "exec sys.executable helper.py" would relaunch
+    # the GUI instead of running run_askpass_and_write, the same hazard fixed
+    # for the daemon's own askpass helper (see GH #1166).
+    import sys
+
+    from sshpilot import askpass_utils
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/fake/SSHPilot", raising=False)
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_DIR", None)
+    monkeypatch.setattr(askpass_utils, "_ASKPASS_SCRIPT", None)
+
+    script_path = askpass_utils.force_regenerate_askpass_script()
+
+    with open(script_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    assert content == '#!/bin/sh\nexec "/fake/SSHPilot" --internal-native-askpass "$@"\n'
+    assert ".py" not in content
+    # No separate helper module is written in the frozen case — the
+    # dispatch flag routes straight into the already-bundled package.
+    assert not os.path.exists(
+        os.path.join(os.path.dirname(script_path), "askpass_helper.py")
+    )

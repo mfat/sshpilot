@@ -1459,17 +1459,32 @@ def ensure_passphrase_askpass() -> str:
     script_path = os.path.join(_ASKPASS_DIR, "askpass.sh")
     logger.debug(f"Generating askpass shell wrapper at {script_path}")
 
-    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    helper_path = os.path.join(_ASKPASS_DIR, "askpass_helper.py")
-    with open(helper_path, "w", encoding="utf-8") as f:
-        f.write("import sys\n")
-        f.write(f"sys.path.insert(0, {pkg_parent!r})\n")
-        f.write("from sshpilot.askpass_utils import run_askpass_and_write\n")
-        f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
-        f.write("sys.exit(run_askpass_and_write(prompt))\n")
-    os.chmod(helper_path, 0o600)
-    with open(script_path, "w", encoding="utf-8") as f:
-        f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
+    if getattr(sys, "frozen", False):
+        # sys.executable is this application's own binary in a frozen
+        # (PyInstaller) build, not a Python interpreter — "exec sys.executable
+        # helper.py" would just relaunch the GUI instead of running
+        # run_askpass_and_write, exactly as with the daemon's askpass helper
+        # (see interaction_broker._write_helper_launcher). Re-invoke this
+        # binary with the internal dispatch flag handled in run.py instead;
+        # the package is already inside the bundle, so no helper file is
+        # needed.
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(
+                "#!/bin/sh\n"
+                f'exec "{sys.executable}" --internal-native-askpass "$@"\n'
+            )
+    else:
+        pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        helper_path = os.path.join(_ASKPASS_DIR, "askpass_helper.py")
+        with open(helper_path, "w", encoding="utf-8") as f:
+            f.write("import sys\n")
+            f.write(f"sys.path.insert(0, {pkg_parent!r})\n")
+            f.write("from sshpilot.askpass_utils import run_askpass_and_write\n")
+            f.write("prompt = sys.argv[1] if len(sys.argv) > 1 else ''\n")
+            f.write("sys.exit(run_askpass_and_write(prompt))\n")
+        os.chmod(helper_path, 0o600)
+        with open(script_path, "w", encoding="utf-8") as f:
+            f.write(f'#!/bin/sh\nexec "{sys.executable}" "{helper_path}" "$@"\n')
 
     script_mode = os.stat(script_path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH
     os.chmod(script_path, script_mode)
