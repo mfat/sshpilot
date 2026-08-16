@@ -779,6 +779,82 @@ def test_restore_connection_store_merge_mode_stays_additive_not_exclusive(tmp_pa
     assert memberships == {"Prod", "QA"}
 
 
+def test_restore_connection_store_merge_mode_root_placement_preserves_group_membership(tmp_path):
+    """Reproduces the reported bug: restoring a backup that places a
+    connection at root must not evict it from a group it already belongs to
+    on the target under merge mode — root placement must be additive, not
+    exclusive."""
+    repo, _, _ = _repo(tmp_path)
+    repo.create_connection(_telnet_data("shared"))
+    prod = repo.create_group("Prod")
+    from sshpilot.api.models.connection_store import MoveConnectionsRequest
+
+    repo.move_connections(
+        MoveConnectionsRequest(connection_ids=("shared",), target_group_id=prod.id)
+    )
+    section = {
+        "version": 1,
+        "connections": [
+            {"id": "shared", "protocol": "telnet", "nickname": "shared",
+             "hostname": "10.0.0.5", "username": "", "port": 2323, "display_name": ""},
+        ],
+        "groups": [],
+        "root_connection_ids": ["shared"],
+        "metadata": [],
+    }
+
+    repo.restore_connection_store(section, mode="merge")
+
+    snap = repo.snapshot()
+    memberships = {g.name for g in snap.groups if "shared" in g.connection_ids}
+    assert memberships == {"Prod"}, (
+        "merge-mode root placement must not remove existing group membership"
+    )
+    # A connection that stays grouped cannot also sit in the root list — the
+    # backup's root placement for it is a no-op under merge, not a promotion.
+    assert "shared" not in snap.root_connection_ids
+
+
+def test_restore_connection_store_root_placement_merge_vs_replace_semantics(tmp_path):
+    """Same initial target state, same backup root placement: merge must
+    preserve pre-existing group membership, replace must remove it."""
+    section = {
+        "version": 1,
+        "connections": [
+            {"id": "shared", "protocol": "telnet", "nickname": "shared",
+             "hostname": "10.0.0.5", "username": "", "port": 2323, "display_name": ""},
+        ],
+        "groups": [],
+        "root_connection_ids": ["shared"],
+        "metadata": [],
+    }
+
+    from sshpilot.api.models.connection_store import MoveConnectionsRequest
+
+    merge_repo, _, _ = _repo(tmp_path / "merge")
+    merge_repo.create_connection(_telnet_data("shared"))
+    merge_prod = merge_repo.create_group("Prod")
+    merge_repo.move_connections(
+        MoveConnectionsRequest(connection_ids=("shared",), target_group_id=merge_prod.id)
+    )
+    merge_repo.restore_connection_store(section, mode="merge")
+    merge_snap = merge_repo.snapshot()
+    merge_memberships = {g.name for g in merge_snap.groups if "shared" in g.connection_ids}
+    assert merge_memberships == {"Prod"}
+
+    replace_repo, _, _ = _repo(tmp_path / "replace")
+    replace_repo.create_connection(_telnet_data("shared"))
+    replace_prod = replace_repo.create_group("Prod")
+    replace_repo.move_connections(
+        MoveConnectionsRequest(connection_ids=("shared",), target_group_id=replace_prod.id)
+    )
+    replace_repo.restore_connection_store(section, mode="replace")
+    replace_snap = replace_repo.snapshot()
+    replace_memberships = {g.name for g in replace_snap.groups if "shared" in g.connection_ids}
+    assert replace_memberships == set()
+    assert replace_snap.root_connection_ids == ("shared",)
+
+
 @pytest.mark.parametrize(
     "protocol,fields",
     [
@@ -789,7 +865,7 @@ def test_restore_connection_store_merge_mode_stays_additive_not_exclusive(tmp_pa
              "workdir": "/app"},
         ),
         (
-            "kubernetes",
+            "k8s",
             {"pod": "web-0", "container": "app", "namespace": "prod",
              "kube_context": "prod-cluster", "kubeconfig": "/home/u/.kube/config",
              "command": "/bin/sh"},

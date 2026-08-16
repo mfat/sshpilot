@@ -144,7 +144,7 @@ CONNECTION_STORE_SECTION_VERSION = 1
 _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "serial": ("device", "baud", "flow", "databits", "parity", "stopbits"),
     "docker": ("container", "command", "runtime", "docker_host", "user", "workdir"),
-    "kubernetes": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
+    "k8s": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
     "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
 }
 
@@ -2694,6 +2694,18 @@ class ConnectionRepository:
         for cid in set(requested_root) - set(root_ids):
             warnings.append(
                 f"Root connection {cid!r} referenced by the backup was not found"
+            )
+        if mode == "merge":
+            # Merge is non-destructive: a connection that already belongs to
+            # a group (whether from pre-existing target state or from this
+            # same restore's own group membership above) must keep that
+            # membership. Root/group membership are mutually exclusive in
+            # this domain model, so an exclusive move to root would evict it
+            # — instead, the backup's root placement is a no-op for an
+            # already-grouped connection under merge.
+            root_ids = tuple(
+                cid for cid in root_ids
+                if self._service.get(cid).group_id is None
             )
         if root_ids:
             self._service.move_connections(
