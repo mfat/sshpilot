@@ -48,10 +48,14 @@ def _terminal(*, is_connected: bool, has_input_ownership: bool, state):
     terminal._daemon_terminal_dimensions = Mock(
         return_value=TerminalDimensions(rows=50, columns=200)
     )
+    terminal.backend = Mock()
 
-    # Bind the real method under test to the mock instance.
+    # Bind the real methods under test to the mock instance.
     terminal._update_daemon_connection_state = (
         lambda: TerminalWidget._update_daemon_connection_state(terminal)
+    )
+    terminal._resync_daemon_terminal_size = (
+        lambda: TerminalWidget._resync_daemon_terminal_size(terminal)
     )
     return terminal, controller
 
@@ -71,6 +75,10 @@ def test_first_active_transition_with_ownership_syncs_daemon_size():
     controller.resize.assert_called_once_with(
         TerminalDimensions(rows=50, columns=200)
     )
+    # A single synchronous read can still race GTK's layout pass; the
+    # backend's tick-poll cache must also be invalidated so a stale read
+    # here gets self-corrected on the very next frame regardless.
+    terminal.backend.invalidate_size_tracking.assert_called_once_with()
 
 
 def test_repeated_active_notifications_do_not_resync_every_time():
@@ -127,6 +135,10 @@ def test_take_input_control_syncs_daemon_size_once_claimed():
     terminal._daemon_terminal_dimensions = Mock(
         return_value=TerminalDimensions(rows=50, columns=200)
     )
+    terminal.backend = Mock()
+    terminal._resync_daemon_terminal_size = (
+        lambda: TerminalWidget._resync_daemon_terminal_size(terminal)
+    )
 
     TerminalWidget.take_input_control(terminal)
 
@@ -139,3 +151,4 @@ def test_take_input_control_syncs_daemon_size_once_claimed():
     controller.resize.assert_called_once_with(
         TerminalDimensions(rows=50, columns=200)
     )
+    terminal.backend.invalidate_size_tracking.assert_called_once_with()

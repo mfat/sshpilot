@@ -170,6 +170,15 @@ class BaseTerminalBackend(Protocol):
         needing rows/columns must use :meth:`get_size`.
         """
 
+    def invalidate_size_tracking(self) -> None:
+        """Force the next size poll to re-report, even at an unchanged size.
+
+        No-op by default; overridden by backends that cache the last polled
+        size (see ``VTETerminalBackend``) so a caller can force a redelivery
+        after a resize was observed but dropped for an unrelated reason
+        (e.g. no input ownership yet).
+        """
+
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Connect a notification emitted after displayed content changes."""
 
@@ -961,6 +970,7 @@ class VTETerminalBackend:
         before/after delta for this poll to notice.
         """
         state = {"size": None}
+        self._size_poll_state = state
 
         def _on_tick(widget, _frame_clock):
             try:
@@ -974,6 +984,23 @@ class VTETerminalBackend:
 
         tick_id = self.vte.add_tick_callback(_on_tick)
         return ("tick-callback", tick_id)
+
+    def invalidate_size_tracking(self) -> None:
+        """Clear the cached last-polled size so the next tick redelivers it.
+
+        Covers the race where the grid already settled at its true
+        post-layout size before a caller could act on a report (e.g.
+        daemon input ownership wasn't granted yet when the tick fired), so
+        ``connect_size_changed``'s own change-detection never saw a further
+        delta to report and only a later, genuine window resize produced
+        one. Forcing the cached size back to ``None`` makes the very next
+        tick redeliver unconditionally, which self-heals regardless of
+        exactly when layout settles relative to ownership being granted
+        (GH #1164 follow-up).
+        """
+        state = getattr(self, "_size_poll_state", None)
+        if state is not None:
+            state["size"] = None
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         return self.vte.connect("contents-changed", callback)

@@ -951,15 +951,7 @@ class TerminalWidget(Gtk.Box):
                 # Resize was silently dropped (no ownership) for as long as
                 # this attachment was view-only; sync the daemon to our
                 # actual current size now that we can resize again.
-                try:
-                    self._daemon_controller.resize(
-                        self._daemon_terminal_dimensions()
-                    )
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to sync daemon terminal size after "
-                        f"input claim: {e}"
-                    )
+                self._resync_daemon_terminal_size()
 
             def _failed(error):
                 logger.info(
@@ -1256,6 +1248,26 @@ class TerminalWidget(Gtk.Box):
             rows=max(1, min(1000, rows)),
             columns=max(1, min(1000, columns)),
         )
+
+    def _resync_daemon_terminal_size(self):
+        """Push the current widget size to the daemon and re-arm polling.
+
+        Called when input ownership is newly granted. A single synchronous
+        read here can still race GTK's own layout pass (the widget may not
+        have finished settling into its real on-screen size yet), so this
+        also invalidates the backend's tick-poll cache — that guarantees a
+        redelivery on the very next frame even if this read was stale,
+        without waiting for an actual further resize to produce one
+        (GH #1164 follow-up).
+        """
+        try:
+            self._daemon_controller.resize(self._daemon_terminal_dimensions())
+        except Exception as e:
+            logger.debug(f"Failed to sync daemon terminal size: {e}")
+        backend = getattr(self, 'backend', None)
+        invalidate = getattr(backend, 'invalidate_size_tracking', None)
+        if callable(invalidate):
+            invalidate()
 
     def _on_daemon_commit(self, terminal, text, size):
         """Handle backend input commit for daemon terminals."""
@@ -1562,17 +1574,9 @@ class TerminalWidget(Gtk.Box):
                         # signal during that window was silently dropped for
                         # lack of ownership (GH #1164 follow-up) — with no
                         # catch-up, the remote PTY/tmux stays at whatever
-                        # size the session opened with. Sync once, now that
-                        # we may actually resize.
-                        try:
-                            self._daemon_controller.resize(
-                                self._daemon_terminal_dimensions()
-                            )
-                        except Exception as e:
-                            logger.debug(
-                                f"Failed to sync daemon terminal size after "
-                                f"ownership grant: {e}"
-                            )
+                        # size the session opened with. Sync now that we may
+                        # actually resize.
+                        self._resync_daemon_terminal_size()
 
                 # Emit connection-established if newly connected
                 if not old_connected:

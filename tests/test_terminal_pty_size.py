@@ -192,3 +192,36 @@ def test_connect_size_changed_fires_on_the_first_tick_too():
     backend.vte.fire_tick()
 
     assert len(calls) == 1
+
+
+def test_invalidate_size_tracking_forces_redelivery_on_the_next_tick():
+    """Regression: a caller (terminal.py) may observe a resize through this
+    poll and have to drop it for an unrelated reason (daemon input
+    ownership not granted yet). If the grid doesn't change again
+    afterwards, plain change-detection never re-reports it — nothing but a
+    genuine further resize produces a new delta, which on GH #1164 meant
+    tmux/top stuck at the stale size until the user manually resized the
+    window. invalidate_size_tracking() lets the caller force one more
+    unconditional report on the very next tick once it's ready to act on
+    it (e.g. right when ownership is granted), regardless of whether the
+    grid itself moves again."""
+    backend = object.__new__(VTETerminalBackend)
+    backend.vte = DummyTickEmitter()
+    backend.vte.rows, backend.vte.columns = 50, 200
+
+    calls = []
+    backend.connect_size_changed(lambda *args: calls.append(args))
+    backend.vte.fire_tick()
+    assert len(calls) == 1
+
+    # Grid stays put (already settled) — no further change to detect.
+    backend.vte.fire_tick()
+    assert len(calls) == 1
+
+    backend.invalidate_size_tracking()
+    backend.vte.fire_tick()
+    assert len(calls) == 2
+
+    # Settles again afterwards: normal change-detection still applies.
+    backend.vte.fire_tick()
+    assert len(calls) == 2
