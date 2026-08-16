@@ -67,6 +67,85 @@ def test_ensure_secrets_page_probes_runs_once(monkeypatch):
     assert visibility == [('auto', {'defer_status_probe': False})]
 
 
+def test_backend_change_checks_unlock_need_before_refreshing_rows(monkeypatch):
+    """Regression: _update_secret_rows_visibility() refreshes the "Forget"
+    row on a background thread that also calls controller.load_state() —
+    when the unlock-need check ran after that call, it raced the same
+    guarded SecretBackendsController and its RuntimeError("a secret backend
+    operation is already in progress") was silently swallowed as "no unlock
+    needed", skipping the unlock prompt on nearly every backend switch. The
+    unlock check must run before rows are refreshed."""
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    prefs._secret_backend_selection_sync = False
+    prefs._secret_backend_ids = ['auto', 'keepassxc']
+
+    controller = mock.Mock()
+    prefs._resolve_secrets_controller = lambda: controller
+
+    combo = mock.Mock()
+    combo.get_selected.return_value = 1  # 'keepassxc'
+
+    order = []
+    monkeypatch.setattr(
+        preferences.PreferencesWindow, '_selected_needs_unlock_from_state',
+        lambda self: (order.append('needs_unlock'), False)[1],
+    )
+    monkeypatch.setattr(
+        preferences.PreferencesWindow, '_update_secret_rows_visibility',
+        lambda self, name: order.append('update_rows'),
+    )
+
+    preferences.PreferencesWindow.on_secret_backend_changed(prefs, combo, None)
+
+    assert order == ['needs_unlock', 'update_rows']
+
+
+def test_selected_needs_unlock_retries_past_a_busy_controller(monkeypatch):
+    """The controller rejects overlapping guarded operations with a plain
+    RuntimeError — the old code treated that identically to "genuinely does
+    not need unlock" and silently skipped the unlock prompt. A transient
+    RuntimeError (an unrelated concurrent probe still holding the
+    controller) must be retried, not swallowed."""
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    monkeypatch.setattr(preferences.time, 'sleep', lambda _seconds: None)
+
+    controller = mock.Mock()
+    calls = []
+
+    def load_state():
+        calls.append(1)
+        if len(calls) < 3:
+            raise RuntimeError("a secret backend operation is already in progress")
+        return mock.Mock(needs_unlock=True)
+
+    controller.load_state.side_effect = load_state
+    prefs._resolve_secrets_controller = lambda: controller
+
+    result = preferences.PreferencesWindow._selected_needs_unlock_from_state(prefs)
+
+    assert result is True
+    assert len(calls) == 3
+
+
+def test_selected_needs_unlock_gives_up_after_bounded_retries(monkeypatch):
+    """A controller that never frees up must not hang the main thread
+    forever — bounded retries, then a plain False (matches the old
+    fail-safe default when the state genuinely can't be read)."""
+    prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)
+    monkeypatch.setattr(preferences.time, 'sleep', lambda _seconds: None)
+
+    controller = mock.Mock()
+    controller.load_state.side_effect = RuntimeError(
+        "a secret backend operation is already in progress"
+    )
+    prefs._resolve_secrets_controller = lambda: controller
+
+    result = preferences.PreferencesWindow._selected_needs_unlock_from_state(prefs)
+
+    assert result is False
+    assert controller.load_state.call_count == 8
+
+
 def test_build_security_page_sets_secrets_page_id(monkeypatch):
     """Security page build must register _secrets_page_id for deferred probes."""
     prefs = preferences.PreferencesWindow.__new__(preferences.PreferencesWindow)

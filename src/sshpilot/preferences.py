@@ -3284,6 +3284,17 @@ class PreferencesWindow(Adw.NavigationPage):
                     else set(self._secret_backend_ids)
                 )
                 return
+            # Checked before _update_secret_rows_visibility(), which refreshes the
+            # "Forget" row on its own background thread (_refresh_forget_master_row):
+            # that thread's controller.load_state() call would otherwise race this
+            # one on the same guarded controller, and the loser's RuntimeError(
+            # "a secret backend operation is already in progress") was silently
+            # swallowed as "no unlock needed" — skipping the unlock prompt on a
+            # backend that actually needed it, on nearly every switch.
+            needs_unlock = (
+                name not in ('bitwarden', 'rbw')
+                and self._selected_needs_unlock_from_state()
+            )
             self._update_secret_rows_visibility(name)
             logger.info("Secret storage backend set to: %s", name)
 
@@ -3306,7 +3317,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 ensure_rbw_ready(self, _done)
                 return
             # A session-backed backend must be unlocked before it can store/read.
-            if self._selected_needs_unlock_from_state():
+            if needs_unlock:
                 try:
                     from .secret_unlock_dialog import prompt_unlock
 
@@ -3317,16 +3328,34 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Failed to update secret storage backend: %s", exc)
 
     def _selected_needs_unlock_from_state(self):
-        """Whether the daemon reports the selected backend needs unlocking."""
+        """Whether the daemon reports the selected backend needs unlocking.
+
+        Runs synchronously on the main thread, so this is a short, bounded
+        retry (not the 10s background-thread one in
+        _refresh_forget_master_row) — just enough to ride out a controller
+        already held by an unrelated concurrent probe (e.g. the page-open
+        Bitwarden/rbw availability check) without freezing the UI for long.
+        Silently returning False here (the old behavior on any exception)
+        meant a backend that genuinely needed unlocking looked unlocked,
+        and the unlock prompt was skipped.
+        """
         controller = self._resolve_secrets_controller()
         if controller is None:
             return False
-        try:
-            state = controller.load_state()
-            return bool(getattr(state, 'needs_unlock', False))
-        except Exception:
-            logger.debug("secret backend state query failed", exc_info=True)
-            return False
+        for attempt in range(8):
+            try:
+                state = controller.load_state()
+                return bool(getattr(state, 'needs_unlock', False))
+            except RuntimeError:
+                if attempt < 7:
+                    time.sleep(0.15)
+                    continue
+                logger.debug("secret backend state query still busy", exc_info=True)
+                return False
+            except Exception:
+                logger.debug("secret backend state query failed", exc_info=True)
+                return False
+        return False
 
     def _setup_bitwarden_backend_async(self, on_done):
         """Probe Bitwarden off the main thread, then unlock or run setup as needed."""
