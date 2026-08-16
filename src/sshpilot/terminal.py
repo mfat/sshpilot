@@ -914,6 +914,17 @@ class TerminalWidget(Gtk.Box):
             return True  # Local terminals always have input
         return self._daemon_controller and self._daemon_controller.input_owner
 
+    def rebind_daemon_client(self, client):
+        """Push a replaced daemon client into this terminal's session controller.
+
+        Called after a transport reconnect so a deferred callback that fires
+        later (e.g. a session-opened success racing the old transport's
+        shutdown) uses the live client instead of the closed one."""
+        if self._daemon_controller is not None:
+            set_client = getattr(self._daemon_controller, "set_client", None)
+            if callable(set_client):
+                set_client(client)
+
     def take_input_control(self):
         """Claim input ownership for this daemon attachment when unowned."""
         if not self._daemon_mode or not self._daemon_controller:

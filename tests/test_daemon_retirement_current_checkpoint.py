@@ -111,6 +111,41 @@ def test_reconnect_resets_open_preferences_mode_confirmation():
     preferences.reset_operation_mode_confirmation.assert_called_once_with()
 
 
+def test_reconnect_rebinds_live_terminals_to_the_new_client():
+    """A daemon transport replacement must push the new client into every open
+    terminal's session controller — otherwise a deferred callback for an
+    in-flight terminal (e.g. session-opened racing the old transport's
+    shutdown) still calls through the closed old client and raises
+    "The client is closed" uncaught (observed as a crash while a terminal
+    sits stuck at "connecting")."""
+    pytest.importorskip("gi")
+    from sshpilot.window import MainWindow
+    from sshpilot.terminal_manager import TerminalManager
+
+    old_client = object()
+    new_client = object()
+    preferences = None
+    window = MainWindow.__new__(MainWindow)
+    window.client = old_client
+    window._confirmed_operation_mode = None
+    window.key_manager = None
+    window._group_mutation_controller = None
+    window._secrets_interaction_presenter = None
+    window._preferences_window = preferences
+    window._attach_client_backed_services = MagicMock()
+    window.terminal_manager = TerminalManager(window)
+
+    stale_terminal = MagicMock()
+    window.active_terminals = {"conn": stale_terminal}
+    window.connection_to_terminals = {}
+    window.tab_view = None
+
+    window._replace_daemon_client(new_client)
+
+    assert window.client is new_client
+    stale_terminal.rebind_daemon_client.assert_called_once_with(new_client)
+
+
 def test_reconnect_rebind_failure_does_not_publish_new_selection():
     from sshpilot import main as main_module
     from sshpilot.api.daemon_reconnect import DaemonReconnectResult

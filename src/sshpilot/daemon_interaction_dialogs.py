@@ -572,7 +572,12 @@ class DaemonInteractionDialogs:
         self._submit_secret(summary, secret)
         dialog.close()
 
-    def _submit_secret(self, summary, secret: bytearray) -> None:
+    def _submit_secret(
+        self,
+        summary,
+        secret: bytearray,
+        remember_policy: RememberPolicy = RememberPolicy.DO_NOT_STORE,
+    ) -> None:
         self._pending_secrets[summary.id] = secret
 
         def _send() -> None:
@@ -585,7 +590,7 @@ class DaemonInteractionDialogs:
                 InteractionDecisionRequest(
                     interaction_id=summary.id,
                     secret_decision=SecretDecision.SUBMIT,
-                    remember_policy=RememberPolicy.DO_NOT_STORE,
+                    remember_policy=remember_policy,
                 )
             )
             self._client.send_interaction_secret(

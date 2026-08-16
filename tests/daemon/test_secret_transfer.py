@@ -203,6 +203,7 @@ def test_daemon_export_manifest_equals_classic_backup_manager(monkeypatch, tmp_p
             "secrets": True,
             "private_keys": False,
         },
+        owner_client_id="client-1",
     )
     from sshpilot.api.models.secrets import SecretOperationState
 
@@ -551,6 +552,11 @@ class _OneShotBroker:
         self._used = True
         return SimpleNamespace(secret=bytearray(self._secret.encode("utf-8")))
 
+    def request_client_secret(self, *, owner_client_id, **kwargs):
+        summary = self.create(**kwargs)
+        result = self.wait_for_result(summary.id)
+        return None if result is None else result.secret
+
 
 def test_service_preview_caches_manifest_so_import_never_reprompts(monkeypatch, tmp_path):
     config_dir, _ = _isolate_paths(monkeypatch, tmp_path)
@@ -584,12 +590,14 @@ def test_service_preview_caches_manifest_so_import_never_reprompts(monkeypatch, 
         config_file, secret_manager=fake, interaction_broker=broker
     )
 
-    preview = service.preview_backup(source=str(source))
+    preview = service.preview_backup(source=str(source), owner_client_id="client-1")
     assert preview["kind"] == "spbk"
     assert preview["encrypted"] is True
     assert preview["included"]["ssh_config"] is True
 
-    result = service.import_backup(source=str(source), options={"mode": "merge"})
+    result = service.import_backup(
+        source=str(source), options={"mode": "merge"}, owner_client_id="client-1"
+    )
     assert result.status.value == "success", result.message
     # The preview collected the passphrase once; the import reused the cached
     # manifest instead of prompting again.
@@ -625,7 +633,9 @@ def test_service_import_prompts_when_no_preview_cached(monkeypatch, tmp_path):
     service = SecretBackendService(
         config_file, secret_manager=fake, interaction_broker=broker
     )
-    result = service.import_backup(source=str(source), options={"mode": "merge"})
+    result = service.import_backup(
+        source=str(source), options={"mode": "merge"}, owner_client_id="client-1"
+    )
     assert result.status.value == "success", result.message
     assert len(broker.created) == 1
 

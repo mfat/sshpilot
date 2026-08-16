@@ -115,6 +115,86 @@ def test_secret_is_responder_bound_one_use_and_cleared(
     result.clear()
 
 
+def test_request_client_secret_registers_the_owner_so_it_is_visible(
+    broker: InteractionBroker,
+) -> None:
+    """Regression: SecretBackendService used to call broker.create() +
+    wait_for_result() directly for master-password/Bitwarden/backup
+    passphrase prompts, never registering a direct-scope owner. The server
+    only forwards INTERACTION_CREATED/STATE_CHANGED events for a session id
+    with no recognized prefix (secret-session-N matches none of sftp-/
+    forward-/operation-/transfer-/key-operation-) to a client that
+    broker.client_owns_direct_scope() confirms owns it — so those
+    interactions were created but invisible to every client, and silently
+    expired with no dialog ever shown. request_client_secret() is the
+    broker API that actually registers the owner; this proves it does, and
+    that ONLY the owning client can see the interaction while it's pending."""
+    session_id = SessionId("secret-session-owner-test")
+    connection_id = ConnectionId("secret-owner-test")
+    started = threading.Event()
+    result_box = []
+
+    def _run():
+        started.set()
+        secret = broker.request_client_secret(
+            owner_client_id=CLIENT_A,
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=InteractionType.PASSWORD,
+            prompt=PasswordPrompt(
+                username="Secret backend",
+                hostname="keepassxc",
+                port=22,
+                attempt=1,
+                can_remember=True,
+                stored_secret_available=False,
+            ),
+        )
+        result_box.append(secret)
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    started.wait(1)
+
+    deadline = time.monotonic() + 2
+    summary = None
+    while time.monotonic() < deadline and summary is None:
+        for candidate in broker.list(CLIENT_A):
+            if candidate.session_id == session_id:
+                summary = candidate
+                break
+    assert summary is not None, "interaction never became visible to its owner"
+
+    # The core of the fix: the owning client sees it, an unrelated client does not.
+    assert broker.client_owns_direct_scope(session_id, CLIENT_A) is True
+    assert broker.client_owns_direct_scope(session_id, CLIENT_B) is False
+    assert all(s.session_id != session_id for s in broker.list(CLIENT_B))
+
+    claim = broker.claim(summary.id, CLIENT_A)
+    broker.respond(
+        InteractionDecisionRequest(
+            interaction_id=summary.id,
+            secret_decision=SecretDecision.SUBMIT,
+            remember_policy=RememberPolicy.DO_NOT_STORE,
+        ),
+        CLIENT_A,
+    )
+    broker.submit_secret(
+        SecretFrame(
+            kind=SecretFrameKind.RESPONSE,
+            interaction_id=summary.id,
+            nonce=bytes.fromhex(claim.nonce),
+            secret=bytearray(b"hunter2"),
+        ),
+        CLIENT_A,
+    )
+    thread.join(2)
+    assert not thread.is_alive()
+    assert bytes(result_box[0] or b"") == b"hunter2"
+    # Scope ownership is released once the request completes.
+    assert broker.client_owns_direct_scope(session_id, CLIENT_A) is False
+
+
 def test_host_key_answer_is_typed_and_final(broker: InteractionBroker) -> None:
     summary = broker.create(
         session_id=SESSION_ID,

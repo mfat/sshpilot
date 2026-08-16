@@ -774,13 +774,68 @@ class InteractionBroker:
         prompt: InteractionPrompt,
     ) -> Optional[bytearray]:
         """Collect one secret for a daemon-owned non-process operation."""
+        result = self._request_client_secret_result(
+            owner_client_id=owner_client_id,
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=interaction_type,
+            prompt=prompt,
+        )
+        return None if result is None else result.secret
+
+    def request_client_secret_with_remember(
+        self,
+        *,
+        owner_client_id: ClientId,
+        session_id: SessionId,
+        connection_id: ConnectionId,
+        interaction_type: InteractionType,
+        prompt: InteractionPrompt,
+    ) -> tuple[Optional[bytearray], RememberPolicy]:
+        """Like :meth:`request_client_secret`, but also reports the
+        ``remember_policy`` the client attached to its response (e.g. a
+        "remember this" checkbox) — needed by callers that offer to persist
+        the secret without a second prompt."""
+        result = self._request_client_secret_result(
+            owner_client_id=owner_client_id,
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=interaction_type,
+            prompt=prompt,
+        )
+        if result is None:
+            return None, RememberPolicy.DO_NOT_STORE
+        return result.secret, result.remember_policy
+
+    def _request_client_secret_result(
+        self,
+        *,
+        owner_client_id: ClientId,
+        session_id: SessionId,
+        connection_id: ConnectionId,
+        interaction_type: InteractionType,
+        prompt: InteractionPrompt,
+    ) -> Optional[InteractionResult]:
+        """Run one direct-scope interaction and return its raw result.
+
+        Registering ``owner_client_id`` as the session's direct scope owner
+        (via ``_direct_scope_owners``) is what makes the server actually
+        forward this interaction's events to that client — see
+        ``DaemonServer._client_can_interact``. A session id with no
+        registered owner and no recognized prefix (sftp-/forward-/
+        operation-/transfer-/key-operation-) is invisible to every client, so
+        skipping this registration (calling ``create()`` +
+        ``wait_for_result()`` directly, as every secret-backend caller used
+        to) means the interaction is created but nobody is ever notified —
+        it silently expires at its timeout with no dialog ever shown.
+        The caller owns clearing ``result.secret``.
+        """
         with self._condition:
             self._require_open_locked()
             if session_id in self._direct_scope_owners:
                 raise ValueError("protected interaction scope is already active")
             self._direct_scope_owners[session_id] = owner_client_id
         result: Optional[InteractionResult] = None
-        secret: Optional[bytearray] = None
         try:
             summary = self.create(
                 session_id=session_id,
@@ -792,12 +847,8 @@ class InteractionBroker:
             result = self.wait_for_result(summary.id)
             if result is None or result.secret is None:
                 return None
-            secret = result.secret
-            result.secret = None
-            return secret
+            return result
         finally:
-            if result is not None:
-                result.clear()
             with self._condition:
                 self._direct_scope_owners.pop(session_id, None)
             self.cancel_session(session_id)

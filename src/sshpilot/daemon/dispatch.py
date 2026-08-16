@@ -146,6 +146,18 @@ from sshpilot.api.transport.codec import (
 from sshpilot.api.transport.envelopes import HandshakeRequest, HandshakeResult, RequestEnvelope
 from sshpilot.api.version import API_IMPLEMENTATION_VERSION, PROTOCOL_VERSION
 from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
+
+# A secret-backend RPC that can wait on a protected interaction (master
+# password / 2FA / API-key prompt — up to
+# ``SecretBackendService.DEFAULT_SECRET_INTERACTION_TIMEOUT`` seconds) must
+# never share a command key with ``CONFIGURATION_COMMAND_KEY``: the bounded
+# command executor serializes same-key work on a single worker regardless of
+# pool size, so one pending unlock would head-of-line block every unrelated
+# configuration/connection RPC (daemon.get_operation_mode,
+# connections.reveal_password, ssh_overrides.get, ...) for the whole wait —
+# observed as those RPCs timing out and the daemon transport being declared
+# dead while a user was simply still typing their master password.
+SECRET_INTERACTIVE_COMMAND_KEY = "secret-backend-interactive"
 from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.key_service import DaemonKeyService
@@ -3469,13 +3481,19 @@ class RequestDispatcher:
     def _handle_unlock_secrets(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_unlock_result_to_wire
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
-        return self._defer(lambda: secret_unlock_result_to_wire(service.unlock()))
+        client_id = self._required_client_id(state)
+        return self._defer(
+            lambda: secret_unlock_result_to_wire(
+                service.unlock(owner_client_id=client_id)
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
+        )
 
     def _handle_lock_secrets(
         self,
@@ -3525,7 +3543,7 @@ class RequestDispatcher:
     def _handle_bitwarden_login(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import bitwarden_status_to_wire
 
@@ -3540,16 +3558,20 @@ class RequestDispatcher:
         if twofa_method is not None and type(twofa_method) is not str:
             raise ValueError("twofa_method must be a string or null")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: bitwarden_status_to_wire(
-                service.bitwarden_login(email, twofa_method=twofa_method)
-            )
+                service.bitwarden_login(
+                    email, twofa_method=twofa_method, owner_client_id=owner_client_id
+                )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_bitwarden_api_key_login(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import bitwarden_status_to_wire
 
@@ -3559,8 +3581,14 @@ class RequestDispatcher:
         if type(client_id) is not str or not client_id.strip():
             raise ValueError("client_id must be a non-empty string")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
-            lambda: bitwarden_status_to_wire(service.bitwarden_api_key_login(client_id))
+            lambda: bitwarden_status_to_wire(
+                service.bitwarden_api_key_login(
+                    client_id, owner_client_id=owner_client_id
+                )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_bitwarden_sso_login(
@@ -3580,19 +3608,26 @@ class RequestDispatcher:
         return self._defer(
             lambda: bitwarden_status_to_wire(
                 service.bitwarden_sso_login(identifier=identifier or None)
-            )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_bitwarden_unlock(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import bitwarden_status_to_wire
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
-        return self._defer(lambda: bitwarden_status_to_wire(service.bitwarden_unlock()))
+        owner_client_id = self._required_client_id(state)
+        return self._defer(
+            lambda: bitwarden_status_to_wire(
+                service.bitwarden_unlock(owner_client_id=owner_client_id)
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
+        )
 
     def _handle_bitwarden_sync(
         self,
@@ -3663,7 +3698,10 @@ class RequestDispatcher:
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
-        return self._defer(lambda: rbw_status_to_wire(service.rbw_unlock()))
+        return self._defer(
+            lambda: rbw_status_to_wire(service.rbw_unlock()),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
+        )
 
     def _handle_rbw_sync(
         self,
@@ -3690,7 +3728,7 @@ class RequestDispatcher:
     def _handle_keepassxc_create_database(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_operation_result_to_wire
 
@@ -3703,22 +3741,32 @@ class RequestDispatcher:
         if keyfile is not None and type(keyfile) is not str:
             raise ValueError("keyfile must be a string or null")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: secret_operation_result_to_wire(
-                service.keepassxc_create_database(path, keyfile=keyfile)
-            )
+                service.keepassxc_create_database(
+                    path, keyfile=keyfile, owner_client_id=owner_client_id
+                )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_keepassxc_unlock(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_operation_result_to_wire
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
-        return self._defer(lambda: secret_operation_result_to_wire(service.keepassxc_unlock()))
+        owner_client_id = self._required_client_id(state)
+        return self._defer(
+            lambda: secret_operation_result_to_wire(
+                service.keepassxc_unlock(owner_client_id=owner_client_id)
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
+        )
 
     def _handle_keepassxc_lock(
         self,
@@ -3734,14 +3782,18 @@ class RequestDispatcher:
     def _handle_remember_master_password(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_operation_result_to_wire
 
         self._require_empty_params(request)
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
-            lambda: secret_operation_result_to_wire(service.remember_master_password())
+            lambda: secret_operation_result_to_wire(
+                service.remember_master_password(owner_client_id=owner_client_id)
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_forget_master_password(
@@ -3760,7 +3812,7 @@ class RequestDispatcher:
     def _handle_export_secret_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_transfer_result_to_wire
 
@@ -3778,6 +3830,7 @@ class RequestDispatcher:
             raise ValueError("options must be an object")
         mirror_logins = bool(params["mirror_logins"])
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: secret_transfer_result_to_wire(
                 service.export_backup(
@@ -3785,14 +3838,16 @@ class RequestDispatcher:
                     connection_ids=connection_ids,
                     options=options,
                     mirror_logins=mirror_logins,
+                    owner_client_id=owner_client_id,
                 )
-            )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_import_secret_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_transfer_result_to_wire
 
@@ -3806,16 +3861,20 @@ class RequestDispatcher:
         if not isinstance(options, dict):
             raise ValueError("options must be an object")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: secret_transfer_result_to_wire(
-                service.import_backup(source=source, options=options)
-            )
+                service.import_backup(
+                    source=source, options=options, owner_client_id=owner_client_id
+                )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_preview_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         params = request.params
         if set(params) != {"source"}:
@@ -3824,7 +3883,13 @@ class RequestDispatcher:
         if type(source) is not str or not source.strip():
             raise ValueError("source must be a non-empty string")
         service = self._required_secrets_service()
-        return self._defer(lambda: service.preview_backup(source=source))
+        owner_client_id = self._required_client_id(state)
+        return self._defer(
+            lambda: service.preview_backup(
+                source=source, owner_client_id=owner_client_id
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
+        )
 
     def _handle_preview_bitwarden_backup(
         self,
@@ -3951,9 +4016,14 @@ class RequestDispatcher:
             )
         )
 
-    def _defer(self, operation: Callable[[], Any]) -> DeferredResult:
+    def _defer(
+        self,
+        operation: Callable[[], Any],
+        *,
+        command_key: Hashable = CONFIGURATION_COMMAND_KEY,
+    ) -> DeferredResult:
         return DeferredResult(
             operation=operation,
-            command_key=CONFIGURATION_COMMAND_KEY,
+            command_key=command_key,
             on_rejected=lambda: None,
         )

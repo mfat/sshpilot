@@ -36,8 +36,8 @@ class TerminalManager:
             except Exception:
                 logger.error("Failed to align terminal backend", exc_info=True)
 
-    def refresh_backends(self) -> None:
-        """Ensure all existing terminals use the configured backend."""
+    def _iter_all_terminals(self):
+        """Every known terminal widget, de-duplicated (connection map, active map, tab view)."""
         seen = set()
         collections = []
         connection_terms = getattr(self.window, "connection_to_terminals", None)
@@ -50,8 +50,8 @@ class TerminalManager:
             for term in list(group):
                 if term in seen:
                     continue
-                self._ensure_backend_alignment(term)
                 seen.add(term)
+                yield term
         tab_view = getattr(self.window, "tab_view", None)
         if tab_view is not None and hasattr(tab_view, "get_n_pages"):
             try:
@@ -62,10 +62,31 @@ class TerminalManager:
                     term = page.get_child()
                     if term is None or term in seen:
                         continue
-                    self._ensure_backend_alignment(term)
                     seen.add(term)
+                    yield term
             except Exception:
-                logger.debug("Failed to iterate tab view while refreshing backends", exc_info=True)
+                logger.debug("Failed to iterate tab view while enumerating terminals", exc_info=True)
+
+    def refresh_backends(self) -> None:
+        """Ensure all existing terminals use the configured backend."""
+        for term in self._iter_all_terminals():
+            self._ensure_backend_alignment(term)
+
+    def rebind_client(self, client) -> None:
+        """Push a replaced daemon client into every live terminal's session controller.
+
+        The daemon owns session/attachment state across a transport reconnect —
+        only each terminal's cached client handle needs to move. Without this,
+        a deferred callback for an in-flight terminal (e.g. a session-opened
+        success racing the old transport's shutdown) still calls through the
+        closed old client and raises "The client is closed" uncaught."""
+        for term in self._iter_all_terminals():
+            rebind = getattr(term, "rebind_daemon_client", None)
+            if callable(rebind):
+                try:
+                    rebind(client)
+                except Exception:
+                    logger.error("Failed to rebind terminal to new daemon client", exc_info=True)
 
     # Connecting/disconnecting hosts
     def _maybe_unlock_secrets_then(self, retry, _allow_reprompt: bool = True) -> bool:

@@ -297,6 +297,13 @@ DEFAULT_REQUEST_TIMEOUT = 5.0
 # then run native ssh-keygen.  Keep this narrower than a global timeout change
 # while allowing the daemon's bounded operation to finish normally.
 KEY_GENERATION_REQUEST_TIMEOUT = 185.0
+# Secret-backend RPCs that can block on a protected interaction (master
+# password / 2FA / API key prompt) — see
+# ``SecretBackendService.DEFAULT_SECRET_INTERACTION_TIMEOUT`` (120s) on the
+# daemon side. Without this, the client's 5s default kills the transport
+# while the daemon is legitimately still waiting on the user, which then
+# looks like a dead daemon and drives a reconnect loop that never recovers.
+SECRET_INTERACTION_REQUEST_TIMEOUT = 130.0
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
@@ -1808,7 +1815,9 @@ class DaemonClient:
 
     def unlock_secrets(self):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.unlock", {})
+        result = self._request(
+            "secrets.unlock", {}, request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT
+        )
         try:
             from sshpilot.api.transport.codec import secret_unlock_result_from_wire
 
@@ -1851,7 +1860,11 @@ class DaemonClient:
         params = {"email": email or ""}
         if twofa_method:
             params["twofa_method"] = twofa_method
-        result = self._request("secrets.bitwarden.login", params)
+        result = self._request(
+            "secrets.bitwarden.login",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1861,7 +1874,11 @@ class DaemonClient:
 
     def bitwarden_api_key_login(self, client_id: str):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.bitwarden.api_key_login", {"client_id": client_id or ""})
+        result = self._request(
+            "secrets.bitwarden.api_key_login",
+            {"client_id": client_id or ""},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1874,7 +1891,11 @@ class DaemonClient:
         params = {}
         if identifier:
             params["identifier"] = identifier
-        result = self._request("secrets.bitwarden.sso_login", params)
+        result = self._request(
+            "secrets.bitwarden.sso_login",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1884,7 +1905,11 @@ class DaemonClient:
 
     def bitwarden_unlock(self):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.bitwarden.unlock", {})
+        result = self._request(
+            "secrets.bitwarden.unlock",
+            {},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import bitwarden_status_from_wire
 
@@ -1946,7 +1971,9 @@ class DaemonClient:
 
     def rbw_unlock(self):
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.rbw.unlock", {})
+        result = self._request(
+            "secrets.rbw.unlock", {}, request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT
+        )
         try:
             from sshpilot.api.transport.codec import rbw_status_from_wire
 
@@ -1980,7 +2007,11 @@ class DaemonClient:
         params = {"path": path or ""}
         if keyfile:
             params["keyfile"] = keyfile
-        result = self._request("secrets.keepassxc.create_database", params)
+        result = self._request(
+            "secrets.keepassxc.create_database",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
 
@@ -1991,7 +2022,11 @@ class DaemonClient:
     def keepassxc_unlock(self):
         """Unlock the selected KeePass database. The daemon prompts for the password."""
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.keepassxc.unlock", {})
+        result = self._request(
+            "secrets.keepassxc.unlock",
+            {},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
 
@@ -2012,7 +2047,11 @@ class DaemonClient:
     def remember_master_password(self):
         """Save the selected vault's master password in the OS keyring."""
         self._require_capability(Capability.SECRETS_OPERATE)
-        result = self._request("secrets.remember_master_password", {})
+        result = self._request(
+            "secrets.remember_master_password",
+            {},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_operation_result_from_wire
 

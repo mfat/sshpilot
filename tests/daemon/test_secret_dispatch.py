@@ -502,6 +502,70 @@ def test_selection_update_passes_expected_revision():
     assert wire["selected_backend"] == "bitwarden"
 
 
+def test_interactive_secret_methods_use_a_dedicated_command_key():
+    """Regression: every secrets.* handler used to share ``command_key`` with
+    plain configuration/connection RPCs (daemon.get_operation_mode,
+    connections.reveal_password, connections.snapshot, ...) through
+    ``_defer()``'s hard-coded ``CONFIGURATION_COMMAND_KEY``. The bounded
+    command executor serializes same-key work onto one worker regardless of
+    pool size, so a pending ``secrets.unlock`` — which can legitimately wait
+    up to ``DEFAULT_SECRET_INTERACTION_TIMEOUT`` (120s) for the user to type
+    a master password — head-of-line blocked every unrelated configuration
+    RPC for the whole wait, which then hit their own short client timeout and
+    tore down the transport as if the daemon had died (observed live: a kdbx
+    unlock in progress made ``daemon.get_operation_mode`` and
+    ``connections.reveal_password`` time out and reconnect in a loop that
+    never recovered). These methods must use a separate key so they can
+    never block unrelated daemon RPCs."""
+    from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
+    from sshpilot.daemon.dispatch import SECRET_INTERACTIVE_COMMAND_KEY
+
+    dispatcher, service = _dispatcher()
+
+    interactive = [
+        ("secrets.unlock", {}),
+        ("secrets.bitwarden.login", {"email": "user@example.com"}),
+        ("secrets.bitwarden.api_key_login", {"client_id": "id"}),
+        ("secrets.bitwarden.sso_login", {}),
+        ("secrets.bitwarden.unlock", {}),
+        ("secrets.rbw.unlock", {}),
+        ("secrets.keepassxc.create_database", {"path": "/tmp/x.kdbx"}),
+        ("secrets.keepassxc.unlock", {}),
+        ("secrets.remember_master_password", {}),
+        (
+            "secrets.transfer.export",
+            {
+                "destination": "/tmp/x.spbk",
+                "connection_ids": [],
+                "options": {},
+                "mirror_logins": False,
+            },
+        ),
+        ("secrets.transfer.import", {"source": "/tmp/x.spbk", "options": {}}),
+        ("secrets.transfer.preview", {"source": "/tmp/x.spbk"}),
+    ]
+    for method, params in interactive:
+        result = dispatcher.dispatch(_envelope(method, params), _state())
+        assert isinstance(result, DeferredResult), method
+        assert result.command_key == SECRET_INTERACTIVE_COMMAND_KEY, method
+        assert result.command_key != CONFIGURATION_COMMAND_KEY, method
+
+    # Fast metadata reads never block on user interaction — they must stay on
+    # the shared configuration key (no reason to isolate them, and isolating
+    # them would just move the head-of-line risk onto each other).
+    non_interactive = [
+        ("secrets.configuration.get", {}),
+        ("secrets.backends.get", {}),
+        ("secrets.state.get", {}),
+        ("secrets.bitwarden.status", {}),
+        ("secrets.lock", {}),
+    ]
+    for method, params in non_interactive:
+        result = dispatcher.dispatch(_envelope(method, params), _state())
+        assert isinstance(result, DeferredResult), method
+        assert result.command_key == CONFIGURATION_COMMAND_KEY, method
+
+
 def test_draining_rejects_operate_but_allows_reads():
     assert "secrets.unlock" in DRAIN_REJECTED_METHODS
     assert "secrets.transfer.export" in DRAIN_REJECTED_METHODS
@@ -558,7 +622,9 @@ def test_preview_backup_delegates_to_service():
     wire = result.operation()
     assert wire["kind"] == "spbk"
     assert wire["included"]["secrets"] is True
-    service.preview_backup.assert_called_once_with(source="/tmp/x.spbk")
+    service.preview_backup.assert_called_once_with(
+        source="/tmp/x.spbk", owner_client_id="client-1"
+    )
 
 
 def test_preview_bitwarden_and_ssh_delegate_to_service():
@@ -768,6 +834,9 @@ def test_real_daemon_login_params_are_identifiers_only(tmp_path):
             return mock.Mock(id="inter-cancel")
 
         def wait_for_result(self, interaction_id):
+            return None
+
+        def request_client_secret(self, *, owner_client_id, **kwargs):
             return None
 
     socket_path = tmp_path / "secrets2.sock"

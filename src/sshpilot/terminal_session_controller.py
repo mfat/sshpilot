@@ -230,6 +230,18 @@ class DaemonTerminalSessionController:
         """Exit details once the daemon session has exited, if reported."""
         return self._tab_state.exit_info
 
+    def set_client(self, client) -> None:
+        """Rebind to a replaced daemon client after a transport reconnect.
+
+        The daemon owns session/attachment state, so it survives a transport
+        swap — only this controller's client handle needs to move. Without
+        this, a deferred callback that fires after reconnect (e.g. a
+        session-opened success racing the old transport's shutdown) still
+        calls through the closed client and raises "The client is closed"
+        (``subscribe_terminal``/``attach_session`` etc.) uncaught.
+        """
+        self._client = client
+
     def open(
         self,
         connection_id: ConnectionId,

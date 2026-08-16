@@ -501,6 +501,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.key_manager = None
         try:
             self._attach_client_backed_services()
+            terminal_manager = getattr(self, "terminal_manager", None)
+            if terminal_manager is not None:
+                terminal_manager.rebind_client(client)
         except Exception:
             # Rebind is a prepare/commit operation.  If a dependent service
             # rejects the candidate, restore a complete old-client graph and
