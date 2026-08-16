@@ -246,14 +246,30 @@ class StartupInfo:
 
         Secret backends are owned by the daemon. When a daemon client or controller
         is reachable through ``config``, metadata (registry, lock state,
-        configuration) is read through the secrets API; otherwise every backend is
-        reported unavailable. This module never imports ``secret_storage`` and never
-        instantiates a local ``SecretManager``.
+        configuration) is read through the secrets API. When it is not reachable —
+        yet, or ever — that is reported as a distinct "unknown"/"unreachable" status
+        rather than fabricated as "unavailable": the client selection that produces
+        ``config.secrets_controller``/``config.client`` completes asynchronously, so
+        "not resolved yet" and "daemon confirmed unavailable" are different states.
+        This module never imports ``secret_storage`` and never instantiates a local
+        ``SecretManager``.
         """
+        if self._daemon_selection_pending():
+            return self._storage_info_pending()
         reader = self._daemon_secrets_reader()
         if reader is not None:
             return self._storage_info_from_daemon(reader)
-        return self._storage_info_unavailable()
+        return self._storage_info_unreachable()
+
+    def _daemon_selection_pending(self):
+        """True while the daemon client selection is still resolving.
+
+        Reading this off ``config`` (really the window) before probing the
+        registry avoids treating "the async selection hasn't completed yet"
+        as "the daemon is unavailable".
+        """
+        source = self._config
+        return bool(getattr(source, "_api_client_selection_pending", False))
 
     def _daemon_secrets_reader(self):
         """The daemon secrets accessor reachable from ``config``, or ``None``.
@@ -302,6 +318,10 @@ class StartupInfo:
             return {'available': None, 'accessible': False}
 
         storage = {
+            # The reader resolved (daemon reachable), but the registry call
+            # itself may still have failed/timed out — that is "unknown", not
+            # "unavailable": we simply have no metadata to report.
+            'metadata_status': 'ok' if registry is not None else 'unknown',
             'libsecret': _backend_entry('libsecret'),
             'keyring': _backend_entry('keyring'),
         }
@@ -327,9 +347,28 @@ class StartupInfo:
             storage['remember_in_keyring'] = getattr(configuration, "remember_in_keyring", None)
         return storage
 
-    def _storage_info_unavailable(self):
-        """Storage metadata when no daemon is reachable — never a local manager."""
+    def _storage_info_pending(self):
+        """Storage metadata while the daemon client selection is still resolving.
+
+        Distinct from :meth:`_storage_info_unreachable` — the daemon hasn't
+        confirmed anything yet, so "unknown" is the honest status, not "not
+        available".
+        """
         return {
+            'metadata_status': 'pending',
+            'libsecret': {'available': None, 'accessible': False},
+            'keyring': {'available': None, 'accessible': False},
+            'effective_backend': 'none',
+            'available_backends': [],
+            'selected_backend': 'none',
+            'session_locked': False,
+        }
+
+    def _storage_info_unreachable(self):
+        """Storage metadata when no daemon client/controller could be reached
+        (selection settled and found nothing) — never a local manager."""
+        return {
+            'metadata_status': 'unreachable',
             'libsecret': {'available': None, 'accessible': False},
             'keyring': {'available': None, 'accessible': False},
             'effective_backend': 'none',
@@ -415,41 +454,53 @@ class StartupInfo:
         print(f"{self.CHECK_INFO} Secure Storage")
         print(self.SECTION_LINE)
         storage = self.info['storage']
-        
-        # Platform-specific storage
-        if is_macos():
-            keyring_info = storage.get('keyring', {})
-            if keyring_info.get('accessible'):
-                backend = keyring_info.get('backend', 'unknown')
-                print(f"  {self.CHECK_OK} Keyring: accessible (backend: {backend})")
-            else:
-                print(f"  {self.CHECK_WARN} Keyring: not accessible")
+        metadata_status = storage.get('metadata_status', 'unknown')
+
+        if metadata_status in ('pending', 'unknown'):
+            # The daemon client selection hasn't settled (or its registry read
+            # failed) — report that honestly instead of a fabricated "not
+            # available", which would send users chasing a keyring problem
+            # that doesn't exist.
+            print(f"  {self.CHECK_INFO} Secret backend status: unknown "
+                  f"(daemon secret metadata not yet available)")
+        elif metadata_status == 'unreachable':
+            print(f"  {self.CHECK_WARN} Secret backend status: unavailable "
+                  f"(no daemon connection)")
         else:
-            # Linux - check libsecret first
-            libsecret_info = storage.get('libsecret', {})
-            if libsecret_info.get('accessible'):
-                print(f"  {self.CHECK_OK} libsecret: accessible via Secret Service")
-            elif libsecret_info.get('available'):
-                error = libsecret_info.get('error', 'unknown error')
-                print(f"  {self.CHECK_WARN} libsecret: available but not accessible ({error})")
+            # Platform-specific storage
+            if is_macos():
+                keyring_info = storage.get('keyring', {})
+                if keyring_info.get('accessible'):
+                    backend = keyring_info.get('backend', 'unknown')
+                    print(f"  {self.CHECK_OK} Keyring: accessible (backend: {backend})")
+                else:
+                    print(f"  {self.CHECK_WARN} Keyring: not accessible")
             else:
-                print(f"  {self.CHECK_WARN} libsecret: not available")
-            
-            # Fallback to keyring on Linux
-            keyring_info = storage.get('keyring', {})
-            if keyring_info.get('accessible'):
-                backend = keyring_info.get('backend', 'unknown')
-                print(f"  {self.CHECK_OK} Keyring: accessible (backend: {backend})")
-            elif keyring_info.get('available'):
-                backend = keyring_info.get('backend', 'unknown')
-                print(f"  {self.CHECK_WARN} Keyring: available but not usable (backend: {backend})")
-        
-        # Effective backend
-        effective = storage.get('effective_backend', 'none')
-        if effective == 'none':
-            print(f"  {self.CHECK_WARN} Effective backend: none (password storage disabled)")
-        else:
-            print(f"  {self.CHECK_OK} Effective backend: {effective}")
+                # Linux - check libsecret first
+                libsecret_info = storage.get('libsecret', {})
+                if libsecret_info.get('accessible'):
+                    print(f"  {self.CHECK_OK} libsecret: accessible via Secret Service")
+                elif libsecret_info.get('available'):
+                    error = libsecret_info.get('error', 'unknown error')
+                    print(f"  {self.CHECK_WARN} libsecret: available but not accessible ({error})")
+                else:
+                    print(f"  {self.CHECK_WARN} libsecret: not available")
+
+                # Fallback to keyring on Linux
+                keyring_info = storage.get('keyring', {})
+                if keyring_info.get('accessible'):
+                    backend = keyring_info.get('backend', 'unknown')
+                    print(f"  {self.CHECK_OK} Keyring: accessible (backend: {backend})")
+                elif keyring_info.get('available'):
+                    backend = keyring_info.get('backend', 'unknown')
+                    print(f"  {self.CHECK_WARN} Keyring: available but not usable (backend: {backend})")
+
+            # Effective backend
+            effective = storage.get('effective_backend', 'none')
+            if effective == 'none':
+                print(f"  {self.CHECK_WARN} Effective backend: none (password storage disabled)")
+            else:
+                print(f"  {self.CHECK_OK} Effective backend: {effective}")
         print()
         
         # Configuration Information

@@ -137,15 +137,34 @@ def _storage_info(verbose=True, config=None):
 
 
 def test_startup_info_storage_unavailable_without_daemon():
-    """Without a daemon client/controller the storage section reports unavailable —
+    """Without a daemon client/controller the storage section reports unreachable —
     it never falls back to instantiating a local SecretManager."""
     storage = _storage_info()
+    assert storage['metadata_status'] == 'unreachable'
     assert storage['effective_backend'] == 'none'
     assert storage['available_backends'] == []
     assert storage['selected_backend'] == 'none'
     assert storage['session_locked'] is False
     assert storage['libsecret']['accessible'] is False
     assert storage['keyring']['accessible'] is False
+
+
+def test_startup_info_storage_pending_while_client_selection_in_progress():
+    """While the async daemon client selection hasn't settled yet, the source
+    (really the window) has no secrets_controller/client attached at all — this
+    must be reported as "pending"/unknown, never fabricated as "unavailable".
+    Regression: startup diagnostics used to fire on a single GLib.idle_add
+    immediately after window construction, well before
+    MainWindow._apply_client_selection runs, so the Secure Storage section
+    always printed "libsecret: not available" even when libsecret was fine."""
+
+    class FakeConfigSource:
+        _api_client_selection_pending = True
+
+    storage = _storage_info(config=FakeConfigSource())
+    assert storage['metadata_status'] == 'pending'
+    assert storage['libsecret']['available'] is None
+    assert storage['keyring']['available'] is None
 
 
 def test_startup_info_storage_reads_through_daemon_controller():

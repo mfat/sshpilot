@@ -415,27 +415,46 @@ class SshPilotApplication(Adw.Application):
         # Initialize window reference
         self.window = None
 
-        # Emit startup diagnostics once the main loop is running (i.e. after the
-        # window is created/presented), reusing the app Config so the backend
-        # lookup doesn't re-read config.json.
-        GLib.idle_add(
-            lambda: (
-                print_startup_info(
-                    isolated=self.isolated_mode,
-                    verbose=self.verbose_override,
-                    config=self.config,
-                    confirmed_mode=getattr(
-                        getattr(self, "window", None),
-                        "_confirmed_operation_mode",
-                        None,
-                    ),
-                ),
-                False,
-            )[1]
-        )
+        # Emit startup diagnostics once the daemon client selection has settled
+        # (see _schedule_startup_diagnostics). The secrets diagnostic reads the
+        # daemon through the window's secrets_controller/client — the app
+        # Config object has neither, so the window is passed, not self.config.
+        GLib.idle_add(lambda: (self._schedule_startup_diagnostics(), False)[1])
 
         logger.info("sshPilot application initialized")
-    
+
+    def _schedule_startup_diagnostics(self, retries_left: int = 25) -> None:
+        """Print startup diagnostics once the daemon client selection settles.
+
+        Client selection (``MainWindow._begin_daemon_client_selection``) runs
+        asynchronously, so ``window.secrets_controller``/``window.client`` are
+        not populated on the first main-loop iteration. Printing immediately
+        used to make the Secure Storage section fabricate "not available" for
+        a daemon that was simply still connecting. Poll briefly (~5s) for the
+        selection to finish; startup_info reports an explicit "unknown" state
+        rather than a false negative if it never does.
+        """
+        window = getattr(self, "window", None)
+        pending = (
+            True if window is None
+            else bool(getattr(window, "_api_client_selection_pending", False))
+        )
+        if pending and retries_left > 0:
+            GLib.timeout_add(
+                200,
+                lambda: (
+                    self._schedule_startup_diagnostics(retries_left - 1),
+                    False,
+                )[1],
+            )
+            return
+        print_startup_info(
+            isolated=self.isolated_mode,
+            verbose=self.verbose_override,
+            config=window,
+            confirmed_mode=getattr(window, "_confirmed_operation_mode", None),
+        )
+
     def _load_app_style(self):
         """Load the bundled application stylesheet once, at APPLICATION priority."""
         display = Gdk.Display.get_default()
