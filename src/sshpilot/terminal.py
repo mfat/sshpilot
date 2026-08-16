@@ -948,6 +948,18 @@ class TerminalWidget(Gtk.Box):
             def _claimed(_value):
                 self._daemon_controller._tab_state.input_owner = True
                 self._hide_view_only_indicator()
+                # Resize was silently dropped (no ownership) for as long as
+                # this attachment was view-only; sync the daemon to our
+                # actual current size now that we can resize again.
+                try:
+                    self._daemon_controller.resize(
+                        self._daemon_terminal_dimensions()
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to sync daemon terminal size after "
+                        f"input claim: {e}"
+                    )
 
             def _failed(error):
                 logger.info(
@@ -1541,6 +1553,26 @@ class TerminalWidget(Gtk.Box):
                     self._show_view_only_indicator()
                 else:
                     self._hide_view_only_indicator()
+                    if not old_connected:
+                        # Input ownership (required to resize — see
+                        # _on_daemon_size_changed) may only just have been
+                        # granted by this same attach result. The widget can
+                        # already have grown to its real on-screen size while
+                        # ownership was still pending, and every resize
+                        # signal during that window was silently dropped for
+                        # lack of ownership (GH #1164 follow-up) — with no
+                        # catch-up, the remote PTY/tmux stays at whatever
+                        # size the session opened with. Sync once, now that
+                        # we may actually resize.
+                        try:
+                            self._daemon_controller.resize(
+                                self._daemon_terminal_dimensions()
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to sync daemon terminal size after "
+                                f"ownership grant: {e}"
+                            )
 
                 # Emit connection-established if newly connected
                 if not old_connected:
