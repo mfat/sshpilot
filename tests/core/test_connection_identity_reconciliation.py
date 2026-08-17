@@ -373,6 +373,30 @@ def test_registry_serialization_and_restart_are_idempotent():
     assert not again.created and not again.deleted
 
 
+def test_registry_round_trip_preserves_retired_generation():
+    """A tombstone's retired_generation must survive the prototype registry's
+    own to_dict/from_dict, not just PersistedIdentity's (identity_state_v2.py)
+    — the resurrection tie-break depends on it regardless of which
+    serializer wrote the file.
+    """
+    tombstoned = IdentityRegistryEntry(
+        uuid="u1",
+        projection=projection("prod"),
+        display_name="Production",
+        tombstone=True,
+        retired_generation=42,
+    )
+    live = old("u2", projection("staging"), "Staging")
+    registry = IdentityRegistry(entries=(tombstoned, live))
+
+    restored = IdentityRegistry.from_dict(json.loads(json.dumps(registry.to_dict())))
+
+    restored_tombstone = next(e for e in restored.entries if e.uuid == "u1")
+    restored_live = next(e for e in restored.entries if e.uuid == "u2")
+    assert restored_tombstone.retired_generation == 42
+    assert restored_live.retired_generation is None
+
+
 def test_identityfile_semantic_modes_round_trip():
     entries = (
         old("u-none", _identity_projection("none", IdentityFileEvidenceMode.EXPLICIT_NONE)),

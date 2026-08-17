@@ -14,11 +14,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import conftest  # noqa: F401  (installs the GI stub)
 
+from dataclasses import replace  # noqa: E402
+
 from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
-from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa: E402
+from sshpilot.core.connections.state_file import (  # noqa: E402
+    read_identity_state_v2,
+    write_identity_state_v2,
+)
 from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError  # noqa: E402
 
@@ -568,6 +573,76 @@ def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
     )
     assert after_identity.uuid == original_uuid
     assert after_identity.display_name == "Production Database"
+
+
+def test_resurrection_picks_highest_generation_among_seeded_duplicate_tombstones(
+    tmp_path,
+):
+    """Directly seed two tombstones sharing alias+anchor, disagreeing on both
+    UUID order and generation order, then drive a real authority transition
+    through ``ConnectionRepository`` and assert the higher-generation one
+    resurrects — the scenario a normal resurrecting round trip doesn't
+    produce on its own (successful resurrection reuses one UUID and never
+    lets a second tombstone accumulate), so it has to be seeded directly.
+    """
+    repo, default_root, state, _legacy = _repo(
+        tmp_path,
+        "Host prod\n    HostName prod.example.com\n",
+    )
+    repo.set_display_name("prod", "Production Database")
+
+    isolated_root = tmp_path / "isolated_ssh_config"
+    isolated_root.write_text(
+        "Host isolated\n    HostName isolated.example.com\n"
+    )
+    repo.transition_ssh_config(SshConfigStore(isolated_root, isolated=True), True)
+
+    before_state = read_identity_state_v2(state)
+    genuine = next(
+        identity
+        for identity in before_state.identities
+        if identity.tombstone and identity.projection.alias == "prod"
+    )
+    assert genuine.retired_generation is not None
+
+    # A UUID that sorts after the genuine one. After a save/reload,
+    # identities come back in UUID order (see the docstring on
+    # reconcile_identities), so a position-based tie-break over the reloaded
+    # order would pick this one last / highest-index — wrongly, since its
+    # retired_generation is lower, meaning it was retired earlier.
+    decoy_uuid = "ffffffff-ffff-4fff-8fff-ffffffffffff"
+    assert decoy_uuid > genuine.uuid
+    decoy = replace(
+        genuine,
+        uuid=decoy_uuid,
+        display_name="Decoy Older Duplicate",
+        retired_generation=max(genuine.retired_generation - 1, 0),
+    )
+
+    write_identity_state_v2(
+        state, replace(before_state, identities=before_state.identities + (decoy,))
+    )
+
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(default_root, isolated=False), False
+    )
+
+    assert [item.id for item in snapshot.connections] == ["prod"]
+    assert snapshot.connections[0].display_name == "Production Database"
+
+    after_state = read_identity_state_v2(state)
+    after_identity = next(
+        identity
+        for identity in after_state.identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    )
+    assert after_identity.uuid == genuine.uuid
+    assert after_identity.display_name == "Production Database"
+    # The decoy stays tombstoned, untouched, rather than being resurrected.
+    decoy_after = next(
+        identity for identity in after_state.identities if identity.uuid == decoy_uuid
+    )
+    assert decoy_after.tombstone is True
 
 
 def test_loads_non_ssh_records_from_state_file(tmp_path):

@@ -462,6 +462,11 @@ class IdentityRegistry:
                     "uuid": entry.uuid,
                     "display_name": entry.display_name,
                     "tombstone": entry.tombstone,
+                    **(
+                        {"retired_generation": entry.retired_generation}
+                        if entry.retired_generation is not None
+                        else {}
+                    ),
                     "projection": {
                         "alias": entry.projection.alias,
                         "hostname": entry.projection.hostname,
@@ -578,6 +583,7 @@ class IdentityRegistry:
                     uuid=str(raw.get("uuid", "")),
                     display_name=str(raw.get("display_name", "")),
                     tombstone=bool(raw.get("tombstone", False)),
+                    retired_generation=raw.get("retired_generation"),
                     projection=ConnectionIdentityProjection(
                         alias=str(projection.get("alias", "")),
                         hostname=projection.get("hostname"),
