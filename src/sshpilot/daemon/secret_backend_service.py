@@ -102,6 +102,8 @@ class SecretBackendService:
         secret_manager: Any = None,
         interaction_broker: Any = None,
         connections_source: Any = None,
+        connection_store_snapshot: Any = None,
+        connection_store_restore: Any = None,
     ) -> None:
         self._path = Path(settings_path)
         if secret_manager is None:
@@ -111,6 +113,12 @@ class SecretBackendService:
         self._manager = secret_manager
         self._broker = interaction_broker
         self._connections_source = connections_source
+        # Two more narrow bound-method callables, parallel to
+        # ``connections_source`` above — the portable connection-store
+        # snapshot/restore surface used by backup export/import. Never the
+        # repository object itself.
+        self._connection_store_snapshot = connection_store_snapshot
+        self._connection_store_restore = connection_store_restore
         # Reentrant: several public operations compose nested public calls under
         # the lock (``update_selection`` -> ``update_configuration`` ->
         # ``get_state``; ``bitwarden_configure_server`` -> ``bitwarden_status``;
@@ -1042,6 +1050,7 @@ class SecretBackendService:
                 connections_source=self._connections_source,
                 passphrase=passphrase,
                 settings_path=self._path,
+                connection_store_snapshot=self._connection_store_snapshot,
             )
 
     def preview_backup(
@@ -1186,6 +1195,7 @@ class SecretBackendService:
                     passphrase=passphrase,
                     settings_path=self._path,
                     manifest=manifest,
+                    connection_store_restore=self._connection_store_restore,
                 )
                 last_attempt = attempt + 1 >= self._MAX_IMPORT_PASSPHRASE_ATTEMPTS
                 if (
@@ -1317,6 +1327,7 @@ class SecretBackendService:
                 connections_source=self._connections_source,
                 settings_path=self._path,
                 manifest=manifest,
+                connection_store_restore=self._connection_store_restore,
             )
 
     def import_bitwarden_backup(
@@ -1337,6 +1348,7 @@ class SecretBackendService:
                 options=options,
                 settings_path=self._path,
                 manifest=manifest,
+                connection_store_restore=self._connection_store_restore,
             )
 
     # ------------------------------------------------------------------

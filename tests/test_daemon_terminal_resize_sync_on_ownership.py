@@ -115,7 +115,6 @@ def test_take_input_control_syncs_daemon_size_once_claimed():
     also sync the daemon to the terminal's actual current size — the same
     "resize dropped while unowned" gap applies here too."""
     from sshpilot.terminal import TerminalWidget
-    from sshpilot.api.models.terminal import ClaimTerminalInputRequest
 
     terminal = Mock()
     terminal._daemon_mode = True

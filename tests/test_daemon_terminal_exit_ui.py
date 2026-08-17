@@ -120,6 +120,28 @@ def test_session_end_without_exit_info_shows_generic_banner(mock_terminal_widget
     terminal._root.tab_view.close_page.assert_not_called()
 
 
+def test_clean_exit_code_after_recorded_failure_still_shows_banner(mock_terminal_widget):
+    """exit_code=0 alone isn't proof of a clean exit: a session that already
+    went through FAILED (session_runtime classified it as a real failure —
+    see GH #1166, where a spawn bug made ssh exit "cleanly" without ever
+    starting) records last_error_message via _on_connection_failed before
+    the final CLOSED transition arrives here. The tab must not silently
+    swallow that banner just because the raw exit code happens to be 0."""
+    terminal = mock_terminal_widget
+    terminal.last_error_message = "The session ended before it produced any output"
+    terminal._daemon_controller.exit_info = SessionExitInfo(
+        exit_code=0, reason="process_exit"
+    )
+
+    _update(terminal)
+
+    terminal._root.tab_view.close_page.assert_not_called()
+    terminal._set_disconnected_banner_visible.assert_called_once()
+    args = terminal._set_disconnected_banner_visible.call_args[0]
+    assert args[0] is True
+    assert args[1] == "The session ended before it produced any output"
+
+
 def test_exit_handling_is_idempotent(mock_terminal_widget):
     """Repeated state updates must not double-close or re-banner the tab."""
     terminal = mock_terminal_widget

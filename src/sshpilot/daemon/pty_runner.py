@@ -448,16 +448,36 @@ class PtySessionProcessRunner:
                 )
                 fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, packed)
             status_read, status_write = os.pipe()
-            helper = str(Path(__file__).with_name("_pty_child.py"))
-            process = subprocess.Popen(
-                (
+            if getattr(sys, "frozen", False):
+                # sys.executable is this application's own binary in a frozen
+                # (PyInstaller) build, not a Python interpreter — running it
+                # against _pty_child.py's path would just relaunch the GUI
+                # (detected as a second instance, exiting almost immediately
+                # with status 0 and no PTY output whatsoever, and none of
+                # _pty_child.py's setsid/login_tty/exec ever runs). Re-invoke
+                # this same binary with an internal flag instead; see the
+                # matching dispatch in run.py and the "--daemon" precedent in
+                # daemon/launcher.py, which has the identical requirement.
+                command = (
+                    sys.executable,
+                    "--internal-pty-child",
+                    str(slave_fd),
+                    str(status_write),
+                    "--",
+                    *argv,
+                )
+            else:
+                helper = str(Path(__file__).with_name("_pty_child.py"))
+                command = (
                     sys.executable,
                     helper,
                     str(slave_fd),
                     str(status_write),
                     "--",
                     *argv,
-                ),
+                )
+            process = subprocess.Popen(
+                command,
                 shell=False,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -469,7 +489,14 @@ class PtySessionProcessRunner:
             os.close(status_write)
             status_write = -1
             readable, _, _ = select.select((status_read,), (), (), 2.0)
-            if not readable or os.read(status_read, 64):
+            # A successful exec closes status_write via CLOEXEC without
+            # writing anything, so os.read(...) returns b"" (EOF) here too —
+            # that is the *success* case, not failure. Only a timeout
+            # (never became readable) or an explicit non-empty payload (the
+            # child wrote b"launch_failed" before exiting) means the exec
+            # itself failed.
+            status = os.read(status_read, 64) if readable else None
+            if status is None or status:
                 process.kill()
                 process.wait(timeout=1.0)
                 raise RuntimeError("PTY child did not exec")

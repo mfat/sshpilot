@@ -649,15 +649,17 @@ def reconcile_identities(
     new_projections: Sequence[ConnectionIdentityProjection],
     *,
     uuid_factory: Callable[[], str],
+    allow_tombstone_resurrection: bool = False,
 ) -> ReconciliationResult:
     """Reconcile one old snapshot with one new snapshot deterministically.
 
-    Exact aliases consume first. Remaining candidates are grouped by the
-    literal ``(hostname, normalized_port)`` anchor. Within each destination,
-    only a unique evidence partition can establish a member-to-member match.
-    Multiple candidates in an otherwise matching partition are reserved as an
-    explicit ambiguity; declaration order is never identity evidence.
-    Tombstones are intentionally excluded.
+    Exact aliases among active identities consume first. Tombstones remain
+    excluded unless the caller explicitly enables resurrection for a known
+    authority transition. Remaining candidates are grouped by the literal
+    ``(hostname, normalized_port)`` anchor. Within each destination, only a
+    unique evidence partition can establish a member-to-member match. Multiple
+    candidates in an otherwise matching partition are reserved as an explicit
+    ambiguity; declaration order is never identity evidence.
     """
 
     active_old = [
@@ -665,6 +667,11 @@ def reconcile_identities(
         for index, entry in enumerate(old_entries)
         if not entry.tombstone
     ]
+    tombstoned_by_alias: Dict[str, list[Tuple[int, IdentityRegistryEntry]]] = {}
+    if allow_tombstone_resurrection:
+        for index, entry in enumerate(old_entries):
+            if entry.tombstone:
+                tombstoned_by_alias.setdefault(entry.projection.alias, []).append((index, entry))
     old_aliases = [entry.projection.alias for _, entry in active_old]
     new_aliases = [projection.alias for projection in new_projections]
     if len(old_aliases) != len(set(old_aliases)):
@@ -679,6 +686,22 @@ def reconcile_identities(
     for new_index, projection in enumerate(new_projections):
         old_item = old_by_alias.get(projection.alias)
         if old_item is None:
+            new_anchor = projection.destination_anchor
+            if new_anchor is not None:
+                candidates = [
+                    entry
+                    for _index, entry in tombstoned_by_alias.get(projection.alias, ())
+                    if entry.projection.destination_anchor == new_anchor
+                ]
+                if len(candidates) == 1:
+                    used_new.add(new_index)
+                    matches.append(
+                        Match(
+                            candidates[0],
+                            projection,
+                            MatchReason.EXACT_ALIAS,
+                        )
+                    )
             continue
         old_index, old_entry = old_item
         used_old.add(old_index)
@@ -852,9 +875,10 @@ def apply_reconciliation(result: ReconciliationResult) -> IdentityRegistry:
     """Build the next active registry, preserving metadata on matches.
 
     Deleted entries are omitted from the active registry. Callers may retain
-    them separately as tombstones for diagnostics, but the matcher never uses
-    those tombstones as future evidence. An unresolved ambiguity is not a
-    deletion or creation decision, so applying it is rejected explicitly.
+    them separately as tombstones. Tombstones participate only when a caller
+    explicitly enables resurrection for a known authority transition. An
+    unresolved ambiguity is not a deletion or creation decision, so applying
+    it is rejected explicitly.
     """
 
     if result.ambiguous:

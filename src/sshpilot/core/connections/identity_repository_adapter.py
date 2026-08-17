@@ -132,12 +132,14 @@ def reconcile_identity_state(
     ssh_config_revision: str,
     uuid_factory: Callable[[], str] = new_uuid4,
     explicit_continuity: Mapping[str, str] = (),
+    allow_tombstone_resurrection: bool = False,
 ) -> IdentityStateV2:
     """Apply one frozen reconciliation pass to a persisted v2 snapshot.
 
     ``explicit_continuity`` maps an old alias to a new alias for an operation
     SSH Pilot itself performed.  Those pairs bypass heuristic evidence while
     all remaining candidates use the accepted matcher unchanged.
+    Tombstone resurrection is reserved for explicit SSH authority transitions.
     """
 
     if type(ssh_config_revision) is not str or not ssh_config_revision.strip():
@@ -189,6 +191,7 @@ def reconcile_identity_state(
         remaining_old,
         remaining_new,
         uuid_factory=uuid_factory,
+        allow_tombstone_resurrection=allow_tombstone_resurrection,
     )
     matches = tuple(explicit_matches) + result.matched
     deleted_uuids = {entry.uuid for entry in result.deleted}
@@ -200,7 +203,18 @@ def reconcile_identity_state(
     identities = []
     for identity in state.identities:
         if identity.tombstone:
-            identities.append(identity)
+            # Check if this tombstone should be resurrected (exact alias + anchor match)
+            match = next((item for item in matches if item.old.uuid == identity.uuid), None)
+            if match is not None:
+                # Resurrect: update projection, clear tombstone flag and retired_generation
+                identities.append(replace(
+                    identity,
+                    projection=match.new_projection,
+                    tombstone=False,
+                    retired_generation=None,
+                ))
+            else:
+                identities.append(identity)
             continue
         match = next((item for item in matches if item.old.uuid == identity.uuid), None)
         if match is not None:

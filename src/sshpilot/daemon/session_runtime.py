@@ -1940,6 +1940,15 @@ class SessionRuntime:
                 0,
             }:
                 failure_reason = evidence.failure_reason
+            elif evidence.verdict == "pending":
+                # A session that exits from STARTING without ever producing
+                # any terminal output — not even a password prompt or a
+                # login banner — has never proven it did anything useful, no
+                # matter how "clean" the raw exit code looks. Silently
+                # treating this as an expected close hides genuine failures
+                # (see GH #1166: on the frozen macOS build, a spawn bug made
+                # ssh never launch at all, which looked exactly like this).
+                failure_reason = "The session ended before it produced any output"
             if failure_reason is not None:
                 failure_code = self._startup_failure_code(record.session_id)
                 record.failure = SessionFailure(
@@ -2021,11 +2030,20 @@ class SessionRuntime:
             client=record.originating_client_id,
             connection=record.connection_id,
         ):
-            logger.info(
-                "session state changed from=%s to=%s",
-                previous_state.value,
-                new_state.value,
-            )
+            if new_state in {SessionState.EXITED, SessionState.FAILED, SessionState.CLOSED}:
+                logger.info(
+                    "session state changed from=%s to=%s exit_info=%s failure=%s",
+                    previous_state.value,
+                    new_state.value,
+                    record.exit_info,
+                    record.failure,
+                )
+            else:
+                logger.info(
+                    "session state changed from=%s to=%s",
+                    previous_state.value,
+                    new_state.value,
+                )
         event_type = EventType.SESSION_STATE_CHANGED
         payload = self._summary_locked(record)
         if new_state is SessionState.EXITED:

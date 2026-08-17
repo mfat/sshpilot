@@ -1071,7 +1071,7 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
 
     calls = []
 
-    def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest):
+    def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest, **_kwargs):
         calls.append(passphrase)
         if passphrase == "wrong":
             return SecretTransferResult(
@@ -1124,7 +1124,7 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
             result = self.wait_for_result(summary.id)
             return None if result is None else result.secret
 
-    def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest):
+    def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest, **_kwargs):
         return SecretTransferResult(
             operation="import", path=source, counts={}, warnings=(),
             status=SecretOperationState.FAILED,
@@ -1222,3 +1222,109 @@ def test_import_consume_clears_cached_manifest(tmp_path):
     assert service._pop_cached_manifest(key) == {"credentials": []}
     assert not service._manifest_cache
     assert not service._manifest_timers
+
+
+# ---------------------------------------------------------------------------
+# connection_store threading: SecretBackendService.export_backup/import_backup
+# actually reach a real ConnectionRepository, not just the lower daemon_*
+# functions tested directly in test_secret_transfer.py.
+# ---------------------------------------------------------------------------
+
+
+def _connection_store_repo(config_dir: Path, ssh_dir: Path):
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    return ConnectionRepository(
+        ssh_store=SshConfigStore(ssh_dir / "config"),
+        state_path=config_dir / "connections.json",
+        legacy_config_path=config_dir / "config.json",
+        isolated=False,
+    )
+
+
+def test_export_backup_threads_connection_store_snapshot(monkeypatch, tmp_path):
+    import sshpilot.backup_manager as bm
+
+    config_dir = tmp_path / "config"
+    ssh_dir = tmp_path / "ssh"
+    config_dir.mkdir()
+    ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(ssh_dir))
+
+    repo = _connection_store_repo(config_dir, ssh_dir)
+    repo.create_connection(
+        {"nickname": "svc-switch", "protocol": "telnet", "hostname": "10.0.0.30"}
+    )
+
+    path = _write_settings(config_dir / "config.json")
+    manager = FakeManager({"libsecret": FakeBackend("libsecret", session_backed=False)})
+    service = SecretBackendService(
+        path, secret_manager=manager,
+        connection_store_snapshot=repo.snapshot_for_backup,
+    )
+    dest = tmp_path / "out.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": True, "known_hosts": False,
+                 "secrets": False, "private_keys": False},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+
+    from sshpilot.backup_archive import read_spbk
+
+    manifest = read_spbk(str(dest), None)
+    connection_ids = {c["id"] for c in manifest["connection_store"]["connections"]}
+    assert "svc-switch" in connection_ids
+
+
+def test_import_backup_threads_connection_store_restore(monkeypatch, tmp_path):
+    import sshpilot.backup_manager as bm
+
+    source_config_dir = tmp_path / "source_config"
+    source_ssh_dir = tmp_path / "source_ssh"
+    source_config_dir.mkdir()
+    source_ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(source_config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(source_ssh_dir))
+
+    source_repo = _connection_store_repo(source_config_dir, source_ssh_dir)
+    source_repo.create_connection(
+        {"nickname": "svc-switch", "protocol": "telnet", "hostname": "10.0.0.30"}
+    )
+    source_path = _write_settings(source_config_dir / "config.json")
+    source_manager = FakeManager({"libsecret": FakeBackend("libsecret", session_backed=False)})
+    source_service = SecretBackendService(
+        source_path, secret_manager=source_manager,
+        connection_store_snapshot=source_repo.snapshot_for_backup,
+    )
+    dest = tmp_path / "out.spbk"
+    export_result = source_service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": True, "known_hosts": False,
+                 "secrets": False, "private_keys": False},
+        owner_client_id="client-1",
+    )
+    assert export_result.status.value == "success", export_result.message
+
+    target_config_dir = tmp_path / "target_config"
+    target_ssh_dir = tmp_path / "target_ssh"
+    target_config_dir.mkdir()
+    target_ssh_dir.mkdir()
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(target_config_dir))
+    monkeypatch.setattr(bm, "get_ssh_dir", lambda: str(target_ssh_dir))
+
+    target_repo = _connection_store_repo(target_config_dir, target_ssh_dir)
+    target_path = _write_settings(target_config_dir / "config.json")
+    target_manager = FakeManager({"libsecret": FakeBackend("libsecret", session_backed=False)})
+    target_service = SecretBackendService(
+        target_path, secret_manager=target_manager,
+        connection_store_restore=target_repo.restore_connection_store,
+    )
+    import_result = target_service.import_backup(
+        source=str(dest), options={"mode": "merge"}, owner_client_id="client-1",
+    )
+    assert import_result.status.value == "success", import_result.message
+    assert "svc-switch" in {c.id for c in target_repo.snapshot().connections}

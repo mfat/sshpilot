@@ -137,11 +137,47 @@ class _HeadlessBackupConfig:
         return None
 
 
-def _backup_manager(settings_path: Path | str):
+class _CallableConnectionStore:
+    """Adapts two narrow callables to ``BackupManager``'s ``connection_store``
+    surface (``snapshot_for_backup``/``restore_connection_store``).
+
+    Keeps this module holding only bound methods off the real
+    ``ConnectionRepository`` — never the repository object itself — mirroring
+    the existing ``connections_source=repository.list_records`` convention.
+    """
+
+    def __init__(self, snapshot_fn: Optional[Any], restore_fn: Optional[Any]) -> None:
+        self._snapshot_fn = snapshot_fn
+        self._restore_fn = restore_fn
+
+    def snapshot_for_backup(self) -> Dict[str, Any]:
+        return self._snapshot_fn() if self._snapshot_fn is not None else {}
+
+    def restore_connection_store(self, section: Dict[str, Any], *, mode: str = "merge"):
+        if self._restore_fn is None:
+            from sshpilot.core.connections.repository import ConnectionStoreRestoreResult
+
+            return ConnectionStoreRestoreResult()
+        return self._restore_fn(section, mode=mode)
+
+
+def _backup_manager(
+    settings_path: Path | str,
+    *,
+    connection_store_snapshot: Optional[Any] = None,
+    connection_store_restore: Optional[Any] = None,
+):
     """One ``BackupManager`` driven by a headless config shim."""
     from sshpilot.backup_manager import BackupManager
 
-    return BackupManager(_HeadlessBackupConfig(settings_path))
+    connection_store = None
+    if connection_store_snapshot is not None or connection_store_restore is not None:
+        connection_store = _CallableConnectionStore(
+            connection_store_snapshot, connection_store_restore
+        )
+    return BackupManager(
+        _HeadlessBackupConfig(settings_path), connection_store=connection_store
+    )
 
 
 def _connection_key_paths(view: Any) -> List[str]:
@@ -203,6 +239,7 @@ def daemon_export_backup(
     connections_source: Optional[Any] = None,
     passphrase: Optional[str] = None,
     settings_path: Optional[Path | str] = None,
+    connection_store_snapshot: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Export the full backup (settings, SSH config, known_hosts, secrets,
     private keys) to a ``.spbk`` file or a Bitwarden backup note.
@@ -222,7 +259,10 @@ def daemon_export_backup(
             message="Nothing selected to export",
         )
 
-    mgr = _backup_manager(settings_path or _settings_path())
+    mgr = _backup_manager(
+        settings_path or _settings_path(),
+        connection_store_snapshot=connection_store_snapshot,
+    )
     warnings: List[str] = []
 
     ssh_dest = _ssh_server_destination(destination)
@@ -230,6 +270,7 @@ def daemon_export_backup(
         return _daemon_export_to_ssh(
             manager, ssh_dest, views, options, passphrase=passphrase,
             connections_source=connections_source, settings_path=settings_path,
+            connection_store_snapshot=connection_store_snapshot,
         )
 
     if _is_bitwarden_destination(destination):
@@ -349,6 +390,7 @@ def _daemon_export_to_ssh(
     passphrase: Optional[str] = None,
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
+    connection_store_snapshot: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Export the backup to a ``.spbk`` file on one of the user's SSH servers.
 
@@ -365,7 +407,10 @@ def _daemon_export_to_ssh(
         datetime.now().strftime("%Y%m%d_%H%M%S")
     )
     try:
-        mgr = _backup_manager(settings_path or _settings_path())
+        mgr = _backup_manager(
+            settings_path or _settings_path(),
+            connection_store_snapshot=connection_store_snapshot,
+        )
         mgr.export_to_backend(
             SSHServerBackupBackend(runner, remote_dir, item_name=name),
             connections=views,
@@ -404,6 +449,7 @@ def daemon_import_backup(
     passphrase: Optional[str] = None,
     settings_path: Optional[Path | str] = None,
     manifest: Optional[Dict[str, Any]] = None,
+    connection_store_restore: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Import a ``.spbk`` archive or a legacy JSON config, and restore it.
 
@@ -434,7 +480,10 @@ def daemon_import_backup(
 
     if not is_spbk(source):
         # Legacy JSON config import — no secrets involved.
-        mgr = _backup_manager(settings_path or _settings_path())
+        mgr = _backup_manager(
+            settings_path or _settings_path(),
+            connection_store_restore=connection_store_restore,
+        )
         try:
             success, error = mgr.import_configuration(
                 source, mode=mode, create_backup=True
@@ -454,8 +503,9 @@ def daemon_import_backup(
             )
         ignored = int(getattr(mgr, "last_import_ignored_secrets", 0) or 0)
         counts = {"restored": 1, "ignored_secrets": ignored}
+        cs_warnings = tuple(getattr(mgr, "last_connection_store_warnings", []) or [])
         return SecretTransferResult(
-            operation="import", path=source, counts=counts, warnings=(),
+            operation="import", path=source, counts=counts, warnings=cs_warnings,
             status=SecretOperationState.SUCCESS, message="",
         )
 
@@ -471,7 +521,10 @@ def daemon_import_backup(
                 message="Wrong passphrase or corrupt backup",
             )
 
-    mgr = _backup_manager(settings_path or _settings_path())
+    mgr = _backup_manager(
+        settings_path or _settings_path(),
+        connection_store_restore=connection_store_restore,
+    )
     try:
         success, error, restored, keys_written = mgr.apply_imported_manifest(
             manifest,
@@ -495,7 +548,7 @@ def daemon_import_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings: List[str] = []
+    warnings: List[str] = list(getattr(mgr, "last_connection_store_warnings", []) or [])
     if not success:
         return SecretTransferResult(
             operation="import",
@@ -750,6 +803,7 @@ def daemon_import_bitwarden_backup(
     options: Optional[Dict[str, Any]] = None,
     settings_path: Optional[Path | str] = None,
     manifest: Optional[Dict[str, Any]] = None,
+    connection_store_restore: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Restore one Bitwarden backup note (merge by default, non-destructive).
 
@@ -819,7 +873,10 @@ def daemon_import_bitwarden_backup(
             message="The chosen backup is not a valid sshPilot backup",
         )
 
-    mgr = _backup_manager(settings_path or _settings_path())
+    mgr = _backup_manager(
+        settings_path or _settings_path(),
+        connection_store_restore=connection_store_restore,
+    )
     try:
         success, error, restored, keys_written = mgr.apply_imported_manifest(
             manifest,
@@ -843,7 +900,7 @@ def daemon_import_bitwarden_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings: List[str] = []
+    warnings: List[str] = list(getattr(mgr, "last_connection_store_warnings", []) or [])
     if not success:
         return SecretTransferResult(
             operation="import",
@@ -1083,6 +1140,7 @@ def daemon_import_ssh_backup(
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
     manifest: Optional[Dict[str, Any]] = None,
+    connection_store_restore: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Download one SSH-stored backup and restore it (merge by default, non-destructive).
 
@@ -1132,7 +1190,10 @@ def daemon_import_ssh_backup(
             message="The chosen backup is not a valid sshPilot backup",
         )
 
-    mgr = _backup_manager(settings_path or _settings_path())
+    mgr = _backup_manager(
+        settings_path or _settings_path(),
+        connection_store_restore=connection_store_restore,
+    )
     try:
         success, error, restored, keys_written = mgr.apply_imported_manifest(
             manifest,
@@ -1153,7 +1214,7 @@ def daemon_import_ssh_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings: List[str] = []
+    warnings: List[str] = list(getattr(mgr, "last_connection_store_warnings", []) or [])
     if not success:
         return SecretTransferResult(
             operation="import", path="ssh", counts=counts, warnings=(),

@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Tuple
 
 from ...api.models.connection_store import (
     ConnectionMetadataSummary,
+    ConnectionPlacementMode,
     ConnectionStoreSnapshot,
     AddTagToConnectionsRequest,
     GroupSummary,
@@ -121,6 +122,62 @@ class LegacyMigrationResult:
     dangling_root_entries_removed: int = 0
     dangling_metadata_entries_removed: int = 0
     dangling_parent_links_removed: int = 0
+
+
+# Schema version for the portable ``connection_store`` backup section built by
+# ``snapshot_for_backup``/consumed by ``restore_connection_store``. Bump only
+# on a breaking shape change; ``restore_connection_store`` skips (with a
+# warning) any section whose version it does not understand.
+CONNECTION_STORE_SECTION_VERSION = 1
+
+# Portable, non-secret launch configuration for built-in non-SSH protocols,
+# beyond the generic id/nickname/hostname/username/port/display_name fields
+# already captured above. Declared here (core) rather than discovered from
+# ``sshpilot.plugins`` at runtime: the dependency-direction boundary
+# (``tests/core/test_dependency_boundary.py``) forbids ``core`` from importing
+# the plugin package, so this list is a deliberately duplicated, centralized
+# allowlist for the built-in protocols only — it must be kept in sync by hand
+# with each plugin's own ``connection_fields()`` declaration
+# (``src/sshpilot/plugins/builtin/*/__init__.py``). A third-party/dynamically
+# loaded protocol gets no portable-field backup support until it's added here;
+# its connections still round-trip with the generic fields only.
+_PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "serial": ("device", "baud", "flow", "databits", "parity", "stopbits"),
+    "docker": ("container", "command", "runtime", "docker_host", "user", "workdir"),
+    "k8s": ("pod", "container", "namespace", "kube_context", "kubeconfig", "command"),
+    "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
+}
+
+# Defense-in-depth secret filter mirroring the GTK client's own
+# ``_SENSITIVE_PARTS`` convention (``sshpilot/gtk/daemon_connection_services.py``):
+# no field in ``_PORTABLE_PROTOCOL_FIELDS`` currently matches this today, but
+# a hand-crafted backup file or a future plugin field must never be able to
+# smuggle a secret into the logical connection_store through ``plugin_data``.
+_SENSITIVE_DATA_PARTS = ("password", "passphrase", "secret", "token", "credential", "private_key")
+
+
+def _is_sensitive_field_name(key: str) -> bool:
+    lowered = key.lower()
+    return any(part in lowered for part in _SENSITIVE_DATA_PARTS)
+
+
+def _portable_plugin_data(protocol: str, data: Mapping[str, Any]) -> Dict[str, Any]:
+    """The subset of ``record.data`` that is safe, portable, protocol-declared
+    launch configuration — never arbitrary/unknown keys, never anything
+    matching a secret-like field name."""
+    allowed = _PORTABLE_PROTOCOL_FIELDS.get(protocol, ())
+    return {
+        key: data[key]
+        for key in allowed
+        if key in data and not _is_sensitive_field_name(key)
+    }
+
+
+@dataclass(frozen=True)
+class ConnectionStoreRestoreResult:
+    """Non-fatal diagnostics from one ``restore_connection_store`` call."""
+
+    warnings: Tuple[str, ...] = ()
 
 
 ChangeListener = Callable[[RepositoryChange], None]
@@ -238,6 +295,12 @@ class ConnectionRepositoryProtocol(Protocol):
 
     def add_tag_to_connections(self, request: AddTagToConnectionsRequest) -> int: ...
 
+    def snapshot_for_backup(self) -> Dict[str, Any]: ...
+
+    def restore_connection_store(
+        self, section: Mapping[str, Any], *, mode: str = "merge"
+    ) -> "ConnectionStoreRestoreResult": ...
+
 
 def _repository_error(message: str) -> CoreError:
     return CoreError(ErrorCode.CONNECTION_STATE_IO_ERROR, message)
@@ -335,17 +398,23 @@ class ConnectionRepository:
             before = self._build_snapshot_locked()
             old_store = self._ssh_store
             old_isolated = self._isolated
+            target_isolated = bool(isolated)
+            mode_changed = old_isolated != target_isolated
             try:
                 # Load before publication so malformed or inaccessible target
                 # configuration cannot leave a partially switched authority.
                 ssh_store.load()
                 self._ssh_store = ssh_store
-                self._isolated = bool(isolated)
-                self._load_state_locked()
+                self._isolated = target_isolated
+                self._load_state_locked(
+                    allow_tombstone_resurrection=mode_changed,
+                )
             except Exception:
                 self._ssh_store = old_store
                 self._isolated = old_isolated
-                self._load_state_locked()
+                self._load_state_locked(
+                    allow_tombstone_resurrection=mode_changed,
+                )
                 raise
             after = self._build_snapshot_locked()
             return self._notify(before, after)
@@ -438,7 +507,11 @@ class ConnectionRepository:
             return read_connection_state(self._state_path), False
         return read_legacy_connection_state(self._legacy_config_path), True
 
-    def _load_state_locked(self) -> None:
+    def _load_state_locked(
+        self,
+        *,
+        allow_tombstone_resurrection: bool = False,
+    ) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
         self._loaded_ssh_config = ssh_config
@@ -474,6 +547,7 @@ class ConnectionRepository:
                         state,
                         projections,
                         ssh_config_revision=ssh_config.root_revision,
+                        allow_tombstone_resurrection=allow_tombstone_resurrection,
                     )
                     write_identity_state_v2(self._state_path, state)
                 self._identity_state = state
@@ -2319,6 +2393,465 @@ class ConnectionRepository:
             if changed:
                 self._commit(before)
             return renamed
+
+    # ------------------------------------------------------------------
+    # Logical backup export/restore (portable user state only — never a
+    # copy of connections.json, never internal UUID/sidecar bookkeeping)
+    # ------------------------------------------------------------------
+
+    def snapshot_for_backup(self) -> Dict[str, Any]:
+        """Portable ``connection_store`` backup section for the current state.
+
+        Built entirely from :meth:`snapshot`'s public projection: SSH aliases
+        and non-SSH nicknames as ids, never internal UUIDs or sidecar
+        bookkeeping (``observed_ssh_revision``, ``sidecar_generation``, etc).
+        """
+        with self._lock:
+            snap = self._build_snapshot_locked()
+            records_by_id = {
+                record.id: record for record in self._service.ordered_records()
+            }
+
+        def _connection_entry(c: ConnectionSummary) -> Dict[str, Any]:
+            entry: Dict[str, Any] = {
+                "id": str(c.id),
+                "protocol": c.protocol,
+                "nickname": c.nickname,
+                "hostname": c.hostname,
+                "username": c.username,
+                "port": c.port,
+                "display_name": (
+                    "" if c.display_name == c.nickname else c.display_name
+                ),
+            }
+            record = records_by_id.get(str(c.id))
+            if record is not None and c.protocol != "ssh":
+                plugin_data = _portable_plugin_data(c.protocol, record.data)
+                if plugin_data:
+                    entry["plugin_data"] = plugin_data
+            return entry
+
+        return {
+            "version": CONNECTION_STORE_SECTION_VERSION,
+            "connections": [_connection_entry(c) for c in snap.connections],
+            "groups": [
+                {
+                    "id": str(g.id),
+                    "name": g.name,
+                    "parent_id": (str(g.parent_id) if g.parent_id is not None else None),
+                    "order": g.order,
+                    "color": g.color,
+                    "connection_ids": [str(cid) for cid in g.connection_ids],
+                }
+                for g in snap.groups
+            ],
+            "root_connection_ids": [str(cid) for cid in snap.root_connection_ids],
+            "metadata": [
+                {"connection_id": str(m.connection_id), "values": dict(m.values)}
+                for m in snap.metadata
+            ],
+        }
+
+    def _validate_connection_store_section_locked(
+        self,
+        connections: List[Mapping[str, Any]],
+        groups: List[Mapping[str, Any]],
+        root_ids: List[Any],
+        metadata: List[Mapping[str, Any]],
+    ) -> None:
+        """Reuse ``ConnectionStoreSnapshot``'s own cross-validation for free:
+        duplicate ids, unknown group parents/members, parent cycles, orphan
+        metadata, and unknown/misplaced root references are all rejected by
+        its constructor — no need to hand-roll those checks here."""
+        conn_summaries = tuple(
+            ConnectionSummary(
+                id=ConnectionId(str(c["id"])),
+                nickname=str(c.get("nickname") or c["id"]),
+                host=str(c.get("hostname") or c["id"]),
+                hostname=str(c.get("hostname") or ""),
+                username=str(c.get("username") or ""),
+                port=int(c.get("port") or 22),
+                protocol=str(c.get("protocol") or "ssh"),
+                display_name=str(c.get("display_name") or ""),
+            )
+            for c in connections
+        )
+        group_summaries = tuple(
+            GroupSummary(
+                id=str(g["id"]),
+                name=str(g.get("name") or g["id"]),
+                parent_id=(str(g["parent_id"]) if g.get("parent_id") else None),
+                order=int(g.get("order") or 0),
+                color=str(g.get("color") or ""),
+                connection_ids=tuple(str(cid) for cid in (g.get("connection_ids") or [])),
+            )
+            for g in groups
+        )
+        metadata_summaries = tuple(
+            ConnectionMetadataSummary(
+                connection_id=ConnectionId(str(m["connection_id"])),
+                values=m.get("values") or {},
+            )
+            for m in metadata
+        )
+        ConnectionStoreSnapshot(
+            generation=0,
+            connections=conn_summaries,
+            groups=group_summaries,
+            root_connection_ids=tuple(str(cid) for cid in root_ids),
+            metadata=metadata_summaries,
+        )
+
+    def _restore_non_ssh_connection_locked(
+        self, entry: Mapping[str, Any], *, mode: str, warnings: List[str]
+    ) -> None:
+        cid = str(entry["id"])
+        existing = self._service.get(cid)
+        protocol = str(entry.get("protocol") or "telnet")
+        payload: Dict[str, Any] = {
+            "id": cid,
+            "nickname": str(entry.get("nickname") or cid),
+            "hostname": str(entry.get("hostname") or ""),
+            "username": str(entry.get("username") or ""),
+            "port": int(entry.get("port") or 22),
+            "protocol": protocol,
+        }
+        display_name = str(entry.get("display_name") or "").strip()
+        if display_name:
+            payload["display_name"] = display_name
+        raw_plugin_data = entry.get("plugin_data")
+        if isinstance(raw_plugin_data, Mapping):
+            # Re-filter on restore too: never trust a hand-crafted or
+            # cross-version backup file to have applied the same allowlist/
+            # security filter used on export.
+            payload.update(_portable_plugin_data(protocol, raw_plugin_data))
+        if existing is None:
+            try:
+                payload["generation"] = 1
+                created = self._service.create(payload)
+                self._non_ssh_generations[created.id] = 1
+            except Exception as error:
+                warnings.append(f"Could not restore connection {cid!r}: {error}")
+        elif mode == "replace":
+            try:
+                next_generation = (
+                    self._non_ssh_generations.get(cid, existing.generation) + 1
+                )
+                payload["generation"] = next_generation
+                self._service.update(cid, payload)
+                self._non_ssh_generations[cid] = next_generation
+            except Exception as error:
+                warnings.append(f"Could not update connection {cid!r}: {error}")
+        # merge mode + already-present connection: left untouched (non-destructive).
+
+    def _restore_groups_locked(
+        self, imported_groups: List[Mapping[str, Any]], *, mode: str, warnings: List[str]
+    ) -> Dict[str, str]:
+        """Map each imported group id to a local group id, creating/reusing
+        groups by ``(mapped_parent_id, name)`` — imported ids are never
+        treated as stable local targets, since group ids are locally
+        generated (``generate_group_slug``)."""
+        existing_by_key: Dict[Tuple[Optional[str], str], str] = {
+            (group.parent_id, group.name): group.id
+            for group in self._service.list_groups()
+        }
+        by_id = {str(g["id"]): g for g in imported_groups}
+        id_map: Dict[str, str] = {}
+
+        # No cycle guard needed here: restore_connection_store already ran
+        # imported_groups through ConnectionStoreSnapshot's own validation
+        # (_validate_connection_store_section_locked), which rejects any
+        # parent cycle among these same id/parent_id pairs before this method
+        # is ever called — so this recursion is guaranteed to terminate.
+        def resolve(imported_id: str) -> Optional[str]:
+            if imported_id in id_map:
+                return id_map[imported_id]
+            entry = by_id.get(imported_id)
+            if entry is None:
+                return None
+            parent_imported_id = entry.get("parent_id")
+            mapped_parent = (
+                resolve(str(parent_imported_id)) if parent_imported_id else None
+            )
+            name = str(entry.get("name") or imported_id).strip() or imported_id
+            color = str(entry.get("color") or "")
+            key = (mapped_parent, name)
+            local_id = existing_by_key.get(key)
+            if local_id is None:
+                try:
+                    record = self._service.create_group(
+                        name, parent_id=mapped_parent, color=color
+                    )
+                    local_id = record.id
+                    existing_by_key[key] = local_id
+                except Exception as error:
+                    warnings.append(f"Could not restore group {name!r}: {error}")
+                    return None
+            elif mode == "replace":
+                try:
+                    self._service.set_group_color(local_id, color)
+                except Exception as error:
+                    warnings.append(f"Could not update group {name!r}: {error}")
+            id_map[imported_id] = local_id
+            return local_id
+
+        for imported_id in by_id:
+            resolve(imported_id)
+
+        if mode == "replace":
+            kept = set(id_map.values())
+            for group in list(self._service.list_groups()):
+                if group.id not in kept:
+                    try:
+                        self._service.delete_group(group.id)
+                    except Exception as error:
+                        warnings.append(
+                            f"Could not remove group {group.id!r}: {error}"
+                        )
+
+        # Apply the backup's sibling order (user-visible state that must
+        # survive the round trip) among the groups it describes. Siblings not
+        # mentioned in the backup are left wherever place_group's insertion
+        # puts them relative to this batch — this only guarantees the
+        # relative order *among backup-described siblings*, in both modes.
+        by_parent: Dict[Optional[str], List[Tuple[int, str, str]]] = {}
+        for imported_id, local_id in id_map.items():
+            entry = by_id[imported_id]
+            parent_imported_id = entry.get("parent_id")
+            mapped_parent = (
+                id_map.get(str(parent_imported_id)) if parent_imported_id else None
+            )
+            order_value = entry.get("order")
+            order_value = order_value if isinstance(order_value, int) else 0
+            by_parent.setdefault(mapped_parent, []).append(
+                (order_value, str(entry.get("name") or ""), local_id)
+            )
+        for parent_id, siblings in by_parent.items():
+            siblings.sort(key=lambda item: (item[0], item[1]))
+            for index, (_, _, local_id) in enumerate(siblings):
+                try:
+                    self._service.place_group(local_id, parent_id, index)
+                except Exception as error:
+                    warnings.append(f"Could not order group {local_id!r}: {error}")
+
+        return id_map
+
+    def _restore_membership_and_order_locked(
+        self,
+        imported_groups: List[Mapping[str, Any]],
+        imported_root: List[Any],
+        id_map: Dict[str, str],
+        *,
+        mode: str,
+        imported_connection_ids: set,
+        warnings: List[str],
+    ) -> None:
+        if mode == "replace":
+            # Evict stale membership from groups the backup persists: a
+            # connection the backup describes must end up in exactly the
+            # group(s) the backup states, not additionally in whatever
+            # group(s) it happened to occupy locally beforehand. Scoped to
+            # connections the backup actually describes (imported_connection_
+            # ids) — a local-only connection outside the backup's scope keeps
+            # its existing membership untouched, since the backup takes no
+            # position on it. (Multi-group membership the backup itself
+            # declares survives: a connection stays "stale" for a group only
+            # when that group's own backup-declared members omit it.)
+            for entry in imported_groups:
+                local_group_id = id_map.get(str(entry["id"]))
+                if local_group_id is None:
+                    continue
+                desired = {str(cid) for cid in (entry.get("connection_ids") or [])}
+                local_group = next(
+                    (g for g in self._service.list_groups() if g.id == local_group_id),
+                    None,
+                )
+                if local_group is None:
+                    continue
+                stale = (set(local_group.connection_ids) - desired) & imported_connection_ids
+                for cid in stale:
+                    try:
+                        self._service.remove_connection_from_group(cid, local_group_id)
+                    except Exception as error:
+                        warnings.append(
+                            f"Could not remove stale membership for {cid!r}: {error}"
+                        )
+
+        for entry in imported_groups:
+            local_group_id = id_map.get(str(entry["id"]))
+            if local_group_id is None:
+                continue
+            requested = [str(cid) for cid in (entry.get("connection_ids") or [])]
+            member_ids = tuple(
+                cid for cid in requested if self._service.get(cid) is not None
+            )
+            for cid in set(requested) - set(member_ids):
+                warnings.append(
+                    f"Connection {cid!r} referenced by a restored group was not found"
+                )
+            if member_ids:
+                self._service.move_connections(
+                    MoveConnectionsRequest(
+                        connection_ids=member_ids,
+                        target_group_id=local_group_id,
+                        mode=ConnectionPlacementMode.ADDITIVE,
+                    )
+                )
+
+        requested_root = [str(cid) for cid in imported_root]
+        root_ids = tuple(
+            cid for cid in requested_root if self._service.get(cid) is not None
+        )
+        for cid in set(requested_root) - set(root_ids):
+            warnings.append(
+                f"Root connection {cid!r} referenced by the backup was not found"
+            )
+        if mode == "merge":
+            # Merge is non-destructive: a connection that already belongs to
+            # a group (whether from pre-existing target state or from this
+            # same restore's own group membership above) must keep that
+            # membership. Root/group membership are mutually exclusive in
+            # this domain model, so an exclusive move to root would evict it
+            # — instead, the backup's root placement is a no-op for an
+            # already-grouped connection under merge.
+            root_ids = tuple(
+                cid for cid in root_ids
+                if self._service.get(cid).group_id is None
+            )
+        if root_ids:
+            self._service.move_connections(
+                MoveConnectionsRequest(connection_ids=root_ids)
+            )
+
+    def _restore_metadata_locked(
+        self,
+        imported_metadata: List[Mapping[str, Any]],
+        imported_connection_ids: set,
+        *,
+        mode: str,
+        warnings: List[str],
+    ) -> None:
+        seen: set = set()
+        for entry in imported_metadata:
+            cid = str(entry.get("connection_id"))
+            if self._service.get(cid) is None:
+                warnings.append(f"Metadata for unknown connection {cid!r} was skipped")
+                continue
+            seen.add(cid)
+            values = entry.get("values") or {}
+            try:
+                if mode == "replace":
+                    merged = validate_safe_metadata(dict(values)) if values else {}
+                else:
+                    current = thaw_safe_metadata(self._metadata.get(cid, {}))
+                    current.update(values)
+                    merged = validate_safe_metadata(current)
+                if merged:
+                    self._metadata[cid] = merged
+                else:
+                    self._metadata.pop(cid, None)
+            except Exception as error:
+                warnings.append(f"Could not restore metadata for {cid!r}: {error}")
+        if mode == "replace":
+            for cid in imported_connection_ids - seen:
+                self._metadata.pop(cid, None)
+
+    def restore_connection_store(
+        self, section: Mapping[str, Any], *, mode: str = "merge"
+    ) -> ConnectionStoreRestoreResult:
+        """Apply a portable ``connection_store`` backup section.
+
+        Restores non-SSH connections, groups, group membership, root order,
+        and safe metadata through the same in-memory primitives used by the
+        repository's own public mutators — never by writing
+        ``connections.json`` directly. Runs as one atomic transaction:
+        ``mode="replace"`` additionally removes local non-SSH connections,
+        groups, and metadata absent from the backup; ``mode="merge"`` never
+        deletes. Returns immediately, with a warning, for a section whose
+        ``version`` this repository does not understand — this keeps a
+        newer-than-supported backup from hard-failing the rest of an import.
+        """
+        if mode not in ("merge", "replace"):
+            raise ValueError("mode must be 'merge' or 'replace'")
+        if not isinstance(section, Mapping):
+            raise TypeError("connection_store section must be a mapping")
+
+        version = section.get("version")
+        if type(version) is not int or version > CONNECTION_STORE_SECTION_VERSION:
+            return ConnectionStoreRestoreResult(
+                warnings=("connection_store section version is unsupported; skipped",)
+            )
+
+        imported_connections = list(section.get("connections") or [])
+        imported_groups = list(section.get("groups") or [])
+        imported_root = list(section.get("root_connection_ids") or [])
+        imported_metadata = list(section.get("metadata") or [])
+
+        warnings: List[str] = []
+        with self._mutation_scope():
+            before = self._begin()
+            try:
+                # Reload from disk first: BackupManager writes the SSH config
+                # tree to disk before invoking this restore, but this
+                # repository's in-memory state still predates that write.
+                # Resolving SSH aliases against stale state would silently
+                # drop every freshly-restored SSH connection from group/
+                # root-order/metadata references.
+                self._load_state_locked()
+
+                self._validate_connection_store_section_locked(
+                    imported_connections, imported_groups, imported_root,
+                    imported_metadata,
+                )
+
+                imported_ids = {str(c["id"]) for c in imported_connections}
+                for entry in imported_connections:
+                    if str(entry.get("protocol") or "ssh") == "ssh":
+                        cid = str(entry["id"])
+                        display_name = str(entry.get("display_name") or "").strip()
+                        if display_name and self._service.get(cid) is not None:
+                            try:
+                                self._set_display_name_locked(
+                                    cid, display_name, bump=False
+                                )
+                            except CoreError as error:
+                                warnings.append(
+                                    f"Could not restore display name for {cid!r}: {error}"
+                                )
+                        continue
+                    self._restore_non_ssh_connection_locked(
+                        entry, mode=mode, warnings=warnings
+                    )
+
+                if mode == "replace":
+                    for record in list(self._service.ordered_records()):
+                        if record.protocol != "ssh" and record.id not in imported_ids:
+                            try:
+                                self._service.delete(record.id)
+                                self._non_ssh_generations.pop(record.id, None)
+                            except Exception as error:
+                                warnings.append(
+                                    f"Could not remove connection {record.id!r}: {error}"
+                                )
+
+                id_map = self._restore_groups_locked(
+                    imported_groups, mode=mode, warnings=warnings
+                )
+                self._restore_membership_and_order_locked(
+                    imported_groups, imported_root, id_map,
+                    mode=mode, imported_connection_ids=imported_ids,
+                    warnings=warnings,
+                )
+                self._restore_metadata_locked(
+                    imported_metadata, imported_ids, mode=mode, warnings=warnings
+                )
+
+                self._persist_state_file_locked()
+            except Exception:
+                self._resync_from_files()
+                raise
+            self._commit(before)
+        return ConnectionStoreRestoreResult(warnings=tuple(warnings))
 
     # ------------------------------------------------------------------
     # Event dispatch (outside the lock)

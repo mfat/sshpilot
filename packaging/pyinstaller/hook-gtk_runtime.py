@@ -83,16 +83,26 @@ if sys.platform == "darwin":
         xdg_path = os.environ[xdg_dir]
         os.makedirs(xdg_path, exist_ok=True)
     
-    # Set PATH explicitly for double-click launches (like working bundle)
-    # This ensures the app has access to all necessary tools including system Python
+    # Set PATH for double-click launches: preserve caller's PATH precedence,
+    # add system paths only as fallbacks, bundled bin gets highest priority
     system_paths = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"]
-    current_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = ":".join(system_paths + [current_path])
-    
-    # Add bundled sshpass to PATH
+
+    path_entries = [
+        entry
+        for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry
+    ]
+
+    for entry in system_paths:
+        if entry not in path_entries:
+            path_entries.append(entry)
+
+    os.environ["PATH"] = os.pathsep.join(path_entries)
+
+    # Add bundled sshpass to PATH (highest priority)
     bundled_bin = str(resources / "bin")
     if Path(bundled_bin).exists():
-        os.environ["PATH"] = f"{bundled_bin}:{os.environ['PATH']}"
+        os.environ["PATH"] = f"{bundled_bin}{os.pathsep}{os.environ['PATH']}"
         print(f"DEBUG: Added bundled bin to PATH: {bundled_bin}")
     
     # Add GI modules to Python path for Cairo bindings

@@ -481,6 +481,47 @@ def test_isolated_load_marks_records(tmp_path):
     assert record.data.get("isolated_mode") is True
 
 
+def test_mode_round_trip_preserves_display_name_and_uuid(tmp_path):
+    repo, default_root, state, _legacy = _repo(
+        tmp_path,
+        "Host prod\n    HostName prod.example.com\n",
+    )
+    repo.set_display_name("prod", "Production Database")
+
+    before_state = read_identity_state_v2(state)
+    before_identity = next(
+        identity
+        for identity in before_state.identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    )
+
+    isolated_root = tmp_path / "isolated_ssh_config"
+    isolated_root.write_text(
+        "Host isolated\n    HostName isolated.example.com\n"
+    )
+
+    repo.transition_ssh_config(
+        SshConfigStore(isolated_root, isolated=True),
+        True,
+    )
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(default_root, isolated=False),
+        False,
+    )
+
+    assert [item.id for item in snapshot.connections] == ["prod"]
+    assert snapshot.connections[0].display_name == "Production Database"
+
+    after_state = read_identity_state_v2(state)
+    after_identity = next(
+        identity
+        for identity in after_state.identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    )
+    assert after_identity.uuid == before_identity.uuid
+    assert after_identity.display_name == "Production Database"
+
+
 def test_loads_non_ssh_records_from_state_file(tmp_path):
     state = tmp_path / "connections.json"
     _write_state(
