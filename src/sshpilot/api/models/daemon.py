@@ -40,6 +40,25 @@ class SetOperationModeRequest:
 
 
 @dataclass(frozen=True)
+class OperationModeFiles:
+    """Resolved, on-disk file paths that back one SSH configuration scope."""
+
+    root_config_path: str
+    root_config_exists: bool
+    known_hosts_path: str
+    known_hosts_exists: bool
+    imported_fragment_path: str
+    imported_fragment_exists: bool
+
+    def __post_init__(self) -> None:
+        for name in ("root_config_path", "known_hosts_path", "imported_fragment_path"):
+            require_identifier(getattr(self, name), name.replace("_", " "))
+        for name in ("root_config_exists", "known_hosts_exists", "imported_fragment_exists"):
+            if type(getattr(self, name)) is not bool:
+                raise TypeError(f"{name} must be a boolean")
+
+
+@dataclass(frozen=True)
 class OperationModeResult:
     """Confirmed mode state or an explicit transition/recovery outcome."""
 
@@ -53,6 +72,12 @@ class OperationModeResult:
     persisted_mode: Optional[OperationMode] = None
     rollback_completed: bool = True
     recovery_required: bool = False
+    # Populated on every real daemon response; ``None`` only appears when
+    # decoding a pre-0.41 wire payload or in a hand-built test fixture.
+    default_files: Optional[OperationModeFiles] = None
+    isolated_files: Optional[OperationModeFiles] = None
+    app_config_path: str = ""
+    app_config_exists: bool = False
 
     def __post_init__(self) -> None:
         if type(self.accepted) is not bool or type(self.seeded) is not bool:
@@ -65,6 +90,13 @@ class OperationModeResult:
             raise TypeError("persisted_mode must be an OperationMode or None")
         if type(self.rollback_completed) is not bool or type(self.recovery_required) is not bool:
             raise TypeError("rollback and recovery flags must be booleans")
+        for files in (self.default_files, self.isolated_files):
+            if files is not None and type(files) is not OperationModeFiles:
+                raise TypeError("default_files/isolated_files must be OperationModeFiles or None")
+        if type(self.app_config_path) is not str:
+            raise TypeError("app_config_path must be a string")
+        if type(self.app_config_exists) is not bool:
+            raise TypeError("app_config_exists must be a boolean")
         if self.recovery_required and self.rollback_completed:
             raise ValueError("a recoverable result must report incomplete rollback")
         if not isinstance(self.active_mode, OperationMode):

@@ -11,7 +11,22 @@ notes remain separate.
   correctness fixes within the current 0.40 contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.40 (current)
+## API 0.41 (current)
+
+### API 0.41 operation-mode file visibility
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `OperationModeResult` gained
+  required-shape additive fields (`default_files`, `isolated_files`,
+  `app_config_path`, `app_config_exists`) that a 0.40 decoder's strict
+  field-set check would reject.
+- Added `OperationModeFiles` (`root_config_path`, `known_hosts_path`,
+  `imported_fragment_path`, and their `_exists` flags), resolved by the
+  daemon for both the default and isolated SSH configuration scopes and
+  returned on every `daemon.get_operation_mode`/`daemon.set_operation_mode`
+  response, so a frontend can show which real files back each mode instead
+  of a generic description.
+
+## Historical API entries
 
 ### API 0.40 daemon-only retirement compatibility boundary
 
@@ -28,8 +43,6 @@ notes remain separate.
   override, and ephemeral CLI projections do not claim durable IDs.
 - Added `connections.clear_session_password` and documented protected-input
   lifecycle limits and ownership.
-
-## Historical API entries
 
 ### API 0.39 (historical snapshot)
 
