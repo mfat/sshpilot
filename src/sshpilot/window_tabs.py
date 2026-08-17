@@ -1452,6 +1452,23 @@ class WindowTabsMixin:
             pass
         return None
 
+    def _on_tab_nav_shortcut(self, step: int) -> bool:
+        """Callback for the hardcoded Alt+Left/Right tab-navigation helper.
+
+        Not part of the shortcut registry, so it must honor Terminal Shortcut
+        Pass-through itself: return False (unconsumed) while accelerators are
+        globally suspended so the key falls through to the focused terminal
+        (Alt+Left/Right are common readline/vim word-navigation combos).
+        """
+        app = self.get_application()
+        if app is not None and not getattr(app, 'accelerators_enabled', True):
+            return False
+        try:
+            self._select_tab_relative(step)
+        except Exception:
+            pass
+        return True
+
     def _select_tab_relative(self, delta: int):
         """Select tab relative to current index, wrapping around."""
         self._return_to_tab_view_if_welcome()

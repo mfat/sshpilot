@@ -114,6 +114,33 @@ def test_disabled_move_shortcuts_are_not_consumed(gui):
         _clear_override(gui, 'tab-move-right')
 
 
+def test_alt_arrow_tab_nav_respects_terminal_pass_through(gui):
+    """Issue found while reviewing #1170: the hardcoded Alt+Left/Right
+    tab-navigation helper isn't part of the shortcut registry, so it kept
+    consuming the key (and switching tabs) even with Terminal Shortcut
+    Pass-through active — defeating pass-through for a common readline/vim
+    word-navigation combo. It must now check accelerators_enabled itself."""
+    gui.open_local_tabs(2)
+    pages = gui.user_pages()
+    gui.window.tab_view.set_selected_page(pages[0])
+    gui.pump(100)
+
+    app = gui.app
+    app._accelerators_enabled = False
+    app._update_accelerators_enabled_flag()
+    try:
+        consumed = gui.window._on_tab_nav_shortcut(1)
+        assert consumed is False
+        assert gui.window.tab_view.get_selected_page() == pages[0]
+    finally:
+        app._accelerators_enabled = True
+        app._update_accelerators_enabled_flag()
+
+    consumed = gui.window._on_tab_nav_shortcut(1)
+    assert consumed is True
+    assert gui.window.tab_view.get_selected_page() == pages[1]
+
+
 def test_single_tab_next_is_still_owned_by_the_action_when_enabled(gui):
     """GNOME Terminal semantics: an *enabled* shortcut whose action is
     temporarily unavailable (only one tab open) still belongs to SSH Pilot —

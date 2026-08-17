@@ -1652,6 +1652,12 @@ class SplitViewTab(Gtk.Box):
         # shortcut editor (see main.py register_custom_shortcut).
         event = _ctrl.get_current_event()
         app = self.window.get_application() if self.window is not None else None
+        if app is not None and not getattr(app, 'accelerators_enabled', True):
+            # Terminal Shortcut Pass-through is active: this CAPTURE-phase
+            # handler must not claim any key either, or it would defeat the
+            # "disable all keyboard shortcuts" contract for split-view users
+            # who have assigned one of these actions.
+            return False
         if event is not None and app is not None and hasattr(app, 'get_effective_shortcuts'):
             for name, callback in self._split_actions.items():
                 for accel in (app.get_effective_shortcuts(name) or []):

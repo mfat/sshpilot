@@ -86,3 +86,48 @@ def test_editor_lists_disabled_split_as_assignable(gui):
         assert row_data is not None, f'no editable row for {name}'
         assert row_data.get('assign_button') is not None
         assert row_data.get('switch') is not None
+
+
+def test_split_action_not_triggered_during_terminal_pass_through(gui):
+    """Issue found while reviewing #1170: SplitViewTab._on_key_pressed is a
+    CAPTURE-phase handler that matched live key events against the
+    user-assigned split shortcut regardless of Terminal Shortcut Pass-through
+    ("Disable all keyboard shortcuts, pass all key events directly to
+    terminal"). Once a user assigned a combo, pass-through could not free it
+    for the terminal. Verify the CAPTURE handler now refuses to consume (or
+    fire) the action while accelerators are globally suspended."""
+    from gi.repository import Gdk
+    from sshpilot.split_view import SplitViewTab
+
+    app = gui.app
+    name = 'split-focus-left'
+    svt = SplitViewTab(gui.window)
+    called = {'n': 0}
+    svt._split_actions[name] = lambda: called.__setitem__('n', called['n'] + 1)
+
+    class _FocusStub:
+        def get_focus(self_inner):
+            return svt
+
+    svt.get_root = lambda: _FocusStub()
+
+    try:
+        app.config.set_shortcut_override(name, ['<Control><Alt>Left'])
+        app.apply_shortcut_overrides()
+
+        app._accelerators_enabled = False
+        app._update_accelerators_enabled_flag()
+        try:
+            consumed = svt._on_key_pressed(
+                None, 0, 0,
+                Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK,
+            )
+        finally:
+            app._accelerators_enabled = True
+            app._update_accelerators_enabled_flag()
+
+        assert consumed is False, 'pass-through must not be consumed by split-view CAPTURE handler'
+        assert called['n'] == 0, 'split action must not fire while pass-through is active'
+    finally:
+        app.config.set_shortcut_override(name, None)
+        app.apply_shortcut_overrides()

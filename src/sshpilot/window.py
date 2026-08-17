@@ -3055,23 +3055,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             tab_nav = Gtk.ShortcutController()
             tab_nav.set_scope(Gtk.ShortcutScope.LOCAL)
 
-            def _on_tab_step(step: int):
-                def _handler(widget, *args):
-                    try:
-                        self._select_tab_relative(step)
-                    except Exception:
-                        pass
-                    return True
-
-                return _handler
-
             tab_nav.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
-                Gtk.CallbackAction.new(_on_tab_step(1))
+                Gtk.CallbackAction.new(lambda widget, *a: self._on_tab_nav_shortcut(1))
             ))
             tab_nav.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
-                Gtk.CallbackAction.new(_on_tab_step(-1))
+                Gtk.CallbackAction.new(lambda widget, *a: self._on_tab_nav_shortcut(-1))
             ))
 
             self.tab_view.add_controller(tab_nav)
