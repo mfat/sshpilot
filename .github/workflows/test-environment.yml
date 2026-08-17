@@ -29,10 +29,16 @@ jobs:
 
       - name: Run pytest (incl. real-tool integration) in the container
         # Mount the repo at /work and the host docker socket so the docker-exec
-        # integration test can talk to the runner's daemon.
+        # integration test can talk to the runner's daemon. --shm-size gives
+        # /dev/shm room for a tmpfs basetemp (default is 64m); basetemp lives on
+        # tmpfs because pytest_sessionfinish's cleanup_dead_symlinks walks a
+        # "<testname>current" symlink per unique tmp_path-using test name, and at
+        # ~5k items that's thousands of resolve() syscalls -- slow enough on a
+        # regular disk-backed /tmp to blow the job timeout.
         run: |
           docker run --rm \
+            --shm-size=2g \
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra -m "not gui"
+            pytest -ra -m "not gui" --basetemp=/dev/shm/pytest-tmp
