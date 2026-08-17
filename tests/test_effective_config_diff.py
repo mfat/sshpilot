@@ -119,6 +119,55 @@ def test_default_config_path_excludes_system_defaults(tmp_path, monkeypatch):
     assert normalized == _effective_config_lines(get_effective_ssh_config("foo"))
 
 
+def test_explicit_root_with_display_flag_matches_default_mode(tmp_path, monkeypatch):
+    """Regression (8094575b): the app's real default-mode caller passes the
+    daemon-selected root (never None) plus include_system_defaults_in_display
+    =True. That must resolve identically to the legacy config_file=None call
+    -- specifically, the displayed full side must still include
+    /etc/ssh/ssh_config, not just what -F <root> resolves."""
+    _use_home(tmp_path, monkeypatch, OWN_BLOCK)
+    root = str(tmp_path / "home" / ".ssh" / "config")
+
+    legacy = diff_effective_config("foo", None, OWN_BLOCK)
+    explicit = diff_effective_config(
+        "foo", root, OWN_BLOCK, include_system_defaults_in_display=True
+    )
+
+    assert explicit is not None and legacy is not None
+    assert explicit["full"] == legacy["full"]
+    assert explicit["has_diff"] == legacy["has_diff"]
+
+
+def test_isolated_mode_root_suppresses_system_defaults_in_display(tmp_path, monkeypatch):
+    """Isolated mode must keep -F'ing the display side to its own root --
+    unlike default mode, it must NOT fall back to plain ssh -G."""
+    _use_home(tmp_path, monkeypatch, "")
+    root = tmp_path / "isolated_ssh_config"
+    root.write_text(OWN_BLOCK, encoding="utf-8")
+
+    result = diff_effective_config(
+        "foo", str(root), OWN_BLOCK, include_system_defaults_in_display=False
+    )
+
+    assert result is not None
+    assert result["has_diff"] is False
+
+
+def test_missing_root_file_falls_back_gracefully(tmp_path, monkeypatch):
+    """A daemon root that hasn't been created yet (fresh install) must not
+    make the whole comparison unavailable -- fall back to the own block."""
+    _use_home(tmp_path, monkeypatch, None)
+    missing_root = str(tmp_path / "home" / ".ssh" / "config")
+    assert not os.path.isfile(missing_root)
+
+    result = diff_effective_config(
+        "foo", missing_root, OWN_BLOCK, include_system_defaults_in_display=False
+    )
+
+    assert result is not None
+    assert result["has_diff"] is False
+
+
 def test_user_level_global_additions_still_reported(tmp_path, monkeypatch):
     """System defaults are excluded, but a Host * in the USER's own config that
     adds a directive must still surface — as an addition, without pretending

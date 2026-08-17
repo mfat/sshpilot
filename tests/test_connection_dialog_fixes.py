@@ -194,3 +194,76 @@ def test_browse_file_delivers_chosen_path(monkeypatch, tmp_path):
     holder["callback"](holder["dialog"], object())
 
     assert chosen == ["/home/alice/.ssh/id_ed25519"]
+
+
+def test_browse_key_uses_explicit_parent_when_given(monkeypatch, tmp_path):
+    """``_browse_key``/``_browse_file`` must parent the chooser to an explicit
+    ``parent`` when one is supplied, not fall back to ``self`` (ConnectionDialog).
+
+    This is the regression from issue #1103: the key-selection flow opens
+    ``KeyChooserDialog`` *above* ConnectionDialog, and its "Browse..." row
+    calls back into ConnectionDialog._browse_key. Always parenting to
+    ConnectionDialog reopens the file chooser one window layer below the
+    modal the user is actually looking at, so it appears hidden again."""
+    from sshpilot import connection_dialog as cd
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    opened = []
+
+    class _FakeDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def set_initial_folder(self, gfile):
+            pass
+
+        def set_filters(self, filters):
+            pass
+
+        def open(self, parent, _cancellable, _callback):
+            opened.append(parent)
+
+    monkeypatch.setattr(cd.Gtk, "FileDialog", _FakeDialog)
+    monkeypatch.setattr(cd, "get_ssh_dir", lambda: str(tmp_path))
+
+    connection_dialog_self = types.SimpleNamespace(
+        get_transient_for=lambda: cd.Gtk.Window.__new__(cd.Gtk.Window))
+    connection_dialog_self._browse_file = types.MethodType(
+        ConnectionDialog.__dict__["_browse_file"], connection_dialog_self)
+    key_chooser_dialog = types.SimpleNamespace(name="key-chooser")
+
+    browse_key = types.MethodType(
+        ConnectionDialog.__dict__["_browse_key"], connection_dialog_self)
+    browse_key(lambda path: None, key_chooser_dialog)
+
+    assert opened == [key_chooser_dialog], (
+        "Browsing from within KeyChooserDialog must parent the file "
+        "chooser to KeyChooserDialog (the visible topmost window), not "
+        "to ConnectionDialog underneath it"
+    )
+
+
+def test_key_chooser_dialog_passes_itself_as_browse_parent():
+    """KeyChooserDialog._on_browse_clicked must hand itself to the on_browse
+    callback so the eventual file chooser parents to the dialog the user is
+    actually looking at."""
+    from sshpilot.connection_dialog import KeyChooserDialog
+
+    calls = []
+
+    def fake_on_browse(chosen, parent):
+        calls.append(parent)
+
+    self = types.SimpleNamespace(
+        _on_add=lambda path: None,
+        _on_browse=fake_on_browse,
+        close=lambda: None,
+    )
+
+    method = KeyChooserDialog.__dict__["_on_browse_clicked"]
+    types.MethodType(method, self)()
+
+    assert calls == [self], (
+        "KeyChooserDialog must pass itself as the parent for the browse "
+        "callback, not rely on the callback defaulting to some other window"
+    )

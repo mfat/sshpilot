@@ -904,7 +904,12 @@ class KeyChooserDialog(Adw.Window):
                 self._on_add(path)
             self.close()
         try:
-            self._on_browse(_chosen)
+            # Pass THIS dialog as the parent: it's the topmost window the
+            # user is looking at when they click Browse, stacked above
+            # ConnectionDialog. Letting the callback default to
+            # ConnectionDialog would reopen the file chooser one layer below
+            # the visible modal (issue #1103 regression).
+            self._on_browse(_chosen, self)
         except Exception:
             logger.debug("Key chooser browse failed", exc_info=True)
 
@@ -2060,7 +2065,7 @@ class ConnectionDialog(
             logger.debug("Certificate discovery failed", exc_info=True)
         return out
 
-    def _browse_file(self, title, on_chosen, filters=None):
+    def _browse_file(self, title, on_chosen, filters=None, parent=None):
         try:
             dialog = Gtk.FileDialog(title=title)
             try:
@@ -2080,12 +2085,17 @@ class ConnectionDialog(
                 except Exception:
                     logger.debug("File chooser cancelled or failed", exc_info=True)
 
-            # Parent the chooser to THIS dialog — the window the user is
-            # looking at — never to ``get_transient_for()``. The connection
-            # dialog is modal and stacked above its transient parent, so a
-            # chooser parented to the MainWindow opens invisibly behind the
-            # modal dialog on Wayland portal stacks (issue #1103).
-            dialog.open(self, None, _done)
+            # Parent the chooser to THE WINDOW THE USER IS ACTUALLY LOOKING
+            # AT — never to ``get_transient_for()`` and never unconditionally
+            # to ``self`` (this ConnectionDialog). ConnectionDialog is modal
+            # and stacked above its transient parent, so a chooser parented
+            # to the MainWindow opens invisibly behind the modal dialog on
+            # Wayland portal stacks (issue #1103). But when browsing is
+            # triggered from a dialog stacked *above* ConnectionDialog (e.g.
+            # KeyChooserDialog), the caller must pass that dialog as
+            # ``parent`` — otherwise the same "hidden behind a modal" bug
+            # reappears one layer up (issue #1103 regression).
+            dialog.open(parent or self, None, _done)
         except Exception:
             logger.debug("Failed to open file chooser", exc_info=True)
 
@@ -2118,10 +2128,10 @@ class ConnectionDialog(
         )
         dialog.present()
 
-    def _browse_key(self, on_chosen):
-        self._browse_file(_("Select SSH Key File"), on_chosen)
+    def _browse_key(self, on_chosen, parent=None):
+        self._browse_file(_("Select SSH Key File"), on_chosen, parent=parent)
 
-    def _browse_cert(self, on_chosen):
+    def _browse_cert(self, on_chosen, parent=None):
         filters = None
         try:
             cert_filter = Gtk.FileFilter()
@@ -2136,7 +2146,7 @@ class ConnectionDialog(
             filters.append(all_filter)
         except Exception:
             filters = None
-        self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters)
+        self._browse_file(_("Select SSH Certificate File"), on_chosen, filters=filters, parent=parent)
 
     def _generate_ssh_config_from_settings(self):
         """Generate SSH config block from current connection settings"""

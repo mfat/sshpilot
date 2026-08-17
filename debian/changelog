@@ -1,3 +1,12 @@
+sshpilot (5.8.5-1) unstable; urgency=medium
+
+  * Release v5.8.5.
+  * Improved effective config diff tool
+  * Improved experience when switching operation mode
+  * Bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 17 Aug 2026 21:18:17 +0000
+
 sshpilot (5.8.4-1) unstable; urgency=medium
 
   * Release v5.8.4.

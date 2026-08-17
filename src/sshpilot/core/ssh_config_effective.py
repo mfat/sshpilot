@@ -267,24 +267,38 @@ def _authored_directives(block_text: str) -> Set[str]:
 
 
 def diff_effective_config(
-    host: str, config_file: Optional[str], own_block_text: str
+    host: str,
+    config_file: Optional[str],
+    own_block_text: str,
+    *,
+    include_system_defaults_in_display: Optional[bool] = None,
 ) -> Optional[Dict[str, object]]:
-    """Compare an authored block against the daemon-selected OpenSSH config."""
+    """Compare an authored block against the daemon-selected OpenSSH config.
+
+    ``config_file`` anchors both sides of the *diff* (own vs. full) to a
+    specific root, e.g. the daemon-selected SSH root, so accumulated globals
+    from an unrelated file never leak in as spurious changes. Whether the
+    *displayed* full side additionally reflects system-wide config
+    (``/etc/ssh/ssh_config``) is controlled separately by
+    ``include_system_defaults_in_display`` (defaults to ``config_file is
+    None`` for callers that don't care) — real ``ssh -G`` invocations made
+    without ``-F`` pick up the system-wide config, so the display should
+    match that whenever the app itself launches sessions without ``-F``.
+    """
     if not _safe_host_identifier(host):
         return None
+    if include_system_defaults_in_display is None:
+        include_system_defaults_in_display = config_file is None
     fd, temporary_path = tempfile.mkstemp(prefix=".sshpilot-own-", suffix=".conf")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(own_block_text)
         own = get_effective_ssh_config(host, config_file=temporary_path)
         if config_file is None:
-            user_config = os.path.expanduser("~/.ssh/config")
-            compare_file = user_config if os.path.isfile(user_config) else temporary_path
-            full = get_effective_ssh_config(host, config_file=compare_file)
-            display = get_effective_ssh_config(host)
-        else:
-            full = get_effective_ssh_config(host, config_file=config_file)
-            display = full
+            config_file = os.path.expanduser("~/.ssh/config")
+        compare_file = config_file if os.path.isfile(config_file) else temporary_path
+        full = get_effective_ssh_config(host, config_file=compare_file)
+        display = get_effective_ssh_config(host) if include_system_defaults_in_display else full
     finally:
         try:
             os.unlink(temporary_path)

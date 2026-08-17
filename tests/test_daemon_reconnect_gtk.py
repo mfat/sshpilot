@@ -101,6 +101,141 @@ def test_request_daemon_reconnect_applies_new_client(monkeypatch):
     assert app._daemon_reconnect_in_progress is False
 
 
+def test_finish_daemon_reconnect_retries_once_after_backoff_failure(monkeypatch):
+    """A transient handshake failure right after an explicit restart (the old
+    process racing to exit/unlink its socket) must not strand the frontend
+    disconnected. The policy's BACKOFF decision was already computed but
+    unused; one failure must trigger exactly one more attempt."""
+    from sshpilot import main as main_module
+
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    replace_client = MagicMock()
+    app.window = SimpleNamespace(
+        _is_quitting=False,
+        client=None,
+        welcome_view=None,
+        _preferences_window=None,
+        _replace_daemon_client=replace_client,
+    )
+    app._api_client_bridge = None
+    app._api_client_selection = None
+    app._api_daemon_launcher = object()
+    app._daemon_reconnect_in_progress = False
+    app._daemon_reconnect_generation = 0
+    app._daemon_shutdown_intent = None
+    app.install_api_event_subscription = lambda client: None  # type: ignore[method-assign]
+
+    new_client = SimpleNamespace(server_instance_id="new-instance")
+    failure = DaemonReconnectResult(
+        client=None,
+        launched=None,
+        decision=ReconnectDecision(
+            outcome=ReconnectOutcome.BACKOFF,
+            delay_seconds=0.0,
+            failures_in_window=1,
+            message="daemon reconnect backing off",
+        ),
+    )
+    success = DaemonReconnectResult(
+        client=new_client,
+        launched=DaemonLaunchResult(client=new_client, process=None),
+        decision=ReconnectDecision(outcome=ReconnectOutcome.ATTEMPT, message="ok"),
+    )
+
+    class _Helper:
+        def __init__(self):
+            self.calls = 0
+
+        def note_transport_loss(self):
+            return None
+
+        def reconnect(self, *, wait_for_backoff=True):
+            self.calls += 1
+            return failure if self.calls == 1 else success
+
+    helper = _Helper()
+    app._api_daemon_reconnect_helper = helper
+
+    def _idle(callback, *args):
+        callback(*args) if args else callback()
+        return 0
+
+    monkeypatch.setattr(main_module.GLib, "idle_add", _idle)
+
+    class _ImmediateThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    monkeypatch.setattr(main_module.threading, "Thread", _ImmediateThread)
+
+    app.request_daemon_reconnect(reason="preferences_restart", immediate=True)
+
+    assert helper.calls == 2
+    replace_client.assert_called_once_with(new_client)
+    assert app._daemon_reconnect_in_progress is False
+
+
+def test_finish_daemon_reconnect_does_not_retry_after_give_up(monkeypatch):
+    """GIVE_UP must not loop forever retrying a doomed reconnect."""
+    from sshpilot import main as main_module
+
+    app = main_module.SshPilotApplication.__new__(main_module.SshPilotApplication)
+    app.window = SimpleNamespace(_is_quitting=False)
+    app._api_client_bridge = None
+    app._daemon_reconnect_in_progress = False
+    app._daemon_reconnect_generation = 0
+    app._daemon_shutdown_intent = None
+
+    give_up = DaemonReconnectResult(
+        client=None,
+        launched=None,
+        decision=ReconnectDecision(
+            outcome=ReconnectOutcome.GIVE_UP,
+            failures_in_window=5,
+            message="daemon reconnect stopped after repeated startup failures",
+        ),
+    )
+
+    class _Helper:
+        def __init__(self):
+            self.calls = 0
+
+        def note_transport_loss(self):
+            return None
+
+        def reconnect(self, *, wait_for_backoff=True):
+            self.calls += 1
+            return give_up
+
+    helper = _Helper()
+    app._api_daemon_reconnect_helper = helper
+
+    def _idle(callback, *args):
+        callback(*args) if args else callback()
+        return 0
+
+    monkeypatch.setattr(main_module.GLib, "idle_add", _idle)
+
+    class _ImmediateThread:
+        def __init__(self, target=None, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            if self._target is not None:
+                self._target()
+
+    monkeypatch.setattr(main_module.threading, "Thread", _ImmediateThread)
+
+    app.request_daemon_reconnect(reason="preferences_restart", immediate=True)
+
+    assert helper.calls == 1
+    assert app._daemon_reconnect_in_progress is False
+
+
 def test_transport_loss_clears_stale_runtime_status_before_reconnect():
     from sshpilot import main as main_module
     from sshpilot.api.errors import ErrorCode, SshPilotError

@@ -150,6 +150,7 @@ def reconcile_identity_state(
             display_name=identity.display_name,
             projection=identity.projection,
             tombstone=identity.tombstone,
+            retired_generation=identity.retired_generation,
         )
         for identity in state.identities
     )

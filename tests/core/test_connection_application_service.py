@@ -569,6 +569,129 @@ def test_unsaved_host_explicit_default_port_overrides_ssh_config(monkeypatch):
     assert calls == [{"user": "alice", "port": 22, "proxy_jump": None}]
 
 
+def test_effective_config_uses_daemon_root_in_default_mode(
+    monkeypatch,
+    tmp_path,
+):
+    """Default mode must resolve against the daemon-selected SSH root."""
+    from sshpilot.core import ssh_config_effective
+
+    root = tmp_path / "config"
+    root.write_text(
+        "Include sshpilot-imported.conf\n",
+        encoding="utf-8",
+    )
+
+    record = _record(
+        record_id="google-router",
+        nickname="GoogleRouter",
+        hostname="192.168.8.1",
+        username="root",
+        host="GoogleRouter",
+    )
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = False
+
+    calls = {}
+
+    def fake_collect_host_block_lines(host, config_file):
+        calls["collect"] = (host, config_file)
+        return [
+            "Host GoogleRouter",
+            "    HostName 192.168.8.1",
+            "    User root",
+        ]
+
+    def fake_diff_effective_config(
+        host, config_file, own_block_text, *, include_system_defaults_in_display=None
+    ):
+        calls["diff"] = (host, config_file, own_block_text)
+        calls["diff_display_flag"] = include_system_defaults_in_display
+        return {
+            "has_diff": False,
+            "changes": [],
+            "own": [
+                "hostname 192.168.8.1",
+                "user root",
+            ],
+            "full": [
+                "hostname 192.168.8.1",
+                "user root",
+            ],
+        }
+
+    monkeypatch.setattr(
+        ssh_config_effective,
+        "collect_host_block_lines",
+        fake_collect_host_block_lines,
+    )
+    monkeypatch.setattr(
+        ssh_config_effective,
+        "diff_effective_config",
+        fake_diff_effective_config,
+    )
+
+    service = ConnectionApplicationService(repo, client_name="test")
+    result = service.get_effective_config(ConnectionId("google-router"))
+
+    assert result.available is True
+    assert result.has_diff is False
+    assert calls["collect"] == ("GoogleRouter", str(root))
+    assert calls["diff"][0:2] == ("GoogleRouter", str(root))
+    # Default (non-isolated) mode: real launches run ssh without -F, so the
+    # displayed full side must still include /etc/ssh/ssh_config (#1138).
+    assert calls["diff_display_flag"] is True
+
+
+def test_effective_config_excludes_system_defaults_in_isolated_mode(
+    monkeypatch,
+    tmp_path,
+):
+    """Isolated mode owns its whole SSH root, so display must stay -F'd to it
+    (no plain ssh -G, which would pull in the real ~/.ssh and /etc/ssh trees
+    that isolated mode is meant to ignore)."""
+    from sshpilot.core import ssh_config_effective
+
+    root = tmp_path / "ssh_config"
+    root.write_text("Include sshpilot-imported.conf\n", encoding="utf-8")
+
+    record = _record(
+        record_id="google-router",
+        nickname="GoogleRouter",
+        hostname="192.168.8.1",
+        username="root",
+        host="GoogleRouter",
+    )
+    repo = FakeRepository([record])
+    repo.root_config_path = root
+    repo.ssh_config_isolated = True
+
+    calls = {}
+
+    def fake_collect_host_block_lines(host, config_file):
+        return ["Host GoogleRouter", "    HostName 192.168.8.1", "    User root"]
+
+    def fake_diff_effective_config(
+        host, config_file, own_block_text, *, include_system_defaults_in_display=None
+    ):
+        calls["diff_display_flag"] = include_system_defaults_in_display
+        return {"has_diff": False, "changes": [], "own": ["x"], "full": ["x"]}
+
+    monkeypatch.setattr(
+        ssh_config_effective, "collect_host_block_lines", fake_collect_host_block_lines
+    )
+    monkeypatch.setattr(
+        ssh_config_effective, "diff_effective_config", fake_diff_effective_config
+    )
+
+    service = ConnectionApplicationService(repo, client_name="test")
+    result = service.get_effective_config(ConnectionId("google-router"))
+
+    assert result.available is True
+    assert calls["diff_display_flag"] is False
+
+
 def test_display_name_update_is_additive_and_keeps_alias_id():
     repo = FakeRepository([_record()])
     service = ConnectionApplicationService(repo, client_name="test")

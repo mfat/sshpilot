@@ -373,6 +373,30 @@ def test_registry_serialization_and_restart_are_idempotent():
     assert not again.created and not again.deleted
 
 
+def test_registry_round_trip_preserves_retired_generation():
+    """A tombstone's retired_generation must survive the prototype registry's
+    own to_dict/from_dict, not just PersistedIdentity's (identity_state_v2.py)
+    — the resurrection tie-break depends on it regardless of which
+    serializer wrote the file.
+    """
+    tombstoned = IdentityRegistryEntry(
+        uuid="u1",
+        projection=projection("prod"),
+        display_name="Production",
+        tombstone=True,
+        retired_generation=42,
+    )
+    live = old("u2", projection("staging"), "Staging")
+    registry = IdentityRegistry(entries=(tombstoned, live))
+
+    restored = IdentityRegistry.from_dict(json.loads(json.dumps(registry.to_dict())))
+
+    restored_tombstone = next(e for e in restored.entries if e.uuid == "u1")
+    restored_live = next(e for e in restored.entries if e.uuid == "u2")
+    assert restored_tombstone.retired_generation == 42
+    assert restored_live.retired_generation is None
+
+
 def test_identityfile_semantic_modes_round_trip():
     entries = (
         old("u-none", _identity_projection("none", IdentityFileEvidenceMode.EXPLICIT_NONE)),
@@ -1583,26 +1607,105 @@ def test_tombstone_not_resurrected_when_anchors_differ():
     assert result.created[0].display_name == "myserver"  # Falls back to alias
 
 
-def test_duplicate_matching_tombstones_are_not_guessed():
-    first = IdentityRegistryEntry(
+def test_duplicate_matching_tombstones_resurrect_highest_retired_generation():
+    """More than one tombstone can share an alias+anchor once an identity has
+    round-tripped through more than one authority transition (e.g. Isolated
+    Mode toggled on and off more than once). Refusing to pick one used to mean
+    every such identity was recreated from scratch on its second round trip
+    onward, silently discarding its display name forever.
+
+    The tie-break is ``retired_generation``, not ``old_entries`` position:
+    identities are persisted as a UUID-keyed object written with
+    ``sort_keys=True`` (see ``state_file.py``), so position does not survive
+    a save/reload — only the generation number does.
+    """
+    earlier_position_but_newer = IdentityRegistryEntry(
         uuid="old-1",
         projection=projection("prod", hostname="prod.example.com"),
-        display_name="First Production",
+        display_name="Newer Generation",
         tombstone=True,
+        retired_generation=50,
     )
-    second = IdentityRegistryEntry(
+    later_position_but_older = IdentityRegistryEntry(
         uuid="old-2",
         projection=projection("prod", hostname="prod.example.com"),
-        display_name="Second Production",
+        display_name="Older Generation",
         tombstone=True,
+        retired_generation=10,
     )
 
+    # List position disagrees with generation: position would pick old-2
+    # (last), generation must still pick old-1 (retired later, at gen 50).
     result = reconcile(
-        [first, second],
+        [earlier_position_but_newer, later_position_but_older],
         [projection("prod", hostname="prod.example.com")],
         ids=("new-uuid",),
         allow_tombstone_resurrection=True,
     )
 
-    assert result.matched == ()
-    assert [entry.uuid for entry in result.created] == ["new-uuid"]
+    assert result.created == ()
+    assert len(result.matched) == 1
+    assert result.matched[0].old.uuid == "old-1"
+    assert result.matched[0].old.display_name == "Newer Generation"
+    assert result.matched[0].reason is MatchReason.EXACT_ALIAS
+
+    # Swapping list order must not change the outcome.
+    swapped = reconcile(
+        [later_position_but_older, earlier_position_but_newer],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
+    )
+    assert swapped.matched[0].old.uuid == "old-1"
+
+
+def test_duplicate_tombstones_with_unknown_generation_fall_back_to_uuid():
+    """Legacy tombstones predating ``retired_generation`` have it as ``None``.
+
+    A known generation always outranks an unknown one; when both are unknown
+    the UUID is the final tie-break, so the choice is still deterministic
+    rather than depending on list position.
+    """
+    unknown_generation = IdentityRegistryEntry(
+        uuid="old-a",
+        projection=projection("prod", hostname="prod.example.com"),
+        display_name="No Generation Recorded",
+        tombstone=True,
+    )
+    known_generation = IdentityRegistryEntry(
+        uuid="old-b",
+        projection=projection("prod", hostname="prod.example.com"),
+        display_name="Has A Generation",
+        tombstone=True,
+        retired_generation=1,
+    )
+
+    result = reconcile(
+        [known_generation, unknown_generation],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
+    )
+    assert result.matched[0].old.uuid == "old-b"
+
+    # Both unknown: falls back to UUID, deterministically, regardless of
+    # list order.
+    both_unknown = IdentityRegistryEntry(
+        uuid="old-z",
+        projection=projection("prod", hostname="prod.example.com"),
+        display_name="Also No Generation",
+        tombstone=True,
+    )
+    forward = reconcile(
+        [unknown_generation, both_unknown],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
+    )
+    backward = reconcile(
+        [both_unknown, unknown_generation],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
+    )
+    assert forward.matched[0].old.uuid == backward.matched[0].old.uuid == "old-z"

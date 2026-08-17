@@ -124,6 +124,7 @@ from ..models.daemon import (
     RestartDaemonRequest,
     SetDaemonLogLevelRequest,
     OperationMode,
+    OperationModeFiles,
     OperationModeResult,
     SetOperationModeRequest,
     StopDaemonRequest,
@@ -5103,6 +5104,46 @@ def set_operation_mode_request_from_wire(value: Any) -> SetOperationModeRequest:
     return SetOperationModeRequest(mode=mode, seed_isolated_config=seed)
 
 
+def operation_mode_files_to_wire(files: OperationModeFiles) -> Dict[str, Any]:
+    if type(files) is not OperationModeFiles:
+        raise TypeError("operation mode files are required")
+    return {
+        "root_config_path": files.root_config_path,
+        "root_config_exists": files.root_config_exists,
+        "known_hosts_path": files.known_hosts_path,
+        "known_hosts_exists": files.known_hosts_exists,
+        "imported_fragment_path": files.imported_fragment_path,
+        "imported_fragment_exists": files.imported_fragment_exists,
+    }
+
+
+def operation_mode_files_from_wire(value: Any) -> OperationModeFiles:
+    data = _strict_fields(
+        value,
+        required={
+            "root_config_path",
+            "root_config_exists",
+            "known_hosts_path",
+            "known_hosts_exists",
+            "imported_fragment_path",
+            "imported_fragment_exists",
+        },
+        context="operation mode files",
+    )
+    return OperationModeFiles(
+        root_config_path=_identifier(data["root_config_path"], "root config path"),
+        root_config_exists=_boolean(data["root_config_exists"], "root_config_exists"),
+        known_hosts_path=_identifier(data["known_hosts_path"], "known hosts path"),
+        known_hosts_exists=_boolean(data["known_hosts_exists"], "known_hosts_exists"),
+        imported_fragment_path=_identifier(
+            data["imported_fragment_path"], "imported fragment path"
+        ),
+        imported_fragment_exists=_boolean(
+            data["imported_fragment_exists"], "imported_fragment_exists"
+        ),
+    )
+
+
 def operation_mode_result_to_wire(result: OperationModeResult) -> Dict[str, Any]:
     if type(result) is not OperationModeResult:
         raise TypeError("operation mode result is required")
@@ -5117,6 +5158,18 @@ def operation_mode_result_to_wire(result: OperationModeResult) -> Dict[str, Any]
         "persisted_mode": result.persisted_mode.value if result.persisted_mode else None,
         "rollback_completed": result.rollback_completed,
         "recovery_required": result.recovery_required,
+        "default_files": (
+            operation_mode_files_to_wire(result.default_files)
+            if result.default_files is not None
+            else None
+        ),
+        "isolated_files": (
+            operation_mode_files_to_wire(result.isolated_files)
+            if result.isolated_files is not None
+            else None
+        ),
+        "app_config_path": result.app_config_path,
+        "app_config_exists": result.app_config_exists,
     }
 
 
@@ -5124,7 +5177,15 @@ def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
     data = _strict_fields(
         value,
         required={"accepted", "active_mode", "generation", "seeded", "conflict", "message", "target_description"},
-        optional={"persisted_mode", "rollback_completed", "recovery_required"},
+        optional={
+            "persisted_mode",
+            "rollback_completed",
+            "recovery_required",
+            "default_files",
+            "isolated_files",
+            "app_config_path",
+            "app_config_exists",
+        },
         context="operation mode result",
     )
     try:
@@ -5146,6 +5207,21 @@ def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
     # decode to a truthful model; the invariant requires rollback_completed to
     # be false whenever recovery is required.
     rollback_completed = data.get("rollback_completed", not recovery_required)
+    # default_files/isolated_files/app_config_path/app_config_exists were added
+    # to the 0.41 operation-mode result. A pre-0.41 daemon omits them entirely;
+    # decode that as "unknown" rather than failing the whole response.
+    default_files_raw = data.get("default_files")
+    default_files = (
+        operation_mode_files_from_wire(default_files_raw)
+        if default_files_raw is not None
+        else None
+    )
+    isolated_files_raw = data.get("isolated_files")
+    isolated_files = (
+        operation_mode_files_from_wire(isolated_files_raw)
+        if isolated_files_raw is not None
+        else None
+    )
     return OperationModeResult(
         accepted=_boolean(data["accepted"], "accepted"),
         active_mode=mode,
@@ -5159,6 +5235,10 @@ def operation_mode_result_from_wire(value: Any) -> OperationModeResult:
         persisted_mode=persisted_mode,
         rollback_completed=_boolean(rollback_completed, "rollback_completed"),
         recovery_required=recovery_required,
+        default_files=default_files,
+        isolated_files=isolated_files,
+        app_config_path=_text(data.get("app_config_path", ""), "app_config_path", allow_empty=True),
+        app_config_exists=_boolean(data.get("app_config_exists", False), "app_config_exists"),
     )
 
 

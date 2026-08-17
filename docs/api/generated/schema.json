@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.40",
+  "api_implementation_version": "0.41",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -4681,6 +4681,53 @@
       ],
       "status": "Implemented"
     },
+    "OperationModeFiles": {
+      "fields": [
+        {
+          "default": null,
+          "name": "root_config_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "root_config_exists",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "known_hosts_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "known_hosts_exists",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "imported_fragment_path",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "imported_fragment_exists",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        }
+      ],
+      "status": "Schema only"
+    },
     "OperationModeResult": {
       "fields": [
         {
@@ -4749,6 +4796,34 @@
         {
           "default": false,
           "name": "recovery_required",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "default_files",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[OperationModeFiles]"
+        },
+        {
+          "default": null,
+          "name": "isolated_files",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[OperationModeFiles]"
+        },
+        {
+          "default": "",
+          "name": "app_config_path",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "app_config_exists",
           "required": false,
           "sensitive": false,
           "type": "bool"

@@ -599,8 +599,8 @@ class VTETerminalBackend:
             # terminal background belongs only to the content widgets; putting
             # it on TerminalWidget hides the radius, while putting it on the
             # card changes the antialiased fringe and makes the curve harsher.
-            if hasattr(owner.scrolled_window, "add_css_class"):
-                owner.scrolled_window.add_css_class(self._css_class)
+            if hasattr(owner.terminal_container, "add_css_class"):
+                owner.terminal_container.add_css_class(self._css_class)
             if hasattr(self.vte, "add_css_class"):
                 self.vte.add_css_class(self._css_class)
 

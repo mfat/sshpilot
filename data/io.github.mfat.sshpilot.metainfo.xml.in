@@ -61,6 +61,13 @@
 
 
 
+    <release version="5.8.5" date="2026-08-17">
+      <description>
+        <p>Improved effective config diff tool</p>
+        <p>Improved experience when switching operation mode</p>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="5.8.4" date="2026-08-17">
       <description>
         <p>Bug fixes and improvements</p>
@@ -591,31 +598,35 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/start-page.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/main-window.png</image>
+      <caption>Main Window</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/start-page.png</image>
       <caption>Start Page</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/groups.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/groups.png</image>
       <caption>Connection Groups</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/main.png</image>
       <caption>Terminal</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/splitview.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/splitview.png</image>
       <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/file-manager.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/file-manager.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/commands.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/commands.png</image>
       <caption>Command Blocks</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/6cfdc358b818676d390cd7dcf2d69e4f4118e642/screenshots/ssh-copy-id.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/ssh-copy-id.png</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
   </screenshots>

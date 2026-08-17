@@ -591,6 +591,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self._requested_operation_mode = None
         self._apply_confirmed_operation_mode(result.active_mode)
+        # This path also fires after a mid-session daemon restart (e.g. to
+        # apply an operation-mode change that live sessions were blocking),
+        # so an already-open Preferences window can be showing the stale
+        # pre-restart radio state. Resync it from the daemon-confirmed mode.
+        preferences = getattr(self, "_preferences_window", None)
+        if preferences is not None:
+            refresh = getattr(preferences, "_request_confirmed_operation_mode", None)
+            if callable(refresh):
+                refresh()
 
     def _on_startup_operation_mode_error(self, error) -> None:
         """Report a failed startup mode request without losing its detail."""
@@ -2057,10 +2066,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
             self.nav_view.add(self._work_page)
-            try:
-                self.nav_view.connect('popped', self._on_navigation_popped)
-            except Exception:
-                logger.debug('Could not connect NavigationView::popped', exc_info=True)
             root_widget = self.nav_view
         else:
             root_widget = self._content_overlay
@@ -2091,28 +2096,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.plugin_host.bind_window(self)
         except Exception:
             logger.exception("Plugin host bind_window failed")
-
-    def _on_navigation_popped(self, _nav_view, page):
-        """Flush Settings when its NavigationPage is popped back to work mode."""
-        prefs = getattr(self, '_preferences_window', None)
-        if prefs is not None and page is prefs:
-            try:
-                keep_open = prefs.on_close_request()
-            except Exception:
-                logger.debug('Failed to flush preferences on pop', exc_info=True)
-                keep_open = False
-            if keep_open and not getattr(self, '_is_quitting', False):
-                # A daemon-backed save failed; keep Settings visible so the
-                # user can fix the value instead of silently losing it.
-                nav = getattr(self, 'nav_view', None)
-                if nav is not None:
-                    try:
-                        nav.push(prefs)
-                    except Exception:
-                        logger.debug(
-                            'Failed to re-push preferences after save failure',
-                            exc_info=True,
-                        )
 
     def is_preferences_visible(self) -> bool:
         """True when Settings mode is the visible NavigationView page."""
@@ -3030,16 +3013,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
 
-        # Disable Adw.TabView's built-in Alt+1..9 / Alt+0 tab-selection shortcuts.
-        # They otherwise shadow split-view "Alt+N focus pane" whenever more than
-        # one tab is open (the tab_view is an ancestor of the split-view tab, so
-        # its handler runs first). Tab switching is via Ctrl+PageUp/Down.
+        # SSH Pilot owns *all* keyboard-driven tab navigation through its own
+        # configurable Gio.SimpleAction layer (tab-next, tab-prev,
+        # tab-move-left, tab-move-right, tab-overview — see main.py
+        # create_action calls and shortcut_editor.py). Adw.TabView's built-in
+        # accelerators (Ctrl+PageUp/Down, Ctrl+Shift+PageUp/Down, Ctrl+Tab,
+        # Ctrl+Shift+Tab, Ctrl+Home/End, Alt+digits, ...) are a second,
+        # independent handler for the same keys that GTK dispatches *before*
+        # our app-level accelerators are even considered, and they are not
+        # wired to the shortcut editor at all. That meant disabling a tab
+        # shortcut in preferences only removed our accelerator while
+        # Adw.TabView kept eating the key, so it never reached the focused
+        # VTE terminal (e.g. Ctrl+PageUp/Down in vim/nano) — see issue #1170.
+        # Disable every Adw.TabView built-in so there is exactly one
+        # authoritative owner of tab-navigation keys; anything not claimed by
+        # an SSH Pilot accelerator falls straight through to the terminal.
         try:
-            self.tab_view.set_shortcuts(
-                self.tab_view.get_shortcuts()
-                & ~Adw.TabViewShortcuts.ALT_DIGITS
-                & ~Adw.TabViewShortcuts.ALT_ZERO
-            )
+            self.tab_view.set_shortcuts(Adw.TabViewShortcuts.NONE)
         except Exception:
             logger.debug("Could not adjust Adw.TabView shortcuts", exc_info=True)
 
@@ -3048,23 +3038,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             tab_nav = Gtk.ShortcutController()
             tab_nav.set_scope(Gtk.ShortcutScope.LOCAL)
 
-            def _on_tab_step(step: int):
-                def _handler(widget, *args):
-                    try:
-                        self._select_tab_relative(step)
-                    except Exception:
-                        pass
-                    return True
-
-                return _handler
-
             tab_nav.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string('<Alt>Right'),
-                Gtk.CallbackAction.new(_on_tab_step(1))
+                Gtk.CallbackAction.new(lambda widget, *a: self._on_tab_nav_shortcut(1))
             ))
             tab_nav.add_shortcut(Gtk.Shortcut.new(
                 Gtk.ShortcutTrigger.parse_string('<Alt>Left'),
-                Gtk.CallbackAction.new(_on_tab_step(-1))
+                Gtk.CallbackAction.new(lambda widget, *a: self._on_tab_nav_shortcut(-1))
             ))
 
             self.tab_view.add_controller(tab_nav)

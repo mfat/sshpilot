@@ -14,8 +14,10 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
     is_valid_operation_transition,
 )
-from sshpilot.api.models.daemon import OperationMode, OperationModeResult
+from sshpilot.api.models.daemon import OperationMode, OperationModeFiles, OperationModeResult
 from sshpilot.api.transport.codec import (
+    operation_mode_files_from_wire,
+    operation_mode_files_to_wire,
     operation_mode_result_from_wire,
     operation_mode_result_to_wire,
     operation_id_request_from_wire,
@@ -124,3 +126,59 @@ def test_successful_operation_mode_status_allows_empty_message():
 
     assert restored.accepted is True
     assert restored.message == ""
+
+
+def _files(root: str) -> OperationModeFiles:
+    return OperationModeFiles(
+        root_config_path=f"{root}/config",
+        root_config_exists=True,
+        known_hosts_path=f"{root}/known_hosts",
+        known_hosts_exists=False,
+        imported_fragment_path=f"{root}/sshpilot-imported.conf",
+        imported_fragment_exists=False,
+    )
+
+
+def test_operation_mode_files_round_trip():
+    files = _files("/home/user/.ssh")
+    assert operation_mode_files_from_wire(operation_mode_files_to_wire(files)) == files
+
+
+def test_operation_mode_result_round_trip_carries_resolved_files():
+    result = OperationModeResult(
+        accepted=True,
+        active_mode=OperationMode.ISOLATED,
+        generation=7,
+        target_description="Isolated SSH configuration",
+        default_files=_files("/home/user/.ssh"),
+        isolated_files=_files("/home/user/.config/sshpilot"),
+        app_config_path="/home/user/.config/sshpilot/config.json",
+        app_config_exists=True,
+    )
+
+    restored = operation_mode_result_from_wire(operation_mode_result_to_wire(result))
+
+    assert restored == result
+
+
+def test_operation_mode_result_without_files_decodes_as_pre_0_41_payload():
+    """A daemon predating API 0.41 omits the file-visibility fields entirely;
+    the client must still decode a truthful (if less detailed) result rather
+    than rejecting the whole response."""
+    wire = operation_mode_result_to_wire(
+        OperationModeResult(
+            accepted=True,
+            active_mode=OperationMode.DEFAULT,
+            generation=1,
+            target_description="Default user SSH configuration",
+        )
+    )
+    for key in ("default_files", "isolated_files", "app_config_path", "app_config_exists"):
+        wire.pop(key)
+
+    restored = operation_mode_result_from_wire(wire)
+
+    assert restored.default_files is None
+    assert restored.isolated_files is None
+    assert restored.app_config_path == ""
+    assert restored.app_config_exists is False

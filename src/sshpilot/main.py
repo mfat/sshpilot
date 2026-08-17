@@ -801,6 +801,20 @@ class SshPilotApplication(Adw.Application):
                 "daemon reconnect did not restore a client message=%s",
                 message or "unavailable",
             )
+            # A single attempt right after we ourselves triggered a restart
+            # routinely races the old process exiting/unlinking its socket
+            # (observed as a spurious handshake_failed). The policy already
+            # computed a backoff decision for exactly this case; nothing
+            # previously consumed it, so a transient failure just stranded
+            # the frontend disconnected until some unrelated action happened
+            # to retry. Follow up once more per failure; the policy itself
+            # bounds the whole cycle (failure count / deadline) and reports
+            # GIVE_UP when retrying is no longer worthwhile.
+            outcome = getattr(decision, "outcome", None)
+            if outcome is not None and outcome == "backoff":
+                self.request_daemon_reconnect(
+                    reason="reconnect_retry", immediate=False
+                )
             return False
 
         from .api.client_factory import ClientSelection

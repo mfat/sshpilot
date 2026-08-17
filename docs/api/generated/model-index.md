@@ -2502,6 +2502,38 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: OperationModeFiles -->
+## `OperationModeFiles`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Resolved, on-disk file paths that back one SSH configuration scope.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `root_config_path` | `str` | Yes | — | No |
+| `root_config_exists` | `bool` | Yes | — | No |
+| `known_hosts_path` | `str` | Yes | — | No |
+| `known_hosts_exists` | `bool` | Yes | — | No |
+| `imported_fragment_path` | `str` | Yes | — | No |
+| `imported_fragment_exists` | `bool` | Yes | — | No |
+
+Synthetic representation:
+
+```json
+{
+  "imported_fragment_exists": {},
+  "imported_fragment_path": {},
+  "known_hosts_exists": {},
+  "known_hosts_path": {},
+  "root_config_exists": {},
+  "root_config_path": {}
+}
+```
+
 <!-- api-model: OperationModeResult -->
 ## `OperationModeResult`
 
@@ -2524,6 +2556,10 @@ Synthetic representation:
 | `persisted_mode` | `Optional[OperationMode]` | No | `null` | No |
 | `rollback_completed` | `bool` | No | `true` | No |
 | `recovery_required` | `bool` | No | `false` | No |
+| `default_files` | `Optional[OperationModeFiles]` | No | `null` | No |
+| `isolated_files` | `Optional[OperationModeFiles]` | No | `null` | No |
+| `app_config_path` | `str` | No | `` | No |
+| `app_config_exists` | `bool` | No | `false` | No |
 
 Synthetic representation:
 
@@ -2531,8 +2567,12 @@ Synthetic representation:
 {
   "accepted": {},
   "active_mode": {},
+  "app_config_exists": false,
+  "app_config_path": "",
   "conflict": false,
+  "default_files": null,
   "generation": {},
+  "isolated_files": null,
   "message": "",
   "persisted_mode": null,
   "recovery_required": false,

@@ -155,14 +155,20 @@ class TerminalWidget(Gtk.Box):
         self._connection_updated_handler = connection_manager.connect_after('connection-updated', self._on_connection_updated_signal)
         logger.debug("Connected to connection-updated signal")
 
-        # Create scrolled window for terminal
-        self.scrolled_window = Gtk.ScrolledWindow()
-        # Horizontal policy NEVER so VTE always reflows its column count to the
-        # available width instead of showing a horizontal scrollbar at narrow
-        # sizes (matches gnome-terminal / ptyxis). Vertical stays AUTOMATIC for
-        # the scrollback buffer.
-        self.scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.scrolled_window.set_overlay_scrolling(True)
+        # Container for the terminal widget + its scrollbar. NOT a
+        # Gtk.ScrolledWindow: VTE's own docs (src/vtegtk.cc) say "you should
+        # not place a VteTerminal inside a GtkScrolledWindow container, since
+        # they are incompatible... pack the terminal in a horizontal GtkBox
+        # together with a GtkScrollbar which uses the GtkAdjustment returned
+        # from gtk_scrollable_get_vadjustment()." VteTerminal already
+        # implements Gtk.Scrollable and reflows its column count to the
+        # available width on its own (matches gnome-terminal / ptyxis; there
+        # is never a horizontal scrollbar). Non-Scrollable backends (the
+        # WebKit-based PyXterm bridge) are appended without a scrollbar and
+        # manage their own internal scrolling — see
+        # _set_terminal_container_child().
+        self.terminal_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self._vte_scrollbar = None
 
         # Create backend first before setup
         self._shortcut_controller = None
@@ -200,13 +206,13 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             pass
 
-        # Add terminal to scrolled window and to the box via an overlay with a connecting view
+        # Add terminal to its container and to the box via an overlay with a connecting view
         if self.terminal_widget is not None:
-            self.scrolled_window.set_child(self.terminal_widget)
+            self._set_terminal_container_child(self.terminal_widget)
             if hasattr(self.backend, "ensure_shell_loaded"):
                 self.backend.ensure_shell_loaded()
         self.overlay = Gtk.Overlay()
-        self.overlay.set_child(self.scrolled_window)
+        self.overlay.set_child(self.terminal_container)
 
         # Connecting overlay elements
         self.connecting_bg = Gtk.Box()
@@ -433,8 +439,8 @@ class TerminalWidget(Gtk.Box):
         self._file_panel_teardown = None
 
         # Set expansion properties
-        self.scrolled_window.set_hexpand(True)
-        self.scrolled_window.set_vexpand(True)
+        self.terminal_container.set_hexpand(True)
+        self.terminal_container.set_vexpand(True)
         if self.terminal_widget is not None:
             self.terminal_widget.set_hexpand(True)
             self.terminal_widget.set_vexpand(True)
@@ -449,7 +455,7 @@ class TerminalWidget(Gtk.Box):
         self.force_style_refresh()
 
         # Set visibility of child widgets (GTK4 style)
-        self.scrolled_window.set_visible(True)
+        self.terminal_container.set_visible(True)
         if self.terminal_widget is not None:
             self.terminal_widget.set_visible(True)
 
@@ -460,6 +466,41 @@ class TerminalWidget(Gtk.Box):
         self._fullscreen.setup_shortcut()
 
         logger.debug("Terminal widget initialized")
+
+    def _set_terminal_container_child(self, widget) -> None:
+        """Install *widget* as the sole content of ``self.terminal_container``.
+
+        VTE's own docs (src/vtegtk.cc) say a VteTerminal must not be placed
+        inside a Gtk.ScrolledWindow; pack it in a Gtk.Box with a
+        Gtk.Scrollbar bound to its own vertical Gtk.Adjustment instead
+        (VteTerminal implements Gtk.Scrollable). Other backends — the
+        WebKit-based PyXterm bridge — don't implement Gtk.Scrollable and
+        manage their own internal scrolling, so they're appended with no
+        scrollbar. Used both at initial construction and by ensure_backend()
+        when swapping backends live.
+        """
+        child = self.terminal_container.get_first_child()
+        while child is not None:
+            next_child = child.get_next_sibling()
+            self.terminal_container.remove(child)
+            child = next_child
+        self._vte_scrollbar = None
+        if widget is None:
+            return
+        self.terminal_container.append(widget)
+        if isinstance(widget, Gtk.Scrollable):
+            scrollbar = Gtk.Scrollbar(
+                orientation=Gtk.Orientation.VERTICAL,
+                adjustment=widget.get_vadjustment(),
+            )
+            scrollbar.set_vexpand(True)
+            # Approximates the auto-hiding overlay scrollbar ScrolledWindow
+            # gave us for free; a plain Gtk.Scrollbar has no such behavior
+            # built in, so this is cosmetic best-effort, not a guarantee of
+            # pixel-identical styling.
+            scrollbar.add_css_class('overlay-indicator')
+            self.terminal_container.append(scrollbar)
+            self._vte_scrollbar = scrollbar
 
     # ── files panel (embedded file manager below the terminal) ──────────────
 
@@ -687,10 +728,10 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 pass
 
-        # Remove old widget from scrolled window
+        # Remove old widget (and its scrollbar, if any) from the container
         if self.terminal_widget is not None:
             try:
-                self.scrolled_window.set_child(None)
+                self._set_terminal_container_child(None)
             except Exception:
                 pass
 
@@ -698,9 +739,9 @@ class TerminalWidget(Gtk.Box):
         self.backend = self._create_backend(backend_name)
         self.terminal_widget = self.backend.widget
 
-        # Add new widget to scrolled window
+        # Add new widget to the container
         if self.terminal_widget is not None:
-            self.scrolled_window.set_child(self.terminal_widget)
+            self._set_terminal_container_child(self.terminal_widget)
             self.terminal_widget.set_hexpand(True)
             self.terminal_widget.set_vexpand(True)
             self.terminal_widget.set_visible(True)
@@ -2561,8 +2602,8 @@ class TerminalWidget(Gtk.Box):
                 widget_to_connect = None
                 if getattr(self, 'terminal_widget', None) is not None:
                     widget_to_connect = self.terminal_widget
-                elif getattr(self, 'scrolled_window', None) is not None:
-                    widget_to_connect = self.scrolled_window
+                elif getattr(self, 'terminal_container', None) is not None:
+                    widget_to_connect = self.terminal_container
 
                 if widget_to_connect is not None:
                     def on_size_changed(widget, param_spec):

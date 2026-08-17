@@ -1273,19 +1273,60 @@ class BackupManager:
         self._ensure_include(main_path, fragment)
         logger.info("Merged SSH hosts into fragment %s", fragment)
 
+    def _fragment_include_is_conditional(
+        self, text: str, fragment_name: str
+    ) -> bool:
+        """Whether an sshPilot ``Include`` for *fragment_name* is read by OpenSSH as
+        conditional inclusion (inside a ``Host``/``Match`` stanza that is not ``Match all``).
+
+        OpenSSH treats an ``Include`` placed inside a ``Host``/``Match`` block as
+        conditional inclusion, so a fragment whose ``Include`` is appended after the last
+        ``Host`` block is silently never matched for other hosts. The ``Match all`` guard
+        restores unconditional inclusion."""
+        for kind, _patterns, block in _iter_config_stanzas(text):
+            if not any(
+                _ssh_keyword(line) == 'include' and fragment_name in line.lower()
+                for line in block
+            ):
+                continue
+            if kind == 'global':
+                return False
+            if kind == 'match':
+                rest = block[0].strip()[len('match'):].strip().lower()
+                return rest != 'all'
+            return True
+        return False
+
+    def _normalize_fragment_include(
+        self, text: str, fragment_name: str, rel: str
+    ) -> str:
+        """Return *text* with any sshPilot-managed fragment ``Include`` removed and a single
+        unconditional (``Match all``-guarded) ``Include`` appended."""
+        out: List[str] = []
+        for line in text.splitlines():
+            if _ssh_keyword(line) == 'include' and fragment_name in line.lower():
+                if out and out[-1].strip() == '# Added by sshPilot import':
+                    out.pop()
+                continue
+            out.append(line)
+        body = '\n'.join(out)
+        if body and not body.endswith('\n'):
+            body += '\n'
+        tail = f"# Added by sshPilot import\nMatch all\n    Include {rel}\n"
+        return body + ('\n' if body else '') + tail
+
     def _ensure_include(self, main_path: str, fragment_path: str) -> None:
         """Add one ``Include`` for ``fragment_path`` to the main config — unless it is already
         resolved (via an explicit Include or a glob that already covers it), which avoids
-        double-inclusion (and the duplicate stanzas that would produce)."""
+        double-inclusion (and the duplicate stanzas that would produce).
+
+        The ``Include`` must be unconditional: OpenSSH reads an ``Include`` placed inside a
+        ``Host``/``Match`` block as conditional inclusion, so a fragment included after the
+        last host block would silently never be matched. An existing conditional fragment
+        ``Include`` (written by older releases) is repaired to the ``Match all``-guarded form."""
         from .ssh_config_utils import resolve_ssh_config_files
         frag_abs = os.path.abspath(fragment_path)
-        try:
-            resolved = {os.path.abspath(p) for p in resolve_ssh_config_files(main_path)}
-        except Exception:
-            resolved = set()
-        if frag_abs in resolved:
-            return
-        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path))
+        fragment_name = os.path.basename(frag_abs)
         existing = ''
         if os.path.exists(main_path):
             try:
@@ -1293,11 +1334,21 @@ class BackupManager:
                     existing = f.read()
             except OSError:
                 existing = ''
-        prefix = existing
-        if prefix and not prefix.endswith('\n'):
-            prefix += '\n'
+        try:
+            resolved = {os.path.abspath(p) for p in resolve_ssh_config_files(main_path)}
+        except Exception:
+            resolved = set()
+        if (
+            frag_abs in resolved
+            and not self._fragment_include_is_conditional(existing, fragment_name)
+        ):
+            return
+        rel = os.path.relpath(frag_abs, _ssh_config_root(main_path))
         self._atomic_write_text(
-            main_path, prefix + f"\n# Added by sshPilot import\nInclude {rel}\n", 0o600)
+            main_path,
+            self._normalize_fragment_include(existing, fragment_name, rel),
+            0o600,
+        )
 
     def _merge_known_hosts(self, target_path: str, imported_hosts: str):
         """Merge known_hosts by appending unique entries"""

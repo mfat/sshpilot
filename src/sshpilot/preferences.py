@@ -266,6 +266,8 @@ class PreferencesWindow(Adw.NavigationPage):
         self.config = config
         self.ssh_overrides_controller = ssh_overrides_controller
         self._ssh_overrides_unavailable = False
+        self._suppress_advanced_ssh_autosave = False
+        self._advanced_ssh_last_good_snapshot = None
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
@@ -1799,32 +1801,29 @@ class PreferencesWindow(Adw.NavigationPage):
         # Operation mode selection
         operation_group = Adw.PreferencesGroup(title=_("Operation Mode"))
 
-
         # Default mode row
-        self.default_mode_row = Adw.ActionRow()
+        self.default_mode_row = Adw.ExpanderRow()
         self.default_mode_row.set_title(_("Default Mode"))
         self.default_mode_row.set_subtitle(_("SSH Pilot loads and modifies ~/.ssh/config"))
         self.default_mode_radio = Gtk.CheckButton()
-
+        self._default_mode_detail_rows = []
 
         # Isolated mode row
-        self.isolated_mode_row = Adw.ActionRow()
+        self.isolated_mode_row = Adw.ExpanderRow()
         self.isolated_mode_row.set_title(_("Isolated Mode"))
         self.isolated_mode_row.set_subtitle(
-            _("SSH Pilot uses a daemon-owned isolated SSH configuration scope.")
+            _("SSH Pilot uses its own SSH configuration file")
         )
         self.isolated_mode_radio = Gtk.CheckButton()
+        self._isolated_mode_detail_rows = []
 
         # Group the radios for exclusive selection
         self.isolated_mode_radio.set_group(self.default_mode_radio)
 
         self.default_mode_row.add_prefix(self.default_mode_radio)
-        self.default_mode_row.set_activatable_widget(self.default_mode_radio)
-
         operation_group.add(self.default_mode_row)
 
         self.isolated_mode_row.add_prefix(self.isolated_mode_radio)
-        self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
         operation_group.add(self.isolated_mode_row)
 
         # The daemon reports the active mode asynchronously; start disabled
@@ -1839,6 +1838,62 @@ class PreferencesWindow(Adw.NavigationPage):
         self._request_confirmed_operation_mode()
 
         advanced_page.add(operation_group)
+
+    def _populate_operation_mode_files(self, result) -> None:
+        """Show the real, daemon-resolved files behind each mode. Rows stay
+        collapsed by default; the detail is there when the user asks for it."""
+        if not hasattr(self, "default_mode_row") or not hasattr(self, "isolated_mode_row"):
+            return
+        default_files = getattr(result, "default_files", None)
+        isolated_files = getattr(result, "isolated_files", None)
+        if default_files is not None:
+            self._rebuild_operation_mode_detail_rows(
+                self.default_mode_row, "_default_mode_detail_rows", default_files, is_default=True
+            )
+        if isolated_files is not None:
+            self._rebuild_operation_mode_detail_rows(
+                self.isolated_mode_row, "_isolated_mode_detail_rows", isolated_files, is_default=False
+            )
+
+    def _rebuild_operation_mode_detail_rows(
+        self, expander, tracked_attr: str, files, *, is_default: bool
+    ) -> None:
+        for old_row in getattr(self, tracked_attr):
+            expander.remove(old_row)
+        rows = [
+            self._operation_mode_detail_row(
+                _("Configuration file"), files.root_config_path, files.root_config_exists,
+            ),
+            self._operation_mode_detail_row(
+                _("Known hosts"),
+                files.known_hosts_path,
+                files.known_hosts_exists,
+                extra_note=_("not managed by SSH Pilot") if is_default else None,
+            ),
+            self._operation_mode_detail_row(
+                _("Imported hosts"), files.imported_fragment_path, files.imported_fragment_exists,
+            ),
+        ]
+        for detail_row in rows:
+            expander.add_row(detail_row)
+        setattr(self, tracked_attr, rows)
+
+    def _operation_mode_detail_row(self, title, path, exists, *, extra_note=None):
+        detail_row = Adw.ActionRow()
+        detail_row.set_title(title)
+        detail_row.set_subtitle(self._operation_mode_file_subtitle(path, exists, extra_note=extra_note))
+        return detail_row
+
+    @staticmethod
+    def _operation_mode_file_subtitle(path, exists, *, extra_note=None) -> str:
+        notes = []
+        if not exists:
+            notes.append(_("Not created yet"))
+        if extra_note:
+            notes.append(extra_note)
+        if not notes:
+            return path
+        return f"{path} — {', '.join(notes)}"
 
     def _request_confirmed_operation_mode(self) -> None:
         """Set the radio state only from a daemon-confirmed mode result."""
@@ -1887,6 +1942,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 isolated = result.active_mode.value == "isolated"
                 self._set_operation_mode_radios(isolated)
                 self._set_operation_mode_controls_sensitive(True)
+                self._populate_operation_mode_files(result)
 
             bridge.submit(client.get_operation_mode, on_success=_apply,
                           on_error=lambda error: self._operation_mode_unavailable(error))
@@ -2357,6 +2413,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._apply_ssh_override_values_to_rows(snapshot)
         for row in rows:
             row.set_sensitive(True)
+        self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
@@ -2510,6 +2567,30 @@ class PreferencesWindow(Adw.NavigationPage):
         # Ensure shortcut overview controls reflect current state
         self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
+        # Every row's displayed value is a claim about what's applied. Persist
+        # it the moment the user changes it instead of leaving it pending
+        # until Done is pressed, so the page never shows a value that wasn't
+        # actually saved.
+        for row in (
+            self.apply_default_keepalive_row,
+            self.controlmaster_row,
+            self.batch_mode_row,
+            self.compression_row,
+            self.debug_enabled_row,
+        ):
+            row.connect('notify::active', self._on_advanced_ssh_field_changed)
+        for row in (
+            self.connect_timeout_row,
+            self.connection_attempts_row,
+            self.keepalive_interval_row,
+            self.keepalive_count_row,
+            self.verbosity_row,
+        ):
+            row.connect('notify::value', self._on_advanced_ssh_field_changed)
+        self.strict_host_row.connect('notify::selected', self._on_advanced_ssh_field_changed)
+
+        self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
+
         return ssh_settings_page
 
     def _build_file_management_preferences_page(self):
@@ -2594,6 +2675,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 "Set to 0 to disable.")
             )
             self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
+            self.sftp_keepalive_interval_row.connect(
+                'notify::value', self.on_sftp_keepalive_interval_changed
+            )
             sftp_advanced_group.add(self.sftp_keepalive_interval_row)
 
 
@@ -2608,6 +2692,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 "manager before raising an error.")
             )
             self.sftp_keepalive_count_row.set_value(keepalive_count_value)
+            self.sftp_keepalive_count_row.connect(
+                'notify::value', self.on_sftp_keepalive_count_changed
+            )
             sftp_advanced_group.add(self.sftp_keepalive_count_row)
 
 
@@ -2622,6 +2709,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 "session; 0 uses the default.")
             )
             self.sftp_connect_timeout_row.set_value(connect_timeout_value)
+            self.sftp_connect_timeout_row.connect(
+                'notify::value', self.on_sftp_connect_timeout_changed
+            )
             sftp_advanced_group.add(self.sftp_connect_timeout_row)
 
 
@@ -2683,26 +2773,6 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.info("Preferences window initialized")
         except Exception as e:
             logger.error(f"Failed to setup preferences: {e}")
-
-    def on_close_request(self, *args):
-        """Persist settings when leaving Settings mode (NavigationView pop).
-
-        Every relevant setter persists immediately, so no blanket
-        ``save_json_config`` write is needed here.  When the daemon SSH
-        overrides save fails, the page stays open and a failure state is
-        shown; returns True to signal the caller to keep Settings visible.
-        """
-        try:
-            if hasattr(self, 'shortcuts_editor_page'):
-                self.shortcuts_editor_page.flush_changes()
-            saved = self.save_advanced_ssh_settings()
-            if not saved:
-                self._show_ssh_save_failure()
-                return True
-        except Exception:
-            logger.debug('Failed to flush preferences on close', exc_info=True)
-            return True
-        return False
 
     def on_view_shortcuts_clicked(self, _button):
         """Open the standalone shortcuts window from preferences."""
@@ -3876,8 +3946,34 @@ class PreferencesWindow(Adw.NavigationPage):
             on_complete=self._schedule_daemon_reconnect_after_restart,
         )
 
-    def _request_daemon_restart(self, *, on_complete):
-        """Restart the daemon, confirming when live resources would be lost."""
+    @staticmethod
+    def _describe_daemon_resources(codes) -> str:
+        """Turn internal resource codes (``sessions``, ``sftp``, ...) into a
+        natural-language list a non-technical user can act on."""
+        labels = {
+            "sessions": _("your open terminal sessions"),
+            "sftp": _("open file browser connections"),
+            "transfers": _("file transfers in progress"),
+            "forwards": _("active port forwards"),
+            "interactions": _("pending prompts (passwords or verification codes)"),
+        }
+        described = [labels.get(code, code) for code in codes]
+        if not described:
+            return _("unsaved live connections")
+        if len(described) == 1:
+            return described[0]
+        return _("{most}, and {last}").format(
+            most=", ".join(described[:-1]), last=described[-1]
+        )
+
+    def _request_daemon_restart(self, *, on_complete, on_cancel=None):
+        """Restart the daemon, confirming when live resources would be lost.
+
+        ``on_cancel`` fires for every path that leaves the daemon untouched
+        (user declined, forced restart itself failed, or the restart request
+        could not even be sent) so a caller that disabled UI in anticipation
+        of ``on_complete`` has a symmetric place to undo that.
+        """
         try:
             from .api.daemon_client import DaemonClient
             from .api.models.daemon import RestartDaemonRequest
@@ -3888,14 +3984,16 @@ class PreferencesWindow(Adw.NavigationPage):
                 result = client.restart_daemon(RestartDaemonRequest(force=False))
                 if not result.accepted and result.confirmation:
                     warn = Adw.AlertDialog(
-                        heading=_("Daemon has live resources"),
+                        heading=_("Restart Required"),
                         body=_(
-                            "Restarting will destroy: {resources}. "
-                            "Force the restart?"
-                        ).format(resources=", ".join(result.will_lose) or _("unknown")),
+                            "Restarting the background service will close: "
+                            "{resources}.\n\nThis cannot be undone. Restart now?"
+                        ).format(
+                            resources=self._describe_daemon_resources(result.will_lose)
+                        ),
                     )
                     warn.add_response('cancel', _("Cancel"))
-                    warn.add_response('force', _("Force restart"))
+                    warn.add_response('force', _("Restart Now"))
                     warn.set_response_appearance(
                         'force', Adw.ResponseAppearance.DESTRUCTIVE
                     )
@@ -3904,6 +4002,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
                     def _force(_d, resp, token=result.confirmation):
                         if resp != 'force':
+                            if on_cancel is not None:
+                                on_cancel()
                             return
                         accepted = False
                         error_body = None
@@ -3930,6 +4030,8 @@ class PreferencesWindow(Adw.NavigationPage):
                             self._show_daemon_restart_error(
                                 error_body or _("The daemon rejected the forced restart.")
                             )
+                            if on_cancel is not None:
+                                on_cancel()
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
@@ -3942,6 +4044,8 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Daemon restart failed: %s", exc)
             self._show_daemon_restart_error(str(exc))
+            if on_cancel is not None:
+                on_cancel()
         self._refresh_daemon_status_row()
 
     def _show_daemon_restart_error(self, body: str) -> None:
@@ -5484,20 +5588,79 @@ class PreferencesWindow(Adw.NavigationPage):
         }
 
     def _apply_ssh_override_values_to_rows(self, snapshot):
-        """Populate the page rows from a daemon ``GlobalSshOverrides``."""
-        self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
-        self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
-        self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
-        self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
-        options = ["accept-new", "yes", "no", "ask"]
+        """Populate the page rows from a daemon ``GlobalSshOverrides``.
+
+        Every row on this page autosaves on change, so setting values here
+        (already-saved daemon state) must not re-trigger a save.
+        """
+        self._suppress_advanced_ssh_autosave = True
         try:
-            self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
-        except ValueError:
-            self.strict_host_row.set_selected(0)
-        self.batch_mode_row.set_active(bool(snapshot.batch_mode))
-        self.compression_row.set_active(bool(snapshot.compression))
-        self.verbosity_row.set_value(int(snapshot.verbosity))
-        self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+            self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
+            self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
+            self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
+            self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
+            options = ["accept-new", "yes", "no", "ask"]
+            try:
+                self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
+            except ValueError:
+                self.strict_host_row.set_selected(0)
+            self.batch_mode_row.set_active(bool(snapshot.batch_mode))
+            self.compression_row.set_active(bool(snapshot.compression))
+            self.verbosity_row.set_value(int(snapshot.verbosity))
+            self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+        finally:
+            self._suppress_advanced_ssh_autosave = False
+
+    def _snapshot_advanced_ssh_rows(self):
+        """Read every row on the Advanced SSH page into a plain dict."""
+        snapshot = dict(self._collect_ssh_override_patch())
+        snapshot['apply_default_keepalive'] = bool(self.apply_default_keepalive_row.get_active())
+        snapshot['controlmaster'] = bool(self.controlmaster_row.get_active())
+        return snapshot
+
+    def _restore_advanced_ssh_rows(self, snapshot):
+        """Write a snapshot from ``_snapshot_advanced_ssh_rows`` back to the rows.
+
+        Used to roll a row back to its last-saved value after a failed
+        autosave, so the page never displays a value that isn't actually
+        applied. Guarded so the restore itself doesn't re-trigger a save.
+        """
+        self._suppress_advanced_ssh_autosave = True
+        try:
+            self.connect_timeout_row.set_value(snapshot['connect_timeout'])
+            self.connection_attempts_row.set_value(snapshot['connection_attempts'])
+            self.keepalive_interval_row.set_value(snapshot['server_alive_interval'])
+            self.keepalive_count_row.set_value(snapshot['server_alive_count_max'])
+            options = ["accept-new", "yes", "no", "ask"]
+            try:
+                self.strict_host_row.set_selected(options.index(snapshot['strict_host_key_checking']))
+            except ValueError:
+                self.strict_host_row.set_selected(0)
+            self.batch_mode_row.set_active(snapshot['batch_mode'])
+            self.compression_row.set_active(snapshot['compression'])
+            self.verbosity_row.set_value(snapshot['verbosity'])
+            self.debug_enabled_row.set_active(snapshot['debug_enabled'])
+            self.apply_default_keepalive_row.set_active(snapshot['apply_default_keepalive'])
+            self.controlmaster_row.set_active(snapshot['controlmaster'])
+        finally:
+            self._suppress_advanced_ssh_autosave = False
+
+    def _on_advanced_ssh_field_changed(self, row, _pspec):
+        """Persist an Advanced SSH row the instant its value changes.
+
+        Every row's displayed value is a claim about what's applied right
+        now, so none of them can wait for Done. On failure the whole page is
+        rolled back to its last-saved snapshot so it never shows a value that
+        didn't actually save.
+        """
+        if self._suppress_advanced_ssh_autosave:
+            return
+        if self.save_advanced_ssh_settings():
+            self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
+        else:
+            self._show_ssh_save_failure()
+            if self._advanced_ssh_last_good_snapshot is not None:
+                self._restore_advanced_ssh_rows(self._advanced_ssh_last_good_snapshot)
 
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI.
@@ -5647,13 +5810,19 @@ class PreferencesWindow(Adw.NavigationPage):
                     return False
 
             # Config-owned rows first (each set_setting saves immediately).
-            if hasattr(self, 'apply_default_keepalive_row'):
-                default_apply = bool(defaults.get('apply_default_keepalive', True))
-                self.config.set_setting('ssh.apply_default_keepalive', default_apply)
-                self.apply_default_keepalive_row.set_active(default_apply)
-            if hasattr(self, 'controlmaster_row'):
-                self.config.set_setting('ssh.controlmaster', False)
-                self.controlmaster_row.set_active(False)
+            # These .set_active() calls mirror a save that already happened
+            # above, so the autosave handler must not re-trigger on them.
+            self._suppress_advanced_ssh_autosave = True
+            try:
+                if hasattr(self, 'apply_default_keepalive_row'):
+                    default_apply = bool(defaults.get('apply_default_keepalive', True))
+                    self.config.set_setting('ssh.apply_default_keepalive', default_apply)
+                    self.apply_default_keepalive_row.set_active(default_apply)
+                if hasattr(self, 'controlmaster_row'):
+                    self.config.set_setting('ssh.controlmaster', False)
+                    self.controlmaster_row.set_active(False)
+            finally:
+                self._suppress_advanced_ssh_autosave = False
 
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
             default_open_external = bool(file_manager_defaults.get('open_externally', False))
@@ -5702,6 +5871,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 manager = self.parent_window.connection_manager
             if manager and hasattr(manager, 'invalidate_cached_commands'):
                 manager.invalidate_cached_commands()
+            if page_built:
+                self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
             return True
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
@@ -5767,6 +5938,28 @@ class PreferencesWindow(Adw.NavigationPage):
                         if owner is not None and getattr(result, "recovery_required", False):
                             if hasattr(owner, "_show_operation_mode_recovery"):
                                 owner._show_operation_mode_recovery(result.message)
+                        elif getattr(result, "conflict", False):
+                            # Live sessions/transfers/forwards are blocking a
+                            # live switch. Restore the previous "restart to
+                            # apply" UX instead of a bare rejection dialog,
+                            # via the existing restart-with-confirmation flow.
+                            def _on_restart_complete(mode=requested):
+                                if owner is not None:
+                                    owner._requested_operation_mode = mode
+                                self._schedule_daemon_reconnect_after_restart()
+
+                            def _on_restart_cancelled():
+                                # Nothing changed (no restart, no mode
+                                # switch): the controls we disabled below in
+                                # anticipation of a restart must not stay
+                                # stuck disabled just because the user (or
+                                # the forced restart itself) declined.
+                                self._set_operation_mode_controls_sensitive(True)
+
+                            self._request_daemon_restart(
+                                on_complete=_on_restart_complete,
+                                on_cancel=_on_restart_cancelled,
+                            )
                         elif owner is not None and hasattr(owner, "_show_operation_mode_rejection"):
                             owner._show_operation_mode_rejection(result.message)
                         return
@@ -5778,6 +5971,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         if callable(apply_mode):
                             apply_mode(result.active_mode)
                     self._update_operation_mode_styles()
+                    self._populate_operation_mode_files(result)
                 finally:
                     self._operation_mode_request_in_flight = False
                     self._set_operation_mode_controls_sensitive(
@@ -6378,6 +6572,33 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('file_manager.open_externally', active)
         except Exception as exc:
             logger.error("Failed to update external file manager preference: %s", exc)
+
+    def on_sftp_keepalive_interval_changed(self, row, *args):
+        """Persist the SFTP keepalive interval the instant it's changed."""
+        try:
+            self.config.set_setting(
+                'file_manager.sftp_keepalive_interval', max(0, int(row.get_value()))
+            )
+        except Exception as exc:
+            logger.error("Failed to update SFTP keepalive interval: %s", exc)
+
+    def on_sftp_keepalive_count_changed(self, row, *args):
+        """Persist the SFTP keepalive retry limit the instant it's changed."""
+        try:
+            self.config.set_setting(
+                'file_manager.sftp_keepalive_count_max', max(0, int(row.get_value()))
+            )
+        except Exception as exc:
+            logger.error("Failed to update SFTP keepalive retry limit: %s", exc)
+
+    def on_sftp_connect_timeout_changed(self, row, *args):
+        """Persist the SFTP connect timeout the instant it's changed."""
+        try:
+            self.config.set_setting(
+                'file_manager.sftp_connect_timeout', max(0, int(row.get_value()))
+            )
+        except Exception as exc:
+            logger.error("Failed to update SFTP connection timeout: %s", exc)
 
     def on_confirm_disconnect_changed(self, switch, *args):
         """Handle confirm disconnect setting change"""

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import sshpilot.api.daemon_client as daemon_client_mod
-from sshpilot.api.models.daemon import OperationMode
+from sshpilot.api.models.daemon import OperationMode, OperationModeFiles
 from sshpilot.preferences import PreferencesWindow
 
 
@@ -41,6 +41,27 @@ class _Button:
 class _Row:
     def remove_css_class(self, cls):
         pass
+
+    def set_subtitle(self, subtitle):
+        self.subtitle = subtitle
+
+
+class _ExpanderRow(_Row):
+    def __init__(self):
+        self.expanded = None
+        self.rows = []
+
+    def add_prefix(self, _widget):
+        pass
+
+    def set_expanded(self, expanded):
+        self.expanded = bool(expanded)
+
+    def add_row(self, row):
+        self.rows.append(row)
+
+    def remove(self, row):
+        self.rows.remove(row)
 
 
 class _Bridge:
@@ -85,8 +106,10 @@ def _make_prefs(result=None):
     prefs.config = config
     prefs.isolated_mode_radio = _Radio(active=True)
     prefs.default_mode_radio = _Radio(active=False)
-    prefs.default_mode_row = _Row()
-    prefs.isolated_mode_row = _Row()
+    prefs.default_mode_row = _ExpanderRow()
+    prefs.isolated_mode_row = _ExpanderRow()
+    prefs._default_mode_detail_rows = []
+    prefs._isolated_mode_detail_rows = []
     prefs.parent_window = SimpleNamespace()
     prefs.client = _ModeClient(result)
     prefs.client_bridge = _Bridge(result)
@@ -178,6 +201,93 @@ def test_rejected_toggle_restoration_does_not_send_compensating_request():
     assert len(prefs.client.requests) == 1
     assert prefs.default_mode_radio.get_active() is True
     assert prefs.rejection_detail == "sessions are active"
+
+
+def _files(root: str, *, exists=True) -> OperationModeFiles:
+    return OperationModeFiles(
+        root_config_path=f"{root}/config",
+        root_config_exists=exists,
+        known_hosts_path=f"{root}/known_hosts",
+        known_hosts_exists=exists,
+        imported_fragment_path=f"{root}/sshpilot-imported.conf",
+        imported_fragment_exists=exists,
+    )
+
+
+class _ActionRowStub:
+    """Stand-in for Adw.ActionRow; the stubbed gi module used outside
+    ``SSHPILOT_GUI_TESTS=1`` returns a bare, method-less ``object()`` for any
+    dynamically-constructed widget, so detail-row-building code needs a real
+    (if minimal) target to call ``set_title``/``set_subtitle`` on."""
+
+    def __init__(self, *a, **kw):
+        self.title = None
+        self.subtitle = None
+
+    def set_title(self, title):
+        self.title = title
+
+    def set_subtitle(self, subtitle):
+        self.subtitle = subtitle
+
+
+def test_populate_operation_mode_files_builds_detail_rows_without_expanding(monkeypatch):
+    monkeypatch.setattr("sshpilot.preferences.Adw.ActionRow", _ActionRowStub)
+    prefs, _recorded = _make_prefs()
+    result = SimpleNamespace(
+        active_mode=OperationMode.ISOLATED,
+        default_files=_files("/home/user/.ssh"),
+        isolated_files=_files("/home/user/.config/sshpilot", exists=False),
+    )
+
+    PreferencesWindow._populate_operation_mode_files(prefs, result)
+
+    # Neither row is auto-expanded; the detail is there when asked for.
+    assert prefs.isolated_mode_row.expanded is None
+    assert prefs.default_mode_row.expanded is None
+
+    default_titles = [row.title for row in prefs.default_mode_row.rows]
+    assert default_titles == ["Configuration file", "Known hosts", "Imported hosts"]
+    config_row, known_hosts_row, fragment_row = prefs.default_mode_row.rows
+    assert config_row.subtitle == "/home/user/.ssh/config"
+    assert "not managed by SSH Pilot" in known_hosts_row.subtitle
+    assert fragment_row.subtitle == "/home/user/.ssh/sshpilot-imported.conf"
+
+    isolated_config_row = prefs.isolated_mode_row.rows[0]
+    assert "Not created yet" in isolated_config_row.subtitle
+
+
+def test_populate_operation_mode_files_rebuild_does_not_duplicate_rows(monkeypatch):
+    monkeypatch.setattr("sshpilot.preferences.Adw.ActionRow", _ActionRowStub)
+    prefs, _recorded = _make_prefs()
+    first = SimpleNamespace(
+        active_mode=OperationMode.DEFAULT,
+        default_files=_files("/home/user/.ssh"),
+        isolated_files=_files("/home/user/.config/sshpilot"),
+    )
+    second = SimpleNamespace(
+        active_mode=OperationMode.DEFAULT,
+        default_files=_files("/home/user/.ssh", exists=False),
+        isolated_files=_files("/home/user/.config/sshpilot"),
+    )
+
+    PreferencesWindow._populate_operation_mode_files(prefs, first)
+    PreferencesWindow._populate_operation_mode_files(prefs, second)
+
+    assert len(prefs.default_mode_row.rows) == 3
+    assert "Not created yet" in prefs.default_mode_row.rows[0].subtitle
+
+
+def test_populate_operation_mode_files_tolerates_missing_files_data():
+    """A pre-0.41 daemon (or an older cached result) omits default_files /
+    isolated_files entirely; populating must not crash on the missing detail."""
+    prefs, _recorded = _make_prefs()
+    result = SimpleNamespace(active_mode=OperationMode.DEFAULT)
+
+    PreferencesWindow._populate_operation_mode_files(prefs, result)
+
+    assert prefs.default_mode_row.rows == []
+    assert prefs.isolated_mode_row.rows == []
 
 
 class _FakeDaemonClient:
@@ -292,6 +402,79 @@ def _request_restart_via_force_dialog(monkeypatch, fake, forced=None):
 
     assert dialogs, "expected the live-resources confirmation dialog"
     return dialogs, completions, fake
+
+
+def test_conflicting_toggle_offers_restart_instead_of_bare_rejection(monkeypatch):
+    """A live-session conflict must restore the "restart to apply" UX, not
+    the daemon-rejection dialog."""
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="Operation mode cannot change while live daemon resources are active: sessions",
+        conflict=True,
+    )
+    prefs, _recorded = _make_prefs(result)
+    prefs.isolated_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+
+    def _fail_on_bare_rejection(_detail):
+        raise AssertionError("bare rejection dialog should not be shown")
+
+    prefs.parent_window._show_operation_mode_rejection = _fail_on_bare_rejection
+
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=True, confirmation=None, will_lose=(), message="")
+    )
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+
+    reconnect_calls = []
+    prefs._schedule_daemon_reconnect_after_restart = lambda: reconnect_calls.append("done")
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert fake.restart_calls, "expected the daemon restart flow to run"
+    assert reconnect_calls == ["done"]
+    assert prefs.parent_window._requested_operation_mode is OperationMode.ISOLATED
+
+
+def test_conflicting_toggle_reenables_controls_when_restart_is_declined(monkeypatch):
+    """Cancelling the restart-confirmation dialog must fully cancel the mode
+    change (no restart, no deferred switch) and not leave the operation-mode
+    controls stuck disabled."""
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="Operation mode cannot change while live daemon resources are active: sessions",
+        conflict=True,
+    )
+    prefs, _recorded = _make_prefs(result)
+    prefs.isolated_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("sessions",))
+    )
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+    dialogs = []
+    monkeypatch.setattr(
+        "sshpilot.preferences.Adw.AlertDialog", _alert_dialog_factory(dialogs)
+    )
+
+    sensitivity_calls = []
+    prefs._set_operation_mode_controls_sensitive = sensitivity_calls.append
+
+    reconnect_calls = []
+    prefs._schedule_daemon_reconnect_after_restart = lambda: reconnect_calls.append("done")
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert dialogs, "expected the live-resources confirmation dialog"
+    dialogs[0].emit_response('cancel')
+
+    assert reconnect_calls == []
+    assert not hasattr(prefs.parent_window, "_requested_operation_mode")
+    assert fake.restart_calls and fake.restart_calls[0].force is False
+    assert sensitivity_calls[-1] is True
 
 
 def test_forced_restart_accepted_runs_completion_once(monkeypatch):

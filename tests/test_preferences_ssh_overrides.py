@@ -123,6 +123,9 @@ def _make_prefs(config, controller):
     prefs.config = config
     prefs.ssh_overrides_controller = controller
     prefs.parent_window = None
+    prefs._ssh_overrides_unavailable = False
+    prefs._suppress_advanced_ssh_autosave = False
+    prefs._advanced_ssh_last_good_snapshot = None
 
     prefs.apply_default_keepalive_row = _Switch(active=True)
     prefs.controlmaster_row = _Switch(active=False)
@@ -435,7 +438,9 @@ def test_save_success_expires_masters_after_mutation(tmp_path, monkeypatch):
     assert expires == [True]
 
 
-def test_on_close_request_returns_true_after_failure(tmp_path, monkeypatch):
+def test_save_advanced_ssh_settings_returns_false_on_revision_conflict(tmp_path, monkeypatch):
+    # Settings autosave per-field now (no Done-button flush), so what used to
+    # be exercised through on_close_request() is exercised directly here.
     config = _make_config(
         tmp_path,
         monkeypatch,
@@ -446,7 +451,6 @@ def test_on_close_request_returns_true_after_failure(tmp_path, monkeypatch):
     controller.load()
     prefs = _make_prefs(config, controller)
     prefs.connect_timeout_row = _Spin(value=60)
-    prefs._show_ssh_save_failure = lambda: None
 
     # Concurrent daemon mutation: refresh the Config cache but keep the stale
     # controller snapshot, producing a revision conflict on save.
@@ -454,10 +458,10 @@ def test_on_close_request_returns_true_after_failure(tmp_path, monkeypatch):
     other.update(UpdateGlobalSshOverridesRequest({"connect_timeout": 7}))
     config.reload_json_cache_strict()
 
-    assert prefs.on_close_request() is True
+    assert prefs.save_advanced_ssh_settings() is False
 
 
-def test_on_close_request_returns_false_after_success(tmp_path, monkeypatch):
+def test_save_advanced_ssh_settings_returns_true_on_success(tmp_path, monkeypatch):
     config = _make_config(
         tmp_path,
         monkeypatch,
@@ -467,7 +471,7 @@ def test_on_close_request_returns_false_after_success(tmp_path, monkeypatch):
     prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
     prefs.connect_timeout_row = _Spin(value=30)
 
-    assert prefs.on_close_request() is False
+    assert prefs.save_advanced_ssh_settings() is True
 
 
 # ---------------------------------------------------------------------------
@@ -604,3 +608,166 @@ def test_config_and_daemon_read_the_same_file(tmp_path, monkeypatch):
     loaded, _migrated = load_settings_strict(tmp_path / "config.json")
     assert loaded["ssh"]["connection_timeout"] == 5
     assert config.get_setting("ssh.connection_timeout", None) == 5
+
+
+# ---------------------------------------------------------------------------
+# Autosave wiring: every Advanced SSH row persists on change, none of it
+# depends on the Done button / a close-time flush.
+# ---------------------------------------------------------------------------
+
+
+def test_field_changed_persists_and_advances_snapshot_on_success(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+    controller.load()
+    prefs = _make_prefs(config, controller)
+    prefs._advanced_ssh_last_good_snapshot = prefs._snapshot_advanced_ssh_rows()
+
+    prefs.compression_row.set_active(True)
+    prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)
+
+    # Actually landed on the daemon, not just marked as if it did.
+    assert service.get().compression is True
+    assert prefs._advanced_ssh_last_good_snapshot['compression'] is True
+
+
+def test_field_changed_reverts_all_rows_on_daemon_failure(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+    controller.load()
+    prefs = _make_prefs(config, controller)
+    baseline = prefs._snapshot_advanced_ssh_rows()
+    prefs._advanced_ssh_last_good_snapshot = baseline
+
+    failures = []
+    prefs._show_ssh_save_failure = lambda: failures.append(True)
+
+    # User edits the field...
+    prefs.connect_timeout_row.set_value(60)
+
+    # ...but a concurrent daemon mutation makes the controller's cached
+    # revision stale, so the save is rejected as a revision conflict.
+    other = SshOverridesService(tmp_path / "config.json")
+    other.update(UpdateGlobalSshOverridesRequest({"connect_timeout": 7}))
+    config.reload_json_cache_strict()
+
+    prefs._on_advanced_ssh_field_changed(prefs.connect_timeout_row, None)
+
+    assert failures == [True]
+    # The whole page rolls back to the last-saved snapshot, not just the
+    # row that was edited: the daemon patch is atomic, so a rejected patch
+    # means nothing in it landed.
+    assert prefs._snapshot_advanced_ssh_rows() == baseline
+
+
+def test_field_changed_is_noop_while_suppressed(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    prefs._suppress_advanced_ssh_autosave = True
+
+    def _fail_if_called():
+        raise AssertionError("save_advanced_ssh_settings must not run while suppressed")
+
+    prefs.save_advanced_ssh_settings = _fail_if_called
+
+    prefs.compression_row.set_active(True)
+    prefs._on_advanced_ssh_field_changed(prefs.compression_row, None)  # must not raise
+
+
+def test_snapshot_round_trip_restores_values_and_clears_suppress_flag(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    snapshot = prefs._snapshot_advanced_ssh_rows()
+
+    prefs.connect_timeout_row.set_value(99)
+    prefs.compression_row.set_active(True)
+    prefs.strict_host_row.set_selected(2)
+
+    prefs._restore_advanced_ssh_rows(snapshot)
+
+    assert prefs._snapshot_advanced_ssh_rows() == snapshot
+    assert prefs._suppress_advanced_ssh_autosave is False
+
+
+def test_reset_refreshes_last_good_snapshot(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 5}},
+    )
+    service = SshOverridesService(tmp_path / "config.json")
+    prefs = _make_prefs(config, SshOverridesController(_ServiceClient(service)))
+    _expiry_record(monkeypatch)
+
+    # A stale baseline from before the reset; if it's left untouched, a
+    # later failed edit would roll back to the wrong (pre-reset) values.
+    prefs._advanced_ssh_last_good_snapshot = {"stale": True}
+
+    assert prefs._apply_default_advanced_settings() is True
+    assert prefs._advanced_ssh_last_good_snapshot == prefs._snapshot_advanced_ssh_rows()
+    assert prefs._advanced_ssh_last_good_snapshot != {"stale": True}
+
+
+def test_controller_attach_seeds_last_good_snapshot(tmp_path, monkeypatch):
+    config = _make_config(
+        tmp_path,
+        monkeypatch,
+        {"ssh": {"connection_timeout": 42}},
+    )
+    prefs = _make_prefs(config, None)
+    service = SshOverridesService(tmp_path / "config.json")
+    controller = SshOverridesController(_ServiceClient(service))
+
+    prefs.set_ssh_overrides_controller(controller)
+
+    assert prefs._advanced_ssh_last_good_snapshot == prefs._snapshot_advanced_ssh_rows()
+
+
+def test_sftp_keepalive_interval_changed_persists_immediately(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {})
+    prefs = _make_prefs(config, None)
+    prefs.sftp_keepalive_interval_row.set_value(45)
+
+    prefs.on_sftp_keepalive_interval_changed(prefs.sftp_keepalive_interval_row)
+
+    assert config.get_setting('file_manager.sftp_keepalive_interval', None) == 45
+
+
+def test_sftp_keepalive_count_changed_persists_immediately(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {})
+    prefs = _make_prefs(config, None)
+    prefs.sftp_keepalive_count_row.set_value(3)
+
+    prefs.on_sftp_keepalive_count_changed(prefs.sftp_keepalive_count_row)
+
+    assert config.get_setting('file_manager.sftp_keepalive_count_max', None) == 3
+
+
+def test_sftp_connect_timeout_changed_persists_immediately(tmp_path, monkeypatch):
+    config = _make_config(tmp_path, monkeypatch, {})
+    prefs = _make_prefs(config, None)
+    prefs.sftp_connect_timeout_row.set_value(20)
+
+    prefs.on_sftp_connect_timeout_changed(prefs.sftp_connect_timeout_row)
+
+    assert config.get_setting('file_manager.sftp_connect_timeout', None) == 20
