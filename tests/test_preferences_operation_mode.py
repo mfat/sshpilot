@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 
 import sshpilot.api.daemon_client as daemon_client_mod
-from sshpilot.api.models.daemon import OperationMode
+from sshpilot.api.models.daemon import OperationMode, OperationModeFiles
 from sshpilot.preferences import PreferencesWindow
 
 
@@ -41,6 +41,27 @@ class _Button:
 class _Row:
     def remove_css_class(self, cls):
         pass
+
+    def set_subtitle(self, subtitle):
+        self.subtitle = subtitle
+
+
+class _ExpanderRow(_Row):
+    def __init__(self):
+        self.expanded = None
+        self.rows = []
+
+    def add_prefix(self, _widget):
+        pass
+
+    def set_expanded(self, expanded):
+        self.expanded = bool(expanded)
+
+    def add_row(self, row):
+        self.rows.append(row)
+
+    def remove(self, row):
+        self.rows.remove(row)
 
 
 class _Bridge:
@@ -85,8 +106,10 @@ def _make_prefs(result=None):
     prefs.config = config
     prefs.isolated_mode_radio = _Radio(active=True)
     prefs.default_mode_radio = _Radio(active=False)
-    prefs.default_mode_row = _Row()
-    prefs.isolated_mode_row = _Row()
+    prefs.default_mode_row = _ExpanderRow()
+    prefs.isolated_mode_row = _ExpanderRow()
+    prefs._default_mode_detail_rows = []
+    prefs._isolated_mode_detail_rows = []
     prefs.parent_window = SimpleNamespace()
     prefs.client = _ModeClient(result)
     prefs.client_bridge = _Bridge(result)
@@ -178,6 +201,93 @@ def test_rejected_toggle_restoration_does_not_send_compensating_request():
     assert len(prefs.client.requests) == 1
     assert prefs.default_mode_radio.get_active() is True
     assert prefs.rejection_detail == "sessions are active"
+
+
+def _files(root: str, *, exists=True) -> OperationModeFiles:
+    return OperationModeFiles(
+        root_config_path=f"{root}/config",
+        root_config_exists=exists,
+        known_hosts_path=f"{root}/known_hosts",
+        known_hosts_exists=exists,
+        imported_fragment_path=f"{root}/sshpilot-imported.conf",
+        imported_fragment_exists=exists,
+    )
+
+
+class _ActionRowStub:
+    """Stand-in for Adw.ActionRow; the stubbed gi module used outside
+    ``SSHPILOT_GUI_TESTS=1`` returns a bare, method-less ``object()`` for any
+    dynamically-constructed widget, so detail-row-building code needs a real
+    (if minimal) target to call ``set_title``/``set_subtitle`` on."""
+
+    def __init__(self, *a, **kw):
+        self.title = None
+        self.subtitle = None
+
+    def set_title(self, title):
+        self.title = title
+
+    def set_subtitle(self, subtitle):
+        self.subtitle = subtitle
+
+
+def test_populate_operation_mode_files_builds_detail_rows_without_expanding(monkeypatch):
+    monkeypatch.setattr("sshpilot.preferences.Adw.ActionRow", _ActionRowStub)
+    prefs, _recorded = _make_prefs()
+    result = SimpleNamespace(
+        active_mode=OperationMode.ISOLATED,
+        default_files=_files("/home/user/.ssh"),
+        isolated_files=_files("/home/user/.config/sshpilot", exists=False),
+    )
+
+    PreferencesWindow._populate_operation_mode_files(prefs, result)
+
+    # Neither row is auto-expanded; the detail is there when asked for.
+    assert prefs.isolated_mode_row.expanded is None
+    assert prefs.default_mode_row.expanded is None
+
+    default_titles = [row.title for row in prefs.default_mode_row.rows]
+    assert default_titles == ["Configuration file", "Known hosts", "Imported hosts"]
+    config_row, known_hosts_row, fragment_row = prefs.default_mode_row.rows
+    assert config_row.subtitle == "/home/user/.ssh/config"
+    assert "not managed by SSH Pilot" in known_hosts_row.subtitle
+    assert fragment_row.subtitle == "/home/user/.ssh/sshpilot-imported.conf"
+
+    isolated_config_row = prefs.isolated_mode_row.rows[0]
+    assert "Not created yet" in isolated_config_row.subtitle
+
+
+def test_populate_operation_mode_files_rebuild_does_not_duplicate_rows(monkeypatch):
+    monkeypatch.setattr("sshpilot.preferences.Adw.ActionRow", _ActionRowStub)
+    prefs, _recorded = _make_prefs()
+    first = SimpleNamespace(
+        active_mode=OperationMode.DEFAULT,
+        default_files=_files("/home/user/.ssh"),
+        isolated_files=_files("/home/user/.config/sshpilot"),
+    )
+    second = SimpleNamespace(
+        active_mode=OperationMode.DEFAULT,
+        default_files=_files("/home/user/.ssh", exists=False),
+        isolated_files=_files("/home/user/.config/sshpilot"),
+    )
+
+    PreferencesWindow._populate_operation_mode_files(prefs, first)
+    PreferencesWindow._populate_operation_mode_files(prefs, second)
+
+    assert len(prefs.default_mode_row.rows) == 3
+    assert "Not created yet" in prefs.default_mode_row.rows[0].subtitle
+
+
+def test_populate_operation_mode_files_tolerates_missing_files_data():
+    """A pre-0.41 daemon (or an older cached result) omits default_files /
+    isolated_files entirely; populating must not crash on the missing detail."""
+    prefs, _recorded = _make_prefs()
+    result = SimpleNamespace(active_mode=OperationMode.DEFAULT)
+
+    PreferencesWindow._populate_operation_mode_files(prefs, result)
+
+    assert prefs.default_mode_row.rows == []
+    assert prefs.isolated_mode_row.rows == []
 
 
 class _FakeDaemonClient:

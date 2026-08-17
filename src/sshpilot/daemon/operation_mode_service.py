@@ -11,6 +11,7 @@ from typing import Callable, Optional, Tuple
 
 from sshpilot.api.models.daemon import (
     OperationMode,
+    OperationModeFiles,
     OperationModeResult,
     SetOperationModeRequest,
 )
@@ -101,6 +102,7 @@ class OperationModeService:
                             persisted_mode=persisted,
                             rollback_completed=False,
                             recovery_required=True,
+                            **self._files_snapshot(),
                         )
                 return OperationModeResult(
                     accepted=True,
@@ -108,6 +110,7 @@ class OperationModeService:
                     generation=self._repository.snapshot().generation,
                     target_description=target_description,
                     persisted_mode=persisted,
+                    **self._files_snapshot(),
                 )
             blockers = tuple(self._resource_probe() or ())
             if blockers:
@@ -122,6 +125,7 @@ class OperationModeService:
                     ),
                     target_description=target_description,
                     persisted_mode=current,
+                    **self._files_snapshot(),
                 )
             target = self._root_for(request.mode)
             target_created = False
@@ -153,6 +157,7 @@ class OperationModeService:
                     seeded=seeded,
                     target_description=target_description,
                     persisted_mode=request.mode,
+                    **self._files_snapshot(),
                 )
             except Exception as error:
                 rollback_errors = []
@@ -225,6 +230,7 @@ class OperationModeService:
                     persisted_mode=persisted_mode,
                     rollback_completed=rollback_completed,
                     recovery_required=recovery_required,
+                    **self._files_snapshot(),
                 )
 
     def status(self) -> OperationModeResult:
@@ -247,6 +253,7 @@ class OperationModeService:
                     persisted_mode=persisted,
                     rollback_completed=False,
                     recovery_required=True,
+                    **self._files_snapshot(),
                 )
             return OperationModeResult(
                 accepted=True,
@@ -254,6 +261,7 @@ class OperationModeService:
                 generation=self._repository.snapshot().generation,
                 target_description=self._description(mode),
                 persisted_mode=persisted,
+                **self._files_snapshot(),
             )
 
     def _read_persisted_mode(self) -> Optional[OperationMode]:
@@ -272,6 +280,32 @@ class OperationModeService:
 
     def _root_for(self, mode: OperationMode) -> Path:
         return self._isolated_root if mode is OperationMode.ISOLATED else self._default_root
+
+    @staticmethod
+    def _files_for(root: Path) -> OperationModeFiles:
+        """Resolve the on-disk files that back *root*'s SSH configuration scope.
+
+        Computed fresh (never cached) so a caller taking this snapshot after a
+        write in the same transaction sees the post-write state."""
+        fragment = root.parent / "sshpilot-imported.conf"
+        known_hosts = root.parent / "known_hosts"
+        return OperationModeFiles(
+            root_config_path=str(root),
+            root_config_exists=root.exists(),
+            known_hosts_path=str(known_hosts),
+            known_hosts_exists=known_hosts.exists(),
+            imported_fragment_path=str(fragment),
+            imported_fragment_exists=fragment.exists(),
+        )
+
+    def _files_snapshot(self) -> dict:
+        """Kwargs shared by every ``OperationModeResult`` this service returns."""
+        return {
+            "default_files": self._files_for(self._default_root),
+            "isolated_files": self._files_for(self._isolated_root),
+            "app_config_path": str(self._config_path),
+            "app_config_exists": self._config_path.exists(),
+        }
 
     @staticmethod
     def _description(mode: OperationMode) -> str:

@@ -405,6 +405,55 @@ def test_repository_rollback_failure_is_recovery_required_and_truthful(tmp_path)
     assert not isolated.exists()
 
 
+def test_status_reports_resolved_files_for_both_scopes(tmp_path):
+    repo = _Repository()
+    service, config, default, isolated = _service(tmp_path, repo)
+
+    result = service.status()
+
+    assert result.default_files.root_config_path == str(default)
+    assert result.default_files.root_config_exists is True
+    assert result.default_files.known_hosts_path == str(default.parent / "known_hosts")
+    assert result.default_files.known_hosts_exists is False
+    assert result.default_files.imported_fragment_path == str(
+        default.parent / "sshpilot-imported.conf"
+    )
+    assert result.default_files.imported_fragment_exists is False
+
+    assert result.isolated_files.root_config_path == str(isolated)
+    assert result.isolated_files.root_config_exists is False
+    assert result.isolated_files.known_hosts_path == str(isolated.parent / "known_hosts")
+    assert result.isolated_files.imported_fragment_path == str(
+        isolated.parent / "sshpilot-imported.conf"
+    )
+
+    assert result.app_config_path == str(config)
+    assert result.app_config_exists is True
+
+
+def test_files_snapshot_reflects_fresh_on_disk_state_not_a_stale_cache(tmp_path):
+    repo = _Repository()
+    service, config, default, isolated = _service(tmp_path, repo)
+
+    before = service.status()
+    assert before.isolated_files.root_config_exists is False
+    assert before.isolated_files.known_hosts_exists is False
+    assert before.isolated_files.imported_fragment_exists is False
+
+    result = service.apply(SetOperationModeRequest(mode=OperationMode.ISOLATED))
+    assert result.accepted is True
+    # The transition just created the isolated root; the same result must
+    # already reflect that, not the pre-transition snapshot.
+    assert result.isolated_files.root_config_exists is True
+
+    (isolated.parent / "known_hosts").write_text("example.com ssh-ed25519 AAAA\n", encoding="utf-8")
+    (isolated.parent / "sshpilot-imported.conf").write_text("Host imported\n", encoding="utf-8")
+
+    after = service.status()
+    assert after.isolated_files.known_hosts_exists is True
+    assert after.isolated_files.imported_fragment_exists is True
+
+
 def test_persisted_config_rollback_failure_is_recovery_required(tmp_path, monkeypatch):
     repo = _Repository()
     service, config, _default, isolated = _service(tmp_path, repo)

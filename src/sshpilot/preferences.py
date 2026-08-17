@@ -1799,32 +1799,29 @@ class PreferencesWindow(Adw.NavigationPage):
         # Operation mode selection
         operation_group = Adw.PreferencesGroup(title=_("Operation Mode"))
 
-
         # Default mode row
-        self.default_mode_row = Adw.ActionRow()
+        self.default_mode_row = Adw.ExpanderRow()
         self.default_mode_row.set_title(_("Default Mode"))
         self.default_mode_row.set_subtitle(_("SSH Pilot loads and modifies ~/.ssh/config"))
         self.default_mode_radio = Gtk.CheckButton()
-
+        self._default_mode_detail_rows = []
 
         # Isolated mode row
-        self.isolated_mode_row = Adw.ActionRow()
+        self.isolated_mode_row = Adw.ExpanderRow()
         self.isolated_mode_row.set_title(_("Isolated Mode"))
         self.isolated_mode_row.set_subtitle(
-            _("SSH Pilot uses a daemon-owned isolated SSH configuration scope.")
+            _("SSH Pilot uses its own SSH configuration file")
         )
         self.isolated_mode_radio = Gtk.CheckButton()
+        self._isolated_mode_detail_rows = []
 
         # Group the radios for exclusive selection
         self.isolated_mode_radio.set_group(self.default_mode_radio)
 
         self.default_mode_row.add_prefix(self.default_mode_radio)
-        self.default_mode_row.set_activatable_widget(self.default_mode_radio)
-
         operation_group.add(self.default_mode_row)
 
         self.isolated_mode_row.add_prefix(self.isolated_mode_radio)
-        self.isolated_mode_row.set_activatable_widget(self.isolated_mode_radio)
         operation_group.add(self.isolated_mode_row)
 
         # The daemon reports the active mode asynchronously; start disabled
@@ -1839,6 +1836,62 @@ class PreferencesWindow(Adw.NavigationPage):
         self._request_confirmed_operation_mode()
 
         advanced_page.add(operation_group)
+
+    def _populate_operation_mode_files(self, result) -> None:
+        """Show the real, daemon-resolved files behind each mode. Rows stay
+        collapsed by default; the detail is there when the user asks for it."""
+        if not hasattr(self, "default_mode_row") or not hasattr(self, "isolated_mode_row"):
+            return
+        default_files = getattr(result, "default_files", None)
+        isolated_files = getattr(result, "isolated_files", None)
+        if default_files is not None:
+            self._rebuild_operation_mode_detail_rows(
+                self.default_mode_row, "_default_mode_detail_rows", default_files, is_default=True
+            )
+        if isolated_files is not None:
+            self._rebuild_operation_mode_detail_rows(
+                self.isolated_mode_row, "_isolated_mode_detail_rows", isolated_files, is_default=False
+            )
+
+    def _rebuild_operation_mode_detail_rows(
+        self, expander, tracked_attr: str, files, *, is_default: bool
+    ) -> None:
+        for old_row in getattr(self, tracked_attr):
+            expander.remove(old_row)
+        rows = [
+            self._operation_mode_detail_row(
+                _("Configuration file"), files.root_config_path, files.root_config_exists,
+            ),
+            self._operation_mode_detail_row(
+                _("Known hosts"),
+                files.known_hosts_path,
+                files.known_hosts_exists,
+                extra_note=_("not managed by SSH Pilot") if is_default else None,
+            ),
+            self._operation_mode_detail_row(
+                _("Imported hosts"), files.imported_fragment_path, files.imported_fragment_exists,
+            ),
+        ]
+        for detail_row in rows:
+            expander.add_row(detail_row)
+        setattr(self, tracked_attr, rows)
+
+    def _operation_mode_detail_row(self, title, path, exists, *, extra_note=None):
+        detail_row = Adw.ActionRow()
+        detail_row.set_title(title)
+        detail_row.set_subtitle(self._operation_mode_file_subtitle(path, exists, extra_note=extra_note))
+        return detail_row
+
+    @staticmethod
+    def _operation_mode_file_subtitle(path, exists, *, extra_note=None) -> str:
+        notes = []
+        if not exists:
+            notes.append(_("Not created yet"))
+        if extra_note:
+            notes.append(extra_note)
+        if not notes:
+            return path
+        return f"{path} — {', '.join(notes)}"
 
     def _request_confirmed_operation_mode(self) -> None:
         """Set the radio state only from a daemon-confirmed mode result."""
@@ -1887,6 +1940,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 isolated = result.active_mode.value == "isolated"
                 self._set_operation_mode_radios(isolated)
                 self._set_operation_mode_controls_sensitive(True)
+                self._populate_operation_mode_files(result)
 
             bridge.submit(client.get_operation_mode, on_success=_apply,
                           on_error=lambda error: self._operation_mode_unavailable(error))
@@ -5834,6 +5888,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         if callable(apply_mode):
                             apply_mode(result.active_mode)
                     self._update_operation_mode_styles()
+                    self._populate_operation_mode_files(result)
                 finally:
                     self._operation_mode_request_in_flight = False
                     self._set_operation_mode_controls_sensitive(
