@@ -3030,16 +3030,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_view.set_hexpand(True)
         self.tab_view.set_vexpand(True)
 
-        # Disable Adw.TabView's built-in Alt+1..9 / Alt+0 tab-selection shortcuts.
-        # They otherwise shadow split-view "Alt+N focus pane" whenever more than
-        # one tab is open (the tab_view is an ancestor of the split-view tab, so
-        # its handler runs first). Tab switching is via Ctrl+PageUp/Down.
+        # SSH Pilot owns *all* keyboard-driven tab navigation through its own
+        # configurable Gio.SimpleAction layer (tab-next, tab-prev,
+        # tab-move-left, tab-move-right, tab-overview — see main.py
+        # create_action calls and shortcut_editor.py). Adw.TabView's built-in
+        # accelerators (Ctrl+PageUp/Down, Ctrl+Shift+PageUp/Down, Ctrl+Tab,
+        # Ctrl+Shift+Tab, Ctrl+Home/End, Alt+digits, ...) are a second,
+        # independent handler for the same keys that GTK dispatches *before*
+        # our app-level accelerators are even considered, and they are not
+        # wired to the shortcut editor at all. That meant disabling a tab
+        # shortcut in preferences only removed our accelerator while
+        # Adw.TabView kept eating the key, so it never reached the focused
+        # VTE terminal (e.g. Ctrl+PageUp/Down in vim/nano) — see issue #1170.
+        # Disable every Adw.TabView built-in so there is exactly one
+        # authoritative owner of tab-navigation keys; anything not claimed by
+        # an SSH Pilot accelerator falls straight through to the terminal.
         try:
-            self.tab_view.set_shortcuts(
-                self.tab_view.get_shortcuts()
-                & ~Adw.TabViewShortcuts.ALT_DIGITS
-                & ~Adw.TabViewShortcuts.ALT_ZERO
-            )
+            self.tab_view.set_shortcuts(Adw.TabViewShortcuts.NONE)
         except Exception:
             logger.debug("Could not adjust Adw.TabView shortcuts", exc_info=True)
 

@@ -230,6 +230,17 @@ class SplitPane(Gtk.Box):
         self._inner_tab_view = Adw.TabView()
         self._inner_tab_view.set_hexpand(True)
         self._inner_tab_view.set_vexpand(True)
+        # Same duplicate-handler hazard as the outer Adw.TabView (see
+        # window.py setup_content_area): this inner view has no keyboard
+        # navigation of its own wired up (sub-tabs are switched by clicking
+        # the mini tab bar), so its built-in accelerators are an unclaimed
+        # second consumer of keys like Ctrl+PageUp/Down that must instead
+        # reach the focused VTE terminal. Disable them so this pane never
+        # shadows either SSH Pilot's tab actions or terminal pass-through.
+        try:
+            self._inner_tab_view.set_shortcuts(Adw.TabViewShortcuts.NONE)
+        except Exception:
+            logger.debug("Could not adjust inner Adw.TabView shortcuts", exc_info=True)
         self._inner_tab_view.connect('close-page', self._on_inner_close)
         self._inner_tab_view.connect('notify::selected-page', self._on_inner_tab_selected)
 
