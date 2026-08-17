@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.8.6" date="2026-08-17">
+      <description>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.8.5" date="2026-08-17">
       <description>
         <p>Improved effective config diff tool</p>
@@ -598,35 +603,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/main-window.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/main-window.png</image>
       <caption>Main Window</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/start-page.png</image>
-      <caption>Start Page</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/groups.png</image>
-      <caption>Connection Groups</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/main-nofm.png</image>
       <caption>Terminal</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/splitview.png</image>
-      <caption>Split View</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/file-manager.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/fm.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/commands.png</image>
-      <caption>Command Blocks</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/splitview.png</image>
+      <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/ssh-copy-id.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/ssh-copy-id.png</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
   </screenshots>

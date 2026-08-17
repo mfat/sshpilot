@@ -438,6 +438,167 @@ def test_daemon_groups_place_stale_generation_rejected(daemon_factory, tmp_path)
     client.close()
 
 
+def test_daemon_move_and_copy_connection_between_groups(daemon_factory, tmp_path):
+    """End-to-end proof for the RPCs the sidebar's "Move to Group" and "Copy
+    to Group" actions use (``connections.assign_to_group``,
+    ``groups.copy_connection``): client DTO -> codec -> dispatcher ->
+    application service -> real repository, over an actual daemon socket.
+    Neither RPC had any daemon-level test before this — only
+    ``groups.place`` did (see test_daemon_groups_place_stale_generation_rejected).
+    """
+    from sshpilot.api.models.common import ConnectionId
+    from sshpilot.api.models.connection_store import (
+        CopyConnectionToGroupRequest,
+        GroupId,
+    )
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(tmp_path / "ssh_config"),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    repo.create_connection(
+        {"nickname": "web", "hostname": "example.com", "protocol": "ssh"}
+    )
+    server, _manager = daemon_factory(manager=repo)
+    client = DaemonClient(socket_path=server.socket_path)
+
+    group_a = client.create_group("A")
+    group_b = client.create_group("B")
+    group_c = client.create_group("C")
+    assert group_a and group_b and group_c
+
+    # Move: assign into A, then move to a *different* group B — must not
+    # leave web in both (that would be a copy, not a move).
+    assert client.assign_connection_to_group(ConnectionId("web"), group_a) is True
+    assert client.assign_connection_to_group(ConnectionId("web"), group_b) is True
+
+    snap = client.get_connection_store_snapshot()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert [g.id for g in web.groups] == [group_b]
+
+    # Copy: gaining C must not drop the existing B membership.
+    assert (
+        client.copy_connection_to_group(
+            CopyConnectionToGroupRequest(
+                connection_id=ConnectionId("web"), group_id=GroupId(group_c)
+            )
+        )
+        is True
+    )
+
+    snap = client.get_connection_store_snapshot()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert {g.id for g in web.groups} == {group_b, group_c}
+
+    client.close()
+
+
+def test_daemon_drag_and_drop_move_between_groups(daemon_factory, tmp_path):
+    """End-to-end proof for ``connections.move`` — the RPC drag-and-drop
+    uses (via ``move_connections``), a separate code path from
+    ``connections.assign_to_group`` with its own dispatcher handler,
+    application-service wrapper, and repository method. Had no daemon-level
+    test before this (see test_daemon_move_and_copy_connection_between_groups
+    for the sibling assign/copy RPCs).
+
+    Exercises both modes a cross-group drop actually uses: "exclusive" (drop
+    onto a different group — must drop the old membership) and "preserve"
+    (reorder within the same group — must not touch other memberships).
+    """
+    from sshpilot.api.models.common import ConnectionId
+    from sshpilot.api.models.connection_store import (
+        ConnectionPlacementMode,
+        CopyConnectionToGroupRequest,
+        GroupId,
+        MoveConnectionsRequest,
+    )
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(tmp_path / "ssh_config"),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    repo.create_connection(
+        {"nickname": "web", "hostname": "example.com", "protocol": "ssh"}
+    )
+    repo.create_connection(
+        {"nickname": "other", "hostname": "other.example", "protocol": "ssh"}
+    )
+    server, _manager = daemon_factory(manager=repo)
+    client = DaemonClient(socket_path=server.socket_path)
+
+    group_a = client.create_group("A")
+    group_b = client.create_group("B")
+    assert group_a and group_b
+
+    assert (
+        client.copy_connection_to_group(
+            CopyConnectionToGroupRequest(
+                connection_id=ConnectionId("web"), group_id=GroupId(group_a)
+            )
+        )
+        is True
+    )
+
+    # Cross-group drop: exclusive mode must drop the A membership.
+    assert (
+        client.move_connections(
+            MoveConnectionsRequest(
+                connection_ids=(ConnectionId("web"),),
+                source_group_id=GroupId(group_a),
+                target_group_id=GroupId(group_b),
+                mode=ConnectionPlacementMode.EXCLUSIVE,
+            )
+        )
+        is True
+    )
+
+    snap = client.get_connection_store_snapshot()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert [g.id for g in web.groups] == [group_b]
+
+    # Same-group reorder: preserve mode must not disturb membership, only
+    # order — and must not affect an unrelated connection's own groups.
+    assert (
+        client.copy_connection_to_group(
+            CopyConnectionToGroupRequest(
+                connection_id=ConnectionId("other"), group_id=GroupId(group_b)
+            )
+        )
+        is True
+    )
+    assert (
+        client.move_connections(
+            MoveConnectionsRequest(
+                connection_ids=(ConnectionId("web"),),
+                source_group_id=GroupId(group_b),
+                target_group_id=GroupId(group_b),
+                target_connection_id=ConnectionId("other"),
+                position="above",
+                mode=ConnectionPlacementMode.PRESERVE,
+            )
+        )
+        is True
+    )
+
+    snap = client.get_connection_store_snapshot()
+    web = next(c for c in snap.connections if c.id == "web")
+    other = next(c for c in snap.connections if c.id == "other")
+    assert [g.id for g in web.groups] == [group_b]
+    assert [g.id for g in other.groups] == [group_b]
+    group_b_summary = next(g for g in snap.groups if g.id == group_b)
+    assert group_b_summary.connection_ids.index("web") < group_b_summary.connection_ids.index("other")
+
+    client.close()
+
+
 def test_delete_key_passphrase_roundtrips_over_daemon(daemon_factory, caplog):
     """Regression: ``connections.delete_passphrase`` must be accepted as deferred work.
 

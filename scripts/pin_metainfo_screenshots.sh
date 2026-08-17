@@ -16,8 +16,8 @@ if [[ ! -f "$METAINFO_FILE" ]]; then
   exit 1
 fi
 
-if ! git -C "$ROOT_DIR" cat-file -e "${COMMIT}:screenshots/start-page.png" 2>/dev/null; then
-  echo "ERROR: Commit $COMMIT does not contain screenshots/start-page.png." >&2
+if ! git -C "$ROOT_DIR" cat-file -e "${COMMIT}:screenshots/main-window.png" 2>/dev/null; then
+  echo "ERROR: Commit $COMMIT does not contain screenshots/main-window.png." >&2
   echo "Commit your screenshot PNGs first, then re-run this script." >&2
   exit 1
 fi

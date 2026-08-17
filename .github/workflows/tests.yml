@@ -68,7 +68,13 @@ jobs:
       # live in the containerized "Test environment" workflow.
       # pytest-cov is already installed above; emit a coverage summary so the
       # least-covered modules are visible (informational, does not fail the run).
+      # basetemp on tmpfs (/dev/shm): pytest_sessionfinish's cleanup_dead_symlinks
+      # walks a "<testname>current" symlink per unique tmp_path-using test name in
+      # basetemp, and at ~5k items that's thousands of resolve() syscalls -- slow
+      # enough on the runner's regular disk to blow the job timeout. RAM-backed
+      # basetemp keeps that cleanup fast regardless of suite size.
       - name: Run pytest
         run: >
           pytest -ra -m "not integration and not gui"
+          --basetemp=/dev/shm/pytest-tmp
           --cov=sshpilot --cov-report=term-missing --cov-report=xml

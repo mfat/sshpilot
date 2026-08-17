@@ -1323,6 +1323,16 @@ class ConnectionRepository:
                 return ConnectionReference(ReferenceKind.NON_SSH_ID, cid)
             return None
 
+        # Identities the service genuinely cannot resolve/render right now
+        # (a pending SSH-config-edit ambiguity), as opposed to ones it has
+        # simply moved elsewhere. Only these may have their old placement
+        # preserved below — a resolvable identity's old placement (e.g. a
+        # group it was just moved out of) must not survive the resync, or
+        # every ordinary move accumulates a stale duplicate membership.
+        unresolved_uuids = {
+            uuid for ambiguity in state.pending_ambiguities for uuid in ambiguity.old_uuids
+        }
+
         old_groups = {group.id: group for group in state.groups}
         groups = []
         for group in self._service.list_groups():
@@ -1337,10 +1347,7 @@ class ConnectionRepository:
             if previous is not None:
                 for item in previous.members:
                     if item not in members:
-                        if item.kind is ReferenceKind.SSH_UUID and any(
-                            old.uuid == item.value and not old.tombstone
-                            for old in state.identities
-                        ):
+                        if item.kind is ReferenceKind.SSH_UUID and item.value in unresolved_uuids:
                             members.append(item)
             groups.append(
                 UuidGroupState(
@@ -1363,10 +1370,7 @@ class ConnectionRepository:
             if item not in grouped and item not in roots:
                 if item.kind is ReferenceKind.NON_SSH_ID and item.value not in non_ssh_ids:
                     continue
-                if item.kind is ReferenceKind.SSH_UUID and not any(
-                    old.uuid == item.value and not old.tombstone
-                    for old in state.identities
-                ):
+                if item.kind is ReferenceKind.SSH_UUID and item.value not in unresolved_uuids:
                     continue
                 roots.append(item)
         current_aliases = {

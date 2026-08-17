@@ -85,9 +85,17 @@ class _ProjectionWindow:
     def __init__(self):
         self.group_manager = _ProjectionGroupManager()
         self.rebuilds = 0
+        # Mirrors MainWindow.__init__'s startup-focus bookkeeping, which
+        # on_projection_reset reads/writes (see "focus first row on startup",
+        # 52e6eb166).
+        self._initial_connection_list_focus_done = False
+        self.focus_calls = 0
 
     def rebuild_connection_list(self):
         self.rebuilds += 1
+
+    def _focus_connection_list_first_row(self):
+        self.focus_calls += 1
 
 
 class _MutationWindow:

@@ -247,6 +247,116 @@ def test_group_mutations_route(tmp_path):
     assert [g.id for g in web.groups] == [group_id]
 
 
+def test_assign_connection_to_group_rpc_moves_between_groups(tmp_path):
+    """``assign_connection_to_group`` (the "move" RPC wrapper) has no other
+    coverage: only the repository/service layers beneath it are tested
+    elsewhere. Proves it moves a connection from one group to a different
+    group — not just to/from root — through the real application service."""
+    repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    service = _service(repo)
+    group_a = service.create_group_rpc("A")
+    group_b = service.create_group_rpc("B")
+    assert service.copy_connection_to_group_rpc("web", group_a) is True
+
+    assert service.assign_connection_to_group(ConnectionId("web"), group_b) is True
+
+    snap = service.snapshot_connection_store()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert [g.id for g in web.groups] == [group_b]
+
+
+def test_copy_connection_to_group_rpc_preserves_membership_across_two_groups(tmp_path):
+    """Extends test_group_mutations_route (single-group copy) to a genuine
+    group-A-and-group-B scenario: copying into a second group must not drop
+    the first membership."""
+    repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    service = _service(repo)
+    group_a = service.create_group_rpc("A")
+    group_b = service.create_group_rpc("B")
+    assert service.copy_connection_to_group_rpc("web", group_a) is True
+
+    assert service.copy_connection_to_group_rpc("web", group_b) is True
+
+    snap = service.snapshot_connection_store()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert {g.id for g in web.groups} == {group_a, group_b}
+
+
+def test_move_connections_rpc_exclusive_move_between_groups(tmp_path):
+    """``move_connections_rpc`` is what drag-and-drop calls (via
+    ``connections.move``) when a row is dropped onto a *different* group —
+    a separate RPC from ``assign_connection_to_group``, with its own
+    application-service wrapper that had no coverage anywhere. Proves an
+    exclusive-mode move drops group A's membership when landing in group B,
+    matching what the "Move to Group" dialog's assign RPC does."""
+    from sshpilot.api.models.connection_store import (
+        ConnectionPlacementMode,
+        GroupId,
+        MoveConnectionsRequest,
+    )
+
+    repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
+    service = _service(repo)
+    group_a = service.create_group_rpc("A")
+    group_b = service.create_group_rpc("B")
+    assert service.copy_connection_to_group_rpc("web", group_a) is True
+
+    assert (
+        service.move_connections_rpc(
+            MoveConnectionsRequest(
+                connection_ids=(ConnectionId("web"),),
+                source_group_id=GroupId(group_a),
+                target_group_id=GroupId(group_b),
+                mode=ConnectionPlacementMode.EXCLUSIVE,
+            )
+        )
+        is True
+    )
+
+    snap = service.snapshot_connection_store()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert [g.id for g in web.groups] == [group_b]
+
+
+def test_move_connections_rpc_preserve_mode_keeps_other_memberships(tmp_path):
+    """The 'reorder within the same group' drop uses preserve mode, which
+    must not touch the connection's membership in a different group."""
+    from sshpilot.api.models.connection_store import (
+        ConnectionPlacementMode,
+        GroupId,
+        MoveConnectionsRequest,
+    )
+
+    repo, _root = _repo(
+        tmp_path,
+        "Host web\n    HostName example.com\nHost other\n    HostName other.example\n",
+    )
+    service = _service(repo)
+    group_a = service.create_group_rpc("A")
+    group_b = service.create_group_rpc("B")
+    assert service.copy_connection_to_group_rpc("web", group_a) is True
+    assert service.copy_connection_to_group_rpc("web", group_b) is True
+    assert service.copy_connection_to_group_rpc("other", group_b) is True
+
+    assert (
+        service.move_connections_rpc(
+            MoveConnectionsRequest(
+                connection_ids=(ConnectionId("web"),),
+                source_group_id=GroupId(group_b),
+                target_group_id=GroupId(group_b),
+                target_connection_id=ConnectionId("other"),
+                position="above",
+                mode=ConnectionPlacementMode.PRESERVE,
+            )
+        )
+        is True
+    )
+
+    snap = service.snapshot_connection_store()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert {g.id for g in web.groups} == {group_a, group_b}
+
+
 def test_metadata_mutations_route(tmp_path):
     repo, _root = _repo(tmp_path, "Host web\n    HostName example.com\n")
     service = _service(repo)
