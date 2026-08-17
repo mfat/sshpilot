@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.8.6" date="2026-08-17">
+      <description>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.8.5" date="2026-08-17">
       <description>
         <p>Improved effective config diff tool</p>
