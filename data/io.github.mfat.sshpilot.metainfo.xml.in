@@ -598,23 +598,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/main-window.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/main-window.png</image>
       <caption>Main Window</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/main-nofm.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/main-nofm.png</image>
       <caption>Terminal</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/fm.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/fm.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/splitview.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/splitview.png</image>
       <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/ssh-copy-id.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/25ac902382d37d5718949da9d010407876226f0e/screenshots/ssh-copy-id.png</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
   </screenshots>
