@@ -591,6 +591,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self._requested_operation_mode = None
         self._apply_confirmed_operation_mode(result.active_mode)
+        # This path also fires after a mid-session daemon restart (e.g. to
+        # apply an operation-mode change that live sessions were blocking),
+        # so an already-open Preferences window can be showing the stale
+        # pre-restart radio state. Resync it from the daemon-confirmed mode.
+        preferences = getattr(self, "_preferences_window", None)
+        if preferences is not None:
+            refresh = getattr(preferences, "_request_confirmed_operation_mode", None)
+            if callable(refresh):
+                refresh()
 
     def _on_startup_operation_mode_error(self, error) -> None:
         """Report a failed startup mode request without losing its detail."""

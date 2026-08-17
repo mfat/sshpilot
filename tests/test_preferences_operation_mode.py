@@ -294,6 +294,79 @@ def _request_restart_via_force_dialog(monkeypatch, fake, forced=None):
     return dialogs, completions, fake
 
 
+def test_conflicting_toggle_offers_restart_instead_of_bare_rejection(monkeypatch):
+    """A live-session conflict must restore the "restart to apply" UX, not
+    the daemon-rejection dialog."""
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="Operation mode cannot change while live daemon resources are active: sessions",
+        conflict=True,
+    )
+    prefs, _recorded = _make_prefs(result)
+    prefs.isolated_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+
+    def _fail_on_bare_rejection(_detail):
+        raise AssertionError("bare rejection dialog should not be shown")
+
+    prefs.parent_window._show_operation_mode_rejection = _fail_on_bare_rejection
+
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=True, confirmation=None, will_lose=(), message="")
+    )
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+
+    reconnect_calls = []
+    prefs._schedule_daemon_reconnect_after_restart = lambda: reconnect_calls.append("done")
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert fake.restart_calls, "expected the daemon restart flow to run"
+    assert reconnect_calls == ["done"]
+    assert prefs.parent_window._requested_operation_mode is OperationMode.ISOLATED
+
+
+def test_conflicting_toggle_reenables_controls_when_restart_is_declined(monkeypatch):
+    """Cancelling the restart-confirmation dialog must fully cancel the mode
+    change (no restart, no deferred switch) and not leave the operation-mode
+    controls stuck disabled."""
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="Operation mode cannot change while live daemon resources are active: sessions",
+        conflict=True,
+    )
+    prefs, _recorded = _make_prefs(result)
+    prefs.isolated_mode_radio = _CallbackRadio(True, prefs.on_operation_mode_toggled)
+    prefs.default_mode_radio = _CallbackRadio(False, prefs.on_operation_mode_toggled)
+
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=False, confirmation="token", will_lose=("sessions",))
+    )
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+    dialogs = []
+    monkeypatch.setattr(
+        "sshpilot.preferences.Adw.AlertDialog", _alert_dialog_factory(dialogs)
+    )
+
+    sensitivity_calls = []
+    prefs._set_operation_mode_controls_sensitive = sensitivity_calls.append
+
+    reconnect_calls = []
+    prefs._schedule_daemon_reconnect_after_restart = lambda: reconnect_calls.append("done")
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert dialogs, "expected the live-resources confirmation dialog"
+    dialogs[0].emit_response('cancel')
+
+    assert reconnect_calls == []
+    assert not hasattr(prefs.parent_window, "_requested_operation_mode")
+    assert fake.restart_calls and fake.restart_calls[0].force is False
+    assert sensitivity_calls[-1] is True
+
+
 def test_forced_restart_accepted_runs_completion_once(monkeypatch):
     fake = _FakeDaemonClient(
         SimpleNamespace(accepted=False, confirmation="token", will_lose=("session",))

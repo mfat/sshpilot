@@ -3876,8 +3876,34 @@ class PreferencesWindow(Adw.NavigationPage):
             on_complete=self._schedule_daemon_reconnect_after_restart,
         )
 
-    def _request_daemon_restart(self, *, on_complete):
-        """Restart the daemon, confirming when live resources would be lost."""
+    @staticmethod
+    def _describe_daemon_resources(codes) -> str:
+        """Turn internal resource codes (``sessions``, ``sftp``, ...) into a
+        natural-language list a non-technical user can act on."""
+        labels = {
+            "sessions": _("your open terminal sessions"),
+            "sftp": _("open file browser connections"),
+            "transfers": _("file transfers in progress"),
+            "forwards": _("active port forwards"),
+            "interactions": _("pending prompts (passwords or verification codes)"),
+        }
+        described = [labels.get(code, code) for code in codes]
+        if not described:
+            return _("unsaved live connections")
+        if len(described) == 1:
+            return described[0]
+        return _("{most}, and {last}").format(
+            most=", ".join(described[:-1]), last=described[-1]
+        )
+
+    def _request_daemon_restart(self, *, on_complete, on_cancel=None):
+        """Restart the daemon, confirming when live resources would be lost.
+
+        ``on_cancel`` fires for every path that leaves the daemon untouched
+        (user declined, forced restart itself failed, or the restart request
+        could not even be sent) so a caller that disabled UI in anticipation
+        of ``on_complete`` has a symmetric place to undo that.
+        """
         try:
             from .api.daemon_client import DaemonClient
             from .api.models.daemon import RestartDaemonRequest
@@ -3888,14 +3914,16 @@ class PreferencesWindow(Adw.NavigationPage):
                 result = client.restart_daemon(RestartDaemonRequest(force=False))
                 if not result.accepted and result.confirmation:
                     warn = Adw.AlertDialog(
-                        heading=_("Daemon has live resources"),
+                        heading=_("Restart Required"),
                         body=_(
-                            "Restarting will destroy: {resources}. "
-                            "Force the restart?"
-                        ).format(resources=", ".join(result.will_lose) or _("unknown")),
+                            "Restarting the background service will close: "
+                            "{resources}.\n\nThis cannot be undone. Restart now?"
+                        ).format(
+                            resources=self._describe_daemon_resources(result.will_lose)
+                        ),
                     )
                     warn.add_response('cancel', _("Cancel"))
-                    warn.add_response('force', _("Force restart"))
+                    warn.add_response('force', _("Restart Now"))
                     warn.set_response_appearance(
                         'force', Adw.ResponseAppearance.DESTRUCTIVE
                     )
@@ -3904,6 +3932,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
                     def _force(_d, resp, token=result.confirmation):
                         if resp != 'force':
+                            if on_cancel is not None:
+                                on_cancel()
                             return
                         accepted = False
                         error_body = None
@@ -3930,6 +3960,8 @@ class PreferencesWindow(Adw.NavigationPage):
                             self._show_daemon_restart_error(
                                 error_body or _("The daemon rejected the forced restart.")
                             )
+                            if on_cancel is not None:
+                                on_cancel()
                         self._refresh_daemon_status_row()
 
                     warn.connect('response', _force)
@@ -3942,6 +3974,8 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Daemon restart failed: %s", exc)
             self._show_daemon_restart_error(str(exc))
+            if on_cancel is not None:
+                on_cancel()
         self._refresh_daemon_status_row()
 
     def _show_daemon_restart_error(self, body: str) -> None:
@@ -5767,6 +5801,28 @@ class PreferencesWindow(Adw.NavigationPage):
                         if owner is not None and getattr(result, "recovery_required", False):
                             if hasattr(owner, "_show_operation_mode_recovery"):
                                 owner._show_operation_mode_recovery(result.message)
+                        elif getattr(result, "conflict", False):
+                            # Live sessions/transfers/forwards are blocking a
+                            # live switch. Restore the previous "restart to
+                            # apply" UX instead of a bare rejection dialog,
+                            # via the existing restart-with-confirmation flow.
+                            def _on_restart_complete(mode=requested):
+                                if owner is not None:
+                                    owner._requested_operation_mode = mode
+                                self._schedule_daemon_reconnect_after_restart()
+
+                            def _on_restart_cancelled():
+                                # Nothing changed (no restart, no mode
+                                # switch): the controls we disabled below in
+                                # anticipation of a restart must not stay
+                                # stuck disabled just because the user (or
+                                # the forced restart itself) declined.
+                                self._set_operation_mode_controls_sensitive(True)
+
+                            self._request_daemon_restart(
+                                on_complete=_on_restart_complete,
+                                on_cancel=_on_restart_cancelled,
+                            )
                         elif owner is not None and hasattr(owner, "_show_operation_mode_rejection"):
                             owner._show_operation_mode_rejection(result.message)
                         return
