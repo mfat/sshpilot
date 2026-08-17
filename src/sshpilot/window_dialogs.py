@@ -1771,9 +1771,6 @@ class WindowConfigDialogsMixin:
                 _("Replace current configuration"),
                 _("Merge with current configuration"),
             ]))
-            mode_row.set_selected(0)
-            mode_row.set_subtitle(
-                _("All current settings will be replaced with the imported configuration."))
             mode_group.add(mode_row)
             page.add(mode_group)
 
@@ -1786,6 +1783,12 @@ class WindowConfigDialogsMixin:
                     mode_row.set_subtitle(
                         _("Add new connections and groups; preserve existing ones."))
             mode_row.connect('notify::selected', sync_mode_subtitle)
+            # Merge is the non-destructive choice (and the daemon's own default when
+            # a caller omits ``mode`` entirely) - default the picker to it too, so
+            # Replace is something you opt into rather than something you must
+            # remember to opt out of.
+            mode_row.set_selected(1)
+            sync_mode_subtitle()
 
             restore_checks = {}
             if included is not None:
