@@ -407,10 +407,15 @@ class IdentityRegistryEntry:
     projection: ConnectionIdentityProjection
     display_name: str = ""
     tombstone: bool = False
+    retired_generation: Optional[int] = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.uuid, str) or not self.uuid:
             raise ValueError("identity UUID must be a non-empty string")
+        if self.retired_generation is not None and (
+            type(self.retired_generation) is not int or self.retired_generation < 0
+        ):
+            raise ValueError("retired generation must be a non-negative integer")
 
 
 @dataclass(frozen=True)
@@ -661,15 +666,18 @@ def reconcile_identities(
     candidates in an otherwise matching partition are reserved as an explicit
     ambiguity; declaration order is never identity evidence.
 
-    Tombstone resurrection candidates are the exception to that last rule:
-    ``old_entries`` position *is* used there, on the assumption every caller
-    appends newly created identities to the end (never reorders existing
-    ones — the sole production caller, ``reconcile_identity_state``, upholds
-    this). When more than one tombstoned generation shares the returning
-    alias and anchor (an identity that has round-tripped through more than
-    one authority transition, e.g. Isolated Mode toggled on and off more
-    than once), the one with the highest index — the most recently retired —
-    is resurrected. Silently refusing to pick one, as before, meant every
+    Tombstone resurrection is the exception to that last rule: when more
+    than one tombstoned generation shares the returning alias and anchor (an
+    identity that has round-tripped through more than one authority
+    transition, e.g. Isolated Mode toggled on and off more than once), the
+    one with the highest ``retired_generation`` — the most recently retired —
+    is resurrected. Candidates with an unknown (``None``) generation, from
+    before this field existed, rank below any known generation; among
+    remaining ties the UUID breaks it, so the choice is always deterministic
+    without depending on ``old_entries`` position (which does not survive a
+    save/reload — persistence writes identities as a UUID-keyed object with
+    ``sort_keys=True``, so reloaded order is UUID-lexicographic, not
+    creation order). Silently refusing to pick one, as before, meant every
     such identity was created fresh from its second round-trip onward,
     permanently discarding its display name.
     """
@@ -701,12 +709,26 @@ def reconcile_identities(
             new_anchor = projection.destination_anchor
             if new_anchor is not None:
                 candidates = [
-                    (candidate_index, entry)
-                    for candidate_index, entry in tombstoned_by_alias.get(projection.alias, ())
+                    entry
+                    for _candidate_index, entry in tombstoned_by_alias.get(projection.alias, ())
                     if entry.projection.destination_anchor == new_anchor
                 ]
                 if candidates:
-                    _, chosen = max(candidates, key=lambda item: item[0])
+                    # Known retired_generation outranks unknown (None, from
+                    # legacy data); the UUID is the final, fully
+                    # deterministic tie-break. old_entries position is
+                    # deliberately not used — it does not survive a
+                    # save/reload (see docstring).
+                    chosen = max(
+                        candidates,
+                        key=lambda entry: (
+                            entry.retired_generation is not None,
+                            entry.retired_generation
+                            if entry.retired_generation is not None
+                            else -1,
+                            entry.uuid,
+                        ),
+                    )
                     used_new.add(new_index)
                     matches.append(
                         Match(

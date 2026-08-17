@@ -522,6 +522,54 @@ def test_mode_round_trip_preserves_display_name_and_uuid(tmp_path):
     assert after_identity.display_name == "Production Database"
 
 
+def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
+    """A second Isolated Mode round trip must not lose the display name.
+
+    Each ``transition_ssh_config`` call re-reads ``connections.json`` from
+    disk (``ConnectionRepository._load_state_locked``), and the writer
+    serializes identities as a UUID-keyed object with ``sort_keys=True``
+    (``state_file.py``), so the on-disk/reloaded order is UUID-lexicographic,
+    not creation order. A tie-break based on in-memory list position would
+    therefore pick an effectively arbitrary tombstone on the second round
+    trip, once two tombstoned generations exist for the same alias+anchor —
+    this exercises the real persistence path, not just the pure matcher.
+    """
+    repo, default_root, state, _legacy = _repo(
+        tmp_path,
+        "Host prod\n    HostName prod.example.com\n",
+    )
+    repo.set_display_name("prod", "Production Database")
+
+    original_uuid = next(
+        identity
+        for identity in read_identity_state_v2(state).identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    ).uuid
+
+    isolated_root = tmp_path / "isolated_ssh_config"
+    isolated_root.write_text(
+        "Host isolated\n    HostName isolated.example.com\n"
+    )
+
+    for _ in range(2):
+        repo.transition_ssh_config(SshConfigStore(isolated_root, isolated=True), True)
+        snapshot = repo.transition_ssh_config(
+            SshConfigStore(default_root, isolated=False), False
+        )
+
+    assert [item.id for item in snapshot.connections] == ["prod"]
+    assert snapshot.connections[0].display_name == "Production Database"
+
+    after_state = read_identity_state_v2(state)
+    after_identity = next(
+        identity
+        for identity in after_state.identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    )
+    assert after_identity.uuid == original_uuid
+    assert after_identity.display_name == "Production Database"
+
+
 def test_loads_non_ssh_records_from_state_file(tmp_path):
     state = tmp_path / "connections.json"
     _write_state(
