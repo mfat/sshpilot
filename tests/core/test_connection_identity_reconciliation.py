@@ -1583,7 +1583,15 @@ def test_tombstone_not_resurrected_when_anchors_differ():
     assert result.created[0].display_name == "myserver"  # Falls back to alias
 
 
-def test_duplicate_matching_tombstones_are_not_guessed():
+def test_duplicate_matching_tombstones_resurrect_the_most_recent():
+    """More than one tombstone can share an alias+anchor once an identity has
+    round-tripped through more than one authority transition (e.g. Isolated
+    Mode toggled on and off more than once). Refusing to pick one used to mean
+    every such identity was recreated from scratch on its second round trip
+    onward, silently discarding its display name forever. ``old_entries``
+    position is the tie-break: identities are appended in creation order and
+    never reordered, so the later position is the more recently retired one.
+    """
     first = IdentityRegistryEntry(
         uuid="old-1",
         projection=projection("prod", hostname="prod.example.com"),
@@ -1604,5 +1612,18 @@ def test_duplicate_matching_tombstones_are_not_guessed():
         allow_tombstone_resurrection=True,
     )
 
-    assert result.matched == ()
-    assert [entry.uuid for entry in result.created] == ["new-uuid"]
+    assert result.created == ()
+    assert len(result.matched) == 1
+    assert result.matched[0].old.uuid == "old-2"
+    assert result.matched[0].old.display_name == "Second Production"
+    assert result.matched[0].reason is MatchReason.EXACT_ALIAS
+
+    # Order in old_entries is the tie-break, not insertion order into the
+    # per-alias bucket: swapping which one comes last still picks last.
+    swapped = reconcile(
+        [second, first],
+        [projection("prod", hostname="prod.example.com")],
+        ids=("new-uuid",),
+        allow_tombstone_resurrection=True,
+    )
+    assert swapped.matched[0].old.uuid == "old-1"

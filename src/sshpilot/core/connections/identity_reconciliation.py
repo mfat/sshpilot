@@ -660,6 +660,18 @@ def reconcile_identities(
     unique evidence partition can establish a member-to-member match. Multiple
     candidates in an otherwise matching partition are reserved as an explicit
     ambiguity; declaration order is never identity evidence.
+
+    Tombstone resurrection candidates are the exception to that last rule:
+    ``old_entries`` position *is* used there, on the assumption every caller
+    appends newly created identities to the end (never reorders existing
+    ones — the sole production caller, ``reconcile_identity_state``, upholds
+    this). When more than one tombstoned generation shares the returning
+    alias and anchor (an identity that has round-tripped through more than
+    one authority transition, e.g. Isolated Mode toggled on and off more
+    than once), the one with the highest index — the most recently retired —
+    is resurrected. Silently refusing to pick one, as before, meant every
+    such identity was created fresh from its second round-trip onward,
+    permanently discarding its display name.
     """
 
     active_old = [
@@ -689,15 +701,16 @@ def reconcile_identities(
             new_anchor = projection.destination_anchor
             if new_anchor is not None:
                 candidates = [
-                    entry
-                    for _index, entry in tombstoned_by_alias.get(projection.alias, ())
+                    (candidate_index, entry)
+                    for candidate_index, entry in tombstoned_by_alias.get(projection.alias, ())
                     if entry.projection.destination_anchor == new_anchor
                 ]
-                if len(candidates) == 1:
+                if candidates:
+                    _, chosen = max(candidates, key=lambda item: item[0])
                     used_new.add(new_index)
                     matches.append(
                         Match(
-                            candidates[0],
+                            chosen,
                             projection,
                             MatchReason.EXACT_ALIAS,
                         )
