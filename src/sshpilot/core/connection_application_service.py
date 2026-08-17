@@ -828,7 +828,12 @@ class ConnectionApplicationService:
             not bool(own_lines),
         )
         try:
-            result = diff_effective_config(record.nickname, root, own_block)
+            result = diff_effective_config(
+                record.nickname,
+                root,
+                own_block,
+                include_system_defaults_in_display=not self._repository.ssh_config_isolated,
+            )
             logger.debug(
                 "Effective-config resolved: id=%s host=%s has_diff=%s "
                 "changes=%d own=%d full=%d",
