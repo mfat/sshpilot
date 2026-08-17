@@ -2066,10 +2066,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
             self.nav_view.add(self._work_page)
-            try:
-                self.nav_view.connect('popped', self._on_navigation_popped)
-            except Exception:
-                logger.debug('Could not connect NavigationView::popped', exc_info=True)
             root_widget = self.nav_view
         else:
             root_widget = self._content_overlay
@@ -2100,28 +2096,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.plugin_host.bind_window(self)
         except Exception:
             logger.exception("Plugin host bind_window failed")
-
-    def _on_navigation_popped(self, _nav_view, page):
-        """Flush Settings when its NavigationPage is popped back to work mode."""
-        prefs = getattr(self, '_preferences_window', None)
-        if prefs is not None and page is prefs:
-            try:
-                keep_open = prefs.on_close_request()
-            except Exception:
-                logger.debug('Failed to flush preferences on pop', exc_info=True)
-                keep_open = False
-            if keep_open and not getattr(self, '_is_quitting', False):
-                # A daemon-backed save failed; keep Settings visible so the
-                # user can fix the value instead of silently losing it.
-                nav = getattr(self, 'nav_view', None)
-                if nav is not None:
-                    try:
-                        nav.push(prefs)
-                    except Exception:
-                        logger.debug(
-                            'Failed to re-push preferences after save failure',
-                            exc_info=True,
-                        )
 
     def is_preferences_visible(self) -> bool:
         """True when Settings mode is the visible NavigationView page."""

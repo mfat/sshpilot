@@ -266,6 +266,8 @@ class PreferencesWindow(Adw.NavigationPage):
         self.config = config
         self.ssh_overrides_controller = ssh_overrides_controller
         self._ssh_overrides_unavailable = False
+        self._suppress_advanced_ssh_autosave = False
+        self._advanced_ssh_last_good_snapshot = None
         self._shortcuts_row = None
         self._shortcuts_button = None
         self._group_display_sync = False
@@ -2411,6 +2413,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self._apply_ssh_override_values_to_rows(snapshot)
         for row in rows:
             row.set_sensitive(True)
+        self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
 
     def _build_ssh_settings_preferences_page(self):
         """Build the SSH Options preferences page."""
@@ -2564,6 +2567,30 @@ class PreferencesWindow(Adw.NavigationPage):
         # Ensure shortcut overview controls reflect current state
         self._set_shortcut_controls_enabled(not self._pass_through_enabled)
 
+        # Every row's displayed value is a claim about what's applied. Persist
+        # it the moment the user changes it instead of leaving it pending
+        # until Done is pressed, so the page never shows a value that wasn't
+        # actually saved.
+        for row in (
+            self.apply_default_keepalive_row,
+            self.controlmaster_row,
+            self.batch_mode_row,
+            self.compression_row,
+            self.debug_enabled_row,
+        ):
+            row.connect('notify::active', self._on_advanced_ssh_field_changed)
+        for row in (
+            self.connect_timeout_row,
+            self.connection_attempts_row,
+            self.keepalive_interval_row,
+            self.keepalive_count_row,
+            self.verbosity_row,
+        ):
+            row.connect('notify::value', self._on_advanced_ssh_field_changed)
+        self.strict_host_row.connect('notify::selected', self._on_advanced_ssh_field_changed)
+
+        self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
+
         return ssh_settings_page
 
     def _build_file_management_preferences_page(self):
@@ -2648,6 +2675,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 "Set to 0 to disable.")
             )
             self.sftp_keepalive_interval_row.set_value(keepalive_interval_value)
+            self.sftp_keepalive_interval_row.connect(
+                'notify::value', self.on_sftp_keepalive_interval_changed
+            )
             sftp_advanced_group.add(self.sftp_keepalive_interval_row)
 
 
@@ -2662,6 +2692,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 "manager before raising an error.")
             )
             self.sftp_keepalive_count_row.set_value(keepalive_count_value)
+            self.sftp_keepalive_count_row.connect(
+                'notify::value', self.on_sftp_keepalive_count_changed
+            )
             sftp_advanced_group.add(self.sftp_keepalive_count_row)
 
 
@@ -2676,6 +2709,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 "session; 0 uses the default.")
             )
             self.sftp_connect_timeout_row.set_value(connect_timeout_value)
+            self.sftp_connect_timeout_row.connect(
+                'notify::value', self.on_sftp_connect_timeout_changed
+            )
             sftp_advanced_group.add(self.sftp_connect_timeout_row)
 
 
@@ -2737,26 +2773,6 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.info("Preferences window initialized")
         except Exception as e:
             logger.error(f"Failed to setup preferences: {e}")
-
-    def on_close_request(self, *args):
-        """Persist settings when leaving Settings mode (NavigationView pop).
-
-        Every relevant setter persists immediately, so no blanket
-        ``save_json_config`` write is needed here.  When the daemon SSH
-        overrides save fails, the page stays open and a failure state is
-        shown; returns True to signal the caller to keep Settings visible.
-        """
-        try:
-            if hasattr(self, 'shortcuts_editor_page'):
-                self.shortcuts_editor_page.flush_changes()
-            saved = self.save_advanced_ssh_settings()
-            if not saved:
-                self._show_ssh_save_failure()
-                return True
-        except Exception:
-            logger.debug('Failed to flush preferences on close', exc_info=True)
-            return True
-        return False
 
     def on_view_shortcuts_clicked(self, _button):
         """Open the standalone shortcuts window from preferences."""
@@ -5572,20 +5588,79 @@ class PreferencesWindow(Adw.NavigationPage):
         }
 
     def _apply_ssh_override_values_to_rows(self, snapshot):
-        """Populate the page rows from a daemon ``GlobalSshOverrides``."""
-        self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
-        self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
-        self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
-        self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
-        options = ["accept-new", "yes", "no", "ask"]
+        """Populate the page rows from a daemon ``GlobalSshOverrides``.
+
+        Every row on this page autosaves on change, so setting values here
+        (already-saved daemon state) must not re-trigger a save.
+        """
+        self._suppress_advanced_ssh_autosave = True
         try:
-            self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
-        except ValueError:
-            self.strict_host_row.set_selected(0)
-        self.batch_mode_row.set_active(bool(snapshot.batch_mode))
-        self.compression_row.set_active(bool(snapshot.compression))
-        self.verbosity_row.set_value(int(snapshot.verbosity))
-        self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+            self.connect_timeout_row.set_value(int(snapshot.connect_timeout))
+            self.connection_attempts_row.set_value(int(snapshot.connection_attempts))
+            self.keepalive_interval_row.set_value(int(snapshot.server_alive_interval))
+            self.keepalive_count_row.set_value(int(snapshot.server_alive_count_max))
+            options = ["accept-new", "yes", "no", "ask"]
+            try:
+                self.strict_host_row.set_selected(options.index(snapshot.strict_host_key_checking))
+            except ValueError:
+                self.strict_host_row.set_selected(0)
+            self.batch_mode_row.set_active(bool(snapshot.batch_mode))
+            self.compression_row.set_active(bool(snapshot.compression))
+            self.verbosity_row.set_value(int(snapshot.verbosity))
+            self.debug_enabled_row.set_active(bool(snapshot.debug_enabled))
+        finally:
+            self._suppress_advanced_ssh_autosave = False
+
+    def _snapshot_advanced_ssh_rows(self):
+        """Read every row on the Advanced SSH page into a plain dict."""
+        snapshot = dict(self._collect_ssh_override_patch())
+        snapshot['apply_default_keepalive'] = bool(self.apply_default_keepalive_row.get_active())
+        snapshot['controlmaster'] = bool(self.controlmaster_row.get_active())
+        return snapshot
+
+    def _restore_advanced_ssh_rows(self, snapshot):
+        """Write a snapshot from ``_snapshot_advanced_ssh_rows`` back to the rows.
+
+        Used to roll a row back to its last-saved value after a failed
+        autosave, so the page never displays a value that isn't actually
+        applied. Guarded so the restore itself doesn't re-trigger a save.
+        """
+        self._suppress_advanced_ssh_autosave = True
+        try:
+            self.connect_timeout_row.set_value(snapshot['connect_timeout'])
+            self.connection_attempts_row.set_value(snapshot['connection_attempts'])
+            self.keepalive_interval_row.set_value(snapshot['server_alive_interval'])
+            self.keepalive_count_row.set_value(snapshot['server_alive_count_max'])
+            options = ["accept-new", "yes", "no", "ask"]
+            try:
+                self.strict_host_row.set_selected(options.index(snapshot['strict_host_key_checking']))
+            except ValueError:
+                self.strict_host_row.set_selected(0)
+            self.batch_mode_row.set_active(snapshot['batch_mode'])
+            self.compression_row.set_active(snapshot['compression'])
+            self.verbosity_row.set_value(snapshot['verbosity'])
+            self.debug_enabled_row.set_active(snapshot['debug_enabled'])
+            self.apply_default_keepalive_row.set_active(snapshot['apply_default_keepalive'])
+            self.controlmaster_row.set_active(snapshot['controlmaster'])
+        finally:
+            self._suppress_advanced_ssh_autosave = False
+
+    def _on_advanced_ssh_field_changed(self, row, _pspec):
+        """Persist an Advanced SSH row the instant its value changes.
+
+        Every row's displayed value is a claim about what's applied right
+        now, so none of them can wait for Done. On failure the whole page is
+        rolled back to its last-saved snapshot so it never shows a value that
+        didn't actually save.
+        """
+        if self._suppress_advanced_ssh_autosave:
+            return
+        if self.save_advanced_ssh_settings():
+            self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
+        else:
+            self._show_ssh_save_failure()
+            if self._advanced_ssh_last_good_snapshot is not None:
+                self._restore_advanced_ssh_rows(self._advanced_ssh_last_good_snapshot)
 
     def save_advanced_ssh_settings(self):
         """Persist advanced SSH settings from the preferences UI.
@@ -5735,13 +5810,19 @@ class PreferencesWindow(Adw.NavigationPage):
                     return False
 
             # Config-owned rows first (each set_setting saves immediately).
-            if hasattr(self, 'apply_default_keepalive_row'):
-                default_apply = bool(defaults.get('apply_default_keepalive', True))
-                self.config.set_setting('ssh.apply_default_keepalive', default_apply)
-                self.apply_default_keepalive_row.set_active(default_apply)
-            if hasattr(self, 'controlmaster_row'):
-                self.config.set_setting('ssh.controlmaster', False)
-                self.controlmaster_row.set_active(False)
+            # These .set_active() calls mirror a save that already happened
+            # above, so the autosave handler must not re-trigger on them.
+            self._suppress_advanced_ssh_autosave = True
+            try:
+                if hasattr(self, 'apply_default_keepalive_row'):
+                    default_apply = bool(defaults.get('apply_default_keepalive', True))
+                    self.config.set_setting('ssh.apply_default_keepalive', default_apply)
+                    self.apply_default_keepalive_row.set_active(default_apply)
+                if hasattr(self, 'controlmaster_row'):
+                    self.config.set_setting('ssh.controlmaster', False)
+                    self.controlmaster_row.set_active(False)
+            finally:
+                self._suppress_advanced_ssh_autosave = False
 
             file_manager_defaults = self.config.get_default_config().get('file_manager', {})
             default_open_external = bool(file_manager_defaults.get('open_externally', False))
@@ -5790,6 +5871,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 manager = self.parent_window.connection_manager
             if manager and hasattr(manager, 'invalidate_cached_commands'):
                 manager.invalidate_cached_commands()
+            if page_built:
+                self._advanced_ssh_last_good_snapshot = self._snapshot_advanced_ssh_rows()
             return True
         except Exception as e:
             logger.error(f"Failed to apply default advanced SSH settings: {e}")
@@ -6489,6 +6572,33 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('file_manager.open_externally', active)
         except Exception as exc:
             logger.error("Failed to update external file manager preference: %s", exc)
+
+    def on_sftp_keepalive_interval_changed(self, row, *args):
+        """Persist the SFTP keepalive interval the instant it's changed."""
+        try:
+            self.config.set_setting(
+                'file_manager.sftp_keepalive_interval', max(0, int(row.get_value()))
+            )
+        except Exception as exc:
+            logger.error("Failed to update SFTP keepalive interval: %s", exc)
+
+    def on_sftp_keepalive_count_changed(self, row, *args):
+        """Persist the SFTP keepalive retry limit the instant it's changed."""
+        try:
+            self.config.set_setting(
+                'file_manager.sftp_keepalive_count_max', max(0, int(row.get_value()))
+            )
+        except Exception as exc:
+            logger.error("Failed to update SFTP keepalive retry limit: %s", exc)
+
+    def on_sftp_connect_timeout_changed(self, row, *args):
+        """Persist the SFTP connect timeout the instant it's changed."""
+        try:
+            self.config.set_setting(
+                'file_manager.sftp_connect_timeout', max(0, int(row.get_value()))
+            )
+        except Exception as exc:
+            logger.error("Failed to update SFTP connection timeout: %s", exc)
 
     def on_confirm_disconnect_changed(self, switch, *args):
         """Handle confirm disconnect setting change"""
