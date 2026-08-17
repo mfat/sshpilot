@@ -806,13 +806,39 @@ class ConnectionApplicationService:
 
         before_generation = self._repository.snapshot().generation
         root = str(self._repository.root_config_path)
-        config_file = root if self._repository.ssh_config_isolated else None
-        own_lines = collect_host_block_lines(record.nickname, config_file)
+        logger.debug(
+            "Effective-config resolve start: id=%s host=%s mode=%s root=%s "
+            "root_file=%s generation=%s",
+            connection_id,
+            record.nickname,
+            "isolated" if self._repository.ssh_config_isolated else "default",
+            root,
+            self._repository.root_config_path.is_file(),
+            before_generation,
+        )
+        own_lines = collect_host_block_lines(record.nickname, root)
         own_block = "\n".join(own_lines)
         if not own_block:
             own_block = format_ssh_config_entry(record.to_dict())
+        logger.debug(
+            "Effective-config authored block: id=%s host=%s own_lines=%d fallback=%s",
+            connection_id,
+            record.nickname,
+            len(own_lines),
+            not bool(own_lines),
+        )
         try:
-            result = diff_effective_config(record.nickname, config_file, own_block)
+            result = diff_effective_config(record.nickname, root, own_block)
+            logger.debug(
+                "Effective-config resolved: id=%s host=%s has_diff=%s "
+                "changes=%d own=%d full=%d",
+                connection_id,
+                record.nickname,
+                bool(result and result.get("has_diff")),
+                len(result.get("changes") or ()) if result else -1,
+                len(result.get("own") or ()) if result else -1,
+                len(result.get("full") or ()) if result else -1,
+            )
         except Exception:
             logger.debug("Daemon effective-config resolution failed", exc_info=True)
             result = None
@@ -820,6 +846,13 @@ class ConnectionApplicationService:
         # A reload/mode transition raced the resolver.  Never publish a
         # comparison tagged with the pre-transition snapshot.
         if before_generation != after_generation:
+            logger.debug(
+                "Effective-config generation raced: id=%s generation=%s->%s, "
+                "discarding result",
+                connection_id,
+                before_generation,
+                after_generation,
+            )
             result = None
         if not result:
             return EffectiveConfigComparison(

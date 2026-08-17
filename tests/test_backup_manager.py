@@ -882,6 +882,57 @@ def test_merge_no_double_include_when_glob_already_covers(monkeypatch, tmp_path)
     assert "sshpilot-imported.conf" not in main.read_text()
 
 
+def test_merge_writes_unconditional_guarded_include(monkeypatch, tmp_path):
+    """A trailing Host block must not swallow the fragment Include: OpenSSH reads an
+    Include inside a Host/Match block as conditional inclusion, so the fragment's hosts
+    would never match. The Include is written under a `Match all` guard instead."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = tmp_path / "dotssh"
+    root.mkdir()
+    main = root / "config"
+    main.write_text("Host existing\n    HostName e.example\n    User alice\n",
+                    encoding="utf-8")
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    mgr._merge_ssh_config_fragment(str(main), ["Host newone\n    HostName n.example\n"])
+
+    text = main.read_text()
+    assert text.count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    assert "Match all\n    Include " + bm._IMPORT_FRAGMENT_NAME in text
+    # The fragment Include must not sit directly inside the trailing Host block.
+    assert not mgr._fragment_include_is_conditional(text, bm._IMPORT_FRAGMENT_NAME)
+    assert (root / bm._IMPORT_FRAGMENT_NAME).read_text() == \
+        "# SSH hosts imported by sshPilot\n\nHost newone\n    HostName n.example\n"
+
+    # Idempotent: re-importing keeps a single guarded Include.
+    mgr._merge_ssh_config_fragment(str(main), ["Host newone\n    HostName n.example\n"])
+    assert main.read_text().count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+
+
+def test_ensure_include_repairs_conditional_fragment_include(monkeypatch, tmp_path):
+    """Older releases appended the fragment Include after the last Host block, where
+    OpenSSH never matches it. A later import must rewrite it unconditionally."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path / "cfg"))
+    root = tmp_path / "dotssh"
+    root.mkdir()
+    main = root / "config"
+    main.write_text(
+        "Host existing\n    HostName e.example\n    User alice\n"
+        "\n# Added by sshPilot import\nInclude sshpilot-imported.conf\n",
+        encoding="utf-8",
+    )
+    fragment = root / bm._IMPORT_FRAGMENT_NAME
+    fragment.write_text("Host newone\n    HostName n.example\n", encoding="utf-8")
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([], ssh_config_path=str(main)))
+    assert mgr._fragment_include_is_conditional(main.read_text(), bm._IMPORT_FRAGMENT_NAME)
+
+    mgr._ensure_include(str(main), str(fragment))
+
+    text = main.read_text()
+    assert text.count(f"Include {bm._IMPORT_FRAGMENT_NAME}") == 1
+    assert "Match all\n    Include " + bm._IMPORT_FRAGMENT_NAME in text
+    assert not mgr._fragment_include_is_conditional(text, bm._IMPORT_FRAGMENT_NAME)
+
+
 # --- SSH config stanza splitter (header-boundary, not indentation) -----------
 
 def test_iter_config_stanzas_boundaries_and_kinds():
