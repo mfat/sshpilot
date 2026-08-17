@@ -20,7 +20,11 @@ from sshpilot.core.connections.state_file import read_identity_state_v2  # noqa:
 from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError, ErrorCode  # noqa: E402
 from sshpilot.api.models.common import ConnectionId  # noqa: E402
-from sshpilot.api.models.connection_store import MoveConnectionsRequest  # noqa: E402
+from sshpilot.api.models.connection_store import (  # noqa: E402
+    ConnectionPlacementMode,
+    GroupId,
+    MoveConnectionsRequest,
+)
 
 
 def _repo(tmp_path, ssh_text: str = ""):
@@ -267,6 +271,103 @@ def test_assign_connection_to_group_moves(tmp_path):
     web = next(c for c in snap.connections if c.id == "web")
     assert [ref.id for ref in web.groups] == [g2.id]
     assert _state(state)["groups"]["groups"][g2.id]["connection_ids"] == ["web"]
+
+
+def test_assign_connection_to_group_clears_old_group_on_disk(tmp_path):
+    """test_assign_connection_to_group_moves only checks that the new group
+    (G2) gained "web" on disk — it never checks that the old group (G1) lost
+    it. A bug that writes the new membership but forgets to clear the old
+    one from the sidecar state file would slip through undetected. This
+    checks both sides of the sidecar write."""
+    repo, root, state = _repo(tmp_path)
+    _seed_web(repo)
+    g1 = repo.create_group("G1")
+    g2 = repo.create_group("G2")
+    repo.copy_connection_to_group("web", g1.id)
+    repo.assign_connection_to_group("web", g2.id)
+    stored_groups = _state(state)["groups"]["groups"]
+    assert stored_groups[g1.id]["connection_ids"] == []
+    assert stored_groups[g2.id]["connection_ids"] == ["web"]
+
+
+def test_assign_connection_to_group_move_survives_fresh_load(tmp_path):
+    """Extends test_multi_membership_survives_fresh_load's rigor (a fresh
+    ConnectionRepository re-reading the real sidecar file through the
+    production reader) to the move case, which previously only had an
+    in-process JSON re-parse checking the new group's membership."""
+    repo, root, state = _repo(tmp_path)
+    _seed_web(repo)
+    g1 = repo.create_group("G1")
+    g2 = repo.create_group("G2")
+    repo.copy_connection_to_group("web", g1.id)
+    repo.assign_connection_to_group("web", g2.id)
+
+    repo2 = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    snap = repo2.snapshot()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert [ref.id for ref in web.groups] == [g2.id]
+    assert "web" not in snap.root_connection_ids
+
+
+def test_move_connections_exclusive_clears_old_group_on_disk(tmp_path):
+    """move_connections (the drag-and-drop RPC's repository method) had no
+    sidecar-persistence coverage at all beyond a staleness-rejection test.
+    Proves an exclusive-mode cross-group move clears the old group's
+    on-disk entry, mirroring the assign_connection_to_group check above."""
+    repo, root, state = _repo(tmp_path)
+    _seed_web(repo)
+    g1 = repo.create_group("G1")
+    g2 = repo.create_group("G2")
+    repo.copy_connection_to_group("web", g1.id)
+
+    repo.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId("web"),),
+            source_group_id=GroupId(g1.id),
+            target_group_id=GroupId(g2.id),
+            mode=ConnectionPlacementMode.EXCLUSIVE,
+        )
+    )
+
+    stored_groups = _state(state)["groups"]["groups"]
+    assert stored_groups[g1.id]["connection_ids"] == []
+    assert stored_groups[g2.id]["connection_ids"] == ["web"]
+
+
+def test_move_connections_exclusive_move_survives_fresh_load(tmp_path):
+    """Same drag-and-drop move as above, proved through a fresh repository
+    instance reading the real sidecar file back via the production reader —
+    not just an in-process JSON re-parse."""
+    repo, root, state = _repo(tmp_path)
+    _seed_web(repo)
+    g1 = repo.create_group("G1")
+    g2 = repo.create_group("G2")
+    repo.copy_connection_to_group("web", g1.id)
+
+    repo.move_connections(
+        MoveConnectionsRequest(
+            connection_ids=(ConnectionId("web"),),
+            source_group_id=GroupId(g1.id),
+            target_group_id=GroupId(g2.id),
+            mode=ConnectionPlacementMode.EXCLUSIVE,
+        )
+    )
+
+    repo2 = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    snap = repo2.snapshot()
+    web = next(c for c in snap.connections if c.id == "web")
+    assert [ref.id for ref in web.groups] == [g2.id]
+    assert "web" not in snap.root_connection_ids
 
 
 def test_assign_connection_to_root(tmp_path):

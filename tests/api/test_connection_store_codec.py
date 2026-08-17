@@ -18,7 +18,11 @@ from sshpilot.api.models.connection_store import (
     ReorderConnectionRequest,
     SetGroupColorRequest,
 )
-from sshpilot.api.models.connections import ConnectionSummary, UpdateConnectionMetadataRequest
+from sshpilot.api.models.connections import (
+    AssignConnectionToGroupRequest,
+    ConnectionSummary,
+    UpdateConnectionMetadataRequest,
+)
 from sshpilot.api.transport.codec import (
     connection_metadata_summary_from_wire,
     connection_metadata_summary_to_wire,
@@ -26,6 +30,8 @@ from sshpilot.api.transport.codec import (
     connection_store_snapshot_to_wire,
     add_tag_to_connections_request_from_wire,
     add_tag_to_connections_request_to_wire,
+    assign_connection_to_group_request_from_wire,
+    assign_connection_to_group_request_to_wire,
     copy_connection_to_group_request_from_wire,
     copy_connection_to_group_request_to_wire,
     move_connections_request_from_wire,
@@ -244,6 +250,29 @@ def test_copy_connection_round_trip():
         )
         == request
     )
+
+
+def test_assign_connection_to_group_round_trip():
+    request = AssignConnectionToGroupRequest(
+        connection_id=ConnectionId("conn-1"), group_id="group-b"
+    )
+    assert (
+        assign_connection_to_group_request_from_wire(
+            assign_connection_to_group_request_to_wire(request)
+        )
+        == request
+    )
+
+
+def test_assign_connection_to_group_wire_omits_empty_group_id():
+    # group_id="" means "move to root"; the wire form must not carry a
+    # spurious empty key, and decoding it back must still round-trip.
+    request = AssignConnectionToGroupRequest(
+        connection_id=ConnectionId("conn-1"), group_id=""
+    )
+    encoded = assign_connection_to_group_request_to_wire(request)
+    assert "group_id" not in encoded
+    assert assign_connection_to_group_request_from_wire(encoded) == request
 
 
 def test_remove_connection_round_trip():
