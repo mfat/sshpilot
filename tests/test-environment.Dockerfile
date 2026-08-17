@@ -42,12 +42,13 @@ RUN set -eux; \
     chmod +x /usr/local/bin/kubectl /usr/local/bin/kind; \
     kubectl version --client; kind version
 
-# Python test dependencies (mirrors .github/workflows/tests.yml + pexpect for the
-# PTY integration tests and wakeonlan so its xfail test passes). PyGObject is
-# omitted on purpose — gi is stubbed by the test suite.
+# Python test dependencies (mirrors .github/workflows/tests.yml, including
+# pytest-xdist for pytest.ini's addopts, + pexpect for the PTY integration
+# tests and wakeonlan so its xfail test passes). PyGObject is omitted on
+# purpose — gi is stubbed by the test suite.
 RUN pip3 install \
         paramiko cryptography keyring psutil certifi \
-        pytest pytest-cov pexpect wakeonlan jsonschema
+        pytest pytest-cov pytest-xdist pexpect wakeonlan jsonschema
 
 WORKDIR /work
 CMD ["pytest", "-ra"]
