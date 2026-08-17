@@ -13,7 +13,12 @@ import types
 gi = types.ModuleType("gi")
 gi.require_version = lambda *args, **kwargs: None
 repository = types.SimpleNamespace()
-repository.Gtk = types.SimpleNamespace(Box=type("Box", (), {}))
+repository.Gtk = types.SimpleNamespace(
+    Box=type("Box", (), {}),
+    Scrollable=type("Scrollable", (), {}),
+    Scrollbar=type("Scrollbar", (), {}),
+    Orientation=types.SimpleNamespace(HORIZONTAL=0, VERTICAL=1),
+)
 repository.GObject = types.SimpleNamespace(
     SignalFlags=types.SimpleNamespace(RUN_FIRST=0)
 )
@@ -51,6 +56,10 @@ class DummyWidget:
 
     def set_visible(self, _value):
         pass
+
+    # _set_terminal_container_child()'s GTK4 child-removal walk
+    def get_next_sibling(self):
+        return None
 
 
 def _bare_terminal():
@@ -101,14 +110,23 @@ def test_backend_switch_detaches_from_old_widget_and_reinstalls(monkeypatch):
     new_backend = DummyBackend()
     terminal.backend = old_backend
 
-    class DummyScrolled:
+    class DummyContainer:
+        """Minimal Gtk.Box double for _set_terminal_container_child()."""
+
         def __init__(self):
-            self.child = old_widget
+            self.children = [old_widget]
 
-        def set_child(self, child):
-            self.child = child
+        def get_first_child(self):
+            return self.children[0] if self.children else None
 
-    terminal.scrolled_window = DummyScrolled()
+        def remove(self, child):
+            if child in self.children:
+                self.children.remove(child)
+
+        def append(self, child):
+            self.children.append(child)
+
+    terminal.terminal_container = DummyContainer()
     terminal._menu_popover = None
     terminal._menu_gesture = None
 

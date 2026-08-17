@@ -57,7 +57,7 @@ def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
         container_box=types.SimpleNamespace(
             add_css_class=lambda name: styled["container"].append(name)
         ),
-        scrolled_window=types.SimpleNamespace(
+        terminal_container=types.SimpleNamespace(
             add_css_class=lambda name: styled["scrolled"].append(name)
         ),
         add_css_class=lambda name: styled["owner"].append(name),
@@ -111,7 +111,7 @@ def test_group_theme_keeps_selection_distinct(monkeypatch):
             ),
         ),
         _get_group_color_rgba=lambda: group,
-        scrolled_window=types.SimpleNamespace(add_css_class=lambda _name: None),
+        terminal_container=types.SimpleNamespace(add_css_class=lambda _name: None),
         add_css_class=lambda _name: None,
     )
     backend = object.__new__(VTETerminalBackend)
