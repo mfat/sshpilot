@@ -591,35 +591,23 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/main-window.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/main-window.png</image>
       <caption>Main Window</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/start-page.png</image>
-      <caption>Start Page</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/groups.png</image>
-      <caption>Connection Groups</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/main.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/main-nofm.png</image>
       <caption>Terminal</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/splitview.png</image>
-      <caption>Split View</caption>
-    </screenshot>
-    <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/file-manager.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/fm.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/commands.png</image>
-      <caption>Command Blocks</caption>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/splitview.png</image>
+      <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/7d406d0f0ba19ed493d422a98cbdd68d6ada7cc9/screenshots/ssh-copy-id.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/00be5855c85b7196b4c48c7da3fa41899b2ca7b8/screenshots/ssh-copy-id.png</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
   </screenshots>
