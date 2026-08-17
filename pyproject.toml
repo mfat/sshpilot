@@ -37,6 +37,9 @@ dependencies = [
 # file manager uses the native OpenSSH `ssh -s sftp` subprocess.
 test = [
     "pytest>=7.0",
+    "pytest-cov",
+    "pytest-xdist",
+    "jsonschema",
     "paramiko>=3.4",
 ]
 # Optional MCP servers (sshpilot-mcp-dev and, later, sshpilot-mcp-runtime).
