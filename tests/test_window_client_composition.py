@@ -221,6 +221,51 @@ def test_failed_selection_leaves_key_manager_none():
     window.plugin_connection_services.detach_client.assert_called_once_with()
 
 
+def test_api_version_mismatch_uses_friendly_message_and_marks_mismatch():
+    """A stale daemon from a different app build (e.g. left running after a
+    macOS DMG upgrade) must not leak the raw ``api_version_mismatch`` enum
+    value into the toast, and must be flagged so the toast offers the one
+    action that can actually recover (Preferences ▸ Restart daemon) instead
+    of a useless Retry."""
+    from sshpilot.daemon.launcher import DaemonLaunchError, DaemonStartupFailure
+
+    window = _make_window()
+    window.client = object()
+    window._api_client_selection_pending = True
+    window._api_client_selection_request = object()
+    window.plugin_connection_services.detach_client = MagicMock()
+    window.connection_runtime_status.close = MagicMock()
+    window._show_client_mode_warning = lambda: None
+
+    window._handle_client_selection_error(
+        DaemonLaunchError(DaemonStartupFailure.API_VERSION_MISMATCH)
+    )
+
+    assert window._client_mode_is_api_mismatch is True
+    assert "api_version_mismatch" not in window._client_mode_warning
+    assert "different app version" in window._client_mode_warning
+
+
+def test_other_daemon_failure_keeps_retry_action_and_friendly_text():
+    from sshpilot.daemon.launcher import DaemonLaunchError, DaemonStartupFailure
+
+    window = _make_window()
+    window.client = object()
+    window._api_client_selection_pending = True
+    window._api_client_selection_request = object()
+    window.plugin_connection_services.detach_client = MagicMock()
+    window.connection_runtime_status.close = MagicMock()
+    window._show_client_mode_warning = lambda: None
+
+    window._handle_client_selection_error(
+        DaemonLaunchError(DaemonStartupFailure.STARTUP_TIMEOUT)
+    )
+
+    assert window._client_mode_is_api_mismatch is False
+    assert "startup_timeout" not in window._client_mode_warning
+    assert "did not become ready in time" in window._client_mode_warning
+
+
 # ---------------------------------------------------------------------------
 # _apply_client_selection (newly completed async selection)
 # ---------------------------------------------------------------------------

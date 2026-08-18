@@ -169,6 +169,9 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("terminal_manager.py", "DaemonLauncher"),
         ("terminal_manager.py", "DaemonLaunchError"),
         ("terminal_manager.py", "DaemonStartupFailure"),
+        # Startup client-selection toast: map DaemonLaunchError.reason to a
+        # human-readable message instead of leaking the raw enum value.
+        ("window.py", "DaemonStartupFailure"),
         # Reserved ``secret-session`` interaction namespace: frontend dialog
         # layers filter on it so secret-backend interactions are presented by
         # the app-wide SecretsInteractionPresenter, never the session-scoped one.

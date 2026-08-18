@@ -507,6 +507,7 @@ class DaemonClient:
         client_id: Optional[str] = None,
         frontend_type: Optional[str] = None,
         event_dispatch_limit: int = DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT,
+        allow_api_mismatch: bool = False,
     ) -> None:
         if type(timeout) not in (int, float) or timeout <= 0:
             raise ValueError("daemon request timeout must be positive")
@@ -556,6 +557,8 @@ class DaemonClient:
         self._daemon_started_at: str = ""
         self._development_revision: str = ""
         self._daemon_api_implementation_version: str = ""
+        self._allow_api_mismatch = bool(allow_api_mismatch)
+        self._api_mismatch = False
         try:
             self._connect_and_handshake()
         except BaseException:
@@ -589,6 +592,20 @@ class DaemonClient:
     @property
     def development_revision(self) -> str:
         return self._development_revision
+
+    @property
+    def api_mismatch(self) -> bool:
+        """True when this client only connected because of ``allow_api_mismatch``.
+
+        Such a client speaks a compatible wire protocol but the peer is
+        running a different sshPilot build (typically a daemon left over
+        from a previous app version). It exists solely so an explicit,
+        user-confirmed recovery action can query status and request a
+        stop/restart of that stale peer; ordinary read/write RPCs are not
+        guaranteed to decode correctly against its DTOs and must not be
+        issued through this client.
+        """
+        return self._api_mismatch
 
     def build_mismatch(self) -> Optional[str]:
         """Return a safe reason when the daemon build looks stale, else None.
@@ -2903,12 +2920,21 @@ class DaemonClient:
             # Protocol v1 while disagreeing about protected-input and DTO
             # contracts. Reject it before normal RPCs; never downgrade a
             # secret operation or select a frontend backend.
-            error = DaemonRestartRequiredError(
-                "The background daemon uses an incompatible API implementation. "
-                "Restart the daemon/application before continuing."
-            )
-            self._fail_transport(error)
-            raise error
+            if not self._allow_api_mismatch:
+                error = DaemonRestartRequiredError(
+                    "The background daemon uses an incompatible API implementation. "
+                    "Restart the daemon/application before continuing."
+                )
+                self._fail_transport(error)
+                raise error
+            # Explicit, caller-confirmed recovery mode: keep the connection
+            # open so administrative status/stop/restart calls can reach and
+            # replace a stale peer. Capabilities are still fetched below (the
+            # capability list itself is part of the stable protocol surface)
+            # so ``_require_capability`` keeps working for those calls, but
+            # callers must never issue ordinary data RPCs through this
+            # client — its other DTOs are not guaranteed compatible.
+            self._api_mismatch = True
         capabilities = self._request("system.get_capabilities", {})
         try:
             self._capabilities = capabilities_from_wire(capabilities)

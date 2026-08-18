@@ -481,3 +481,63 @@ def test_non_recursive_remove_also_requires_a_current_daemon(tmp_path):
 
     thread.join(2)
     assert requests == []
+
+
+def test_allow_api_mismatch_connects_to_a_stale_daemon_for_recovery(tmp_path):
+    """``allow_api_mismatch`` is the narrow, explicit recovery path used to
+    stop/replace a daemon left over from a different sshPilot build (e.g. a
+    macOS app bundle upgraded in place while the old daemon process is still
+    resident) — it must still complete the handshake instead of raising."""
+    old_api = "0.18"
+    assert old_api != API_IMPLEMENTATION_VERSION
+
+    socket_path = tmp_path / "recovery.sock"
+
+    def _action(peer):
+        peer.settimeout(0.5)
+        try:
+            decode_envelope(receive_frame(peer))
+        except TimeoutError:
+            pass
+
+    thread, release = _connected_protocol_server(
+        socket_path,
+        _action,
+        api_implementation_version=old_api,
+        supported=["daemon.status", "daemon.control"],
+    )
+    client = DaemonClient(
+        socket_path=socket_path, client_version="test", allow_api_mismatch=True
+    )
+    try:
+        assert client.api_mismatch is True
+        assert client.get_capabilities().api_implementation_version == old_api
+    finally:
+        release.set()
+        client.close()
+    thread.join(2)
+
+
+def test_default_client_still_rejects_a_stale_daemon(tmp_path):
+    """The ordinary (non-recovery) constructor path is unchanged: it must
+    keep refusing an incompatible peer rather than silently tolerating it."""
+    old_api = "0.18"
+    socket_path = tmp_path / "no-recovery.sock"
+
+    def _action(peer):
+        peer.settimeout(0.5)
+        try:
+            decode_envelope(receive_frame(peer))
+        except TimeoutError:
+            pass
+
+    thread, release = _connected_protocol_server(
+        socket_path,
+        _action,
+        api_implementation_version=old_api,
+    )
+    with pytest.raises(SshPilotError) as caught:
+        DaemonClient(socket_path=socket_path, client_version="test")
+    assert caught.value.code is ErrorCode.API_VERSION_MISMATCH
+    release.set()
+    thread.join(2)
