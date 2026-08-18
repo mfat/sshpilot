@@ -145,6 +145,7 @@ everywhere Flatpak does.
 
 | Component    | Minimum Version |
 |---------------|----------------|
+| Python        | 3.12           |
 | GTK 4         | 4.6            |
 | libadwaita    | 1.5            |
 | VTE (GTK4)    | 0.70           |
