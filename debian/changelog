@@ -1,3 +1,10 @@
+sshpilot (5.8.7-1) unstable; urgency=medium
+
+  * Release v5.8.7.
+  * Bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Tue, 18 Aug 2026 19:45:10 +0000
+
 sshpilot (5.8.6-1) unstable; urgency=medium
 
   * Release v5.8.6.
