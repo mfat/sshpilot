@@ -3,28 +3,25 @@
 [![Latest release](https://img.shields.io/github/v/release/mfat/sshpilot)](https://github.com/mfat/sshpilot/releases/latest)
 [![License: GPL v3](https://img.shields.io/github/license/mfat/sshpilot)](LICENSE)
 
-<table>
-<tr>
-<td width="50%">
-<img src="screenshots/main-window.png" alt="Sidebar, terminal, and SFTP panes" width="100%" />
-<p align="center"><sub>Sidebar, terminal, and SFTP panes in one window</sub></p>
-</td>
-<td width="50%">
-<img src="screenshots/fm.png" alt="Dual-pane SFTP file manager" width="100%" />
-<p align="center"><sub>Dual-pane SFTP file manager</sub></p>
-</td>
-</tr>
-<tr>
-<td width="50%">
-<img src="screenshots/splitview.png" alt="Split view with multiple terminals" width="100%" />
-<p align="center"><sub>Split view with multiple terminals</sub></p>
-</td>
-<td width="50%">
-<img src="screenshots/ssh-copy-id.png" alt="Copy key to server dialog" width="100%" />
-<p align="center"><sub>Key transfer to a server (ssh-copy-id)</sub></p>
-</td>
-</tr>
-</table>
+<p align="center">
+<img src="screenshots/main-window.png" alt="Sidebar, terminal, and SFTP panes" width="90%" /><br/>
+<sub>Sidebar, terminal, and SFTP panes in one window</sub>
+</p>
+
+<p align="center">
+<img src="screenshots/fm.png" alt="Dual-pane SFTP file manager" width="90%" /><br/>
+<sub>Dual-pane SFTP file manager</sub>
+</p>
+
+<p align="center">
+<img src="screenshots/splitview.png" alt="Split view with multiple terminals" width="90%" /><br/>
+<sub>Split view with multiple terminals</sub>
+</p>
+
+<p align="center">
+<img src="screenshots/ssh-copy-id.png" alt="Copy key to server dialog" width="90%" /><br/>
+<sub>Key transfer to a server (ssh-copy-id)</sub>
+</p>
 
 ## Features
 
