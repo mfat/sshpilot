@@ -52,9 +52,11 @@ def test_quit_policy_dialog_responses(phase14_harness):
     h.pump(100)
     assert decisions == [DaemonQuitDecision.TERMINATE_ALL]
 
+    # There is no "keep running" outcome: quit ends the daemon and its work,
+    # so any response other than Quit is a cancel.
     decisions.clear()
     dialog = present_daemon_quit_dialog(win, on_decision=_capture)
     h.pump(100)
     dialog.emit("response", "keep")
     h.pump(100)
-    assert decisions == [DaemonQuitDecision.KEEP_RUNNING]
+    assert decisions == [DaemonQuitDecision.CANCEL]

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
+import signal
 import socket
 import stat
+import struct
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional, Tuple
+
+
+logger = logging.getLogger(__name__)
 
 
 class SocketSecurityError(RuntimeError):
@@ -198,3 +205,180 @@ def unlink_owned_socket(path: Path, identity: Optional[Tuple[int, int]]) -> None
         and (info.st_dev, info.st_ino) == identity
     ):
         path.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Peer identification and eviction.
+#
+# A daemon that cannot serve this build (different API implementation, wedged
+# before the handshake, or dead but still holding a socket file) must never be
+# allowed to make application startup fail.  The launcher and the quit path
+# both need to replace such a peer, which means identifying the process behind
+# the socket and, as a last resort, signalling it.
+#
+# Authority to do that comes from the socket's own location: the parent
+# directory is validated as a mode-0700 directory owned by this user, so any
+# process accepting there is this user's own sshPilot daemon.
+# ---------------------------------------------------------------------------
+
+# macOS ``getsockopt`` level/name for the peer PID of a Unix socket
+# (``<sys/un.h>``: SOL_LOCAL / LOCAL_PEERPID).  Linux uses SO_PEERCRED.
+_SOL_LOCAL = 0
+_LOCAL_PEERPID = 2
+
+
+def peer_process_id(sock: socket.socket) -> Optional[int]:
+    """Return the PID behind a connected Unix socket, or ``None``.
+
+    Linux reports pid/uid/gid through ``SO_PEERCRED``; macOS reports the pid
+    alone through ``LOCAL_PEERPID``.  Where the uid is available it must match
+    this user, so a pid is never returned for a peer we would not be entitled
+    to signal.  Returns ``None`` on any platform that reports neither.
+    """
+
+    if hasattr(socket, "SO_PEERCRED"):
+        try:
+            raw = sock.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+            )
+            pid, uid, _gid = struct.unpack("3i", raw)
+        except (OSError, struct.error):
+            return None
+        if hasattr(os, "getuid") and uid != os.getuid():
+            return None
+        return pid if pid > 1 else None
+    try:
+        raw = sock.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, struct.calcsize("i"))
+        (pid,) = struct.unpack("i", raw)
+    except (OSError, struct.error):
+        return None
+    return pid if pid > 1 else None
+
+
+def probe_socket_owner(
+    path: Path, *, timeout: float = 0.25
+) -> Tuple[bool, Optional[int]]:
+    """Return ``(accepting, peer_pid)`` for a daemon socket.
+
+    ``accepting`` is True only when a process completed a connection, so a
+    leftover socket *file* whose owner has died reports ``(False, None)``.
+    """
+
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(max(0.01, float(timeout)))
+    try:
+        probe.connect(str(path))
+    except (ConnectionRefusedError, FileNotFoundError, NotADirectoryError):
+        return False, None
+    except OSError:
+        # Ambiguous: something is there but would not complete a connection.
+        # Treat it as live so callers never unlink on a guess.
+        return True, None
+    else:
+        return True, peer_process_id(probe)
+    finally:
+        probe.close()
+
+
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+def _wait_until_socket_free(path: Path, *, deadline: float, poll: float) -> bool:
+    while True:
+        accepting, _pid = probe_socket_owner(path, timeout=0.1)
+        if not accepting:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+
+
+def remove_dead_socket(path: Path) -> bool:
+    """Unlink a socket file that no process is accepting on.
+
+    Returns True when the path is gone afterwards.  Refuses to touch anything
+    that is not an owned Unix socket, and re-probes immediately before the
+    unlink so a daemon that just claimed the path is never removed.
+    """
+
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return True
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISSOCK(info.st_mode):
+        return False
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        return False
+    accepting, _pid = probe_socket_owner(path)
+    if accepting:
+        return False
+    try:
+        after = path.lstat()
+    except FileNotFoundError:
+        return True
+    if (after.st_dev, after.st_ino) != (info.st_dev, info.st_ino):
+        # Replaced between the probe and now — that is a live daemon's socket.
+        return False
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def evict_socket_owner(
+    path: Path,
+    *,
+    pid: Optional[int] = None,
+    term_timeout: float = 2.0,
+    kill_timeout: float = 1.0,
+    poll_interval: float = 0.05,
+) -> bool:
+    """Force the process holding ``path`` to release it, then clear the path.
+
+    The escalation is SIGTERM, then SIGKILL, then unlink of the orphaned
+    socket file.  Callers are expected to have already tried the graceful
+    ``daemon.stop`` RPC; this is the fallback for a peer that will not or
+    cannot answer it.  Returns True when nothing accepts on ``path`` and the
+    stale socket file (if any) has been removed.
+    """
+
+    if pid is None:
+        _accepting, pid = probe_socket_owner(path)
+
+    if pid is not None and pid != os.getpid() and _process_is_alive(pid):
+        for signal_number, timeout in (
+            (signal.SIGTERM, term_timeout),
+            (signal.SIGKILL, kill_timeout),
+        ):
+            try:
+                os.kill(pid, signal_number)
+            except (ProcessLookupError, PermissionError, OSError):
+                break
+            logger.info(
+                "Signalled unusable daemon pid=%s signal=%s",
+                pid,
+                signal_number.name,
+            )
+            if _wait_until_socket_free(
+                path,
+                deadline=time.monotonic() + max(0.0, float(timeout)),
+                poll=poll_interval,
+            ):
+                break
+
+    accepting, _pid = probe_socket_owner(path)
+    if accepting:
+        return False
+    return remove_dead_socket(path)

@@ -133,7 +133,8 @@ def _describe_daemon_start_failure(reason: str) -> str:
             "A running background service uses an incompatible protocol version."
         ),
         DaemonStartupFailure.API_VERSION_MISMATCH.value: _(
-            "A background service from a different app version is already running."
+            "A background service from a different app version is running and "
+            "could not be replaced."
         ),
         DaemonStartupFailure.MISSING_CAPABILITY.value: _(
             "The running background service does not support required features."
@@ -784,23 +785,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 type(cause).__name__,
                 getattr(getattr(cause, 'code', None), 'value', None),
             )
-        from .daemon.launcher import DaemonStartupFailure
-
-        self._client_mode_is_api_mismatch = (
-            reason == DaemonStartupFailure.API_VERSION_MISMATCH.value
-        )
-        if self._client_mode_is_api_mismatch:
-            self._client_mode_warning = _(
-                "SSH Pilot requires its background service, but a service from a "
-                "different app version is already running.\n"
-                "Open Settings → Terminal and use “Restart daemon” "
-                "to replace it."
-            )
-        else:
-            self._client_mode_warning = _(
-                "SSH Pilot requires its background service. %s "
-                "Retry, restart the service, inspect diagnostics, or exit."
-            ) % _describe_daemon_start_failure(reason)
+        self._client_mode_warning = _(
+            "SSH Pilot requires its background service. %s "
+            "Retry, restart the service, inspect diagnostics, or exit."
+        ) % _describe_daemon_start_failure(reason)
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(None)
         self._show_client_mode_warning()
@@ -823,60 +811,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _show_client_mode_warning(self) -> bool:
         message = self._client_mode_warning
-        is_api_mismatch = bool(getattr(self, '_client_mode_is_api_mismatch', False))
         self._client_mode_warning = None
-        self._client_mode_is_api_mismatch = False
         if not message or self._is_quitting:
             return False
         try:
             toast = Adw.Toast.new(message)
             toast.set_timeout(0)
-            if is_api_mismatch:
-                # "Retry" alone can never succeed here: the socket is held by
-                # a service from a different build, so send the user to the
-                # one action that can actually replace it.
-                toast.set_button_label(_("Open Settings"))
-                toast.connect(
-                    "button-clicked",
-                    lambda *_args: self._open_preferences_for_daemon_restart(),
-                )
-            else:
-                toast.set_button_label(_("Retry"))
-                toast.connect("button-clicked", lambda *_args: self.retry_daemon_connection())
+            # Retry is the right action for every reason, including a stale
+            # peer: each attempt runs the launcher's full recovery, which
+            # stops or kills a daemon that cannot serve this build before
+            # starting a current one.
+            toast.set_button_label(_("Retry"))
+            toast.connect("button-clicked", lambda *_args: self.retry_daemon_connection())
             self.toast_overlay.add_toast(toast)
         except Exception:
             logger.warning("Unable to display daemon recovery diagnostics")
         return False
-
-    def _open_preferences_for_daemon_restart(self) -> None:
-        """Open Settings so the user can reach Terminal → Restart daemon.
-
-        That action tolerates a background service left over from a
-        different sshPilot build (unlike ordinary startup, which refuses to
-        reuse an incompatible peer), so it is the working recovery path
-        when startup itself reported an API version mismatch.
-        """
-        preferences = getattr(self, '_preferences_window', None)
-        if preferences is None:
-            try:
-                from .preferences import PreferencesWindow
-
-                controller = self._build_ssh_overrides_controller()
-                preferences = PreferencesWindow(
-                    self, self.config, ssh_overrides_controller=controller,
-                )
-                self._preferences_window = preferences
-            except Exception:
-                logger.error(
-                    "Could not open Preferences for daemon recovery", exc_info=True
-                )
-                return
-        try:
-            preferences.present(self)
-        except Exception:
-            logger.error(
-                "Could not present Preferences for daemon recovery", exc_info=True
-            )
 
     def _maybe_restore_daemon_sessions(self) -> None:
         """Offer or auto-reattach retained daemon sessions after GTK restart.
@@ -6168,9 +6118,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections.
 
-        When daemon-backed work is active (or the app-close policy is ASK),
-        presents Keep running / Terminate everything / Cancel. Otherwise falls
-        back to Cancel / Quit Anyway for local-terminal jobs.
+        Quit always tears the daemon and its work down; the app-close policy
+        only decides whether that is confirmed first (ASK) or immediate
+        (TERMINATE). Local-terminal jobs keep their own Cancel / Quit Anyway
+        prompt.
         """
         try:
             self.unminimize()
@@ -6183,7 +6134,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         from .daemon_quit_policy import (
             DaemonQuitDecision,
-            apply_keep_running,
             apply_terminate_all,
             has_daemon_active_work,
             present_daemon_quit_dialog,
@@ -6194,10 +6144,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         auto = None
         if daemon_work:
             auto = resolve_quit_decision_from_policy(getattr(self, "config", None))
-            # ASK (None) → dialog; DETACH/TERMINATE apply immediately.
-            if auto is DaemonQuitDecision.KEEP_RUNNING:
-                apply_keep_running(self)
-                return
+            # ASK (None) → confirm dialog; TERMINATE applies immediately.
             if auto is DaemonQuitDecision.TERMINATE_ALL:
                 apply_terminate_all(self)
                 return
@@ -6208,9 +6155,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 def _on_daemon_decision(decision: DaemonQuitDecision) -> None:
                     try:
-                        if decision is DaemonQuitDecision.KEEP_RUNNING:
-                            apply_keep_running(self)
-                        elif decision is DaemonQuitDecision.TERMINATE_ALL:
+                        if decision is DaemonQuitDecision.TERMINATE_ALL:
                             apply_terminate_all(self)
                         else:
                             try:

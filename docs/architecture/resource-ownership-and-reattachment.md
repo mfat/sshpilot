@@ -30,6 +30,6 @@ This document defines the ownership model, orphan rules, claim semantics, and re
 - Attempting to claim a forward currently owned by a live client returns `SshPilotError(ErrorCode.FORWARD_OWNED_BY_ANOTHER)`.
 
 ### 3. Application Quit & Reattachment
-- **Keep Running Policy**: GTK presents Keep connections running / Terminate everything / Cancel when `terminal.daemon_app_close_policy=ask` (default). Keep-running detaches all views; the daemon keeps active sessions, SFTP services, and forwards running. App-launched daemons are **not** stopped on keep-running.
-- **Terminate everything**: drains sessions/SFTP/transfers/forwards/interactions via public APIs, then `stop_daemon(force=True)` for app-launched daemons.
-- Upon GTK restart after keep-running, `daemon_session_restore.py` and `forward_service_controller.py` query the daemon and restore GTK tabs and forward UI entries with full output replay.
+- **Quit ends everything.** There is no keep-running outcome. `terminal.daemon_app_close_policy` chooses only whether quit confirms first (`ask`, the default, when live work exists) or proceeds immediately (`terminate`); a configuration still holding the retired `detach` value resolves to `ask`.
+- **Teardown order**: drain sessions/SFTP/transfers/forwards/interactions via public APIs, then `stop_daemon(force=True)` — for *any* daemon this app is connected to, not only one it launched itself. A daemon that will not stop is escalated to SIGTERM then SIGKILL, and the ControlMasters a killed daemon could not retire are swept afterwards, so quit leaves no `ssh` process behind. Quit is never cancelled because the daemon refused.
+- **Restore** (`daemon_session_restore.py`, `forward_service_controller.py`) is therefore crash recovery: it repopulates tabs and forward entries with full output replay when the UI went away *without* a clean quit (crash, SIGKILL, logout), and the daemon's sessions are still live on relaunch.

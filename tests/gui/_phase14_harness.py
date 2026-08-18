@@ -1299,18 +1299,6 @@ class Phase14Harness:
         finally:
             client.close()
 
-    def quit_keep_running(self) -> None:
-        from sshpilot.daemon_quit_policy import apply_keep_running
-
-        apply_keep_running(self.gui.window)
-        self.pump_until(
-            lambda: self.gui is None or getattr(self.gui.window, "_is_quitting", False),
-            timeout=15.0,
-            label="quit keep-running started",
-        )
-        # Allow cleanup timeouts to finish
-        for _ in range(30):
-            self.pump(100)
 
 def make_isolated_home(tmp_path: Path) -> Path:
     """Prepare isolated HOME/XDG dirs and export them into os.environ."""

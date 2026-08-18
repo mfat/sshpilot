@@ -221,12 +221,14 @@ def test_failed_selection_leaves_key_manager_none():
     window.plugin_connection_services.detach_client.assert_called_once_with()
 
 
-def test_api_version_mismatch_uses_friendly_message_and_marks_mismatch():
-    """A stale daemon from a different app build (e.g. left running after a
-    macOS DMG upgrade) must not leak the raw ``api_version_mismatch`` enum
-    value into the toast, and must be flagged so the toast offers the one
-    action that can actually recover (Preferences ▸ Restart daemon) instead
-    of a useless Retry."""
+def test_api_version_mismatch_reports_a_failed_replacement_not_a_todo():
+    """Reaching this message at all means the launcher already tried.
+
+    Startup replaces a daemon from another build by itself (stop RPC, then
+    signals), so a mismatch that still surfaces is a replacement that failed
+    — not a chore to hand the user. The text must say that, and must not leak
+    the raw ``api_version_mismatch`` enum value.
+    """
     from sshpilot.daemon.launcher import DaemonLaunchError, DaemonStartupFailure
 
     window = _make_window()
@@ -241,9 +243,13 @@ def test_api_version_mismatch_uses_friendly_message_and_marks_mismatch():
         DaemonLaunchError(DaemonStartupFailure.API_VERSION_MISMATCH)
     )
 
-    assert window._client_mode_is_api_mismatch is True
-    assert "api_version_mismatch" not in window._client_mode_warning
-    assert "different app version" in window._client_mode_warning
+    warning = window._client_mode_warning
+    assert "api_version_mismatch" not in warning
+    assert "different app version" in warning
+    assert "could not be replaced" in warning
+    # No "go to Settings" advice: Preferences' restart is strictly weaker
+    # than the eviction that just failed, so it cannot be the way out.
+    assert "Settings" not in warning
 
 
 def test_other_daemon_failure_keeps_retry_action_and_friendly_text():
@@ -261,7 +267,6 @@ def test_other_daemon_failure_keeps_retry_action_and_friendly_text():
         DaemonLaunchError(DaemonStartupFailure.STARTUP_TIMEOUT)
     )
 
-    assert window._client_mode_is_api_mismatch is False
     assert "startup_timeout" not in window._client_mode_warning
     assert "did not become ready in time" in window._client_mode_warning
 

@@ -1,8 +1,10 @@
 """Application quit policy for daemon-backed resources.
 
-Presents Keep running / Terminate everything / Cancel when active daemon work
-exists, and applies the chosen decision without duplicating daemon state
-machines in GTK.
+Quitting sshPilot ends everything it started: remote sessions, SFTP services,
+transfers, forwards, the background daemon itself, and the ControlMasters the
+daemon spawned. There is deliberately no "leave it running" outcome — the only
+question a user is ever asked is whether to go through with the quit, and that
+confirmation appears only when live work would be lost.
 """
 
 from __future__ import annotations
@@ -28,9 +30,11 @@ _TERMINATE_POLL_SECONDS = 0.05
 
 
 class DaemonQuitDecision(str, Enum):
-    """User (or policy) choice when quitting with daemon work."""
+    """User (or policy) choice when quitting with daemon work.
 
-    KEEP_RUNNING = "keep_running"
+    Quit tears everything down; the only choice is whether to proceed.
+    """
+
     TERMINATE_ALL = "terminate_all"
     CANCEL = "cancel"
 
@@ -77,7 +81,7 @@ def daemon_active_work_summary(client) -> dict[str, int]:
 
 
 def has_daemon_active_work(window, client=None) -> bool:
-    """Whether quit should offer daemon keep-running / terminate choices."""
+    """Whether quitting would end live daemon work, so it needs confirming."""
     if window_has_daemon_terminals(window):
         return True
     client = client if client is not None else getattr(window, "client", None)
@@ -86,26 +90,15 @@ def has_daemon_active_work(window, client=None) -> bool:
 
 
 def resolve_quit_decision_from_policy(config) -> Optional[DaemonQuitDecision]:
-    """Map app-close policy to an automatic decision, or None when ASK."""
+    """Map app-close policy to an automatic decision, or None when ASK.
+
+    Quit always terminates; the policy only decides whether the user is asked
+    to confirm first.
+    """
     policy = resolve_app_close_policy(config)
-    if policy == TerminalClosePolicy.DETACH:
-        return DaemonQuitDecision.KEEP_RUNNING
     if policy == TerminalClosePolicy.TERMINATE:
         return DaemonQuitDecision.TERMINATE_ALL
     return None  # ASK
-
-
-def apply_keep_running(window) -> None:
-    """Detach GTK views; leave daemon resources running."""
-    window._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
-    window._daemon_quit_close_policy = TerminalClosePolicy.DETACH
-    app = window.get_application() if hasattr(window, "get_application") else None
-    if app is not None:
-        app._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
-
-    from . import shutdown
-
-    shutdown.cleanup_and_quit(window)
 
 
 def _client_supports_daemon_control(client) -> Optional[bool]:
@@ -339,6 +332,27 @@ def wait_for_daemon_termination(
     ]
 
 
+def resolve_daemon_socket_path(client=None) -> Optional[os.PathLike]:
+    """Return the daemon endpoint this app is bound to, or ``None``.
+
+    Prefers the path the live client actually connected to so a session
+    started against an explicit ``--socket`` is torn down at that path rather
+    than the default one.
+    """
+    if client is not None:
+        socket_path = getattr(client, "_socket_path", None)
+        if socket_path is None:
+            socket_path = getattr(client, "socket_path", None)
+        if socket_path is not None:
+            return socket_path
+    try:
+        from .daemon.lifecycle import resolve_socket_path
+
+        return resolve_socket_path()
+    except Exception:
+        return None
+
+
 def _resolve_terminate_context(window):
     """Return ``(client, daemon_process, socket_path)`` for Terminate everything."""
     client = getattr(window, "client", None)
@@ -349,20 +363,7 @@ def _resolve_terminate_context(window):
 
     daemon_process = getattr(selection, "daemon_process", None) if selection else None
 
-    socket_path = None
-    if client is not None:
-        socket_path = getattr(client, "_socket_path", None)
-        if socket_path is None:
-            socket_path = getattr(client, "socket_path", None)
-    if socket_path is None:
-        try:
-            from .daemon.lifecycle import resolve_socket_path
-
-            socket_path = resolve_socket_path()
-        except Exception:
-            socket_path = None
-
-    return client, daemon_process, socket_path
+    return client, daemon_process, resolve_daemon_socket_path(client)
 
 
 def _run_in_background(fn: Callable[[], None]) -> None:
@@ -401,42 +402,41 @@ def begin_terminate_shutdown_intent(window) -> None:
                 logger.debug("cancel_daemon_reconnect failed", exc_info=True)
 
 
-def _clear_terminate_quit_decision(window) -> None:
-    window._daemon_quit_decision = None
-    window._daemon_quit_close_policy = None
-    window._daemon_shutdown_intent = None
-    app = window.get_application() if hasattr(window, "get_application") else None
-    if app is not None:
-        app._daemon_quit_decision = None
-        app._daemon_shutdown_intent = None
+def force_daemon_exit(socket_path: Optional[os.PathLike]) -> list[str]:
+    """Make the daemon exit when the graceful stop did not.
 
+    Escalates SIGTERM (which the daemon handles as a normal shutdown, so it
+    still tears down its own sessions and ControlMasters) and then SIGKILL,
+    finally removing an orphaned socket file. A SIGKILLed daemon cannot run
+    its own cleanup, so the ControlMasters it spawned are swept here instead —
+    quit must not leave ``ssh`` processes and their remote TCP connections
+    behind.
 
-def _present_terminate_failed(window, errors: list[str]) -> None:
-    """Keep the window open and report that Terminate everything failed."""
-    from gi.repository import Adw
+    Returns an empty list once nothing holds the socket.
+    """
+    if socket_path is None:
+        return []
+    from .daemon.lifecycle import evict_socket_owner
+    from .daemon.runtime_cleanup import terminate_orphaned_ssh_masters
 
-    detail = "\n".join(f"• {message}" for message in errors[:8])
-    if len(errors) > 8:
-        detail += "\n" + _("…and {n} more").format(n=len(errors) - 8)
-    body = _(
-        "Could not terminate all daemon work. The application was not quit "
-        "so remote sessions and file transfers are not left half-closed.\n\n"
-        "{detail}"
-    ).format(detail=detail or _("Unknown error"))
-
-    dialog = Adw.AlertDialog.new(_("Terminate everything failed"), body)
-    dialog.add_response("ok", _("OK"))
-    dialog.set_default_response("ok")
-    dialog.set_close_response("ok")
-    dialog.present(window)
+    try:
+        freed = evict_socket_owner(Path(socket_path))
+    except Exception as exc:
+        return [f"force daemon exit: {exc}"]
+    terminate_orphaned_ssh_masters()
+    if not freed:
+        return ["the background service did not exit"]
+    return []
 
 
 def apply_terminate_all(window) -> None:
-    """Force-stop the daemon, wait for confirmed exit, then quit.
+    """Force-stop the daemon, confirm it is gone, then quit.
 
     The stop RPC and process/socket wait run on a background thread so the GTK
-    main loop is not blocked for the full RPC or drain timeout. Quit proceeds
-    only after termination is confirmed (or fails with an error dialog).
+    main loop is not blocked for the full RPC or drain timeout. A daemon that
+    does not answer or does not exit is escalated to signals rather than
+    cancelling the quit: quit is not a request the background service is
+    allowed to refuse.
     """
     # Intent first — before stop_daemon — so transport_closed cannot reconnect.
     begin_terminate_shutdown_intent(window)
@@ -451,14 +451,16 @@ def apply_terminate_all(window) -> None:
                 daemon_process=daemon_process,
                 socket_path=socket_path,
             )
+        if errors:
+            for message in errors:
+                logger.warning(
+                    "terminate-all during quit: %s; escalating", message
+                )
+            errors = force_daemon_exit(socket_path)
 
         def _finish() -> bool:
-            if errors:
-                for message in errors:
-                    logger.warning("terminate-all during quit: %s", message)
-                _clear_terminate_quit_decision(window)
-                _present_terminate_failed(window, errors)
-                return False
+            for message in errors:
+                logger.error("quit could not fully tear down: %s", message)
 
             from . import shutdown
 
@@ -471,7 +473,7 @@ def apply_terminate_all(window) -> None:
 
 
 def present_daemon_quit_dialog(window, *, on_decision) -> Any:
-    """Show Keep running / Terminate everything / Cancel and invoke callback.
+    """Confirm a quit that will end live remote work, and invoke callback.
 
     Uses ``Adw.AlertDialog`` (libadwaita) per project dialog rules.
     """
@@ -498,25 +500,21 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
         "Daemon-backed connections are active."
     )
     body = _(
-        "Choose whether to leave remote work running in the daemon, "
-        "or terminate everything and quit.\n\n{detail}"
+        "Quitting closes every remote session and stops the background "
+        "service. Nothing is left running.\n\n{detail}"
     ).format(detail=detail)
 
     dialog = Adw.AlertDialog.new(_("Quit SSH Pilot?"), body)
     dialog.add_response("cancel", _("Cancel"))
-    dialog.add_response("keep", _("Keep connections running"))
-    dialog.add_response("terminate", _("Terminate everything and quit"))
-    dialog.set_response_appearance("keep", Adw.ResponseAppearance.SUGGESTED)
+    dialog.add_response("terminate", _("Quit and Close Everything"))
     dialog.set_response_appearance(
         "terminate", Adw.ResponseAppearance.DESTRUCTIVE
     )
-    dialog.set_default_response("keep")
+    dialog.set_default_response("cancel")
     dialog.set_close_response("cancel")
 
     def _on_response(_dialog, response: str) -> None:
-        if response == "keep":
-            on_decision(DaemonQuitDecision.KEEP_RUNNING)
-        elif response == "terminate":
+        if response == "terminate":
             on_decision(DaemonQuitDecision.TERMINATE_ALL)
         else:
             on_decision(DaemonQuitDecision.CANCEL)
@@ -528,10 +526,11 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
 
 __all__ = [
     "DaemonQuitDecision",
-    "apply_keep_running",
     "apply_terminate_all",
     "begin_terminate_shutdown_intent",
     "daemon_active_work_summary",
+    "force_daemon_exit",
+    "resolve_daemon_socket_path",
     "has_daemon_active_work",
     "present_daemon_quit_dialog",
     "resolve_quit_decision_from_policy",

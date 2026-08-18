@@ -328,8 +328,13 @@ def _sync_terminate_dispatch(monkeypatch, quit_policy):
     )
 
 
-def test_issue3_apply_terminate_all_must_not_quit_when_termination_fails(monkeypatch):
-    """Failed Terminate everything must not call cleanup_and_quit."""
+def test_issue3_apply_terminate_all_escalates_when_stop_is_refused(monkeypatch):
+    """A daemon that refuses the stop RPC is killed, and the quit proceeds.
+
+    Quit is not a request the background service may decline: leaving the app
+    running (the old behaviour) left both a live daemon and a window the user
+    asked to close.
+    """
     import sshpilot.daemon_quit_policy as quit_policy
     import sshpilot.shutdown as shutdown_mod
 
@@ -341,11 +346,11 @@ def test_issue3_apply_terminate_all_must_not_quit_when_termination_fails(monkeyp
             "stop_daemon force: Only the originating client may mutate this SFTP service"
         ],
     )
-    presented: list[tuple] = []
+    forced: list[object] = []
     monkeypatch.setattr(
         quit_policy,
-        "_present_terminate_failed",
-        lambda window, errors: presented.append((window, list(errors))),
+        "force_daemon_exit",
+        lambda socket_path: forced.append(socket_path) or [],
     )
 
     quit_calls: list[object] = []
@@ -365,9 +370,8 @@ def test_issue3_apply_terminate_all_must_not_quit_when_termination_fails(monkeyp
     window = _Window()
     quit_policy.apply_terminate_all(window)
 
-    assert quit_calls == []
-    assert presented and presented[0][1]
-    assert window._daemon_quit_decision is None
+    assert forced, "a refused stop must escalate to forcing the daemon out"
+    assert quit_calls == [window]
 
 
 def test_issue3_apply_terminate_all_quits_when_termination_succeeds(monkeypatch):
@@ -399,8 +403,13 @@ def test_issue3_apply_terminate_all_quits_when_termination_succeeds(monkeypatch)
     assert quit_calls == [window]
 
 
-def test_issue3_apply_terminate_all_waits_for_daemon_exit_before_quit(monkeypatch):
-    """Quit is gated on wait_for_daemon_termination, not stop accepted alone."""
+def test_issue3_apply_terminate_all_escalates_when_daemon_outlives_its_stop(monkeypatch):
+    """An accepted stop that never completes still ends in a dead daemon.
+
+    Quit is gated on confirmed exit, not on the stop RPC being accepted — but
+    a daemon that accepts and then lingers is signalled rather than allowed to
+    keep the application open.
+    """
     import sshpilot.daemon_quit_policy as quit_policy
     import sshpilot.shutdown as shutdown_mod
 
@@ -414,7 +423,7 @@ def test_issue3_apply_terminate_all_waits_for_daemon_exit_before_quit(monkeypatc
     )
 
     quit_calls: list[object] = []
-    presented: list[list[str]] = []
+    forced: list[object] = []
     monkeypatch.setattr(
         shutdown_mod,
         "cleanup_and_quit",
@@ -422,8 +431,8 @@ def test_issue3_apply_terminate_all_waits_for_daemon_exit_before_quit(monkeypatc
     )
     monkeypatch.setattr(
         quit_policy,
-        "_present_terminate_failed",
-        lambda window, errors: presented.append(list(errors)),
+        "force_daemon_exit",
+        lambda socket_path: forced.append(socket_path) or [],
     )
 
     class _Window:
@@ -433,9 +442,10 @@ def test_issue3_apply_terminate_all_waits_for_daemon_exit_before_quit(monkeypatc
         def get_application(self):
             return None
 
-    quit_policy.apply_terminate_all(_Window())
-    assert quit_calls == []
-    assert presented and "socket still present" in presented[0][0]
+    window = _Window()
+    quit_policy.apply_terminate_all(window)
+    assert forced, "a daemon that outlives its own stop must be signalled"
+    assert quit_calls == [window]
 
 
 def test_wait_for_daemon_termination_requires_process_and_socket(tmp_path):

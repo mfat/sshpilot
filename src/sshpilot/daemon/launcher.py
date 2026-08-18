@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -19,6 +20,10 @@ from sshpilot.api.errors import ErrorCode, SshPilotError
 
 from .lifecycle import (
     SocketSecurityError,
+    ensure_private_runtime_directory,
+    evict_socket_owner,
+    probe_socket_owner,
+    remove_dead_socket,
     resolve_socket_path,
     validate_client_socket_path,
 )
@@ -28,8 +33,16 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_STARTUP_TIMEOUT = 3.0
+# A frozen build starts a whole application bundle, not an interpreter: code
+# signature validation, dyld, and a cold page cache put first-launch startup
+# well past the source-tree budget on macOS in particular. Timing out there
+# reports a broken daemon when the daemon was merely still starting.
+FROZEN_STARTUP_TIMEOUT = 20.0
 DEFAULT_POLL_INTERVAL = 0.05
 DEFAULT_PROBE_TIMEOUT = 0.25
+# How long the graceful ``daemon.stop`` RPC gets before eviction escalates to
+# signals. Short: an unusable peer is by definition one we cannot rely on.
+DEFAULT_EVICTION_STOP_TIMEOUT = 2.0
 
 _SENSITIVE_CHILD_ENVIRONMENT = frozenset(
     {
@@ -72,6 +85,21 @@ class DaemonLaunchError(RuntimeError):
         super().__init__(f"local daemon startup failed ({reason.value})")
 
 
+# Failures that describe a *resident peer this build cannot use* rather than a
+# failure to start one. Every one of them is recoverable by replacing that
+# peer, so the launcher evicts it instead of surfacing a dead end: a daemon
+# left over from a previous app build must never be able to keep the
+# application from starting.
+EVICTABLE_FAILURES = frozenset(
+    {
+        DaemonStartupFailure.API_VERSION_MISMATCH,
+        DaemonStartupFailure.INCOMPATIBLE_PROTOCOL,
+        DaemonStartupFailure.MISSING_CAPABILITY,
+        DaemonStartupFailure.HANDSHAKE_FAILED,
+    }
+)
+
+
 @dataclass(frozen=True)
 class DaemonProcessHandle:
     """Proof that this launcher created one exact child process."""
@@ -109,6 +137,11 @@ def _child_environment(source: Optional[Mapping[str, str]] = None) -> dict:
         # the bootloader's inherited onefile/child state before dispatching
         # the daemon entrypoint from the shared application executable.
         environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        # Tell the daemon it is running inside a packaged app so it picks the
+        # packaged idle-shutdown default. Nothing else set this, so shipped
+        # builds silently used the longer development timeout and left a
+        # resident daemon for minutes after the last client disconnected.
+        environment.setdefault("SSHPILOT_PACKAGED", "1")
     return environment
 
 
@@ -119,7 +152,7 @@ class DaemonLauncher:
         self,
         *,
         socket_path: Optional[os.PathLike] = None,
-        startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
+        startup_timeout: Optional[float] = None,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
         probe_timeout: float = DEFAULT_PROBE_TIMEOUT,
         executable: Optional[str] = None,
@@ -128,6 +161,12 @@ class DaemonLauncher:
         verbose: Optional[bool] = None,
         quiet: Optional[bool] = None,
     ) -> None:
+        if startup_timeout is None:
+            startup_timeout = (
+                FROZEN_STARTUP_TIMEOUT
+                if getattr(sys, "frozen", False)
+                else DEFAULT_STARTUP_TIMEOUT
+            )
         if startup_timeout <= 0 or poll_interval <= 0 or probe_timeout <= 0:
             raise ValueError("daemon launcher timeouts must be positive")
         self.socket_path = resolve_socket_path(socket_path)
@@ -170,22 +209,18 @@ class DaemonLauncher:
             pass
 
     def connect_or_start(self) -> DaemonLaunchResult:
-        """Return one compatible client, launching at most once per call."""
+        """Return one compatible client, launching at most once per call.
+
+        A resident daemon this build cannot speak to is replaced rather than
+        reported: startup does not depend on the previous build having exited
+        cleanly.
+        """
 
         with self._lock:
-            try:
-                validate_client_socket_path(self.socket_path)
-            except SocketSecurityError as error:
-                raise DaemonLaunchError(
-                    DaemonStartupFailure.UNSAFE_SOCKET
-                ) from error
+            self._prepare_socket_location()
 
-            try:
-                client = self._connect(self.probe_timeout)
-            except SshPilotError as error:
-                if error.code is not ErrorCode.DAEMON_UNAVAILABLE:
-                    raise self._classify_handshake_error(error) from error
-            else:
+            client = self._connect_to_usable_peer()
+            if client is not None:
                 self._ensure_gtk_askpass_log_forwarder()
                 self._ensure_daemon_log_forwarder()
                 self._synchronize_explicit_log_level(client)
@@ -243,6 +278,132 @@ class DaemonLauncher:
             self._ensure_daemon_log_forwarder()
             self._synchronize_explicit_log_level(client)
             return DaemonLaunchResult(client=client, process=handle)
+
+    def _prepare_socket_location(self) -> None:
+        """Validate the socket location, repairing what is safely repairable.
+
+        A runtime directory left at the wrong mode by an unguarded ``makedirs``
+        under a lax umask, or a leftover non-socket file at the endpoint, are
+        both self-inflicted local states that used to fail startup outright
+        with ``unsafe_socket``. Neither is a security signal on a path this
+        user already owns, so both are repaired. Anything that is *not* ours
+        (foreign owner, symlinked directory) still fails closed.
+        """
+
+        try:
+            validate_client_socket_path(self.socket_path)
+            return
+        except SocketSecurityError as first_error:
+            initial_error: SocketSecurityError = first_error
+
+        try:
+            ensure_private_runtime_directory(self.socket_path.parent)
+        except (SocketSecurityError, OSError) as error:
+            raise DaemonLaunchError(DaemonStartupFailure.UNSAFE_SOCKET) from error
+
+        self._discard_unusable_endpoint()
+
+        try:
+            validate_client_socket_path(self.socket_path)
+        except SocketSecurityError as error:
+            raise DaemonLaunchError(DaemonStartupFailure.UNSAFE_SOCKET) from error
+        # These messages are curated and path-free, so they are safe to log.
+        logger.info(
+            "Repaired the daemon socket location before startup (was: %s)",
+            initial_error,
+        )
+
+    def _discard_unusable_endpoint(self) -> None:
+        """Remove an endpoint that is not a usable socket and answers nobody."""
+
+        try:
+            info = self.socket_path.lstat()
+        except (FileNotFoundError, OSError):
+            return
+        if stat.S_ISSOCK(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+            if not stat.S_IMODE(info.st_mode) & 0o177:
+                return  # A well-formed socket; not this method's business.
+            accepting, _pid = probe_socket_owner(self.socket_path)
+            if accepting:
+                return  # Live peer; eviction, not deletion, is the answer.
+        if hasattr(os, "getuid") and info.st_uid != os.getuid():
+            return
+        try:
+            self.socket_path.unlink()
+        except (FileNotFoundError, OSError):
+            return
+        logger.info("Removed an unusable daemon socket endpoint before startup")
+
+    def _connect_to_usable_peer(self) -> Optional[DaemonClient]:
+        """Return a client for a resident daemon, or ``None`` to launch one.
+
+        Evicts (once) a peer that answers but cannot serve this build, so the
+        caller falls through to launching a current daemon instead of failing.
+        """
+
+        for attempt in (0, 1):
+            try:
+                return self._connect(self.probe_timeout)
+            except DaemonLaunchError as error:
+                reason = error.reason
+            except SshPilotError as error:
+                if error.code is ErrorCode.DAEMON_UNAVAILABLE:
+                    remove_dead_socket(self.socket_path)
+                    return None
+                reason = self._classify_handshake_error(error).reason
+
+            if attempt or reason not in EVICTABLE_FAILURES:
+                raise DaemonLaunchError(reason)
+            logger.warning(
+                "Resident daemon cannot serve this build reason=%s; replacing it",
+                reason.value,
+            )
+            if not self._evict_unusable_peer():
+                raise DaemonLaunchError(reason)
+        return None
+
+    def _evict_unusable_peer(self) -> bool:
+        """Replace the daemon holding the socket. True when the socket is free.
+
+        Graceful first: an administrative ``daemon.stop`` lets the old daemon
+        close its own sessions and children. Signals are the fallback for a
+        peer that cannot answer — a wedged process, or one whose reply DTOs
+        this build can no longer decode.
+        """
+
+        self._request_peer_stop()
+        return evict_socket_owner(self.socket_path)
+
+    def _request_peer_stop(self) -> None:
+        """Best-effort administrative stop of an incompatible resident daemon.
+
+        Deliberately issues no other RPC: the peer's DTOs are not guaranteed
+        to match this build, and every failure mode here simply escalates to
+        the signal path.
+        """
+
+        from sshpilot.api.models.daemon import StopDaemonRequest
+
+        client: Optional[DaemonClient] = None
+        try:
+            client = DaemonClient(
+                socket_path=self.socket_path,
+                timeout=DEFAULT_EVICTION_STOP_TIMEOUT,
+                connect_timeout=self.probe_timeout,
+                client_name="sshpilot-gtk",
+                frontend_type="gtk",
+                allow_api_mismatch=True,
+            )
+            client.stop_daemon(StopDaemonRequest(force=True))
+            logger.info("Requested graceful stop of the outgoing daemon")
+        except BaseException:
+            logger.debug("Graceful stop of the outgoing daemon failed", exc_info=True)
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except BaseException:
+                    pass
 
     def _connect(self, timeout: float) -> DaemonClient:
         # ``timeout`` here is the launcher probe budget for socket connect only.

@@ -564,3 +564,34 @@ def test_forced_restart_cancelled_skips_forced_rpc_and_completion(monkeypatch):
     assert fake.restart_calls[0].force is False
     assert fake.closed is True
     assert len(dialogs) == 1
+
+
+def test_restart_never_probes_status_over_a_possibly_stale_daemon(monkeypatch):
+    """Restart is the recovery for a daemon from another build — so it must
+    not begin with an RPC that daemon may not be able to answer.
+
+    ``allow_api_mismatch`` clients speak the stable control surface only;
+    their data DTOs are not guaranteed to decode against this build. Probing
+    ``daemon.status`` first aborted the restart on exactly the daemon the
+    restart exists to replace.
+    """
+    fake = _FakeDaemonClient(
+        SimpleNamespace(accepted=True, confirmation=None, will_lose=(), message="")
+    )
+
+    def _undecodable_status():
+        fake.status_checked = True
+        raise ValueError("daemon status contains an unknown state")
+
+    fake.get_daemon_status = _undecodable_status
+
+    monkeypatch.setattr(daemon_client_mod, "DaemonClient", lambda *a, **kw: fake)
+    prefs, _ = _make_prefs()
+    completions = []
+
+    prefs._request_daemon_restart(on_complete=lambda: completions.append("done"))
+
+    assert fake.status_checked is False, "restart must issue control RPCs only"
+    assert completions == ["done"]
+    assert len(fake.restart_calls) == 1
+    assert fake.closed is True

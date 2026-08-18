@@ -2098,12 +2098,46 @@ class DaemonServer:
                 type(error).__name__,
             )
         finally:
+            owned_the_socket = self._socket_identity is not None
             unlink_owned_socket(self.socket_path, self._socket_identity)
             self._socket_identity = None
             try:
                 sweep_stale_askpass_sockets(self.socket_path.parent)
             except Exception:
                 logger.debug("shutdown askpass sweep failed", exc_info=True)
+            if owned_the_socket:
+                self._expire_control_masters()
+
+    def _expire_control_masters(self) -> None:
+        """Terminate the ControlMasters this daemon's sessions left behind.
+
+        OpenSSH backgrounds a multiplexing master into its own session, so it
+        is not one of our children and survives both process-group teardown
+        and daemon exit — for the whole ``ControlPersist`` window. Quitting the
+        application must not leave those ``ssh`` processes (and their live TCP
+        connections to remote hosts) running, so they are retired explicitly.
+
+        Two guards keep the blast radius exactly right. Only a daemon that
+        actually owned the listening socket sweeps at all, so a startup that
+        lost the single-instance race cannot tear down the masters belonging
+        to the daemon that won it. And only a daemon on the *default* socket
+        does, because the ControlMaster directory is per-user, not per-socket:
+        an instance started on an explicit ``--socket`` (a test fixture, a
+        second development instance) shares that directory with the user's
+        real daemon and must not retire its masters.
+        """
+
+        try:
+            if self.socket_path != resolve_socket_path():
+                return
+        except Exception:
+            return
+        try:
+            from sshpilot.ssh_multiplex import expire_all_masters
+
+            expire_all_masters(background=False, timeout=2.0, mode="exit")
+        except Exception:
+            logger.debug("shutdown ControlMaster teardown failed", exc_info=True)
 
     def collect_resource_counts(self) -> DaemonResourceCounts:
         with self._event_lock:

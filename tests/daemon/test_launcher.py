@@ -547,10 +547,19 @@ def test_daemon_without_required_gtk_connection_capabilities_is_rejected(
 
 
 def test_unsafe_socket_target_is_refused_before_process_launch(tmp_path):
+    """A socket location that is not really ours still fails closed.
+
+    Repairable local litter (a stray file at the endpoint, a runtime directory
+    left at the wrong mode) is now healed instead — see
+    ``tests/daemon/test_launcher_self_healing.py``. A symlinked directory is
+    not repairable: following it would place this user's private socket
+    somewhere they did not choose.
+    """
+    real = tmp_path / "elsewhere"
+    real.mkdir(mode=0o700)
     directory = tmp_path / "runtime"
-    directory.mkdir(mode=0o700)
+    directory.symlink_to(real, target_is_directory=True)
     socket_path = directory / "sshpilotd.sock"
-    socket_path.write_text("not a socket", encoding="utf-8")
     launches = []
     launcher = DaemonLauncher(
         socket_path=socket_path,
@@ -562,4 +571,3 @@ def test_unsafe_socket_target_is_refused_before_process_launch(tmp_path):
 
     assert caught.value.reason is DaemonStartupFailure.UNSAFE_SOCKET
     assert launches == []
-    assert socket_path.read_text(encoding="utf-8") == "not a socket"

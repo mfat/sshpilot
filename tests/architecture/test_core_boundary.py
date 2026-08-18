@@ -157,6 +157,13 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # Diagnostics: resolve the daemon socket path for Help ▸ Diagnostics.
         ("log_viewer.py", "resolve_socket_path"),
         ("daemon_quit_policy.py", "resolve_socket_path"),
+        # Quit must leave nothing running: when the daemon will not stop on
+        # request, the quit path escalates to signalling the process holding
+        # the socket. The escalation itself lives in the daemon package.
+        ("daemon_quit_policy.py", "evict_socket_owner"),
+        # …and sweeps the ControlMasters that a killed daemon never got to
+        # retire, so quitting leaves no ``ssh`` process behind.
+        ("daemon_quit_policy.py", "terminate_orphaned_ssh_masters"),
         # Daemon-adjacent cleanup of stale askpass sockets.
         # Shared rule for the per-user runtime tree the daemon sockets,
         # askpass sockets, and ControlMaster sockets all live under —

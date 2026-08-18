@@ -152,8 +152,9 @@ def main() -> int:
 
         # --- Restore ---
         session_id = harness.detach_terminal_keep_session(term)
-        harness.gui.app._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
-        harness.gui.window._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
+        # Quit always stops the daemon now; simulate the crash-style exit
+        # that session restore exists for.
+        harness.gui.app._stop_daemon_for_quit = lambda *_a, **_k: None
         try:
             harness.gui.shutdown()
         except Exception:
