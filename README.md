@@ -6,22 +6,22 @@
 <table>
 <tr>
 <td width="50%">
-<img src="https://github.com/user-attachments/assets/b391e067-87b0-4ecb-a749-6e59de8e0bc2" alt="Connection sidebar with tabbed terminal" width="100%" />
-<p align="center"><sub>Connection sidebar with tabbed terminal</sub></p>
+<img src="screenshots/main-window.png" alt="Sidebar, terminal, and SFTP panes" width="100%" />
+<p align="center"><sub>Sidebar, terminal, and SFTP panes in one window</sub></p>
 </td>
 <td width="50%">
-<img src="https://github.com/user-attachments/assets/46e5ea81-6a98-46ef-b8ec-33b98858d9cf" alt="Dual-pane SFTP file manager" width="100%" />
-<p align="center"><sub>Built-in dual-pane SFTP file manager</sub></p>
+<img src="screenshots/fm.png" alt="Dual-pane SFTP file manager" width="100%" />
+<p align="center"><sub>Dual-pane SFTP file manager</sub></p>
 </td>
 </tr>
 <tr>
 <td width="50%">
-<img src="https://github.com/user-attachments/assets/b58ff8f2-ea1b-4836-a9b6-ee679c66c095" alt="btop running inside SSH Pilot's terminal" width="100%" />
-<p align="center"><sub>Full terminal power — btop running over SSH</sub></p>
+<img src="screenshots/splitview.png" alt="Split view with multiple terminals" width="100%" />
+<p align="center"><sub>Split view with multiple terminals</sub></p>
 </td>
 <td width="50%">
-<img src="https://github.com/user-attachments/assets/7b5c1c01-d20d-4694-bce1-e42eebc74f40" alt="Copy key to server dialog" width="100%" />
-<p align="center"><sub>One-click key transfer (ssh-copy-id)</sub></p>
+<img src="screenshots/ssh-copy-id.png" alt="Copy key to server dialog" width="100%" />
+<p align="center"><sub>Key transfer to a server (ssh-copy-id)</sub></p>
 </td>
 </tr>
 </table>
