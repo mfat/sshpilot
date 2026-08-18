@@ -3902,21 +3902,22 @@ class PreferencesWindow(Adw.NavigationPage):
         try:
             from .api.daemon_client import DaemonClient
 
-            client = DaemonClient(timeout=1.0)
+            client = DaemonClient(timeout=1.0, allow_api_mismatch=True)
             try:
                 status = client.get_daemon_status()
                 resources = status.resources
-                row.set_subtitle(
-                    _(
-                        "{state} · instance {instance} · "
-                        "{sessions} sessions · {clients} clients"
-                    ).format(
-                        state=status.state.value,
-                        instance=status.server_instance_id[:8],
-                        sessions=resources.sessions_active,
-                        clients=resources.clients,
-                    )
+                subtitle = _(
+                    "{state} · instance {instance} · "
+                    "{sessions} sessions · {clients} clients"
+                ).format(
+                    state=status.state.value,
+                    instance=status.server_instance_id[:8],
+                    sessions=resources.sessions_active,
+                    clients=resources.clients,
                 )
+                if client.api_mismatch:
+                    subtitle += " · " + _("different app version — restart required")
+                row.set_subtitle(subtitle)
             finally:
                 client.close()
         except Exception as exc:
@@ -3978,7 +3979,7 @@ class PreferencesWindow(Adw.NavigationPage):
             from .api.daemon_client import DaemonClient
             from .api.models.daemon import RestartDaemonRequest
 
-            client = DaemonClient(timeout=2.0)
+            client = DaemonClient(timeout=2.0, allow_api_mismatch=True)
             try:
                 client.get_daemon_status()
                 result = client.restart_daemon(RestartDaemonRequest(force=False))
@@ -4009,7 +4010,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         error_body = None
                         forced = None
                         try:
-                            forced = DaemonClient(timeout=2.0)
+                            forced = DaemonClient(timeout=2.0, allow_api_mismatch=True)
                             forced_result = forced.restart_daemon(
                                 RestartDaemonRequest(force=True, confirmation=token)
                             )
