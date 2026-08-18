@@ -498,18 +498,20 @@ def _clear_terminate_quit_decision(window) -> None:
 
 
 def _present_incomplete_teardown(window, survivors: list[str]) -> None:
-    """Explain which owned resources are still running, and stay open."""
+    """List what is still running, and stay open.
+
+    The heading carries the outcome; the body is just the list. Why teardown
+    fell short is a log concern.
+    """
     from gi.repository import Adw
 
-    detail = "\n".join(f"• {message}" for message in survivors[:8])
+    body = "\n".join(f"• {message}" for message in survivors[:8])
     if len(survivors) > 8:
-        detail += "\n" + _("…and {n} more").format(n=len(survivors) - 8)
-    body = _(
-        "SSH Pilot could not shut everything down, so it has not quit. "
-        "Leaving now would strand these on your machine:\n\n{detail}"
-    ).format(detail=detail or _("Unknown error"))
+        body += "\n" + _("…and {n} more").format(n=len(survivors) - 8)
 
-    dialog = Adw.AlertDialog.new(_("Could not quit completely"), body)
+    dialog = Adw.AlertDialog.new(
+        _("Could not quit completely"), body or _("Something is still running.")
+    )
     dialog.add_response("ok", _("OK"))
     dialog.set_default_response("ok")
     dialog.set_close_response("ok")
@@ -578,6 +580,10 @@ def apply_terminate_all(window) -> None:
 def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     """Confirm a quit that will end live remote work, and invoke callback.
 
+    The body is only what the user has running. How teardown is carried out
+    and verified is this module's problem, not something to explain in a
+    dialog the user is trying to get past.
+
     Uses ``Adw.AlertDialog`` (libadwaita) per project dialog rules.
     """
     from gi.repository import Adw
@@ -597,16 +603,9 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
             _("Pending prompts: {n}").format(n=summary["interactions_pending"])
         )
     if window_has_daemon_terminals(window) and not parts:
-        parts.append(_("Daemon-backed terminal tabs are open."))
+        parts.append(_("Open terminal tabs"))
 
-    detail = "\n".join(parts) if parts else _(
-        "Daemon-backed connections are active."
-    )
-    body = _(
-        "Quitting closes every remote session and stops the background "
-        "service. SSH Pilot checks that each one has actually stopped, and "
-        "stays open to tell you if any of them has not.\n\n{detail}"
-    ).format(detail=detail)
+    body = "\n".join(parts) if parts else _("You have active connections.")
 
     dialog = Adw.AlertDialog.new(_("Quit SSH Pilot?"), body)
     dialog.add_response("cancel", _("Cancel"))
