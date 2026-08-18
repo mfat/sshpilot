@@ -350,7 +350,7 @@ def test_issue3_apply_terminate_all_escalates_when_stop_is_refused(monkeypatch):
     monkeypatch.setattr(
         quit_policy,
         "force_daemon_exit",
-        lambda socket_path: forced.append(socket_path) or [],
+        lambda socket_path, **_kwargs: forced.append(socket_path) or [],
     )
     monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
 
@@ -434,7 +434,7 @@ def test_issue3_apply_terminate_all_escalates_when_daemon_outlives_its_stop(monk
     monkeypatch.setattr(
         quit_policy,
         "force_daemon_exit",
-        lambda socket_path: forced.append(socket_path) or [],
+        lambda socket_path, **_kwargs: forced.append(socket_path) or [],
     )
     monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
 

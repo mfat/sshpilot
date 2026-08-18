@@ -70,7 +70,7 @@ DEFAULT_CLOSE_GRACE_SECONDS = 0.5
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 2.0
 DEFAULT_MAX_RETAINED_CLOSED_SESSIONS = 100
 
-from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process
+from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process_or_abandon
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +262,7 @@ class SubprocessSessionProcessRunner:
             env=environment,
             close_fds=True,
         )
-        record_owned_process(process.pid, kind=KIND_SESSION)
+        record_owned_process_or_abandon(process, kind=KIND_SESSION)
         handle = _OwnedSubprocessHandle(process, on_exit, self._unregister)
         with self._condition:
             if self._closed:

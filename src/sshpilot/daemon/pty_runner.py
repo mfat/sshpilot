@@ -29,7 +29,7 @@ from .session_runtime import (
     SessionLaunchSpec,
     SessionProcessHandle,
 )
-from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process
+from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process_or_abandon
 
 DEFAULT_TERMINAL_INPUT_BYTES = 256 * 1024
 DEFAULT_PTY_READ_CHUNK = 32 * 1024
@@ -492,8 +492,8 @@ class PtySessionProcessRunner:
             status_write = -1
             # The helper calls setsid before exec, so the child is a process
             # group leader and the whole group is ours to signal.
-            record_owned_process(
-                process.pid, kind=KIND_SESSION, process_group=True
+            record_owned_process_or_abandon(
+                process, kind=KIND_SESSION, process_group=True
             )
             readable, _, _ = select.select((status_read,), (), (), 2.0)
             # A successful exec closes status_write via CLOEXEC without

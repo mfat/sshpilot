@@ -21,6 +21,7 @@ that we decline to kill something.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -31,7 +32,7 @@ from typing import Iterable, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-REGISTRY_FILE_NAME = "sshpilotd-processes.json"
+REGISTRY_FILE_PREFIX = "sshpilotd-processes"
 _REGISTRY_VERSION = 1
 
 # Process kinds. Stable strings: they are written to disk by one build and
@@ -44,9 +45,17 @@ KIND_HELPER = "helper"
 
 
 def registry_path_for(socket_path: os.PathLike) -> Path:
-    """Return the registry file that belongs beside ``socket_path``."""
+    """Return the registry file belonging to one daemon endpoint.
 
-    return Path(socket_path).parent / REGISTRY_FILE_NAME
+    The name is tied to the socket path, not just its directory: daemons are
+    per-socket while the directory is per-user, so two instances on explicit
+    ``--socket`` paths in one directory would otherwise share a registry and
+    each read the other's children as its own.
+    """
+
+    resolved = Path(socket_path)
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:16]
+    return resolved.parent / f"{REGISTRY_FILE_PREFIX}-{digest}.json"
 
 
 @dataclass(frozen=True)
@@ -75,7 +84,10 @@ class ProcessIdentity:
             return False
         current = _create_time(self.pid)
         if current is None:
-            return False
+            # Either the process is gone, or we could not read its start time.
+            # Only the first is proof of absence, so an existing PID we cannot
+            # fingerprint counts as alive.
+            return _pid_exists(self.pid)
         # Creation times are floats from the same source; compare with a
         # tolerance well under any plausible PID-recycle interval.
         if abs(current - self.create_time) >= 0.05:
@@ -105,6 +117,20 @@ def _create_time(pid: int) -> Optional[float]:
         return float(psutil.Process(pid).create_time())
     except Exception:
         return _create_time_from_proc(pid)
+
+
+def _pid_exists(pid: int) -> bool:
+    """Whether any process holds ``pid`` — identity unknown."""
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
 
 
 def _is_zombie(pid: int) -> bool:
@@ -197,14 +223,29 @@ class RegisteredProcess:
         )
 
 
+class RegistryUnreadable(RuntimeError):
+    """The registry exists (or may exist) but its contents cannot be trusted.
+
+    Deliberately distinct from "read successfully and empty". For shutdown
+    verification the two are opposites: one proves there is nothing left to
+    clean up, the other proves nothing at all. Corrupt JSON, an unsupported
+    version, and an I/O or permission failure all raise this so the caller
+    must decide explicitly rather than inherit an empty tuple.
+    """
+
+
 class OwnedProcessRegistry:
     """File-backed set of the processes this daemon is responsible for.
 
     Writes are whole-file and atomic (``os.replace``), which is sufficient
-    because exactly one daemon owns a socket directory at a time — the same
-    single-instance guarantee the socket bind provides. Readers tolerate a
-    missing or corrupt file by reporting nothing owned, since a registry that
-    cannot be parsed must never be turned into signals.
+    because exactly one daemon owns a given socket at a time — the same
+    single-instance guarantee the socket bind provides.
+
+    A *missing* file counts as empty. That is the one absence this design can
+    prove: the registry is created on the first child a daemon spawns, in the
+    directory it already owns, so "no file" means "this endpoint never had a
+    tracked child". Every other failure to read raises
+    :class:`RegistryUnreadable`.
     """
 
     def __init__(self, path: os.PathLike) -> None:
@@ -254,6 +295,8 @@ class OwnedProcessRegistry:
                 self._write(remaining)
 
     def entries(self) -> Tuple[RegisteredProcess, ...]:
+        """All recorded entries. Raises :class:`RegistryUnreadable` if unsure."""
+
         with self._lock:
             return tuple(self._read())
 
@@ -286,28 +329,40 @@ class OwnedProcessRegistry:
         try:
             raw = self._path.read_bytes()
         except FileNotFoundError:
+            # The only provable absence: no daemon ever recorded a child here.
             return []
-        except OSError:
-            logger.debug("Could not read the process registry", exc_info=True)
-            return []
+        except OSError as error:
+            raise RegistryUnreadable(
+                "the owned-process registry could not be read"
+            ) from error
         try:
             document = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            logger.warning("Ignoring an unreadable owned-process registry")
-            return []
-        if type(document) is not dict or document.get("version") != _REGISTRY_VERSION:
-            return []
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise RegistryUnreadable(
+                "the owned-process registry is corrupt"
+            ) from error
+        if type(document) is not dict:
+            raise RegistryUnreadable("the owned-process registry is malformed")
+        if document.get("version") != _REGISTRY_VERSION:
+            raise RegistryUnreadable(
+                "the owned-process registry uses an unsupported format"
+            )
         raw_entries = document.get("entries")
         if type(raw_entries) is not list:
-            return []
+            raise RegistryUnreadable("the owned-process registry is malformed")
         entries = []
         for item in raw_entries:
             entry = RegisteredProcess.from_wire(item)
-            if entry is not None:
-                entries.append(entry)
+            if entry is None:
+                raise RegistryUnreadable(
+                    "the owned-process registry contains an unusable entry"
+                )
+            entries.append(entry)
         return entries
 
     def _write(self, entries: Iterable[RegisteredProcess]) -> None:
+        """Persist atomically. Raises ``OSError`` when ownership is not recorded."""
+
         document = {
             "version": _REGISTRY_VERSION,
             "entries": [entry.to_wire() for entry in entries],
@@ -324,11 +379,13 @@ class OwnedProcessRegistry:
                 os.close(descriptor)
             os.replace(temporary, self._path)
         except OSError:
-            logger.debug("Could not write the process registry", exc_info=True)
             try:
                 temporary.unlink()
             except OSError:
                 pass
+            # Never swallowed: an unrecorded child is one nothing could prove
+            # ownership of afterwards, so the caller has to fail the launch.
+            raise
 
 
 # The daemon process installs its registry here so the runtimes that spawn
@@ -349,18 +406,30 @@ def active_registry() -> Optional[OwnedProcessRegistry]:
         return _active_registry
 
 
+class OwnershipNotRecorded(RuntimeError):
+    """A child could not be recorded, so its ownership cannot be proven later."""
+
+
 def record_owned_process(
     pid: int, *, kind: str, label: str = "", process_group: bool = False
 ) -> None:
-    """Register a child with the active registry, if one is installed."""
+    """Register a child with the active registry, if one is installed.
+
+    Raises :class:`OwnershipNotRecorded` when the registry exists but the
+    child could not be persisted. Callers must then abandon the launch: a
+    child nobody can prove we own is one nothing will reap if this daemon is
+    killed, which is precisely the orphan the registry exists to prevent.
+    """
 
     registry = active_registry()
     if registry is None:
         return
     try:
         registry.register(pid, kind=kind, label=label, process_group=process_group)
-    except Exception:
-        logger.debug("Could not record an owned process", exc_info=True)
+    except Exception as error:
+        raise OwnershipNotRecorded(
+            "the child process could not be recorded as owned"
+        ) from error
 
 
 def forget_owned_process(pid: int) -> None:
@@ -371,3 +440,29 @@ def forget_owned_process(pid: int) -> None:
         registry.unregister(pid)
     except Exception:
         logger.debug("Could not forget an owned process", exc_info=True)
+
+
+def record_owned_process_or_abandon(
+    process, *, kind: str, label: str = "", process_group: bool = False
+) -> None:
+    """Record a freshly spawned child, or kill it and raise.
+
+    The only safe response to "we cannot record this child" is to not have
+    the child: a live process nothing can prove we own would outlive a killed
+    daemon with nothing left to reap it.
+    """
+
+    try:
+        record_owned_process(
+            process.pid, kind=kind, label=label, process_group=process_group
+        )
+    except OwnershipNotRecorded:
+        logger.error(
+            "Abandoning a %s child that could not be recorded as owned", kind
+        )
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except Exception:
+            logger.debug("Could not stop an unrecorded child", exc_info=True)
+        raise

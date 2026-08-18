@@ -1237,12 +1237,14 @@ class SshPilotApplication(Adw.Application):
         """
 
         from .daemon_quit_policy import (
+            capture_daemon_identity,
             force_daemon_exit,
             resolve_daemon_socket_path,
             wait_for_daemon_termination,
         )
 
         socket_path = resolve_daemon_socket_path(client)
+        daemon_identity = capture_daemon_identity(socket_path)
         daemon_process = getattr(selection, 'daemon_process', None)
 
         if client is not None:
@@ -1266,7 +1268,9 @@ class SshPilotApplication(Adw.Application):
         if errors:
             for message in errors:
                 logger.warning("quit shutdown: %s; escalating", message)
-            for message in force_daemon_exit(socket_path):
+            for message in force_daemon_exit(
+                socket_path, daemon_identity=daemon_identity
+            ):
                 logger.error("quit could not fully tear down: %s", message)
 
     def setup_logging(self):

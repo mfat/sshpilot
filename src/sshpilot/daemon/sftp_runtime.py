@@ -97,7 +97,7 @@ from sshpilot.logging_support import log_context
 from .operation_runtime import OperationCancelled
 from .session_runtime import SessionLaunchSpec
 
-from .process_registry import KIND_SFTP, forget_owned_process, record_owned_process
+from .process_registry import KIND_SFTP, forget_owned_process, record_owned_process_or_abandon
 
 logger = logging.getLogger(__name__)
 
@@ -269,7 +269,7 @@ class SubprocessSftpProcessRunner:
                 "The SFTP session could not be established",
                 connection_id=spec.connection_id,
             ) from exc
-        record_owned_process(process.pid, kind=KIND_SFTP)
+        record_owned_process_or_abandon(process, kind=KIND_SFTP)
         handle = _SubprocessSftpHandle(process, client)
         with self._lock:
             if self._closed:

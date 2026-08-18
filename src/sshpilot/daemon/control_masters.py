@@ -29,6 +29,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -38,6 +39,16 @@ logger = logging.getLogger(__name__)
 
 # ``ssh -O check`` prints e.g. "Master running (pid=12345)".
 _MASTER_PID_PATTERN = re.compile(rb"\(pid=(\d+)\)")
+# Positive evidence that nothing is listening on the ControlPath: OpenSSH
+# reports a refused connection or a missing/stale socket. Anything else that
+# merely fails is not evidence of absence.
+_ABSENT_PATTERN = re.compile(
+    rb"No such file or directory"
+    rb"|Connection refused"
+    rb"|control socket connect|Control socket connect"
+    rb"|not a control socket|No control (path|socket)",
+    re.IGNORECASE,
+)
 
 DEFAULT_CONTROL_COMMAND_TIMEOUT = 2.0
 
@@ -53,10 +64,41 @@ def owns_default_control_master_namespace(socket_path: Optional[os.PathLike]) ->
 
     if socket_path is None:
         return False
-    try:
-        return Path(socket_path) == resolve_socket_path()
-    except Exception:
-        return False
+    # A failure to resolve the default socket propagates: callers must decide
+    # explicitly, because "cannot tell" is not "does not own".
+    return Path(socket_path) == resolve_socket_path()
+
+
+class MasterState(str, Enum):
+    """What we actually know about a ControlPath.
+
+    ABSENT requires *positive evidence* that nothing is listening. Anything
+    that merely prevented us from finding out — ssh missing, a timed-out or
+    failed probe, an unreadable directory, output we cannot parse — is
+    UNKNOWN, never ABSENT. The distinction is load-bearing: only ABSENT
+    permits unlinking a socket, and only ABSENT permits a successful quit.
+    """
+
+    LIVE = "live"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class ControlMasterProbe:
+    """The result of asking one ControlPath whether a master is behind it."""
+
+    path: Path
+    state: MasterState
+    pid: Optional[int] = None
+    reason: str = ""
+
+    def describe(self) -> str:
+        if self.state is MasterState.LIVE:
+            if self.pid is None:
+                return f"ControlMaster on {self.path.name}"
+            return f"ControlMaster pid={self.pid} on {self.path.name}"
+        return f"ControlMaster on {self.path.name} could not be checked ({self.reason})"
 
 
 @dataclass(frozen=True)
@@ -73,7 +115,11 @@ class OwnedControlMaster:
 
 
 def control_master_directory() -> Optional[Path]:
-    """The directory sshPilot points ``ControlPath`` at, if it is resolvable."""
+    """The directory sshPilot points ``ControlPath`` at, if it is resolvable.
+
+    ``None`` means *unresolved*, not *empty*: callers must treat it as an
+    inability to enumerate masters rather than as proof there are none.
+    """
 
     try:
         from sshpilot.ssh_multiplex import socket_dir
@@ -84,9 +130,24 @@ def control_master_directory() -> Optional[Path]:
         return None
 
 
+def list_control_paths(directory: Path) -> Tuple[Path, ...]:
+    """Every candidate ControlPath in ``directory``.
+
+    Raises ``OSError`` when the directory cannot be listed — an unreadable
+    directory is unknown territory, not an empty one. A directory that does
+    not exist is genuinely empty: sshPilot creates it before the first master.
+    """
+
+    try:
+        return tuple(sorted(directory / name for name in os.listdir(directory)))
+    except FileNotFoundError:
+        return ()
+
+
 def _run_control_command(
     path: Path, action: str, *, timeout: float
 ) -> Optional[subprocess.CompletedProcess]:
+    """Run one ``ssh -O`` command. ``None`` means it could not be completed."""
     try:
         return subprocess.run(
             [
@@ -110,76 +171,132 @@ def _run_control_command(
 
 def probe_control_master(
     path: Path, *, timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT
-) -> Optional[OwnedControlMaster]:
-    """Return the live master answering on ``path``, or ``None``.
+) -> ControlMasterProbe:
+    """Ask one ControlPath whether a master is behind it.
 
-    A socket file that answers nothing is a leftover from a crashed master,
-    not a surviving process.
+    Only a completed ``ssh -O check`` that reports failure is evidence of
+    ABSENT — that is a socket whose master is gone. A probe that could not
+    run or could not finish tells us nothing, and saying "absent" there would
+    unlink the socket of a master that is alive and holding a remote
+    connection open.
     """
 
-    result = _run_control_command(path, "check", timeout=timeout)
-    if result is None or result.returncode != 0:
-        return None
-    match = _MASTER_PID_PATTERN.search(result.stderr or b"") or _MASTER_PID_PATTERN.search(
-        result.stdout or b""
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                f"ControlPath={path}",
+                "-O",
+                "check",
+                # The host argument only feeds token expansion, which a
+                # literal ControlPath does not need.
+                "sshpilot-controlmaster",
+            ],
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return ControlMasterProbe(
+            path=path, state=MasterState.UNKNOWN, reason="the check timed out"
+        )
+    except FileNotFoundError:
+        return ControlMasterProbe(
+            path=path, state=MasterState.UNKNOWN, reason="ssh is unavailable"
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ControlMasterProbe(
+            path=path, state=MasterState.UNKNOWN, reason="the check could not run"
+        )
+
+    output = (result.stderr or b"") + (result.stdout or b"")
+    if result.returncode == 0:
+        match = _MASTER_PID_PATTERN.search(output)
+        if match is None:
+            # It answered as a live master but we cannot name it. Live is the
+            # safe reading; an unnameable master is still a master.
+            return ControlMasterProbe(
+                path=path,
+                state=MasterState.LIVE,
+                reason="the master did not report a pid",
+            )
+        return ControlMasterProbe(
+            path=path, state=MasterState.LIVE, pid=int(match.group(1))
+        )
+
+    if _ABSENT_PATTERN.search(output):
+        return ControlMasterProbe(path=path, state=MasterState.ABSENT)
+    return ControlMasterProbe(
+        path=path,
+        state=MasterState.UNKNOWN,
+        reason="the check failed for an unrecognized reason",
     )
-    pid = int(match.group(1)) if match else None
-    return OwnedControlMaster(path=path, pid=pid)
+
+
+def survey_control_masters(
+    *, directory: Optional[Path] = None, timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT
+) -> Tuple[ControlMasterProbe, ...]:
+    """Probe every ControlPath sshPilot created.
+
+    Raises ``OSError`` when the directory itself cannot be enumerated, and
+    ``LookupError`` when it cannot even be resolved. Neither is reported as
+    "no masters": an unreadable directory could be hiding any number of live
+    connections.
+    """
+
+    base = directory if directory is not None else control_master_directory()
+    if base is None:
+        raise LookupError("the ControlMaster directory could not be resolved")
+    return tuple(
+        probe_control_master(path, timeout=timeout) for path in list_control_paths(base)
+    )
 
 
 def list_owned_control_masters(
     *, directory: Optional[Path] = None, timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT
 ) -> Tuple[OwnedControlMaster, ...]:
-    """Every live master on a ControlPath sshPilot created."""
+    """Every master known to be LIVE. Unknown states are *not* included here.
 
-    base = directory if directory is not None else control_master_directory()
-    if base is None:
-        return ()
-    try:
-        names = sorted(os.listdir(base))
-    except OSError:
-        return ()
-    masters = []
-    for name in names:
-        candidate = base / name
-        master = probe_control_master(candidate, timeout=timeout)
-        if master is not None:
-            masters.append(master)
-    return tuple(masters)
+    Callers that must not fail open should use :func:`survey_control_masters`
+    and handle UNKNOWN explicitly; this convenience view is for reporting.
+    """
+
+    return tuple(
+        OwnedControlMaster(path=probe.path, pid=probe.pid)
+        for probe in survey_control_masters(directory=directory, timeout=timeout)
+        if probe.state is MasterState.LIVE
+    )
 
 
 def terminate_owned_control_masters(
     *,
     directory: Optional[Path] = None,
     timeout: float = DEFAULT_CONTROL_COMMAND_TIMEOUT,
-) -> Tuple[OwnedControlMaster, ...]:
-    """Ask every owned master to exit; return the ones still alive after.
+) -> Tuple[ControlMasterProbe, ...]:
+    """Ask every owned master to exit; return everything not proven gone.
 
     ``ssh -O exit`` terminates the master immediately and unlinks its socket.
-    A socket that answers nothing is unlinked here instead, since it is a
-    crashed master's leftover rather than a process. The return value is the
-    point of the exercise: a swallowed exception must not be mistaken for a
-    master that actually went away.
+    A ControlPath positively proven ABSENT is a crashed master's leftover and
+    its socket file is removed here. A path we could not check is left
+    strictly alone — unlinking it would strand a live master with an open
+    authenticated connection and no way to reach it again.
+
+    The return value is the point: anything still LIVE, or whose state is
+    UNKNOWN, comes back so quit can refuse rather than assume.
     """
 
-    base = directory if directory is not None else control_master_directory()
-    if base is None:
-        return ()
-    try:
-        names = sorted(os.listdir(base))
-    except OSError:
-        return ()
-
-    for name in names:
-        candidate = base / name
-        master = probe_control_master(candidate, timeout=timeout)
-        if master is None:
-            # Nothing is listening; remove the stale socket file only.
+    probes = survey_control_masters(directory=directory, timeout=timeout)
+    for probe in probes:
+        if probe.state is MasterState.ABSENT:
             try:
-                candidate.unlink()
+                probe.path.unlink()
             except OSError:
                 pass
-            continue
-        _run_control_command(candidate, "exit", timeout=timeout)
+        elif probe.state is MasterState.LIVE:
+            _run_control_command(probe.path, "exit", timeout=timeout)
 
-    return list_owned_control_masters(directory=base, timeout=timeout)
+    remaining = survey_control_masters(directory=directory, timeout=timeout)
+    return tuple(
+        probe for probe in remaining if probe.state is not MasterState.ABSENT
+    )

@@ -135,19 +135,21 @@ def test_forced_teardown_sweeps_masters_only_for_the_default_socket(monkeypatch)
 def test_quit_teardown_reports_a_master_that_would_not_exit(monkeypatch, tmp_path):
     """Required: a ControlMaster that survives blocks a 'successful' Quit."""
     import sshpilot.daemon.runtime_verification as verification
-    from sshpilot.daemon.control_masters import OwnedControlMaster
+    from sshpilot.daemon.control_masters import ControlMasterProbe, MasterState
 
     monkeypatch.setattr(
         verification, "reap_orphaned_children", lambda **_kwargs: ()
     )
-    stubborn = OwnedControlMaster(path=tmp_path / "cm" / "abc", pid=777)
+    stubborn = ControlMasterProbe(
+        path=tmp_path / "cm" / "abc", state=MasterState.LIVE, pid=777
+    )
     monkeypatch.setattr(
         verification,
         "terminate_owned_control_masters",
         lambda **_kwargs: (stubborn,),
     )
     monkeypatch.setattr(
-        verification, "list_owned_control_masters", lambda **_kwargs: (stubborn,)
+        verification, "survey_control_masters", lambda **_kwargs: (stubborn,)
     )
     monkeypatch.setattr(
         verification, "probe_socket_owner", lambda *_a, **_k: (False, None)

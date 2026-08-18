@@ -50,7 +50,7 @@ from sshpilot.logging_support import log_context
 
 from .session_runtime import SessionLaunchSpec
 
-from .process_registry import KIND_FORWARD, forget_owned_process, record_owned_process
+from .process_registry import KIND_FORWARD, forget_owned_process, record_owned_process_or_abandon
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ class SubprocessForwardProcessRunner:
             env=dict(environment),
             close_fds=True,
         )
-        record_owned_process(process.pid, kind=KIND_FORWARD)
+        record_owned_process_or_abandon(process, kind=KIND_FORWARD)
         handle = _OwnedForwardProcess(process, on_exit, self._unregister)
         with self._lock:
             if self._closed:

@@ -409,7 +409,26 @@ def begin_terminate_shutdown_intent(window) -> None:
                 logger.debug("cancel_daemon_reconnect failed", exc_info=True)
 
 
-def force_daemon_exit(socket_path: Optional[os.PathLike]) -> list[str]:
+def capture_daemon_identity(socket_path: Optional[os.PathLike]):
+    """Fingerprint the daemon before teardown, so it cannot vanish from view.
+
+    A daemon that closes its socket but keeps running would otherwise pass
+    final verification: the socket check stops finding it and nothing else
+    knows what to look for. Taken from peer credentials rather than a
+    ``Popen`` handle, so it works for a daemon this app merely connected to.
+    """
+    from .daemon.runtime_verification import capture_daemon_identity as _capture
+
+    try:
+        return _capture(socket_path)
+    except Exception:
+        logger.debug("Could not capture the daemon identity", exc_info=True)
+        return None
+
+
+def force_daemon_exit(
+    socket_path: Optional[os.PathLike], *, daemon_identity=None
+) -> list[str]:
     """Make the daemon exit when the graceful stop did not, then collect after it.
 
     Escalates SIGTERM (which the daemon handles as a normal shutdown, so it
@@ -435,7 +454,9 @@ def force_daemon_exit(socket_path: Optional[os.PathLike]) -> list[str]:
         errors.append(f"force daemon exit: {exc}")
 
     try:
-        result = terminate_owned_runtime(socket_path=socket_path)
+        result = terminate_owned_runtime(
+            socket_path=socket_path, daemon_identity=daemon_identity
+        )
     except Exception as exc:
         return errors + [f"runtime teardown: {exc}"]
     return errors + list(result.messages())
@@ -509,6 +530,9 @@ def apply_terminate_all(window) -> None:
     begin_terminate_shutdown_intent(window)
 
     client, daemon_process, socket_path = _resolve_terminate_context(window)
+    # Captured before anything is asked to stop: teardown is exactly when the
+    # daemon stops being findable through its socket.
+    daemon_identity = capture_daemon_identity(socket_path)
 
     def _worker() -> None:
         errors = terminate_all_daemon_work(client)
@@ -523,13 +547,15 @@ def apply_terminate_all(window) -> None:
                 logger.warning(
                     "terminate-all during quit: %s; escalating", message
                 )
-            force_daemon_exit(socket_path)
+            force_daemon_exit(socket_path, daemon_identity=daemon_identity)
 
         # Exit is gated on proof, not on the teardown steps having been
         # attempted. Whatever the escalation above believed it accomplished,
         # the verifier is what decides: it re-checks the socket, the daemon's
         # registered children, and sshPilot's own ControlMasters.
-        survivors = verify_quit_teardown(socket_path)
+        survivors = verify_quit_teardown(
+            socket_path, daemon_identity=daemon_identity
+        )
 
         def _finish() -> bool:
             if survivors:
@@ -607,6 +633,7 @@ __all__ = [
     "apply_terminate_all",
     "begin_terminate_shutdown_intent",
     "daemon_active_work_summary",
+    "capture_daemon_identity",
     "force_daemon_exit",
     "resolve_daemon_socket_path",
     "verify_quit_teardown",

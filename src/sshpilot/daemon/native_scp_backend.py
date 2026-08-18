@@ -18,7 +18,7 @@ from sshpilot.transfer_scp import (
     insert_legacy_scp_flag,
     legacy_scp_flag_unsupported,
 )
-from .process_registry import KIND_TRANSFER, forget_owned_process, record_owned_process
+from .process_registry import KIND_TRANSFER, forget_owned_process, record_owned_process_or_abandon
 
 _MAX_STDERR_BYTES = 64 * 1024
 _DRAIN_CHUNK_BYTES = 8192
@@ -212,8 +212,8 @@ class NativeScpBackend:
                 shell=False,
             )
             setattr(process, "_sshpilot_process_group", os.name != "nt")
-            record_owned_process(
-                process.pid,
+            record_owned_process_or_abandon(
+                process,
                 kind=KIND_TRANSFER,
                 process_group=(os.name != "nt"),
             )

@@ -30,8 +30,9 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from .control_masters import (
-    list_owned_control_masters,
+    MasterState,
     owns_default_control_master_namespace,
+    survey_control_masters,
     terminate_owned_control_masters,
 )
 from .lifecycle import probe_socket_owner
@@ -39,6 +40,8 @@ from .process_registry import (
     OwnedProcessRegistry,
     ProcessIdentity,
     RegisteredProcess,
+    RegistryUnreadable,
+    identify_process,
     registry_path_for,
 )
 
@@ -48,6 +51,10 @@ SURVIVOR_DAEMON = "daemon"
 SURVIVOR_SOCKET = "daemon_socket"
 SURVIVOR_CHILD = "child_process"
 SURVIVOR_CONTROL_MASTER = "control_master"
+# Not a resource we found, but a check we could not complete. It counts as a
+# survivor because the governing invariant is that inability to verify absence
+# is never verified absence.
+SURVIVOR_UNVERIFIED = "unverified"
 
 
 @dataclass(frozen=True)
@@ -126,30 +133,108 @@ def verify_sshpilot_runtime_terminated(
             )
         )
 
-    for entry in _live_registry_entries(socket_path, registry_path):
+    try:
+        for entry in _live_registry_entries(socket_path, registry_path):
+            survivors.append(
+                SurvivingResource(
+                    kind=SURVIVOR_CHILD,
+                    identifier=f"pid={entry.pid}",
+                    detail=_describe_child(entry),
+                )
+            )
+    except RegistryUnreadable as error:
         survivors.append(
             SurvivingResource(
-                kind=SURVIVOR_CHILD,
-                identifier=f"pid={entry.pid}",
-                detail=_describe_child(entry),
+                kind=SURVIVOR_UNVERIFIED,
+                identifier="process registry",
+                detail=f"owned processes could not be checked: {error}",
             )
         )
 
     if check_control_masters is None:
-        check_control_masters = owns_default_control_master_namespace(socket_path)
+        try:
+            check_control_masters = owns_default_control_master_namespace(socket_path)
+        except Exception as error:
+            # Not knowing whether we own the shared master namespace is not
+            # the same as not owning it: skipping the check here would let a
+            # live multiplexed connection pass unnoticed.
+            survivors.append(
+                SurvivingResource(
+                    kind=SURVIVOR_UNVERIFIED,
+                    identifier="ControlMaster ownership",
+                    detail=f"multiplexed connections could not be checked: {error}",
+                )
+            )
+            check_control_masters = False
     if check_control_masters:
-        for master in list_owned_control_masters(directory=control_master_directory):
+        survivors.extend(
+            _control_master_survivors(directory=control_master_directory)
+        )
+
+    return ShutdownVerificationResult(survivors=tuple(survivors))
+
+
+def _control_master_survivors(*, directory: Optional[Path]) -> list:
+    """LIVE masters, plus any path whose state we could not establish."""
+
+    try:
+        probes = survey_control_masters(directory=directory)
+    except (OSError, LookupError) as error:
+        return [
+            SurvivingResource(
+                kind=SURVIVOR_UNVERIFIED,
+                identifier="ControlMaster directory",
+                detail=f"multiplexed connections could not be checked: {error}",
+            )
+        ]
+
+    survivors = []
+    for probe in probes:
+        if probe.state is MasterState.LIVE:
             survivors.append(
                 SurvivingResource(
                     kind=SURVIVOR_CONTROL_MASTER,
                     identifier=(
-                        f"pid={master.pid}" if master.pid else master.path.name
+                        f"pid={probe.pid}" if probe.pid else probe.path.name
                     ),
                     detail="a multiplexed SSH connection is still open",
                 )
             )
+        elif probe.state is MasterState.UNKNOWN:
+            survivors.append(
+                SurvivingResource(
+                    kind=SURVIVOR_UNVERIFIED,
+                    identifier=probe.path.name,
+                    detail=f"a multiplexed SSH connection could not be checked "
+                    f"({probe.reason})",
+                )
+            )
+    return survivors
 
-    return ShutdownVerificationResult(survivors=tuple(survivors))
+
+def capture_daemon_identity(
+    socket_path: Optional[os.PathLike], *, probe_timeout: float = 0.25
+) -> Optional[ProcessIdentity]:
+    """Fingerprint the daemon behind ``socket_path`` before teardown starts.
+
+    Taken from the socket's peer credentials, so it works whether this process
+    launched the daemon or merely connected to one already running — a
+    ``Popen`` handle only exists in the first case. Capturing it *first*
+    matters: a daemon that closes its listener but stays alive would otherwise
+    have nothing left to identify it by, and would pass final verification by
+    disappearing from the only place we were looking.
+    """
+
+    if socket_path is None:
+        return None
+    try:
+        accepting, pid = probe_socket_owner(Path(socket_path), timeout=probe_timeout)
+    except Exception:
+        logger.debug("Could not probe the daemon socket owner", exc_info=True)
+        return None
+    if not accepting or pid is None:
+        return None
+    return identify_process(pid)
 
 
 def _describe_child(entry: RegisteredProcess) -> str:
@@ -179,14 +264,12 @@ def _registry_for(
 def _live_registry_entries(
     socket_path: Optional[os.PathLike], registry_path: Optional[os.PathLike]
 ) -> Tuple[RegisteredProcess, ...]:
+    """Live registered children. Propagates :class:`RegistryUnreadable`."""
+
     registry = _registry_for(socket_path, registry_path)
     if registry is None:
         return ()
-    try:
-        return registry.prune()
-    except Exception:
-        logger.debug("Could not read the owned-process registry", exc_info=True)
-        return ()
+    return registry.prune()
 
 
 def reap_orphaned_children(
@@ -211,7 +294,7 @@ def reap_orphaned_children(
     if registry is None:
         return ()
 
-    alive = registry.prune()
+    alive = registry.prune()  # RegistryUnreadable propagates to the caller.
     if not alive:
         return ()
 
@@ -272,6 +355,7 @@ def _wait_for_exit(
 def terminate_owned_runtime(
     *,
     socket_path: Optional[os.PathLike] = None,
+    daemon_identity: Optional[ProcessIdentity] = None,
     registry_path: Optional[os.PathLike] = None,
     control_master_directory: Optional[Path] = None,
     sweep_control_masters: Optional[bool] = None,
@@ -284,21 +368,32 @@ def terminate_owned_runtime(
     ownership rule the daemon's own shutdown does.
     """
 
-    reap_orphaned_children(socket_path=socket_path, registry_path=registry_path)
+    try:
+        reap_orphaned_children(socket_path=socket_path, registry_path=registry_path)
+    except RegistryUnreadable:
+        # Nothing to reap from a registry we cannot read; the verification
+        # below is what turns that into a refusal to quit.
+        logger.error("The owned-process registry could not be read during teardown")
 
     if sweep_control_masters is None:
         sweep_control_masters = owns_default_control_master_namespace(socket_path)
     if sweep_control_masters:
-        surviving = terminate_owned_control_masters(
-            directory=control_master_directory
-        )
-        if surviving:
-            logger.warning(
-                "%d ControlMaster(s) did not exit on request", len(surviving)
+        try:
+            surviving = terminate_owned_control_masters(
+                directory=control_master_directory
             )
+        except (OSError, LookupError):
+            logger.error("The ControlMaster directory could not be enumerated")
+        else:
+            if surviving:
+                logger.warning(
+                    "%d ControlMaster(s) not proven gone after teardown",
+                    len(surviving),
+                )
 
     return verify_sshpilot_runtime_terminated(
         socket_path=socket_path,
+        daemon_identity=daemon_identity,
         registry_path=registry_path,
         control_master_directory=control_master_directory,
         check_control_masters=sweep_control_masters,

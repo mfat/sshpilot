@@ -169,6 +169,10 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # sshPilot owns is still running. Ownership lives in the daemon
         # package because that is what creates the processes.
         ("daemon_quit_policy.py", "verify_sshpilot_runtime_terminated"),
+        # Fingerprints the daemon from socket peer credentials *before*
+        # teardown, so one that releases its socket but keeps running cannot
+        # pass verification by disappearing from the socket check.
+        ("daemon_quit_policy.py", "capture_daemon_identity"),
         # Daemon-adjacent cleanup of stale askpass sockets.
         # Shared rule for the per-user runtime tree the daemon sockets,
         # askpass sockets, and ControlMaster sockets all live under —
