@@ -46,15 +46,21 @@ class DaemonQuitDecision(str, Enum):
     CANCEL = "cancel"
 
 
-def window_has_daemon_terminals(window) -> bool:
-    """True when any mapped terminal is on the daemon SSH path."""
+def count_daemon_terminals(window) -> int:
+    """How many mapped terminals are on the daemon SSH path."""
+    total = 0
     for terms in getattr(window, "connection_to_terminals", {}).values():
         for term in terms:
-            if getattr(term, "_daemon_mode", False):
-                return True
-            if getattr(term, "_daemon_controller", None) is not None:
-                return True
-    return False
+            if getattr(term, "_daemon_mode", False) or (
+                getattr(term, "_daemon_controller", None) is not None
+            ):
+                total += 1
+    return total
+
+
+def window_has_daemon_terminals(window) -> bool:
+    """True when any mapped terminal is on the daemon SSH path."""
+    return count_daemon_terminals(window) > 0
 
 
 def daemon_active_work_summary(client) -> dict[str, int]:
@@ -589,27 +595,17 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     from gi.repository import Adw
 
     summary = daemon_active_work_summary(getattr(window, "client", None))
-    parts = []
-    if summary["sessions_active"]:
-        parts.append(_("Sessions: {n}").format(n=summary["sessions_active"]))
-    if summary["sftp_active"]:
-        parts.append(_("File managers: {n}").format(n=summary["sftp_active"]))
-    if summary["transfers_running"]:
-        parts.append(_("Transfers: {n}").format(n=summary["transfers_running"]))
-    if summary["forwards_active"]:
-        parts.append(_("Forwards: {n}").format(n=summary["forwards_active"]))
-    if summary["interactions_pending"]:
-        parts.append(
-            _("Pending prompts: {n}").format(n=summary["interactions_pending"])
-        )
-    if window_has_daemon_terminals(window) and not parts:
-        parts.append(_("Open terminal tabs"))
-
-    body = "\n".join(parts) if parts else _("You have active connections.")
+    sessions = summary["sessions_active"]
+    if not sessions:
+        # The status probe can come back empty (a daemon mid-shutdown, a
+        # transport hiccup) while tabs are plainly open. Count what the window
+        # is showing rather than telling the user they have nothing running.
+        sessions = count_daemon_terminals(window)
+    body = _("Number of running sessions: {n}").format(n=sessions)
 
     dialog = Adw.AlertDialog.new(_("Quit SSH Pilot?"), body)
     dialog.add_response("cancel", _("Cancel"))
-    dialog.add_response("terminate", _("Quit and Close Everything"))
+    dialog.add_response("terminate", _("Quit"))
     dialog.set_response_appearance(
         "terminate", Adw.ResponseAppearance.DESTRUCTIVE
     )
@@ -633,6 +629,7 @@ __all__ = [
     "begin_terminate_shutdown_intent",
     "daemon_active_work_summary",
     "capture_daemon_identity",
+    "count_daemon_terminals",
     "force_daemon_exit",
     "resolve_daemon_socket_path",
     "verify_quit_teardown",
