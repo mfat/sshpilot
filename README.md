@@ -1,5 +1,8 @@
 **SSH Pilot** is a user-friendly SSH and SFTP client for Linux and macOS
 
+[![Latest release](https://img.shields.io/github/v/release/mfat/sshpilot)](https://github.com/mfat/sshpilot/releases/latest)
+[![License: GPL v3](https://img.shields.io/github/license/mfat/sshpilot)](LICENSE)
+
 <img width="1202" height="777" alt="btop" src="https://github.com/user-attachments/assets/b58ff8f2-ea1b-4836-a9b6-ee679c66c095" />
 <img width="1184" height="702" alt="terminal" src="https://github.com/user-attachments/assets/b391e067-87b0-4ecb-a749-6e59de8e0bc2" />
 <img width="1303" height="726" alt="sftp" src="https://github.com/user-attachments/assets/46e5ea81-6a98-46ef-b8ec-33b98858d9cf" />
@@ -16,7 +19,7 @@
 - SCP download/upload support
 - Key transfer to server (ssh-copy-id)
 - Known hosts and Authorized keys management (local & remote)
-- Graphical Docker container managemer 
+- Graphical Docker container manager
 - Support for various secure storage backends (libsecret, Keepass, Bitwarden/Vaultwarden, pass)
 - Backup and restore to/from Bitwarden/Vaultwarden, or your own servers (supports app settings, secrets and keys)
 - Snippets for quick execution of scripts/commands
@@ -24,7 +27,7 @@
 
 ## Download
 
-You can download directly from the [Releases](https://github.com/mfat/sshpilot/releases/) section, but we recomment adding below repositories for automatic updates:
+You can download directly from the [Releases](https://github.com/mfat/sshpilot/releases/) section, but we recommend adding one of the repositories below for automatic updates:
 
 ### <img src="https://img.icons8.com/color/48/000000/ubuntu.png" width="24"/> Ubuntu PPA
 
@@ -180,6 +183,10 @@ https://t.me/sshpilot
 SSH Pilot uses the following third-party libraries:
 
 - **[pyxtermjs](https://github.com/cs01/pyxtermjs)** - A fully functional terminal in your browser, used as an alternative terminal backend (MIT License)
+
+## License
+
+SSH Pilot is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ## Special Thanks
 
