@@ -26,6 +26,7 @@ from .lifecycle import (
     remove_dead_socket,
     resolve_socket_path,
     validate_client_socket_path,
+    wait_until_socket_free,
 )
 
 
@@ -40,9 +41,15 @@ DEFAULT_STARTUP_TIMEOUT = 3.0
 FROZEN_STARTUP_TIMEOUT = 20.0
 DEFAULT_POLL_INTERVAL = 0.05
 DEFAULT_PROBE_TIMEOUT = 0.25
-# How long the graceful ``daemon.stop`` RPC gets before eviction escalates to
-# signals. Short: an unusable peer is by definition one we cannot rely on.
+# How long the graceful ``daemon.stop`` RPC itself may take to be answered.
+# Short: an unusable peer is by definition one we cannot rely on.
 DEFAULT_EVICTION_STOP_TIMEOUT = 2.0
+# How long a daemon that *accepted* the stop gets to finish leaving. The stop
+# RPC replies as soon as the request is accepted, while the daemon then drains
+# (its own drain budget is 5s), so escalating on the reply alone would mean
+# routinely killing a daemon that was shutting down correctly — and a killed
+# daemon cannot reap the ssh children the drain existed to clean up.
+DEFAULT_EVICTION_DRAIN_TIMEOUT = 6.0
 
 _SENSITIVE_CHILD_ENVIRONMENT = frozenset(
     {
@@ -358,24 +365,38 @@ class DaemonLauncher:
                 "Resident daemon cannot serve this build reason=%s; replacing it",
                 reason.value,
             )
+            # The outcome is advisory. Eviction stops rather than guessing
+            # when the socket changes hands mid-flight, so the next probe —
+            # not this return value — decides what is actually there now: a
+            # daemon we can use, a free socket to launch into, or the same
+            # unusable peer, which then fails for real.
             if not self._evict_unusable_peer():
-                raise DaemonLaunchError(reason)
+                logger.warning("Could not free the daemon socket; re-probing")
         return None
 
     def _evict_unusable_peer(self) -> bool:
         """Replace the daemon holding the socket. True when the socket is free.
 
         Graceful first: an administrative ``daemon.stop`` lets the old daemon
-        close its own sessions and children. Signals are the fallback for a
-        peer that cannot answer — a wedged process, or one whose reply DTOs
+        close its own sessions, children and ControlMasters. A daemon that
+        accepts it is then given time to actually finish — the stop RPC
+        replies on acceptance, not on exit — because signalling one that is
+        already leaving correctly buys nothing and costs the cleanup it was
+        in the middle of. Signals remain the fallback for a peer that will
+        not answer or will not go: a wedged process, or one whose reply DTOs
         this build can no longer decode.
         """
 
-        self._request_peer_stop()
+        if self._request_peer_stop():
+            if wait_until_socket_free(
+                self.socket_path, timeout=DEFAULT_EVICTION_DRAIN_TIMEOUT
+            ):
+                logger.info("The outgoing daemon stopped on request")
+                return remove_dead_socket(self.socket_path)
         return evict_socket_owner(self.socket_path)
 
-    def _request_peer_stop(self) -> None:
-        """Best-effort administrative stop of an incompatible resident daemon.
+    def _request_peer_stop(self) -> bool:
+        """Ask an incompatible resident daemon to stop. True when it accepted.
 
         Deliberately issues no other RPC: the peer's DTOs are not guaranteed
         to match this build, and every failure mode here simply escalates to
@@ -394,10 +415,16 @@ class DaemonLauncher:
                 frontend_type="gtk",
                 allow_api_mismatch=True,
             )
-            client.stop_daemon(StopDaemonRequest(force=True))
-            logger.info("Requested graceful stop of the outgoing daemon")
+            result = client.stop_daemon(StopDaemonRequest(force=True))
+            accepted = bool(getattr(result, "accepted", False))
+            logger.info(
+                "Requested graceful stop of the outgoing daemon accepted=%s",
+                accepted,
+            )
+            return accepted
         except BaseException:
             logger.debug("Graceful stop of the outgoing daemon failed", exc_info=True)
+            return False
         finally:
             if client is not None:
                 try:

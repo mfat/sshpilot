@@ -280,26 +280,19 @@ def probe_socket_owner(
         probe.close()
 
 
-def _process_is_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except OSError:
-        return True
-    return True
+def wait_until_socket_free(
+    path: Path, *, timeout: float, poll_interval: float = 0.05
+) -> bool:
+    """Block until nothing accepts on ``path``. True when it came free."""
 
-
-def _wait_until_socket_free(path: Path, *, deadline: float, poll: float) -> bool:
+    deadline = time.monotonic() + max(0.0, float(timeout))
     while True:
         accepting, _pid = probe_socket_owner(path, timeout=0.1)
         if not accepting:
             return True
         if time.monotonic() >= deadline:
             return False
-        time.sleep(poll)
+        time.sleep(poll_interval)
 
 
 def remove_dead_socket(path: Path) -> bool:
@@ -352,29 +345,53 @@ def evict_socket_owner(
     ``daemon.stop`` RPC; this is the fallback for a peer that will not or
     cannot answer it.  Returns True when nothing accepts on ``path`` and the
     stale socket file (if any) has been removed.
+
+    A PID is only a name for whoever held the socket at the moment we looked,
+    and the process we are evicting is by definition one that may be exiting
+    right now — so the owner is re-confirmed immediately before *every*
+    signal, never once up front.  If the socket has changed hands, eviction
+    stops rather than signalling a number that may since have been reused by
+    an unrelated process; the caller re-probes and deals with the new owner
+    on its own terms.  The residual window between that confirmation and
+    ``os.kill`` is one syscall wide and cannot be closed with POSIX PIDs
+    alone (it would need pidfd/kqueue handles), but it is the same standard
+    :func:`remove_dead_socket` holds itself to before unlinking.
     """
 
-    if pid is None:
-        _accepting, pid = probe_socket_owner(path)
+    expected_pid = pid
+    if expected_pid is None:
+        _accepting, expected_pid = probe_socket_owner(path)
 
-    if pid is not None and pid != os.getpid() and _process_is_alive(pid):
+    if expected_pid is not None and expected_pid != os.getpid():
         for signal_number, timeout in (
             (signal.SIGTERM, term_timeout),
             (signal.SIGKILL, kill_timeout),
         ):
+            accepting, current_pid = probe_socket_owner(path)
+            if not accepting:
+                break  # It let go; nothing left to signal.
+            if current_pid != expected_pid:
+                # Either another process now owns the socket, or this
+                # platform cannot re-confirm the owner. Both mean we can no
+                # longer prove the PID still identifies the daemon we set
+                # out to evict, which is the only warrant we have to kill it.
+                logger.info(
+                    "Daemon socket changed hands during eviction; "
+                    "not signalling pid=%s",
+                    expected_pid,
+                )
+                break
             try:
-                os.kill(pid, signal_number)
+                os.kill(expected_pid, signal_number)
             except (ProcessLookupError, PermissionError, OSError):
                 break
             logger.info(
                 "Signalled unusable daemon pid=%s signal=%s",
-                pid,
+                expected_pid,
                 signal_number.name,
             )
-            if _wait_until_socket_free(
-                path,
-                deadline=time.monotonic() + max(0.0, float(timeout)),
-                poll=poll_interval,
+            if wait_until_socket_free(
+                path, timeout=timeout, poll_interval=poll_interval
             ):
                 break
 

@@ -512,10 +512,19 @@ def test_existing_incompatible_or_malformed_daemon_is_not_restarted(
         ),
     ],
 )
-def test_daemon_without_required_gtk_connection_capabilities_is_rejected(
+def test_daemon_without_required_gtk_connection_capabilities_is_replaced(
     tmp_path,
     supported,
 ):
+    """A partial daemon is never *used* — it is now replaced instead.
+
+    The rule that no required backend domain may disappear behind a
+    partial/legacy daemon is unchanged: this client still refuses to run
+    against it. What changed is the remedy. In production a reduced
+    capability set means the resident daemon is a different build, so the
+    launcher stops it and starts a current one rather than leaving startup
+    with nowhere to go.
+    """
     class _NoCapabilityCore:
         def __init__(self):
             from tests.helpers.fake_connection_repository import make_test_repository
@@ -536,11 +545,23 @@ def test_daemon_without_required_gtk_connection_capabilities_is_rejected(
     socket_path = socket_dir / "sshpilotd.sock"
     server = DaemonServer(_NoCapabilityCore, socket_path=socket_path)
     server.start_in_thread()
+    launches = []
+
+    def _record_launch(command, **_kwargs):
+        launches.append(command)
+        raise OSError("replacement launch suppressed for this test")
+
     try:
-        launcher = DaemonLauncher(socket_path=socket_path)
+        launcher = DaemonLauncher(socket_path=socket_path, popen=_record_launch)
         with pytest.raises(DaemonLaunchError) as caught:
             launcher.connect_or_start()
-        assert caught.value.reason is DaemonStartupFailure.MISSING_CAPABILITY
+
+        # The partial daemon was evicted and a replacement was attempted;
+        # only the suppressed launch stops this from being a live client.
+        assert caught.value.reason is DaemonStartupFailure.PROCESS_EXITED
+        assert launches, "a replacement daemon must have been launched"
+        assert server.wait_stopped(timeout=5), "the partial daemon must be stopped"
+        assert not socket_path.exists()
     finally:
         server.shutdown()
         assert server.wait_stopped()

@@ -184,6 +184,124 @@ def test_evict_socket_owner_escalates_to_sigkill(tmp_path):
         _reap(squatter)
 
 
+def test_eviction_never_signals_a_pid_that_no_longer_owns_the_socket(tmp_path):
+    """The PID is re-confirmed before every signal, not captured once.
+
+    We are, by definition, evicting a process that may be exiting right now.
+    If it goes and its PID is recycled, a stale number would name an
+    unrelated process — and this code's whole job is to send SIGKILL to it.
+    """
+    import sshpilot.daemon.lifecycle as lifecycle
+
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    squatter = _start_squatter(socket_path)
+    try:
+        real_probe = lifecycle.probe_socket_owner
+        probes = []
+
+        def _owner_changed(path, **kwargs):
+            accepting, pid = real_probe(path, **kwargs)
+            probes.append(pid)
+            # First look reports the truth; from then on the socket appears
+            # to belong to somebody else, exactly as a PID recycle would.
+            if len(probes) == 1:
+                return accepting, pid
+            return accepting, (pid or 0) + 100000
+
+        signalled = []
+        monkey_kill = lambda pid, sig: signalled.append((pid, sig))
+        lifecycle.probe_socket_owner = _owner_changed
+        original_kill = lifecycle.os.kill
+        lifecycle.os.kill = monkey_kill
+        try:
+            assert lifecycle.evict_socket_owner(socket_path) is False
+        finally:
+            lifecycle.probe_socket_owner = real_probe
+            lifecycle.os.kill = original_kill
+
+        assert signalled == [], "no signal may be sent to an unconfirmed PID"
+        assert squatter.poll() is None, "the squatter must be left alone"
+        assert socket_path.exists()
+    finally:
+        _reap(squatter)
+
+
+def test_eviction_reconfirms_ownership_before_escalating_to_sigkill(tmp_path):
+    """The SIGKILL step re-probes too, not just the SIGTERM step."""
+    import sshpilot.daemon.lifecycle as lifecycle
+
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    squatter = _start_squatter(socket_path, mode="ignore-term")
+    try:
+        real_probe = lifecycle.probe_socket_owner
+        calls = {"n": 0}
+
+        def _changes_after_sigterm(path, **kwargs):
+            accepting, pid = real_probe(path, **kwargs)
+            calls["n"] += 1
+            # Confirm for SIGTERM, then look like a different owner so the
+            # SIGKILL escalation has to stand down.
+            if calls["n"] <= 1:
+                return accepting, pid
+            return accepting, (pid or 0) + 100000
+
+        signalled = []
+        original_kill = lifecycle.os.kill
+
+        def _record_kill(pid, sig):
+            signalled.append(sig)
+            original_kill(pid, sig)
+
+        lifecycle.probe_socket_owner = _changes_after_sigterm
+        lifecycle.os.kill = _record_kill
+        try:
+            lifecycle.evict_socket_owner(socket_path, term_timeout=0.2)
+        finally:
+            lifecycle.probe_socket_owner = real_probe
+            lifecycle.os.kill = original_kill
+
+        assert signal.SIGKILL not in signalled, (
+            "SIGKILL must not be sent once ownership can no longer be confirmed"
+        )
+        assert squatter.poll() is None
+    finally:
+        _reap(squatter)
+
+
+def test_an_accepted_stop_is_given_time_to_drain_before_any_signal(tmp_path):
+    """A daemon that accepted the stop is leaving; do not shoot it mid-drain.
+
+    ``daemon.stop`` replies on acceptance while the daemon then drains (5s of
+    its own budget), and a killed daemon cannot reap the ssh children the
+    drain exists to clean up.
+    """
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    squatter = _start_squatter(socket_path)
+    launcher = DaemonLauncher(socket_path=socket_path)
+
+    evictions = []
+
+    def _stopped_on_request() -> bool:
+        # Stand in for a daemon that accepts the stop and then takes a moment
+        # to unlink its socket, the way a real drain does.
+        _reap(squatter)
+        socket_path.unlink(missing_ok=True)
+        return True
+
+    launcher._request_peer_stop = _stopped_on_request
+    import sshpilot.daemon.launcher as launcher_mod
+
+    original_evict = launcher_mod.evict_socket_owner
+    launcher_mod.evict_socket_owner = lambda *a, **k: evictions.append(a) or True
+    try:
+        assert launcher._evict_unusable_peer() is True
+    finally:
+        launcher_mod.evict_socket_owner = original_evict
+        _reap(squatter)
+
+    assert evictions == [], "a daemon that left on request must never be signalled"
+
+
 def test_remove_dead_socket_clears_an_orphan_but_spares_a_live_one(tmp_path):
     orphan_dir = tmp_path / "orphan"
     orphan_dir.mkdir(mode=0o700)
