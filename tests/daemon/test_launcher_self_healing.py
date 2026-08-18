@@ -505,3 +505,133 @@ def test_frozen_child_environment_marks_packaged(monkeypatch):
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     assert _child_environment({})["SSHPILOT_PACKAGED"] == "1"
+
+
+def test_a_socket_replaced_after_the_probe_is_never_unlinked(tmp_path):
+    """Required: the inode check must survive a socket changing hands.
+
+    Between deciding a socket is dead and removing it, a new daemon may claim
+    the path. Unlinking then would strand a healthy daemon holding a socket
+    nobody can reach.
+    """
+    import sshpilot.daemon.lifecycle as lifecycle
+
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    socket_path.parent.mkdir(mode=0o700, parents=True)
+
+    # A dead socket file: bound, then its owner went away.
+    orphan = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    orphan.bind(str(socket_path))
+    os.chmod(socket_path, 0o600)
+    orphan.close()
+    original_inode = socket_path.stat().st_ino
+
+    real_probe = lifecycle.probe_socket_owner
+
+    def _replace_socket_mid_flight(path, **kwargs):
+        result = real_probe(path, **kwargs)
+        # Simulate a new daemon claiming the path right after the probe said
+        # nothing was listening.
+        if socket_path.stat().st_ino == original_inode:
+            socket_path.unlink()
+            replacement = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            replacement.bind(str(socket_path))
+            os.chmod(socket_path, 0o600)
+            replacement.listen(4)
+            _replace_socket_mid_flight.holder = replacement
+        return result
+
+    lifecycle.probe_socket_owner = _replace_socket_mid_flight
+    try:
+        assert lifecycle.remove_dead_socket(socket_path) is False
+    finally:
+        lifecycle.probe_socket_owner = real_probe
+        holder = getattr(_replace_socket_mid_flight, "holder", None)
+        if holder is not None:
+            holder.close()
+
+    assert socket_path.exists(), "the replacement socket must survive"
+    assert socket_path.stat().st_ino != original_inode
+
+
+def test_a_still_starting_daemon_is_not_killed_for_being_slow(tmp_path):
+    """Required by G: an ambiguous handshake gets a grace window, not a signal.
+
+    A daemon binds its socket before it can serve, so "connected but no
+    handshake" is what a healthy daemon looks like mid-startup. Killing on the
+    first such failure would shoot a daemon that was about to work.
+    """
+    from sshpilot.daemon.launcher import DaemonStartupFailure
+
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    socket_path.parent.mkdir(mode=0o700, parents=True)
+    launcher = DaemonLauncher(socket_path=socket_path)
+
+    probes = []
+    sentinel = object()
+
+    def _slow_start():
+        probes.append(1)
+        # Unusable twice, then ready — a daemon finishing its startup.
+        if len(probes) < 3:
+            return DaemonStartupFailure.HANDSHAKE_FAILED
+        return sentinel
+
+    launcher._probe_peer_once = _slow_start
+
+    def _must_not_evict():
+        raise AssertionError("a daemon that became ready must never be evicted")
+
+    launcher._evict_unusable_peer = _must_not_evict
+
+    assert launcher._connect_to_usable_peer() is sentinel
+    assert len(probes) >= 3
+
+
+def test_a_proven_incompatible_daemon_is_not_granted_the_grace_window(tmp_path):
+    """The grace window must not slow down (or soften) a real mismatch."""
+    from sshpilot.daemon.launcher import DaemonStartupFailure
+
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    socket_path.parent.mkdir(mode=0o700, parents=True)
+    launcher = DaemonLauncher(socket_path=socket_path)
+
+    probes = []
+    launcher._probe_peer_once = lambda: (
+        probes.append(1) or DaemonStartupFailure.API_VERSION_MISMATCH
+    )
+    evictions = []
+    launcher._evict_unusable_peer = lambda: evictions.append(1) or False
+
+    with pytest.raises(DaemonLaunchError) as caught:
+        launcher._connect_to_usable_peer()
+
+    assert caught.value.reason is DaemonStartupFailure.API_VERSION_MISMATCH
+    assert evictions, "a proven mismatch is evicted immediately"
+    assert len(probes) == 2, "no grace retries for a proven mismatch"
+
+
+def test_an_unidentifiable_live_peer_is_neither_signalled_nor_unlinked(tmp_path):
+    """Required by F: no PID, no graceful stop — fail safe, not destructive."""
+    import sshpilot.daemon.launcher as launcher_mod
+
+    socket_path = tmp_path / "runtime" / "sshpilotd.sock"
+    squatter = _start_squatter(socket_path)
+    launcher = DaemonLauncher(socket_path=socket_path)
+    launcher._request_peer_stop = lambda: False
+
+    real_probe = launcher_mod.probe_socket_owner
+    launcher_mod.probe_socket_owner = lambda path, **kw: (True, None)
+    evictions = []
+    real_evict = launcher_mod.evict_socket_owner
+    launcher_mod.evict_socket_owner = lambda *a, **k: evictions.append(a) or True
+    try:
+        assert launcher._evict_unusable_peer() is False
+    finally:
+        launcher_mod.probe_socket_owner = real_probe
+        launcher_mod.evict_socket_owner = real_evict
+
+    assert evictions == [], "eviction must not run without an identified peer"
+    assert squatter.poll() is None, "the peer must be left alone"
+    assert socket_path.exists(), "a live socket must never be unlinked"
+    _reap(squatter)

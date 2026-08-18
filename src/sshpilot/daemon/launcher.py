@@ -106,6 +106,24 @@ EVICTABLE_FAILURES = frozenset(
     }
 )
 
+# Failures that *prove* the peer is the wrong build. Their verdict cannot
+# improve by waiting, so eviction is immediate.
+PROVEN_INCOMPATIBLE_FAILURES = frozenset(
+    {
+        DaemonStartupFailure.API_VERSION_MISMATCH,
+        DaemonStartupFailure.INCOMPATIBLE_PROTOCOL,
+        DaemonStartupFailure.MISSING_CAPABILITY,
+    }
+)
+
+# A handshake failure is ambiguous: a daemon that has bound its socket but is
+# still finishing startup looks exactly like a wedged one for a moment, and a
+# second app instance racing this launch will produce it routinely. Ambiguous
+# failures are retried for this long before the peer is treated as unusable,
+# so a healthy daemon is never killed for being slow.
+AMBIGUOUS_HANDSHAKE_GRACE = 2.0
+AMBIGUOUS_HANDSHAKE_POLL = 0.1
+
 
 @dataclass(frozen=True)
 class DaemonProcessHandle:
@@ -349,15 +367,22 @@ class DaemonLauncher:
         """
 
         for attempt in (0, 1):
-            try:
-                return self._connect(self.probe_timeout)
-            except DaemonLaunchError as error:
-                reason = error.reason
-            except SshPilotError as error:
-                if error.code is ErrorCode.DAEMON_UNAVAILABLE:
-                    remove_dead_socket(self.socket_path)
-                    return None
-                reason = self._classify_handshake_error(error).reason
+            outcome = self._probe_peer_once()
+            if not isinstance(outcome, DaemonStartupFailure):
+                return outcome
+            reason = outcome
+
+            if (
+                reason not in PROVEN_INCOMPATIBLE_FAILURES
+                and reason in EVICTABLE_FAILURES
+            ):
+                # Ambiguous: possibly a daemon still finishing startup rather
+                # than a broken one. Give it a bounded moment to answer before
+                # treating an unfinished handshake as grounds for killing it.
+                outcome = self._await_ambiguous_peer()
+                if not isinstance(outcome, DaemonStartupFailure):
+                    return outcome
+                reason = outcome
 
             if attempt or reason not in EVICTABLE_FAILURES:
                 raise DaemonLaunchError(reason)
@@ -373,6 +398,44 @@ class DaemonLauncher:
             if not self._evict_unusable_peer():
                 logger.warning("Could not free the daemon socket; re-probing")
         return None
+
+    def _probe_peer_once(self):
+        """One probe. Returns a client, ``None`` (no peer), or a failure reason."""
+
+        try:
+            return self._connect(self.probe_timeout)
+        except DaemonLaunchError as error:
+            return error.reason
+        except SshPilotError as error:
+            if error.code is ErrorCode.DAEMON_UNAVAILABLE:
+                remove_dead_socket(self.socket_path)
+                return None
+            return self._classify_handshake_error(error).reason
+
+    def _await_ambiguous_peer(self):
+        """Retry an ambiguous handshake failure for a bounded grace window.
+
+        A daemon binds its socket before it is ready to serve, so "connected
+        but the handshake failed" is what a *healthy* daemon looks like for a
+        moment during its own startup — and what the loser of a two-instance
+        launch race sees. Killing on the first such failure would shoot a
+        daemon that was about to work. Nothing here weakens compatibility
+        checking: a proven-incompatible peer never reaches this path.
+        """
+
+        deadline = time.monotonic() + AMBIGUOUS_HANDSHAKE_GRACE
+        reason = DaemonStartupFailure.HANDSHAKE_FAILED
+        while time.monotonic() < deadline:
+            threading.Event().wait(AMBIGUOUS_HANDSHAKE_POLL)
+            outcome = self._probe_peer_once()
+            if not isinstance(outcome, DaemonStartupFailure):
+                if outcome is not None:
+                    logger.info("The resident daemon became ready during startup")
+                return outcome
+            reason = outcome
+            if reason in PROVEN_INCOMPATIBLE_FAILURES:
+                break
+        return reason
 
     def _evict_unusable_peer(self) -> bool:
         """Replace the daemon holding the socket. True when the socket is free.
@@ -393,7 +456,21 @@ class DaemonLauncher:
             ):
                 logger.info("The outgoing daemon stopped on request")
                 return remove_dead_socket(self.socket_path)
-        return evict_socket_owner(self.socket_path)
+
+        accepting, peer_pid = probe_socket_owner(self.socket_path)
+        if accepting and peer_pid is None:
+            # A live peer we cannot name. Both remaining options would be
+            # unsafe: unlinking the socket would strand a running daemon
+            # holding it, and signalling an unverified PID could kill an
+            # unrelated process. Startup fails loudly instead — which is why
+            # peer-PID discovery is a tested platform invariant rather than a
+            # best-effort nicety.
+            logger.error(
+                "A daemon holds the socket but its process cannot be "
+                "identified on this platform; refusing to signal or unlink"
+            )
+            return False
+        return evict_socket_owner(self.socket_path, pid=peer_pid)
 
     def _request_peer_stop(self) -> bool:
         """Ask an incompatible resident daemon to stop. True when it accepted.

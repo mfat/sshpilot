@@ -50,6 +50,8 @@ from sshpilot.logging_support import log_context
 
 from .session_runtime import SessionLaunchSpec
 
+from .process_registry import KIND_FORWARD, forget_owned_process, record_owned_process
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_RETAINED_CLOSED_FORWARDS = 100
@@ -136,6 +138,7 @@ class _OwnedForwardProcess:
             if self._notified:
                 return
             self._notified = True
+        forget_owned_process(self._process.pid)
         self._unregister(self)
         self._on_exit(return_code)
 
@@ -208,10 +211,12 @@ class SubprocessForwardProcessRunner:
             env=dict(environment),
             close_fds=True,
         )
+        record_owned_process(process.pid, kind=KIND_FORWARD)
         handle = _OwnedForwardProcess(process, on_exit, self._unregister)
         with self._lock:
             if self._closed:
                 handle.terminate()
+                forget_owned_process(process.pid)
                 raise RuntimeError("forward process runner is closed")
             self._handles.add(handle)
         return handle

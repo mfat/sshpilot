@@ -5996,10 +5996,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.show_quit_confirmation_dialog()
                 return True  # Prevent close, let dialog handle it
 
-        # No active connections or all local terminals are idle, safe to close
+        # No active connections, or only idle local terminals. Nothing needs
+        # confirming — but a daemon still has to be torn down and *verified*
+        # gone before the process exits, so this closes through the same
+        # gated path rather than simply allowing the window to go away.
+        if getattr(self, "client", None) is not None:
+            self._teardown_ssh_config_monitor()
+            self._proceed_with_confirmed_quit()
+            return True  # Hold the window until teardown is verified.
+
         self._teardown_ssh_config_monitor()
         self._invalidate_api_window_callbacks()
         return False  # Allow close
+
+    def _proceed_with_confirmed_quit(self) -> None:
+        """Quit through the verified-teardown path whenever a daemon exists.
+
+        Every exit that owns runtime resources goes through
+        ``apply_terminate_all``: it stops the daemon, reaps what it owned, and
+        only calls ``cleanup_and_quit`` once verification proves nothing
+        sshPilot started is still running. Without a daemon there is nothing
+        to verify and the plain shutdown applies.
+        """
+        if getattr(self, "client", None) is not None:
+            from .daemon_quit_policy import apply_terminate_all
+
+            apply_terminate_all(self)
+            return
+        shutdown.cleanup_and_quit(self)
 
     def _invalidate_api_window_callbacks(self) -> None:
         """Detach this window without closing the application-owned client."""
@@ -6232,7 +6256,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Dismissed via Escape / window close -> treat as Cancel.
                 index = -1
             if index == 1:  # "Quit Anyway"
-                shutdown.cleanup_and_quit(self)
+                self._proceed_with_confirmed_quit()
             else:
                 # Cancel / dismissed: the user is staying in the app, so bring
                 # the main window to the front. The button click provided a

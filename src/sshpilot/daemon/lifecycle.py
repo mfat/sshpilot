@@ -8,10 +8,13 @@ import signal
 import socket
 import stat
 import struct
+import sys
 import tempfile
 import time
 from pathlib import Path
 from typing import Optional, Tuple
+
+from .process_registry import identify_process
 
 
 logger = logging.getLogger(__name__)
@@ -221,19 +224,43 @@ def unlink_owned_socket(path: Path, identity: Optional[Tuple[int, int]]) -> None
 # process accepting there is this user's own sshPilot daemon.
 # ---------------------------------------------------------------------------
 
-# macOS ``getsockopt`` level/name for the peer PID of a Unix socket
-# (``<sys/un.h>``: SOL_LOCAL / LOCAL_PEERPID).  Linux uses SO_PEERCRED.
+# macOS ``getsockopt`` level/names for Unix-socket peer identity, from
+# ``<sys/un.h>``:
+#     #define SOL_LOCAL        0
+#     #define LOCAL_PEERCRED   0x001   /* struct xucred */
+#     #define LOCAL_PEERPID    0x002   /* pid_t */
+# Linux uses SO_PEERCRED, which carries pid/uid/gid together.
 _SOL_LOCAL = 0
+_LOCAL_PEERCRED = 1
 _LOCAL_PEERPID = 2
+# struct xucred begins: u_int cr_version; uid_t cr_uid; ...
+_XUCRED_PREFIX = "=II"
+
+
+def peer_credentials_supported() -> bool:
+    """Whether this platform can identify the process behind a Unix socket.
+
+    Both production platforms can, and startup self-healing depends on it: a
+    daemon whose process cannot be named can neither be signalled safely nor
+    have its socket unlinked safely. This is asserted as a platform invariant
+    by the test suite rather than being allowed to degrade silently.
+    """
+
+    return hasattr(socket, "SO_PEERCRED") or sys.platform == "darwin"
 
 
 def peer_process_id(sock: socket.socket) -> Optional[int]:
     """Return the PID behind a connected Unix socket, or ``None``.
 
-    Linux reports pid/uid/gid through ``SO_PEERCRED``; macOS reports the pid
-    alone through ``LOCAL_PEERPID``.  Where the uid is available it must match
-    this user, so a pid is never returned for a peer we would not be entitled
-    to signal.  Returns ``None`` on any platform that reports neither.
+    Linux reports pid/uid/gid together through ``SO_PEERCRED``. macOS reports
+    the PID through ``LOCAL_PEERPID`` and the uid separately through
+    ``LOCAL_PEERCRED``; both are consulted, so neither platform hands back a
+    PID without also confirming the peer runs as this user. A PID is never
+    returned for PID 0 or 1, which cannot be ours and are catastrophic to
+    signal.
+
+    ``None`` means "not identified" and is always safe: every caller treats it
+    as grounds to refuse to signal, never as permission to proceed.
     """
 
     if hasattr(socket, "SO_PEERCRED"):
@@ -247,12 +274,41 @@ def peer_process_id(sock: socket.socket) -> Optional[int]:
         if hasattr(os, "getuid") and uid != os.getuid():
             return None
         return pid if pid > 1 else None
+
+    if sys.platform != "darwin":
+        return None
+
+    if not _darwin_peer_is_this_user(sock):
+        return None
     try:
-        raw = sock.getsockopt(_SOL_LOCAL, _LOCAL_PEERPID, struct.calcsize("i"))
+        raw = sock.getsockopt(
+            _SOL_LOCAL, _LOCAL_PEERPID, struct.calcsize("i")
+        )
         (pid,) = struct.unpack("i", raw)
     except (OSError, struct.error):
         return None
     return pid if pid > 1 else None
+
+
+def _darwin_peer_is_this_user(sock: socket.socket) -> bool:
+    """Confirm a macOS peer's uid via ``LOCAL_PEERCRED`` (``struct xucred``).
+
+    A socket in a 0700 directory this user owns already implies this, so an
+    unreadable xucred is not treated as a failure — but when the kernel does
+    answer, a foreign uid is refused outright.
+    """
+
+    try:
+        raw = sock.getsockopt(_SOL_LOCAL, _LOCAL_PEERCRED, 256)
+    except OSError:
+        return True
+    try:
+        _version, uid = struct.unpack_from(_XUCRED_PREFIX, raw, 0)
+    except struct.error:
+        return True
+    if not hasattr(os, "getuid"):
+        return True
+    return uid == os.getuid()
 
 
 def probe_socket_owner(
@@ -362,7 +418,15 @@ def evict_socket_owner(
     if expected_pid is None:
         _accepting, expected_pid = probe_socket_owner(path)
 
-    if expected_pid is not None and expected_pid != os.getpid():
+    expected_identity = (
+        identify_process(expected_pid) if expected_pid is not None else None
+    )
+    if (
+        expected_pid is not None
+        and expected_pid > 1
+        and expected_pid != os.getpid()
+        and expected_identity is not None
+    ):
         for signal_number, timeout in (
             (signal.SIGTERM, term_timeout),
             (signal.SIGKILL, kill_timeout),
@@ -370,6 +434,14 @@ def evict_socket_owner(
             accepting, current_pid = probe_socket_owner(path)
             if not accepting:
                 break  # It let go; nothing left to signal.
+            if not expected_identity.matches_live_process():
+                # Same number, different process: the daemon exited and the
+                # PID was recycled. Signalling now would hit a stranger.
+                logger.info(
+                    "Daemon pid=%s was recycled during eviction; not signalling",
+                    expected_pid,
+                )
+                break
             if current_pid != expected_pid:
                 # Either another process now owns the socket, or this
                 # platform cannot re-confirm the owner. Both mean we can no

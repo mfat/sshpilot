@@ -147,22 +147,3 @@ def sweep_runtime_directory_on_startup(
         owner_uid=owner_uid,
         protect_paths=protect,
     )
-
-
-def terminate_orphaned_ssh_masters(*, timeout: float = 2.0) -> None:
-    """Terminate ControlMasters no daemon is left to clean up.
-
-    A daemon that exits normally retires its own masters. One that had to be
-    killed cannot, and OpenSSH backgrounds a master into its own session — so
-    it would otherwise keep an authenticated connection to the remote host
-    alive for the rest of its ``ControlPersist`` window, after the application
-    is gone. This is the sweep for exactly that case; it is a no-op when no
-    master sockets remain.
-    """
-
-    try:
-        from sshpilot.ssh_multiplex import expire_all_masters
-
-        expire_all_masters(background=False, timeout=timeout, mode="exit")
-    except Exception:
-        logger.debug("orphaned ControlMaster sweep failed", exc_info=True)

@@ -5,6 +5,13 @@ transfers, forwards, the background daemon itself, and the ControlMasters the
 daemon spawned. There is deliberately no "leave it running" outcome — the only
 question a user is ever asked is whether to go through with the quit, and that
 confirmation appears only when live work would be lost.
+
+Ending it is not the same as claiming it ended. Exit is gated on
+:func:`verify_quit_teardown`, which asks the daemon package's authoritative
+verifier what is still alive; anything owned that survives keeps the window
+open with a list of what it is. The alternative — exiting anyway — strands
+processes with no owner left to reap them, which is exactly the residue the
+next launch then has to fight.
 """
 
 from __future__ import annotations
@@ -403,40 +410,100 @@ def begin_terminate_shutdown_intent(window) -> None:
 
 
 def force_daemon_exit(socket_path: Optional[os.PathLike]) -> list[str]:
-    """Make the daemon exit when the graceful stop did not.
+    """Make the daemon exit when the graceful stop did not, then collect after it.
 
     Escalates SIGTERM (which the daemon handles as a normal shutdown, so it
     still tears down its own sessions and ControlMasters) and then SIGKILL,
-    finally removing an orphaned socket file. A SIGKILLed daemon cannot run
-    its own cleanup, so the ControlMasters it spawned are swept here instead —
-    quit must not leave ``ssh`` processes and their remote TCP connections
-    behind.
+    finally removing an orphaned socket file. A killed daemon cannot run its
+    own cleanup, so its registered children and the ControlMasters it spawned
+    are reaped here instead — the ControlMaster sweep under the same ownership
+    rule the daemon's own shutdown uses, so an instance on an explicit
+    ``--socket`` never touches the real daemon's masters.
 
-    Returns an empty list once nothing holds the socket.
+    Returns an empty list only when nothing sshPilot owns is still running.
     """
     if socket_path is None:
         return []
     from .daemon.lifecycle import evict_socket_owner
-    from .daemon.runtime_cleanup import terminate_orphaned_ssh_masters
+    from .daemon.runtime_verification import terminate_owned_runtime
+
+    errors: list[str] = []
+    try:
+        if not evict_socket_owner(Path(socket_path)):
+            errors.append("the background service did not exit")
+    except Exception as exc:
+        errors.append(f"force daemon exit: {exc}")
 
     try:
-        freed = evict_socket_owner(Path(socket_path))
+        result = terminate_owned_runtime(socket_path=socket_path)
     except Exception as exc:
-        return [f"force daemon exit: {exc}"]
-    terminate_orphaned_ssh_masters()
-    if not freed:
-        return ["the background service did not exit"]
-    return []
+        return errors + [f"runtime teardown: {exc}"]
+    return errors + list(result.messages())
+
+
+def verify_quit_teardown(
+    socket_path: Optional[os.PathLike],
+    *,
+    daemon_identity=None,
+) -> list[str]:
+    """Return what is still running, empty when quit may proceed.
+
+    This is the gate on application exit. It asks the authoritative verifier
+    rather than re-deriving the answer, so "nothing is left running" is a
+    checked claim and not an assumption about what teardown probably did.
+    """
+    from .daemon.runtime_verification import verify_sshpilot_runtime_terminated
+
+    try:
+        result = verify_sshpilot_runtime_terminated(
+            socket_path=socket_path, daemon_identity=daemon_identity
+        )
+    except Exception as exc:
+        # A verification that cannot run has not proven anything, and quit is
+        # gated on proof.
+        return [f"could not verify shutdown: {exc}"]
+    return list(result.messages())
+
+
+def _clear_terminate_quit_decision(window) -> None:
+    """Undo the quit intent so the window is usable again after a refusal."""
+    window._daemon_quit_decision = None
+    window._daemon_quit_close_policy = None
+    window._daemon_shutdown_intent = None
+    app = window.get_application() if hasattr(window, "get_application") else None
+    if app is not None:
+        app._daemon_quit_decision = None
+        app._daemon_shutdown_intent = None
+
+
+def _present_incomplete_teardown(window, survivors: list[str]) -> None:
+    """Explain which owned resources are still running, and stay open."""
+    from gi.repository import Adw
+
+    detail = "\n".join(f"• {message}" for message in survivors[:8])
+    if len(survivors) > 8:
+        detail += "\n" + _("…and {n} more").format(n=len(survivors) - 8)
+    body = _(
+        "SSH Pilot could not shut everything down, so it has not quit. "
+        "Leaving now would strand these on your machine:\n\n{detail}"
+    ).format(detail=detail or _("Unknown error"))
+
+    dialog = Adw.AlertDialog.new(_("Could not quit completely"), body)
+    dialog.add_response("ok", _("OK"))
+    dialog.set_default_response("ok")
+    dialog.set_close_response("ok")
+    dialog.present(window)
 
 
 def apply_terminate_all(window) -> None:
-    """Force-stop the daemon, confirm it is gone, then quit.
+    """Tear the runtime down, verify it is gone, and only then quit.
 
-    The stop RPC and process/socket wait run on a background thread so the GTK
-    main loop is not blocked for the full RPC or drain timeout. A daemon that
-    does not answer or does not exit is escalated to signals rather than
-    cancelling the quit: quit is not a request the background service is
-    allowed to refuse.
+    The stop RPC, escalation and verification run on a background thread so
+    the GTK main loop is not blocked. A daemon that does not answer or does
+    not exit is escalated to signals rather than cancelling the quit — but
+    the quit itself is conditional on the final verification: if anything
+    sshPilot owns is still running, the application stays open and says what
+    survived, because exiting would strand it with no owner left to reap it.
     """
     # Intent first — before stop_daemon — so transport_closed cannot reconnect.
     begin_terminate_shutdown_intent(window)
@@ -456,11 +523,21 @@ def apply_terminate_all(window) -> None:
                 logger.warning(
                     "terminate-all during quit: %s; escalating", message
                 )
-            errors = force_daemon_exit(socket_path)
+            force_daemon_exit(socket_path)
+
+        # Exit is gated on proof, not on the teardown steps having been
+        # attempted. Whatever the escalation above believed it accomplished,
+        # the verifier is what decides: it re-checks the socket, the daemon's
+        # registered children, and sshPilot's own ControlMasters.
+        survivors = verify_quit_teardown(socket_path)
 
         def _finish() -> bool:
-            for message in errors:
-                logger.error("quit could not fully tear down: %s", message)
+            if survivors:
+                for message in survivors:
+                    logger.error("quit refused: %s is still running", message)
+                _clear_terminate_quit_decision(window)
+                _present_incomplete_teardown(window, survivors)
+                return False
 
             from . import shutdown
 
@@ -501,7 +578,8 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     )
     body = _(
         "Quitting closes every remote session and stops the background "
-        "service. Nothing is left running.\n\n{detail}"
+        "service. SSH Pilot checks that each one has actually stopped, and "
+        "stays open to tell you if any of them has not.\n\n{detail}"
     ).format(detail=detail)
 
     dialog = Adw.AlertDialog.new(_("Quit SSH Pilot?"), body)
@@ -531,6 +609,7 @@ __all__ = [
     "daemon_active_work_summary",
     "force_daemon_exit",
     "resolve_daemon_socket_path",
+    "verify_quit_teardown",
     "has_daemon_active_work",
     "present_daemon_quit_dialog",
     "resolve_quit_decision_from_policy",

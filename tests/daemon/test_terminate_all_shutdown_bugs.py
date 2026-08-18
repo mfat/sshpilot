@@ -329,11 +329,11 @@ def _sync_terminate_dispatch(monkeypatch, quit_policy):
 
 
 def test_issue3_apply_terminate_all_escalates_when_stop_is_refused(monkeypatch):
-    """A daemon that refuses the stop RPC is killed, and the quit proceeds.
+    """A daemon that refuses the stop RPC is killed, then verified gone.
 
-    Quit is not a request the background service may decline: leaving the app
-    running (the old behaviour) left both a live daemon and a window the user
-    asked to close.
+    Escalation is unconditional — quit is not a request the background service
+    may decline — but the *exit* is not: it happens only because verification
+    afterwards finds nothing owned still running.
     """
     import sshpilot.daemon_quit_policy as quit_policy
     import sshpilot.shutdown as shutdown_mod
@@ -352,6 +352,7 @@ def test_issue3_apply_terminate_all_escalates_when_stop_is_refused(monkeypatch):
         "force_daemon_exit",
         lambda socket_path: forced.append(socket_path) or [],
     )
+    monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
 
     quit_calls: list[object] = []
     monkeypatch.setattr(
@@ -385,6 +386,7 @@ def test_issue3_apply_terminate_all_quits_when_termination_succeeds(monkeypatch)
         "terminate_all_daemon_work",
         lambda _client: [],
     )
+    monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
     quit_calls: list[object] = []
     monkeypatch.setattr(
         shutdown_mod,
@@ -434,6 +436,7 @@ def test_issue3_apply_terminate_all_escalates_when_daemon_outlives_its_stop(monk
         "force_daemon_exit",
         lambda socket_path: forced.append(socket_path) or [],
     )
+    monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
 
     class _Window:
         client = object()
@@ -513,3 +516,117 @@ def test_terminate_refuses_daemon_control_without_stop_daemon():
     )
     errors = terminate_all_daemon_work(client)
     assert errors and "DAEMON_CONTROL" in errors[0]
+
+
+# ---------------------------------------------------------------------------
+# Exit is gated on verification, not on teardown having been attempted.
+# ---------------------------------------------------------------------------
+
+
+def _gated_window():
+    class _Window:
+        client = object()
+        _daemon_quit_decision = None
+        _daemon_quit_close_policy = None
+        _daemon_shutdown_intent = None
+
+        def get_application(self):
+            return None
+
+    return _Window()
+
+
+def test_surviving_daemon_prevents_the_gui_from_exiting(monkeypatch):
+    """Required: eviction failure must not end in a 'successful' quit.
+
+    Exiting here would strand a running daemon with no owner left to reap it,
+    which is exactly the state the next launch has to fight.
+    """
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.shutdown as shutdown_mod
+
+    _sync_terminate_dispatch(monkeypatch, quit_policy)
+    monkeypatch.setattr(quit_policy, "terminate_all_daemon_work", lambda _c: [])
+    monkeypatch.setattr(quit_policy, "force_daemon_exit", lambda _p: ["stuck"])
+    monkeypatch.setattr(
+        quit_policy,
+        "verify_quit_teardown",
+        lambda *_a, **_k: ["the background service still owns its socket (pid=99)"],
+    )
+
+    quit_calls = []
+    presented = []
+    monkeypatch.setattr(
+        shutdown_mod, "cleanup_and_quit", lambda window: quit_calls.append(window)
+    )
+    monkeypatch.setattr(
+        quit_policy,
+        "_present_incomplete_teardown",
+        lambda window, survivors: presented.append(list(survivors)),
+    )
+
+    window = _gated_window()
+    quit_policy.apply_terminate_all(window)
+
+    assert quit_calls == [], "quit must not complete while something owned survives"
+    assert presented and "still owns its socket" in presented[0][0]
+    # The window is usable again rather than stuck mid-quit.
+    assert window._daemon_quit_decision is None
+    assert window._daemon_shutdown_intent is None
+
+
+def test_surviving_tracked_child_prevents_the_gui_from_exiting(monkeypatch):
+    """Required: a live owned SSH child blocks exit even with the daemon gone."""
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.shutdown as shutdown_mod
+
+    _sync_terminate_dispatch(monkeypatch, quit_policy)
+    monkeypatch.setattr(quit_policy, "terminate_all_daemon_work", lambda _c: [])
+    monkeypatch.setattr(
+        quit_policy,
+        "verify_quit_teardown",
+        lambda *_a, **_k: ["a remote session process is still running (pid=4242)"],
+    )
+    quit_calls = []
+    monkeypatch.setattr(
+        shutdown_mod, "cleanup_and_quit", lambda window: quit_calls.append(window)
+    )
+    monkeypatch.setattr(
+        quit_policy, "_present_incomplete_teardown", lambda *_a: None
+    )
+
+    quit_policy.apply_terminate_all(_gated_window())
+    assert quit_calls == []
+
+
+def test_verified_teardown_allows_the_gui_to_exit(monkeypatch):
+    """Required: everything owned confirmed dead permits the quit."""
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.shutdown as shutdown_mod
+
+    _sync_terminate_dispatch(monkeypatch, quit_policy)
+    monkeypatch.setattr(quit_policy, "terminate_all_daemon_work", lambda _c: [])
+    monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
+    quit_calls = []
+    monkeypatch.setattr(
+        shutdown_mod, "cleanup_and_quit", lambda window: quit_calls.append(window)
+    )
+
+    window = _gated_window()
+    quit_policy.apply_terminate_all(window)
+    assert quit_calls == [window]
+
+
+def test_a_verification_that_cannot_run_blocks_the_quit(monkeypatch):
+    """An unprovable shutdown is not a proven one."""
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.daemon.runtime_verification as verification
+
+    def _explode(**_kwargs):
+        raise RuntimeError("registry unreadable")
+
+    monkeypatch.setattr(
+        verification, "verify_sshpilot_runtime_terminated", _explode
+    )
+    survivors = quit_policy.verify_quit_teardown("/nonexistent/sshpilotd.sock")
+    assert survivors, "a verification failure must read as 'not verified'"

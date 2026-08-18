@@ -161,9 +161,14 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # request, the quit path escalates to signalling the process holding
         # the socket. The escalation itself lives in the daemon package.
         ("daemon_quit_policy.py", "evict_socket_owner"),
-        # …and sweeps the ControlMasters that a killed daemon never got to
-        # retire, so quitting leaves no ``ssh`` process behind.
-        ("daemon_quit_policy.py", "terminate_orphaned_ssh_masters"),
+        # …reaps what a killed daemon could not (its registered children and
+        # the ControlMasters it never got to retire), so quitting leaves no
+        # ``ssh`` process behind…
+        ("daemon_quit_policy.py", "terminate_owned_runtime"),
+        # …and gates the exit itself on the authoritative proof that nothing
+        # sshPilot owns is still running. Ownership lives in the daemon
+        # package because that is what creates the processes.
+        ("daemon_quit_policy.py", "verify_sshpilot_runtime_terminated"),
         # Daemon-adjacent cleanup of stale askpass sockets.
         # Shared rule for the per-user runtime tree the daemon sockets,
         # askpass sockets, and ControlMaster sockets all live under —
