@@ -1481,8 +1481,15 @@ class TerminalWidget(Gtk.Box):
             elif policy == TerminalClosePolicy.ASK and not is_quitting:
                 self._show_daemon_close_dialog()
                 return  # Dialog will handle the actual close
+            elif is_quitting:
+                # Quit ends every session. Detaching here used to leave the
+                # session (and the daemon holding it) alive after the app was
+                # gone, which is exactly what quit must not do.
+                self._daemon_controller.close()
+                logger.debug(
+                    f"Terminated daemon session {self._daemon_tab_state.session_id} on quit"
+                )
             else:
-                # Default to detach during quit or if policy is unknown
                 self._daemon_controller.detach()
                 logger.debug(f"Detached from daemon session {self._daemon_tab_state.session_id}")
 

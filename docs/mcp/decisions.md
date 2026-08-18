@@ -75,10 +75,9 @@ Status: Accepted
 
 Decision: MCP servers live under `src/sshpilot/mcp/` as separate subpackages
 (`dev`, later `runtime`), stay GTK/GI-free, and ship as setuptools console
-scripts (`sshpilot-mcp-dev`). The official `mcp` SDK (which requires
-Python 3.10+) is an optional extra (`pip install 'sshpilot[mcp]'`); the core
-application keeps its Python 3.9 floor. The repo `_scope` module stays pure
-stdlib so path-safety tests run without the SDK.
+scripts (`sshpilot-mcp-dev`). The official `mcp` SDK is an optional extra
+(`pip install 'sshpilot[mcp]'`) rather than a base dependency. The repo
+`_scope` module stays pure stdlib so path-safety tests run without the SDK.
 
 Reason: mirrors the existing `core`/`api`/`daemon` subpackage layout, keeps the
 base install lean, and treats MCP support as opt-in.

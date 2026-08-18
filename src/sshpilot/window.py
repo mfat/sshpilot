@@ -110,6 +110,45 @@ from .plugins.registry import capabilities_for
 logger = logging.getLogger(__name__)
 
 
+def _describe_daemon_start_failure(reason: str) -> str:
+    """Human-readable sentence for a ``DaemonStartupFailure`` reason string.
+
+    Falls back to a generic sentence for reasons this map does not know
+    about (including plain exception type names) instead of leaking the
+    internal enum value into user-facing text.
+    """
+    from .daemon.launcher import DaemonStartupFailure
+
+    messages = {
+        DaemonStartupFailure.PROCESS_EXITED.value: _(
+            "The background service exited unexpectedly during startup."
+        ),
+        DaemonStartupFailure.STARTUP_TIMEOUT.value: _(
+            "The background service did not become ready in time."
+        ),
+        DaemonStartupFailure.HANDSHAKE_FAILED.value: _(
+            "The background service did not respond correctly during startup."
+        ),
+        DaemonStartupFailure.INCOMPATIBLE_PROTOCOL.value: _(
+            "A running background service uses an incompatible protocol version."
+        ),
+        DaemonStartupFailure.API_VERSION_MISMATCH.value: _(
+            "A background service from a different app version is running and "
+            "could not be replaced."
+        ),
+        DaemonStartupFailure.MISSING_CAPABILITY.value: _(
+            "The running background service does not support required features."
+        ),
+        DaemonStartupFailure.UNSAFE_SOCKET.value: _(
+            "The background service socket location is not safe to use."
+        ),
+        DaemonStartupFailure.INTERNAL_ERROR.value: _(
+            "The background service could not be started."
+        ),
+    }
+    return messages.get(reason, _("The background service could not be started."))
+
+
 _tips_banner_css_installed = False
 
 
@@ -747,10 +786,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 getattr(getattr(cause, 'code', None), 'value', None),
             )
         self._client_mode_warning = _(
-            "SSH Pilot requires its background service. "
-            "The service could not be started (%s). Retry, restart the service, "
-            "inspect diagnostics, or exit."
-        ) % reason
+            "SSH Pilot requires its background service. %s "
+            "Retry, restart the service, inspect diagnostics, or exit."
+        ) % _describe_daemon_start_failure(reason)
         if hasattr(self, 'welcome_view') and self.welcome_view is not None:
             self.welcome_view.set_client(None)
         self._show_client_mode_warning()
@@ -779,6 +817,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             toast = Adw.Toast.new(message)
             toast.set_timeout(0)
+            # Retry is the right action for every reason, including a stale
+            # peer: each attempt runs the launcher's full recovery, which
+            # stops or kills a daemon that cannot serve this build before
+            # starting a current one.
             toast.set_button_label(_("Retry"))
             toast.connect("button-clicked", lambda *_args: self.retry_daemon_connection())
             self.toast_overlay.add_toast(toast)
@@ -5954,10 +5996,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.show_quit_confirmation_dialog()
                 return True  # Prevent close, let dialog handle it
 
-        # No active connections or all local terminals are idle, safe to close
+        # No active connections, or only idle local terminals. Nothing needs
+        # confirming — but a daemon still has to be torn down and *verified*
+        # gone before the process exits, so this closes through the same
+        # gated path rather than simply allowing the window to go away.
+        if getattr(self, "client", None) is not None:
+            self._teardown_ssh_config_monitor()
+            self._proceed_with_confirmed_quit()
+            return True  # Hold the window until teardown is verified.
+
         self._teardown_ssh_config_monitor()
         self._invalidate_api_window_callbacks()
         return False  # Allow close
+
+    def _proceed_with_confirmed_quit(self) -> None:
+        """Quit through the verified-teardown path whenever a daemon exists.
+
+        Every exit that owns runtime resources goes through
+        ``apply_terminate_all``: it stops the daemon, reaps what it owned, and
+        only calls ``cleanup_and_quit`` once verification proves nothing
+        sshPilot started is still running. Without a daemon there is nothing
+        to verify and the plain shutdown applies.
+        """
+        if getattr(self, "client", None) is not None:
+            from .daemon_quit_policy import apply_terminate_all
+
+            apply_terminate_all(self)
+            return
+        shutdown.cleanup_and_quit(self)
 
     def _invalidate_api_window_callbacks(self) -> None:
         """Detach this window without closing the application-owned client."""
@@ -6076,9 +6142,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def show_quit_confirmation_dialog(self):
         """Show confirmation dialog when quitting with active connections.
 
-        When daemon-backed work is active (or the app-close policy is ASK),
-        presents Keep running / Terminate everything / Cancel. Otherwise falls
-        back to Cancel / Quit Anyway for local-terminal jobs.
+        Quit always tears the daemon and its work down; the app-close policy
+        only decides whether that is confirmed first (ASK) or immediate
+        (TERMINATE). Local-terminal jobs keep their own Cancel / Quit Anyway
+        prompt.
         """
         try:
             self.unminimize()
@@ -6091,7 +6158,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         from .daemon_quit_policy import (
             DaemonQuitDecision,
-            apply_keep_running,
             apply_terminate_all,
             has_daemon_active_work,
             present_daemon_quit_dialog,
@@ -6102,10 +6168,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         auto = None
         if daemon_work:
             auto = resolve_quit_decision_from_policy(getattr(self, "config", None))
-            # ASK (None) → dialog; DETACH/TERMINATE apply immediately.
-            if auto is DaemonQuitDecision.KEEP_RUNNING:
-                apply_keep_running(self)
-                return
+            # ASK (None) → confirm dialog; TERMINATE applies immediately.
             if auto is DaemonQuitDecision.TERMINATE_ALL:
                 apply_terminate_all(self)
                 return
@@ -6116,9 +6179,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
                 def _on_daemon_decision(decision: DaemonQuitDecision) -> None:
                     try:
-                        if decision is DaemonQuitDecision.KEEP_RUNNING:
-                            apply_keep_running(self)
-                        elif decision is DaemonQuitDecision.TERMINATE_ALL:
+                        if decision is DaemonQuitDecision.TERMINATE_ALL:
                             apply_terminate_all(self)
                         else:
                             try:
@@ -6195,7 +6256,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 # Dismissed via Escape / window close -> treat as Cancel.
                 index = -1
             if index == 1:  # "Quit Anyway"
-                shutdown.cleanup_and_quit(self)
+                self._proceed_with_confirmed_quit()
             else:
                 # Cancel / dismissed: the user is staying in the app, so bring
                 # the main window to the front. The button click provided a

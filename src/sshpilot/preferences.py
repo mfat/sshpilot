@@ -818,19 +818,19 @@ class PreferencesWindow(Adw.NavigationPage):
         self.app_close_policy_row = Adw.ComboRow()
         self.app_close_policy_row.set_title(_("Quit policy"))
         self.app_close_policy_row.set_subtitle(
-            _("Action when quitting with daemon-backed connections")
+            _("Quitting always closes remote sessions and the background service")
         )
         app_policy_model = Gtk.StringList()
-        app_policy_model.append(_("Keep connections running"))
-        app_policy_model.append(_("Terminate everything"))
-        app_policy_model.append(_("Ask each time"))
+        app_policy_model.append(_("Ask before closing active connections"))
+        app_policy_model.append(_("Quit immediately"))
         self.app_close_policy_row.set_model(app_policy_model)
         current_app_policy = self.config.get_setting(
             'terminal.daemon_app_close_policy', 'ask'
         )
+        # 'detach' is retired; a config still carrying it falls back to Ask.
         app_policy_index = {
-            'detach': 0, 'terminate': 1, 'ask': 2
-        }.get(current_app_policy, 2)
+            'ask': 0, 'terminate': 1
+        }.get(current_app_policy, 0)
         self.app_close_policy_row.set_selected(app_policy_index)
         self.app_close_policy_row.connect(
             'notify::selected', self.on_app_close_policy_changed
@@ -3870,8 +3870,8 @@ class PreferencesWindow(Adw.NavigationPage):
     def on_app_close_policy_changed(self, row, _pspec):
         """Persist the application quit policy preference."""
         try:
-            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
-            policy = policy_map.get(row.get_selected(), 'detach')
+            policy_map = {0: 'ask', 1: 'terminate'}
+            policy = policy_map.get(row.get_selected(), 'ask')
             self.config.set_setting('terminal.daemon_app_close_policy', policy)
         except Exception as exc:
             logger.error("Failed to update app close policy: %s", exc)
@@ -3902,8 +3902,17 @@ class PreferencesWindow(Adw.NavigationPage):
         try:
             from .api.daemon_client import DaemonClient
 
-            client = DaemonClient(timeout=1.0)
+            client = DaemonClient(timeout=1.0, allow_api_mismatch=True)
             try:
+                if client.api_mismatch:
+                    # A daemon from a different build. Its status DTO is not
+                    # guaranteed to decode against this build, and reading it
+                    # would only turn a describable state into "Unavailable
+                    # (ValueError)", so report the one fact that matters.
+                    row.set_subtitle(
+                        _("Running a different app version — restart required")
+                    )
+                    return False
                 status = client.get_daemon_status()
                 resources = status.resources
                 row.set_subtitle(
@@ -3978,9 +3987,13 @@ class PreferencesWindow(Adw.NavigationPage):
             from .api.daemon_client import DaemonClient
             from .api.models.daemon import RestartDaemonRequest
 
-            client = DaemonClient(timeout=2.0)
+            client = DaemonClient(timeout=2.0, allow_api_mismatch=True)
             try:
-                client.get_daemon_status()
+                # Only control RPCs here, deliberately. This client may be
+                # talking to a daemon from a different build, whose data DTOs
+                # this build is not guaranteed to decode — a status probe
+                # first would abort the restart on exactly the daemon the
+                # restart exists to replace.
                 result = client.restart_daemon(RestartDaemonRequest(force=False))
                 if not result.accepted and result.confirmation:
                     warn = Adw.AlertDialog(
@@ -4009,7 +4022,7 @@ class PreferencesWindow(Adw.NavigationPage):
                         error_body = None
                         forced = None
                         try:
-                            forced = DaemonClient(timeout=2.0)
+                            forced = DaemonClient(timeout=2.0, allow_api_mismatch=True)
                             forced_result = forced.restart_daemon(
                                 RestartDaemonRequest(force=True, confirmation=token)
                             )

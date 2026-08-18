@@ -129,14 +129,15 @@ class TestDaemonQuitDecision:
                 return default
 
         assert (
-            resolve_quit_decision_from_policy(Cfg("detach"))
-            is DaemonQuitDecision.KEEP_RUNNING
-        )
-        assert (
             resolve_quit_decision_from_policy(Cfg("terminate"))
             is DaemonQuitDecision.TERMINATE_ALL
         )
         assert resolve_quit_decision_from_policy(Cfg("ask")) is None
+        # ``detach`` is retired: quit always terminates, so a configuration
+        # still carrying it must confirm rather than silently leave a daemon
+        # (and its remote sessions) running after the app exits.
+        assert resolve_quit_decision_from_policy(Cfg("detach")) is None
+        assert not hasattr(DaemonQuitDecision, "KEEP_RUNNING")
 
     def test_has_daemon_work_from_terminals(self):
         from sshpilot.daemon_quit_policy import has_daemon_active_work

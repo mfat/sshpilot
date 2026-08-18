@@ -29,6 +29,7 @@ from .session_runtime import (
     SessionLaunchSpec,
     SessionProcessHandle,
 )
+from .process_registry import KIND_SESSION, forget_owned_process, record_owned_process_or_abandon
 
 DEFAULT_TERMINAL_INPUT_BYTES = 256 * 1024
 DEFAULT_PTY_READ_CHUNK = 32 * 1024
@@ -323,6 +324,7 @@ class PtyProcessHandle(SessionProcessHandle):
         with self._lock:
             if self._process.poll() is None:
                 os.killpg(self._process.pid, signal.SIGKILL)
+        forget_owned_process(self._process.pid)
 
     def wait(self, timeout: float) -> Optional[SessionExitInfo]:
         try:
@@ -488,6 +490,11 @@ class PtySessionProcessRunner:
             )
             os.close(status_write)
             status_write = -1
+            # The helper calls setsid before exec, so the child is a process
+            # group leader and the whole group is ours to signal.
+            record_owned_process_or_abandon(
+                process, kind=KIND_SESSION, process_group=True
+            )
             readable, _, _ = select.select((status_read,), (), (), 2.0)
             # A successful exec closes status_write via CLOEXEC without
             # writing anything, so os.read(...) returns b"" (EOF) here too —

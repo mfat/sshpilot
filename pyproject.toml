@@ -12,7 +12,7 @@ authors = [
   { name="mFat", email="newmfat@gmail.com" },
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 description = "SSH connection manager and terminal"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -37,10 +37,13 @@ dependencies = [
 # file manager uses the native OpenSSH `ssh -s sftp` subprocess.
 test = [
     "pytest>=7.0",
+    "pytest-cov",
+    "pytest-xdist",
+    "jsonschema",
     "paramiko>=3.4",
 ]
-# Optional MCP servers (sshpilot-mcp-dev and, later, sshpilot-mcp-runtime).
-# The MCP SDK requires Python 3.10+; the core application keeps 3.9 support.
+# Optional MCP servers (sshpilot-mcp-dev and, later, sshpilot-mcp-runtime),
+# kept out of the base install to keep it lean.
 mcp = [
     "mcp>=2.0.0",
 ]

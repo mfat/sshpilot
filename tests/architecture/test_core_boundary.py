@@ -157,6 +157,22 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # Diagnostics: resolve the daemon socket path for Help ▸ Diagnostics.
         ("log_viewer.py", "resolve_socket_path"),
         ("daemon_quit_policy.py", "resolve_socket_path"),
+        # Quit must leave nothing running: when the daemon will not stop on
+        # request, the quit path escalates to signalling the process holding
+        # the socket. The escalation itself lives in the daemon package.
+        ("daemon_quit_policy.py", "evict_socket_owner"),
+        # …reaps what a killed daemon could not (its registered children and
+        # the ControlMasters it never got to retire), so quitting leaves no
+        # ``ssh`` process behind…
+        ("daemon_quit_policy.py", "terminate_owned_runtime"),
+        # …and gates the exit itself on the authoritative proof that nothing
+        # sshPilot owns is still running. Ownership lives in the daemon
+        # package because that is what creates the processes.
+        ("daemon_quit_policy.py", "verify_sshpilot_runtime_terminated"),
+        # Fingerprints the daemon from socket peer credentials *before*
+        # teardown, so one that releases its socket but keeps running cannot
+        # pass verification by disappearing from the socket check.
+        ("daemon_quit_policy.py", "capture_daemon_identity"),
         # Daemon-adjacent cleanup of stale askpass sockets.
         # Shared rule for the per-user runtime tree the daemon sockets,
         # askpass sockets, and ControlMaster sockets all live under —
@@ -169,6 +185,9 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("terminal_manager.py", "DaemonLauncher"),
         ("terminal_manager.py", "DaemonLaunchError"),
         ("terminal_manager.py", "DaemonStartupFailure"),
+        # Startup client-selection toast: map DaemonLaunchError.reason to a
+        # human-readable message instead of leaking the raw enum value.
+        ("window.py", "DaemonStartupFailure"),
         # Reserved ``secret-session`` interaction namespace: frontend dialog
         # layers filter on it so secret-backend interactions are presented by
         # the app-wide SecretsInteractionPresenter, never the session-scoped one.

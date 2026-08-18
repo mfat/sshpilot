@@ -1177,17 +1177,13 @@ class SshPilotApplication(Adw.Application):
         if client is None and self.window is not None:
             client = getattr(self.window, 'client', None)
 
-        # App-launched daemon: request graceful stop before closing the
-        # transport — unless the user chose Keep connections running.
-        # Externally-managed daemons (daemon_process is None) are left alone.
-        from .daemon_quit_policy import DaemonQuitDecision
-
-        quit_decision = getattr(self, "_daemon_quit_decision", None)
-        if quit_decision is None and self.window is not None:
-            quit_decision = getattr(self.window, "_daemon_quit_decision", None)
-
-        daemon_process = getattr(selection, 'daemon_process', None)
-        keep_running = quit_decision is DaemonQuitDecision.KEEP_RUNNING
+        # Quitting the application stops the daemon — always, and whether or
+        # not this process is the one that launched it. A daemon we merely
+        # connected to is still *this user's* daemon serving *this* app; the
+        # only reason it exists is to serve the window that is now closing,
+        # and leaving it resident is what makes the next launch collide with a
+        # previous build. Idle-shutdown remains the safety net for crashes, not
+        # the mechanism for ordinary quit.
         already_force_stopped = (
             getattr(self, "_daemon_shutdown_intent", None) == "terminate"
             or (
@@ -1196,42 +1192,12 @@ class SshPilotApplication(Adw.Application):
                 == "terminate"
             )
         )
-        if (
-            client is not None
-            and daemon_process is not None
-            and not keep_running
-            and not already_force_stopped
-        ):
-            try:
-                from .api.models.daemon import StopDaemonRequest
-                force = quit_decision is DaemonQuitDecision.TERMINATE_ALL
-                result = client.stop_daemon(StopDaemonRequest(force=force))
-                if not result.accepted and result.confirmation:
-                    # Active resources exist — force stop to terminate all work.
-                    logger.info(
-                        "Daemon stop refused (%s); force-terminating all work",
-                        result.will_lose,
-                    )
-                    client.stop_daemon(
-                        StopDaemonRequest(force=True)
-                    )
-                else:
-                    logger.info(
-                        "Requested graceful stop of app-launched daemon"
-                    )
-            except Exception:
-                logger.debug(
-                    "Daemon graceful stop request failed (will idle out)",
-                    exc_info=True,
-                )
-        elif already_force_stopped:
+        if already_force_stopped:
             logger.debug(
                 "Terminate-all already force-stopped the daemon; skipping on_shutdown stop"
             )
-        elif keep_running:
-            logger.info(
-                "Keep-running quit: leaving app-launched daemon intact"
-            )
+        else:
+            self._stop_daemon_for_quit(client, selection)
 
         if client is not None:
             try:
@@ -1261,6 +1227,51 @@ class SshPilotApplication(Adw.Application):
         from .terminal import process_manager
         process_manager.cleanup_all()
         logger.info("Cleanup completed")
+
+    def _stop_daemon_for_quit(self, client, selection) -> None:
+        """Stop the daemon and confirm it is gone before the app exits.
+
+        Graceful force-stop first so the daemon closes its own sessions, SFTP
+        services, transfers and ControlMasters; then a bounded wait; then
+        signals. Quit does not depend on the daemon cooperating.
+        """
+
+        from .daemon_quit_policy import (
+            capture_daemon_identity,
+            force_daemon_exit,
+            resolve_daemon_socket_path,
+            wait_for_daemon_termination,
+        )
+
+        socket_path = resolve_daemon_socket_path(client)
+        daemon_identity = capture_daemon_identity(socket_path)
+        daemon_process = getattr(selection, 'daemon_process', None)
+
+        if client is not None:
+            try:
+                from .api.models.daemon import StopDaemonRequest
+
+                client.stop_daemon(StopDaemonRequest(force=True))
+                logger.info("Requested stop of the background service on quit")
+            except Exception:
+                logger.debug(
+                    "Daemon stop request failed on quit; escalating",
+                    exc_info=True,
+                )
+
+        errors = wait_for_daemon_termination(
+            client=None,
+            daemon_process=daemon_process,
+            socket_path=socket_path,
+            timeout=5.0,
+        )
+        if errors:
+            for message in errors:
+                logger.warning("quit shutdown: %s; escalating", message)
+            for message in force_daemon_exit(
+                socket_path, daemon_identity=daemon_identity
+            ):
+                logger.error("quit could not fully tear down: %s", message)
 
     def setup_logging(self):
         """Set up logging configuration.

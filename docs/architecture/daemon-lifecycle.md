@@ -65,6 +65,17 @@ after a monotonic deadline.
 race-hardened: probe an existing compatible daemon, otherwise spawn
 `sshpilot-daemon` once per attempt.
 
+It is also self-healing, because a background service must never be able to
+make the application unusable. A resident daemon that answers but cannot serve
+this build — different API implementation (the in-place app upgrade case),
+unsupported protocol, missing capabilities, or wedged before the handshake —
+is *replaced*, not reported: `daemon.stop(force)` first so the outgoing daemon
+tears down its own sessions and ControlMasters, then SIGTERM, then SIGKILL,
+then removal of the orphaned socket. Locally repairable states (a runtime
+directory left at the wrong mode, a stray non-socket file at the endpoint) are
+repaired in place. What still fails closed is a location that is not really
+ours: a symlinked runtime directory, or one owned by another user.
+
 **Optional: systemd user service.** Packaged unit at
 `share/sshpilot/systemd/sshpilot-daemon.service` for users who want a persistent
 daemon. See [packaging-daemon.md](../operations/packaging-daemon.md).

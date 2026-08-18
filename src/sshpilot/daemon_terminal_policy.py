@@ -337,16 +337,24 @@ def resolve_tab_close_policy(config) -> TerminalClosePolicy:
 
 
 def resolve_app_close_policy(config) -> TerminalClosePolicy:
-    # Default ASK so quitting with daemon work presents Keep running /
-    # Terminate everything / Cancel rather than silently detaching.
+    """Resolve how quit treats daemon-backed work: confirm first, or just do it.
+
+    Quit always terminates, so DETACH is not a valid app-close policy. A
+    configuration still carrying the retired ``detach`` value (or anything
+    unrecognized) resolves to ASK, which confirms before tearing live work
+    down — the safe reading of a stale preference.
+    """
     raw = str(
         _get_setting(config, APP_CLOSE_POLICY_SETTING, TerminalClosePolicy.ASK.value)
         or ""
     )
     try:
-        return TerminalClosePolicy(raw.strip().lower())
+        policy = TerminalClosePolicy(raw.strip().lower())
     except ValueError:
         return TerminalClosePolicy.ASK
+    if policy is TerminalClosePolicy.DETACH:
+        return TerminalClosePolicy.ASK
+    return policy
 
 
 def preferred_daemon_emulator(config) -> str:

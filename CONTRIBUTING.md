@@ -69,12 +69,14 @@ the way CI does:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -ra -m "not integration"
+pytest -ra -m "not integration and not gui"
 ```
 
 `integration`-marked tests run real tool binaries and are exercised separately
-in CI. Some unit tests are marked `xfail` (see `tests/conftest.py`) — that is
-expected.
+in CI. `tests/conftest.py` has a mechanism (`_KNOWN_FAILING_NODEIDS`) for
+tracking pre-existing environment-specific failures as non-strict `xfail`; it's
+currently empty — prefer an explicit `skipif` inside the test itself over
+adding to it, so CI skips cleanly instead of relying on a non-strict XPASS.
 
 ### Running GUI tests (real GTK)
 

@@ -23,7 +23,6 @@ pytestmark = pytest.mark.gui
 
 def test_restore_replay_and_live_output(phase14_harness):
     from sshpilot.api.models.sessions import SessionState
-    from sshpilot.daemon_quit_policy import DaemonQuitDecision
     from sshpilot.daemon_session_restore import DaemonSessionRestoreManager
 
     h = phase14_harness
@@ -33,9 +32,11 @@ def test_restore_replay_and_live_output(phase14_harness):
     h.wait_for_marker(f"MARKER_A_{OUTPUT_MARKER}", terminal=term)
 
     session_id = h.detach_terminal_keep_session(term)
-    # Close GTK only; keep ephemeral daemon (do not stop_daemon).
-    h.gui.app._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
-    h.gui.window._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
+    # Close GTK only, leaving the daemon resident. An ordinary quit always
+    # stops the daemon now, so this stands in for the case restore actually
+    # serves: the UI went away without shutting the service down (crash,
+    # SIGKILL, logout), and its sessions are still live on relaunch.
+    h.gui.app._stop_daemon_for_quit = lambda *_args, **_kwargs: None
     try:
         h.gui.shutdown()
     except Exception:
@@ -53,7 +54,7 @@ def test_restore_replay_and_live_output(phase14_harness):
     )
 
     h.restart_app()
-    h.gui.app._daemon_quit_decision = DaemonQuitDecision.KEEP_RUNNING
+    h.gui.app._stop_daemon_for_quit = lambda *_args, **_kwargs: None
     win = h.gui.window
     win.config.set_setting("terminal.daemon_restore_sessions", True)
     win.config.set_setting("terminal.daemon_auto_attach", True)

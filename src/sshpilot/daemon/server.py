@@ -585,6 +585,9 @@ class DaemonServer:
                 raise SocketSecurityError("The daemon socket changed during bind")
             listener.listen()
             listener.setblocking(False)
+            # Bind proves single-instance ownership of this socket directory,
+            # so it is now safe to own the durable child registry beside it.
+            self._install_process_registry()
             # Own the single-instance socket before loading/migrating the core.
             # Readiness remains false until construction and migration finish.
             core = self._core_factory()
@@ -2098,12 +2101,97 @@ class DaemonServer:
                 type(error).__name__,
             )
         finally:
+            owned_the_socket = self._socket_identity is not None
             unlink_owned_socket(self.socket_path, self._socket_identity)
             self._socket_identity = None
             try:
                 sweep_stale_askpass_sockets(self.socket_path.parent)
             except Exception:
                 logger.debug("shutdown askpass sweep failed", exc_info=True)
+            if owned_the_socket:
+                self._expire_control_masters()
+            self._release_process_registry()
+
+    def _install_process_registry(self) -> None:
+        """Own the durable record of children spawned from this daemon.
+
+        In-memory handles cover every case except the one that matters after
+        the fact: a daemon that is killed cannot reap its children, and
+        nothing else would then know which processes belonged to it.
+        """
+
+        from .process_registry import (
+            OwnedProcessRegistry,
+            registry_path_for,
+            set_active_registry,
+        )
+
+        try:
+            registry = OwnedProcessRegistry(registry_path_for(self.socket_path))
+            # A registry surviving here describes a previous daemon's
+            # children; entries whose process is gone are dropped, and any
+            # genuine orphan stays listed for the application to reap.
+            registry.prune()
+            set_active_registry(registry)
+            self._process_registry = registry
+        except Exception:
+            logger.debug("Could not install the process registry", exc_info=True)
+
+    def _release_process_registry(self) -> None:
+        """Drop the registry after a clean shutdown reaped its children."""
+
+        from .process_registry import set_active_registry
+
+        registry = getattr(self, "_process_registry", None)
+        self._process_registry = None
+        set_active_registry(None)
+        if registry is None:
+            return
+        try:
+            if not registry.prune():
+                registry.clear()
+        except Exception:
+            logger.debug("Could not release the process registry", exc_info=True)
+
+    def _expire_control_masters(self) -> None:
+        """Terminate the ControlMasters this daemon's sessions left behind.
+
+        OpenSSH backgrounds a multiplexing master into its own session, so it
+        is not one of our children and survives both process-group teardown
+        and daemon exit — for the whole ``ControlPersist`` window. Quitting the
+        application must not leave those ``ssh`` processes (and their live TCP
+        connections to remote hosts) running, so they are retired explicitly.
+
+        Two guards keep the blast radius exactly right. Only a daemon that
+        actually owned the listening socket sweeps at all, so a startup that
+        lost the single-instance race cannot tear down the masters belonging
+        to the daemon that won it. And only a daemon on the *default* socket
+        does, because the ControlMaster directory is per-user, not per-socket:
+        an instance started on an explicit ``--socket`` (a test fixture, a
+        second development instance) shares that directory with the user's
+        real daemon and must not retire its masters. That second rule is
+        :func:`owns_default_control_master_namespace`, shared with the GUI's
+        forced-teardown fallback so the two cannot drift apart.
+        """
+
+        from .control_masters import (
+            owns_default_control_master_namespace,
+            terminate_owned_control_masters,
+        )
+
+        if not owns_default_control_master_namespace(self.socket_path):
+            return
+        try:
+            surviving = terminate_owned_control_masters()
+        except Exception:
+            logger.debug("shutdown ControlMaster teardown failed", exc_info=True)
+            return
+        if surviving:
+            # Reported, never swallowed: the application's own verification
+            # is what decides whether quit may finish, and it re-checks these.
+            logger.warning(
+                "%d ControlMaster(s) survived daemon shutdown", len(surviving)
+            )
 
     def collect_resource_counts(self) -> DaemonResourceCounts:
         with self._event_lock:

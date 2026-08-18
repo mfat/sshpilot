@@ -8,9 +8,10 @@
 # they come from system packages (see README).
 -r requirements.txt
 
-# Tests (CI runs: pytest -ra -m "not integration")
+# Tests (CI runs: pytest -ra -m "not integration and not gui")
 pytest>=7.0
 pytest-cov
+pytest-xdist
 jsonschema
 # Test-only: test_combined_auth.py uses paramiko as a mock SSH server to
 # validate the native auth path; not a runtime dependency.
