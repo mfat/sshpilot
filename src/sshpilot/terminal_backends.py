@@ -294,6 +294,15 @@ class VTETerminalBackend:
     def __init__(self, owner: "TerminalWidget") -> None:
         self.owner = owner
         self.vte = Vte.Terminal()
+
+        def _debug_commit(_terminal, committed_text, size):
+            data = committed_text.encode("utf-8")
+            print(
+                f"[VTE COMMIT] text={committed_text!r} size={size} hex={data.hex()}",
+                flush=True,
+            )
+
+        self.vte.connect("commit", _debug_commit)
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._background_provider = None
@@ -306,6 +315,7 @@ class VTETerminalBackend:
         self._native_context_handler: Optional[int] = None
         self._native_context_callback: Optional[Callable[[bool], None]] = None
         self._initialized = False
+        self._macos_option_key_controller: Optional[Gtk.EventControllerKey] = None
 
     def initialize(self) -> None:
         if self._initialized:
@@ -405,6 +415,130 @@ class VTETerminalBackend:
         except Exception:
             logger.debug("Could not configure VTE word selection", exc_info=True)
 
+    def set_macos_option_key_passthrough(self, enabled: bool) -> None:
+        """Install or remove the macOS Option key passthrough controller."""
+        from .platform_utils import is_macos
+        if not is_macos():
+            return
+        if enabled:
+            self._install_macos_option_key_controller()
+        else:
+            self._remove_macos_option_key_controller()
+
+    def _install_macos_option_key_controller(self) -> None:
+        """Install the macOS Option key event controller."""
+        if self._macos_option_key_controller is not None:
+            return
+        try:
+            controller = Gtk.EventControllerKey()
+            controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            controller.connect('key-pressed', self._on_macos_option_key_pressed)
+            self.vte.add_controller(controller)
+            self._macos_option_key_controller = controller
+        except Exception:
+            logger.debug("Failed to install macOS Option key controller", exc_info=True)
+
+    def _remove_macos_option_key_controller(self) -> None:
+        """Remove the macOS Option key event controller."""
+        controller = self._macos_option_key_controller
+        if controller is None:
+            return
+        try:
+            self.vte.remove_controller(controller)
+        except Exception:
+            logger.debug("Failed to remove macOS Option key controller", exc_info=True)
+        finally:
+            self._macos_option_key_controller = None
+
+    # Dead key to base character mapping for terminal use
+    _DEAD_KEY_MAP = {
+        'dead_tilde': '~',
+        'dead_perispomeni': '~',  # Greek circumflex, used for tilde on some layouts
+        'dead_grave': '`',
+        'dead_acute': "'",
+        'dead_circumflex': '^',
+        'dead_diaeresis': '"',
+        'dead_macron': '\u00af',
+        'dead_cedilla': '\u00b8',
+        'dead_caron': '\u02c7',
+        'dead_breve': '\u02d8',
+    }
+
+    def _on_macos_option_key_pressed(
+        self,
+        controller: Gtk.EventControllerKey,
+        keyval: int,
+        keycode: int,
+        state: Gdk.ModifierType,
+    ) -> bool:
+        """Intercept Option-generated characters from alternate keyboard layouts.
+
+        Returns True to consume the event, False to let VTE handle it.
+        """
+        # 1. Alt/Option must be pressed
+        if not (state & Gdk.ModifierType.ALT_MASK):
+            return False
+
+        # 2. Control must NOT be pressed
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            return False
+
+        # 3. Meta/Command must NOT be pressed
+        meta_mask = getattr(Gdk.ModifierType, 'META_MASK', 0)
+        if meta_mask and (state & meta_mask):
+            return False
+
+        # 4. Handle dead keys by converting to base character
+        keyval_name = None
+        try:
+            keyval_name = Gdk.keyval_name(keyval)
+        except Exception:
+            pass
+
+        if keyval_name and keyval_name.startswith('dead_'):
+            char = self._DEAD_KEY_MAP.get(keyval_name)
+            if char:
+                try:
+                    data = char.encode('utf-8')
+                    self.owner.feed_child_data(data)
+                    return True
+                except Exception:
+                    logger.debug("Failed to send dead key character", exc_info=True)
+                    return False
+            # Unknown dead key - let VTE handle it
+            return False
+
+        # 5. Convert to Unicode
+        codepoint = Gdk.keyval_to_unicode(keyval)
+        if codepoint == 0:
+            return False
+
+        # 6. Must be printable (reject control chars)
+        if codepoint < 0x20 or codepoint == 0x7F:
+            return False
+
+        try:
+            char = chr(codepoint)
+            if not char.isprintable():
+                return False
+        except (ValueError, OverflowError):
+            return False
+
+        # 7. Skip basic ASCII letters - let VTE handle Alt+letter for Meta sequences
+        if codepoint >= ord('A') and codepoint <= ord('Z'):
+            return False
+        if codepoint >= ord('a') and codepoint <= ord('z'):
+            return False
+
+        # Send through canonical input path (handles daemon mode)
+        try:
+            data = char.encode('utf-8')
+            self.owner.feed_child_data(data)
+            return True  # Consume event
+        except Exception:
+            logger.debug("Failed to send Option key character", exc_info=True)
+            return False
+
     def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
         """Register VTE-native URL matching and selection observation once."""
         if getattr(self, "_link_match_tag", None) is None:
@@ -467,6 +601,7 @@ class VTETerminalBackend:
 
     def destroy(self) -> None:
         self._destroyed = True
+        self._remove_macos_option_key_controller()
         self.clear_native_context_menu()
         try:
             if self._termprops_handler is not None:

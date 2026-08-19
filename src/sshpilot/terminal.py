@@ -2325,6 +2325,16 @@ class TerminalWidget(Gtk.Box):
         )
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+        # Apply macOS Option key passthrough
+        if is_macos():
+            try:
+                enabled = self.config.get_setting(
+                    'terminal.macos_option_key_passthrough', False
+                )
+                if hasattr(self.backend, 'set_macos_option_key_passthrough'):
+                    self.backend.set_macos_option_key_passthrough(bool(enabled))
+            except Exception:
+                logger.debug("Failed to apply macOS Option key passthrough", exc_info=True)
 
     def _on_vte_pointer_enter(self, controller, x, y):
         """Compatibility no-op; VTE owns pointer-enter link handling."""
@@ -3598,6 +3608,13 @@ class TerminalWidget(Gtk.Box):
             self._install_shortcuts()
         return False
 
+    def _apply_macos_option_key_passthrough(self, enabled: bool) -> bool:
+        """Apply macOS Option key passthrough setting to the backend."""
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'set_macos_option_key_passthrough'):
+            backend.set_macos_option_key_passthrough(enabled)
+        return False
+
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'terminal.pass_through_mode':
             GLib.idle_add(self._apply_pass_through_mode, bool(value))
@@ -3605,6 +3622,8 @@ class TerminalWidget(Gtk.Box):
             if self._updating_encoding_config:
                 return
             GLib.idle_add(self._apply_terminal_encoding_idle, value or '')
+        elif key == 'terminal.macos_option_key_passthrough':
+            GLib.idle_add(self._apply_macos_option_key_passthrough, bool(value))
 
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation

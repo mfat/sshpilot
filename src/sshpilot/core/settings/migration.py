@@ -52,6 +52,16 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         terminal_cfg['encoding'] = 'UTF-8'
         updated = True
 
+    # macOS Option key passthrough (new setting)
+    if 'macos_option_key_passthrough' not in terminal_cfg:
+        terminal_cfg['macos_option_key_passthrough'] = False
+        updated = True
+    elif not isinstance(terminal_cfg['macos_option_key_passthrough'], bool):
+        terminal_cfg['macos_option_key_passthrough'] = bool(
+            terminal_cfg['macos_option_key_passthrough']
+        )
+        updated = True
+
     file_manager_defaults = get_default_config().get('file_manager', {})
     file_manager_cfg = config.get('file_manager')
     if not isinstance(file_manager_cfg, dict):
