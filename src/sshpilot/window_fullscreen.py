@@ -69,16 +69,22 @@ for the duration (and restored on exit). No background is hardcoded — the them
 still decides the colour.
 
 Start keeps its normal chrome: immersive mode is the terminal presentation
-only. On macOS the OS owns fullscreen and its window-control reveal, so nothing
-here emulates it — the ToolbarView is left alone and the tab bar stays in the
-flow so tabs remain reachable.
+only.
+
+This is not platform-gated. macOS was special-cased at first, on the theory
+that the OS owns the fullscreen reveal — but SSH Pilot calls
+``maybe_set_native_controls(header_bar, False)``, so its window controls there
+are client-side GTK widgets inside the content, and macOS's native reveal
+uncovers the *menu bar*, not this app's chrome. Leaving the tab bar pinned
+visible on macOS therefore just wasted a strip of screen with nothing revealing
+it. What macOS does own is the fullscreen *transition*, which is honoured
+through notify::fullscreened above, and its traffic lights, which this module
+never draws or emulates.
 """
 
 import logging
 
 from gi.repository import Gtk, Gdk, Adw
-
-from .platform_utils import is_macos
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +124,6 @@ class WindowFullscreenController:
         self._bubble_controller = None
         self._motion_controller = None
 
-        # macOS owns fullscreen presentation and its own window-control
-        # reveal; never build a competing one there.
-        self._immersive_chrome_enabled = not is_macos()
         self._immersive_active = False
         self._top_chrome_revealed = False
         self._saved_extend_content = None
@@ -141,11 +144,6 @@ class WindowFullscreenController:
     def terminal_presentation_active(self) -> bool:
         """True while a terminal is being presented fullscreen."""
         return self.active and self.presentation == PRESENTATION_TERMINAL
-
-    @property
-    def immersive_chrome_enabled(self) -> bool:
-        """False on macOS, where the OS owns the reveal."""
-        return self._immersive_chrome_enabled
 
     @property
     def top_chrome_revealed(self) -> bool:
@@ -186,8 +184,6 @@ class WindowFullscreenController:
             logger.debug('Failed to install fullscreen key controller', exc_info=True)
 
     def _install_motion_controller(self) -> None:
-        if not self._immersive_chrome_enabled:
-            return
         try:
             motion = Gtk.EventControllerMotion()
             motion.connect('motion', self.on_pointer_motion)
@@ -485,16 +481,16 @@ class WindowFullscreenController:
         self._set_widget_visible('tips_banner_container', False)
         self._set_widget_visible('broadcast_banner', False)
 
-        if self._immersive_chrome_enabled and self._enter_immersive_chrome():
+        if self._enter_immersive_chrome():
             # Both bars are top bars of the ToolbarView now, hidden until the
             # pointer reaches the top edge. They stay `visible` as widgets —
             # the ToolbarView's reveal is what shows and hides the surface.
             self._set_widget_visible('header_bar', True)
             self._sync_tab_bar_visibility()
         else:
-            # macOS (the OS owns the reveal) or the legacy non-Adw split
-            # fallback with no ToolbarView: hide the header and leave the tab
-            # bar in the flow so tabs stay reachable without a reveal gesture.
+            # Legacy non-Adw split fallback with no ToolbarView: nothing can
+            # overlay, so hide the header and leave the tab bar in the flow
+            # rather than making tabs unreachable.
             self._set_widget_visible('header_bar', False)
             self._sync_tab_bar_visibility()
         self._add_fullscreen_css()

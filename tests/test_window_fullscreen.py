@@ -486,11 +486,18 @@ class _FullscreenWindow:
 
 
 def _window(monkeypatch=None, macos=False):
+    """Build a stub window wired to a real controller.
+
+    ``macos`` patches the platform probe for anything that still consults it.
+    Fullscreen *presentation* deliberately has no platform branch left — that
+    it behaves identically either way is the property the macOS tests assert.
+    """
     wm = _window_module()
     from sshpilot import window_fullscreen as wf
 
     if monkeypatch is not None:
-        monkeypatch.setattr(wf, 'is_macos', lambda: macos)
+        from sshpilot import platform_utils
+        monkeypatch.setattr(platform_utils, 'is_macos', lambda: macos, raising=False)
 
     win = _FullscreenWindow(wm)
     controller = wf.WindowFullscreenController(win)
@@ -1039,9 +1046,15 @@ def test_fullscreen_toggle_goes_through_the_window_action_path():
 # --------------------------------------------------------------------------
 
 
-def test_immersive_chrome_is_enabled_off_macos(monkeypatch):
-    _win, fc = _window(monkeypatch, macos=False)
-    assert fc.immersive_chrome_enabled is True
+def test_immersive_chrome_is_not_platform_gated(monkeypatch):
+    """Every platform hides both bars; none is special-cased."""
+    for macos in (False, True):
+        win, fc = _window(monkeypatch, macos=macos)
+        win.open_terminal('A')
+        _f11(fc)
+        assert fc.terminal_presentation_active is True, macos
+        assert win.header_shown() is False, macos
+        assert win.tab_bar_shown() is False, macos
 
 
 def test_chrome_never_reveals_outside_fullscreen(monkeypatch):
@@ -1240,44 +1253,76 @@ def test_redundant_notify_with_consistent_state_is_a_noop():
 
 
 # --------------------------------------------------------------------------
-# 11. macOS defers to the native fullscreen experience
+# 11. macOS
 # --------------------------------------------------------------------------
 
 
-def test_macos_does_not_emulate_the_top_edge_reveal(monkeypatch):
-    """macOS owns fullscreen and its own window-control reveal.
+def test_macos_hides_the_tab_bar_like_every_other_platform(monkeypatch):
+    """SSH Pilot draws its own header bar on macOS.
 
-    SSH Pilot must not build a competing auto-hiding chrome surface there: the
-    ToolbarView is left in its normal layout and the pointer does nothing.
+    ``maybe_set_native_controls(header_bar, False)`` means the window controls
+    there are client-side GTK widgets inside the content, not macOS traffic
+    lights, and macOS's native fullscreen reveal uncovers the *menu bar*, not
+    our chrome. So the app must auto-hide its own bars on macOS exactly as
+    elsewhere; pinning the tab bar visible just wasted a strip of the screen.
+    """
+    win, fc = _window(monkeypatch, macos=True)
+    win.open_terminal('A')
+
+    _f11(fc)
+
+    assert win.header_shown() is False
+    assert win.tab_bar_shown() is False
+    assert win.tab_bar not in win.tab_content_box.children
+    assert win._content_toolbar_view.get_extend_content_to_top_edge() is True
+    # And the terminal actually gets that space.
+    assert win.terminal_allocation() == win._content_toolbar_view.WINDOW_HEIGHT
+
+
+def test_macos_top_edge_reveal_brings_both_bars_back(monkeypatch):
+    win, fc = _window(monkeypatch, macos=True)
+    win.open_terminal('A')
+    _f11(fc)
+
+    fc.on_pointer_motion(None, 100.0, 0.0)
+
+    assert fc.top_chrome_revealed is True
+    assert win.header_shown() is True
+    assert win.tab_bar_shown() is True
+    assert win.fullscreen_button.get_visible() is True
+
+
+def test_macos_builds_no_bespoke_window_control_overlay(monkeypatch):
+    """The revealed chrome is the app's own header bar, not an emulation.
+
+    Nothing of our making is injected over the content, so there is no
+    competing traffic-light/window-control surface.
     """
     win, fc = _window(monkeypatch, macos=True)
     win.open_terminal('A')
     _f11(fc)
-
-    assert fc.immersive_chrome_enabled is False
-    assert win._content_toolbar_view.get_extend_content_to_top_edge() is False
-    assert win._content_toolbar_view.top_bars == [win.header_bar]
-    assert win.tab_bar in win.tab_content_box.children
-
     fc.on_pointer_motion(None, 100.0, 0.0)
-    assert fc.top_chrome_revealed is False
 
-    # Application fullscreen state stays coherent regardless.
-    assert fc.active is True
-    assert win.window_is_fullscreen is True
-    _f11(fc)
-    assert fc.active is False
-    assert win.window_is_fullscreen is False
+    assert win._global_overlay.overlays == []
 
 
-def test_macos_keeps_tabs_reachable_without_an_overlay(monkeypatch):
-    """With no reveal gesture to lean on, the tab bar stays in the flow."""
+def test_macos_exit_restores_chrome_exactly(monkeypatch):
     win, fc = _window(monkeypatch, macos=True)
     win.open_terminal('A')
+    before = {
+        'header': win.header_shown(),
+        'tab_bar': win.tab_bar_shown(),
+        'allocation': win.terminal_allocation(),
+    }
+
+    _f11(fc)
     _f11(fc)
 
-    assert win.tab_bar_shown() is True
-    assert win.header_shown() is False
+    assert win.header_shown() == before['header']
+    assert win.tab_bar_shown() == before['tab_bar']
+    assert win.terminal_allocation() == before['allocation']
+    assert win.tab_bar in win.tab_content_box.children
+    assert win._content_toolbar_view.top_bars == [win.header_bar]
 
 
 def test_macos_still_exits_fullscreen_when_the_last_terminal_closes(monkeypatch):
