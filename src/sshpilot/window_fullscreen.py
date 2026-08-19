@@ -19,7 +19,8 @@ for the window. It holds:
   on exit (no hard-coded defaults);
 * ``presentation`` — ``'start'`` or ``'terminal'``: how the *currently active*
   page is presented while fullscreen. Start keeps its normal chrome; a terminal
-  hides the sidebar/header/banners but always keeps the tab bar.
+  hides the sidebar and banners and folds the header bar and tab bar into the
+  auto-hiding top overlay described below.
 
 The controller subscribes to the tab view itself (``notify::selected-page`` and
 ``page-detached``), so presentation follows the active page without any terminal
