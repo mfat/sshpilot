@@ -11,6 +11,11 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from sshpilot.core.settings.defaults import get_default_config
 from sshpilot.core.settings.migration import ensure_config_defaults
 
+# GTK modifier mask constants (integer values for testing)
+ALT_MASK = 1 << 3
+CONTROL_MASK = 1 << 2
+META_MASK = 1 << 28
+
 
 class TestOptionKeyDefaults:
     """Test default configuration for macOS Option key passthrough."""
@@ -101,59 +106,140 @@ class TestOptionKeyMigration:
         assert updated_config['terminal']['macos_option_key_passthrough'] is True
 
 
-class TestOptionKeyFiltering:
-    """Test filtering criteria for Option key interception."""
+class TestOptionKeyHandler:
+    """Test the _on_macos_option_key_pressed handler logic."""
 
-    def test_pass_through_when_alt_not_pressed(self):
-        """Event passes through when Alt/Option is not pressed."""
-        # No ALT_MASK means don't intercept
-        from gi.repository import Gdk
+    @pytest.fixture
+    def mock_gdk(self):
+        """Create mock Gdk module with proper integer modifier values."""
+        mock_modifier_type = MagicMock()
+        mock_modifier_type.ALT_MASK = ALT_MASK
+        mock_modifier_type.CONTROL_MASK = CONTROL_MASK
+        mock_modifier_type.META_MASK = META_MASK
 
-        state = MagicMock()
-        state.__and__ = MagicMock(return_value=False)
+        mock_gdk = MagicMock()
+        mock_gdk.ModifierType = mock_modifier_type
+        mock_gdk.keyval_name = MagicMock(return_value=None)
+        mock_gdk.keyval_to_unicode = MagicMock(side_effect=lambda kv: kv if kv < 0x10000 else 0)
+        return mock_gdk
 
-        # Handler should return False (pass through)
-        assert not (state & Gdk.ModifierType.ALT_MASK)
-
-    def test_intercept_requires_alt_mask(self):
-        """Interception requires Alt/Option mask to be set."""
-        # This tests the logical requirement - actual GTK testing needs real GTK
-
-    def test_ctrl_alt_not_intercepted(self):
-        """Ctrl+Alt combinations should not be intercepted."""
-        # Ctrl+Alt is used for terminal shortcuts, not character input
-
-    def test_cmd_alt_not_intercepted(self):
-        """Cmd+Alt combinations should not be intercepted."""
-        # Command+Alt is for system shortcuts
-
-    def test_dead_keys_converted_to_base_chars(self):
-        """Dead keys are converted to their base characters."""
+    @pytest.fixture
+    def backend(self):
+        """Create a VTETerminalBackend instance with mocked dependencies."""
         from sshpilot.terminal_backends import VTETerminalBackend
 
-        # Test the dead key mapping
-        expected = {
-            'dead_tilde': '~',
-            'dead_perispomeni': '~',  # Greek circumflex, used for tilde on some layouts
-            'dead_grave': '`',
-            'dead_acute': "'",
-            'dead_circumflex': '^',
-            'dead_diaeresis': '"',
-        }
-        for dead_key, base_char in expected.items():
-            assert VTETerminalBackend._DEAD_KEY_MAP.get(dead_key) == base_char
+        backend = VTETerminalBackend.__new__(VTETerminalBackend)
+        backend._macos_option_key_controller = None
+        backend.vte = MagicMock()
+        backend.owner = MagicMock()
+        return backend
 
-    def test_control_char_not_intercepted(self):
-        """Control characters (< 0x20) should not be intercepted."""
-        # Non-printable characters should pass to VTE
+    def test_pass_through_when_alt_not_pressed(self, backend, mock_gdk):
+        """Event passes through when Alt/Option is not pressed."""
+        with patch.dict('sys.modules', {'gi.repository': MagicMock(Gdk=mock_gdk)}):
+            with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+                controller = MagicMock()
+                controller.get_group.return_value = 1
+                state = 0  # No modifiers
 
-    def test_ascii_letters_not_intercepted(self):
-        """Basic ASCII letters (a-z, A-Z) pass through for Meta sequences."""
-        # Alt+B, Alt+F etc. should still work for word navigation
+                result = backend._on_macos_option_key_pressed(
+                    controller, ord('|'), 0, state
+                )
+                assert result is False
 
-    def test_printable_unicode_intercepted(self):
-        """Printable Unicode characters should be intercepted."""
-        # This is the core functionality - send characters directly
+    def test_pass_through_when_ctrl_pressed(self, backend, mock_gdk):
+        """Ctrl+Alt combinations pass through."""
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+            state = ALT_MASK | CONTROL_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, ord('c'), 0, state
+            )
+            assert result is False
+
+    def test_pass_through_when_meta_pressed(self, backend, mock_gdk):
+        """Cmd+Alt combinations pass through."""
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+            state = ALT_MASK | META_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, ord('c'), 0, state
+            )
+            assert result is False
+
+    def test_pass_through_on_primary_layout(self, backend, mock_gdk):
+        """Alt+key on layout=0 passes through for Meta sequences."""
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 0  # Primary layout
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, ord('b'), 0, state
+            )
+            assert result is False
+            backend.owner.feed_child_data.assert_not_called()
+
+    def test_pass_through_dead_keys(self, backend, mock_gdk):
+        """Dead keys pass through for IME composition."""
+        mock_gdk.keyval_name.return_value = 'dead_tilde'
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, 0xfe53, 0, state  # dead_tilde keyval
+            )
+            assert result is False
+            backend.owner.feed_child_data.assert_not_called()
+
+    def test_pass_through_control_characters(self, backend, mock_gdk):
+        """Control characters (< 0x20) pass through."""
+        # Override side_effect to return ESC control character
+        mock_gdk.keyval_to_unicode.side_effect = None
+        mock_gdk.keyval_to_unicode.return_value = 0x1b  # ESC
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, 0xff1b, 0, state  # Escape keyval
+            )
+            assert result is False
+
+    def test_intercept_printable_on_alternate_layout(self, backend, mock_gdk):
+        """Printable char on layout!=0 with Alt is intercepted."""
+        mock_gdk.keyval_to_unicode.return_value = ord('|')
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1  # Alternate layout
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, ord('|'), 0, state
+            )
+            assert result is True
+            backend.owner.feed_child_data.assert_called_once_with(b'|')
+
+    def test_intercept_sends_utf8(self, backend, mock_gdk):
+        """Non-ASCII characters are sent as UTF-8."""
+        mock_gdk.keyval_to_unicode.return_value = ord('€')
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, 0x20ac, 0, state
+            )
+            assert result is True
+            backend.owner.feed_child_data.assert_called_once_with('€'.encode('utf-8'))
 
 
 class TestControllerLifecycle:
@@ -163,22 +249,66 @@ class TestControllerLifecycle:
         """Controller is not installed on non-macOS platforms."""
         from sshpilot.terminal_backends import VTETerminalBackend
 
-        # The set_macos_option_key_passthrough method imports is_macos locally
-        # We need to patch it in platform_utils where it's defined
         with patch('sshpilot.platform_utils.is_macos', return_value=False):
             backend = VTETerminalBackend.__new__(VTETerminalBackend)
             backend._macos_option_key_controller = None
             backend.vte = MagicMock()
 
-            # Call the method - it should return early without installing controller
             backend.set_macos_option_key_passthrough(True)
 
-            # Controller should still be None since we're not on macOS
             assert backend._macos_option_key_controller is None
 
+    def test_controller_installed_on_macos(self):
+        """Controller is installed on macOS when enabled."""
+        from sshpilot.terminal_backends import VTETerminalBackend, Gtk
+
+        with patch('sshpilot.platform_utils.is_macos', return_value=True):
+            # Mock Gtk.EventControllerKey to return a mock controller
+            mock_controller = MagicMock()
+            with patch.object(Gtk, 'EventControllerKey', return_value=mock_controller):
+                backend = VTETerminalBackend.__new__(VTETerminalBackend)
+                backend._macos_option_key_controller = None
+                backend.vte = MagicMock()
+
+                backend.set_macos_option_key_passthrough(True)
+
+                assert backend._macos_option_key_controller is mock_controller
+
+    def test_controller_removed_when_disabled(self):
+        """Controller is removed when feature is disabled."""
+        from sshpilot.terminal_backends import VTETerminalBackend
+
+        with patch('sshpilot.platform_utils.is_macos', return_value=True):
+            backend = VTETerminalBackend.__new__(VTETerminalBackend)
+            backend._macos_option_key_controller = MagicMock()
+            backend.vte = MagicMock()
+
+            backend.set_macos_option_key_passthrough(False)
+
+            assert backend._macos_option_key_controller is None
+
+    def test_no_duplicate_controller_install(self):
+        """Double-enable doesn't create duplicate controllers."""
+        from sshpilot.terminal_backends import VTETerminalBackend, Gtk
+
+        with patch('sshpilot.platform_utils.is_macos', return_value=True):
+            mock_controller = MagicMock()
+            with patch.object(Gtk, 'EventControllerKey', return_value=mock_controller):
+                backend = VTETerminalBackend.__new__(VTETerminalBackend)
+                backend._macos_option_key_controller = None
+                backend.vte = MagicMock()
+
+                backend.set_macos_option_key_passthrough(True)
+                first_controller = backend._macos_option_key_controller
+
+                # Second call should not create a new controller
+                backend.set_macos_option_key_passthrough(True)
+                second_controller = backend._macos_option_key_controller
+
+                assert first_controller is second_controller
+
     def test_destroy_removes_controller(self):
-        """destroy() should clean up the controller."""
-        # Verify the destroy method calls _remove_macos_option_key_controller
+        """destroy() cleans up the controller."""
         from sshpilot.terminal_backends import VTETerminalBackend
 
         backend = VTETerminalBackend.__new__(VTETerminalBackend)
@@ -189,17 +319,12 @@ class TestControllerLifecycle:
         backend._native_context_handler = None
         backend._background_provider = None
         backend.vte = MagicMock()
-
-        # Mock clear_native_context_menu and _remove_background_provider
         backend.clear_native_context_menu = MagicMock()
         backend._remove_background_provider = MagicMock()
 
-        # Call destroy
         backend.destroy()
 
-        # Verify destroyed flag is set
         assert backend._destroyed is True
-        # Verify controller was removed (set to None in _remove_macos_option_key_controller)
         assert backend._macos_option_key_controller is None
 
 
@@ -207,28 +332,26 @@ class TestInputRouting:
     """Test input reaches the correct destination."""
 
     def test_utf8_encoding_for_multibyte_characters(self):
-        """Non-ASCII characters should be properly UTF-8 encoded."""
+        """Non-ASCII characters are properly UTF-8 encoded."""
         test_chars = [
-            ('ß', b'\xc3\x9f'),  # German sharp s
-            ('é', b'\xc3\xa9'),  # French e with acute
-            ('日', b'\xe6\x97\xa5'),  # Japanese kanji
-            ('€', b'\xe2\x82\xac'),  # Euro sign
+            ('ß', b'\xc3\x9f'),
+            ('é', b'\xc3\xa9'),
+            ('日', b'\xe6\x97\xa5'),
+            ('€', b'\xe2\x82\xac'),
         ]
         for char, expected_bytes in test_chars:
             assert char.encode('utf-8') == expected_bytes
 
     def test_printable_detection(self):
         """Test printable character detection logic."""
-        # Printable characters
         assert '|'.isprintable()
         assert '@'.isprintable()
         assert 'ñ'.isprintable()
         assert '日'.isprintable()
 
-        # Non-printable characters
         assert not '\x00'.isprintable()
-        assert not '\x1b'.isprintable()  # ESC
-        assert not '\x7f'.isprintable()  # DEL
+        assert not '\x1b'.isprintable()
+        assert not '\x7f'.isprintable()
 
 
 class TestPlatformGuard:

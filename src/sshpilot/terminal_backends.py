@@ -294,15 +294,6 @@ class VTETerminalBackend:
     def __init__(self, owner: "TerminalWidget") -> None:
         self.owner = owner
         self.vte = Vte.Terminal()
-
-        def _debug_commit(_terminal, committed_text, size):
-            data = committed_text.encode("utf-8")
-            print(
-                f"[VTE COMMIT] text={committed_text!r} size={size} hex={data.hex()}",
-                flush=True,
-            )
-
-        self.vte.connect("commit", _debug_commit)
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._background_provider = None
@@ -450,20 +441,6 @@ class VTETerminalBackend:
         finally:
             self._macos_option_key_controller = None
 
-    # Dead key to base character mapping for terminal use
-    _DEAD_KEY_MAP = {
-        'dead_tilde': '~',
-        'dead_perispomeni': '~',  # Greek circumflex, used for tilde on some layouts
-        'dead_grave': '`',
-        'dead_acute': "'",
-        'dead_circumflex': '^',
-        'dead_diaeresis': '"',
-        'dead_macron': '\u00af',
-        'dead_cedilla': '\u00b8',
-        'dead_caron': '\u02c7',
-        'dead_breve': '\u02d8',
-    }
-
     def _on_macos_option_key_pressed(
         self,
         controller: Gtk.EventControllerKey,
@@ -488,32 +465,30 @@ class VTETerminalBackend:
         if meta_mask and (state & meta_mask):
             return False
 
-        # 4. Handle dead keys by converting to base character
-        keyval_name = None
+        # 4. Keyboard layout/group must be non-zero (alternate layout)
+        # On layout=0 (primary), Alt+letter should produce Meta sequences
+        try:
+            group = controller.get_group()
+            if group == 0:
+                return False
+        except Exception:
+            # Cannot determine layout - don't intercept
+            return False
+
+        # 5. Dead keys pass through for IME composition
         try:
             keyval_name = Gdk.keyval_name(keyval)
+            if keyval_name and keyval_name.startswith('dead_'):
+                return False
         except Exception:
             pass
 
-        if keyval_name and keyval_name.startswith('dead_'):
-            char = self._DEAD_KEY_MAP.get(keyval_name)
-            if char:
-                try:
-                    data = char.encode('utf-8')
-                    self.owner.feed_child_data(data)
-                    return True
-                except Exception:
-                    logger.debug("Failed to send dead key character", exc_info=True)
-                    return False
-            # Unknown dead key - let VTE handle it
-            return False
-
-        # 5. Convert to Unicode
+        # 6. Convert to Unicode
         codepoint = Gdk.keyval_to_unicode(keyval)
         if codepoint == 0:
             return False
 
-        # 6. Must be printable (reject control chars)
+        # 7. Must be printable (reject control chars)
         if codepoint < 0x20 or codepoint == 0x7F:
             return False
 
@@ -522,12 +497,6 @@ class VTETerminalBackend:
             if not char.isprintable():
                 return False
         except (ValueError, OverflowError):
-            return False
-
-        # 7. Skip basic ASCII letters - let VTE handle Alt+letter for Meta sequences
-        if codepoint >= ord('A') and codepoint <= ord('Z'):
-            return False
-        if codepoint >= ord('a') and codepoint <= ord('z'):
             return False
 
         # Send through canonical input path (handles daemon mode)
