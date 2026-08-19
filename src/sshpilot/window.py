@@ -225,7 +225,6 @@ def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
         return default
 
 
-@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/window.ui")
 def _accelerator_label(accel: str) -> str:
     """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
     try:
@@ -237,6 +236,7 @@ def _accelerator_label(accel: str) -> str:
     return accel
 
 
+@Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/window.ui")
 class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowConfigDialogsMixin, WindowActions):
     """Main application window"""
 
