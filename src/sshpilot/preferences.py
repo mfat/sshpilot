@@ -657,7 +657,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self.autocomplete_switch = Adw.SwitchRow()
         self.autocomplete_switch.set_title(_("Command autocomplete"))
         self.autocomplete_switch.set_subtitle(
-            _("Suggest commands from history and snippets as you type (embedded terminal)")
+            _("Suggest commands from history and snippets as you type")
         )
         self.autocomplete_switch.set_active(
             bool(self.config.get_setting('terminal.autocomplete', True))
@@ -676,6 +676,9 @@ class PreferencesWindow(Adw.NavigationPage):
         self.autocomplete_remote_switch.connect(
             'notify::active', self.on_autocomplete_remote_toggled)
         keyboard_group.add(self.autocomplete_remote_switch)
+
+        # Autocomplete is only available with PyXterm backend
+        self._update_autocomplete_visibility()
 
         # macOS Option key passthrough (only on macOS)
         if is_macos():
@@ -6239,6 +6242,14 @@ class PreferencesWindow(Adw.NavigationPage):
         # Default: show for unknown backends
         self.encoding_row.set_visible(True)
 
+    def _update_autocomplete_visibility(self):
+        """Show autocomplete options only when PyXterm backend is selected."""
+        is_pyxterm = self._is_pyxterm_backend()
+        if hasattr(self, 'autocomplete_switch') and self.autocomplete_switch:
+            self.autocomplete_switch.set_visible(is_pyxterm)
+        if hasattr(self, 'autocomplete_remote_switch') and self.autocomplete_remote_switch:
+            self.autocomplete_remote_switch.set_visible(is_pyxterm)
+
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
             return
@@ -6409,6 +6420,9 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
+
+        # Update autocomplete visibility (only available with PyXterm)
+        self._update_autocomplete_visibility()
 
         # Note: We do NOT call refresh_backends() here
         # This ensures existing terminals keep their current backend
