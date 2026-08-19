@@ -359,6 +359,9 @@ class _FullscreenWindow:
 
         # Window-level state observed by the tests.
         self.window_is_fullscreen = False
+        self.signal_handlers = {}
+        self.fullscreen_calls = 0
+        self.unfullscreen_calls = 0
         self.maximized = False
         self.css_classes = set()
         self.controllers = []
@@ -374,11 +377,41 @@ class _FullscreenWindow:
         self._sidebar_minimal = False
 
     # -- Gtk.Window API ----------------------------------------------------
+    def connect(self, signal, handler, *args):
+        self.signal_handlers.setdefault(signal, []).append((handler, args))
+        return len(self.signal_handlers[signal])
+
+    def _emit(self, signal, *emit_args):
+        for handler, args in list(self.signal_handlers.get(signal, ())):
+            handler(self, *emit_args, *args)
+
+    def is_fullscreen(self):
+        return self.window_is_fullscreen
+
+    def _set_fullscreened(self, value):
+        """Change the property and notify, exactly as GTK does.
+
+        Emitting synchronously is stricter than real GTK (which notifies once
+        the compositor confirms): a re-entrancy guard that holds here holds
+        for the asynchronous case too.
+        """
+        value = bool(value)
+        if self.window_is_fullscreen == value:
+            return
+        self.window_is_fullscreen = value
+        self._emit('notify::fullscreened', None)
+
     def fullscreen(self):
-        self.window_is_fullscreen = True
+        self.fullscreen_calls += 1
+        self._set_fullscreened(True)
 
     def unfullscreen(self):
-        self.window_is_fullscreen = False
+        self.unfullscreen_calls += 1
+        self._set_fullscreened(False)
+
+    # The window manager / OS changing fullscreen behind the app's back.
+    def set_fullscreen_externally(self, value):
+        self._set_fullscreened(value)
 
     def is_maximized(self):
         return self.maximized
@@ -1035,6 +1068,160 @@ def test_overlay_survives_the_terminal_that_entered_fullscreen(monkeypatch):
     assert win.header_shown() is True
     win.fullscreen_button.clicked()
     assert fc.active is False
+
+
+# --------------------------------------------------------------------------
+# 12. Synchronization with the real window / WM fullscreen state
+# --------------------------------------------------------------------------
+
+
+def test_external_fullscreen_entry_sync():
+    """The WM (or macOS native control) puts the window fullscreen."""
+    win, fc = _window()
+    win.open_terminal('A')
+    assert fc.active is False
+    calls_before = win.fullscreen_calls
+
+    win.set_fullscreen_externally(True)
+
+    assert fc.active is True
+    assert fc.origin == 'terminal'          # coherent with the active page
+    assert fc.presentation == 'terminal'    # presentation actually applied
+    assert win.header_shown() is False
+    assert win.sidebar_visible() is False
+    # Adopted, not re-requested: no second fullscreen() at the window.
+    assert win.fullscreen_calls == calls_before
+
+
+def test_external_fullscreen_entry_from_start_takes_start_origin():
+    win, fc = _window()
+
+    win.set_fullscreen_externally(True)
+
+    assert fc.active is True
+    assert fc.origin == 'start'
+    assert fc.presentation == 'start'
+    assert win.header_shown() is True
+
+
+def test_external_fullscreen_exit_sync():
+    """The WM (or macOS native control) leaves fullscreen behind our back."""
+    win, fc = _window()
+    win.open_terminal('A')
+    win._toggle_sidebar_visibility(False)   # non-default chrome to restore
+    before = {
+        'sidebar': win.sidebar_visible(),
+        'header': win.header_shown(),
+        'tab_bar': win.tab_bar_shown(),
+        'allocation': win.terminal_allocation(),
+    }
+    _f11(fc)
+    fc.on_pointer_motion(None, 100.0, 0.0)   # transient controls up
+    calls_before = win.unfullscreen_calls
+
+    win.set_fullscreen_externally(False)
+
+    assert fc.active is False
+    assert fc.origin is None
+    assert fc._saved is None
+    assert fc.presentation is None
+    assert fc.top_chrome_revealed is False
+    assert win.fullscreen_button.get_visible() is False
+    assert 'terminal-fullscreen-mode' not in win.css_classes
+    # Exact chrome restoration, including the ToolbarView parenting.
+    assert win.sidebar_visible() == before['sidebar']
+    assert win.header_shown() == before['header']
+    assert win.tab_bar_shown() == before['tab_bar']
+    assert win.terminal_allocation() == before['allocation']
+    assert win.tab_bar in win.tab_content_box.children
+    assert win._content_toolbar_view.top_bars == [win.header_bar]
+    # The exit already happened externally: do not push it back at the WM.
+    assert win.unfullscreen_calls == calls_before
+    # Ready for another toggle.
+    assert _f11(fc) is True
+    assert fc.active is True
+
+
+def test_controller_entry_does_not_loop():
+    """enter() -> fullscreen() -> notify must not re-enter or re-snapshot."""
+    win, fc = _window()
+    win.open_terminal('A')
+    win._toggle_sidebar_visibility(False)
+
+    captures = []
+    original_capture = fc._capture_ui_state
+
+    def counting_capture():
+        state = original_capture()
+        captures.append(state)
+        return state
+
+    fc._capture_ui_state = counting_capture
+
+    _f11(fc)
+
+    assert fc.active is True
+    assert win.fullscreen_calls == 1
+    # One logical enter: the snapshot is taken once, and it is the *pre*
+    # fullscreen chrome (a second capture would record the hidden sidebar).
+    assert len(captures) == 1
+    assert fc._saved['sidebar_visible'] is False   # what it was before entering
+    assert fc.presentation == 'terminal'
+
+
+def test_controller_exit_does_not_loop():
+    """exit() -> unfullscreen() -> notify must not restore twice."""
+    win, fc = _window()
+    win.open_terminal('A')
+    _f11(fc)
+
+    restores = []
+    original_restore = fc._restore_ui_state
+
+    def counting_restore(saved, **kwargs):
+        restores.append(saved)
+        return original_restore(saved, **kwargs)
+
+    fc._restore_ui_state = counting_restore
+
+    _f11(fc)
+
+    assert fc.active is False
+    assert win.unfullscreen_calls == 1
+    assert len(restores) == 1
+    assert win.header_shown() is True
+    assert win.tab_bar in win.tab_content_box.children
+
+
+def test_window_manager_refusing_fullscreen_is_reconciled():
+    """A request that the WM does not honour must not wedge the controller."""
+    win, fc = _window()
+    win.open_terminal('A')
+    _f11(fc)
+    assert fc.active is True
+
+    # The WM drops the window straight back out of fullscreen.
+    win.set_fullscreen_externally(False)
+
+    assert fc.active is False
+    assert fc.origin is None
+    assert win.header_shown() is True
+    assert _f11(fc) is True
+    assert fc.active is True
+
+
+def test_redundant_notify_with_consistent_state_is_a_noop():
+    win, fc = _window()
+    win.open_terminal('A')
+    _f11(fc)
+    saved = fc._saved
+
+    # A notify that tells us what we already know changes nothing.
+    fc._on_window_fullscreened_changed(win, None)
+
+    assert fc.active is True
+    assert fc._saved is saved
+    assert fc.presentation == 'terminal'
 
 
 # --------------------------------------------------------------------------

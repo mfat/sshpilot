@@ -25,6 +25,16 @@ The controller subscribes to the tab view itself (``notify::selected-page`` and
 ``page-detached``), so presentation follows the active page without any terminal
 having to report in, and nothing here ever holds a reference to a terminal.
 
+Real window state
+-----------------
+The window's ``fullscreened`` property is authoritative, not ``active``. The
+controller listens for ``notify::fullscreened`` and reconciles: fullscreen
+entered behind its back (a desktop shortcut, macOS's native control) is
+*adopted* — chrome captured, presentation applied — and fullscreen left behind
+its back runs the same teardown as a normal exit. Its own transitions are
+tagged with a pending marker so the resulting notification is recognised as
+already-consistent instead of recursing.
+
 Keyboard
 --------
 F11 is handled in the *capture* phase on the window, so it is a reliable toggle
@@ -114,6 +124,11 @@ class WindowFullscreenController:
         self._saved_top_bar_style = None
         self._tab_bar_relocated = False
 
+        # Set while a transition this controller requested is in flight, so the
+        # resulting notify::fullscreened is not mistaken for an external one.
+        # Not a timer: it is cleared by the very notification it predicts.
+        self._pending_transition = None
+
         self._installed = False
 
     # -- introspection -----------------------------------------------------
@@ -143,6 +158,7 @@ class WindowFullscreenController:
         self._install_key_controllers()
         self._install_motion_controller()
         self._install_tab_hooks()
+        self._install_window_state_hook()
 
     def _install_key_controllers(self) -> None:
         try:
@@ -175,6 +191,15 @@ class WindowFullscreenController:
         except Exception:
             logger.debug('Failed to install top-edge motion controller', exc_info=True)
 
+    def _install_window_state_hook(self) -> None:
+        """Follow the real window fullscreen state, however it changes."""
+        try:
+            self.window.connect(
+                'notify::fullscreened', self._on_window_fullscreened_changed
+            )
+        except Exception:
+            logger.debug('Failed to hook notify::fullscreened', exc_info=True)
+
     def _install_tab_hooks(self) -> None:
         tab_view = getattr(self.window, 'tab_view', None)
         if tab_view is None:
@@ -198,24 +223,46 @@ class WindowFullscreenController:
 
     def enter(self, origin=None) -> None:
         """Enter fullscreen, capturing the exact chrome state first."""
+        self._begin_fullscreen(origin, request_window_fullscreen=True)
+
+    def exit(self) -> None:
+        """Leave fullscreen and restore the exact captured chrome state."""
+        self._end_fullscreen(request_window_unfullscreen=True)
+
+    def _begin_fullscreen(self, origin=None, *, request_window_fullscreen: bool) -> None:
+        """Take up fullscreen.
+
+        With ``request_window_fullscreen`` false the window is already
+        fullscreen (the WM or the OS put it there) and nothing is asked of it.
+        """
         if self.active:
             return
         try:
+            # Snapshot before anything touches the chrome.
             self._saved = self._capture_ui_state()
             self.origin = origin or (
                 ORIGIN_START if self._active_page_is_start() else ORIGIN_TERMINAL
             )
             self.active = True
 
-            self._set_window_fullscreen(True)
+            if request_window_fullscreen:
+                self._set_window_fullscreen(True)
             self._show_fullscreen_button(True)
             self._apply_presentation()
-            logger.debug('Entered fullscreen (origin=%s)', self.origin)
+            logger.debug(
+                'Entered fullscreen (origin=%s, external=%s)',
+                self.origin, not request_window_fullscreen,
+            )
         except Exception:
             logger.error('Failed to enter fullscreen', exc_info=True)
 
-    def exit(self) -> None:
-        """Leave fullscreen and restore the exact captured chrome state."""
+    def _end_fullscreen(self, *, request_window_unfullscreen: bool) -> None:
+        """Give up fullscreen.
+
+        With ``request_window_unfullscreen`` false the window has already left
+        fullscreen externally, so the WM owns the window state and nothing is
+        pushed back at it — only the application-side teardown runs.
+        """
         if not self.active:
             return
         try:
@@ -223,7 +270,8 @@ class WindowFullscreenController:
             self._show_fullscreen_button(False)
             self._clear_terminal_presentation()
             self._restore_ui_state(self._saved)
-            self._set_window_fullscreen(False)
+            if request_window_unfullscreen:
+                self._set_window_fullscreen(False)
         except Exception:
             logger.error('Failed to exit fullscreen cleanly', exc_info=True)
         finally:
@@ -234,7 +282,9 @@ class WindowFullscreenController:
             self.presentation = None
             self._saved = None
             self._sync_tab_bar_visibility()
-            logger.debug('Exited fullscreen')
+            logger.debug(
+                'Exited fullscreen (external=%s)', not request_window_unfullscreen
+            )
 
     def update_presentation_for_active_page(self) -> None:
         """Re-apply presentation after a tab switch/close. Idempotent."""
@@ -558,7 +608,60 @@ class WindowFullscreenController:
             pass
         return False
 
+    def _window_is_fullscreen(self) -> bool:
+        """Read the window's real fullscreen state.
+
+        Gtk.Window exposes the `fullscreened` property; the matching getter is
+        `is_fullscreen()` here, with `get_fullscreened()` on versions that ship
+        it, so try both before falling back to the property itself.
+        """
+        for name in ('is_fullscreen', 'get_fullscreened'):
+            getter = getattr(self.window, name, None)
+            if callable(getter):
+                try:
+                    return bool(getter())
+                except Exception:
+                    logger.debug('%s() failed', name, exc_info=True)
+        try:
+            return bool(self.window.get_property('fullscreened'))
+        except Exception:
+            logger.debug('Could not read the fullscreened property', exc_info=True)
+        return False
+
+    def _on_window_fullscreened_changed(self, window, _pspec=None) -> None:
+        """Reconcile with the window's real fullscreen state.
+
+        The property is authoritative: whatever it says wins, whether the
+        change came from F11, the header-bar button, macOS's native control or
+        the desktop's own shortcut.
+        """
+        del window  # self.window is the one that matters
+        actual = self._window_is_fullscreen()
+
+        pending = self._pending_transition
+        if pending is not None:
+            self._pending_transition = None
+            if actual == (pending == 'enter'):
+                # Our own transition landing. `active` was already set, and the
+                # chrome was already captured/restored — doing either again
+                # would re-snapshot fullscreen chrome as if it were normal.
+                return
+            # The window did not end up where we asked; fall through and
+            # reconcile against reality.
+
+        if actual == self.active:
+            return
+
+        if actual:
+            # Adopted, not requested: the window is already fullscreen.
+            self._begin_fullscreen(request_window_fullscreen=False)
+        else:
+            # Already out of fullscreen; only the application side is left.
+            self._end_fullscreen(request_window_unfullscreen=False)
+
     def _set_window_fullscreen(self, fullscreen: bool) -> None:
+        # Predict the notification this causes so it is not read as external.
+        self._pending_transition = 'enter' if fullscreen else 'exit'
         try:
             if fullscreen:
                 if hasattr(self.window, 'fullscreen'):
