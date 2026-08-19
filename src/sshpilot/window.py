@@ -4146,6 +4146,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         falls back to row 0, so the sidebar keeps its scroll position (#1175).
         """
         self._start_tab_focus_idle_id = None
+        # This runs at PRIORITY_DEFAULT_IDLE, below GTK's event dispatch, so the
+        # user can leave Start again before it fires. Re-check the selection or
+        # a stale pass would pull focus out of the tab they switched to.
+        if not self.is_start_tab_selected():
+            return False
         if self._startup_first_row_focus_allowed():
             return self._focus_connection_list_first_row()
         try:

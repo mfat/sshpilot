@@ -129,6 +129,8 @@ class _FocusWindow:
             '_focus_start_tab_sidebar',
             '_focus_is_in_connection_list',
             '_select_only_row',
+            '_is_start_tab_page',
+            'is_start_tab_selected',
             'show_start_tab',
             'on_tab_selected',
         ):
@@ -170,9 +172,6 @@ class _FocusWindow:
 
     def _create_start_tab(self):
         return None
-
-    def _is_start_tab_page(self, page):
-        return page is self._start_tab_page
 
     def has_user_tabs(self):
         return bool(self.user_tabs)
@@ -405,3 +404,38 @@ def test_start_tab_paths_do_not_reference_the_startup_only_helper():
         assert '_schedule_start_tab_focus' in source, (
             f'{method.__qualname__} no longer schedules the Start-tab focus owner'
         )
+
+
+def test_stale_start_focus_idle_does_not_steal_focus_after_switching_away(
+    window,
+    idle_queue,
+):
+    """A queued Start focus pass must be inert after the user leaves Start.
+
+    ``_schedule_start_tab_focus`` queues at PRIORITY_DEFAULT_IDLE, below GTK's
+    event dispatch, so a quick switch back to a session tab is handled first
+    and the callback would otherwise pull focus out of the terminal.
+    """
+    row = _scrolled_to_bottom_with_selection(window)
+    session_page = window.open_session_tab()
+
+    window.grab_focus_calls.clear()
+
+    window.show_start_tab()
+
+    assert window.tab_view.get_selected_page() is window._start_tab_page
+    assert len(idle_queue.pending) == 1
+
+    terminal_focus = _TerminalWidget()
+    window.focus_widget = terminal_focus
+
+    window.tab_view.set_selected_page(session_page)
+
+    assert window.tab_view.get_selected_page() is session_page
+
+    idle_queue.process()
+
+    assert window.focus_widget is terminal_focus
+    assert window.grab_focus_calls == []
+    assert window._start_tab_focus_idle_id is None
+    assert window.connection_list.get_selected_rows() == [row]
