@@ -184,19 +184,71 @@ class TestOptionKeyHandler:
             assert result is False
             backend.owner.feed_child_data.assert_not_called()
 
-    def test_pass_through_dead_keys(self, backend, mock_gdk):
-        """Dead keys pass through for IME composition."""
-        mock_gdk.keyval_name.return_value = 'dead_tilde'
+    @pytest.mark.parametrize('group', [0, 1])
+    @pytest.mark.parametrize(
+        'keyval_name, keyval',
+        [('dead_tilde', 0xfe53), ('dead_perispomeni', 0xfe53)],
+    )
+    def test_tilde_dead_keys_feed_literal_tilde(
+        self, backend, mock_gdk, keyval_name, keyval, group
+    ):
+        """Option+N style tilde dead keys feed a literal ~ regardless of group.
+
+        GDK on macOS does not reliably report a non-zero group for alternate
+        layouts, so the tilde check must run before the group early return.
+        """
+        mock_gdk.keyval_name.return_value = keyval_name
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = group
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, keyval, 0, state
+            )
+            assert result is True
+            backend.owner.feed_child_data.assert_called_once_with(b'~')
+
+    def test_pass_through_other_dead_keys(self, backend, mock_gdk):
+        """Non-tilde dead keys pass through for IME composition."""
+        mock_gdk.keyval_name.return_value = 'dead_acute'
         with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
             controller = MagicMock()
             controller.get_group.return_value = 1
             state = ALT_MASK
 
             result = backend._on_macos_option_key_pressed(
-                controller, 0xfe53, 0, state  # dead_tilde keyval
+                controller, 0xfe51, 0, state  # dead_acute keyval
             )
             assert result is False
             backend.owner.feed_child_data.assert_not_called()
+
+    def test_tilde_dead_key_not_intercepted_without_alt(self, backend, mock_gdk):
+        """A tilde dead key without Option still passes through."""
+        mock_gdk.keyval_name.return_value = 'dead_tilde'
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+
+            result = backend._on_macos_option_key_pressed(
+                controller, 0xfe53, 0, 0
+            )
+            assert result is False
+            backend.owner.feed_child_data.assert_not_called()
+
+    def test_intercept_backslash_on_alternate_layout(self, backend, mock_gdk):
+        """Option+Shift+/ style backslash is still intercepted."""
+        mock_gdk.keyval_to_unicode.return_value = ord('\\')
+        with patch('sshpilot.terminal_backends.Gdk', mock_gdk):
+            controller = MagicMock()
+            controller.get_group.return_value = 1
+            state = ALT_MASK
+
+            result = backend._on_macos_option_key_pressed(
+                controller, ord('\\'), 0, state
+            )
+            assert result is True
+            backend.owner.feed_child_data.assert_called_once_with(b'\\')
 
     def test_pass_through_control_characters(self, backend, mock_gdk):
         """Control characters (< 0x20) pass through."""

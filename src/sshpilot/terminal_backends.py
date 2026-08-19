@@ -441,6 +441,11 @@ class VTETerminalBackend:
         finally:
             self._macos_option_key_controller = None
 
+    # Dead keys that carry a literal tilde on macOS alternate layouts
+    # (e.g. Option+N on French). VTE has no IME to compose them, so feed the
+    # base character directly instead of swallowing the keystroke.
+    _TILDE_DEAD_KEYS = frozenset({'dead_tilde', 'dead_perispomeni'})
+
     def _on_macos_option_key_pressed(
         self,
         controller: Gtk.EventControllerKey,
@@ -465,7 +470,23 @@ class VTETerminalBackend:
         if meta_mask and (state & meta_mask):
             return False
 
-        # 4. Keyboard layout/group must be non-zero (alternate layout)
+        try:
+            keyval_name = Gdk.keyval_name(keyval)
+        except Exception:
+            keyval_name = None
+
+        # 4. Tilde dead keys are terminal-relevant literals, not composition
+        # starters. Checked before the layout/group test because GDK on macOS
+        # does not reliably report a non-zero group for alternate layouts.
+        if keyval_name in self._TILDE_DEAD_KEYS:
+            try:
+                self.owner.feed_child_data('~'.encode('utf-8'))
+                return True  # Consume event
+            except Exception:
+                logger.debug("Failed to send dead key tilde", exc_info=True)
+                return False
+
+        # 5. Keyboard layout/group must be non-zero (alternate layout)
         # On layout=0 (primary), Alt+letter should produce Meta sequences
         try:
             group = controller.get_group()
@@ -475,20 +496,16 @@ class VTETerminalBackend:
             # Cannot determine layout - don't intercept
             return False
 
-        # 5. Dead keys pass through for IME composition
-        try:
-            keyval_name = Gdk.keyval_name(keyval)
-            if keyval_name and keyval_name.startswith('dead_'):
-                return False
-        except Exception:
-            pass
+        # 6. Remaining dead keys pass through for IME composition
+        if keyval_name and keyval_name.startswith('dead_'):
+            return False
 
-        # 6. Convert to Unicode
+        # 7. Convert to Unicode
         codepoint = Gdk.keyval_to_unicode(keyval)
         if codepoint == 0:
             return False
 
-        # 7. Must be printable (reject control chars)
+        # 8. Must be printable (reject control chars)
         if codepoint < 0x20 or codepoint == 0x7F:
             return False
 
