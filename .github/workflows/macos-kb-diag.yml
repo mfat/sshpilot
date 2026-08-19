@@ -1,0 +1,288 @@
+# .github/workflows/macos-keyboard-diagnostic.yml
+
+name: macOS keyboard diagnostic
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "sshpilot/terminal_backends.py"
+      - "src/**"
+      - "tests/**"
+      - ".github/workflows/macos-keyboard-diagnostic.yml"
+
+jobs:
+  french-option-keys:
+    name: French Option-key translation
+    runs-on: macos-26
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Show macOS runner
+        run: |
+          sw_vers
+          uname -m
+
+      - name: Build native keyboard diagnostic
+        shell: bash
+        run: |
+          cat > /tmp/keyboard_diag.c <<'EOF'
+          #include <Carbon/Carbon.h>
+          #include <CoreFoundation/CoreFoundation.h>
+          #include <stdio.h>
+          #include <string.h>
+
+          enum {
+              OUTPUT_CAPACITY = 16,
+              STRING_CAPACITY = 512
+          };
+
+          static void cfstring_to_utf8(
+              CFStringRef value,
+              char *buffer,
+              size_t buffer_size
+          ) {
+              if (value == NULL) {
+                  snprintf(buffer, buffer_size, "<null>");
+                  return;
+              }
+
+              if (!CFStringGetCString(
+                      value,
+                      buffer,
+                      (CFIndex)buffer_size,
+                      kCFStringEncodingUTF8)) {
+                  snprintf(buffer, buffer_size, "<conversion failed>");
+              }
+          }
+
+          static void print_output(
+              const char *label,
+              OSStatus status,
+              UInt32 dead_key_state,
+              const UniChar *characters,
+              UniCharCount length
+          ) {
+              printf(
+                  "  %-30s status=%d dead_state=%u length=%lu",
+                  label,
+                  (int)status,
+                  (unsigned int)dead_key_state,
+                  (unsigned long)length
+              );
+
+              if (length == 0) {
+                  printf(" text=<none>\n");
+                  return;
+              }
+
+              CFStringRef string = CFStringCreateWithCharacters(
+                  kCFAllocatorDefault,
+                  characters,
+                  length
+              );
+
+              char utf8[STRING_CAPACITY];
+              cfstring_to_utf8(string, utf8, sizeof(utf8));
+
+              printf(" text=\"%s\" codepoints=", utf8);
+
+              for (UniCharCount index = 0; index < length; ++index) {
+                  printf(
+                      "%sU+%04X",
+                      index == 0 ? "" : ",",
+                      characters[index]
+                  );
+              }
+
+              printf("\n");
+              CFRelease(string);
+          }
+
+          static OSStatus translate_key(
+              const UCKeyboardLayout *layout,
+              UInt16 key_code,
+              UInt32 modifiers,
+              OptionBits options,
+              UInt32 *dead_key_state,
+              const char *label
+          ) {
+              UniChar characters[OUTPUT_CAPACITY] = {0};
+              UniCharCount length = 0;
+
+              OSStatus status = UCKeyTranslate(
+                  layout,
+                  key_code,
+                  kUCKeyActionDown,
+                  modifiers,
+                  LMGetKbdType(),
+                  options,
+                  dead_key_state,
+                  OUTPUT_CAPACITY,
+                  &length,
+                  characters
+              );
+
+              print_output(
+                  label,
+                  status,
+                  *dead_key_state,
+                  characters,
+                  length
+              );
+
+              return status;
+          }
+
+          static int diagnose_layout(TISInputSourceRef source) {
+              CFStringRef source_id = TISGetInputSourceProperty(
+                  source,
+                  kTISPropertyInputSourceID
+              );
+              CFStringRef source_name = TISGetInputSourceProperty(
+                  source,
+                  kTISPropertyLocalizedName
+              );
+              CFDataRef layout_data = TISGetInputSourceProperty(
+                  source,
+                  kTISPropertyUnicodeKeyLayoutData
+              );
+
+              if (layout_data == NULL || CFDataGetLength(layout_data) == 0) {
+                  return 0;
+              }
+
+              char id[STRING_CAPACITY];
+              char name[STRING_CAPACITY];
+
+              cfstring_to_utf8(source_id, id, sizeof(id));
+              cfstring_to_utf8(source_name, name, sizeof(name));
+
+              if (strstr(id, "French") == NULL &&
+                  strstr(name, "French") == NULL &&
+                  strstr(name, "Français") == NULL) {
+                  return 0;
+              }
+
+              const UCKeyboardLayout *layout =
+                  (const UCKeyboardLayout *)CFDataGetBytePtr(layout_data);
+
+              const UInt32 option_modifiers = optionKey >> 8;
+              const UInt32 option_shift_modifiers =
+                  (optionKey | shiftKey) >> 8;
+
+              printf("\nKeyboard layout\n");
+              printf("  name: %s\n", name);
+              printf("  id:   %s\n", id);
+
+              UInt32 dead_key_state = 0;
+
+              translate_key(
+                  layout,
+                  kVK_ANSI_N,
+                  option_modifiers,
+                  0,
+                  &dead_key_state,
+                  "Option+N"
+              );
+
+              if (dead_key_state != 0) {
+                  translate_key(
+                      layout,
+                      kVK_Space,
+                      0,
+                      0,
+                      &dead_key_state,
+                      "Space after Option+N"
+                  );
+              }
+
+              dead_key_state = 0;
+              translate_key(
+                  layout,
+                  kVK_ANSI_N,
+                  option_modifiers,
+                  kUCKeyTranslateNoDeadKeysMask,
+                  &dead_key_state,
+                  "Option+N (no dead keys)"
+              );
+
+              dead_key_state = 0;
+              translate_key(
+                  layout,
+                  kVK_ANSI_N,
+                  option_shift_modifiers,
+                  0,
+                  &dead_key_state,
+                  "Option+Shift+N"
+              );
+
+              dead_key_state = 0;
+              translate_key(
+                  layout,
+                  kVK_ANSI_N,
+                  option_shift_modifiers,
+                  kUCKeyTranslateNoDeadKeysMask,
+                  &dead_key_state,
+                  "Option+Shift+N (no dead)"
+              );
+
+              return 1;
+          }
+
+          int main(void) {
+              CFArrayRef sources = TISCreateInputSourceList(NULL, true);
+
+              if (sources == NULL) {
+                  fprintf(stderr, "Unable to enumerate keyboard layouts.\n");
+                  return 1;
+              }
+
+              CFIndex count = CFArrayGetCount(sources);
+              int french_layouts = 0;
+
+              printf("Keyboard type: %u\n", (unsigned int)LMGetKbdType());
+              printf("Installed input sources: %ld\n", (long)count);
+
+              for (CFIndex index = 0; index < count; ++index) {
+                  TISInputSourceRef source =
+                      (TISInputSourceRef)CFArrayGetValueAtIndex(
+                          sources,
+                          index
+                      );
+
+                  french_layouts += diagnose_layout(source);
+              }
+
+              CFRelease(sources);
+
+              if (french_layouts == 0) {
+                  fprintf(
+                      stderr,
+                      "No installed French Unicode keyboard layout found.\n"
+                  );
+                  return 2;
+              }
+
+              printf(
+                  "\nDiagnosed %d French keyboard layout(s).\n",
+                  french_layouts
+              );
+
+              return 0;
+          }
+          EOF
+
+          clang \
+            -Wall \
+            -Wextra \
+            -Werror \
+            -framework Carbon \
+            -framework CoreFoundation \
+            /tmp/keyboard_diag.c \
+            -o /tmp/keyboard_diag
+
+      - name: Test French Option-key mappings
+        run: /tmp/keyboard_diag
