@@ -85,6 +85,7 @@ from .window_session import WindowSessionMixin
 from .window_help import WindowHelpMixin
 from .window_file_manager import WindowFileManagerMixin
 from .window_tabs import WindowTabsMixin
+from .window_fullscreen import WindowFullscreenController
 from .window_dialogs import (
     WindowConfigDialogsMixin,
     resolve_app_modal_parent,  # noqa: F401  re-exported for tests / other modules
@@ -397,6 +398,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Set up window
         self.setup_window()
         self.setup_ui()
+        # Fullscreen is window state: exactly one controller per window owns the
+        # saved chrome, the F11/Escape controllers and the top-edge exit
+        # controls, so a closing terminal can never strand the window
+        # fullscreen (issue #1102).
+        self.fullscreen_controller = WindowFullscreenController(self)
+        self.fullscreen_controller.install()
         self._setup_omnisearch_shortcut()
         self.setup_connections()
         self.setup_signals()
@@ -3251,6 +3258,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._toggle_command_blocks_panel(btn.get_active())
 
         self._cmd_blocks_toggle_btn.connect('toggled', _on_cmd_toggle_btn_toggled)
+
+        # Fullscreen toggle. Hidden outside fullscreen so normal chrome is
+        # unchanged; shown while fullscreen so the revealed header bar carries
+        # its own way out (no bespoke overlay button is needed).
+        self.fullscreen_button = Gtk.Button()
+        _cmd_icon_utils.set_button_icon(self.fullscreen_button, 'view-restore-symbolic')
+        self.fullscreen_button.add_css_class('flat')
+        self.fullscreen_button.set_tooltip_text(_('Exit Fullscreen (F11)'))
+        self.fullscreen_button.set_visible(False)
+        self.fullscreen_button.connect('clicked', lambda _btn: self.toggle_fullscreen())
+        self.header_bar.pack_end(self.fullscreen_button)
+
         self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
         self.header_bar.pack_end(self._headerbar_theme_menu_button)
         self.header_bar.pack_end(self.menu_button)
@@ -3334,8 +3353,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
         banner_box.add_controller(banner_controller)
 
+        # Only the Adw split variants build a ToolbarView; the legacy fallback
+        # below has none, and fullscreen degrades to plain hiding there.
+        self._content_toolbar_view = None
+
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
+            # Kept on the window: terminal fullscreen folds the tab bar into
+            # this view's top-bar group and drives its reveal/extend properties
+            # to overlay the chrome (see window_fullscreen.py).
+            self._content_toolbar_view = content_box
             content_box.add_top_bar(self.header_bar)
             # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3355,6 +3382,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug("Set content widget for OverlaySplitView")
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
+            self._content_toolbar_view = content_box
             content_box.add_top_bar(self.header_bar)
             # Create content wrapper with banner below header bar
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -3948,6 +3976,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Config signals
         self.config.connect('setting-changed', self.on_setting_changed)
 
+
+    # --- Fullscreen: the window owns the state; everything else delegates ---
+
+    def toggle_fullscreen(self) -> None:
+        """Toggle window fullscreen (F11). Works with or without terminals."""
+        controller = getattr(self, 'fullscreen_controller', None)
+        if controller is not None:
+            controller.toggle()
+
+    def is_fullscreen_active(self) -> bool:
+        controller = getattr(self, 'fullscreen_controller', None)
+        return bool(controller is not None and controller.active)
 
     def _is_start_tab_page(self, page) -> bool:
         return page is not None and page is getattr(self, '_start_tab_page', None)
@@ -6032,6 +6072,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if self._is_quitting:
             self._teardown_ssh_config_monitor()
             self._invalidate_api_window_callbacks()
+            # Drop the window-global fullscreen CSS provider and controllers.
+            try:
+                controller = getattr(self, 'fullscreen_controller', None)
+                if controller is not None:
+                    controller.shutdown()
+            except Exception:
+                logger.debug('Fullscreen controller shutdown failed', exc_info=True)
             return False  # Already quitting, allow close
 
         # Capture the currently-open tabs so they can be restored next launch

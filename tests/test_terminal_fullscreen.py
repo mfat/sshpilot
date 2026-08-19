@@ -1,13 +1,14 @@
-"""Characterization tests for the terminal fullscreen feature.
+"""Fullscreen behavior that used to live on TerminalWidget.
 
-Pins the cleanly-testable behavior before extraction into FullscreenController:
-the toggle dispatch and the banner show/hide/dismiss visibility. The heavy
-enter/exit window juggling reaches into the toplevel window and is covered by
-the real-GTK smoke + manual test instead; the focus-restoration collapse is
-tested as a method once extracted (see test_restore_focus_* below).
+``FullscreenController`` (``sshpilot/terminal_fullscreen.py``) owned the
+toggle, the banner and the saved chrome state, and ``TerminalWidget`` owned the
+controller. That ownership is the #1102 defect, so the module is gone: the
+window owns ``WindowFullscreenController`` and the terminal only forwards.
 
-Standard headless pattern: build a bare TerminalWidget via ``__new__`` and stub
-only the attributes each method touches.
+The characterization coverage from that module is kept here against the new
+owner, minus the banner — that is gone too, replaced by the window-owned
+top-edge controls (see tests/test_window_fullscreen.py) — plus the delegation
+contract for the terminal-facing wrapper.
 """
 from types import SimpleNamespace
 
@@ -15,73 +16,87 @@ import pytest
 
 pytest.importorskip("gi")
 
-from sshpilot.terminal_fullscreen import FullscreenController
+from sshpilot.window_fullscreen import WindowFullscreenController
 
 
-class _Container:
-    def __init__(self, visible=False):
-        self.visible = visible
-        self._child = object()  # not an Adw.Banner → set_revealed path skipped
-
-    def get_child(self):
-        return self._child
-
-    def set_visible(self, v):
-        self.visible = v
-
-
-def _fc(**attrs):
-    fc = FullscreenController.__new__(FullscreenController)
-    fc.t = SimpleNamespace()
-    fc._is_fullscreen = False
-    fc._fullscreen_banner_container = None
-    for k, v in attrs.items():
-        setattr(fc, k, v)
+def _controller(**attrs):
+    fc = WindowFullscreenController.__new__(WindowFullscreenController)
+    fc.window = SimpleNamespace()
+    fc.active = False
+    fc.origin = None
+    fc.presentation = None
+    fc._saved = None
+    for key, value in attrs.items():
+        setattr(fc, key, value)
     return fc
 
 
 def test_toggle_enters_when_not_fullscreen():
-    fc = _fc(_is_fullscreen=False)
+    fc = _controller(active=False)
     calls = []
-    fc._enter_fullscreen = lambda: calls.append("enter")
-    fc._exit_fullscreen = lambda: calls.append("exit")
-    fc.toggle_fullscreen()
+    fc.enter = lambda: calls.append("enter")
+    fc.exit = lambda: calls.append("exit")
+    fc.toggle()
     assert calls == ["enter"]
 
 
 def test_toggle_exits_when_fullscreen():
-    fc = _fc(_is_fullscreen=True)
+    fc = _controller(active=True)
     calls = []
-    fc._enter_fullscreen = lambda: calls.append("enter")
-    fc._exit_fullscreen = lambda: calls.append("exit")
-    fc.toggle_fullscreen()
+    fc.enter = lambda: calls.append("enter")
+    fc.exit = lambda: calls.append("exit")
+    fc.toggle()
     assert calls == ["exit"]
 
 
-def test_show_fullscreen_banner_makes_it_visible():
-    fc = _fc(_fullscreen_banner_container=_Container(visible=False))
-    fc._show_fullscreen_banner()
-    assert fc._fullscreen_banner_container.visible is True
+def test_no_banner_or_bespoke_overlay_machinery_survived():
+    """Neither the banner nor the bespoke top-controls revealer came back.
+
+    The exit affordance is the window's own header bar, revealed by the
+    ToolbarView along with the tab bar as one surface.
+    """
+    for name in (
+        "_ensure_banner",
+        "_attach_banner",
+        "_detach_banner",
+        "_show_banner",
+        "_hide_banner",
+        "dismiss_banner",
+        "banner_visible",
+        "_ensure_top_controls",
+        "_destroy_top_controls",
+        "top_controls_revealed",
+    ):
+        assert not hasattr(WindowFullscreenController, name), name
 
 
-def test_hide_fullscreen_banner_makes_it_invisible():
-    fc = _fc(_fullscreen_banner_container=_Container(visible=True))
-    fc._hide_fullscreen_banner()
-    assert fc._fullscreen_banner_container.visible is False
+def test_terminal_module_no_longer_defines_a_fullscreen_controller():
+    from sshpilot import terminal as terminal_module
+
+    assert not hasattr(terminal_module, "FullscreenController")
+
+    with pytest.raises(ImportError):
+        import sshpilot.terminal_fullscreen  # noqa: F401
 
 
-def test_dismiss_hides_banner():
-    fc = _fc()
-    hidden = []
-    fc._hide_fullscreen_banner = lambda: hidden.append(True)
-    fc._on_fullscreen_banner_dismiss(None)
-    assert hidden == [True]
+def test_terminal_toggle_forwards_to_the_window_controller():
+    from sshpilot.terminal import TerminalWidget
+
+    toggled = []
+    window = SimpleNamespace(
+        fullscreen_controller=SimpleNamespace(toggle=lambda: toggled.append(True))
+    )
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    terminal.get_root = lambda: window
+
+    terminal.toggle_fullscreen()
+    assert toggled == [True]
 
 
-def test_restore_focus_uses_terminal_widget_public_api():
-    grabbed = []
-    fc = _fc()
-    fc.t = SimpleNamespace(grab_terminal_focus=lambda: grabbed.append("terminal"))
+def test_terminal_toggle_is_a_noop_without_a_window():
+    from sshpilot.terminal import TerminalWidget
 
-    assert fc._restore_focus() is False
-    assert grabbed == ["terminal"]
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    terminal.get_root = lambda: None
+
+    assert terminal.toggle_fullscreen() is None

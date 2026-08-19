@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
-from .terminal_fullscreen import FullscreenController
 from .core.connection_evidence import classify_connection_evidence
 
 
@@ -127,9 +126,6 @@ class TerminalWidget(Gtk.Box):
         self._backend_name = "vte"
         self.backend = None
         self.terminal_widget = None
-
-        # Fullscreen (state + window juggling) lives in a composed controller.
-        self._fullscreen = FullscreenController(self)
 
         # Daemon session support
         self._daemon_mode = False
@@ -461,9 +457,6 @@ class TerminalWidget(Gtk.Box):
 
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
-
-        # Setup fullscreen keyboard shortcut (F11)
-        self._fullscreen.setup_shortcut()
 
         logger.debug("Terminal widget initialized")
 
@@ -3784,6 +3777,20 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Error terminating process {pid}: {e}")
             return False
 
+    def _repaint_connection_status(self, root) -> None:
+        """Ask the window to re-render this connection's sidebar rows.
+
+        Best-effort and never raises: a failure to repaint must not abort the
+        disconnect, nor the tab close that called it.
+        """
+        handler = getattr(root, 'on_connection_status_changed', None)
+        if not callable(handler):
+            return
+        try:
+            GLib.idle_add(handler, None, self.connection, False)
+        except Exception:
+            logger.debug('Failed to schedule connection status repaint', exc_info=True)
+
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
         # Guard UI emissions when the root window is quitting. Computed up front
@@ -3815,8 +3822,15 @@ class TerminalWidget(Gtk.Box):
             # Only update manager / UI if not quitting
             if hasattr(self, 'connection') and self.connection and not is_quitting:
                 self.connection.is_connected = False
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+                # Connection status is daemon-authoritative now: this window's
+                # `connection_manager` is a ConnectionPresentationStore (a
+                # read-only DTO projection) with no `emit`, so the GObject-era
+                # push raised AttributeError straight out of disconnect() and
+                # aborted whatever was closing the tab. Repaint the sidebar
+                # rows directly — that repaint was the emit's only observable
+                # effect, since on_connection_status_changed is render-only and
+                # `is_connected` above is the authoritative bit it renders.
+                self._repaint_connection_status(root)
 
         try:
             # Try to get the terminal's child PID (with timeout protection)
@@ -4453,9 +4467,22 @@ class TerminalWidget(Gtk.Box):
             return "SSH_TERMINAL"
         return self._job_status
 
-    # --- Fullscreen: thin forwarder to the composed FullscreenController ---
+    # --- Fullscreen: a request to the window, which owns the state ---
     def toggle_fullscreen(self):
-        return self._fullscreen.toggle_fullscreen()
+        """Ask the toplevel window to toggle fullscreen.
+
+        The terminal deliberately holds no fullscreen state and installs no F11
+        controller: the window owns both, so closing this widget can never
+        strand the window fullscreen (issue #1102). F11 itself is handled by
+        the window-level controller; this stays for callers that already hold a
+        terminal.
+        """
+        root = self.get_root()
+        controller = getattr(root, 'fullscreen_controller', None)
+        if controller is None:
+            logger.debug('No window fullscreen controller available')
+            return None
+        return controller.toggle()
 
     def _setup_drag_and_drop(self):
         """Set up drag and drop for SCP upload from filesystem."""
