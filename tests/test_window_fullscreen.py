@@ -1046,8 +1046,8 @@ def test_fullscreen_toggle_goes_through_the_window_action_path():
 # --------------------------------------------------------------------------
 
 
-def test_immersive_chrome_is_not_platform_gated(monkeypatch):
-    """Every platform hides both bars; none is special-cased."""
+def test_hiding_chrome_is_not_platform_gated(monkeypatch):
+    """Every platform hides both bars on entry; only the *reveal* differs."""
     for macos in (False, True):
         win, fc = _window(monkeypatch, macos=macos)
         win.open_terminal('A')
@@ -1055,6 +1055,20 @@ def test_immersive_chrome_is_not_platform_gated(monkeypatch):
         assert fc.terminal_presentation_active is True, macos
         assert win.header_shown() is False, macos
         assert win.tab_bar_shown() is False, macos
+        assert win.terminal_allocation() == (
+            win._content_toolbar_view.WINDOW_HEIGHT
+        ), macos
+
+
+def test_linux_reveal_includes_the_header_bar(monkeypatch):
+    win, fc = _window(monkeypatch, macos=False)
+    win.open_terminal('A')
+    _f11(fc)
+
+    fc.on_pointer_motion(None, 100.0, 0.0)
+
+    assert win.header_shown() is True
+    assert win.tab_bar_shown() is True
 
 
 def test_chrome_never_reveals_outside_fullscreen(monkeypatch):
@@ -1279,7 +1293,12 @@ def test_macos_hides_the_tab_bar_like_every_other_platform(monkeypatch):
     assert win.terminal_allocation() == win._content_toolbar_view.WINDOW_HEIGHT
 
 
-def test_macos_top_edge_reveal_brings_both_bars_back(monkeypatch):
+def test_macos_top_edge_reveals_the_tab_bar_only(monkeypatch):
+    """macOS reveals its own menu bar at the top edge.
+
+    Surfacing SSH Pilot's header bar in the same gesture would stack two
+    chromes on the same strip, so only the tab bar comes back there.
+    """
     win, fc = _window(monkeypatch, macos=True)
     win.open_terminal('A')
     _f11(fc)
@@ -1287,9 +1306,37 @@ def test_macos_top_edge_reveal_brings_both_bars_back(monkeypatch):
     fc.on_pointer_motion(None, 100.0, 0.0)
 
     assert fc.top_chrome_revealed is True
-    assert win.header_shown() is True
     assert win.tab_bar_shown() is True
-    assert win.fullscreen_button.get_visible() is True
+    assert win.header_shown() is False
+
+
+def test_macos_reveal_region_covers_the_tab_bar_alone(monkeypatch):
+    """With no header revealed, the region must not include its height."""
+    win, fc = _window(monkeypatch, macos=True)
+    win.open_terminal('A')
+    _f11(fc)
+    fc.on_pointer_motion(None, 100.0, 0.0)
+
+    # Tab bar is 38px; the header (46px) is not part of the revealed surface.
+    assert fc._reveal_region_height() == win.tab_bar.height
+
+    fc.on_pointer_motion(None, 100.0, 60.0)   # past the tab bar
+    assert fc.top_chrome_revealed is False
+
+
+def test_macos_reveal_keeps_tabs_usable_and_fullscreen_intact(monkeypatch):
+    win, fc = _window(monkeypatch, macos=True)
+    _a, page_a = win.open_terminal('A')
+    _b, page_b = win.open_terminal('B')
+    _f11(fc)
+    allocation = win.terminal_allocation()
+
+    fc.on_pointer_motion(None, 100.0, 0.0)
+    win.tab_view.set_selected_page(page_a)
+
+    assert fc.active is True
+    assert win.tab_bar_shown() is True
+    assert win.terminal_allocation() == allocation
 
 
 def test_macos_builds_no_bespoke_window_control_overlay(monkeypatch):

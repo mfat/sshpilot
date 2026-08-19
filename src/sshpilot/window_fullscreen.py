@@ -71,20 +71,32 @@ still decides the colour.
 Start keeps its normal chrome: immersive mode is the terminal presentation
 only.
 
-This is not platform-gated. macOS was special-cased at first, on the theory
+*Hiding* is not platform-gated: every platform folds both bars away so the
+terminal gets the whole window. macOS was special-cased at first, on the theory
 that the OS owns the fullscreen reveal — but SSH Pilot calls
 ``maybe_set_native_controls(header_bar, False)``, so its window controls there
 are client-side GTK widgets inside the content, and macOS's native reveal
 uncovers the *menu bar*, not this app's chrome. Leaving the tab bar pinned
 visible on macOS therefore just wasted a strip of screen with nothing revealing
-it. What macOS does own is the fullscreen *transition*, which is honoured
-through notify::fullscreened above, and its traffic lights, which this module
-never draws or emulates.
+it.
+
+What differs by platform is the *reveal*: because macOS uncovers its menu bar
+on the very same top-edge gesture, only the tab bar comes back there, rather
+than stacking two chromes on one strip (see ``_reveal_includes_header``). The
+consequence is that the header bar's exit button and window controls are not
+reachable by pointer during macOS fullscreen — Control+Command+F, Escape and
+the OS's own fullscreen control are the ways out.
+
+What macOS does own is the fullscreen *transition*, honoured through
+notify::fullscreened above, and its traffic lights, which this module never
+draws or emulates.
 """
 
 import logging
 
 from gi.repository import Gtk, Gdk, Adw
+
+from . import platform_utils
 
 logger = logging.getLogger(__name__)
 
@@ -335,6 +347,18 @@ class WindowFullscreenController:
     def on_pointer_leave(self, _controller=None) -> None:
         self._set_top_chrome_revealed(False)
 
+    @staticmethod
+    def _reveal_includes_header() -> bool:
+        """Whether the top-edge reveal surfaces the header bar as well.
+
+        macOS reveals its own menu bar on the same gesture, so bringing SSH
+        Pilot's header bar back there too would stack two chromes on one
+        strip; the tab bar alone comes back. Everywhere else the header is
+        part of the revealed surface and carries the window controls, the menu
+        and the fullscreen exit button.
+        """
+        return not platform_utils.is_macos()
+
     def _reveal_region_height(self) -> float:
         """How far down the revealed chrome reaches.
 
@@ -483,9 +507,10 @@ class WindowFullscreenController:
 
         if self._enter_immersive_chrome():
             # Both bars are top bars of the ToolbarView now, hidden until the
-            # pointer reaches the top edge. They stay `visible` as widgets —
-            # the ToolbarView's reveal is what shows and hides the surface.
-            self._set_widget_visible('header_bar', True)
+            # pointer reaches the top edge. Whichever stays `visible` as a
+            # widget is what the ToolbarView's reveal actually surfaces — on
+            # macOS that is the tab bar alone (see _reveal_includes_header).
+            self._set_widget_visible('header_bar', self._reveal_includes_header())
             self._sync_tab_bar_visibility()
         else:
             # Legacy non-Adw split fallback with no ToolbarView: nothing can
