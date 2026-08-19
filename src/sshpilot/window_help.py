@@ -12,9 +12,22 @@ from gi.repository import Adw, Gio, Gtk
 from gettext import gettext as _
 
 from .platform_utils import is_macos
-from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
+from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT, TOGGLE_FULLSCREEN_ACTION
 
 logger = logging.getLogger(__name__)
+
+#: Actions listed in the overview's General group, rendered from whatever
+#: accelerator is configured for each — never a hard-coded label.
+GENERAL_SHORTCUT_ACTIONS = [
+    ('toggle_sidebar', _('Toggle Sidebar')),
+    (TOGGLE_FULLSCREEN_ACTION, _('Toggle Fullscreen')),
+    ('omnisearch', _('Omnisearch')),
+    ('quit', _('Quit')),
+    ('preferences', _('Settings')),
+    ('help', _('Documentation')),
+    ('shortcuts', _('Keyboard Shortcuts')),
+    ('edit-ssh-config', _('SSH Config Editor')),
+]
 
 
 class WindowHelpMixin:
@@ -114,15 +127,7 @@ class WindowHelpMixin:
         group_general = Gtk.ShortcutsGroup()
 
         # Add general shortcuts with current values
-        general_actions = [
-            ('toggle_sidebar', _('Toggle Sidebar')),
-            ('omnisearch', _('Omnisearch')),
-            ('quit', _('Quit')),
-            ('preferences', _('Settings')),
-            ('help', _('Documentation')),
-            ('shortcuts', _('Keyboard Shortcuts')),
-            ('edit-ssh-config', _('SSH Config Editor')),
-        ]
+        general_actions = GENERAL_SHORTCUT_ACTIONS
         
         for action_name, title in general_actions:
             shortcuts = current_shortcuts.get(action_name)

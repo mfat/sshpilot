@@ -12,6 +12,7 @@ from .file_manager_integration import (
 )
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos
+from .shortcut_utils import TOGGLE_FULLSCREEN_ACTION
 from .i18n import ui_language_codes as _ui_language_codes
 from . import wol
 
@@ -1161,6 +1162,23 @@ def _on_view_logs_action_factory(window):
     return _activate
 
 
+def register_fullscreen_action(window):
+    """Add ``win.toggle-fullscreen``, the one target every fullscreen
+    accelerator and the header-bar button resolve to.
+
+    Its accelerators come from the shortcut registry (see
+    ``register_window_shortcut`` in main.py), so there is no second,
+    hard-coded key path that could fire for the same event.
+    """
+    try:
+        action = Gio.SimpleAction.new(TOGGLE_FULLSCREEN_ACTION, None)
+        action.connect('activate', lambda *_args: window.toggle_fullscreen())
+        window.add_action(action)
+        window.toggle_fullscreen_action = action
+    except Exception as e:
+        logger.error(f"Failed to register fullscreen toggle action: {e}")
+
+
 def register_window_actions(window):
     """Register SimpleActions with the provided main window."""
     # Context menu action to force opening a new connection tab
@@ -1261,6 +1279,8 @@ def register_window_actions(window):
         window.copy_to_group_action = Gio.SimpleAction.new('copy-to-group', None)
         window.copy_to_group_action.connect('activate', window.on_copy_to_group_action)
         window.add_action(window.copy_to_group_action)
+
+    register_fullscreen_action(window)
 
     # Sidebar toggle action and accelerators
     try:

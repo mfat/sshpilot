@@ -499,14 +499,21 @@ def _window(monkeypatch=None, macos=False):
     return win, controller
 
 
-def _press(controller, keyval, phase='capture'):
-    if phase == 'capture':
-        return controller.on_capture_key_pressed(None, keyval, 0, 0)
+def _press(controller, keyval, phase='bubble'):
+    """Only Escape reaches the controller as a key event now."""
+    assert phase == 'bubble', 'the controller installs no capture-phase handler'
     return controller.on_bubble_key_pressed(None, keyval, 0, 0)
 
 
 def _f11(controller):
-    return _press(controller, Gdk.KEY_F11)
+    """Fire Toggle Fullscreen the way its accelerator does.
+
+    The accelerator resolves to ``win.toggle-fullscreen``, whose handler calls
+    ``MainWindow.toggle_fullscreen`` — the real bound method here — so this
+    exercises the same path F11, Control+Command+F or any user rebinding takes.
+    """
+    controller.window.toggle_fullscreen()
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -999,24 +1006,32 @@ def test_escape_is_ignored_when_not_fullscreen():
     assert _press(fc, Gdk.KEY_Escape, phase='bubble') is False
 
 
-def test_escape_is_never_intercepted_before_the_focused_widget():
-    """The capture-phase handler must not swallow Escape.
+def test_no_capture_phase_handler_can_swallow_terminal_keys():
+    """The controller installs exactly one key controller, on bubble.
 
-    Escape is live terminal input (vi, less, readline). Only the bubble phase —
-    reached solely when the focused widget declined the key — may exit
-    fullscreen.
+    Escape is live terminal input (vi, less, readline), so nothing may claim it
+    before the focused widget. The fullscreen accelerator is not a key handler
+    here at all — it is a registry action — so there is no capture-phase
+    controller left to intercept anything.
     """
     _win, fc = _window()
+    assert not hasattr(fc, 'on_capture_key_pressed')
+    assert '_capture_controller' not in vars(fc)
+
+    # Escape still reaches the controller — on bubble, so only once the
+    # focused widget has declined it.
     _f11(fc)
-    assert _press(fc, Gdk.KEY_Escape, phase='capture') is False
-    assert fc.active is True
+    assert _press(fc, Gdk.KEY_Escape) is True
+    assert fc.active is False
 
 
-def test_f11_is_handled_in_the_capture_phase():
-    """F11 must stay a reliable toggle even when a terminal has focus."""
+def test_fullscreen_toggle_goes_through_the_window_action_path():
+    """Whatever accelerator is configured ends up at the same controller."""
     _win, fc = _window()
-    assert _press(fc, Gdk.KEY_F11, phase='capture') is True
+    assert _f11(fc) is True
     assert fc.active is True
+    assert _f11(fc) is True
+    assert fc.active is False
 
 
 # --------------------------------------------------------------------------

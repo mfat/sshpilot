@@ -86,6 +86,7 @@ from .window_help import WindowHelpMixin
 from .window_file_manager import WindowFileManagerMixin
 from .window_tabs import WindowTabsMixin
 from .window_fullscreen import WindowFullscreenController
+from .shortcut_utils import TOGGLE_FULLSCREEN_ACTION
 from .window_dialogs import (
     WindowConfigDialogsMixin,
     resolve_app_modal_parent,  # noqa: F401  re-exported for tests / other modules
@@ -225,6 +226,17 @@ def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/window.ui")
+def _accelerator_label(accel: str) -> str:
+    """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
+    try:
+        ok, keyval, mods = Gtk.accelerator_parse(accel)
+        if ok and keyval:
+            return Gtk.accelerator_get_label(keyval, mods)
+    except Exception:
+        pass
+    return accel
+
+
 class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin, WindowHelpMixin, WindowFileManagerMixin, WindowTabsMixin, WindowConfigDialogsMixin, WindowActions):
     """Main application window"""
 
@@ -1966,16 +1978,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Show the effective (possibly user-customized) shortcut in the tooltip.
         sidebar_accels = self._get_safe_current_shortcuts().get('toggle_sidebar') or ['F9']
 
-        def _accel_label(accel):
-            try:
-                ok, keyval, mods = Gtk.accelerator_parse(accel)
-                if ok and keyval:
-                    return Gtk.accelerator_get_label(keyval, mods)
-            except Exception:
-                pass
-            return accel
-
-        accel_labels = ', '.join(_accel_label(a) for a in sidebar_accels)
+        accel_labels = ', '.join(_accelerator_label(a) for a in sidebar_accels)
         self.sidebar_toggle_button.set_tooltip_text(
             _('Hide Sidebar ({accels})').format(accels=accel_labels))
         # Button should not appear pressed when sidebar is visible
@@ -3265,9 +3268,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.fullscreen_button = Gtk.Button()
         _cmd_icon_utils.set_button_icon(self.fullscreen_button, 'view-restore-symbolic')
         self.fullscreen_button.add_css_class('flat')
-        self.fullscreen_button.set_tooltip_text(_('Exit Fullscreen (F11)'))
         self.fullscreen_button.set_visible(False)
-        self.fullscreen_button.connect('clicked', lambda _btn: self.toggle_fullscreen())
+        # Same window action every fullscreen accelerator resolves to, so the
+        # button and the shortcut can never drift apart.
+        self.fullscreen_button.set_action_name(f'win.{TOGGLE_FULLSCREEN_ACTION}')
+        self._update_fullscreen_button_tooltip()
         self.header_bar.pack_end(self.fullscreen_button)
 
         self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
@@ -3978,6 +3983,29 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
 
     # --- Fullscreen: the window owns the state; everything else delegates ---
+
+    def _update_fullscreen_button_tooltip(self) -> None:
+        """Label the button with whatever accelerator is configured.
+
+        Mirrors the sidebar toggle: a hard-coded "F11" would be wrong on macOS
+        (Control+Command+F) and wrong for anyone who rebound it.
+        """
+        button = getattr(self, 'fullscreen_button', None)
+        if button is None:
+            return
+        try:
+            accels = self._get_safe_current_shortcuts().get(
+                TOGGLE_FULLSCREEN_ACTION
+            ) or []
+            labels = ', '.join(
+                label for label in (_accelerator_label(a) for a in accels) if label
+            )
+            button.set_tooltip_text(
+                _('Exit Fullscreen ({accels})').format(accels=labels)
+                if labels else _('Exit Fullscreen')
+            )
+        except Exception:
+            logger.debug('Failed to build fullscreen button tooltip', exc_info=True)
 
     def toggle_fullscreen(self) -> None:
         """Toggle window fullscreen (F11). Works with or without terminals."""

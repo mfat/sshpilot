@@ -39,7 +39,11 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
-from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    TOGGLE_FULLSCREEN_ACTION,
+    default_fullscreen_shortcuts,
+)
 
 # Build-time paths written by Meson at install time. Absent in a setuptools /
 # editable checkout, where we fall back to package-relative discovery.
@@ -328,6 +332,13 @@ class SshPilotApplication(Adw.Application):
         # it shows up in the shortcut editor and respects overrides.
         self.register_window_shortcut(
             'toggle_sidebar', ['F9', '<Meta>b'] if mac else ['F9']
+        )
+
+        # Fullscreen is likewise a window action. Registering it here is what
+        # puts it in the overview and the customizer and makes the registry —
+        # not a hard-coded key handler — the single owner of the accelerator.
+        self.register_window_shortcut(
+            TOGGLE_FULLSCREEN_ACTION, default_fullscreen_shortcuts(mac)
         )
 
         # Detailed shortcut list is verbose noise at INFO. Help → Keyboard
@@ -1502,6 +1513,13 @@ class SshPilotApplication(Adw.Application):
                     win._update_sidebar_accelerators()
                 except Exception:
                     logger.debug("Failed to update window accelerators for current state")
+            # Keep the header-bar fullscreen tooltip showing the binding that
+            # is actually in force after a rebind or reset.
+            if hasattr(win, '_update_fullscreen_button_tooltip'):
+                try:
+                    win._update_fullscreen_button_tooltip()
+                except Exception:
+                    logger.debug("Failed to refresh the fullscreen button tooltip")
 
     def _update_accelerators_enabled_flag(self):
         """Update the exposed accelerator enabled flag considering focus state."""

@@ -38,10 +38,14 @@ already-consistent instead of recursing.
 
 Keyboard
 --------
-F11 is handled in the *capture* phase on the window, so it is a reliable toggle
-no matter what has focus. Escape is handled in the *bubble* phase, which is
-reached only when the focused widget declined the key — a focused VTE consumes
-Escape as ordinary terminal input, so fullscreen never steals it.
+The fullscreen accelerator is an ordinary registry entry — the
+``win.toggle-fullscreen`` action, defaulting to F11 (Control+Command+F on
+macOS, which keeps F11 for the OS) — so it is listed in the shortcut overview
+and rebindable in the customizer, and nothing here duplicates it with a
+hard-coded key handler. Escape *is* handled here, in the *bubble* phase, which
+is reached only when the focused widget declined the key: a focused VTE
+consumes Escape as ordinary terminal input, so fullscreen never steals it, and
+a global accelerator could not make that distinction.
 
 Immersive terminal chrome
 -------------------------
@@ -111,7 +115,6 @@ class WindowFullscreenController:
         self.presentation = None
         self._saved = None
 
-        self._capture_controller = None
         self._bubble_controller = None
         self._motion_controller = None
 
@@ -162,13 +165,15 @@ class WindowFullscreenController:
         self._install_window_state_hook()
 
     def _install_key_controllers(self) -> None:
-        try:
-            capture = Gtk.EventControllerKey()
-            capture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-            capture.connect('key-pressed', self.on_capture_key_pressed)
-            self.window.add_controller(capture)
-            self._capture_controller = capture
+        """Only Escape is handled here.
 
+        The fullscreen accelerator itself belongs to the shortcut registry
+        (``win.toggle-fullscreen``), so it is customizable and listed in the
+        overview, and there is no second hard-coded path that could fire for
+        the same key event. Escape cannot work that way: it is live terminal
+        input, and a global accelerator would take it away from VTE.
+        """
+        try:
             # Bubble phase: only keys the focused widget declined arrive here,
             # so a terminal keeps its own Escape.
             bubble = Gtk.EventControllerKey()
@@ -176,9 +181,9 @@ class WindowFullscreenController:
             bubble.connect('key-pressed', self.on_bubble_key_pressed)
             self.window.add_controller(bubble)
             self._bubble_controller = bubble
-            logger.debug('Window fullscreen key controllers installed')
+            logger.debug('Window fullscreen Escape controller installed')
         except Exception:
-            logger.debug('Failed to install fullscreen key controllers', exc_info=True)
+            logger.debug('Failed to install fullscreen key controller', exc_info=True)
 
     def _install_motion_controller(self) -> None:
         if not self._immersive_chrome_enabled:
@@ -312,13 +317,6 @@ class WindowFullscreenController:
         self._set_widget_visible('fullscreen_button', visible)
 
     # -- key handling ------------------------------------------------------
-
-    def on_capture_key_pressed(self, _controller, keyval, _keycode, _state) -> bool:
-        """F11 only. Escape is deliberately left to the focused widget."""
-        if keyval == Gdk.KEY_F11:
-            self.toggle()
-            return True
-        return False
 
     def on_bubble_key_pressed(self, _controller, keyval, _keycode, _state) -> bool:
         """Escape, but only once the focused widget has declined it."""
@@ -730,7 +728,7 @@ class WindowFullscreenController:
             if self.active:
                 self.exit()
         finally:
-            for attr in ('_capture_controller', '_bubble_controller', '_motion_controller'):
+            for attr in ('_bubble_controller', '_motion_controller'):
                 controller = getattr(self, attr, None)
                 if controller is None:
                     continue
