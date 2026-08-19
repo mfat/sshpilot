@@ -269,6 +269,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._startup_tasks_scheduled = False
         self._startup_complete = False
         self._initial_connection_list_focus_done = False
+        self._start_tab_focus_idle_id = None
         self._pending_focus_operations = []
         if hasattr(self.config, 'connect'):
             try:
@@ -4021,7 +4022,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
         self._update_content_theme_for_selected_tab()
-        GLib.idle_add(self._focus_connection_list_first_row)
+        self._schedule_start_tab_focus()
 
         try:
             if (self.config.get_setting('ui.sidebar_show_when_no_tabs', False)
@@ -4050,27 +4051,64 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._update_layout_toggle_state()
         logger.info("Showing tab view")
 
-    def _focus_connection_list_first_row(self):
-        """Focus the first row of the connection list so arrow-key navigation works immediately."""
+    def _connection_list_is_focusable(self) -> bool:
+        """True when the connection list exists and is a usable focus target.
+
+        The omni-search popup takes precedence over the sidebar while it is up,
+        so every focus path here bails out for it.
+        """
+        omni = getattr(self, '_omni_search', None)
+        if omni is not None and omni.popup.visible:
+            return False
+        connection_list = getattr(self, 'connection_list', None)
+        if connection_list is None:
+            return False
+        return bool(connection_list.get_parent())
+
+    def _first_selected_connection_list_row(self) -> Optional[Gtk.ListBoxRow]:
+        """Return the first selected row of any kind, or None when nothing is selected."""
+        connection_list = getattr(self, 'connection_list', None)
+        if connection_list is None:
+            return None
         try:
-            omni = getattr(self, '_omni_search', None)
-            if omni is not None and omni.popup.visible:
+            selected_rows = list(connection_list.get_selected_rows())
+        except Exception:
+            selected_row = connection_list.get_selected_row()
+            selected_rows = [selected_row] if selected_row else []
+        return selected_rows[0] if selected_rows else None
+
+    def _startup_first_row_focus_allowed(self) -> bool:
+        """True only while first-row focusing is still a startup behavior.
+
+        Startup is over once ``_on_startup_complete`` has fired *and* the
+        connection store has populated the sidebar at least once. Both halves
+        matter: the daemon attaches asynchronously, so the initial store
+        projection legitimately lands after the 500 ms timer, and that
+        projection is the real "focus the first row on startup" moment (see
+        ``on_projection_reset``). After that, moving focus to row 0 would drag
+        the sidebar back to the top behind the user's back (issue #1175).
+        """
+        if not getattr(self, '_startup_complete', False):
+            return True
+        return not getattr(self, '_initial_connection_list_focus_done', True)
+
+    def _focus_connection_list_first_row(self):
+        """Focus the first connection row so arrow-key navigation works immediately.
+
+        Startup-only. Runtime transitions back to the Start tab go through
+        ``_focus_start_tab_sidebar`` instead, which never touches row 0.
+        """
+        try:
+            if not self._startup_first_row_focus_allowed():
                 return False
-            if not hasattr(self, 'connection_list') or self.connection_list is None:
-                return False
-            if not self.connection_list.get_parent():
+            if not self._connection_list_is_focusable():
                 return False
 
             first_row = self.connection_list.get_row_at_index(0)
 
             # During startup: auto-select first row if nothing is selected yet.
             if not getattr(self, '_startup_complete', False):
-                try:
-                    selected_rows = list(self.connection_list.get_selected_rows())
-                except Exception:
-                    sel = self.connection_list.get_selected_row()
-                    selected_rows = [sel] if sel else []
-                if not selected_rows and first_row:
+                if self._first_selected_connection_list_row() is None and first_row:
                     self._select_only_row(first_row)
 
             # Focus the first row directly — not just the ListBox container.
@@ -4082,6 +4120,46 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.connection_list.grab_focus()
         except Exception as e:
             logger.debug(f"Focus connection list failed: {e}")
+        return False
+
+    def _schedule_start_tab_focus(self) -> None:
+        """Queue the single Start-tab focus pass, coalescing duplicate requests.
+
+        Selecting the Start tab reaches here twice — once from
+        ``show_start_tab`` and once from the ``notify::selected-page`` handler
+        — so collapse both into one idle callback.
+        """
+        if getattr(self, '_start_tab_focus_idle_id', None):
+            return
+        try:
+            self._start_tab_focus_idle_id = GLib.idle_add(self._focus_start_tab_sidebar)
+        except Exception:
+            logger.debug("Failed to schedule Start tab focus", exc_info=True)
+
+    def _focus_start_tab_sidebar(self):
+        """Sole owner of sidebar focus when the Start tab becomes current.
+
+        On startup this is the first-row focus that makes arrow keys live
+        immediately. Afterwards — typically returning to Start because the last
+        session tab closed, which destroys the widget that held focus — it hands
+        the keyboard back to the row the user already has selected. It never
+        falls back to row 0, so the sidebar keeps its scroll position (#1175).
+        """
+        self._start_tab_focus_idle_id = None
+        if self._startup_first_row_focus_allowed():
+            return self._focus_connection_list_first_row()
+        try:
+            if not self._connection_list_is_focusable():
+                return False
+            # Focus already lives in the sidebar (e.g. the user switched tabs
+            # from the row list): leave it exactly where it is.
+            if self._focus_is_in_connection_list():
+                return False
+            selected_row = self._first_selected_connection_list_row()
+            if selected_row is not None:
+                selected_row.grab_focus()
+        except Exception as e:
+            logger.debug(f"Start tab sidebar focus failed: {e}")
         return False
 
     def focus_connection_list(self):
@@ -4106,13 +4184,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self._restore_sidebar_after_search()
 
                 # Ensure a row is selected before focusing
-                try:
-                    selected_rows = list(self.connection_list.get_selected_rows())
-                except Exception:
-                    selected_row = self.connection_list.get_selected_row()
-                    selected_rows = [selected_row] if selected_row else []
-                logger.debug(f"Focus connection list - current selection count: {len(selected_rows)}")
-                target_row = selected_rows[0] if selected_rows else None
+                target_row = self._first_selected_connection_list_row()
+                logger.debug(f"Focus connection list - current selection: {target_row}")
                 if target_row is None:
                     # Select the first row regardless of type
                     target_row = self.connection_list.get_row_at_index(0)
@@ -5669,7 +5742,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # is what makes "focus the first row on startup" work regardless
             # of how long that took. Only the first reset ever counts, so a
             # later reconnect/refresh never steals focus from the user.
-            self._initial_connection_list_focus_done = True
             startup_behavior = 'welcome'
             try:
                 startup_behavior = self.config.get_setting(
@@ -5678,7 +5750,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
             if startup_behavior != 'terminal':
+                # Runs before the flag flips: this call *is* the startup
+                # first-row focus, and _startup_first_row_focus_allowed()
+                # keys off that same flag once the 500 ms timer has passed.
                 self._focus_connection_list_first_row()
+            self._initial_connection_list_focus_done = True
 
     def on_connection_removed(self, manager, connection):
         """Handle connection removed from the connection manager"""

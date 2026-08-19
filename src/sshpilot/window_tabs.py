@@ -1710,7 +1710,7 @@ class WindowTabsMixin:
                 return
 
             if self._is_start_tab_page(page):
-                GLib.idle_add(self._focus_connection_list_first_row)
+                self._schedule_start_tab_focus()
                 try:
                     if not self.has_user_tabs():
                         # Back at the welcome screen with no sessions: undo a
