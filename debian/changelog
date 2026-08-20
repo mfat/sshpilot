@@ -1,3 +1,15 @@
+sshpilot (5.8.8-1) unstable; urgency=medium
+
+  * Release v5.8.8.
+  * Improved full-screen experience (activated with F11 on linux,
+    Cmd+Ctrl+F on macOS)
+  * Improved app menu on macOS
+  * Added animated effect to omnisearch
+  * Added workaround for French keyboard layout on macOS
+  * Bug fixes and improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 20 Aug 2026 13:11:35 +0000
+
 sshpilot (5.8.7-1) unstable; urgency=medium
 
   * Release v5.8.7.
