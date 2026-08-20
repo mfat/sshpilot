@@ -68,8 +68,10 @@
 .startpage-recent-row:hover { background: alpha(@window_fg_color, 0.06); }
 
 /* Shared welcome/global omni-search (omni_search.py). */
-/* Fine resting outline; the box materializes with an accent ring + soft glow
-   on focus (wrapping the results list too).
+/* Fine resting outline; focus materializes with an accent ring + soft glow
+   (wrapping the results list too). The Start-activation cue is not CSS: a
+   short accent tracer travels around the border once, drawn by
+   OmniSearchController via Cairo.
    (@accent_bg_color + alpha() instead of var(--accent-color)/color-mix so it
    also works on libadwaita/GTK versions predating CSS variables.) */
 .omni-search {
@@ -84,18 +86,6 @@
         0 0 0 2px alpha(@accent_bg_color, 0.65),
         0 0 12px 3px alpha(@accent_bg_color, 0.35),
         0 8px 28px alpha(#000000, 0.28);
-}
-/* Transient "look here" bloom while the Start tab becomes current
-   (OmniSearchController.request_attention): a soft, wider accent halo around
-   the resting box. Distinctly subtler than the real focus ring, and retired
-   the moment Omnisearch opens; if the two ever overlap, the :focus-within
-   ring above wins by specificity. */
-.omni-search-attention {
-    background-color: alpha(@accent_bg_color, 0.05);
-    box-shadow:
-        0 0 0 3px alpha(@accent_bg_color, 0.22),
-        0 0 16px 3px alpha(@accent_bg_color, 0.16),
-        0 8px 28px alpha(#000000, 0.16);
 }
 .omni-search-entry {
     min-height: 56px;

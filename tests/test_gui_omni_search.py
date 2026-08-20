@@ -133,48 +133,57 @@ def test_real_mouse_click_routes_typing_to_welcome_omni(gui):
     assert win.search_entry.get_text() == ""
 
 
-def test_start_activation_blooms_omni_attention_once(gui):
-    """Returning to the Start tab pulses the docked omni-search exactly once,
-    without grabbing its keyboard focus, and the bloom fades by itself."""
+def test_start_activation_traces_omni_attention_once(gui):
+    """Returning to the Start tab traces the docked omni-search border exactly
+    once, without grabbing its keyboard focus, and the tracer retires by
+    itself. Timing waits derive from the production duration, not arbitrary
+    sleeps."""
+    from sshpilot.omni_search import _ATTENTION_MS
+
     win = gui.window
     omni = win._omni_search
     omni.dismiss(clear=True)
-    gui.pump(800)  # let any startup pulse finish and fade
+    gui.pump(_ATTENTION_MS + 300)  # let any startup tracer finish
 
     win.terminal_manager.show_local_terminal()
     gui.pump(200)
     assert not win.is_start_tab_selected()
-    assert not omni.content.has_css_class("omni-search-attention")
+    assert not omni.attention_active
 
     win.show_start_tab()
     gui.pump(50)
     assert win.is_start_tab_selected()
-    assert omni.content.has_css_class("omni-search-attention")
+    assert omni.attention_active
+    assert omni._attention_area.get_mapped()
     assert not _focus_is_within(win, omni.entry)
 
-    gui.pump(900)
-    assert not omni.content.has_css_class("omni-search-attention")
+    gui.pump(_ATTENTION_MS + 250)
+    assert not omni.attention_active
 
     win.terminal_manager.show_local_terminal()
     gui.pump(200)
     assert not win.is_start_tab_selected()
+    assert not omni.attention_active
 
     win.show_start_tab()
     gui.pump(50)
-    assert omni.content.has_css_class("omni-search-attention")
-    gui.pump(900)
-    assert not omni.content.has_css_class("omni-search-attention")
+    assert omni.attention_active
+    gui.pump(_ATTENTION_MS + 250)
+    assert not omni.attention_active
 
 
 def test_attention_never_fires_when_start_already_selected(gui):
-    """Re-selecting the current Start tab is not a transition: no bloom."""
+    """Re-selecting the current Start tab is not a transition: no tracer."""
+    from sshpilot.omni_search import _ATTENTION_MS
+
     win = gui.window
     omni = win._omni_search
     omni.dismiss(clear=True)
-    gui.pump(800)
+    gui.pump(_ATTENTION_MS + 300)
     assert win.is_start_tab_selected()
+    assert not omni.attention_active
 
     win.show_start_tab()
     gui.pump(100)
 
-    assert not omni.content.has_css_class("omni-search-attention")
+    assert not omni.attention_active
