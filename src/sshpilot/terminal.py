@@ -54,9 +54,32 @@ def _ensure_terminal_padding_css() -> None:
         # Bare vte-terminal: every VTE in this process is ours. (A subclass
         # does NOT get a CSS node from __gtype_name__ — TerminalWidget's node
         # is plain "box", so scoping via "terminalwidget" matches nothing.)
+        #
+        # In fullscreen terminal mode (.terminal-fullscreen-mode on the window),
+        # remove all padding/margins/borders for true fullscreen experience.
         provider.load_from_data(b"""
 vte-terminal {
     padding: 4px 8px;
+}
+
+/* Terminal card with margins for windowed mode */
+.terminal-card {
+    margin: 4px;
+}
+
+/* True fullscreen: no margins, padding, or card styling */
+.terminal-fullscreen-mode vte-terminal {
+    padding: 0;
+}
+
+.terminal-fullscreen-mode .terminal-card {
+    margin: 0;
+    border-radius: 0;
+}
+
+.terminal-fullscreen-mode .card {
+    background: transparent;
+    box-shadow: none;
 }
 """)
         Gtk.StyleContext.add_provider_for_display(
@@ -418,13 +441,11 @@ class TerminalWidget(Gtk.Box):
 
         # Rounded-corner card framing the terminal, matching the file manager
         # panes. overflow=HIDDEN clips the VTE content to the rounded corners.
+        # Use CSS class for margins so fullscreen mode can override them.
         _ensure_terminal_padding_css()
         self.container_box.add_css_class("card")
+        self.container_box.add_css_class("terminal-card")
         self.container_box.set_overflow(Gtk.Overflow.HIDDEN)
-        self.container_box.set_margin_top(4)
-        self.container_box.set_margin_bottom(4)
-        self.container_box.set_margin_start(4)
-        self.container_box.set_margin_end(4)
 
         self.append(self.container_box)
 
