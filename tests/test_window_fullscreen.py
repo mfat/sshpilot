@@ -25,6 +25,14 @@ what they do to the content's height. Production methods (``show_start_tab``,
 ``_update_tab_button_visibility``, ``_toggle_sidebar_visibility``,
 ``has_user_tabs``, ``toggle_fullscreen``, ...) are *bound*, not reimplemented,
 so the real tab-close-to-Start transition is what gets exercised.
+
+Fullscreen is only for real tabs: the Start page can never be fullscreen. The
+``win.toggle-fullscreen`` action is disabled while Start is selected (a disabled
+``SimpleAction`` does not activate, so the accelerator does nothing), the
+controller refuses to enter from Start even if a terminal lurks in the
+background, and selecting Start while fullscreen — the last tab closing or the
+user switching — leaves fullscreen immediately. There is no Start-origin
+fullscreen state to persist.
 """
 
 import sys
@@ -308,6 +316,16 @@ class _FakeButton(_FakeWidget):
         return self._on_click()
 
 
+class _FakeAction:
+    """Gio.SimpleAction stand-in: the controller toggles its enabled state."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+
+    def set_enabled(self, value):
+        self.enabled = bool(value)
+
+
 class _FakeOverlay:
     def __init__(self):
         self.overlays = []
@@ -347,6 +365,10 @@ class _FullscreenWindow:
         self.tips_banner_container = _FakeWidget(False)
         self.broadcast_banner = _FakeWidget(False)
         self.fullscreen_button = _FakeButton(lambda: self.toggle_fullscreen())
+        # The registry action the fullscreen accelerator and the header-bar
+        # button resolve to; the controller enables it only while a non-Start
+        # tab is selected.
+        self.toggle_fullscreen_action = _FakeAction()
 
         # Content ToolbarView: header bar is its only top bar normally; the
         # tab bar lives in the content, above the tab view.
@@ -531,31 +553,66 @@ def _f11(controller):
 
 
 # --------------------------------------------------------------------------
-# 1. Start supports F11
+# 1. Start can never enter fullscreen
 # --------------------------------------------------------------------------
 
 
-def test_start_page_f11_enters_and_exits_fullscreen_without_any_terminal():
+def test_start_only_fullscreen_action_cannot_enter_fullscreen():
     win, fc = _window()
     assert win.tab_view.get_n_pages() == 1  # Start only, no terminal exists
 
-    assert _f11(fc) is True
-    assert fc.active is True
-    assert win.window_is_fullscreen is True
-    assert fc.origin == 'start'
+    # The action a disabled SimpleAction resolves to: no accelerator fires.
+    assert win.toggle_fullscreen_action.enabled is False
 
     assert _f11(fc) is True
     assert fc.active is False
     assert win.window_is_fullscreen is False
+    assert win.fullscreen_calls == 0
 
 
-def test_start_fullscreen_preserves_start_chrome():
+def test_start_only_toggle_leaves_normal_chrome_untouched():
     win, fc = _window()
+    before = win.sidebar_visible()
+
     _f11(fc)
-    # Start keeps its normal UI: sidebar and header stay as they were.
-    assert win.sidebar_visible() is True
+
+    assert fc.active is False
+    assert win.sidebar_visible() == before
     assert win.header_bar.get_visible() is True
     assert 'terminal-fullscreen-mode' not in win.css_classes
+
+
+def test_start_selected_with_terminal_in_background_cannot_enter_fullscreen():
+    win, fc = _window()
+    _terminal, page = win.open_terminal('A')
+    win.tab_view.set_selected_page(win._start_tab_page)
+    assert win.toggle_fullscreen_action.enabled is False
+
+    # Fullscreen cannot be entered while Start is selected, even though a
+    # real tab exists in the background.
+    assert _f11(fc) is True
+    assert fc.active is False
+    assert win.window_is_fullscreen is False
+
+    # Selecting the real tab re-enables the action.
+    win.tab_view.set_selected_page(page)
+    assert win.toggle_fullscreen_action.enabled is True
+
+
+def test_non_start_tab_selected_fullscreen_works_normally():
+    win, fc = _window()
+    win.open_terminal('A')
+    assert win.toggle_fullscreen_action.enabled is True
+
+    _f11(fc)
+    assert fc.active is True
+    assert win.window_is_fullscreen is True
+    assert win.header_shown() is False
+    assert win.sidebar_visible() is False
+
+    _f11(fc)
+    assert fc.active is False
+    assert win.window_is_fullscreen is False
 
 
 # --------------------------------------------------------------------------
@@ -571,7 +628,6 @@ def test_fullscreen_survives_switching_to_another_terminal():
     win.tab_view.set_selected_page(page_a)
     _f11(fc)
     assert fc.active is True
-    assert fc.origin == 'terminal'
 
     win.tab_view.set_selected_page(page_b)
 
@@ -579,7 +635,8 @@ def test_fullscreen_survives_switching_to_another_terminal():
     assert win.fullscreen_controller is fc
     assert fc.active is True
     assert win.window_is_fullscreen is True
-    assert fc.presentation == 'terminal'
+    assert fc.terminal_presentation_active is True
+    assert win.toggle_fullscreen_action.enabled is True
 
     # F11 from B drives the same state machine.
     _f11(fc)
@@ -602,6 +659,7 @@ def test_terminal_toggle_fullscreen_delegates_to_the_window_controller():
     from sshpilot.terminal import TerminalWidget
 
     win, fc = _window()
+    win.open_terminal('A')  # fullscreen requires a selected non-Start tab
     terminal = TerminalWidget.__new__(TerminalWidget)
     terminal.get_root = lambda: win
 
@@ -630,17 +688,17 @@ def test_closing_active_terminal_keeps_fullscreen_when_another_remains():
     assert win.window_is_fullscreen is True
     assert win.sidebar_visible() is False
     # Still the immersive terminal presentation, driven by the surviving tab.
-    assert fc.presentation == 'terminal'
+    assert fc.terminal_presentation_active is True
     assert win.header_shown() is False
     assert win.tab_bar_shown() is False
 
 
 # --------------------------------------------------------------------------
-# 4. Terminal-origin fullscreen exits after the last terminal closes
+# 4. Fullscreen exits when the last terminal closes
 # --------------------------------------------------------------------------
 
 
-def test_terminal_origin_fullscreen_exits_when_last_terminal_closes():
+def test_fullscreen_exits_when_last_terminal_closes():
     win, fc = _window()
     before = {
         'sidebar': win.sidebar_visible(),
@@ -650,7 +708,7 @@ def test_terminal_origin_fullscreen_exits_when_last_terminal_closes():
 
     _a, page_a = win.open_terminal('A')
     _f11(fc)
-    assert fc.origin == 'terminal'
+    assert fc.active is True
 
     win.tab_view.close_page(page_a)
 
@@ -664,36 +722,12 @@ def test_terminal_origin_fullscreen_exits_when_last_terminal_closes():
     assert win._content_toolbar_view.top_bars == [win.header_bar]
     assert win._content_toolbar_view.get_extend_content_to_top_edge() is False
     assert 'terminal-fullscreen-mode' not in win.css_classes
+    # Back on Start, fullscreen is unavailable again.
+    assert win.toggle_fullscreen_action.enabled is False
 
 
 # --------------------------------------------------------------------------
-# 5. Start-origin fullscreen persists
-# --------------------------------------------------------------------------
-
-
-def test_start_origin_fullscreen_persists_through_a_terminal_lifecycle():
-    win, fc = _window()
-    _f11(fc)
-    assert fc.origin == 'start'
-
-    _a, page_a = win.open_terminal('A')
-    assert fc.active is True
-    assert fc.presentation == 'terminal'
-
-    win.tab_view.close_page(page_a)
-
-    assert win.tab_view.get_selected_page() is win._start_tab_page
-    assert fc.active is True
-    assert win.window_is_fullscreen is True
-    assert fc.origin == 'start'
-
-    _f11(fc)
-    assert fc.active is False
-    assert win.window_is_fullscreen is False
-
-
-# --------------------------------------------------------------------------
-# 6. Terminal fullscreen is immersive: chrome auto-hides, tabs stay reachable
+# 5. Terminal fullscreen is immersive: chrome auto-hides, tabs stay reachable
 # --------------------------------------------------------------------------
 
 
@@ -706,7 +740,7 @@ def test_terminal_fullscreen_hides_all_top_chrome_by_default(n_terminals):
 
     _f11(fc)
 
-    assert fc.presentation == 'terminal'
+    assert fc.terminal_presentation_active is True
     assert win.sidebar_visible() is False
     assert win.header_shown() is False
     assert win.tab_bar_shown() is False
@@ -823,7 +857,7 @@ def test_switching_tabs_while_revealed_does_not_exit_fullscreen():
 
     assert fc.active is True
     assert win.window_is_fullscreen is True
-    assert fc.presentation == 'terminal'
+    assert fc.terminal_presentation_active is True
     # Tabs stay reachable: the overlay is still up and the bars still painted.
     assert fc.top_chrome_revealed is True
     assert win.tab_bar_shown() is True
@@ -859,34 +893,27 @@ def test_revealed_headerbar_toggle_exits_and_restores_exact_state():
     assert win._content_toolbar_view.get_extend_content_to_top_edge() is False
 
 
-def test_start_presentation_keeps_normal_chrome_and_never_auto_hides():
-    """Immersive chrome is the terminal presentation only."""
+def test_switching_to_start_while_fullscreen_exits_fullscreen():
+    """Start can never be the page behind fullscreen: selecting it leaves,
+    even with other tabs still open in the background."""
     win, fc = _window()
-    _f11(fc)  # Start-origin fullscreen, Start active
-
-    assert fc.presentation == 'start'
-    assert win.header_shown() is True
-    assert win._content_toolbar_view.get_extend_content_to_top_edge() is False
-    assert win.tab_bar in win.tab_content_box.children
-
-    fc.on_pointer_motion(None, 100.0, 0.0)
-    assert fc.top_chrome_revealed is False
-
-
-def test_returning_to_start_while_fullscreen_restores_normal_chrome():
-    win, fc = _window()
-    _f11(fc)  # Start origin
     _a, page_a = win.open_terminal('A')
-    assert fc.presentation == 'terminal'
+    win.open_terminal('B')
+    _f11(fc)
+    assert fc.active is True
     assert win.header_shown() is False
 
     win.tab_view.set_selected_page(win._start_tab_page)
 
-    assert fc.active is True
-    assert fc.presentation == 'start'
+    assert fc.active is False
+    assert win.window_is_fullscreen is False
     assert win.header_shown() is True
     assert win.tab_bar in win.tab_content_box.children
     assert win._content_toolbar_view.get_extend_content_to_top_edge() is False
+    assert win.toggle_fullscreen_action.enabled is False
+    # The background tabs are untouched; selecting one re-enables fullscreen.
+    win.tab_view.set_selected_page(page_a)
+    assert win.toggle_fullscreen_action.enabled is True
 
 
 # --------------------------------------------------------------------------
@@ -961,11 +988,11 @@ def test_destroying_the_terminal_cannot_strand_the_window_in_fullscreen():
     assert win.sidebar_visible() is True
     assert win.tab_bar in win.tab_content_box.children
 
-    # F11 still works from Start afterwards.
-    assert _f11(fc) is True
-    assert fc.active is True
+    # F11 from Start can no longer enter fullscreen.
+    assert win.toggle_fullscreen_action.enabled is False
     assert _f11(fc) is True
     assert fc.active is False
+    assert win.window_is_fullscreen is False
 
 
 def test_entering_fullscreen_creates_no_banner():
@@ -1006,6 +1033,7 @@ def test_controller_holds_no_reference_to_any_terminal():
 
 def test_escape_exits_fullscreen_when_it_is_not_consumed():
     win, fc = _window()
+    win.open_terminal('A')
     _f11(fc)
     assert fc.active is True
 
@@ -1034,6 +1062,7 @@ def test_no_capture_phase_handler_can_swallow_terminal_keys():
 
     # Escape still reaches the controller — on bubble, so only once the
     # focused widget has declined it.
+    _win.open_terminal('A')
     _f11(fc)
     assert _press(fc, Gdk.KEY_Escape) is True
     assert fc.active is False
@@ -1041,7 +1070,8 @@ def test_no_capture_phase_handler_can_swallow_terminal_keys():
 
 def test_fullscreen_toggle_goes_through_the_window_action_path():
     """Whatever accelerator is configured ends up at the same controller."""
-    _win, fc = _window()
+    win, fc = _window()
+    win.open_terminal('A')
     assert _f11(fc) is True
     assert fc.active is True
     assert _f11(fc) is True
@@ -1120,23 +1150,32 @@ def test_external_fullscreen_entry_sync():
     win.set_fullscreen_externally(True)
 
     assert fc.active is True
-    assert fc.origin == 'terminal'          # coherent with the active page
-    assert fc.presentation == 'terminal'    # presentation actually applied
+    assert fc.terminal_presentation_active is True
     assert win.header_shown() is False
     assert win.sidebar_visible() is False
     # Adopted, not re-requested: no second fullscreen() at the window.
     assert win.fullscreen_calls == calls_before
 
 
-def test_external_fullscreen_entry_from_start_takes_start_origin():
+def test_external_fullscreen_entry_from_start_is_undone():
+    """The WM puts the window fullscreen while Start is selected.
+
+    There is no Start fullscreen state to adopt, so the window is pushed
+    straight back out — a fullscreen window with no controller state would
+    have nothing left to exit from.
+    """
     win, fc = _window()
+    calls_before = win.unfullscreen_calls
+    assert win.toggle_fullscreen_action.enabled is False
 
     win.set_fullscreen_externally(True)
 
-    assert fc.active is True
-    assert fc.origin == 'start'
-    assert fc.presentation == 'start'
+    assert fc.active is False
+    assert win.window_is_fullscreen is False
+    assert win.unfullscreen_calls == calls_before + 1
     assert win.header_shown() is True
+    assert win.sidebar_visible() is True
+    assert win.toggle_fullscreen_action.enabled is False
 
 
 def test_external_fullscreen_exit_sync():
@@ -1157,9 +1196,7 @@ def test_external_fullscreen_exit_sync():
     win.set_fullscreen_externally(False)
 
     assert fc.active is False
-    assert fc.origin is None
     assert fc._saved is None
-    assert fc.presentation is None
     assert fc.top_chrome_revealed is False
     assert win.fullscreen_button.get_visible() is False
     assert 'terminal-fullscreen-mode' not in win.css_classes
@@ -1201,7 +1238,7 @@ def test_controller_entry_does_not_loop():
     # fullscreen chrome (a second capture would record the hidden sidebar).
     assert len(captures) == 1
     assert fc._saved['sidebar_visible'] is False   # what it was before entering
-    assert fc.presentation == 'terminal'
+    assert fc.terminal_presentation_active is True
 
 
 def test_controller_exit_does_not_loop():
@@ -1239,7 +1276,6 @@ def test_window_manager_refusing_fullscreen_is_reconciled():
     win.set_fullscreen_externally(False)
 
     assert fc.active is False
-    assert fc.origin is None
     assert win.header_shown() is True
     assert _f11(fc) is True
     assert fc.active is True
@@ -1256,7 +1292,7 @@ def test_redundant_notify_with_consistent_state_is_a_noop():
 
     assert fc.active is True
     assert fc._saved is saved
-    assert fc.presentation == 'terminal'
+    assert fc.terminal_presentation_active is True
 
 
 # --------------------------------------------------------------------------
@@ -1323,6 +1359,7 @@ def test_macos_fullscreen_header_bar_gets_the_menu_bar_spacer(monkeypatch):
     window's top edge, so the header bar must reserve its height while
     fullscreen and give it back on exit."""
     win, fc = _window(monkeypatch, macos=True)
+    win.open_terminal('A')
     spacer = _spacer_class()
     assert spacer not in win.header_bar.css_classes
 
@@ -1335,16 +1372,22 @@ def test_macos_fullscreen_header_bar_gets_the_menu_bar_spacer(monkeypatch):
     assert spacer not in win.header_bar.css_classes
 
 
-def test_macos_start_fullscreen_keeps_the_spacer_on_the_pinned_header(monkeypatch):
-    """Start keeps its chrome pinned while fullscreen, so the spacer must be
-    there too — the pinned header bar is exactly what the revealed menu bar
-    would cover."""
+def test_macos_start_cannot_enter_fullscreen_no_spacer(monkeypatch):
+    """Start is never fullscreen, so the menu-bar spacer never lands on its
+    pinned header bar."""
     win, fc = _window(monkeypatch, macos=True)
-    _f11(fc)
+    spacer = _spacer_class()
+    assert win.toggle_fullscreen_action.enabled is False
 
-    assert fc.presentation == 'start'
-    assert win.header_shown() is True
-    assert _spacer_class() in win.header_bar.css_classes
+    _f11(fc)
+    assert fc.active is False
+    assert spacer not in win.header_bar.css_classes
+
+    # Even an externally-forced entry while Start is selected is undone.
+    win.set_fullscreen_externally(True)
+    assert fc.active is False
+    assert win.window_is_fullscreen is False
+    assert spacer not in win.header_bar.css_classes
 
 
 def test_macos_terminal_fullscreen_spacer_reveals_with_the_chrome(monkeypatch):
@@ -1366,9 +1409,8 @@ def test_non_macos_fullscreen_adds_no_menu_bar_spacer(monkeypatch):
     """The spacer is macOS-only: other platforms have no menu bar to reveal
     over the window's top edge."""
     win, fc = _window(monkeypatch, macos=False)
-    _f11(fc)
-    assert _spacer_class() not in win.header_bar.css_classes
     win.open_terminal('A')
+    _f11(fc)
     assert _spacer_class() not in win.header_bar.css_classes
 
 
@@ -1376,6 +1418,7 @@ def test_macos_externally_adopted_fullscreen_gets_the_spacer(monkeypatch):
     """Adopted fullscreen (macOS's own control) applies and removes the
     spacer like any other entry and exit."""
     win, fc = _window(monkeypatch, macos=True)
+    win.open_terminal('A')
     spacer = _spacer_class()
 
     win.set_fullscreen_externally(True)
