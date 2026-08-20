@@ -4008,12 +4008,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug('Failed to build fullscreen button tooltip', exc_info=True)
 
     def toggle_fullscreen(self) -> None:
-        """Toggle window fullscreen (F11).
-
-        Fullscreen is for real tabs only: while the Start page is selected the
-        ``win.toggle-fullscreen`` action is disabled and the controller refuses
-        to enter, so this is a no-op there.
-        """
+        """Toggle window fullscreen (F11). Works with or without terminals."""
         controller = getattr(self, 'fullscreen_controller', None)
         if controller is not None:
             controller.toggle()

@@ -1169,12 +1169,6 @@ def register_fullscreen_action(window):
     Its accelerators come from the shortcut registry (see
     ``register_window_shortcut`` in main.py), so there is no second,
     hard-coded key path that could fire for the same event.
-
-    The action's enabled state follows the selected page (fullscreen is only
-    for real tabs, never the Start page): ``WindowFullscreenController``
-    enables and disables it from the tab view's selection signals, so the
-    accelerator and the header-bar button refuse fullscreen while Start is
-    selected.
     """
     try:
         action = Gio.SimpleAction.new(TOGGLE_FULLSCREEN_ACTION, None)

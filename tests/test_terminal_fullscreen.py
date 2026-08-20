@@ -23,6 +23,8 @@ def _controller(**attrs):
     fc = WindowFullscreenController.__new__(WindowFullscreenController)
     fc.window = SimpleNamespace()
     fc.active = False
+    fc.origin = None
+    fc.presentation = None
     fc._saved = None
     for key, value in attrs.items():
         setattr(fc, key, value)

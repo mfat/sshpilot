@@ -12,24 +12,19 @@ Ownership
 for the window. It holds:
 
 * ``active``      — whether the window is in application fullscreen;
+* ``origin``      — ``START`` or ``TERMINAL``: where *this* fullscreen session
+  began. It never changes because the active page changed; it decides only
+  whether closing the last terminal also leaves fullscreen;
 * ``_saved``      — the exact chrome state captured on entry, restored verbatim
-  on exit (no hard-coded defaults).
-
-Fullscreen exists only to present a real user tab: it can never be entered
-while the Start page is selected, and if Start becomes the selected page while
-fullscreen (last tab closed, or the user switched to Start), fullscreen leaves
-immediately. There is no "Start fullscreen" state at all — the Start page is
-never presented fullscreen, so there is nothing to keep alive for it.
-
-The ``win.toggle-fullscreen`` action is enabled only while a non-Start tab is
-selected, and the controller guards ``enter()`` with the same rule, so direct
-callers (a terminal delegating the toggle) cannot slip past the disabled
-action.
+  on exit (no hard-coded defaults);
+* ``presentation`` — ``'start'`` or ``'terminal'``: how the *currently active*
+  page is presented while fullscreen. Start keeps its normal chrome; a terminal
+  hides the sidebar and banners and folds the header bar and tab bar into the
+  auto-hiding top overlay described below.
 
 The controller subscribes to the tab view itself (``notify::selected-page`` and
-``page-detached``), so the action state and the exit-on-Start rule follow the
-active page without any terminal having to report in, and nothing here ever
-holds a reference to a terminal.
+``page-detached``), so presentation follows the active page without any terminal
+having to report in, and nothing here ever holds a reference to a terminal.
 
 Real window state
 -----------------
@@ -73,9 +68,8 @@ once the content extends under them, so the toolbar style is switched to raised
 for the duration (and restored on exit). No background is hardcoded — the theme
 still decides the colour.
 
-Start keeps its normal chrome and is never itself fullscreen: entering
-fullscreen while Start is selected is refused, and selecting Start while
-fullscreen exits it. Immersive mode is the only fullscreen presentation.
+Start keeps its normal chrome: immersive mode is the terminal presentation
+only.
 
 This is not platform-gated. macOS was special-cased at first, on the theory
 that the OS owns the fullscreen reveal — but SSH Pilot calls
@@ -101,6 +95,14 @@ from gi.repository import Gtk, Gdk, Adw
 from . import platform_utils
 
 logger = logging.getLogger(__name__)
+
+#: Fullscreen origins.
+ORIGIN_START = 'start'
+ORIGIN_TERMINAL = 'terminal'
+
+#: Presentations.
+PRESENTATION_START = 'start'
+PRESENTATION_TERMINAL = 'terminal'
 
 #: Window CSS class applied while a terminal is presented fullscreen.
 FULLSCREEN_CSS_CLASS = 'terminal-fullscreen-mode'
@@ -163,6 +165,8 @@ class WindowFullscreenController:
         self.window = window
 
         self.active = False
+        self.origin = None
+        self.presentation = None
         self._saved = None
 
         self._bubble_controller = None
@@ -186,23 +190,8 @@ class WindowFullscreenController:
 
     @property
     def terminal_presentation_active(self) -> bool:
-        """True while fullscreen is active.
-
-        Fullscreen has exactly one presentation now (a real tab), so this is
-        just ``active``; the name is kept for callers that distinguish the
-        immersive mode from a hypothetical Start presentation.
-        """
-        return self.active
-
-    @property
-    def fullscreen_available(self) -> bool:
-        """Fullscreen may only be entered while a real (non-Start) tab is
-        selected.
-
-        This is the single policy point: the ``win.toggle-fullscreen`` action
-        is enabled from it and ``enter()`` is guarded by it.
-        """
-        return not self._active_page_is_start()
+        """True while a terminal is being presented fullscreen."""
+        return self.active and self.presentation == PRESENTATION_TERMINAL
 
     @property
     def top_chrome_revealed(self) -> bool:
@@ -220,7 +209,6 @@ class WindowFullscreenController:
         self._install_motion_controller()
         self._install_tab_hooks()
         self._install_window_state_hook()
-        self._sync_fullscreen_action_state()
 
     def _install_key_controllers(self) -> None:
         """Only Escape is handled here.
@@ -273,25 +261,7 @@ class WindowFullscreenController:
             logger.debug('Failed to hook fullscreen into the tab view', exc_info=True)
 
     def _on_tab_view_changed(self, *_args) -> None:
-        self._sync_fullscreen_action_state()
         self.update_presentation_for_active_page()
-
-    def _sync_fullscreen_action_state(self) -> None:
-        """Enable ``win.toggle-fullscreen`` only while a non-Start tab is
-        selected.
-
-        A disabled SimpleAction does not activate, so the accelerator, the
-        shortcut overview and the header-bar button all refuse fullscreen
-        while Start is selected; the controller's own ``enter()`` guard is
-        the same policy for callers that bypass the action.
-        """
-        action = getattr(self.window, 'toggle_fullscreen_action', None)
-        if action is None:
-            return
-        try:
-            action.set_enabled(self.fullscreen_available)
-        except Exception:
-            logger.debug('Failed to sync fullscreen action state', exc_info=True)
 
     # -- public API --------------------------------------------------------
 
@@ -301,21 +271,15 @@ class WindowFullscreenController:
         else:
             self.enter()
 
-    def enter(self) -> None:
-        """Enter fullscreen, capturing the exact chrome state first.
-
-        No-op while the Start page is selected: fullscreen is only for real
-        tabs. The ``win.toggle-fullscreen`` action is disabled in that state
-        anyway; this guard covers callers that bypass the action (e.g. a
-        terminal delegating its own toggle).
-        """
-        self._begin_fullscreen(request_window_fullscreen=True)
+    def enter(self, origin=None) -> None:
+        """Enter fullscreen, capturing the exact chrome state first."""
+        self._begin_fullscreen(origin, request_window_fullscreen=True)
 
     def exit(self) -> None:
         """Leave fullscreen and restore the exact captured chrome state."""
         self._end_fullscreen(request_window_unfullscreen=True)
 
-    def _begin_fullscreen(self, *, request_window_fullscreen: bool) -> None:
+    def _begin_fullscreen(self, origin=None, *, request_window_fullscreen: bool) -> None:
         """Take up fullscreen.
 
         With ``request_window_fullscreen`` false the window is already
@@ -323,27 +287,22 @@ class WindowFullscreenController:
         """
         if self.active:
             return
-        if not self.fullscreen_available:
-            # Fullscreen is only for real tabs: Start can never be fullscreen.
-            if not request_window_fullscreen:
-                # The WM/OS put the window fullscreen while Start was
-                # selected. Undo it: leaving the window fullscreen with no
-                # controller state would strand it (nothing could exit).
-                self._set_window_fullscreen(False)
-            return
         try:
             # Snapshot before anything touches the chrome.
             self._saved = self._capture_ui_state()
+            self.origin = origin or (
+                ORIGIN_START if self._active_page_is_start() else ORIGIN_TERMINAL
+            )
             self.active = True
 
             if request_window_fullscreen:
                 self._set_window_fullscreen(True)
             self._show_fullscreen_button(True)
-            self._apply_terminal_presentation()
+            self._apply_presentation()
             self._apply_macos_fullscreen_spacer()
             logger.debug(
-                'Entered fullscreen (external=%s)',
-                not request_window_fullscreen,
+                'Entered fullscreen (origin=%s, external=%s)',
+                self.origin, not request_window_fullscreen,
             )
         except Exception:
             logger.error('Failed to enter fullscreen', exc_info=True)
@@ -371,6 +330,8 @@ class WindowFullscreenController:
             # Never leave the state machine wedged, even if a restore step
             # raised: F11 must keep working.
             self.active = False
+            self.origin = None
+            self.presentation = None
             self._saved = None
             self._sync_tab_bar_visibility()
             logger.debug(
@@ -381,14 +342,15 @@ class WindowFullscreenController:
         """Re-apply presentation after a tab switch/close. Idempotent."""
         if not self.active:
             return
-        if self._active_page_is_start():
-            # Fullscreen exists only to present a real tab. The last one just
-            # closed (Start is selected again) or the user switched to Start
-            # with tabs still open: either way there is nothing left to
-            # present, so leave.
+        on_start = self._active_page_is_start()
+        if (on_start
+                and self.origin == ORIGIN_TERMINAL
+                and not self._has_user_tabs()):
+            # The fullscreen session began in a terminal and the last terminal
+            # is gone: fullscreen has nothing left to present.
             self.exit()
             return
-        self._apply_terminal_presentation()
+        self._apply_presentation()
 
     # -- exit affordance ---------------------------------------------------
 
@@ -577,8 +539,26 @@ class WindowFullscreenController:
 
     # -- presentation ------------------------------------------------------
 
+    def _apply_presentation(self) -> None:
+        if self._active_page_is_start():
+            self._apply_start_presentation()
+        else:
+            self._apply_terminal_presentation()
+
+    def _apply_start_presentation(self) -> None:
+        """Start keeps its ordinary chrome; only the window is fullscreen.
+
+        Immersive auto-hiding chrome is the terminal presentation only — Start
+        navigation has to stay visible and usable.
+        """
+        self.presentation = PRESENTATION_START
+        self._clear_terminal_presentation()
+        self._restore_ui_state(self._saved, restore_tab_bar=False)
+        self._sync_tab_bar_visibility()
+
     def _apply_terminal_presentation(self) -> None:
         """Edge-to-edge terminal with the chrome folded into a top overlay."""
+        self.presentation = PRESENTATION_TERMINAL
         self._set_sidebar_visible(False)
         self._set_widget_visible('update_banner_container', False)
         self._set_widget_visible('tips_banner_container', False)
@@ -615,12 +595,13 @@ class WindowFullscreenController:
             'maximized': self._get_window_maximized(),
         }
 
-    def _restore_ui_state(self, saved) -> None:
+    def _restore_ui_state(self, saved, restore_tab_bar: bool = True) -> None:
         if not saved:
             return
         self._set_sidebar_visible(saved.get('sidebar_visible'))
         self._set_widget_visible('header_bar', saved.get('header_visible'))
-        self._set_widget_visible('tab_bar', saved.get('tab_bar_visible'))
+        if restore_tab_bar:
+            self._set_widget_visible('tab_bar', saved.get('tab_bar_visible'))
         self._set_widget_visible('update_banner_container', saved.get('update_banner_visible'))
         self._set_widget_visible('tips_banner_container', saved.get('tips_banner_visible'))
         self._set_widget_visible('broadcast_banner', saved.get('broadcast_banner_visible'))
@@ -808,6 +789,15 @@ class WindowFullscreenController:
             except Exception:
                 logger.debug('Failed to read the active tab', exc_info=True)
         return True
+
+    def _has_user_tabs(self) -> bool:
+        checker = getattr(self.window, 'has_user_tabs', None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                logger.debug('Failed to count user tabs', exc_info=True)
+        return False
 
     # -- teardown ----------------------------------------------------------
 
