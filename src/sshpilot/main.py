@@ -423,6 +423,16 @@ class SshPilotApplication(Adw.Application):
         except Exception:
             pass
         
+        # On macOS, register the native system menubar (reuses the app/window
+        # actions registered above; a no-op on Linux/Windows where the in-window
+        # hamburger menu remains the entry point).
+        try:
+            from .macos_menubar import install_menubar
+
+            install_menubar(self)
+        except Exception as exc:
+            logger.error("Failed to install macOS menubar: %s", exc)
+
         # Initialize window reference
         self.window = None
 
