@@ -5,6 +5,19 @@ import sys
 
 DOUBLE_SHIFT_SHORTCUT = "<double-shift>"
 
+#: Canonical name of the window action every fullscreen accelerator reaches.
+TOGGLE_FULLSCREEN_ACTION = "toggle-fullscreen"
+
+
+def default_fullscreen_shortcuts(mac: bool) -> list[str]:
+    """Platform default accelerators for Toggle Fullscreen.
+
+    macOS deliberately does not take F11. The OS binds it itself, and SSH
+    Pilot defers to native fullscreen there, so the default is the standard
+    macOS Control+Command+F. Everywhere else F11 is the expected key.
+    """
+    return ["<Control><Meta>f"] if mac else ["F11"]
+
 
 class DoubleShiftDetector:
     """Recognize two clean Shift presses within a short interval."""

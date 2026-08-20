@@ -306,6 +306,7 @@ class VTETerminalBackend:
         self._native_context_handler: Optional[int] = None
         self._native_context_callback: Optional[Callable[[bool], None]] = None
         self._initialized = False
+        self._macos_option_key_controller: Optional[Gtk.EventControllerKey] = None
 
     def initialize(self) -> None:
         if self._initialized:
@@ -405,6 +406,125 @@ class VTETerminalBackend:
         except Exception:
             logger.debug("Could not configure VTE word selection", exc_info=True)
 
+    def set_macos_option_key_passthrough(self, enabled: bool) -> None:
+        """Install or remove the macOS Option key passthrough controller."""
+        from .platform_utils import is_macos
+        if not is_macos():
+            return
+        if enabled:
+            self._install_macos_option_key_controller()
+        else:
+            self._remove_macos_option_key_controller()
+
+    def _install_macos_option_key_controller(self) -> None:
+        """Install the macOS Option key event controller."""
+        if self._macos_option_key_controller is not None:
+            return
+        try:
+            controller = Gtk.EventControllerKey()
+            controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+            controller.connect('key-pressed', self._on_macos_option_key_pressed)
+            self.vte.add_controller(controller)
+            self._macos_option_key_controller = controller
+        except Exception:
+            logger.debug("Failed to install macOS Option key controller", exc_info=True)
+
+    def _remove_macos_option_key_controller(self) -> None:
+        """Remove the macOS Option key event controller."""
+        controller = self._macos_option_key_controller
+        if controller is None:
+            return
+        try:
+            self.vte.remove_controller(controller)
+        except Exception:
+            logger.debug("Failed to remove macOS Option key controller", exc_info=True)
+        finally:
+            self._macos_option_key_controller = None
+
+    # Dead keys that carry a literal tilde on macOS alternate layouts
+    # (e.g. Option+N on French). VTE has no IME to compose them, so feed the
+    # base character directly instead of swallowing the keystroke.
+    _TILDE_DEAD_KEYS = frozenset({'dead_tilde', 'dead_perispomeni'})
+
+    def _on_macos_option_key_pressed(
+        self,
+        controller: Gtk.EventControllerKey,
+        keyval: int,
+        keycode: int,
+        state: Gdk.ModifierType,
+    ) -> bool:
+        """Intercept Option-generated characters from alternate keyboard layouts.
+
+        Returns True to consume the event, False to let VTE handle it.
+        """
+        # 1. Alt/Option must be pressed
+        if not (state & Gdk.ModifierType.ALT_MASK):
+            return False
+
+        # 2. Control must NOT be pressed
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            return False
+
+        # 3. Meta/Command must NOT be pressed
+        meta_mask = getattr(Gdk.ModifierType, 'META_MASK', 0)
+        if meta_mask and (state & meta_mask):
+            return False
+
+        try:
+            keyval_name = Gdk.keyval_name(keyval)
+        except Exception:
+            keyval_name = None
+
+        # 4. Tilde dead keys are terminal-relevant literals, not composition
+        # starters. Checked before the layout/group test because GDK on macOS
+        # does not reliably report a non-zero group for alternate layouts.
+        if keyval_name in self._TILDE_DEAD_KEYS:
+            try:
+                self.owner.feed_child_data('~'.encode('utf-8'))
+                return True  # Consume event
+            except Exception:
+                logger.debug("Failed to send dead key tilde", exc_info=True)
+                return False
+
+        # 5. Keyboard layout/group must be non-zero (alternate layout)
+        # On layout=0 (primary), Alt+letter should produce Meta sequences
+        try:
+            group = controller.get_group()
+            if group == 0:
+                return False
+        except Exception:
+            # Cannot determine layout - don't intercept
+            return False
+
+        # 6. Remaining dead keys pass through for IME composition
+        if keyval_name and keyval_name.startswith('dead_'):
+            return False
+
+        # 7. Convert to Unicode
+        codepoint = Gdk.keyval_to_unicode(keyval)
+        if codepoint == 0:
+            return False
+
+        # 8. Must be printable (reject control chars)
+        if codepoint < 0x20 or codepoint == 0x7F:
+            return False
+
+        try:
+            char = chr(codepoint)
+            if not char.isprintable():
+                return False
+        except (ValueError, OverflowError):
+            return False
+
+        # Send through canonical input path (handles daemon mode)
+        try:
+            data = char.encode('utf-8')
+            self.owner.feed_child_data(data)
+            return True  # Consume event
+        except Exception:
+            logger.debug("Failed to send Option key character", exc_info=True)
+            return False
+
     def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
         """Register VTE-native URL matching and selection observation once."""
         if getattr(self, "_link_match_tag", None) is None:
@@ -467,6 +587,7 @@ class VTETerminalBackend:
 
     def destroy(self) -> None:
         self._destroyed = True
+        self._remove_macos_option_key_controller()
         self.clear_native_context_menu()
         try:
             if self._termprops_handler is not None:

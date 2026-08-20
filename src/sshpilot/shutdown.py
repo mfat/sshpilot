@@ -148,13 +148,16 @@ def _perform_cleanup_and_quit(window, connections_to_disconnect):
 
 
 def _show_cleanup_progress(window, total_connections):
-    """Show cleanup progress dialog."""
+    """Show cleanup progress dialog.
 
-    window._progress_dialog = Adw.MessageDialog(
-        transient_for=window,
-        modal=True,
-        heading=_("Closing Connections"),
-    )
+    Uses an in-window ``Adw.AlertDialog`` rather than a native
+    ``Adw.MessageDialog`` window: on macOS, a MessageDialog presented while
+    the main window is fullscreen becomes a separate fullscreen window. The
+    AlertDialog stays inside the existing (possibly fullscreen) main window.
+    """
+
+    window._progress_dialog = Adw.AlertDialog()
+    window._progress_dialog.set_heading(_("Closing Connections"))
 
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     box.set_margin_top(20)
@@ -173,7 +176,7 @@ def _show_cleanup_progress(window, total_connections):
     box.append(window._progress_label)
 
     window._progress_dialog.set_extra_child(box)
-    window._progress_dialog.present()
+    window._progress_dialog.present(window)
 
 
 def _update_cleanup_progress(window, completed, total):
@@ -190,14 +193,20 @@ def _update_cleanup_progress(window, completed, total):
 
 
 def _hide_cleanup_progress(window):
-    """Hide cleanup progress dialog."""
+    """Hide cleanup progress dialog.
 
-    if getattr(window, "_progress_dialog", None):
+    Clears the window state unconditionally so a failing ``close()`` (the
+    dialog may already be gone when shutdown fails midway) can never leave
+    stale widgets behind.
+    """
+
+    dialog = getattr(window, "_progress_dialog", None)
+    window._progress_dialog = None
+    window._progress_bar = None
+    window._progress_label = None
+    if dialog is not None:
         try:
-            window._progress_dialog.close()
-            window._progress_dialog = None
-            window._progress_bar = None
-            window._progress_label = None
+            dialog.close()
         except Exception as e:
             logger.debug(f"Error closing progress dialog: {e}")
 

@@ -39,7 +39,11 @@ gi.require_version('Gtk', '4.0')
 gi.require_version('Vte', '3.91')
 
 from gi.repository import Adw, Gtk, Gio, GLib, Gdk
-from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
+from .shortcut_utils import (
+    DOUBLE_SHIFT_SHORTCUT,
+    TOGGLE_FULLSCREEN_ACTION,
+    default_fullscreen_shortcuts,
+)
 
 # Build-time paths written by Meson at install time. Absent in a setuptools /
 # editable checkout, where we fall back to package-relative discovery.
@@ -330,6 +334,13 @@ class SshPilotApplication(Adw.Application):
             'toggle_sidebar', ['F9', '<Meta>b'] if mac else ['F9']
         )
 
+        # Fullscreen is likewise a window action. Registering it here is what
+        # puts it in the overview and the customizer and makes the registry —
+        # not a hard-coded key handler — the single owner of the accelerator.
+        self.register_window_shortcut(
+            TOGGLE_FULLSCREEN_ACTION, default_fullscreen_shortcuts(mac)
+        )
+
         # Detailed shortcut list is verbose noise at INFO. Help → Keyboard
         # Shortcuts already shows this to users.
         if logger.isEnabledFor(logging.DEBUG):
@@ -411,7 +422,7 @@ class SshPilotApplication(Adw.Application):
             signal.signal(signal.SIGINT, _handle_sigint)
         except Exception:
             pass
-        
+
         # Initialize window reference
         self.window = None
 
@@ -422,6 +433,33 @@ class SshPilotApplication(Adw.Application):
         GLib.idle_add(lambda: (self._schedule_startup_diagnostics(), False)[1])
 
         logger.info("sshPilot application initialized")
+
+    def do_startup(self):
+        """Install the native macOS menubar once the application is registered.
+
+        ``Gtk.Application.set_menubar`` requires the application to be
+        registered (``gtk_application_set_menubar`` asserts on
+        ``g_application_get_is_registered``), which only happens during
+        startup — calling it from ``__init__`` made real macOS builds emit
+        that assertion at launch. ``Adw.Application.do_startup`` runs the
+        normal GApplication startup sequence first (the ``super()`` proxy
+        does not bind ``self`` for vfuncs, so the parent is chained up
+        explicitly), then the menubar is installed exactly once. Non-macOS
+        builds never call ``install_menubar``.
+        """
+        Adw.Application.do_startup(self)
+
+        if getattr(self, "_macos_menubar_installed", False):
+            return
+        if not is_macos():
+            return
+        try:
+            from .macos_menubar import install_menubar
+
+            install_menubar(self)
+            self._macos_menubar_installed = True
+        except Exception as exc:
+            logger.error("Failed to install macOS menubar: %s", exc)
 
     def _schedule_startup_diagnostics(self, retries_left: int = 25) -> None:
         """Print startup diagnostics once the daemon client selection settles.
@@ -1262,6 +1300,7 @@ class SshPilotApplication(Adw.Application):
         errors = wait_for_daemon_termination(
             client=None,
             daemon_process=daemon_process,
+            daemon_identity=daemon_identity,
             socket_path=socket_path,
             timeout=5.0,
         )
@@ -1502,6 +1541,13 @@ class SshPilotApplication(Adw.Application):
                     win._update_sidebar_accelerators()
                 except Exception:
                     logger.debug("Failed to update window accelerators for current state")
+            # Keep the header-bar fullscreen tooltip showing the binding that
+            # is actually in force after a rebind or reset.
+            if hasattr(win, '_update_fullscreen_button_tooltip'):
+                try:
+                    win._update_fullscreen_button_tooltip()
+                except Exception:
+                    logger.debug("Failed to refresh the fullscreen button tooltip")
 
     def _update_accelerators_enabled_flag(self):
         """Update the exposed accelerator enabled flag considering focus state."""

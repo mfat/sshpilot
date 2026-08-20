@@ -36,7 +36,6 @@ logger = logging.getLogger(__name__)
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
-from .terminal_fullscreen import FullscreenController
 from .core.connection_evidence import classify_connection_evidence
 
 
@@ -44,6 +43,29 @@ from .core.connection_evidence import classify_connection_evidence
 # prompt doesn't hug the card's rounded left edge (VTE >= 0.76 honors CSS
 # padding; the padding area is painted with the terminal background).
 _terminal_padding_css_installed = False
+
+
+def sanitize_local_shell_env(env):
+    """Return a copy of *env* stripped of the launching terminal's identity.
+
+    sshPilot inherits the environment of the terminal it was launched from.
+    On macOS that includes ``TERM_PROGRAM`` / ``TERM_PROGRAM_VERSION`` /
+    ``TERM_SESSION_ID`` pointing at Apple Terminal, so the embedded local
+    shell would believe it is running inside Apple Terminal and macOS loads
+    its shell-session integration — printing a ``Restored session: ...``
+    banner sshPilot never asked for. The shell sshPilot spawns is its own, so
+    it is re-identified as ``sshPilot`` instead.
+
+    The input dict is never mutated. Non-macOS hosts are returned as an
+    unchanged copy, so no unrelated Linux behavior changes.
+    """
+    sanitized = dict(env)
+    if not is_macos():
+        return sanitized
+    sanitized.pop("TERM_PROGRAM_VERSION", None)
+    sanitized.pop("TERM_SESSION_ID", None)
+    sanitized["TERM_PROGRAM"] = "sshPilot"
+    return sanitized
 
 
 def _ensure_terminal_padding_css() -> None:
@@ -55,9 +77,32 @@ def _ensure_terminal_padding_css() -> None:
         # Bare vte-terminal: every VTE in this process is ours. (A subclass
         # does NOT get a CSS node from __gtype_name__ — TerminalWidget's node
         # is plain "box", so scoping via "terminalwidget" matches nothing.)
+        #
+        # In fullscreen terminal mode (.terminal-fullscreen-mode on the window),
+        # remove all padding/margins/borders for true fullscreen experience.
         provider.load_from_data(b"""
 vte-terminal {
     padding: 4px 8px;
+}
+
+/* Terminal card with margins for windowed mode */
+.terminal-card {
+    margin: 4px;
+}
+
+/* True fullscreen: no margins, padding, or card styling */
+.terminal-fullscreen-mode vte-terminal {
+    padding: 0;
+}
+
+.terminal-fullscreen-mode .terminal-card {
+    margin: 0;
+    border-radius: 0;
+}
+
+.terminal-fullscreen-mode .card {
+    background: transparent;
+    box-shadow: none;
 }
 """)
         Gtk.StyleContext.add_provider_for_display(
@@ -127,9 +172,6 @@ class TerminalWidget(Gtk.Box):
         self._backend_name = "vte"
         self.backend = None
         self.terminal_widget = None
-
-        # Fullscreen (state + window juggling) lives in a composed controller.
-        self._fullscreen = FullscreenController(self)
 
         # Daemon session support
         self._daemon_mode = False
@@ -422,13 +464,11 @@ class TerminalWidget(Gtk.Box):
 
         # Rounded-corner card framing the terminal, matching the file manager
         # panes. overflow=HIDDEN clips the VTE content to the rounded corners.
+        # Use CSS class for margins so fullscreen mode can override them.
         _ensure_terminal_padding_css()
         self.container_box.add_css_class("card")
+        self.container_box.add_css_class("terminal-card")
         self.container_box.set_overflow(Gtk.Overflow.HIDDEN)
-        self.container_box.set_margin_top(4)
-        self.container_box.set_margin_bottom(4)
-        self.container_box.set_margin_start(4)
-        self.container_box.set_margin_end(4)
 
         self.append(self.container_box)
 
@@ -461,9 +501,6 @@ class TerminalWidget(Gtk.Box):
 
         # Show overlay initially
         self._set_connecting_overlay_visible(True)
-
-        # Setup fullscreen keyboard shortcut (F11)
-        self._fullscreen.setup_shortcut()
 
         logger.debug("Terminal widget initialized")
 
@@ -2325,6 +2362,16 @@ class TerminalWidget(Gtk.Box):
         )
         self._apply_pass_through_mode(self._pass_through_mode)
         self._setup_context_menu()
+        # Apply macOS Option key passthrough
+        if is_macos():
+            try:
+                enabled = self.config.get_setting(
+                    'terminal.macos_option_key_passthrough', False
+                )
+                if hasattr(self.backend, 'set_macos_option_key_passthrough'):
+                    self.backend.set_macos_option_key_passthrough(bool(enabled))
+            except Exception:
+                logger.debug("Failed to apply macOS Option key passthrough", exc_info=True)
 
     def _on_vte_pointer_enter(self, controller, x, y):
         """Compatibility no-op; VTE owns pointer-enter link handling."""
@@ -2773,7 +2820,9 @@ class TerminalWidget(Gtk.Box):
             # provider so child processes (e.g. ssh run from this shell) reach the
             # user's ssh-agent via the same seam as SSH connections.
             from .identity import get_identity_manager
-            env = get_identity_manager().apply_selected_to_env(os.environ.copy())
+            env = sanitize_local_shell_env(
+                get_identity_manager().apply_selected_to_env(os.environ.copy())
+            )
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'
@@ -2814,7 +2863,9 @@ class TerminalWidget(Gtk.Box):
         # Route env injection through the selected identity provider (one seam for all
         # SSH_AUTH_SOCK injection); idempotent over the inherited environment.
         from .identity import get_identity_manager
-        env = get_identity_manager().apply_selected_to_env(os.environ.copy())
+        env = sanitize_local_shell_env(
+            get_identity_manager().apply_selected_to_env(os.environ.copy())
+        )
 
         # Determine the user's preferred shell
         shell = None
@@ -3598,6 +3649,13 @@ class TerminalWidget(Gtk.Box):
             self._install_shortcuts()
         return False
 
+    def _apply_macos_option_key_passthrough(self, enabled: bool) -> bool:
+        """Apply macOS Option key passthrough setting to the backend."""
+        backend = getattr(self, 'backend', None)
+        if backend is not None and hasattr(backend, 'set_macos_option_key_passthrough'):
+            backend.set_macos_option_key_passthrough(enabled)
+        return False
+
     def _on_config_setting_changed(self, _config, key, value):
         if key == 'terminal.pass_through_mode':
             GLib.idle_add(self._apply_pass_through_mode, bool(value))
@@ -3605,6 +3663,8 @@ class TerminalWidget(Gtk.Box):
             if self._updating_encoding_config:
                 return
             GLib.idle_add(self._apply_terminal_encoding_idle, value or '')
+        elif key == 'terminal.macos_option_key_passthrough':
+            GLib.idle_add(self._apply_macos_option_key_passthrough, bool(value))
 
     # PTY forwarding is now handled automatically by VTE
     # No need for manual PTY management in this implementation
@@ -3765,6 +3825,20 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Error terminating process {pid}: {e}")
             return False
 
+    def _repaint_connection_status(self, root) -> None:
+        """Ask the window to re-render this connection's sidebar rows.
+
+        Best-effort and never raises: a failure to repaint must not abort the
+        disconnect, nor the tab close that called it.
+        """
+        handler = getattr(root, 'on_connection_status_changed', None)
+        if not callable(handler):
+            return
+        try:
+            GLib.idle_add(handler, None, self.connection, False)
+        except Exception:
+            logger.debug('Failed to schedule connection status repaint', exc_info=True)
+
     def disconnect(self):
         """Close the SSH connection and clean up resources"""
         # Guard UI emissions when the root window is quitting. Computed up front
@@ -3796,8 +3870,15 @@ class TerminalWidget(Gtk.Box):
             # Only update manager / UI if not quitting
             if hasattr(self, 'connection') and self.connection and not is_quitting:
                 self.connection.is_connected = False
-                if hasattr(self, 'connection_manager') and self.connection_manager:
-                    GLib.idle_add(self.connection_manager.emit, 'connection-status-changed', self.connection, False)
+                # Connection status is daemon-authoritative now: this window's
+                # `connection_manager` is a ConnectionPresentationStore (a
+                # read-only DTO projection) with no `emit`, so the GObject-era
+                # push raised AttributeError straight out of disconnect() and
+                # aborted whatever was closing the tab. Repaint the sidebar
+                # rows directly — that repaint was the emit's only observable
+                # effect, since on_connection_status_changed is render-only and
+                # `is_connected` above is the authoritative bit it renders.
+                self._repaint_connection_status(root)
 
         try:
             # Try to get the terminal's child PID (with timeout protection)
@@ -4434,9 +4515,22 @@ class TerminalWidget(Gtk.Box):
             return "SSH_TERMINAL"
         return self._job_status
 
-    # --- Fullscreen: thin forwarder to the composed FullscreenController ---
+    # --- Fullscreen: a request to the window, which owns the state ---
     def toggle_fullscreen(self):
-        return self._fullscreen.toggle_fullscreen()
+        """Ask the toplevel window to toggle fullscreen.
+
+        The terminal deliberately holds no fullscreen state and installs no F11
+        controller: the window owns both, so closing this widget can never
+        strand the window fullscreen (issue #1102). F11 itself is handled by
+        the window-level controller; this stays for callers that already hold a
+        terminal.
+        """
+        root = self.get_root()
+        controller = getattr(root, 'fullscreen_controller', None)
+        if controller is None:
+            logger.debug('No window fullscreen controller available')
+            return None
+        return controller.toggle()
 
     def _setup_drag_and_drop(self):
         """Set up drag and drop for SCP upload from filesystem."""

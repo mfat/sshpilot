@@ -65,3 +65,6 @@ sshpilot/vendor/pyxtermjs/index.html
 # Generated translation template
 po/*.pot
 /.commandcode
+
+# graphify knowledge-graph output (regenerable; ~50MB)
+graphify-out/

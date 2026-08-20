@@ -32,6 +32,7 @@ def get_default_config() -> Dict[str, Any]:
             'copy_on_select': False,
             'paste_on_right_click': False,
             'encoding': 'UTF-8',
+            'macos_option_key_passthrough': False,
         },
         'secrets': {
             # Secret storage backend: 'auto' (platform default), 'libsecret',

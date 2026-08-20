@@ -657,7 +657,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self.autocomplete_switch = Adw.SwitchRow()
         self.autocomplete_switch.set_title(_("Command autocomplete"))
         self.autocomplete_switch.set_subtitle(
-            _("Suggest commands from history and snippets as you type (embedded terminal)")
+            _("Suggest commands from history and snippets as you type")
         )
         self.autocomplete_switch.set_active(
             bool(self.config.get_setting('terminal.autocomplete', True))
@@ -676,6 +676,25 @@ class PreferencesWindow(Adw.NavigationPage):
         self.autocomplete_remote_switch.connect(
             'notify::active', self.on_autocomplete_remote_toggled)
         keyboard_group.add(self.autocomplete_remote_switch)
+
+        # Autocomplete is only available with PyXterm backend
+        self._update_autocomplete_visibility()
+
+        # macOS Option key passthrough (only on macOS)
+        if is_macos():
+            self.macos_option_key_switch = Adw.SwitchRow()
+            self.macos_option_key_switch.set_title(_("Option key character input"))
+            self.macos_option_key_switch.set_subtitle(
+                _("Send Option-generated characters directly without ESC prefix "
+                  "(fixes international keyboard layouts)")
+            )
+            self.macos_option_key_switch.set_active(
+                bool(self.config.get_setting('terminal.macos_option_key_passthrough', False))
+            )
+            self.macos_option_key_switch.connect(
+                'notify::active', self.on_macos_option_key_toggled
+            )
+            keyboard_group.add(self.macos_option_key_switch)
 
         terminal_page.add(keyboard_group)
 
@@ -3844,6 +3863,13 @@ class PreferencesWindow(Adw.NavigationPage):
         except Exception as exc:
             logger.error("Failed to update remote autocomplete mode: %s", exc)
 
+    def on_macos_option_key_toggled(self, switch, _pspec):
+        """Persist the macOS Option key passthrough preference."""
+        self.config.set_setting(
+            'terminal.macos_option_key_passthrough',
+            bool(switch.get_active())
+        )
+
     def on_copy_on_select_toggled(self, switch, _pspec):
         """Persist the terminal copy-on-selection preference."""
         try:
@@ -6216,6 +6242,14 @@ class PreferencesWindow(Adw.NavigationPage):
         # Default: show for unknown backends
         self.encoding_row.set_visible(True)
 
+    def _update_autocomplete_visibility(self):
+        """Show autocomplete options only when PyXterm backend is selected."""
+        is_pyxterm = self._is_pyxterm_backend()
+        if hasattr(self, 'autocomplete_switch') and self.autocomplete_switch:
+            self.autocomplete_switch.set_visible(is_pyxterm)
+        if hasattr(self, 'autocomplete_remote_switch') and self.autocomplete_remote_switch:
+            self.autocomplete_remote_switch.set_visible(is_pyxterm)
+
     def on_encoding_selection_changed(self, combo_row, _param):
         if self._encoding_selection_sync:
             return
@@ -6386,6 +6420,9 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Update encoding row visibility when backend changes
         self._update_encoding_row_visibility()
+
+        # Update autocomplete visibility (only available with PyXterm)
+        self._update_autocomplete_visibility()
 
         # Note: We do NOT call refresh_backends() here
         # This ensures existing terminals keep their current backend

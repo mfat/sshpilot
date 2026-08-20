@@ -83,7 +83,8 @@ class FakeWindow:
         self.toast_overlay = types.SimpleNamespace(
             toasts=[], add_toast=lambda t: self.toast_overlay.toasts.append(t))
         self._plugins_menu_section = types.SimpleNamespace(
-            items=[], append=lambda label, action: None)
+            items=[], append=lambda label, action: None,
+            remove_all=lambda: None)
         self.opened = []
         self.terminal_manager = types.SimpleNamespace(
             connect_to_host=lambda conn: self.opened.append(conn))

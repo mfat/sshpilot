@@ -289,37 +289,43 @@ def wait_for_daemon_termination(
     *,
     client=None,
     daemon_process=None,
+    daemon_identity=None,
     socket_path: Optional[os.PathLike] = None,
     timeout: float = _TERMINATE_WAIT_SECONDS,
     poll_interval: float = _TERMINATE_POLL_SECONDS,
 ) -> list[str]:
     """Block until the force-stopped daemon is confirmed gone.
 
-    Success when:
-    * an app-launched process handle has exited, and
-    * the Unix socket (when known) no longer exists.
+    Success requires every known indicator to be satisfied:
 
-    When neither handle nor socket is known, probes ``get_daemon_status`` until
-    the daemon is unreachable. Returns error messages on timeout.
+    * an app-launched process handle has exited,
+    * the Unix socket (when known) no longer exists, and
+    * a captured daemon identity (when one was taken before teardown) no
+      longer matches a live process.
+
+    The identity check is what closes the gap between "the socket is gone"
+    and "the daemon is gone": a daemon that closes its listener but keeps
+    running has disappeared from the only place a socket-only wait would
+    look, and would otherwise pass final verification. When no handle, socket
+    or identity is known, probes ``get_daemon_status`` until the daemon is
+    unreachable. Returns error messages on timeout.
     """
     deadline = time.monotonic() + max(0.0, float(timeout))
     have_process = daemon_process is not None
     have_socket = socket_path is not None
+    have_identity = daemon_identity is not None
+
+    def _identity_gone() -> bool:
+        if daemon_identity is None:
+            return True
+        return not daemon_identity.matches_live_process()
 
     while True:
         process_done = _process_has_exited(daemon_process)
         socket_gone = _socket_is_gone(socket_path)
+        identity_gone = _identity_gone()
 
-        if have_process and have_socket:
-            if process_done and socket_gone:
-                return []
-        elif have_process:
-            if process_done:
-                return []
-        elif have_socket:
-            if socket_gone:
-                return []
-        else:
+        if not have_process and not have_socket and not have_identity:
             # External / unknown layout: treat unreachable status as gone.
             if client is None:
                 return []
@@ -327,6 +333,8 @@ def wait_for_daemon_termination(
                 client.get_daemon_status()
             except Exception:
                 return []
+        elif process_done and socket_gone and identity_gone:
+            return []
 
         if time.monotonic() >= deadline:
             break
@@ -337,7 +345,9 @@ def wait_for_daemon_termination(
         details.append("daemon process still running")
     if have_socket and not _socket_is_gone(socket_path):
         details.append(f"socket still present ({socket_path})")
-    if not have_process and not have_socket:
+    if have_identity and daemon_identity.matches_live_process():
+        details.append(f"daemon process still running (pid={daemon_identity.pid})")
+    if not have_process and not have_socket and not have_identity:
         details.append("daemon still responding to status probes")
     return [
         "daemon did not finish shutting down: "
@@ -548,6 +558,7 @@ def apply_terminate_all(window) -> None:
             errors = wait_for_daemon_termination(
                 client=client,
                 daemon_process=daemon_process,
+                daemon_identity=daemon_identity,
                 socket_path=socket_path,
             )
         if errors:

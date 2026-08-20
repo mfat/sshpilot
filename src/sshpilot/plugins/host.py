@@ -102,7 +102,9 @@ class UiHost:
         self._pages[full_id] = _PageReg(full_id, title, icon_name, factory, plugin_id,
                                         add_menu_item=add_menu_item, on_activate=on_activate)
         if self._window is not None:
-            self._install_menu_item(self._pages[full_id])
+            self._ensure_page_action(self._pages[full_id])
+        # Registry changed → rebuild both dynamic menu sections from it.
+        self._refresh_plugin_menu_sections()
 
     def page_ids_for_plugin(self, plugin_id: str) -> List[str]:
         """Full ids of pages registered by ``plugin_id`` (empty if none / the
@@ -168,6 +170,8 @@ class UiHost:
                     window.remove_action(action_name)
             except Exception:
                 logger.exception("Failed to remove action for page %r", full_id)
+        # Registry changed → rebuild both dynamic menu sections from it.
+        self._refresh_plugin_menu_sections()
 
     # --- live calls ---------------------------------------------------
     def open_page(self, full_id: str) -> None:
@@ -189,7 +193,10 @@ class UiHost:
     def bind_window(self, window) -> None:
         self._window = window
         for reg in self._pages.values():
-            self._install_menu_item(reg)
+            self._ensure_page_action(reg)
+        # Registry is the source of truth: rebuild the dynamic menu sections
+        # for this window (and any macOS native section) from it.
+        self._refresh_plugin_menu_sections()
         for message, timeout in self._pending_toasts:
             self._show_toast(message, timeout)
         self._pending_toasts.clear()
@@ -214,7 +221,13 @@ class UiHost:
         safe = reg.full_id.replace(":", "-").replace(".", "-")
         return f"plugin-page-{safe}"
 
-    def _install_menu_item(self, reg: _PageReg) -> None:
+    def _ensure_page_action(self, reg: _PageReg) -> None:
+        """Ensure the window-owned ``win.plugin-page-...`` action exists.
+
+        Idempotent: the action is created once per window and kept window-owned
+        (no duplicate app-scope actions). Menu entries are not touched here —
+        they are rebuilt from the registry by :meth:`_refresh_plugin_menu_sections`.
+        """
         window = self._window
         if window is None:
             return
@@ -234,11 +247,40 @@ class UiHost:
                 action = Gio.SimpleAction.new(action_name, None)
                 action.connect("activate", _activate)
                 window.add_action(action)
-                section = getattr(window, "_plugins_menu_section", None)
-                if section is not None:
-                    section.append(reg.title, f"win.{action_name}")
         except Exception:
             logger.exception("Failed to install menu item for page %r", reg.full_id)
+
+    def _refresh_plugin_menu_sections(self) -> None:
+        """Rebuild the dynamic plugin menu sections from the page registry.
+
+        ``self._pages`` is the source of truth for active pages; both the
+        in-window hamburger section and (on macOS) the app-owned native Tools
+        section are cleared and repopulated so a deactivated/re-enabled plugin
+        can never leave a stale entry behind or duplicate itself.
+        """
+        active_pages = [
+            reg for reg in self._pages.values() if reg.add_menu_item
+        ]
+
+        window = self._window
+        if window is not None:
+            section = getattr(window, "_plugins_menu_section", None)
+            if section is not None:
+                section.remove_all()
+                for reg in active_pages:
+                    section.append(reg.title, f"win.{self._action_name(reg)}")
+
+        app = None
+        if window is not None:
+            try:
+                app = window.get_application()
+            except Exception:
+                pass
+        macos_section = getattr(app, "_macos_plugins_menu_section", None)
+        if macos_section is not None:
+            macos_section.remove_all()
+            for reg in active_pages:
+                macos_section.append(reg.title, f"win.{self._action_name(reg)}")
 
     def _open_now(self, full_id: str) -> None:
         reg = self._pages[full_id]

@@ -872,7 +872,7 @@ class WindowTabsMixin:
         if response_id == 'close':
             self._persist_disconnect_opt_out(checkbox)
             self._run_suppressed_close(close_fn)
-        dialog.destroy()
+        dialog.close()
 
     def _confirm_then_bulk_close(self, target_page, close_fn, after_only: bool):
         """Close other / to-the-right tabs, honoring confirm-disconnect.
@@ -892,9 +892,7 @@ class WindowTabsMixin:
         n_sessions = self._count_sessions_in_pages(pages)
 
         if confirm and n_sessions > 0:
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
+            dialog = Adw.AlertDialog(
                 heading=_("Close tabs?"),
                 body=_("This will close {t} tab(s) and disconnect {n} session(s). Continue?").format(
                     t=len(pages), n=n_sessions
@@ -912,7 +910,7 @@ class WindowTabsMixin:
                 close_fn,
                 checkbox,
             )
-            dialog.present()
+            dialog.present(self)
         else:
             # Toggle off, or nothing with a live session to disconnect: close
             # directly. With the toggle off, on_tab_close disconnects each tab
@@ -942,9 +940,7 @@ class WindowTabsMixin:
                     self._pending_close_split_tab_view = tab_view
                     self._pending_close_split_page = page
                     self._pending_close_split_child = child
-                    dialog = Adw.MessageDialog(
-                        transient_for=self,
-                        modal=True,
+                    dialog = Adw.AlertDialog(
                         heading=_("Close split view?"),
                         body=_("This will disconnect {n} terminal session(s). Continue?").format(n=n_terminals),
                     )
@@ -959,7 +955,7 @@ class WindowTabsMixin:
                         self._on_split_tab_close_response,
                         checkbox,
                     )
-                    dialog.present()
+                    dialog.present(self)
                     return True  # Prevent immediate close; dialog handles it
                 child.cleanup_all()
                 return False
@@ -989,15 +985,13 @@ class WindowTabsMixin:
             
             # Show confirmation dialog
             host_value = _get_connection_host(connection) or _get_connection_alias(connection)
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
+            dialog = Adw.AlertDialog(
                 heading=_("Close connection to {name}").format(
                     name=getattr(connection, "display_name", None)
                     or connection.nickname
                     or host_value
                 ),
-                body=_("Are you sure you want to close this connection?")
+                body=_("Are you sure you want to close this connection?"),
             )
             dialog.add_response('cancel', _("Cancel"))
             dialog.add_response('close', _("Close"))
@@ -1008,7 +1002,7 @@ class WindowTabsMixin:
             
             # Connect to response signal before showing the dialog
             dialog.connect('response', self._on_tab_close_response, checkbox)
-            dialog.present()
+            dialog.present(self)
             
             # Prevent the default close behavior while we show confirmation
             return True
@@ -1047,7 +1041,7 @@ class WindowTabsMixin:
             # This is the critical step that makes the close button work again.
             tab_view.close_page_finish(page, False)
 
-        dialog.destroy()
+        dialog.close()
         # Clear pending state to avoid memory leaks
         self._pending_close_tab_view = None
         self._pending_close_page = None
@@ -1071,7 +1065,7 @@ class WindowTabsMixin:
         else:
             if tab_view is not None and page is not None:
                 tab_view.close_page_finish(page, False)
-        dialog.destroy()
+        dialog.close()
         self._pending_close_split_tab_view = None
         self._pending_close_split_page = None
         self._pending_close_split_child = None
@@ -1710,7 +1704,10 @@ class WindowTabsMixin:
                 return
 
             if self._is_start_tab_page(page):
-                GLib.idle_add(self._focus_connection_list_first_row)
+                self._schedule_start_tab_focus()
+                omni = getattr(self, '_omni_search', None)
+                if omni is not None and hasattr(omni, 'request_attention'):
+                    omni.request_attention()
                 try:
                     if not self.has_user_tabs():
                         # Back at the welcome screen with no sessions: undo a
