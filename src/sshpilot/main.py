@@ -422,16 +422,6 @@ class SshPilotApplication(Adw.Application):
             signal.signal(signal.SIGINT, _handle_sigint)
         except Exception:
             pass
-        
-        # On macOS, register the native system menubar (reuses the app/window
-        # actions registered above; a no-op on Linux/Windows where the in-window
-        # hamburger menu remains the entry point).
-        try:
-            from .macos_menubar import install_menubar
-
-            install_menubar(self)
-        except Exception as exc:
-            logger.error("Failed to install macOS menubar: %s", exc)
 
         # Initialize window reference
         self.window = None
@@ -443,6 +433,31 @@ class SshPilotApplication(Adw.Application):
         GLib.idle_add(lambda: (self._schedule_startup_diagnostics(), False)[1])
 
         logger.info("sshPilot application initialized")
+
+    def do_startup(self):
+        """Install the native macOS menubar once the application is registered.
+
+        ``Gtk.Application.set_menubar`` requires the application to be
+        registered (``gtk_application_set_menubar`` asserts on
+        ``g_application_get_is_registered``), which only happens during
+        startup — calling it from ``__init__`` made real macOS builds emit
+        that assertion at launch. ``super().do_startup()`` runs the normal
+        GApplication startup sequence first, then the menubar is installed
+        exactly once. Non-macOS builds never call ``install_menubar``.
+        """
+        super().do_startup()
+
+        if getattr(self, "_macos_menubar_installed", False):
+            return
+        if not is_macos():
+            return
+        try:
+            from .macos_menubar import install_menubar
+
+            install_menubar(self)
+            self._macos_menubar_installed = True
+        except Exception as exc:
+            logger.error("Failed to install macOS menubar: %s", exc)
 
     def _schedule_startup_diagnostics(self, retries_left: int = 25) -> None:
         """Print startup diagnostics once the daemon client selection settles.
