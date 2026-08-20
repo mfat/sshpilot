@@ -83,6 +83,18 @@
         0 0 12px 3px alpha(@accent_bg_color, 0.35),
         0 8px 28px alpha(#000000, 0.28);
 }
+/* Transient "look here" bloom while the Start tab becomes current
+   (OmniSearchController.request_attention): a soft, wider accent halo around
+   the resting box. Distinctly subtler than the real focus ring, and retired
+   the moment Omnisearch opens; if the two ever overlap, the :focus-within
+   ring above wins by specificity. */
+.omni-search-attention {
+    background-color: alpha(@accent_bg_color, 0.05);
+    box-shadow:
+        0 0 0 3px alpha(@accent_bg_color, 0.22),
+        0 0 16px 3px alpha(@accent_bg_color, 0.16),
+        0 8px 28px alpha(#000000, 0.16);
+}
 .omni-search-entry {
     min-height: 56px;
     border-radius: 8px;

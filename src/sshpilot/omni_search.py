@@ -21,6 +21,16 @@ from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 _ = gettext.gettext
 
 _MAX_RESULTS = 8
+
+# Transient "look here" bloom on the docked omni-search box when the Start tab
+# becomes active. Kept separate from :focus-within so the resting box stays
+# invisible while the real focused/open state keeps its distinctive ring.
+_ATTENTION_CLASS = "omni-search-attention"
+_ATTENTION_MS = 1400
+# Settle delay before the boot-time bloom starts: the ``map`` signal can fire
+# a frame before the window is actually usable, so the pulse waits briefly
+# instead of overlapping the window's appearance.
+_ATTENTION_DEBUT_DELAY_MS = 450
 _TRANSFER_INTENTS = {
     "sftp": ("sftp", _("SFTP File Manager"), "folder-remote-symbolic"),
     "scp": ("scp", _("Transfer Files with SCP"), "folder-remote-symbolic"),
@@ -441,6 +451,10 @@ class OmniSearchController:
 
         self.content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.content.add_css_class("omni-search")
+        self._attention_source_id = None
+        self._attention_start_source_id = None
+        self._attention_map_handler_id = None
+        self.content.connect("destroy", self._on_attention_owner_destroyed)
 
         self.entry = Gtk.SearchEntry()
         self.entry.set_can_focus(True)
@@ -564,7 +578,146 @@ class OmniSearchController:
         else:
             self.popup.apply_preset("omni")
 
+    # -- transient Start attention -----------------------------------------
+
+    def request_attention(self) -> None:
+        """Brief, focus-safe attention bloom on the docked omni-search box.
+
+        Called from the canonical Start-transition path when the Start tab
+        becomes current. No-op unless Start is genuinely visible and
+        Omnisearch is neither open nor focused, so it never competes with the
+        real ``:focus-within`` ring. Repeats restart the pulse instead of
+        stacking (each call replaces any pending timeout), which keeps
+        duplicate activation requests deterministic and single-visual. Never
+        touches keyboard focus.
+
+        When the window has not been presented yet (initial Start
+        presentation), the pulse is deferred until the search box is mapped,
+        so the bloom is actually visible instead of expiring before the first
+        paint.
+        """
+        if self.popup.visible:
+            return
+        if not self._start_is_visible():
+            return
+        try:
+            if self._entry_focus_widget().has_focus():
+                return
+        except Exception:
+            pass
+        self._cancel_attention()
+        if not self._attention_owner_is_mapped():
+            # The window has not been presented yet (initial Start
+            # presentation happens mid-construction); a timer started now
+            # would expire before the first paint. Defer until the widget is
+            # mapped, then let the settle delay pace the bloom's start.
+            self._defer_attention_until_map()
+            return
+        self._start_attention_pulse()
+
+    def _attention_owner_is_mapped(self) -> bool:
+        try:
+            return bool(self.content.get_mapped())
+        except Exception:
+            return True
+
+    def _defer_attention_until_map(self) -> None:
+        # One-shot: replace any earlier pending map hook so repeated requests
+        # keep the deterministic single-pulse semantics.
+        handler_id = self._attention_map_handler_id
+        if handler_id is not None:
+            try:
+                self.content.disconnect(handler_id)
+            except Exception:
+                pass
+            self._attention_map_handler_id = None
+        try:
+            self._attention_map_handler_id = self.content.connect(
+                "map", self._on_attention_map
+            )
+        except Exception:
+            pass
+
+    def _on_attention_map(self, *_args) -> None:
+        # One-shot: the content is (presumably) on screen now; disconnect so a
+        # later unmap/map cycle cannot stack another pulse. The bloom itself
+        # waits a beat so it starts once the window is actually usable.
+        handler_id = self._attention_map_handler_id
+        self._attention_map_handler_id = None
+        if handler_id is not None:
+            try:
+                self.content.disconnect(handler_id)
+            except Exception:
+                pass
+        try:
+            self._attention_start_source_id = GLib.timeout_add(
+                _ATTENTION_DEBUT_DELAY_MS, self._on_attention_start_delay
+            )
+        except Exception:
+            self._attention_start_source_id = None
+
+    def _on_attention_start_delay(self) -> None:
+        # Re-run the full guarded request against the now-mapped widget; if
+        # Start was left during the settle delay, the guards decline silently.
+        self._attention_start_source_id = None
+        self.request_attention()
+        return GLib.SOURCE_REMOVE
+
+    def _start_attention_pulse(self) -> None:
+        self.content.add_css_class(_ATTENTION_CLASS)
+        try:
+            self._attention_source_id = GLib.timeout_add(
+                _ATTENTION_MS, self._on_attention_timeout
+            )
+        except Exception:
+            self._attention_source_id = None
+
+    def _cancel_attention(self) -> None:
+        """Retire any pending attention pulse (timer/class/map hook) idempotently."""
+        source_id = self._attention_source_id
+        self._attention_source_id = None
+        if source_id is not None:
+            try:
+                GLib.source_remove(source_id)
+            except Exception:
+                pass
+        start_source_id = self._attention_start_source_id
+        self._attention_start_source_id = None
+        if start_source_id is not None:
+            try:
+                GLib.source_remove(start_source_id)
+            except Exception:
+                pass
+        handler_id = self._attention_map_handler_id
+        self._attention_map_handler_id = None
+        if handler_id is not None:
+            try:
+                self.content.disconnect(handler_id)
+            except Exception:
+                pass
+        try:
+            self.content.remove_css_class(_ATTENTION_CLASS)
+        except Exception:
+            pass
+
+    def _on_attention_timeout(self):
+        self._attention_source_id = None
+        try:
+            self.content.remove_css_class(_ATTENTION_CLASS)
+        except Exception:
+            pass
+        return GLib.SOURCE_REMOVE
+
+    def _on_attention_owner_destroyed(self, *_args) -> None:
+        # The content box can be destroyed while a pulse is pending (window
+        # teardown); retire the timer so nothing fires into a dead widget.
+        self._cancel_attention()
+
     def show(self, select_all: bool = True) -> None:
+        # Opening Omnisearch is its own strong visual state (the focused
+        # ring), so retire any pending attention pulse rather than letting it
+        # linger under the popup.
+        self._cancel_attention()
         # While open, the placeholder shows example queries instead of the
         # shortcut hint; _on_popup_hidden switches it back.
         self.entry.set_placeholder_text(self._examples_placeholder())

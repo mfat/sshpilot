@@ -131,3 +131,50 @@ def test_real_mouse_click_routes_typing_to_welcome_omni(gui):
     assert _focus_is_within(win, omni.entry)
     assert omni.entry.get_text() == "abc"
     assert win.search_entry.get_text() == ""
+
+
+def test_start_activation_blooms_omni_attention_once(gui):
+    """Returning to the Start tab pulses the docked omni-search exactly once,
+    without grabbing its keyboard focus, and the bloom fades by itself."""
+    win = gui.window
+    omni = win._omni_search
+    omni.dismiss(clear=True)
+    gui.pump(800)  # let any startup pulse finish and fade
+
+    win.terminal_manager.show_local_terminal()
+    gui.pump(200)
+    assert not win.is_start_tab_selected()
+    assert not omni.content.has_css_class("omni-search-attention")
+
+    win.show_start_tab()
+    gui.pump(50)
+    assert win.is_start_tab_selected()
+    assert omni.content.has_css_class("omni-search-attention")
+    assert not _focus_is_within(win, omni.entry)
+
+    gui.pump(900)
+    assert not omni.content.has_css_class("omni-search-attention")
+
+    win.terminal_manager.show_local_terminal()
+    gui.pump(200)
+    assert not win.is_start_tab_selected()
+
+    win.show_start_tab()
+    gui.pump(50)
+    assert omni.content.has_css_class("omni-search-attention")
+    gui.pump(900)
+    assert not omni.content.has_css_class("omni-search-attention")
+
+
+def test_attention_never_fires_when_start_already_selected(gui):
+    """Re-selecting the current Start tab is not a transition: no bloom."""
+    win = gui.window
+    omni = win._omni_search
+    omni.dismiss(clear=True)
+    gui.pump(800)
+    assert win.is_start_tab_selected()
+
+    win.show_start_tab()
+    gui.pump(100)
+
+    assert not omni.content.has_css_class("omni-search-attention")

@@ -1705,6 +1705,9 @@ class WindowTabsMixin:
 
             if self._is_start_tab_page(page):
                 self._schedule_start_tab_focus()
+                omni = getattr(self, '_omni_search', None)
+                if omni is not None and hasattr(omni, 'request_attention'):
+                    omni.request_attention()
                 try:
                     if not self.has_user_tabs():
                         # Back at the welcome screen with no sessions: undo a

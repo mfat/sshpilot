@@ -2137,6 +2137,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._global_overlay,
             self.welcome_view.omni_home,
         )
+        # Initial Start presentation at first paint: the Start tab is created
+        # and selected before this controller exists (see ``_add_start_tab``),
+        # so its selection notification cannot reach the controller here. Ask
+        # for the Omnisearch attention bloom directly; the controller defers it
+        # until the window is actually mapped.
+        omni = getattr(self, '_omni_search', None)
+        if omni is not None and hasattr(omni, 'request_attention'):
+            omni.request_attention()
 
         # Sidebar is always visible on startup
         # (toast_overlay + main_box come from the template)
