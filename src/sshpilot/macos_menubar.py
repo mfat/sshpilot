@@ -38,9 +38,9 @@ def build_macos_menubar(
     here — that would produce a redundant "SSH Pilot" menu in the bar.
 
     ``plugins_section`` is the shared mutable menu section that plugin pages
-    are appended to (see ``UiHost._install_menu_item``); pass the same object
-    ``install_menubar`` stores on the app. ``None`` (tests / off-macOS) just
-    omits the section.
+    are appended to (see ``UiHost._refresh_plugin_menu_sections``); pass the
+    same object ``install_menubar`` stores on the app. ``None`` (tests /
+    off-macOS) just omits the section.
     """
     menubar = menu_cls()
 
@@ -129,7 +129,8 @@ def install_menubar(app) -> None:
     The plugin-contributed Tools entries share one mutable section between
     the in-window hamburger menu and this menubar: the object is created here
     (before any window exists), stored on *app*, passed into the builder, and
-    later appended to by ``UiHost._install_menu_item``.
+    later rebuilt from the plugin registry by
+    ``UiHost._refresh_plugin_menu_sections``.
 
     No-op elsewhere: the in-window hamburger menu keeps serving Linux and
     Windows.
