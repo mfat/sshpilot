@@ -54,6 +54,23 @@ def test_tracer_progress_clamps_by_duration():
     assert module._tracer_progress(100, 0) == 1.0
 
 
+def test_tracer_progress_wraps_per_lap_then_retires():
+    # Per-lap phase counts up within each lap.
+    assert module._tracer_progress(350_000, 700, laps=3) == pytest.approx(0.5)
+    assert module._tracer_progress(700_000, 700, laps=3) == pytest.approx(0.0)
+    # Third lap phase, then retirement at the total duration.
+    assert module._tracer_progress(1_750_000, 700, laps=3) == pytest.approx(0.5)
+    assert module._tracer_progress(2_100_000, 700, laps=3) == 1.0
+    assert module._tracer_progress(3_000_000, 700, laps=3) == 1.0
+
+
+def test_tracer_progress_loops_forever_when_laps_zero():
+    assert module._tracer_progress(0, 700, laps=0) == 0.0
+    assert module._tracer_progress(700_000, 700, laps=0) == pytest.approx(0.0)
+    assert module._tracer_progress(21_700_000, 700, laps=0) == pytest.approx(0.0)
+    assert module._tracer_progress(21_350_000, 700, laps=0) == pytest.approx(0.5)
+
+
 def test_tracer_dash_offset_spans_one_perimeter():
     perimeter = 266.272311059609
     assert module._tracer_dash_offset(0.0, perimeter) == 0.0

@@ -39,16 +39,20 @@ _MAX_RESULTS = 8
 # The tracer's one full clockwise lap around the border. 700 ms read as
 # fidgety; 3500 ms is a single slow, calm pass that still completes within a
 # normal attention hold.
-_ATTENTION_MS = 900
+_ATTENTION_MS = 1500
+# How many full clockwise laps the tracer makes before retiring. 1 = a single
+# pass (the original behaviour); 0 = loop until the guard stops it (leaving
+# Start or opening Omnisearch). Positive N = exactly N laps.
+_ATTENTION_LAPS = 2
 # Visible tracer length as a fraction of the border perimeter (15-25% reads as
 # a short moving segment rather than a partial outline).
-_ATTENTION_SEGMENT_FRACTION = 0.05
-_ATTENTION_STROKE_WIDTH = 2.0
+_ATTENTION_SEGMENT_FRACTION = 0.95
+_ATTENTION_STROKE_WIDTH = 0.5
 _ATTENTION_RADIUS = 8.0
 # Settle delay before the boot-time tracer starts: the ``map`` signal can fire
 # a frame before the window is actually usable. Only affects the initial
 # mapped/startup presentation; normal Start transitions begin immediately.
-_ATTENTION_DEBUT_DELAY_MS = 250
+_ATTENTION_DEBUT_DELAY_MS = 350
 _TRANSFER_INTENTS = {
     "sftp": ("sftp", _("SFTP File Manager"), "folder-remote-symbolic"),
     "scp": ("scp", _("Transfer Files with SCP"), "folder-remote-symbolic"),
@@ -103,11 +107,24 @@ def _rounded_rect_perimeter(width: float, height: float, radius: float) -> float
     return 2.0 * (width - 2.0 * r) + 2.0 * (height - 2.0 * r) + 2.0 * math.pi * r
 
 
-def _tracer_progress(elapsed_us: int, duration_ms: int) -> float:
-    """Clamp elapsed frame-clock time (microseconds) into a ``0..1`` progress."""
+def _tracer_progress(elapsed_us: int, duration_ms: int, laps: int = 1) -> float:
+    """Map elapsed frame-clock time (microseconds) into tracer progress.
+
+    Single lap: clamps to ``1.0`` when the lap finishes. Multiple laps: the
+    progress wraps to the current lap's phase (``0 <= p < 1``) and returns
+    ``1.0`` once the final lap is done. ``laps <= 0`` loops forever, wrapping
+    each lap, until the caller's guard retires the tracer.
+    """
     if duration_ms <= 0:
         return 1.0
-    return max(0.0, min(1.0, elapsed_us / (1000.0 * duration_ms)))
+    t = elapsed_us / (1000.0 * duration_ms)
+    if laps <= 0:
+        return max(0.0, t % 1.0)
+    if laps == 1:
+        return max(0.0, min(1.0, t))
+    if t >= laps:
+        return 1.0
+    return max(0.0, t % 1.0)
 
 
 def _tracer_dash_offset(progress: float, perimeter: float) -> float:
@@ -859,7 +876,7 @@ class OmniSearchController:
             self._attention_area.queue_draw()
             return True
         self._attention_progress = _tracer_progress(
-            now - self._attention_start_us, _ATTENTION_MS
+            now - self._attention_start_us, _ATTENTION_MS, _ATTENTION_LAPS
         )
         if self._attention_progress >= 1.0:
             self._attention_active = False
