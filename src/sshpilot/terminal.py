@@ -45,6 +45,45 @@ from .core.connection_evidence import classify_connection_evidence
 _terminal_padding_css_installed = False
 
 
+def _finish_capture_gesture(gesture, handled: bool) -> None:
+    """Resolve a capture gesture without leaving it competing with VTE."""
+    state = (
+        Gtk.EventSequenceState.CLAIMED
+        if handled
+        else Gtk.EventSequenceState.DENIED
+    )
+    gesture.set_state(state)
+
+
+def _context_click_is_handled(
+    button: int,
+    *,
+    paste_on_right_click: bool,
+    shift_held: bool,
+    native_vte_menu: bool,
+) -> bool:
+    """Whether SSH Pilot, rather than the backend, owns this pointer sequence."""
+    if button not in (Gdk.BUTTON_SECONDARY, 3):
+        return False
+    return (paste_on_right_click and not shift_held) or not native_vte_menu
+
+
+def _context_gesture_button(manual_dismiss: bool) -> int:
+    """Observe all PyXterm presses for dismissal, but only VTE right-clicks."""
+    return 0 if manual_dismiss else Gdk.BUTTON_SECONDARY
+
+
+def _link_click_is_handled(
+    n_press: int,
+    *,
+    active: bool,
+    modifier_held: bool,
+    uri: Optional[str],
+) -> bool:
+    """Whether a click qualifies for SSH Pilot's link-opening action."""
+    return n_press == 1 and active and modifier_held and bool(uri)
+
+
 def sanitize_local_shell_env(env):
     """Return a copy of *env* stripped of the launching terminal's identity.
 
@@ -3147,11 +3186,14 @@ class TerminalWidget(Gtk.Box):
                 self._install_manual_menu_dismissal(parent_widget)
 
             # Capture records coordinates before VTE handles the event; it
-            # claims only the paste-on-right-click policy case.
+            # claims only when SSH Pilot handles the click itself. PyXterm's
+            # non-autohide menu needs every button for manual click-away
+            # dismissal, while VTE only needs secondary-button observation.
             gesture = Gtk.GestureClick()
-            gesture.set_button(0)
+            gesture.set_button(_context_gesture_button(self._menu_needs_manual_dismiss))
             gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             def _on_pressed(gest, n_press, x, y):
+                handled = False
                 try:
                     btn = 0
                     try:
@@ -3185,23 +3227,29 @@ class TerminalWidget(Gtk.Box):
                         shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
                     except Exception:
                         shift_held = False
+                    native_vte_menu = bool(
+                        getattr(self, '_native_vte_context_menu', False)
+                    )
+                    if not _context_click_is_handled(
+                        btn,
+                        paste_on_right_click=paste_on_rc,
+                        shift_held=shift_held,
+                        native_vte_menu=native_vte_menu,
+                    ):
+                        return
                     if paste_on_rc and not shift_held:
                         self._pending_context_menu_coordinates = None
-                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         try:
                             if self.backend:
                                 self.backend.grab_focus()
                         except Exception:
                             pass
                         self.paste_text()
+                        handled = True
                         return
                     # VTE 0.76+ owns recognition, placement and popup lifecycle.
                     # This gesture exists on that path solely to preserve the
                     # paste-on-right-click preference above.
-                    if getattr(self, '_native_vte_context_menu', False):
-                        return
-                    # Stop event propagation to prevent other context menus
-                    gest.set_state(Gtk.EventSequenceState.CLAIMED)
                     # Focus terminal first for reliable copy/paste
                     try:
                         if self.backend:
@@ -3240,8 +3288,11 @@ class TerminalWidget(Gtk.Box):
                     except Exception as e:
                         logger.error(f"Failed to position context menu: {e}")
                     self._menu_popover.popup()
+                    handled = True
                 except Exception as e:
                     logger.error(f"Context menu popup failed: {e}")
+                finally:
+                    _finish_capture_gesture(gest, handled)
             gesture.connect('pressed', _on_pressed)
             # Store gesture reference for cleanup
             self._menu_gesture = gesture
@@ -3264,11 +3315,12 @@ class TerminalWidget(Gtk.Box):
                 url_gesture.set_button(Gdk.BUTTON_PRIMARY)
                 url_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 def _on_url_click(gest, n_press, x, y):
+                    handled = False
                     try:
-                        if n_press != 1:
-                            return
-                        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
-                            return
+                        active = not (
+                            getattr(self, '_destroyed', False)
+                            or getattr(self, '_is_quitting', False)
+                        )
                         # Plain click must reach VTE for cursor placement /
                         # selection — only Ctrl+click (Cmd+click on macOS)
                         # activates links, matching GNOME Terminal.
@@ -3276,18 +3328,27 @@ class TerminalWidget(Gtk.Box):
                             state = gest.get_current_event_state()
                         except Exception:
                             return
-                        if not self._click_has_link_modifier(state):
+                        modifier_held = self._click_has_link_modifier(state)
+                        uri = (
+                            self._vte_uri_at(x, y)
+                            if n_press == 1 and active and modifier_held
+                            else None
+                        )
+                        if not _link_click_is_handled(
+                            n_press,
+                            active=active,
+                            modifier_held=modifier_held,
+                            uri=uri,
+                        ):
                             return
 
-                        uri = self._vte_uri_at(x, y)
-                        if not uri:
-                            return  # no URL here – let VTE handle the click normally
-
-                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         Gio.AppInfo.launch_default_for_uri(uri, None)
+                        handled = True
                         logger.debug(f"Opened URL via Ctrl/Cmd+click: {uri}")
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
+                    finally:
+                        _finish_capture_gesture(gest, handled)
                 url_gesture.connect('pressed', _on_url_click)
                 self._register_menu_controller(self.backend.widget, url_gesture)
                 self._url_click_gesture = url_gesture
