@@ -92,18 +92,23 @@ def test_build_menubar_top_level_structure():
     ]
     # The app menu (About/Settings…/Quit) is owned by the native macOS
     # application menu; the menubar model starts with File.
-    assert labels == ["File", "Edit", "View", "Window", "Help"]
+    assert labels == ["File", "Edit", "View", "Tools", "Window", "Help"]
 
 
-def test_build_menubar_uses_existing_actions():
+def test_build_menubar_uses_existing_actions(monkeypatch):
+    import sshpilot.macos_menubar as mm
+
+    monkeypatch.setattr(mm, "should_hide_file_manager_options", lambda: False)
     model = _build()
     menus = _submenus_by_label(model)
 
     assert [a for _l, a in _flatten_items(menus["File"])] == [
         "app.new-connection",
+        "win.create-group",
         "app.local-terminal",
         "win.save-session",
         "win.open-session",
+        "win.manage-sessions",
         "win.import-config",
         "win.export-config",
     ]
@@ -120,6 +125,14 @@ def test_build_menubar_uses_existing_actions():
         "win.toggle-fullscreen",
         "app.tab-overview",
     ]
+    assert [a for _l, a in _flatten_items(menus["Tools"])] == [
+        "app.new-key",
+        "app.broadcast-command",
+        "win.open-file-manager",
+        "app.edit-ssh-config",
+        "win.edit-known-hosts",
+        "win.manage-local-authorized-keys",
+    ]
     assert [a for _l, a in _flatten_items(menus["Window"])] == [
         "app.tab-next",
         "app.tab-prev",
@@ -128,8 +141,42 @@ def test_build_menubar_uses_existing_actions():
         "app.shortcuts",
         "app.help",
         "win.check-for-updates",
+        "win.view-logs",
         "win.report-problem",
+        "win.export-diagnostics",
     ]
+
+
+def test_build_menubar_manage_files_follows_availability(monkeypatch):
+    import sshpilot.macos_menubar as mm
+
+    monkeypatch.setattr(mm, "should_hide_file_manager_options", lambda: False)
+    tools_menu = _submenus_by_label(_build())["Tools"]
+    assert ("Manage Files", "win.open-file-manager") in _flatten_items(tools_menu)
+
+    monkeypatch.setattr(mm, "should_hide_file_manager_options", lambda: True)
+    tools_menu = _submenus_by_label(_build())["Tools"]
+    assert ("Manage Files", "win.open-file-manager") not in _flatten_items(tools_menu)
+
+
+def test_build_menubar_attaches_shared_plugin_section_under_tools():
+    plugins_section = _FakeMenu()
+    model = build_macos_menubar(
+        menu_cls=_FakeMenu,
+        menu_item_cls=_FakeMenuItem,
+        variant_factory=_FakeVariant,
+        plugins_section=plugins_section,
+    )
+    tools_menu = _submenus_by_label(model)["Tools"]
+    sections = [
+        entry[2]
+        for entry in tools_menu.entries
+        if entry[0] == "section"
+    ]
+    assert sections[-1] is plugins_section
+
+    plugins_section.append("Docker", "win.plugin-page-docker")
+    assert ("Docker", "win.plugin-page-docker") in _flatten_items(tools_menu)
 
 
 def test_build_menubar_window_submenu_marked_macos_special():
@@ -188,7 +235,7 @@ def _stub_gi_for_app_init(monkeypatch):
     monkeypatch.setattr(repository.Gio.Application, "__init__", lambda self, *a, **k: None)
     monkeypatch.setattr(repository.Adw.Application, "do_startup", lambda self: None)
     monkeypatch.setattr(repository.Gio.Application, "do_startup", lambda self: None)
-    monkeypatch.setattr(mm, "build_macos_menubar", lambda: "MENU")
+    monkeypatch.setattr(mm, "build_macos_menubar", lambda **kw: "MENU")
 
     import sshpilot.main as main_module
     return main_module
@@ -272,7 +319,33 @@ def test_install_menubar_sets_model_on_macos(monkeypatch):
     monkeypatch.setattr("sshpilot.macos_menubar.is_macos", lambda: True)
     monkeypatch.setattr(
         "sshpilot.macos_menubar.build_macos_menubar",
-        lambda: _FakeMenu(),
+        lambda **kw: _FakeMenu(),
     )
     install_menubar(app)
     assert isinstance(app._menubar, _FakeMenu)
+
+
+def test_install_menubar_creates_shared_plugin_section(monkeypatch):
+    """install_menubar stores the shared mutable plugin section on the app and
+    passes the very same object into the builder (so UiHost appends to the
+    live native Tools menu)."""
+    import sshpilot.macos_menubar as mm
+
+    app = types.SimpleNamespace(
+        set_menubar=lambda model: setattr(app, "_menubar", model),
+    )
+    monkeypatch.setattr(mm, "is_macos", lambda: True)
+    captured = []
+    monkeypatch.setattr(
+        mm,
+        "build_macos_menubar",
+        lambda **kw: captured.append(kw.get("plugins_section")) or _FakeMenu(),
+    )
+    install_menubar(app)
+    section = app._macos_plugins_menu_section
+    assert section is not None
+    assert captured == [section]
+    # Re-install reuses the same section (no rebuild of the shared menu).
+    install_menubar(app)
+    assert app._macos_plugins_menu_section is section
+    assert captured == [section, section]

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from sshpilot.core.plugins import (
     ALL_EVENTS,
@@ -90,6 +90,11 @@ class UiHost:
         # time), so actions registered at activate time appear without any
         # window-action plumbing.
         self._connection_actions: Dict[str, _ConnActionReg] = {}
+        # Page ids already appended to the app-owned native macOS plugin
+        # section (app._macos_plugins_menu_section). Unlike the per-window
+        # hamburger section, that one is shared across binds, so it is
+        # tracked separately to keep entries unique.
+        self._macos_menu_ids: Set[str] = set()
 
     # --- registration (safe before or after bind) ---------------------
     def register_page(self, full_id: str, title: str, icon_name: str,
@@ -141,6 +146,7 @@ class UiHost:
             reg = self._pages.pop(full_id, None)
             if reg is None:
                 continue
+            self._macos_menu_ids.discard(full_id)
             try:
                 self._pending_open.remove(full_id)
             except ValueError:
@@ -237,6 +243,22 @@ class UiHost:
                 section = getattr(window, "_plugins_menu_section", None)
                 if section is not None:
                     section.append(reg.title, f"win.{action_name}")
+                # Native macOS menubar: the same entry also lands in the
+                # application-owned shared section (created by
+                # install_menubar on macOS; absent elsewhere). The action
+                # stays window-owned — no duplicate app-scope action.
+                app = None
+                try:
+                    app = window.get_application()
+                except Exception:
+                    pass
+                if app is not None and reg.full_id not in self._macos_menu_ids:
+                    macos_section = getattr(
+                        app, "_macos_plugins_menu_section", None
+                    )
+                    if macos_section is not None:
+                        macos_section.append(reg.title, f"win.{action_name}")
+                        self._macos_menu_ids.add(reg.full_id)
         except Exception:
             logger.exception("Failed to install menu item for page %r", reg.full_id)
 

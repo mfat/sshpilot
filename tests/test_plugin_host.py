@@ -190,16 +190,24 @@ class FakeWindow:
         self.client = None
         self._actions = {}
         self.shown_tab_view = 0
+        self._app = None
 
     def show_tab_view(self):
         self.shown_tab_view += 1
+
+    def get_application(self):
+        return self._app
 
     def lookup_action(self, name):
         return self._actions.get(name)
 
     def add_action(self, action):
-        # Gio.SimpleAction is stubbed; key by identity count.
-        self._actions[f"action-{len(self._actions)}"] = action
+        # Key by the action's own name when available (the module's _patch_gi
+        # fixture supplies named actions); fall back to identity count.
+        name = getattr(action, "name", None)
+        if name is None:
+            name = f"action-{len(self._actions)}"
+        self._actions[name] = action
 
 
 # --- EventBus -------------------------------------------------------------
@@ -322,6 +330,76 @@ def test_ui_host_activate_time_calls_do_not_crash():
     ui.open_page("unknown")  # unknown id just logs
     # binding later is still fine
     ui.bind_window(FakeWindow())
+
+
+# --- UiHost: shared native macOS plugin menu section -----------------------
+
+def test_ui_host_plugin_entries_land_in_macos_section_once():
+    """On macOS the plugin page entry appears in both the hamburger section
+    and the app-owned native Tools section, exactly once each."""
+    ui = UiHost()
+    native_section = FakeMenuSection()
+    app = types.SimpleNamespace(_macos_plugins_menu_section=native_section)
+    window = FakeWindow()
+    window._app = app
+
+    ui.register_page("p:docker", "Docker", "icon", lambda: "W", plugin_id="p")
+    ui.bind_window(window)
+
+    assert window._plugins_menu_section.items == [
+        ("Docker", "win.plugin-page-p-docker")
+    ]
+    assert native_section.items == [("Docker", "win.plugin-page-p-docker")]
+
+    # Repeat bind/install path must not duplicate the native entry.
+    ui.bind_window(window)
+    assert window._plugins_menu_section.items == [
+        ("Docker", "win.plugin-page-p-docker")
+    ]
+    assert native_section.items == [("Docker", "win.plugin-page-p-docker")]
+
+
+def test_ui_host_macos_section_reuses_one_entry_across_windows():
+    """The native section is application-owned, so binding a second window
+    must not append a second copy."""
+    ui = UiHost()
+    native_section = FakeMenuSection()
+    app = types.SimpleNamespace(_macos_plugins_menu_section=native_section)
+
+    first = FakeWindow()
+    first._app = app
+    ui.register_page("p:docker", "Docker", "icon", lambda: "W", plugin_id="p")
+    ui.bind_window(first)
+
+    second = FakeWindow()
+    second._app = app
+    ui.bind_window(second)
+
+    assert len(second._plugins_menu_section.items) == 1
+    assert native_section.items == [("Docker", "win.plugin-page-p-docker")]
+
+
+def test_ui_host_no_macos_section_required_off_macos():
+    """Non-macOS must neither require nor create the native plugin section:
+    a window with no application (or an app without the section) still gets
+    its hamburger entry and never touches a native section."""
+    ui = UiHost()
+    ui.register_page("p:docker", "Docker", "icon", lambda: "W", plugin_id="p")
+
+    plain = FakeWindow()
+    ui.bind_window(plain)
+    assert plain._plugins_menu_section.items == [
+        ("Docker", "win.plugin-page-p-docker")
+    ]
+
+    app_without_section = types.SimpleNamespace()
+    window = FakeWindow()
+    window._app = app_without_section
+    ui.bind_window(window)
+    assert window._plugins_menu_section.items == [
+        ("Docker", "win.plugin-page-p-docker")
+    ]
+    assert not hasattr(app_without_section, "_macos_plugins_menu_section")
 
 
 # --- PluginHost: bridges, sessions, lifecycle, services -------------------
