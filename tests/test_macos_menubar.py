@@ -90,18 +90,15 @@ def test_build_menubar_top_level_structure():
         for entry in model.entries
         if entry[0] in ("submenu", "item-object")
     ]
-    assert labels == ["SSH Pilot", "File", "Edit", "View", "Window", "Help"]
+    # The app menu (About/Settings…/Quit) is owned by the native macOS
+    # application menu; the menubar model starts with File.
+    assert labels == ["File", "Edit", "View", "Window", "Help"]
 
 
 def test_build_menubar_uses_existing_actions():
     model = _build()
     menus = _submenus_by_label(model)
 
-    assert [a for _l, a in _flatten_items(menus["SSH Pilot"])] == [
-        "app.about",
-        "app.preferences",
-        "app.quit",
-    ]
     assert [a for _l, a in _flatten_items(menus["File"])] == [
         "app.new-connection",
         "app.local-terminal",

@@ -5,6 +5,11 @@ as the system menu bar. This module builds that model by reusing the same
 ``app.*`` / ``win.*`` actions the in-window hamburger menu already registers
 — the handlers live in exactly one place.
 
+The application menu itself (the bold first menu with About / Settings /
+Quit) is deliberately *not* built here: GTK's macOS backend already renders
+it natively from the ``app.*`` actions. Only the trailing menus (File … Help)
+live in the menubar model.
+
 The builder takes injectable constructors so tests can capture the menu
 structure without instantiating real GIO objects.
 """
@@ -24,14 +29,13 @@ def build_macos_menubar(
     menu_item_cls=Gio.MenuItem,
     variant_factory=GLib.Variant,
 ) -> Gio.Menu:
-    """Build SSH Pilot's native macOS application menubar model."""
-    menubar = menu_cls()
+    """Build SSH Pilot's native macOS application menubar model.
 
-    app_menu = menu_cls()
-    app_menu.append(_("About SSH Pilot"), "app.about")
-    app_menu.append(_("Settings…"), "app.preferences")
-    app_menu.append(_("Quit SSH Pilot"), "app.quit")
-    menubar.append_submenu(_("SSH Pilot"), app_menu)
+    The macOS application menu (About / Settings… / Quit) is rendered
+    natively by GTK from the ``app.*`` actions and must not be duplicated
+    here — that would produce a redundant "SSH Pilot" menu in the bar.
+    """
+    menubar = menu_cls()
 
     file_menu = menu_cls()
     file_menu.append(_("New Connection"), "app.new-connection")
