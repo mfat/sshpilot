@@ -441,11 +441,13 @@ class SshPilotApplication(Adw.Application):
         registered (``gtk_application_set_menubar`` asserts on
         ``g_application_get_is_registered``), which only happens during
         startup — calling it from ``__init__`` made real macOS builds emit
-        that assertion at launch. ``super().do_startup()`` runs the normal
-        GApplication startup sequence first, then the menubar is installed
-        exactly once. Non-macOS builds never call ``install_menubar``.
+        that assertion at launch. ``Adw.Application.do_startup`` runs the
+        normal GApplication startup sequence first (the ``super()`` proxy
+        does not bind ``self`` for vfuncs, so the parent is chained up
+        explicitly), then the menubar is installed exactly once. Non-macOS
+        builds never call ``install_menubar``.
         """
-        super().do_startup()
+        Adw.Application.do_startup(self)
 
         if getattr(self, "_macos_menubar_installed", False):
             return
