@@ -80,11 +80,19 @@ visible on macOS therefore just wasted a strip of screen with nothing revealing
 it. What macOS does own is the fullscreen *transition*, which is honoured
 through notify::fullscreened above, and its traffic lights, which this module
 never draws or emulates.
+
+The one macOS accommodation is the menu-bar strip itself: while fullscreen the
+header bar carries the ``macos-fullscreen-spacer`` CSS class, whose raised
+min-height reserves the strip the auto-hidden menu bar slides over when the
+pointer reaches the top edge, so the bar's controls stay visible below it. It
+is applied on entry and removed on exit like the fullscreen button.
 """
 
 import logging
 
 from gi.repository import Gtk, Gdk, Adw
+
+from . import platform_utils
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +114,46 @@ TOP_EDGE_TRIGGER_PX = 4
 #: report 0 until they have been allocated at least once). Deliberately not a
 #: plausible measured total, so a silent fallback is obvious in a trace.
 TOP_EDGE_FALLBACK_REGION_PX = 72
+
+#: CSS class that gives the header bar room for the macOS menu bar while
+#: fullscreen.
+MACOS_FULLSCREEN_SPACER_CSS_CLASS = 'macos-fullscreen-spacer'
+#: Total header-bar min-height while fullscreen on macOS, so the bar's
+#: controls sit below the auto-hidden menu bar when it reveals over the
+#: window's top edge.
+MACOS_FULLSCREEN_SPACER_MIN_HEIGHT_PX = 64
+
+_macos_fullscreen_spacer_css_installed = False
+
+
+def _ensure_macos_fullscreen_spacer_css() -> None:
+    """Install the CSS that grows the header bar during macOS fullscreen.
+
+    In native macOS fullscreen the menu bar auto-hides, and moving the
+    pointer to the top edge makes it slide down *over* the window's own top
+    strip — where SSH Pilot's client-side header bar sits (its window
+    controls are ordinary GTK widgets; ``maybe_set_native_controls`` is
+    off). Reserving the menu-bar height keeps the bar's buttons below the
+    revealed menu bar. Installed once per process, macOS-only callers.
+    """
+    global _macos_fullscreen_spacer_css_installed
+    if _macos_fullscreen_spacer_css_installed:
+        return
+    try:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(f"""
+headerbar.{MACOS_FULLSCREEN_SPACER_CSS_CLASS} {{
+    min-height: {MACOS_FULLSCREEN_SPACER_MIN_HEIGHT_PX}px;
+}}
+""".encode())
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        _macos_fullscreen_spacer_css_installed = True
+    except Exception:  # pragma: no cover - headless/test doubles
+        logger.debug('macOS fullscreen spacer CSS install failed', exc_info=True)
 
 
 class WindowFullscreenController:
@@ -251,6 +299,7 @@ class WindowFullscreenController:
                 self._set_window_fullscreen(True)
             self._show_fullscreen_button(True)
             self._apply_presentation()
+            self._apply_macos_fullscreen_spacer()
             logger.debug(
                 'Entered fullscreen (origin=%s, external=%s)',
                 self.origin, not request_window_fullscreen,
@@ -271,6 +320,7 @@ class WindowFullscreenController:
             self._set_top_chrome_revealed(False)
             self._show_fullscreen_button(False)
             self._clear_terminal_presentation()
+            self._remove_macos_fullscreen_spacer()
             self._restore_ui_state(self._saved)
             if request_window_unfullscreen:
                 self._set_window_fullscreen(False)
@@ -311,6 +361,39 @@ class WindowFullscreenController:
         revealing the chrome reveals it along with the window controls and menu.
         """
         self._set_widget_visible('fullscreen_button', visible)
+
+    # -- macOS menu-bar accommodation --------------------------------------
+
+    def _apply_macos_fullscreen_spacer(self) -> None:
+        """Give the header bar room for the macOS menu bar while fullscreen.
+
+        In native macOS fullscreen the auto-hidden menu bar slides down over
+        the window's top edge when the pointer reaches it — exactly where the
+        app's own client-side header bar sits. Bumping the bar's min-height
+        (via the ``macos-fullscreen-spacer`` CSS class) keeps its controls
+        below the revealed menu bar. No-op anywhere else.
+        """
+        if not platform_utils.is_macos():
+            return
+        header_bar = getattr(self.window, 'header_bar', None)
+        if header_bar is None:
+            return
+        _ensure_macos_fullscreen_spacer_css()
+        try:
+            header_bar.add_css_class(MACOS_FULLSCREEN_SPACER_CSS_CLASS)
+        except Exception:
+            logger.debug('Failed to apply the macOS fullscreen spacer', exc_info=True)
+
+    def _remove_macos_fullscreen_spacer(self) -> None:
+        if not platform_utils.is_macos():
+            return
+        header_bar = getattr(self.window, 'header_bar', None)
+        if header_bar is None:
+            return
+        try:
+            header_bar.remove_css_class(MACOS_FULLSCREEN_SPACER_CSS_CLASS)
+        except Exception:
+            logger.debug('Failed to remove the macOS fullscreen spacer', exc_info=True)
 
     # -- key handling ------------------------------------------------------
 

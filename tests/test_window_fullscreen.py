@@ -53,6 +53,13 @@ class _FakeWidget:
     def __init__(self, visible=True, height=0):
         self._visible = visible
         self.height = height
+        self.css_classes = set()
+
+    def add_css_class(self, name):
+        self.css_classes.add(name)
+
+    def remove_css_class(self, name):
+        self.css_classes.discard(name)
 
     def get_height(self):
         return self.height if self._visible else 0
@@ -1304,6 +1311,80 @@ def test_macos_builds_no_bespoke_window_control_overlay(monkeypatch):
     fc.on_pointer_motion(None, 100.0, 0.0)
 
     assert win._global_overlay.overlays == []
+
+
+def _spacer_class():
+    from sshpilot import window_fullscreen as wf
+    return wf.MACOS_FULLSCREEN_SPACER_CSS_CLASS
+
+
+def test_macos_fullscreen_header_bar_gets_the_menu_bar_spacer(monkeypatch):
+    """In native macOS fullscreen the auto-hidden menu bar reveals *over* the
+    window's top edge, so the header bar must reserve its height while
+    fullscreen and give it back on exit."""
+    win, fc = _window(monkeypatch, macos=True)
+    spacer = _spacer_class()
+    assert spacer not in win.header_bar.css_classes
+
+    _f11(fc)
+    assert fc.active is True
+    assert spacer in win.header_bar.css_classes
+
+    _f11(fc)
+    assert fc.active is False
+    assert spacer not in win.header_bar.css_classes
+
+
+def test_macos_start_fullscreen_keeps_the_spacer_on_the_pinned_header(monkeypatch):
+    """Start keeps its chrome pinned while fullscreen, so the spacer must be
+    there too — the pinned header bar is exactly what the revealed menu bar
+    would cover."""
+    win, fc = _window(monkeypatch, macos=True)
+    _f11(fc)
+
+    assert fc.presentation == 'start'
+    assert win.header_shown() is True
+    assert _spacer_class() in win.header_bar.css_classes
+
+
+def test_macos_terminal_fullscreen_spacer_reveals_with_the_chrome(monkeypatch):
+    """Immersive mode hides the bars, but the spacer must be in place for the
+    reveal: the revealed header bar sits at the window's top edge."""
+    win, fc = _window(monkeypatch, macos=True)
+    win.open_terminal('A')
+    _f11(fc)
+    assert _spacer_class() in win.header_bar.css_classes
+
+    fc.on_pointer_motion(None, 100.0, 0.0)
+    assert win.header_shown() is True
+
+    _f11(fc)
+    assert _spacer_class() not in win.header_bar.css_classes
+
+
+def test_non_macos_fullscreen_adds_no_menu_bar_spacer(monkeypatch):
+    """The spacer is macOS-only: other platforms have no menu bar to reveal
+    over the window's top edge."""
+    win, fc = _window(monkeypatch, macos=False)
+    _f11(fc)
+    assert _spacer_class() not in win.header_bar.css_classes
+    win.open_terminal('A')
+    assert _spacer_class() not in win.header_bar.css_classes
+
+
+def test_macos_externally_adopted_fullscreen_gets_the_spacer(monkeypatch):
+    """Adopted fullscreen (macOS's own control) applies and removes the
+    spacer like any other entry and exit."""
+    win, fc = _window(monkeypatch, macos=True)
+    spacer = _spacer_class()
+
+    win.set_fullscreen_externally(True)
+    assert fc.active is True
+    assert spacer in win.header_bar.css_classes
+
+    win.set_fullscreen_externally(False)
+    assert fc.active is False
+    assert spacer not in win.header_bar.css_classes
 
 
 def test_macos_exit_restores_chrome_exactly(monkeypatch):
