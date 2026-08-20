@@ -519,6 +519,155 @@ def test_terminate_refuses_daemon_control_without_stop_daemon():
 
 
 # ---------------------------------------------------------------------------
+# Regression: socket loss is not daemon loss when an identity was captured.
+#
+# A force-stopped daemon can close its Unix socket and then take a short while
+# to exit. The waiter must keep polling the captured ProcessIdentity instead of
+# returning success the moment the socket disappears — otherwise final
+# verification correctly spots the still-running PID and refuses the quit, the
+# intermittent "first quit fails, second succeeds" bug.
+# ---------------------------------------------------------------------------
+
+
+def _alive_identity(pid=4242):
+    return types.SimpleNamespace(pid=pid, matches_live_process=lambda: True)
+
+
+def test_wait_for_daemon_termination_does_not_succeed_on_socket_loss_while_identity_lives(
+    tmp_path,
+):
+    """The exact regression: socket gone, captured identity still alive.
+
+    The waiter must NOT return success just because the socket disappeared.
+    """
+    from sshpilot.daemon_quit_policy import wait_for_daemon_termination
+
+    sock = tmp_path / "sshpilotd.sock"
+    sock.write_text("")
+    sock.unlink()  # socket disappears first; the daemon process lingers
+
+    errors = wait_for_daemon_termination(
+        daemon_identity=_alive_identity(),
+        socket_path=sock,
+        timeout=0.15,
+        poll_interval=0.05,
+    )
+    assert errors, "socket loss alone must not count as daemon termination"
+    assert "daemon process still running" in errors[0]
+
+
+def test_wait_for_daemon_termination_waits_for_identity_after_socket(
+    monkeypatch, tmp_path
+):
+    """Identity exits shortly after the socket: poll 1-2 alive, poll 3 dead.
+
+    Expected: the waiter keeps polling past socket loss and succeeds once the
+    captured identity is gone, without escalation.
+    """
+    import sshpilot.daemon_quit_policy as quit_policy
+    from sshpilot.daemon_quit_policy import wait_for_daemon_termination
+
+    sock = tmp_path / "sshpilotd.sock"  # never created: already gone
+    checks = {"n": 0}
+
+    class _Identity:
+        pid = 4242
+
+        def matches_live_process(self):
+            checks["n"] += 1
+            return checks["n"] < 3  # alive for the first two polls, dead on the 3rd
+
+    # Drive the poll loop deterministically: no real sleeping, and a clock that
+    # never reaches the deadline, so the loop exits only via the identity dying.
+    monkeypatch.setattr(quit_policy.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(quit_policy.time, "monotonic", lambda: 0.0)
+
+    errors = wait_for_daemon_termination(
+        daemon_identity=_Identity(),
+        socket_path=sock,
+        timeout=1.0,
+        poll_interval=0.05,
+    )
+    assert errors == []
+    assert checks["n"] >= 3, "the waiter must keep polling until the identity is gone"
+
+
+def test_wait_for_daemon_termination_times_out_when_identity_stays_alive(tmp_path):
+    """Identity alive through the whole timeout → a termination error.
+
+    That error is what sends apply_terminate_all() into force_daemon_exit().
+    """
+    from sshpilot.daemon_quit_policy import wait_for_daemon_termination
+
+    sock = tmp_path / "sshpilotd.sock"
+    sock.write_text("")
+    sock.unlink()
+
+    errors = wait_for_daemon_termination(
+        daemon_identity=_alive_identity(),
+        socket_path=sock,
+        timeout=0.15,
+        poll_interval=0.05,
+    )
+    assert errors and "daemon process still running" in errors[0]
+
+
+def test_wait_for_daemon_termination_without_identity_keeps_socket_only_behavior(
+    tmp_path,
+):
+    """No captured identity: the pre-fix socket-only semantics are unchanged."""
+    from sshpilot.daemon_quit_policy import wait_for_daemon_termination
+
+    sock = tmp_path / "sshpilotd.sock"
+    sock.write_text("")
+    sock.unlink()
+
+    # Socket gone, nothing else known → immediate success (unchanged).
+    assert (
+        wait_for_daemon_termination(socket_path=sock, timeout=0.15, poll_interval=0.05)
+        == []
+    )
+
+    # Socket present, nothing else known → timeout mentioning the socket.
+    sock.write_text("")
+    errors = wait_for_daemon_termination(
+        socket_path=sock, timeout=0.15, poll_interval=0.05
+    )
+    assert errors and "socket" in errors[0]
+
+
+def test_apply_terminate_all_passes_captured_identity_to_waiter(monkeypatch):
+    """The identity captured before shutdown must reach the termination waiter."""
+    import sshpilot.daemon_quit_policy as quit_policy
+    import sshpilot.shutdown as shutdown_mod
+
+    monkeypatch.setattr(quit_policy, "_run_in_background", lambda fn: fn())
+    monkeypatch.setattr(quit_policy, "_invoke_on_main", lambda fn: fn())
+    monkeypatch.setattr(quit_policy, "terminate_all_daemon_work", lambda _c: [])
+    monkeypatch.setattr(quit_policy, "verify_quit_teardown", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        shutdown_mod, "cleanup_and_quit", lambda _window: None
+    )
+
+    captured = object()
+    monkeypatch.setattr(quit_policy, "capture_daemon_identity", lambda _s: captured)
+    monkeypatch.setattr(
+        quit_policy, "resolve_daemon_socket_path", lambda _c: "/tmp/x.sock"
+    )
+
+    seen = {}
+
+    def _fake_wait(**kwargs):
+        seen.update(kwargs)
+        return []
+
+    monkeypatch.setattr(quit_policy, "wait_for_daemon_termination", _fake_wait)
+
+    quit_policy.apply_terminate_all(_gated_window())
+    assert seen.get("daemon_identity") is captured
+
+
+# ---------------------------------------------------------------------------
 # Exit is gated on verification, not on teardown having been attempted.
 # ---------------------------------------------------------------------------
 

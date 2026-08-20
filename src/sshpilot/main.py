@@ -1300,6 +1300,7 @@ class SshPilotApplication(Adw.Application):
         errors = wait_for_daemon_termination(
             client=None,
             daemon_process=daemon_process,
+            daemon_identity=daemon_identity,
             socket_path=socket_path,
             timeout=5.0,
         )

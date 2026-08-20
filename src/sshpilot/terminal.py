@@ -45,6 +45,29 @@ from .core.connection_evidence import classify_connection_evidence
 _terminal_padding_css_installed = False
 
 
+def sanitize_local_shell_env(env):
+    """Return a copy of *env* stripped of the launching terminal's identity.
+
+    sshPilot inherits the environment of the terminal it was launched from.
+    On macOS that includes ``TERM_PROGRAM`` / ``TERM_PROGRAM_VERSION`` /
+    ``TERM_SESSION_ID`` pointing at Apple Terminal, so the embedded local
+    shell would believe it is running inside Apple Terminal and macOS loads
+    its shell-session integration — printing a ``Restored session: ...``
+    banner sshPilot never asked for. The shell sshPilot spawns is its own, so
+    it is re-identified as ``sshPilot`` instead.
+
+    The input dict is never mutated. Non-macOS hosts are returned as an
+    unchanged copy, so no unrelated Linux behavior changes.
+    """
+    sanitized = dict(env)
+    if not is_macos():
+        return sanitized
+    sanitized.pop("TERM_PROGRAM_VERSION", None)
+    sanitized.pop("TERM_SESSION_ID", None)
+    sanitized["TERM_PROGRAM"] = "sshPilot"
+    return sanitized
+
+
 def _ensure_terminal_padding_css() -> None:
     global _terminal_padding_css_installed
     if _terminal_padding_css_installed:
@@ -2797,7 +2820,9 @@ class TerminalWidget(Gtk.Box):
             # provider so child processes (e.g. ssh run from this shell) reach the
             # user's ssh-agent via the same seam as SSH connections.
             from .identity import get_identity_manager
-            env = get_identity_manager().apply_selected_to_env(os.environ.copy())
+            env = sanitize_local_shell_env(
+                get_identity_manager().apply_selected_to_env(os.environ.copy())
+            )
             # Set TERM to a proper value only if missing or set to "dumb"
             if 'TERM' not in env or env.get('TERM', '').lower() == 'dumb':
                 env['TERM'] = 'xterm-256color'
@@ -2838,7 +2863,9 @@ class TerminalWidget(Gtk.Box):
         # Route env injection through the selected identity provider (one seam for all
         # SSH_AUTH_SOCK injection); idempotent over the inherited environment.
         from .identity import get_identity_manager
-        env = get_identity_manager().apply_selected_to_env(os.environ.copy())
+        env = sanitize_local_shell_env(
+            get_identity_manager().apply_selected_to_env(os.environ.copy())
+        )
 
         # Determine the user's preferred shell
         shell = None
