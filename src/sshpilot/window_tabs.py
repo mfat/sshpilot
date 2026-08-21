@@ -132,7 +132,8 @@ class WindowTabsMixin:
             if page and not self._is_start_tab_page(page):
                 self._show_tab_rename_popover(page, x, y)
             return
-        if kind == 'empty':
+        if (kind == 'empty'
+                and not getattr(self, '_tab_bar_in_custom_titlebar', False)):
             try:
                 self.terminal_manager.show_local_terminal()
             except Exception as exc:

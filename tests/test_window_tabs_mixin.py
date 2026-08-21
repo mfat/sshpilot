@@ -229,6 +229,25 @@ def test_tab_bar_double_click_empty_opens_local_terminal():
     assert calls == ['local']
 
 
+def test_custom_titlebar_double_click_empty_does_not_open_local_terminal():
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    calls = []
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self._tab_bar_in_custom_titlebar = True
+            self.tab_bar = types.SimpleNamespace()
+            empty = _FakeWidget(css_name='tabbox', parent=self.tab_bar)
+            self.tab_bar.pick = lambda x, y, flags: empty
+            self.terminal_manager = types.SimpleNamespace(
+                show_local_terminal=lambda: calls.append('local')
+            )
+
+    Stub()._on_tab_bar_pressed(None, 2, 100, 5)
+    assert calls == []
+
+
 def test_tab_bar_double_click_close_button_does_not_open_local():
     from sshpilot.window_tabs import WindowTabsMixin
 
