@@ -1323,6 +1323,12 @@ class WindowTabsMixin:
                 self.tab_button.set_visible(show_tabs)
             if hasattr(self, 'tab_bar'):
                 self.tab_bar.set_visible(show_tabs)
+            # The tab bar occupies the custom title bar's centre stack. When
+            # it disappears, restore the minimal-sidebar title (or the empty
+            # draggable centre) instead of leaving an invisible child selected.
+            mover = getattr(self, '_move_title_to_content_header', None)
+            if callable(mover):
+                mover(bool(getattr(self, '_sidebar_minimal', False)))
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
 

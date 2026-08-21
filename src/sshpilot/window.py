@@ -185,10 +185,10 @@ def _ensure_tips_banner_css() -> None:
     _tips_banner_css_installed = True
 
 
-def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) -> None:
+def maybe_set_native_controls(widget: Gtk.Widget, value: bool = False) -> None:
     """
-    Safely set native controls on header bar, with fallback for older GTK versions.
-    Only affects macOS and requires GTK 4.18+. GTK will handle title buttons by default.
+    Safely configure a title-button widget, with fallback for older GTK versions.
+    Only affects macOS and requires GTK 4.18+.
     """
     # Only exists in GTK 4.18+
     is_418_plus = (
@@ -198,7 +198,7 @@ def maybe_set_native_controls(header_bar: Gtk.HeaderBar, value: bool = False) ->
 
     if sys.platform == "darwin" and is_418_plus:
         try:
-            header_bar.set_use_native_controls(value)
+            widget.set_use_native_controls(value)
         except AttributeError:
             pass  # extra safety in case of odd bindings
 _get_connection_host = get_connection_host
@@ -1875,7 +1875,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def setup_ui(self):
         """Set up the user interface"""
         # Outer skeleton (ToastOverlay -> main_box) is in the template; the split
-        # view, header bar, banners, sidebar, and tabs are appended below.
+        # view, custom title bar, banners, sidebar, and tabs are appended below.
         main_box = self.main_box
 
         # Create update notification banner (hidden by default)
@@ -1951,22 +1951,49 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tips_revealer.set_child(tips_body)
         self.tips_banner_container = self.tips_revealer
 
-        # Create header bar (content pane — window controls on the right with split views)
-        self.header_bar = Adw.HeaderBar()
-        self.header_bar.add_css_class('flat')
-        self.header_bar.set_show_start_title_buttons(True)
-        self.header_bar.set_show_end_title_buttons(True)
-        # Empty title so Adw doesn't repeat the window title beside tab actions.
-        # In minimal-strip mode the "SSH Pilot" title moves here (the sidebar
-        # header is too narrow) — see _apply_sidebar_minimal_chrome.
+        # Custom one-row title bar. Gtk.WindowHandle supplies window dragging,
+        # double-click maximise and the title-bar context menu; WindowControls
+        # on both sides follow the desktop's configured button placement. The
+        # centre stack shows either the full-width tab bar, the minimal-sidebar
+        # title, or an empty draggable region.
+        self.header_bar = Gtk.WindowHandle()
+        self.header_bar.add_css_class('content-titlebar')
+        self._content_header_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=0,
+        )
+        self._content_header_box.add_css_class('toolbar')
+
+        self._window_controls_start = Gtk.WindowControls.new(Gtk.PackType.START)
+        self._window_controls_end = Gtk.WindowControls.new(Gtk.PackType.END)
+        maybe_set_native_controls(self._window_controls_start, False)
+        maybe_set_native_controls(self._window_controls_end, False)
+
+        self._headerbar_start_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=0,
+        )
+        self._headerbar_end_box = Gtk.Box(
+            orientation=Gtk.Orientation.HORIZONTAL,
+            spacing=0,
+        )
+
+        self._content_title_stack = Gtk.Stack()
+        self._content_title_stack.set_hexpand(True)
+        self._content_title_stack.set_transition_type(Gtk.StackTransitionType.NONE)
         self._content_empty_title = Gtk.Box()
-        self.header_bar.set_title_widget(self._content_empty_title)
+        self._content_title_stack.add_named(self._content_empty_title, 'empty')
+        self._content_title_stack.set_visible_child_name('empty')
 
-        # Safely configure native window controls (macOS only, GTK 4.18+)
-        maybe_set_native_controls(self.header_bar, False)
+        self._content_header_box.append(self._window_controls_start)
+        self._content_header_box.append(self._headerbar_start_box)
+        self._content_header_box.append(self._content_title_stack)
+        self._content_header_box.append(self._headerbar_end_box)
+        self._content_header_box.append(self._window_controls_end)
+        self.header_bar.set_child(self._content_header_box)
+        self._tab_bar_in_custom_titlebar = True
 
-
-        # Add sidebar toggle button to the left side of header bar
+        # Add sidebar toggle button to the title bar's start controls.
         self.sidebar_toggle_button = Gtk.ToggleButton()
         self.sidebar_toggle_button.set_can_focus(False)  # Remove focus from sidebar toggle
 
@@ -1984,7 +2011,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Button should not appear pressed when sidebar is visible
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
-        self.header_bar.pack_start(self.sidebar_toggle_button)
+        self._headerbar_start_box.append(self.sidebar_toggle_button)
 
         # Add local terminal button right after the sidebar toggle
         self.local_terminal_button = Gtk.Button()
@@ -1995,14 +2022,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
-        self.header_bar.pack_start(self.local_terminal_button)
+        self._headerbar_start_box.append(self.local_terminal_button)
         # Toggled by Preferences ▸ Interface ▸ Header Bar.
         self._headerbar_local_terminal_button = self.local_terminal_button
 
-        # Add tab button to header bar (will be created later in setup_content_area)
-        # This will be added after the tab view is created
-
-        # Add header bar to main container only when using traditional split views
+        # Add the custom title bar directly for the legacy split fallback.
         if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
             main_box.append(self.header_bar)
 
@@ -2537,7 +2561,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show = not minimal
         # The "SSH Pilot" title label has a natural min width that floors how
         # narrow the sidebar can get; hide it so the strip can shrink fully, and
-        # move the title to the content header bar instead.
+        # move the title to the content title bar instead.
         title = getattr(self, '_sidebar_title_label', None)
         if title is not None:
             try:
@@ -2572,18 +2596,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
 
     def _move_title_to_content_header(self, minimal: bool) -> None:
-        """Put the "SSH Pilot" title in the content header while the sidebar is a
-        strip (its own header is too narrow), and clear it again when full."""
-        hb = getattr(self, 'header_bar', None)
-        if hb is None:
+        """Select tabs, the minimal-sidebar title, or the empty drag region."""
+        stack = getattr(self, '_content_title_stack', None)
+        if stack is None:
             return
         if minimal and not hasattr(self, '_content_title_label'):
             self._content_title_label = Gtk.Label(label='SSH Pilot')
             self._content_title_label.add_css_class('title')
+            stack.add_named(self._content_title_label, 'title')
         title = getattr(self, '_content_title_label', None)
-        empty = getattr(self, '_content_empty_title', None)
+        tab_bar = getattr(self, 'tab_bar', None)
         try:
-            hb.set_title_widget(title if minimal else empty)
+            if tab_bar is not None and self.has_user_tabs():
+                stack.set_visible_child(tab_bar)
+            else:
+                stack.set_visible_child(
+                    title if minimal and title is not None
+                    else self._content_empty_title
+                )
         except Exception:
             pass
 
@@ -3184,8 +3214,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_view(self.tab_view)
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
-        # Blend with the flat header bar above it (no headerbar fill / seam).
+        self.tab_bar.set_hexpand(True)
+        # The tab bar fills the custom title bar's centre stack. "inline"
+        # avoids drawing another toolbar surface inside the WindowHandle row.
         self.tab_bar.add_css_class('inline')
+        self._content_title_stack.add_named(self.tab_bar, 'tabs')
 
         # H/V layout toggles after the last tab (tab bar end action)
         from .split_view import create_layout_toggle_buttons
@@ -3228,7 +3261,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Create tab content box
         self.tab_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        self.tab_content_box.append(self.tab_bar)
         self.tab_content_box.append(self.tab_view)
         if hasattr(self.tab_view, 'add_css_class'):
             self.tab_view.add_css_class('terminal-bg')
@@ -3246,7 +3278,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.split_view_button.set_tooltip_text(_('New Split View'))
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
-        self.header_bar.pack_start(self.split_view_button)
+        self._headerbar_start_box.append(self.split_view_button)
 
         # Command blocks toggle button (right sidebar)
         from sshpilot import icon_utils as _cmd_icon_utils
@@ -3271,7 +3303,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._cmd_blocks_toggle_btn.connect('toggled', _on_cmd_toggle_btn_toggled)
 
         # Fullscreen toggle. Hidden outside fullscreen so normal chrome is
-        # unchanged; shown while fullscreen so the revealed header bar carries
+        # unchanged; shown while fullscreen so the revealed title bar carries
         # its own way out (no bespoke overlay button is needed).
         self.fullscreen_button = Gtk.Button()
         _cmd_icon_utils.set_button_icon(self.fullscreen_button, 'view-restore-symbolic')
@@ -3281,11 +3313,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # button and the shortcut can never drift apart.
         self.fullscreen_button.set_action_name(f'win.{TOGGLE_FULLSCREEN_ACTION}')
         self._update_fullscreen_button_tooltip()
-        self.header_bar.pack_end(self.fullscreen_button)
+        self._headerbar_end_box.append(self.fullscreen_button)
 
-        self.header_bar.pack_end(self._cmd_blocks_toggle_btn)
-        self.header_bar.pack_end(self._headerbar_theme_menu_button)
-        self.header_bar.pack_end(self.menu_button)
+        self._headerbar_end_box.append(self._cmd_blocks_toggle_btn)
+        self._headerbar_end_box.append(self._headerbar_theme_menu_button)
+        self._headerbar_end_box.append(self.menu_button)
         self._sync_theme_menu_button()
 
         # Create broadcast command banner (custom banner-like widget)
@@ -3372,18 +3404,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         if HAS_OVERLAY_SPLIT:
             content_box = Adw.ToolbarView()
-            # Kept on the window: terminal fullscreen folds the tab bar into
-            # this view's top-bar group and drives its reveal/extend properties
-            # to overlay the chrome (see window_fullscreen.py).
+            # Kept on the window: terminal fullscreen drives this view's
+            # reveal/extend properties to overlay the custom tab/title bar
+            # chrome (see window_fullscreen.py).
             self._content_toolbar_view = content_box
             content_box.add_top_bar(self.header_bar)
-            # Create content wrapper with banner below header bar
+            # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.tab_overview)
-            # Wrap only the content area (below the header bar) so the command
+            # Wrap only the content area (below the title bar) so the command
             # blocks sidebar opens inside the terminal pane, not across the full window.
             self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
             content_box.set_content(
@@ -3397,7 +3429,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             content_box = Adw.ToolbarView()
             self._content_toolbar_view = content_box
             content_box.add_top_bar(self.header_bar)
-            # Create content wrapper with banner below header bar
+            # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
             content_wrapper.append(self.tips_banner_container)

@@ -729,6 +729,20 @@ def test_terminal_fullscreen_moves_both_bars_into_one_overlay_surface():
     assert toolbar.get_reveal_top_bars() is False
 
 
+def test_tab_bar_already_in_custom_titlebar_is_not_relocated_or_double_measured():
+    """The current one-row chrome keeps tabs inside its WindowHandle."""
+    win, fc = _window()
+    win._tab_bar_in_custom_titlebar = True
+    win.tab_content_box.remove(win.tab_bar)
+    win.open_terminal('A')
+
+    _f11(fc)
+
+    assert win._content_toolbar_view.top_bars == [win.header_bar]
+    assert fc._tab_bar_relocated is False
+    assert fc._reveal_region_height() == win.header_bar.height
+
+
 def test_revealed_chrome_is_opaque_over_terminal_output():
     """Flat top bars go transparent once the content extends under them.
 
