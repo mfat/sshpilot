@@ -1,0 +1,189 @@
+name: Standalone Flatpak (full access + bundled OpenSSH)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build x86_64 bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+
+    steps:
+      - name: Resolve latest SSH Pilot main
+        id: main
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHA="$(git ls-remote https://github.com/mfat/sshpilot.git refs/heads/main | awk '{print $1}')"
+          test -n "$SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Latest main: $SHA"
+
+      - name: Checkout current Flathub manifest
+        uses: actions/checkout@v4
+        with:
+          repository: flathub/io.github.mfat.sshpilot
+          ref: master
+          path: flatpak
+
+      - name: Prepare standalone test manifest
+        env:
+          SOURCE_SHA: ${{ steps.main.outputs.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import textwrap
+
+          manifest = pathlib.Path("flatpak/io.github.mfat.sshpilot.yaml")
+          text = manifest.read_text()
+
+          # Always build the latest commit on SSH Pilot's main branch, not the
+          # commit containing this workflow and not the release currently
+          # pinned by Flathub.
+          source_pattern = re.compile(
+              r'(url:\s*"?https://github\.com/mfat/sshpilot\.git"?[ \t]*\n)'
+              r'(?:[ \t]*#tag:[^\n]*\n)?'
+              r'([ \t]*)commit:[ \t]*[0-9a-fA-F]+'
+          )
+          source_sha = os.environ["SOURCE_SHA"]
+
+          def replace_source(match):
+              indent = match.group(2)
+              return f"{match.group(1)}{indent}commit: {source_sha}"
+
+          text, count = source_pattern.subn(replace_source, text, count=1)
+          if count != 1:
+              raise SystemExit("Could not pin the SSH Pilot module to latest main")
+
+          # Standalone diagnostic bundle only: expose host files and all
+          # devices. This intentionally does not modify the published Flathub
+          # manifest or represent the permissions intended for release.
+          if "  - --device=all\n" not in text:
+              if "  - --device=dri\n" not in text:
+                  raise SystemExit("Expected --device=dri in the Flathub manifest")
+              text = text.replace("  - --device=dri\n", "  - --device=all\n", 1)
+
+          if "  - --filesystem=host\n" not in text:
+              if "  - --filesystem=~/.ssh:create\n" in text:
+                  text = text.replace(
+                      "  - --filesystem=~/.ssh:create\n",
+                      "  - --filesystem=host\n",
+                      1,
+                  )
+              else:
+                  marker = "  - --device=all\n"
+                  text = text.replace(marker, marker + "  - --filesystem=host\n", 1)
+
+          # Force executable-name resolution to prefer the application prefix.
+          if "  - --env=PATH=/app/bin:/usr/bin\n" not in text:
+              marker = "  - --filesystem=host\n"
+              text = text.replace(
+                  marker,
+                  marker + "  - --env=PATH=/app/bin:/usr/bin\n",
+                  1,
+              )
+
+          # Build a complete, matched FIDO-capable OpenSSH stack. The GNOME 50
+          # runtime currently provides ssh/ssh-keygen but not ssh-sk-helper.
+          # Bundle libcbor + libfido2 first, then OpenSSH 10.4p1. OpenSSH finds
+          # libfido2 at configure time and builds /app/libexec/ssh-sk-helper.
+          openssh_modules = textwrap.dedent(r'''
+            - name: libcbor
+              buildsystem: cmake-ninja
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DBUILD_SHARED_LIBS=ON
+                - -DWITH_EXAMPLES=OFF
+                - -DWITH_TESTS=OFF
+              sources:
+                - type: git
+                  url: https://github.com/PJK/libcbor.git
+                  tag: v0.13.0
+
+            - name: libfido2
+              buildsystem: cmake-ninja
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DBUILD_EXAMPLES=OFF
+                - -DBUILD_MANPAGES=OFF
+                - -DBUILD_STATIC_LIBS=OFF
+                - -DBUILD_TOOLS=ON
+                - -DNFC_LINUX=OFF
+              sources:
+                - type: git
+                  url: https://github.com/Yubico/libfido2.git
+                  tag: 1.17.0
+
+            - name: openssh
+              buildsystem: simple
+              build-commands:
+                - >-
+                  ./configure
+                  --prefix=/app
+                  --sysconfdir=/app/etc/ssh
+                  --libexecdir=/app/libexec
+                  --with-privsep-path=/app/var/empty
+                  --without-pam
+                  --without-kerberos5
+                  --disable-strip
+                - make -j${FLATPAK_BUILDER_N_JOBS:-2}
+                - make install-nokeys
+                - test -x /app/bin/ssh
+                - test -x /app/bin/ssh-keygen
+                - test -x /app/bin/scp
+                - test -x /app/bin/sftp
+                - test -x /app/bin/ssh-agent
+                - test -x /app/bin/ssh-add
+                - test -x /app/libexec/ssh-sk-helper
+                - ldd /app/libexec/ssh-sk-helper | grep -q libfido2
+                - /app/bin/ssh -V
+              sources:
+                - type: git
+                  url: https://github.com/openssh/openssh-portable.git
+                  tag: V_10_4_P1
+          ''').strip("\n")
+
+          # The Flathub manifest uses a top-level YAML sequence indented by two
+          # spaces under modules:. Keep the injected modules at that exact level.
+          openssh_modules = textwrap.indent(openssh_modules, "  ")
+
+          modules_marker = "modules:\n"
+          if modules_marker not in text:
+              raise SystemExit("Could not find modules: in Flathub manifest")
+          text = text.replace(
+              modules_marker,
+              modules_marker + openssh_modules + "\n\n",
+              1,
+          )
+
+          manifest.write_text(text)
+          PY
+
+          echo "SSH Pilot main commit: $SOURCE_SHA"
+          echo "Standalone permissions:"
+          grep -E -- '--device=|--filesystem=|--env=PATH=' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- '  - --device=all' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- '  - --filesystem=host' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- '  - name: openssh' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- 'tag: V_10_4_P1' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- 'tag: 1.17.0' flatpak/io.github.mfat.sshpilot.yaml
+
+      - name: Build standalone Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: sshpilot-full-access-openssh.flatpak
+          manifest-path: flatpak/io.github.mfat.sshpilot.yaml
+          cache-key: sshpilot-full-access-openssh-${{ steps.main.outputs.sha }}
+          arch: x86_64
+          upload-artifact: true
+          artifact-name: sshpilot-full-access-openssh-x86_64-${{ steps.main.outputs.sha }}

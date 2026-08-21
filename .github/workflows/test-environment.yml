@@ -41,9 +41,8 @@ jobs:
         # ~5k items that's thousands of resolve() syscalls -- slow enough on a
         # regular disk-backed /tmp to blow the job timeout.
         # virtual_fido requires runner-level UHID/hidraw setup and an
-        # explicitly built pando85 binary; it is not claimed by this
-        # ordinary GitHub-hosted gate. It has no hosted runner job because
-        # ubuntu-latest does not provide the required UHID kernel module.
+        # explicitly built pando85 binary; the dedicated job below provisions
+        # that capability and runs it independently.
         run: |
           docker run --rm \
             --network=host \
@@ -97,37 +96,6 @@ jobs:
 
       - name: Build SSH Pilot test image
         run: docker build -f tests/test-environment.Dockerfile -t sshpilot-test-env .
-
-      - name: Record narrower device probes
-        shell: bash
-        run: |
-          set -euo pipefail
-          probe() {
-            local name="$1"
-            shift
-            echo "===== $name ====="
-            set +e
-            docker run --rm \
-              --network=host \
-              --user root \
-              "$@" \
-              -v "$PANDO_BIN":/usr/local/bin/pando-auth:ro \
-              sshpilot-test-env \
-              sh -ceu '
-                /usr/local/bin/pando-auth >/tmp/pando.log 2>&1 &
-                pid=$!
-                trap "kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true" EXIT
-                sleep 5
-                ls -l /dev/uhid /dev/hidraw* 2>&1 || true
-                fido2-token -L 2>&1 || true
-              '
-            echo "probe status: $?"
-            set -e
-          }
-          probe "UHID only" --device=/dev/uhid
-          probe "UHID plus hidraw cgroup, without /dev bind" \
-            --device=/dev/uhid \
-            --device-cgroup-rule="c ${HIDRAW_MAJOR}:* rwm"
 
       - name: Verify virtual HID inside test container
         shell: bash
