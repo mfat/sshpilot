@@ -15,11 +15,13 @@ effect was re-rendering the sidebar rows, which is what ``disconnect()`` asks
 the window for now.
 """
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
 pytest.importorskip("gi")
 
+from sshpilot.connection_model import ConnectionState
 from sshpilot.terminal import TerminalWidget
 
 
@@ -82,3 +84,61 @@ def test_repaint_never_raises_out_of_disconnect(monkeypatch):
     terminal = _terminal(root, SimpleNamespace(nickname="host"))
 
     assert terminal._repaint_connection_status(root) is None
+
+
+def _exited_terminal(root):
+    terminal = TerminalWidget.__new__(TerminalWidget)
+    terminal.connection = SimpleNamespace(hostname="example.test")
+    terminal.connection_manager = _Store()
+    terminal.connection_state = ConnectionState.CONNECTED
+    terminal.connection_state_reason = ""
+    terminal.is_connected = True
+    terminal.last_error_message = None
+    terminal.process_pid = None
+    terminal.backend = None
+    terminal._connect_grace_timer_id = None
+    terminal.get_root = lambda: root
+    terminal.emit = Mock()
+    terminal._set_connecting_overlay_visible = Mock()
+    terminal._record_error_detail = Mock()
+    terminal._set_disconnected_banner_visible = Mock()
+    return terminal
+
+
+def test_child_exit_cleanup_accepts_read_only_presentation_store(monkeypatch):
+    """An unexpected child exit must still reach its reconnect UI."""
+    monkeypatch.setattr(
+        "sshpilot.terminal.GLib.idle_add",
+        lambda callback, *args: callback(*args),
+    )
+    terminal = _exited_terminal(None)
+    terminal._classify_exit = Mock(
+        return_value=(ConnectionState.DISCONNECTED, "Connection lost")
+    )
+
+    terminal._handle_child_exit_cleanup(256)
+
+    assert terminal.connection_state is ConnectionState.DISCONNECTED
+    assert terminal.is_connected is False
+    terminal.emit.assert_called_once_with("connection-lost")
+    terminal._set_disconnected_banner_visible.assert_called_once_with(
+        True, "Connection lost"
+    )
+
+
+def test_clean_child_exit_accepts_read_only_presentation_store(monkeypatch):
+    """A clean child exit must close its tab without a legacy state API."""
+    monkeypatch.setattr(
+        "sshpilot.terminal.GLib.idle_add",
+        lambda callback, *args: callback(*args),
+    )
+    page = object()
+    tab_view = SimpleNamespace(close_page=Mock(), get_page=Mock(return_value=page))
+    root = SimpleNamespace(tab_view=tab_view)
+    terminal = _exited_terminal(root)
+
+    terminal._handle_child_exit_cleanup(0)
+
+    assert terminal.connection_state is ConnectionState.DISCONNECTED
+    assert terminal.is_connected is False
+    tab_view.close_page.assert_called_once_with(page)
