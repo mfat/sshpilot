@@ -261,8 +261,8 @@ class WindowTabsMixin:
         menu.append_section(None, sec2)
 
         sec3 = Gio.Menu()
-        sec3.append_item(_item(_('Side by Side'), 'tabmenu-layout-horizontal'))
-        sec3.append_item(_item(_('Top / Bottom'), 'tabmenu-layout-vertical'))
+        sec3.append_item(_item(_('Split Side by Side'), 'tabmenu-layout-horizontal'))
+        sec3.append_item(_item(_('Split Top and Bottom'), 'tabmenu-layout-vertical'))
         sec3.append_item(_item(_('Default layout'), 'tabmenu-layout-default'))
         sec3.append_item(_item(_('Compact layout'), 'tabmenu-layout-compact'))
         menu.append_section(None, sec3)

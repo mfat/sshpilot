@@ -9,3 +9,11 @@ def test_tab_bar_end_action_contains_only_tab_overview_button():
     assert "set_end_action_widget(self.tab_button)" in text
     assert "create_layout_toggle_buttons" not in text
     assert "layout_end_box" not in text
+
+
+def test_terminal_context_menu_split_labels_are_action_oriented():
+    with open("src/sshpilot/window_tabs.py", encoding="utf-8") as handle:
+        text = handle.read()
+
+    assert "_('Split Side by Side')" in text
+    assert "_('Split Top and Bottom')" in text

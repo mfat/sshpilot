@@ -16,11 +16,29 @@ class _Menu:
     def append_submenu(self, label, submenu):
         self.entries.append(('submenu', label, submenu))
 
+    def append_item(self, item):
+        self.entries.append(('item-object', item))
+
+
+class _MenuItem:
+    def __init__(self):
+        self.attributes = {}
+
+    def set_attribute_value(self, name, value):
+        self.attributes[name] = value
+
+
+class _StringVariant:
+    def __init__(self, _type, value):
+        self.value = value
+
 
 def test_view_submenu_exposes_titlebar_commands(monkeypatch):
     from sshpilot import window as window_module
 
     monkeypatch.setattr(window_module.Gio, 'Menu', _Menu)
+    monkeypatch.setattr(window_module.Gio, 'MenuItem', _MenuItem)
+    monkeypatch.setattr(window_module.GLib, 'Variant', _StringVariant)
     monkeypatch.setattr(window_module, 'should_hide_file_manager_options', lambda: True)
 
     stub = types.SimpleNamespace(
@@ -38,12 +56,17 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
     view_menu = next(submenu for _kind, label, submenu in submenus if label == 'View')
 
     assert view_menu.entries == [
+        ('item', 'Toggle Full Screen', 'win.toggle-fullscreen'),
         ('item', 'Sidebar Toggle Button', 'win.headerbar-sidebar-toggle'),
         ('item', 'Split View Button', 'win.headerbar-split-view'),
         ('item', 'Commands Button', 'win.headerbar-commands'),
         ('item', 'Theme Menu', 'win.headerbar-theme-menu'),
         ('item', 'Local Terminal Button', 'win.headerbar-local-terminal'),
     ]
+
+    first_section = menu.entries[0][2]
+    custom_item = first_section.entries[0][1]
+    assert custom_item.attributes['custom'].value == 'theme-selector'
 
     root_items = [
         entry

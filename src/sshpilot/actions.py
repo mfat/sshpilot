@@ -1393,7 +1393,14 @@ def register_window_actions(window):
 
     # Application theme (header bar menu)
     if hasattr(window, '_apply_app_theme'):
-        theme_action = Gio.SimpleAction.new('set-app-theme', GLib.VariantType.new('s'))
+        saved_theme = str(window.config.get_setting('app-theme', 'default'))
+        if saved_theme not in {'default', 'light', 'dark'}:
+            saved_theme = 'default'
+        theme_action = Gio.SimpleAction.new_stateful(
+            'set-app-theme',
+            GLib.VariantType.new('s'),
+            GLib.Variant('s', saved_theme),
+        )
         theme_action.connect(
             'activate',
             lambda _action, param: window._apply_app_theme(

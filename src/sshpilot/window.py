@@ -3075,7 +3075,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             style_manager.set_color_scheme(Adw.ColorScheme.DEFAULT)
 
         self.config.set_setting('app-theme', theme_key)
+        action = self.lookup_action('set-app-theme')
+        if action is not None:
+            action.set_state(GLib.Variant('s', theme_key))
         self._sync_theme_menu_button()
+
+    def _install_main_menu_theme_selector(self) -> None:
+        """Fill the main menu's custom theme-selector placeholder."""
+        popover = self.menu_button.get_popover()
+        if not isinstance(popover, Gtk.PopoverMenu):
+            return
+        from .theme_selector import create_theme_selector
+        popover.add_child(create_theme_selector(), 'theme-selector')
 
     def _create_theme_menu(self) -> Gio.Menu:
         menu = Gio.Menu()
@@ -3634,6 +3645,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Create application menu"""
         menu = Gio.Menu()
 
+        theme_section = Gio.Menu()
+        theme_item = Gio.MenuItem()
+        theme_item.set_attribute_value(
+            'custom', GLib.Variant('s', 'theme-selector')
+        )
+        theme_section.append_item(theme_item)
+        menu.append_section(None, theme_section)
+
         new_section = Gio.Menu()
         new_section.append(_('New Connection'), 'app.new-connection')
         new_section.append(_('New Group'), 'win.create-group')
@@ -3668,6 +3687,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         submenu_section.append_submenu(_('Import/Export'), import_export_menu)
 
         view_menu = Gio.Menu()
+        view_menu.append(_('Toggle Full Screen'), f'win.{TOGGLE_FULLSCREEN_ACTION}')
         for action_name, label, _key, _default in HEADERBAR_VISIBILITY_ACTIONS:
             view_menu.append(_(label), f'win.{action_name}')
         submenu_section.append_submenu(_('View'), view_menu)

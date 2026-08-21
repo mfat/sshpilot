@@ -324,22 +324,20 @@ def install_sidebar_css():
           }
         }
 
-        /* Minimal (icon-only) sidebar avatars: a plain neutral circle. The
-           circle fill stays neutral for every row; group rows tint only their
-           glyph (folder icon / initials) via a per-widget provider (see
-           _set_avatar_color). */
+        /* Minimal sidebar glyphs are deliberately unframed: both connection
+           initials and group folder icons render without circular backing. */
         .sidebar-avatar {
           min-width: 28px;
           min-height: 28px;
-          border-radius: 9999px;
-          background-color: alpha(@window_fg_color, 0.15);
+          background: none;
+          box-shadow: none;
           color: @window_fg_color;
           font-weight: bold;
         }
 
-        /* Ring around a connected connection's avatar. */
+        /* Status must not reintroduce a circular ring in minimal mode. */
         .sidebar-avatar.sidebar-avatar-online {
-          box-shadow: 0 0 0 2px @success_color;
+          box-shadow: none;
         }
 
         /* Detachable sidebar popup: an opaque panel floating over the work area
@@ -682,7 +680,7 @@ def _avatar_initials(name: Optional[str]) -> str:
 
 
 def _make_avatar(*, initials: Optional[str] = None, icon_name: Optional[str] = None) -> Gtk.Widget:
-    """A round avatar we style ourselves: a Label of initials or a folder icon."""
+    """Create a minimal-row folder avatar or unframed initials label."""
     if icon_name is not None:
         from sshpilot import icon_utils
         widget = icon_utils.new_image_from_icon_name(icon_name)
@@ -699,8 +697,8 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     """Tint a group avatar's glyph (folder icon / initials) with ``rgba``.
 
     A provider on the widget's own style context at USER priority overrides the
-    default ``.sidebar-avatar`` foreground; the circle keeps its neutral fill so
-    only the glyph carries the group colour.
+    default ``.sidebar-avatar`` foreground, tinting the folder glyph or the
+    unframed initials text.
     """
     old = getattr(avatar, '_color_provider', None)
     if old is not None:
@@ -4176,6 +4174,7 @@ def _build_sidebar_header(window, sidebar_box):
     window.menu_button.set_icon_name('open-menu-symbolic')
     window.menu_button.set_tooltip_text(_('Menu'))
     window.menu_button.set_menu_model(window.create_menu())
+    window._install_main_menu_theme_selector()
 
     header_handle = Gtk.WindowHandle()
     header_handle.set_hexpand(True)
