@@ -298,7 +298,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._is_controlled_reconnect = False  # Flag to track controlled reconnection
         self._internal_file_manager_windows: List[Any] = []
 
-        # Command Blocks panel (right-side sidebar)
+        # Command Snippets palette
         self.command_block_store: Optional[CommandBlockStore] = None
         self.command_blocks_panel: Optional[CommandBlocksPanel] = None
         self._command_popup = None
@@ -3370,7 +3370,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self._headerbar_start_box.append(self.split_view_button)
 
-        # Command blocks toggle button (right sidebar)
+        # Command Snippets palette toggle button
         from sshpilot import icon_utils as _cmd_icon_utils
 
         self._headerbar_theme_menu_button = Gtk.MenuButton()
@@ -3382,7 +3382,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Commands'))
+        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Command Snippets'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):

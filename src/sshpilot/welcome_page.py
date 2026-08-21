@@ -106,7 +106,7 @@ class WelcomePage(Gtk.Overlay):
             ('folder-remote-symbolic', _('SFTP File Manager'),
              self._open_file_manager,
              'manage-files'),
-            ('system-run-symbolic', _('Snippets'),
+            ('system-run-symbolic', _('Command Snippets'),
              lambda _b: self._open_command_blocks_sidebar(),
              'toggle-command-blocks'),
         ], chip_sizes)

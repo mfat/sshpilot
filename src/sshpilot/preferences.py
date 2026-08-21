@@ -1659,7 +1659,7 @@ class PreferencesWindow(Adw.NavigationPage):
             default=False,
         )
         _add_headerbar_switch(
-            "Commands Button",
+            "Command Snippets Button",
             "Show the command snippets toggle button",
             'ui.headerbar_show_commands',
         )
@@ -2785,7 +2785,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
             self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
             self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", self._create_plugins_page)
-            self.add_page_to_layout(N_("Command Blocks"), "view-list-symbolic", self._create_command_blocks_page)
+            self.add_page_to_layout(N_("Command Snippets"), "view-list-symbolic", self._create_command_blocks_page)
             self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", self._build_advanced_preferences_page)
 
             self._schedule_idle_page_building()
@@ -5208,14 +5208,14 @@ class PreferencesWindow(Adw.NavigationPage):
                              action=_("Enable"), on_accept=_accept, on_decline=_decline)
 
     def _create_command_blocks_page(self):
-        """Build the Command Blocks preferences page."""
+        """Build the Command Snippets preferences page."""
         page = Adw.PreferencesPage()
 
         group = Adw.PreferencesGroup(title=_("Behavior"))
 
         always_show_row = Adw.SwitchRow()
-        always_show_row.set_title(_("Always Show Sidebar"))
-        always_show_row.set_subtitle(_("Keep the commands sidebar open on startup"))
+        always_show_row.set_title(_("Open on Startup"))
+        always_show_row.set_subtitle(_("Open Command Snippets when the window starts"))
         always_show_row.set_active(bool(self.config.get_setting('command_blocks.always_show_sidebar', False)))
         always_show_row.connect('notify::active', lambda r, _: self.config.set_setting('command_blocks.always_show_sidebar', r.get_active()))
         group.add(always_show_row)
@@ -5228,8 +5228,8 @@ class PreferencesWindow(Adw.NavigationPage):
         group.add(insert_only_row)
 
         auto_hide_row = Adw.SwitchRow()
-        auto_hide_row.set_title(_("Auto-hide Sidebar After Sending"))
-        auto_hide_row.set_subtitle(_("Hide the command panel as soon as a command is sent"))
+        auto_hide_row.set_title(_("Close After Sending"))
+        auto_hide_row.set_subtitle(_("Close Command Snippets after sending a command"))
         auto_hide_row.set_active(bool(self.config.get_setting('command_blocks.auto_hide_sidebar', False)))
         self._cb_auto_hide_row = auto_hide_row
         auto_hide_row.connect(

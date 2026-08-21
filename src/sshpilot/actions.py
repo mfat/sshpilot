@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 HEADERBAR_VISIBILITY_ACTIONS = (
     ('headerbar-sidebar-toggle', 'Sidebar Toggle Button', 'ui.headerbar_show_sidebar_toggle', False),
     ('headerbar-split-view', 'Split View Button', 'ui.headerbar_show_split_view', False),
-    ('headerbar-commands', 'Commands Button', 'ui.headerbar_show_commands', True),
+    ('headerbar-commands', 'Command Snippets Button', 'ui.headerbar_show_commands', True),
     ('headerbar-theme-menu', 'Theme Menu', 'ui.headerbar_show_theme_toggle', False),
     ('headerbar-local-terminal', 'Local Terminal Button', 'ui.headerbar_show_local_terminal', True),
 )

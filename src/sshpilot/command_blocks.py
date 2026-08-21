@@ -1,4 +1,4 @@
-"""Command Blocks — right-side panel for storing and running command snippets."""
+"""Command Snippets — palette for storing and running reusable commands."""
 
 from __future__ import annotations
 
@@ -1124,7 +1124,7 @@ class AddFolderDialog(Adw.Window):
 
 
 class CommandBlocksPanel(Gtk.Box):
-    """Right-side panel listing command blocks with search, folders, and editing."""
+    """Command Snippets palette with search, folders, and editing."""
 
     def __init__(self, window, store: CommandBlockStore) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
@@ -1148,53 +1148,53 @@ class CommandBlocksPanel(Gtk.Box):
         self.add_css_class("sidebar")
 
         # --- Header ---
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        header = Gtk.CenterBox()
         header.set_margin_start(8)
         header.set_margin_end(8)
         header.set_margin_top(8)
         header.set_margin_bottom(4)
 
-        title = Gtk.Label(label=_("Commands"))
-        title.set_halign(Gtk.Align.START)
-        title.set_xalign(0)
+        title = Gtk.Label(label=_("Command Snippets"))
+        title.set_halign(Gtk.Align.CENTER)
+        title.set_xalign(0.5)
         title.add_css_class("heading")
-        header.append(title)
+        header.set_center_widget(title)
 
-        # Keep the layout and action buttons right-aligned.
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        header.append(spacer)
+        controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
 
         self._layout_toggle = Gtk.ToggleButton()
-        self._layout_toggle.set_icon_name("view-dual-symbolic")
+        self._layout_toggle.set_icon_name(
+            "view-list-symbolic" if self._view_layout == "tiled" else "view-grid-symbolic"
+        )
         self._layout_toggle.add_css_class("flat")
         self._layout_toggle.set_active(self._view_layout == "tiled")
         self._layout_toggle.set_tooltip_text(
             _("Use list layout") if self._view_layout == "tiled" else _("Use tiled layout")
         )
         self._layout_toggle.connect("toggled", self._on_layout_toggled)
-        header.append(self._layout_toggle)
+        controls.append(self._layout_toggle)
 
         add_cmd_btn = Gtk.Button()
         add_cmd_btn.set_icon_name("list-add-symbolic")
         add_cmd_btn.add_css_class("flat")
         add_cmd_btn.set_tooltip_text(_("Add command"))
         add_cmd_btn.connect("clicked", lambda _: self._open_edit_dialog(None))
-        header.append(add_cmd_btn)
+        controls.append(add_cmd_btn)
 
         add_folder_btn = Gtk.Button()
         add_folder_btn.set_icon_name("folder-new-symbolic")
         add_folder_btn.add_css_class("flat")
         add_folder_btn.set_tooltip_text(_("New folder"))
         add_folder_btn.connect("clicked", lambda _: self._open_add_folder_dialog())
-        header.append(add_folder_btn)
+        controls.append(add_folder_btn)
 
         self._search_toggle = Gtk.ToggleButton()
         self._search_toggle.set_icon_name("system-search-symbolic")
         self._search_toggle.add_css_class("flat")
         self._search_toggle.set_tooltip_text(_("Search commands"))
         self._search_toggle.connect("toggled", self._on_search_toggle)
-        header.append(self._search_toggle)
+        controls.append(self._search_toggle)
+        header.set_end_widget(controls)
 
         self.append(header)
 
@@ -1590,6 +1590,9 @@ class CommandBlocksPanel(Gtk.Box):
         layout = "tiled" if button.get_active() else "list"
         button.set_tooltip_text(
             _("Use list layout") if layout == "tiled" else _("Use tiled layout")
+        )
+        button.set_icon_name(
+            "view-list-symbolic" if layout == "tiled" else "view-grid-symbolic"
         )
         self._view_layout = layout
         self.store._config.set_setting("command_blocks.view_layout", layout)
