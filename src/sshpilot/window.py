@@ -2358,7 +2358,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', False),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
-            ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', True),
+            ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', False),
             ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
         for attr, key, default in mapping:

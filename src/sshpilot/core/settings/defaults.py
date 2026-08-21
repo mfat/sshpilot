@@ -106,7 +106,7 @@ def get_default_config() -> Dict[str, Any]:
             'headerbar_show_sidebar_toggle': False,
             'headerbar_show_split_view': False,
             'headerbar_show_commands': True,
-            'headerbar_show_theme_toggle': True,
+            'headerbar_show_theme_toggle': False,
             'headerbar_show_local_terminal': True,
         },
         'welcome': {
