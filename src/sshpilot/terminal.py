@@ -1308,6 +1308,11 @@ class TerminalWidget(Gtk.Box):
     def _on_daemon_continuity_lost(self):
         """Handle daemon terminal continuity loss."""
         try:
+            # A known-good terminal prefix may end in the middle of an escape
+            # sequence.  Reset the emulator parser before displaying local
+            # text; the damaged remote stream is permanently halted by the
+            # binding and must never resume in this parser state.
+            self.backend.reset(False, True)
             marker = b"\r\n[Earlier terminal output is no longer available]\r\n"
             self._feed_display(marker)
         except Exception as e:

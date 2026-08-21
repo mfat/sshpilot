@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from tests._gui_harness import requires_gui
@@ -27,10 +29,6 @@ class _Client:
         return TerminalSubscription(lambda: None)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="current GTK backlog overflow drops the alternate-screen/dialog setup",
-)
 def test_real_vte_retains_post_flood_dialog_title_and_buttons():
     terminal = Vte.Terminal()
     window = Gtk.Window()
@@ -56,9 +54,10 @@ def test_real_vte_retains_post_flood_dialog_title_and_buttons():
         max_pending_bytes=64,
         on_close=lambda _binding: None,
     )
-    chunks = (
-        b"output-line-00000001\r\n" * 2,
-        b"output-line-00000003\r\n",
+    flood_line = b"output-line-00000001 abcdefghijklmnopqrstuvwxyz\r\n"
+    chunks = tuple(
+        flood_line * 256 for _index in range(96)
+    ) + (
         b"\x1b[?1049h\x1b[2J\x1b[8;16HPOST-FLOOD DIALOG",
         b"\x1b[15;29H<Yes>   <No>",
     )
@@ -73,11 +72,16 @@ def test_real_vte_retains_post_flood_dialog_title_and_buttons():
                 )
             )
             sequence += len(chunk)
-        dispatches.pop()()
-        while context.pending():
+        callback = dispatches.pop()
+        while callback():
+            pass
+        deadline = time.monotonic() + 1.0
+        text = ""
+        while time.monotonic() < deadline and "POST-FLOOD DIALOG" not in text:
             context.iteration(False)
-        content = terminal.get_text_format(Vte.Format.TEXT)
-        text = content[0] if isinstance(content, tuple) else content
+            content = terminal.get_text_format(Vte.Format.TEXT)
+            text = content[0] if isinstance(content, tuple) else content
+            time.sleep(0.005)
     finally:
         binding.close()
         window.destroy()

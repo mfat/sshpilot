@@ -3,17 +3,28 @@
 from __future__ import annotations
 
 import logging
+import struct
+import tempfile
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from collections import deque
-from typing import Callable, Deque, Dict, Optional, TypeVar
+from datetime import datetime, timezone
+from typing import Callable, Dict, Optional, TypeVar
 
 from gi.repository import GLib
+
+from .api.models.terminal import TerminalOutput
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-DEFAULT_GTK_TERMINAL_PENDING_BYTES = 1024 * 1024
+# Maximum raw payload handed to GTK in one idle slice.  This is a latency
+# bound, not a permission to discard terminal data.
+DEFAULT_GTK_TERMINAL_PENDING_BYTES = 64 * 1024
+DEFAULT_GTK_TERMINAL_SPOOL_BYTES = 64 * 1024 * 1024
+
+_TERMINAL_OUTPUT_RECORD = struct.Struct("!QQBQ")
+_OUTPUT_REPLAY = 1
+_OUTPUT_EOF = 2
 
 
 class GtkClientRequest:
@@ -66,6 +77,7 @@ class GtkClientBridge:
         on_eof=None,
         on_error=None,
         max_pending_bytes: int = DEFAULT_GTK_TERMINAL_PENDING_BYTES,
+        max_spool_bytes: int = DEFAULT_GTK_TERMINAL_SPOOL_BYTES,
     ):
         """Coalesce daemon terminal callbacks onto GTK's main context."""
 
@@ -78,6 +90,7 @@ class GtkClientBridge:
             on_eof=on_eof,
             on_error=on_error,
             max_pending_bytes=max_pending_bytes,
+            max_spool_bytes=max_spool_bytes,
             on_close=lambda item: self._discard_terminal_binding(item),
         )
         with self._lock:
@@ -261,7 +274,14 @@ class GtkClientBridge:
 
 
 class GtkTerminalBinding:
-    """One bounded, coalesced terminal-to-GLib handoff."""
+    """One ordered, bounded terminal-to-GLib handoff.
+
+    Output is durably spooled outside the GTK heap and drained in bounded
+    slices.  Reaching the spool's hard bound is terminal for this binding: its
+    coherent prefix is delivered, continuity loss is reported, and later
+    bytes are suppressed.  In particular, bytes after a gap are never fed to
+    the existing terminal-parser state.
+    """
 
     def __init__(
         self,
@@ -274,6 +294,7 @@ class GtkTerminalBinding:
         on_eof,
         on_error,
         max_pending_bytes,
+        max_spool_bytes=DEFAULT_GTK_TERMINAL_SPOOL_BYTES,
         on_close,
     ) -> None:
         if (
@@ -281,19 +302,34 @@ class GtkTerminalBinding:
             or max_pending_bytes < 1
         ):
             raise ValueError("GTK terminal pending byte limit must be positive")
+        if type(max_spool_bytes) is not int or max_spool_bytes < 1:
+            raise ValueError("GTK terminal spool byte limit must be positive")
         self._dispatcher = dispatcher
         self._on_output = on_output
         self._on_continuity_lost = on_continuity_lost
         self._on_eof = on_eof
         self._on_error = on_error
         self._max_pending_bytes = max_pending_bytes
+        self._max_spool_bytes = max_spool_bytes
         self._on_close = on_close
         self._lock = threading.Lock()
-        self._pending: Deque = deque()
+        self._spool = tempfile.TemporaryFile(mode="w+b", buffering=0)
+        self._spool.truncate(max_spool_bytes)
+        self._spool_read_offset = 0
+        self._spool_write_offset = 0
+        self._spool_records = 0
+        self._spool_bytes = 0
         self._pending_bytes = 0
+        self._high_water_mark = 0
         self._scheduled = False
         self._closed = False
-        self._continuity_lost = None
+        self._terminal_loss = None
+        self._loss_reported = False
+        self._pending_eof = None
+        self._pending_error = None
+        self._last_received_sequence = None
+        self._last_delivered_sequence = None
+        self._session_id = session_id
         self._subscription = client.subscribe_terminal(
             session_id,
             self._receive_output,
@@ -302,21 +338,90 @@ class GtkTerminalBinding:
             on_error=self._receive_error,
         )
 
+    @property
+    def pending_bytes(self) -> int:
+        with self._lock:
+            return self._pending_bytes
+
+    @property
+    def high_water_mark(self) -> int:
+        with self._lock:
+            return self._high_water_mark
+
+    @property
+    def last_received_sequence(self):
+        with self._lock:
+            return self._last_received_sequence
+
+    @property
+    def last_delivered_sequence(self):
+        with self._lock:
+            return self._last_delivered_sequence
+
+    @property
+    def continuity_lost(self) -> bool:
+        with self._lock:
+            return self._terminal_loss is not None
+
     def _receive_output(self, output) -> None:
         with self._lock:
-            if self._closed:
+            if self._closed or self._terminal_loss is not None:
                 return
-            if self._pending_bytes + len(output.data) > self._max_pending_bytes:
-                self._pending.clear()
-                self._pending_bytes = 0
-                self._continuity_lost = (
+            if (
+                self._last_received_sequence is not None
+                and output.sequence != self._last_received_sequence
+            ):
+                self._terminal_loss = (
+                    output.session_id,
+                    self._last_received_sequence,
+                    output.sequence,
+                )
+                self._schedule_locked()
+                return
+            created_us = int(output.created_at.timestamp() * 1_000_000)
+            flags = (_OUTPUT_REPLAY if output.replay else 0) | (
+                _OUTPUT_EOF if output.eof else 0
+            )
+            header = _TERMINAL_OUTPUT_RECORD.pack(
+                output.sequence,
+                len(output.data),
+                flags,
+                created_us,
+            )
+            record_size = len(header) + len(output.data)
+            if self._spool_bytes + record_size > self._max_spool_bytes:
+                self._terminal_loss = (
                     output.session_id,
                     output.sequence,
                     output.next_sequence,
                 )
-            else:
-                self._pending.append(("output", output))
-                self._pending_bytes += len(output.data)
+                self._schedule_locked()
+                return
+            try:
+                self._write_spool_locked(self._spool_write_offset, header)
+                data_offset = (
+                    self._spool_write_offset + len(header)
+                ) % self._max_spool_bytes
+                self._write_spool_locked(data_offset, output.data)
+            except OSError:
+                self._terminal_loss = (
+                    output.session_id,
+                    output.sequence,
+                    output.next_sequence,
+                )
+                self._schedule_locked()
+                return
+            self._spool_write_offset = (
+                self._spool_write_offset + record_size
+            ) % self._max_spool_bytes
+            self._spool_records += 1
+            self._spool_bytes += record_size
+            self._pending_bytes += len(output.data)
+            self._high_water_mark = max(
+                self._high_water_mark,
+                self._pending_bytes,
+            )
+            self._last_received_sequence = output.next_sequence
             self._schedule_locked()
 
     def _receive_continuity(
@@ -328,7 +433,9 @@ class GtkTerminalBinding:
         with self._lock:
             if self._closed:
                 return
-            self._continuity_lost = (
+            if self._terminal_loss is not None:
+                return
+            self._terminal_loss = (
                 session_id,
                 expected_sequence,
                 available_sequence,
@@ -339,14 +446,14 @@ class GtkTerminalBinding:
         with self._lock:
             if self._closed:
                 return
-            self._pending.append(("eof", session_id, sequence))
+            self._pending_eof = (session_id, sequence)
             self._schedule_locked()
 
     def _receive_error(self, error) -> None:
         with self._lock:
             if self._closed:
                 return
-            self._pending.append(("error", error))
+            self._pending_error = error
             self._schedule_locked()
 
     def _schedule_locked(self) -> None:
@@ -359,29 +466,131 @@ class GtkTerminalBinding:
         with self._lock:
             if self._closed:
                 return False
-            pending = tuple(self._pending)
-            self._pending.clear()
-            self._pending_bytes = 0
-            continuity = self._continuity_lost
-            self._continuity_lost = None
-            self._scheduled = False
+            pending = self._read_slice_locked()
+            more_output = self._spool_records > 0
+            continuity = None
+            eof = None
+            error = None
+            if not more_output:
+                if self._terminal_loss is not None and not self._loss_reported:
+                    continuity = self._terminal_loss
+                    self._loss_reported = True
+                eof = self._pending_eof
+                self._pending_eof = None
+                error = self._pending_error
+                self._pending_error = None
+                self._scheduled = False
+                self._reset_empty_spool_locked()
+
+        for output in pending:
+            with self._lock:
+                if self._closed:
+                    return False
+            self._on_output(output)
+            with self._lock:
+                self._last_delivered_sequence = output.next_sequence
         if continuity is not None and callable(self._on_continuity_lost):
             self._on_continuity_lost(*continuity)
-        for item in pending:
-            if item[0] == "output":
-                self._on_output(item[1])
-            elif item[0] == "eof" and callable(self._on_eof):
-                self._on_eof(item[1], item[2])
-            elif item[0] == "error" and callable(self._on_error):
-                self._on_error(item[1])
-        return False
+        if eof is not None and callable(self._on_eof):
+            self._on_eof(*eof)
+        if error is not None and callable(self._on_error):
+            self._on_error(error)
+        return more_output
+
+    def _read_slice_locked(self):
+        pending = []
+        payload_bytes = 0
+        while self._spool_records:
+            raw_header = self._read_spool_locked(
+                self._spool_read_offset,
+                _TERMINAL_OUTPUT_RECORD.size,
+            )
+            if len(raw_header) != _TERMINAL_OUTPUT_RECORD.size:
+                self._terminal_loss = (
+                    self._session_id,
+                    self._last_delivered_sequence or 0,
+                    self._last_received_sequence or 0,
+                )
+                self._spool_records = 0
+                self._spool_bytes = 0
+                self._pending_bytes = 0
+                break
+            sequence, length, flags, created_us = _TERMINAL_OUTPUT_RECORD.unpack(
+                raw_header
+            )
+            if pending and payload_bytes + length > self._max_pending_bytes:
+                break
+            data_offset = (
+                self._spool_read_offset + _TERMINAL_OUTPUT_RECORD.size
+            ) % self._max_spool_bytes
+            data = self._read_spool_locked(data_offset, length)
+            if len(data) != length:
+                self._terminal_loss = (
+                    self._session_id,
+                    self._last_delivered_sequence or 0,
+                    self._last_received_sequence or 0,
+                )
+                self._spool_records = 0
+                self._spool_bytes = 0
+                self._pending_bytes = 0
+                break
+            record_size = _TERMINAL_OUTPUT_RECORD.size + length
+            self._spool_read_offset = (
+                self._spool_read_offset + record_size
+            ) % self._max_spool_bytes
+            self._spool_records -= 1
+            self._spool_bytes -= record_size
+            self._pending_bytes -= length
+            payload_bytes += length
+            pending.append(
+                TerminalOutput(
+                    session_id=self._session_id,
+                    sequence=sequence,
+                    data=data,
+                    created_at=datetime.fromtimestamp(
+                        created_us / 1_000_000,
+                        tz=timezone.utc,
+                    ),
+                    replay=bool(flags & _OUTPUT_REPLAY),
+                    eof=bool(flags & _OUTPUT_EOF),
+                )
+            )
+        return pending
+
+    def _write_spool_locked(self, offset: int, data: bytes) -> None:
+        first_length = min(len(data), self._max_spool_bytes - offset)
+        self._spool.seek(offset)
+        self._spool.write(data[:first_length])
+        if first_length < len(data):
+            self._spool.seek(0)
+            self._spool.write(data[first_length:])
+
+    def _read_spool_locked(self, offset: int, length: int) -> bytes:
+        first_length = min(length, self._max_spool_bytes - offset)
+        self._spool.seek(offset)
+        first = self._spool.read(first_length)
+        if len(first) != first_length or first_length == length:
+            return first
+        self._spool.seek(0)
+        return first + self._spool.read(length - first_length)
+
+    def _reset_empty_spool_locked(self) -> None:
+        if self._spool_records:
+            return
+        self._spool_read_offset = 0
+        self._spool_write_offset = 0
+        self._spool_bytes = 0
+        self._pending_bytes = 0
 
     def close(self) -> None:
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-            self._pending.clear()
+            spool = self._spool
             self._pending_bytes = 0
+            self._spool_records = 0
+            self._spool_bytes = 0
+        spool.close()
         self._subscription.close()
         self._on_close(self)

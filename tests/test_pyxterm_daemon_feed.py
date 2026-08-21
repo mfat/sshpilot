@@ -94,13 +94,23 @@ def test_daemon_output_feeds_backend_when_vte_is_none():
 
 def test_daemon_continuity_marker_feeds_backend_when_vte_is_none():
     fed = []
-    backend = types.SimpleNamespace(feed=lambda data: fed.append(data))
+    events = []
+    backend = types.SimpleNamespace(
+        reset=lambda clear_scrollback, clear_screen: events.append(
+            ("reset", clear_scrollback, clear_screen)
+        ),
+        feed=lambda data: (events.append(("feed", data)), fed.append(data)),
+    )
     t = _daemon_term(backend=backend)
 
     t._on_daemon_continuity_lost()
 
     assert len(fed) == 1
     assert b"no longer available" in fed[0]
+    assert events == [
+        ("reset", False, True),
+        ("feed", fed[0]),
+    ]
 
 
 def test_daemon_dimensions_use_backend_get_size_not_vte():
