@@ -42,6 +42,7 @@ from tests.daemon.phase10_sshd import (
     start_phase10_sshd,
 )
 from tests.daemon.password_sshd import container_runtime as _password_runtime
+from tests.daemon.integration_environment import skip_or_fail
 
 _TERMINAL_TRANSFER = frozenset(
     {TransferState.COMPLETED, TransferState.CANCELLED, TransferState.FAILED}
@@ -49,14 +50,14 @@ _TERMINAL_TRANSFER = frozenset(
 
 
 def require_phase10_container(tmp_path: Path) -> Phase10SshdEnvironment:
-    """Start the Phase 10 fixture or skip when podman/docker is unavailable."""
+    """Start Phase 10, skipping only outside the canonical test environment."""
 
     if container_runtime() is None and _password_runtime() is None:
-        pytest.skip("Phase 10.1 requires podman or docker")
+        skip_or_fail("Phase 10.1 requires podman or docker")
     try:
         return start_phase10_sshd(tmp_path)
     except RuntimeError as error:
-        pytest.skip(f"Phase 10 OpenSSH fixture unavailable: {error}")
+        skip_or_fail(f"Phase 10 OpenSSH fixture unavailable: {error}")
 
 
 def free_port() -> int:

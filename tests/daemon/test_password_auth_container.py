@@ -27,6 +27,7 @@ from sshpilot.daemon.pty_runner import PtySessionProcessRunner
 from sshpilot.daemon.session_runtime import SessionLaunchSpec
 
 from tests.daemon.password_sshd import container_runtime, start_password_sshd
+from tests.daemon.integration_environment import skip_or_fail
 
 
 pytestmark = pytest.mark.integration
@@ -34,13 +35,11 @@ pytestmark = pytest.mark.integration
 
 def _require_container_password_env(tmp_path):
     if container_runtime() is None:
-        pytest.skip(
-            "Containerized password authentication requires podman or docker"
-        )
+        skip_or_fail("Containerized password authentication requires podman or docker")
     try:
         return start_password_sshd(tmp_path)
     except RuntimeError as error:
-        pytest.skip(f"Isolated password sshd unavailable: {error}")
+        skip_or_fail(f"Isolated password sshd unavailable: {error}")
 
 
 def _wait_until(predicate, timeout: float = 12.0) -> bool:

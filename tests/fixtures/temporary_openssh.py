@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Optional
 
 from tests.daemon.password_sshd import container_runtime
+from tests.daemon.integration_environment import skip_or_fail
 
 AuthMode = Literal["password", "key", "key_plain"]
 
@@ -563,12 +564,10 @@ exec /usr/sbin/sshd -D -e
 
 
 def require_temporary_openssh(tmp_path: Path) -> TemporaryOpenSSH:
-    """pytest helper — skip when container runtime is unavailable."""
-    import pytest
-
+    """pytest helper — skip only outside the canonical integration image."""
     if container_runtime() is None:
-        pytest.skip("Phase 13 temporary OpenSSH requires podman or docker")
+        skip_or_fail("Phase 13 temporary OpenSSH requires podman or docker")
     try:
         return start_temporary_openssh(tmp_path)
     except RuntimeError as exc:
-        pytest.skip(f"temporary OpenSSH unavailable: {exc}")
+        skip_or_fail(f"temporary OpenSSH unavailable: {exc}")

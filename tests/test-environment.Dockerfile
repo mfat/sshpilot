@@ -48,12 +48,13 @@ RUN set -eux; \
 # purpose — gi is stubbed by the test suite.
 RUN pip3 install \
         paramiko cryptography keyring psutil certifi \
-        pytest pytest-cov pytest-xdist pexpect wakeonlan jsonschema \
-        --ignore-installed
+        pytest pytest-cov pytest-xdist pexpect wakeonlan jsonschema
 
-# The runtime MCP integration tests use the official Python SDK. Keep this
-# explicit because the base application intentionally leaves MCP optional.
-RUN pip3 install --ignore-installed mcp anyio
+# openssh-tests installs Debian Python packages (notably idna) without pip
+# RECORD metadata. The MCP optional dependency's resolver otherwise attempts
+# to uninstall those packages and fails; --ignore-installed leaves the apt
+# environment intact while installing MCP and its declared transitive deps.
+RUN pip3 install --ignore-installed mcp
 
 # This image is the canonical environment for the real-tool integration gate.
 # Tests may still be run on arbitrary developer machines, where unsupported

@@ -35,6 +35,7 @@ jobs:
         # regular disk-backed /tmp to blow the job timeout.
         run: |
           docker run --rm \
+            --network=host \
             --shm-size=2g \
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
