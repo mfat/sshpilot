@@ -6,6 +6,7 @@ src/sshpilot/authorized_keys_window.py
 src/sshpilot/bitwarden_setup.py
 src/sshpilot/command_blocks.py
 src/sshpilot/command_converter.py
+src/sshpilot/command_palette.py
 src/sshpilot/command_progress_dialog.py
 src/sshpilot/connection_dialog.py
 src/sshpilot/connection_dialog_field_helpers.py
@@ -13,14 +14,21 @@ src/sshpilot/connection_dialog_port_forwarding.py
 src/sshpilot/connection_dialog_validation.py
 src/sshpilot/connection_manager.py
 src/sshpilot/connection_sort.py
+src/sshpilot/core/validation/connection.py
+src/sshpilot/daemon_quit_policy.py
+src/sshpilot/daemon_sessions_dialog.py
+src/sshpilot/daemon_terminal_policy.py
+src/sshpilot/effective_config_dialog.py
 src/sshpilot/file_manager/pane.py
 src/sshpilot/file_manager/pane_controls.py
 src/sshpilot/file_manager/progress_dialog.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
+src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/host_picker.py
 src/sshpilot/known_hosts_editor.py
 src/sshpilot/log_viewer.py
+src/sshpilot/macos_menubar.py
 src/sshpilot/main.py
 src/sshpilot/omni_search.py
 src/sshpilot/plugins/builtin/docker_manager/dialogs.py
@@ -49,7 +57,6 @@ src/sshpilot/split_view.py
 src/sshpilot/ssh_connection_validator.py
 src/sshpilot/sshcopyid_window.py
 src/sshpilot/terminal.py
-src/sshpilot/terminal_fullscreen.py
 src/sshpilot/terminal_manager.py
 src/sshpilot/terminal_search.py
 src/sshpilot/text_editor.py
@@ -62,6 +69,10 @@ src/sshpilot/window_file_manager.py
 src/sshpilot/window_help.py
 src/sshpilot/window_session.py
 src/sshpilot/window_tabs.py
+
+# Meson-merged application metadata:
+data/io.github.mfat.sshpilot.desktop.in
+data/io.github.mfat.sshpilot.metainfo.xml.in
 
 # Blueprint-compiled UI (GtkBuilder):
 src/sshpilot/resources/ui/add_folder_dialog.ui
