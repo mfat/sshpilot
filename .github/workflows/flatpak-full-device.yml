@@ -42,6 +42,7 @@ jobs:
           import os
           import pathlib
           import re
+          import textwrap
 
           manifest = pathlib.Path("flatpak/io.github.mfat.sshpilot.yaml")
           text = manifest.read_text()
@@ -96,7 +97,7 @@ jobs:
           # runtime currently provides ssh/ssh-keygen but not ssh-sk-helper.
           # Bundle libcbor + libfido2 first, then OpenSSH 10.4p1. OpenSSH finds
           # libfido2 at configure time and builds /app/libexec/ssh-sk-helper.
-          openssh_modules = r'''
+          openssh_modules = textwrap.dedent(r'''
             - name: libcbor
               buildsystem: cmake-ninja
               config-opts:
@@ -144,12 +145,17 @@ jobs:
                 - test -x /app/bin/ssh-agent
                 - test -x /app/bin/ssh-add
                 - test -x /app/libexec/ssh-sk-helper
+                - ldd /app/libexec/ssh-sk-helper | grep -q libfido2
                 - /app/bin/ssh -V
               sources:
                 - type: git
                   url: https://github.com/openssh/openssh-portable.git
                   tag: V_10_4_P1
-          '''.strip("\n")
+          ''').strip("\n")
+
+          # The Flathub manifest uses a top-level YAML sequence indented by two
+          # spaces under modules:. Keep the injected modules at that exact level.
+          openssh_modules = textwrap.indent(openssh_modules, "  ")
 
           modules_marker = "modules:\n"
           if modules_marker not in text:
@@ -168,6 +174,7 @@ jobs:
           grep -E -- '--device=|--filesystem=|--env=PATH=' flatpak/io.github.mfat.sshpilot.yaml
           grep -q -- '  - --device=all' flatpak/io.github.mfat.sshpilot.yaml
           grep -q -- '  - --filesystem=host' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- '  - name: openssh' flatpak/io.github.mfat.sshpilot.yaml
           grep -q -- 'tag: V_10_4_P1' flatpak/io.github.mfat.sshpilot.yaml
           grep -q -- 'tag: 1.17.0' flatpak/io.github.mfat.sshpilot.yaml
 
