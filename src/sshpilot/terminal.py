@@ -2473,10 +2473,10 @@ class TerminalWidget(Gtk.Box):
         uri = getattr(self, '_context_menu_hyperlink_uri', None)
         if uri:
             try:
-                display = Gdk.Display.get_default()
-                clipboard = display.get_clipboard()
+                clipboard = self.get_clipboard()
                 clipboard.set(uri)
                 logger.debug(f"Copied link to clipboard: {uri}")
+                self._show_toast(_("Copied to clipboard"))
             except Exception as e:
                 logger.warning(f"Failed to copy link '{uri}': {e}")
 
@@ -2627,23 +2627,6 @@ class TerminalWidget(Gtk.Box):
                 root.add_toast(toast)
         except Exception:
             pass
-
-    def _has_terminal_selection(self) -> bool:
-        """Whether the terminal currently has a text selection.
-
-        Used to decide if a copy actually put something on the clipboard. The
-        backend reports it when it can (VTE); a backend that can't answer
-        synchronously (PyXterm) is treated optimistically as having a selection.
-        """
-        try:
-            if self.backend is not None:
-                getter = getattr(self.backend, 'get_has_selection', None)
-                if getter is not None:
-                    return bool(getter())
-                return True
-        except Exception:
-            pass
-        return False
 
     def _notify_invalid_encoding(self, requested, fallback):
         message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
@@ -3064,15 +3047,25 @@ class TerminalWidget(Gtk.Box):
             self._menu_controller_registry = []
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
+            self._clipboard_actions = Gio.SimpleActionGroup()
+            self._selection_actions = Gio.SimpleActionGroup()
             act_copy = Gio.SimpleAction.new("copy", None)
             act_copy.connect("activate", lambda a, p: self.copy_text())
-            self._menu_actions.add_action(act_copy)
+            self._clipboard_actions.add_action(act_copy)
+            if self.backend and self.backend.supports_feature("clipboard-html"):
+                act_copy_html = Gio.SimpleAction.new("copy-as-html", None)
+                act_copy_html.connect(
+                    "activate", lambda a, p: self.copy_text(format="html"))
+                self._clipboard_actions.add_action(act_copy_html)
             act_paste = Gio.SimpleAction.new("paste", None)
             act_paste.connect("activate", lambda a, p: self.paste_text())
-            self._menu_actions.add_action(act_paste)
+            self._clipboard_actions.add_action(act_paste)
             act_selall = Gio.SimpleAction.new("select_all", None)
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
+            native_selall = Gio.SimpleAction.new("select-all", None)
+            native_selall.connect("activate", lambda a, p: self.select_all())
+            self._selection_actions.add_action(native_selall)
 
             # Open Link / Copy Link actions
             act_open_link = Gio.SimpleAction.new("open_link", None)
@@ -3106,6 +3099,11 @@ class TerminalWidget(Gtk.Box):
             self._menu_actions.add_action(act_save)
 
             self.insert_action_group('term', self._menu_actions)
+            # These canonical names are also used by the native macOS Edit
+            # menu. Action lookup walks from the focused backend widget to this
+            # TerminalWidget, so context menus and the app menubar share paths.
+            self.insert_action_group('clipboard', self._clipboard_actions)
+            self.insert_action_group('selection', self._selection_actions)
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
@@ -3120,8 +3118,11 @@ class TerminalWidget(Gtk.Box):
             self._link_menu.append(_("Copy Link"), "term.copy_link")
 
             if is_macos():
-                self._menu_model.append(_("Copy\t⌘C"), "term.copy")
-                self._menu_model.append(_("Paste\t⌘V"), "term.paste")
+                self._menu_model.append(_("Copy\t⌘C"), "clipboard.copy")
+                if self.backend and self.backend.supports_feature("clipboard-html"):
+                    self._menu_model.append(
+                        _("Copy as HTML"), "clipboard.copy-as-html")
+                self._menu_model.append(_("Paste\t⌘V"), "clipboard.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\t⌘="), "term.zoom_in")
@@ -3133,8 +3134,13 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
             else:
-                self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
-                self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
+                self._menu_model.append(
+                    _("Copy\tCtrl+Shift+C"), "clipboard.copy")
+                if self.backend and self.backend.supports_feature("clipboard-html"):
+                    self._menu_model.append(
+                        _("Copy as HTML"), "clipboard.copy-as-html")
+                self._menu_model.append(
+                    _("Paste\tCtrl+Shift+V"), "clipboard.paste")
                 self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\tCtrl++"), "term.zoom_in")
@@ -3145,7 +3151,6 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Search\tCtrl+Shift+F"), "term.search")
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
-
             # Popover parent + dismissal strategy.
             #
             # A grabbing (autohide) GtkPopover cannot establish its input grab over a
@@ -3504,16 +3509,12 @@ class TerminalWidget(Gtk.Box):
 
                 def _cb_copy(widget, *args):
                     if self.backend:
-                        had_selection = self._has_terminal_selection()
-                        result = _schedule_vte_action(self.backend.copy_clipboard)
-                        if had_selection:
-                            self._show_toast(_("Copied to clipboard"))
-                        return result
+                        return _schedule_vte_action(self.copy_text)
                     return False
 
                 def _cb_paste(widget, *args):
                     if self.backend:
-                        return _schedule_vte_action(self.backend.paste_clipboard)
+                        return _schedule_vte_action(self.paste_text)
                     return False
 
                 def _cb_select_all(widget, *args):
@@ -3532,14 +3533,19 @@ class TerminalWidget(Gtk.Box):
                     paste_trigger = "<Primary><Shift>v"
                     select_trigger = "<Primary><Shift>a"
 
-                controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(copy_trigger),
-                    Gtk.CallbackAction.new(_cb_copy)
-                ))
-                controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(paste_trigger),
-                    Gtk.CallbackAction.new(_cb_paste)
-                ))
+                backend_owns_clipboard_shortcuts = bool(
+                    self.backend
+                    and self.backend.supports_feature(
+                        "native-clipboard-shortcuts"))
+                if not backend_owns_clipboard_shortcuts:
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(copy_trigger),
+                        Gtk.CallbackAction.new(_cb_copy)
+                    ))
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(paste_trigger),
+                        Gtk.CallbackAction.new(_cb_paste)
+                    ))
                 controller.add_shortcut(Gtk.Shortcut.new(
                     Gtk.ShortcutTrigger.parse_string(select_trigger),
                     Gtk.CallbackAction.new(_cb_select_all)
@@ -3710,6 +3716,9 @@ class TerminalWidget(Gtk.Box):
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
         enabled = bool(enabled)
+        backend = getattr(self, "backend", None)
+        if backend is not None and hasattr(backend, "set_shortcut_passthrough"):
+            backend.set_shortcut_passthrough(enabled)
         current = getattr(self, '_pass_through_mode', False)
         if enabled == current:
             if enabled:
@@ -4375,13 +4384,19 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("copy-on-select failed", exc_info=True)
 
-    def copy_text(self):
+    def copy_text(self, *, format="text"):
         """Copy selected text to clipboard"""
         if self.backend:
-            had_selection = self._has_terminal_selection()
-            self.backend.copy_clipboard()
-            if had_selection:
-                self._show_toast(_("Copied to clipboard"))
+            def _completed(copied):
+                if copied:
+                    self._show_toast(_("Copied to clipboard"))
+
+            self.backend.copy_clipboard(format=format, on_complete=_completed)
+
+    def handle_backend_copy_result(self, copied):
+        """Report a backend-owned shortcut copy through the standard UI path."""
+        if copied:
+            self._show_toast(_("Copied to clipboard"))
 
     def paste_text(self):
         """Paste text from clipboard"""

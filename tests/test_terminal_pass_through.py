@@ -41,6 +41,9 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
     terminal._shortcut_controller = 'shortcut-controller'
     terminal._scroll_controller = 'scroll-controller'
     terminal._pass_through_mode = False
+    backend_modes = []
+    terminal.backend = types.SimpleNamespace(
+        set_shortcut_passthrough=backend_modes.append)
 
     monkeypatch.setattr(terminal_mod, 'is_macos', lambda: False)
     monkeypatch.setattr(terminal_cls, '_setup_mouse_wheel_zoom', lambda self: None, raising=False)
@@ -59,6 +62,7 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
     assert terminal._shortcut_controller is None
     assert terminal._scroll_controller is None
     assert terminal._pass_through_mode is True
+    assert backend_modes == [True]
     assert installs == []
 
     terminal._apply_pass_through_mode(False)
@@ -66,6 +70,7 @@ def test_pass_through_mode_allows_ctrl_shift_v(monkeypatch):
     assert installs == ['install']
     assert terminal._shortcut_controller == 'new-shortcut'
     assert terminal._pass_through_mode is False
+    assert backend_modes == [True, False]
 
 
 # Removed: test_prepare_key_native_mode_falls_back — TerminalWidget._prepare_key_for_native_mode
