@@ -1080,6 +1080,7 @@ class WindowTabsMixin:
     def on_tab_attached(self, tab_view, page, position):
         """Handle tab attached"""
         self._update_tab_button_visibility()
+        self._update_command_snippets_button_visibility()
         # Register a drop target on TerminalWidget pages so dragging a
         # connection onto a terminal converts that tab into a split-view tab.
         try:
@@ -1321,8 +1322,38 @@ class WindowTabsMixin:
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
 
+    def _update_command_snippets_button_visibility(self) -> None:
+        """Show snippets only while the selected tab visibly contains a terminal."""
+        button = getattr(self, "_cmd_blocks_toggle_btn", None)
+        if button is None:
+            return
+
+        visible = False
+        try:
+            page = self.tab_view.get_selected_page()
+            child = page.get_child() if page is not None else None
+            if page is None or self._is_start_tab_page(page):
+                visible = False
+            elif _is_terminal_widget(child):
+                visible = bool(child.get_visible())
+            else:
+                # Split-view tabs contain terminals without being TerminalWidget
+                # themselves; the focused terminal is the visible target there.
+                from .split_view import SplitViewTab
+                if isinstance(child, SplitViewTab):
+                    terminal = self._get_active_terminal_widget()
+                    visible = bool(terminal is not None and terminal.get_visible())
+        except Exception:
+            logger.debug("Failed to determine snippets button visibility", exc_info=True)
+
+        button.set_visible(visible)
+        if not visible and getattr(self, "_command_popup", None) is not None:
+            if self._command_popup.visible:
+                self._toggle_command_blocks_panel(False)
+
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""
+        self._update_command_snippets_button_visibility()
         # Skip dict cleanup when a terminal is being moved into a split pane
         # (the terminal stays live; its tracking entries remain valid).
         if getattr(self, '_moving_tab_to_pane', False):
@@ -1690,6 +1721,7 @@ class WindowTabsMixin:
         """Update active terminal mapping when the user switches tabs."""
         self._update_content_theme_for_selected_tab()
         self._update_layout_toggle_state()
+        self._update_command_snippets_button_visibility()
         try:
             page = tab_view.get_selected_page()
             if page is None:

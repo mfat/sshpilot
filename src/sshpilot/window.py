@@ -2382,6 +2382,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
 
+        # The preference controls whether the button is allowed at all; the
+        # selected-tab state is a separate runtime condition. Apply it last so
+        # preference refreshes cannot resurrect the button on the Start page.
+        self._update_command_snippets_button_visibility()
+
     def update_sidebar_display(self):
         """Update sidebar display based on current preferences."""
         if not hasattr(self, 'connection_list'):
@@ -3408,6 +3413,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._headerbar_end_box.append(self._cmd_blocks_toggle_btn)
         self._headerbar_end_box.append(self._headerbar_theme_menu_button)
         self._headerbar_end_box.append(self.menu_button)
+        self._update_command_snippets_button_visibility()
         self._sync_theme_menu_button()
 
         # Create broadcast command banner (custom banner-like widget)
@@ -3646,6 +3652,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     self._command_popup and self._command_popup.visible
                 )
             if visible:
+                # Keep keyboard/action activation consistent with the header
+                # button: snippets are available only for a visible terminal
+                # tab, never for the Start tab or an empty tab view.
+                if (
+                    self._cmd_blocks_toggle_btn is not None
+                    and not self._cmd_blocks_toggle_btn.get_visible()
+                ):
+                    return
                 if self._ensure_command_blocks_panel() is None:
                     return
                 self._close_search_if_open()
@@ -4266,6 +4280,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
         self._update_content_theme_for_selected_tab()
+        self._update_command_snippets_button_visibility()
         self._schedule_start_tab_focus()
 
         try:
@@ -4293,6 +4308,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
         self._update_content_theme_for_selected_tab()
         self._update_layout_toggle_state()
+        self._update_command_snippets_button_visibility()
         logger.info("Showing tab view")
 
     def _connection_list_is_focusable(self) -> bool:
