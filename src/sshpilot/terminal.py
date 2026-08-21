@@ -45,6 +45,45 @@ from .core.connection_evidence import classify_connection_evidence
 _terminal_padding_css_installed = False
 
 
+def _finish_capture_gesture(gesture, handled: bool) -> None:
+    """Resolve a capture gesture without leaving it competing with VTE."""
+    state = (
+        Gtk.EventSequenceState.CLAIMED
+        if handled
+        else Gtk.EventSequenceState.DENIED
+    )
+    gesture.set_state(state)
+
+
+def _context_click_is_handled(
+    button: int,
+    *,
+    paste_on_right_click: bool,
+    shift_held: bool,
+    native_vte_menu: bool,
+) -> bool:
+    """Whether SSH Pilot, rather than the backend, owns this pointer sequence."""
+    if button not in (Gdk.BUTTON_SECONDARY, 3):
+        return False
+    return (paste_on_right_click and not shift_held) or not native_vte_menu
+
+
+def _context_gesture_button(manual_dismiss: bool) -> int:
+    """Observe all PyXterm presses for dismissal, but only VTE right-clicks."""
+    return 0 if manual_dismiss else Gdk.BUTTON_SECONDARY
+
+
+def _link_click_is_handled(
+    n_press: int,
+    *,
+    active: bool,
+    modifier_held: bool,
+    uri: Optional[str],
+) -> bool:
+    """Whether a click qualifies for SSH Pilot's link-opening action."""
+    return n_press == 1 and active and modifier_held and bool(uri)
+
+
 def sanitize_local_shell_env(env):
     """Return a copy of *env* stripped of the launching terminal's identity.
 
@@ -1269,6 +1308,11 @@ class TerminalWidget(Gtk.Box):
     def _on_daemon_continuity_lost(self):
         """Handle daemon terminal continuity loss."""
         try:
+            # A known-good terminal prefix may end in the middle of an escape
+            # sequence.  Reset the emulator parser before displaying local
+            # text; the damaged remote stream is permanently halted by the
+            # binding and must never resume in this parser state.
+            self.backend.reset(False, True)
             marker = b"\r\n[Earlier terminal output is no longer available]\r\n"
             self._feed_display(marker)
         except Exception as e:
@@ -1285,8 +1329,14 @@ class TerminalWidget(Gtk.Box):
             from .api.errors import ErrorCode
 
             code = getattr(error, "code", None)
+            if code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE:
+                logger.warning("Terminal input was not delivered due to backpressure")
+                self._show_toast(
+                    _("Terminal input was not delivered; please try again."),
+                    timeout=5,
+                )
+                return
             if code in {
-                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
                 ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
                 ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
                 ErrorCode.SESSION_INVALID_STATE,
@@ -1328,13 +1378,13 @@ class TerminalWidget(Gtk.Box):
         )
 
     def _resync_daemon_terminal_size(self):
-        """Push the current widget size to the daemon and re-arm polling.
+        """Push the current grid to the daemon and re-arm size tracking.
 
         Called when input ownership is newly granted. A single synchronous
         read here can still race GTK's own layout pass (the widget may not
         have finished settling into its real on-screen size yet), so this
-        also invalidates the backend's tick-poll cache — that guarantees a
-        redelivery on the very next frame even if this read was stale,
+        also invalidates the backend's grid cache and queues allocation — that
+        guarantees a redelivery after layout even if this read was stale,
         without waiting for an actual further resize to produce one
         (GH #1164 follow-up).
         """
@@ -1667,7 +1717,12 @@ class TerminalWidget(Gtk.Box):
                 if not old_connected:
                     GLib.idle_add(self.emit, 'connection-established')
 
-            elif daemon_state in {TerminalSessionState.OPENING, TerminalSessionState.ATTACHING, TerminalSessionState.REPLAYING}:
+            elif daemon_state in {
+                TerminalSessionState.OPENING,
+                TerminalSessionState.ATTACHING,
+                TerminalSessionState.REPLAYING,
+                TerminalSessionState.RECOVERING,
+            }:
                 self.connection_state = self.connection_state.__class__.CONNECTING
                 self.connection_state_reason = f'Daemon: {daemon_state.value}'
                 self._set_connecting_overlay_visible(True)
@@ -2418,10 +2473,10 @@ class TerminalWidget(Gtk.Box):
         uri = getattr(self, '_context_menu_hyperlink_uri', None)
         if uri:
             try:
-                display = Gdk.Display.get_default()
-                clipboard = display.get_clipboard()
+                clipboard = self.get_clipboard()
                 clipboard.set(uri)
                 logger.debug(f"Copied link to clipboard: {uri}")
+                self._show_toast(_("Copied to clipboard"))
             except Exception as e:
                 logger.warning(f"Failed to copy link '{uri}': {e}")
 
@@ -2572,23 +2627,6 @@ class TerminalWidget(Gtk.Box):
                 root.add_toast(toast)
         except Exception:
             pass
-
-    def _has_terminal_selection(self) -> bool:
-        """Whether the terminal currently has a text selection.
-
-        Used to decide if a copy actually put something on the clipboard. The
-        backend reports it when it can (VTE); a backend that can't answer
-        synchronously (PyXterm) is treated optimistically as having a selection.
-        """
-        try:
-            if self.backend is not None:
-                getter = getattr(self.backend, 'get_has_selection', None)
-                if getter is not None:
-                    return bool(getter())
-                return True
-        except Exception:
-            pass
-        return False
 
     def _notify_invalid_encoding(self, requested, fallback):
         message = _(f"Encoding '{requested}' is not supported. Using {fallback} instead.")
@@ -3009,15 +3047,25 @@ class TerminalWidget(Gtk.Box):
             self._menu_controller_registry = []
             # Per-widget action group
             self._menu_actions = Gio.SimpleActionGroup()
+            self._clipboard_actions = Gio.SimpleActionGroup()
+            self._selection_actions = Gio.SimpleActionGroup()
             act_copy = Gio.SimpleAction.new("copy", None)
             act_copy.connect("activate", lambda a, p: self.copy_text())
-            self._menu_actions.add_action(act_copy)
+            self._clipboard_actions.add_action(act_copy)
+            if self.backend and self.backend.supports_feature("clipboard-html"):
+                act_copy_html = Gio.SimpleAction.new("copy-as-html", None)
+                act_copy_html.connect(
+                    "activate", lambda a, p: self.copy_text(format="html"))
+                self._clipboard_actions.add_action(act_copy_html)
             act_paste = Gio.SimpleAction.new("paste", None)
             act_paste.connect("activate", lambda a, p: self.paste_text())
-            self._menu_actions.add_action(act_paste)
+            self._clipboard_actions.add_action(act_paste)
             act_selall = Gio.SimpleAction.new("select_all", None)
             act_selall.connect("activate", lambda a, p: self.select_all())
             self._menu_actions.add_action(act_selall)
+            native_selall = Gio.SimpleAction.new("select-all", None)
+            native_selall.connect("activate", lambda a, p: self.select_all())
+            self._selection_actions.add_action(native_selall)
 
             # Open Link / Copy Link actions
             act_open_link = Gio.SimpleAction.new("open_link", None)
@@ -3051,6 +3099,11 @@ class TerminalWidget(Gtk.Box):
             self._menu_actions.add_action(act_save)
 
             self.insert_action_group('term', self._menu_actions)
+            # These canonical names are also used by the native macOS Edit
+            # menu. Action lookup walks from the focused backend widget to this
+            # TerminalWidget, so context menus and the app menubar share paths.
+            self.insert_action_group('clipboard', self._clipboard_actions)
+            self.insert_action_group('selection', self._selection_actions)
 
             # Menu model with keyboard shortcuts
             self._menu_model = Gio.Menu()
@@ -3065,8 +3118,11 @@ class TerminalWidget(Gtk.Box):
             self._link_menu.append(_("Copy Link"), "term.copy_link")
 
             if is_macos():
-                self._menu_model.append(_("Copy\t⌘C"), "term.copy")
-                self._menu_model.append(_("Paste\t⌘V"), "term.paste")
+                self._menu_model.append(_("Copy\t⌘C"), "clipboard.copy")
+                if self.backend and self.backend.supports_feature("clipboard-html"):
+                    self._menu_model.append(
+                        _("Copy as HTML"), "clipboard.copy-as-html")
+                self._menu_model.append(_("Paste\t⌘V"), "clipboard.paste")
                 self._menu_model.append(_("Select All\t⌘A"), "term.select_all")
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\t⌘="), "term.zoom_in")
@@ -3078,8 +3134,13 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
             else:
-                self._menu_model.append(_("Copy\tCtrl+Shift+C"), "term.copy")
-                self._menu_model.append(_("Paste\tCtrl+Shift+V"), "term.paste")
+                self._menu_model.append(
+                    _("Copy\tCtrl+Shift+C"), "clipboard.copy")
+                if self.backend and self.backend.supports_feature("clipboard-html"):
+                    self._menu_model.append(
+                        _("Copy as HTML"), "clipboard.copy-as-html")
+                self._menu_model.append(
+                    _("Paste\tCtrl+Shift+V"), "clipboard.paste")
                 self._menu_model.append(_("Select All\tCtrl+Shift+A"), "term.select_all")
                 zoom_section = Gio.Menu()
                 zoom_section.append(_("Zoom In\tCtrl++"), "term.zoom_in")
@@ -3090,7 +3151,6 @@ class TerminalWidget(Gtk.Box):
                 search_section.append(_("Search\tCtrl+Shift+F"), "term.search")
                 search_section.append(_("Save Output…"), "term.save_contents")
                 self._menu_model.append_section(None, search_section)
-
             # Popover parent + dismissal strategy.
             #
             # A grabbing (autohide) GtkPopover cannot establish its input grab over a
@@ -3147,11 +3207,14 @@ class TerminalWidget(Gtk.Box):
                 self._install_manual_menu_dismissal(parent_widget)
 
             # Capture records coordinates before VTE handles the event; it
-            # claims only the paste-on-right-click policy case.
+            # claims only when SSH Pilot handles the click itself. PyXterm's
+            # non-autohide menu needs every button for manual click-away
+            # dismissal, while VTE only needs secondary-button observation.
             gesture = Gtk.GestureClick()
-            gesture.set_button(0)
+            gesture.set_button(_context_gesture_button(self._menu_needs_manual_dismiss))
             gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
             def _on_pressed(gest, n_press, x, y):
+                handled = False
                 try:
                     btn = 0
                     try:
@@ -3185,23 +3248,29 @@ class TerminalWidget(Gtk.Box):
                         shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
                     except Exception:
                         shift_held = False
+                    native_vte_menu = bool(
+                        getattr(self, '_native_vte_context_menu', False)
+                    )
+                    if not _context_click_is_handled(
+                        btn,
+                        paste_on_right_click=paste_on_rc,
+                        shift_held=shift_held,
+                        native_vte_menu=native_vte_menu,
+                    ):
+                        return
                     if paste_on_rc and not shift_held:
                         self._pending_context_menu_coordinates = None
-                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         try:
                             if self.backend:
                                 self.backend.grab_focus()
                         except Exception:
                             pass
                         self.paste_text()
+                        handled = True
                         return
                     # VTE 0.76+ owns recognition, placement and popup lifecycle.
                     # This gesture exists on that path solely to preserve the
                     # paste-on-right-click preference above.
-                    if getattr(self, '_native_vte_context_menu', False):
-                        return
-                    # Stop event propagation to prevent other context menus
-                    gest.set_state(Gtk.EventSequenceState.CLAIMED)
                     # Focus terminal first for reliable copy/paste
                     try:
                         if self.backend:
@@ -3240,8 +3309,11 @@ class TerminalWidget(Gtk.Box):
                     except Exception as e:
                         logger.error(f"Failed to position context menu: {e}")
                     self._menu_popover.popup()
+                    handled = True
                 except Exception as e:
                     logger.error(f"Context menu popup failed: {e}")
+                finally:
+                    _finish_capture_gesture(gest, handled)
             gesture.connect('pressed', _on_pressed)
             # Store gesture reference for cleanup
             self._menu_gesture = gesture
@@ -3264,11 +3336,12 @@ class TerminalWidget(Gtk.Box):
                 url_gesture.set_button(Gdk.BUTTON_PRIMARY)
                 url_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
                 def _on_url_click(gest, n_press, x, y):
+                    handled = False
                     try:
-                        if n_press != 1:
-                            return
-                        if getattr(self, '_destroyed', False) or getattr(self, '_is_quitting', False):
-                            return
+                        active = not (
+                            getattr(self, '_destroyed', False)
+                            or getattr(self, '_is_quitting', False)
+                        )
                         # Plain click must reach VTE for cursor placement /
                         # selection — only Ctrl+click (Cmd+click on macOS)
                         # activates links, matching GNOME Terminal.
@@ -3276,18 +3349,27 @@ class TerminalWidget(Gtk.Box):
                             state = gest.get_current_event_state()
                         except Exception:
                             return
-                        if not self._click_has_link_modifier(state):
+                        modifier_held = self._click_has_link_modifier(state)
+                        uri = (
+                            self._vte_uri_at(x, y)
+                            if n_press == 1 and active and modifier_held
+                            else None
+                        )
+                        if not _link_click_is_handled(
+                            n_press,
+                            active=active,
+                            modifier_held=modifier_held,
+                            uri=uri,
+                        ):
                             return
 
-                        uri = self._vte_uri_at(x, y)
-                        if not uri:
-                            return  # no URL here – let VTE handle the click normally
-
-                        gest.set_state(Gtk.EventSequenceState.CLAIMED)
                         Gio.AppInfo.launch_default_for_uri(uri, None)
+                        handled = True
                         logger.debug(f"Opened URL via Ctrl/Cmd+click: {uri}")
                     except Exception as e:
                         logger.warning(f"URL click failed: {e}")
+                    finally:
+                        _finish_capture_gesture(gest, handled)
                 url_gesture.connect('pressed', _on_url_click)
                 self._register_menu_controller(self.backend.widget, url_gesture)
                 self._url_click_gesture = url_gesture
@@ -3427,16 +3509,12 @@ class TerminalWidget(Gtk.Box):
 
                 def _cb_copy(widget, *args):
                     if self.backend:
-                        had_selection = self._has_terminal_selection()
-                        result = _schedule_vte_action(self.backend.copy_clipboard)
-                        if had_selection:
-                            self._show_toast(_("Copied to clipboard"))
-                        return result
+                        return _schedule_vte_action(self.copy_text)
                     return False
 
                 def _cb_paste(widget, *args):
                     if self.backend:
-                        return _schedule_vte_action(self.backend.paste_clipboard)
+                        return _schedule_vte_action(self.paste_text)
                     return False
 
                 def _cb_select_all(widget, *args):
@@ -3455,14 +3533,19 @@ class TerminalWidget(Gtk.Box):
                     paste_trigger = "<Primary><Shift>v"
                     select_trigger = "<Primary><Shift>a"
 
-                controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(copy_trigger),
-                    Gtk.CallbackAction.new(_cb_copy)
-                ))
-                controller.add_shortcut(Gtk.Shortcut.new(
-                    Gtk.ShortcutTrigger.parse_string(paste_trigger),
-                    Gtk.CallbackAction.new(_cb_paste)
-                ))
+                backend_owns_clipboard_shortcuts = bool(
+                    self.backend
+                    and self.backend.supports_feature(
+                        "native-clipboard-shortcuts"))
+                if not backend_owns_clipboard_shortcuts:
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(copy_trigger),
+                        Gtk.CallbackAction.new(_cb_copy)
+                    ))
+                    controller.add_shortcut(Gtk.Shortcut.new(
+                        Gtk.ShortcutTrigger.parse_string(paste_trigger),
+                        Gtk.CallbackAction.new(_cb_paste)
+                    ))
                 controller.add_shortcut(Gtk.Shortcut.new(
                     Gtk.ShortcutTrigger.parse_string(select_trigger),
                     Gtk.CallbackAction.new(_cb_select_all)
@@ -3633,6 +3716,9 @@ class TerminalWidget(Gtk.Box):
     def _apply_pass_through_mode(self, enabled: bool):
         """Enable or disable custom shortcut handling based on configuration."""
         enabled = bool(enabled)
+        backend = getattr(self, "backend", None)
+        if backend is not None and hasattr(backend, "set_shortcut_passthrough"):
+            backend.set_shortcut_passthrough(enabled)
         current = getattr(self, '_pass_through_mode', False)
         if enabled == current:
             if enabled:
@@ -4298,13 +4384,19 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("copy-on-select failed", exc_info=True)
 
-    def copy_text(self):
+    def copy_text(self, *, format="text"):
         """Copy selected text to clipboard"""
         if self.backend:
-            had_selection = self._has_terminal_selection()
-            self.backend.copy_clipboard()
-            if had_selection:
-                self._show_toast(_("Copied to clipboard"))
+            def _completed(copied):
+                if copied:
+                    self._show_toast(_("Copied to clipboard"))
+
+            self.backend.copy_clipboard(format=format, on_complete=_completed)
+
+    def handle_backend_copy_result(self, copied):
+        """Report a backend-owned shortcut copy through the standard UI path."""
+        if copied:
+            self._show_toast(_("Copied to clipboard"))
 
     def paste_text(self):
         """Paste text from clipboard"""

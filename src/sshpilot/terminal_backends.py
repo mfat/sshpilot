@@ -11,6 +11,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 import gi
 
 gi.require_version("Gtk", "4.0")
+gi.require_version("Vte", "3.91")
 
 from gi.repository import GObject, Gtk
 from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_color
@@ -129,8 +130,12 @@ class BaseTerminalBackend(Protocol):
     def disconnect(self, handler_id: Any) -> None:
         """Disconnect a previously registered signal handler."""
 
-    def copy_clipboard(self) -> None:
-        """Copy the current terminal selection to the clipboard."""
+    def copy_clipboard(
+        self,
+        format: str = "text",
+        on_complete: Optional[Callable[[bool], None]] = None,
+    ) -> None:
+        """Copy the selection and report whether a non-empty payload was copied."""
 
     def get_has_selection(self) -> bool:
         """Whether the terminal currently has a text selection."""
@@ -171,13 +176,7 @@ class BaseTerminalBackend(Protocol):
         """
 
     def invalidate_size_tracking(self) -> None:
-        """Force the next size poll to re-report, even at an unchanged size.
-
-        No-op by default; overridden by backends that cache the last polled
-        size (see ``VTETerminalBackend``) so a caller can force a redelivery
-        after a resize was observed but dropped for an unrelated reason
-        (e.g. no input ownership yet).
-        """
+        """Force cached size tracking to re-report an unchanged grid."""
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """Connect a notification emitted after displayed content changes."""
@@ -288,12 +287,56 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from .terminal import TerminalWidget
 
 
+class GridTrackingVteTerminal(Vte.Terminal):
+    """VTE terminal that reports grid changes after GTK allocation."""
+
+    __gtype_name__ = "SshPilotGridTrackingVteTerminal"
+    __gsignals__ = {
+        "grid-size-changed": (
+            GObject.SignalFlags.RUN_LAST,
+            None,
+            (int, int),
+        ),
+    }
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._grid_size = None
+        self._grid_tracking_enabled = True
+
+    def do_size_allocate(self, width: int, height: int, baseline: int) -> None:
+        # ``super().do_size_allocate(...)`` resolves to Gtk.Widget's public
+        # allocation wrapper in PyGObject and has the wrong signature. Calling
+        # the introspected VTE parent vfunc explicitly is the reliable chain.
+        Vte.Terminal.do_size_allocate(self, width, height, baseline)
+        if not self._grid_tracking_enabled:
+            return
+        grid_size = (
+            int(self.get_row_count()),
+            int(self.get_column_count()),
+        )
+        if grid_size == self._grid_size:
+            return
+        self._grid_size = grid_size
+        rows, columns = grid_size
+        self.emit("grid-size-changed", columns, rows)
+
+    def invalidate_grid_size(self) -> None:
+        """Force the next allocation to re-report the current VTE grid."""
+
+        self._grid_size = None
+        self.queue_allocate()
+
+    def disable_grid_tracking(self) -> None:
+        self._grid_tracking_enabled = False
+
+
 class VTETerminalBackend:
     """VTE based terminal backend."""
 
     def __init__(self, owner: "TerminalWidget") -> None:
         self.owner = owner
-        self.vte = Vte.Terminal()
+        self.vte = GridTrackingVteTerminal()
         self.widget = self.vte
         self._termprops_handler: Optional[int] = None
         self._background_provider = None
@@ -587,6 +630,7 @@ class VTETerminalBackend:
 
     def destroy(self) -> None:
         self._destroyed = True
+        self.vte.disable_grid_tracking()
         self._remove_macos_option_key_controller()
         self.clear_native_context_menu()
         try:
@@ -985,16 +1029,6 @@ class VTETerminalBackend:
         self._native_context_callback = None
 
     def disconnect(self, handler_id: Any) -> None:
-        if (
-            isinstance(handler_id, tuple)
-            and len(handler_id) == 2
-            and handler_id[0] == "tick-callback"
-        ):
-            try:
-                self.vte.remove_tick_callback(handler_id[1])
-            except Exception:
-                logger.debug("Failed to remove VTE tick callback", exc_info=True)
-            return
         if isinstance(handler_id, (tuple, list)):
             for one_id in handler_id:
                 self.disconnect(one_id)
@@ -1020,9 +1054,25 @@ class VTETerminalBackend:
     # ------------------------------------------------------------------
     # Clipboard helpers
     # ------------------------------------------------------------------
-    def copy_clipboard(self) -> None:
-        if self.vte.get_has_selection():
-            self.vte.copy_clipboard_format(Vte.Format.TEXT)
+    def copy_clipboard(
+        self,
+        format: str = "text",
+        on_complete: Optional[Callable[[bool], None]] = None,
+    ) -> None:
+        copied = False
+        try:
+            vte_format = Vte.Format.HTML if format == "html" else Vte.Format.TEXT
+            # Validate the payload itself, rather than merely trusting the
+            # selection flag.  This also gives the success notification the
+            # same semantics as Ptyxis: null/empty selections are not copies.
+            selected = self.vte.get_text_selected(vte_format)
+            if selected:
+                self.vte.copy_clipboard_format(vte_format)
+                copied = True
+        except Exception:
+            logger.debug("Failed to copy VTE selection", exc_info=True)
+        if on_complete is not None:
+            on_complete(copied)
 
     def get_has_selection(self) -> bool:
         return bool(self.vte.get_has_selection())
@@ -1057,71 +1107,16 @@ class VTETerminalBackend:
         return self.vte.connect("commit", callback)
 
     def connect_size_changed(self, callback: Callable[..., None]) -> Optional[Any]:
-        """Fire *callback* when the terminal's column/row grid changes size.
+        """Notify after VTE's allocation vfunc changes its row/column grid."""
 
-        Not VTE's own "char-size-changed" signal: per VTE's docs that fires
-        only on cell/font-metric changes (e.g. zoom), never when the widget
-        itself is resized. A first fix tried ``notify::column-count`` /
-        ``notify::row-count`` instead — but those are not real GObject
-        properties on Vte.Terminal (confirmed via
-        ``GObject.list_properties``), so that notify never fires either.
-        GTK4 also removed the public "size-allocate" signal entirely (it is
-        now a private vfunc, ``GtkWidgetClass.size_allocate``, with no
-        signal to connect to from Python). Any of these silently leaves the
-        remote PTY (and anything reading it, e.g. tmux) stuck at whatever
-        size the session opened with, no matter how big the window/pane
-        grew afterwards (GH #1164).
-
-        The only mechanism GTK4 actually offers for observing an opaque
-        widget's real allocated size is polling once per rendered frame via
-        ``Gtk.Widget.add_tick_callback`` — it only runs while the widget is
-        mapped (so it's free while the tab isn't visible), and comparing
-        two cached ints per tick is cheap.
-
-        The very first tick fires *callback* too, not just later changes:
-        skipping it (treating tick #1 as "just the baseline") assumed
-        whatever size was read synchronously at session-open time — before
-        layout/allocation may have settled — still matched reality once
-        polling started. When it didn't (layout settling is a frame or more
-        behind session-open on a fresh tab), the daemon was told a size the
-        widget had already outgrown, nothing ever detected a "change" from
-        that wrong baseline, and a fullscreen program (top, tmux) stayed
-        rendering into the stale corner until the user manually resized the
-        window — resize being the only thing that produced a real
-        before/after delta for this poll to notice.
-        """
-        state = {"size": None}
-        self._size_poll_state = state
-
-        def _on_tick(widget, _frame_clock):
-            try:
-                size = (widget.get_row_count(), widget.get_column_count())
-            except Exception:
-                return GLib.SOURCE_CONTINUE
-            if size != state["size"]:
-                state["size"] = size
-                callback(widget, 0, 0)
-            return GLib.SOURCE_CONTINUE
-
-        tick_id = self.vte.add_tick_callback(_on_tick)
-        return ("tick-callback", tick_id)
+        handler_id = self.vte.connect("grid-size-changed", callback)
+        self.vte.invalidate_grid_size()
+        return handler_id
 
     def invalidate_size_tracking(self) -> None:
-        """Clear the cached last-polled size so the next tick redelivers it.
+        """Force one event-driven allocation report at the current grid."""
 
-        Covers the race where the grid already settled at its true
-        post-layout size before a caller could act on a report (e.g.
-        daemon input ownership wasn't granted yet when the tick fired), so
-        ``connect_size_changed``'s own change-detection never saw a further
-        delta to report and only a later, genuine window resize produced
-        one. Forcing the cached size back to ``None`` makes the very next
-        tick redeliver unconditionally, which self-heals regardless of
-        exactly when layout settles relative to ownership being granted
-        (GH #1164 follow-up).
-        """
-        state = getattr(self, "_size_poll_state", None)
-        if state is not None:
-            state["size"] = None
+        self.vte.invalidate_grid_size()
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         return self.vte.connect("contents-changed", callback)
@@ -1245,6 +1240,7 @@ class VTETerminalBackend:
             "daemon_input",
             "daemon_resize",
             "save_output",
+            "clipboard-html",
             # Compatibility spellings.
             "search", "font-scaling",
         }
@@ -1298,6 +1294,11 @@ class PyXtermTerminalBackend:
         self._current_search_case_sensitive: bool = False  # Whether current search is case sensitive
         self._pending_spawn_callback: Optional[Callable] = None  # Store callback until WebView is ready
         self._pending_spawn_user_data: Optional[Any] = None  # Store user_data for callback
+        self._clipboard_copy_serial = 0
+        self._clipboard_copy_callbacks: dict[int, Callable[[bool], None]] = {}
+        self._has_selection = False
+        self._selection_changed_cb: Optional[Callable[..., None]] = None
+        self._shortcut_passthrough = False
 
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -1388,7 +1389,18 @@ class PyXtermTerminalBackend:
 
     def setup_link_handling(self, motion_callback, enter_callback, selection_callback, hover_callback=None) -> None:
         """xterm.js handles links in its WebLinks addon."""
-        return None
+        self._selection_changed_cb = selection_callback
+
+    def get_has_selection(self) -> bool:
+        return self._has_selection
+
+    def set_shortcut_passthrough(self, enabled: bool) -> None:
+        """Let terminal applications receive SSH Pilot's usual shortcuts."""
+        self._shortcut_passthrough = bool(enabled)
+        if not self.available:
+            return
+        value = "true" if self._shortcut_passthrough else "false"
+        self._run_javascript(f"window.sshpilotShortcutPassthrough = {value};")
 
     def hyperlink_at(self, x: float, y: float) -> Optional[str]:
         return None
@@ -1413,7 +1425,14 @@ class PyXtermTerminalBackend:
     def destroy(self) -> None:
         # Embedded backend: nothing server-side to tear down. Subclasses
         # (PyXtermBridgeBackend) close their PTY bridge before calling super().
-        pass
+        callbacks = list(self._clipboard_copy_callbacks.values())
+        self._clipboard_copy_callbacks.clear()
+        self._selection_changed_cb = None
+        for callback in callbacks:
+            try:
+                callback(False)
+            except Exception:
+                logger.debug("Clipboard completion callback raised", exc_info=True)
 
     def _run_javascript(self, script: str) -> None:
         """Execute JavaScript in the WebView"""
@@ -1713,13 +1732,14 @@ class PyXtermTerminalBackend:
             return None
         return display.get_clipboard()
 
-    def _set_system_clipboard_text(self, text: str) -> None:
+    def _set_system_clipboard_text(self, text: str) -> bool:
         if not text:
-            return
+            return False
         clipboard = self._get_system_clipboard()
         if clipboard is None:
-            return
+            return False
         clipboard.set(text)
+        return True
 
     def _paste_text(self, text: str) -> None:
         """Inject clipboard text into xterm.js (fires onData → PTY bridge)."""
@@ -1734,32 +1754,47 @@ class PyXtermTerminalBackend:
         )
         self._run_javascript(script)
 
-    def copy_clipboard(self) -> None:
+    def copy_clipboard(
+        self,
+        format: str = "text",
+        on_complete: Optional[Callable[[bool], None]] = None,
+    ) -> None:
         """Copy selected text from xterm.js to the system clipboard.
 
         Selection is read in JS and posted to Python so we can write the GTK
         clipboard. ``navigator.clipboard`` is unreliable for cross-app use in
         WebKitGTK (and paste from other apps fails for the same reason).
         """
-        if not self.available:
+        # xterm.js exposes plain selection text only.
+        if not self.available or format != "text":
+            if on_complete is not None:
+                on_complete(False)
             return
+        self._clipboard_copy_serial += 1
+        request_id = self._clipboard_copy_serial
+        if on_complete is not None:
+            self._clipboard_copy_callbacks[request_id] = on_complete
         try:
             # IIFE returns a boolean so evaluate_javascript_finish does not see
             # a Promise/"undefined" completion value as an unsupported type.
             script = """
             (function() {
+                var selection = "";
                 if (typeof window.term !== 'undefined' && window.term.hasSelection()) {
-                    var selection = window.term.getSelection();
-                    if (selection && typeof window.ptySend === 'function') {
-                        window.ptySend({type: "copy", text: selection});
-                    }
+                    selection = window.term.getSelection() || "";
+                }
+                if (typeof window.ptySend === 'function') {
+                    window.ptySend({type: "copy", requestId: %d, text: selection});
                 }
                 return true;
             })();
-            """
+            """ % request_id
             self._run_javascript(script)
         except Exception as e:
             logger.debug(f"Failed to copy from PyXterm backend: {e}", exc_info=True)
+            callback = self._clipboard_copy_callbacks.pop(request_id, None)
+            if callback is not None:
+                callback(False)
 
     def paste_clipboard(self) -> None:
         """Paste system clipboard content into xterm.js.
@@ -2250,6 +2285,7 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     super().set_font(self._stored_font)
                 except Exception:  # noqa: BLE001
                     pass
+            self.set_shortcut_passthrough(self._shortcut_passthrough)
             # Resize the already-running shell to the real terminal size (it was
             # spawned at a default size in parallel with the page load).
             if self._bridge is not None:
@@ -2303,6 +2339,14 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     self._size_changed_cb(self.widget, 0, 0)
                 except Exception:  # noqa: BLE001
                     logger.debug("size-changed callback raised", exc_info=True)
+        elif kind == "selection-changed":
+            self._has_selection = bool(payload.get("hasSelection"))
+            callback = self._selection_changed_cb
+            if callback is not None:
+                try:
+                    callback(self.widget)
+                except Exception:  # noqa: BLE001
+                    logger.debug("selection-changed callback raised", exc_info=True)
         elif kind == "title":
             # xterm.js OSC 0/2 title change — parity with VTE's window title +
             # termprops-based CONNECTING→CONNECTED promotion.
@@ -2336,10 +2380,27 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self.paste_clipboard()
         elif kind == "copy":
             # Selection posted from JS (shortcut or copy_clipboard).
+            copied = False
             try:
-                self._set_system_clipboard_text(payload.get("text") or "")
+                copied = self._set_system_clipboard_text(payload.get("text") or "")
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to set system clipboard from PyXterm", exc_info=True)
+            request_id = payload.get("requestId")
+            callback = self._clipboard_copy_callbacks.pop(request_id, None)
+            if callback is not None:
+                callback(copied)
+            elif request_id is None:
+                # Embedded xterm.js owns its keyboard shortcut so WebKit and a
+                # GTK bubble controller cannot both process the same event.
+                # Report the actual write through the same UI completion path
+                # used by context-menu copies.
+                owner = self.owner
+                if owner is not None and hasattr(owner, "handle_backend_copy_result"):
+                    try:
+                        owner.handle_backend_copy_result(copied)
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "handle_backend_copy_result raised", exc_info=True)
 
     # ---- autocomplete (Termius-style popup, engine in autocomplete.py) -------
 
@@ -2708,4 +2769,5 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             "pty", "pty_access", "local_process", "terminal_search",
             "dynamic_font", "clipboard", "content_extraction", "daemon_input",
             "daemon_resize", "search", "font-scaling",
+            "native-clipboard-shortcuts",
         }

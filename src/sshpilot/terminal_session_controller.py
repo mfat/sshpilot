@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Protocol
@@ -21,12 +22,15 @@ from .api.models.sessions import (
     SessionState,
 )
 from .api.models.terminal import (
+    ReplayRequest,
     ResizeTerminalRequest,
     TerminalDimensions,
     TerminalInput,
 )
 
 logger = logging.getLogger(__name__)
+
+_RECOVERY_REPLAY_CHUNK_BYTES = 512 * 1024
 
 
 class TerminalSessionState(str, Enum):
@@ -35,6 +39,7 @@ class TerminalSessionState(str, Enum):
     OPENING = "opening"
     ATTACHING = "attaching"
     REPLAYING = "replaying"
+    RECOVERING = "recovering"
     ACTIVE = "active"
     DETACHED = "detached"
     CLOSING = "closing"
@@ -194,6 +199,15 @@ class DaemonTerminalSessionController:
         self._restoring_existing = False
         self._attach_from_sequence = 0
         self._replay_catchup_target: Optional[int] = None
+        self._stream_generation = 0
+        self._recovery_catchup_target: Optional[int] = None
+        self._recovery_replay_pending = None
+        self._resize_in_flight = False
+        self._resize_sent: Optional[TerminalDimensions] = None
+        self._pending_resize: Optional[TerminalDimensions] = None
+        self._recovery_input = deque()
+        self._recovery_input_bytes = 0
+        self._max_recovery_input_bytes = 256 * 1024
 
     @property
     def tab_state(self) -> DaemonTerminalTabState:
@@ -240,7 +254,22 @@ class DaemonTerminalSessionController:
         calls through the closed client and raises "The client is closed"
         (``subscribe_terminal``/``attach_session`` etc.) uncaught.
         """
+        if client is self._client:
+            return
         self._client = client
+        session_id = self._tab_state.session_id
+        if session_id is not None:
+            self._subscribe_session_events(session_id)
+        if (
+            self._stream is not None
+            and self._tab_state.state
+            in {
+                TerminalSessionState.ACTIVE,
+                TerminalSessionState.REPLAYING,
+                TerminalSessionState.RECOVERING,
+            }
+        ):
+            self._begin_output_recovery(reattach=True)
 
     def open(
         self,
@@ -297,13 +326,7 @@ class DaemonTerminalSessionController:
 
         # Set up terminal output stream first
         if want_output and not self._stream:
-            self._stream = self._bridge.bind_terminal(
-                self._client,
-                self._tab_state.session_id,
-                on_output=self._handle_output,
-                on_continuity_lost=self._handle_continuity_lost,
-                on_error=self._on_error,
-            )
+            self._replace_output_binding(self._client, paused=False)
 
         # Then attach to the session
         self._bridge.submit(
@@ -326,6 +349,8 @@ class DaemonTerminalSessionController:
 
         self._tab_state.state = TerminalSessionState.DETACHED
         self._tab_state.input_owner = False
+        self._invalidate_output_binding()
+        self._clear_pending_terminal_control()
 
         if self._stream:
             self._stream.close()
@@ -349,6 +374,8 @@ class DaemonTerminalSessionController:
 
         self._closed = True
         self._tab_state.state = TerminalSessionState.CLOSING
+        self._invalidate_output_binding()
+        self._clear_pending_terminal_control()
         self._unsubscribe_events()
 
         # Close output stream first
@@ -377,20 +404,35 @@ class DaemonTerminalSessionController:
         if self._closed or not self._tab_state.input_owner:
             return
 
-        if not (self._tab_state.session_id and self._tab_state.attachment_id):
+        if not self._tab_state.session_id:
             return
 
-        self._bridge.submit(
-            lambda: self._client.send_terminal_input(
-                TerminalInput(
-                    session_id=self._tab_state.session_id,
-                    attachment_id=self._tab_state.attachment_id,
-                    data=data,
-                )
-            ),
-            on_success=lambda _: None,
-            on_error=self._on_input_error,
+        if not self._tab_state.attachment_id:
+            if self._tab_state.state is TerminalSessionState.RECOVERING:
+                self._queue_recovery_input(data)
+            return
+
+        submit = (
+            self._bridge.submit_terminal_input
+            if callable(
+                getattr(type(self._bridge), "submit_terminal_input", None)
+            )
+            else self._bridge.submit
         )
+        try:
+            submit(
+                lambda: self._client.send_terminal_input(
+                    TerminalInput(
+                        session_id=self._tab_state.session_id,
+                        attachment_id=self._tab_state.attachment_id,
+                        data=data,
+                    )
+                ),
+                on_success=lambda _: None,
+                on_error=self._on_input_error,
+            )
+        except BaseException as error:
+            self._on_input_error(error)
 
     def resize(self, dimensions: TerminalDimensions) -> None:
         """Resize terminal. Requires input ownership (resize authority)."""
@@ -400,17 +442,42 @@ class DaemonTerminalSessionController:
         if not (self._tab_state.session_id and self._tab_state.attachment_id):
             return
 
-        self._bridge.submit(
-            lambda: self._client.resize_terminal(
-                ResizeTerminalRequest(
-                    session_id=self._tab_state.session_id,
-                    attachment_id=self._tab_state.attachment_id,
-                    dimensions=dimensions,
-                )
-            ),
-            on_success=lambda _: None,
-            on_error=self._on_input_error,
-        )
+        if self._resize_in_flight:
+            self._pending_resize = dimensions
+            return
+        self._resize_in_flight = True
+        self._submit_resize(dimensions)
+
+    def _submit_resize(self, dimensions: TerminalDimensions) -> None:
+        self._resize_sent = dimensions
+        try:
+            self._bridge.submit(
+                lambda: self._client.resize_terminal(
+                    ResizeTerminalRequest(
+                        session_id=self._tab_state.session_id,
+                        attachment_id=self._tab_state.attachment_id,
+                        dimensions=dimensions,
+                    )
+                ),
+                on_success=lambda _: self._finish_resize(None),
+                on_error=self._finish_resize,
+            )
+        except BaseException as error:
+            self._finish_resize(error)
+
+    def _finish_resize(self, error) -> None:
+        if error is not None:
+            self._on_input_error(error)
+        if self._closed or not self._tab_state.input_owner:
+            self._resize_in_flight = False
+            self._pending_resize = None
+            return
+        pending = self._pending_resize
+        self._pending_resize = None
+        if pending is not None and pending != self._resize_sent:
+            self._submit_resize(pending)
+            return
+        self._resize_in_flight = False
 
     def subscribe_output(
         self,
@@ -590,13 +657,16 @@ class DaemonTerminalSessionController:
 
         self._tab_state.attachment_id = result.attachment.id
         self._tab_state.input_owner = result.attachment.input_owner
-        self._tab_state.expected_sequence = result.live_sequence
 
         # The daemon replays [min(from_sequence, live), live). REPLAYING is
         # only valid while replay frames are actually in flight — reattaching
         # to an idle session whose replay slice is empty delivers no frames at
         # all, so waiting for output here would stick the tab on "Connecting".
         replay_from = min(self._attach_from_sequence, result.live_sequence)
+        # This is the next byte represented by the existing frontend state.
+        # Do not advance to live_sequence until replay bytes have actually
+        # passed through the terminal output callback.
+        self._tab_state.expected_sequence = replay_from
         if replay_from < result.live_sequence:
             self._replay_catchup_target = result.live_sequence
             self._tab_state.state = TerminalSessionState.REPLAYING
@@ -610,6 +680,355 @@ class DaemonTerminalSessionController:
         if callback is not None:
             callback()
 
+    def _replace_output_binding(self, client, *, paused: bool):
+        self._stream_generation += 1
+        generation = self._stream_generation
+        previous = self._stream
+        self._stream = None
+        if previous is not None:
+            previous.close()
+        binding = self._bridge.bind_terminal(
+            client,
+            self._tab_state.session_id,
+            on_output=lambda output: self._handle_bound_output(generation, output),
+            on_continuity_lost=lambda session_id, expected, available: (
+                self._handle_bound_continuity(
+                    generation,
+                    session_id,
+                    expected,
+                    available,
+                )
+            ),
+            on_error=lambda error: self._handle_bound_error(generation, error),
+            start_paused=paused,
+            recovery_sequence=(
+                self._tab_state.expected_sequence if paused else None
+            ),
+        )
+        if generation != self._stream_generation or self._closed:
+            binding.close()
+            return generation, None
+        self._stream = binding
+        return generation, binding
+
+    def _invalidate_output_binding(self) -> None:
+        self._stream_generation += 1
+        self._recovery_catchup_target = None
+        self._recovery_replay_pending = None
+
+    def _handle_bound_output(self, generation: int, output) -> None:
+        if generation != self._stream_generation or self._closed:
+            return
+        self._handle_output(output)
+
+    def _handle_bound_continuity(
+        self,
+        generation: int,
+        session_id,
+        expected,
+        available,
+    ) -> None:
+        if generation != self._stream_generation or self._closed:
+            return
+        self._handle_continuity_lost(session_id, expected, available)
+
+    def _handle_bound_error(self, generation: int, error) -> None:
+        if generation != self._stream_generation or self._closed:
+            return
+        self._on_error(error)
+
+    def _begin_output_recovery(self, *, reattach: bool) -> None:
+        if self._closed or self._tab_state.session_id is None:
+            return
+        safe_sequence = self._tab_state.expected_sequence
+        self._tab_state.state = TerminalSessionState.RECOVERING
+        self._notify_state_changed()
+        generation, binding = self._replace_output_binding(
+            self._client,
+            paused=True,
+        )
+        if binding is None:
+            return
+        recovery_client = self._client
+
+        if reattach:
+            self._tab_state.attachment_id = None
+
+            def operation():
+                return recovery_client.attach_session(
+                    AttachSessionRequest(
+                        session_id=self._tab_state.session_id,
+                        request_input=True,
+                        want_terminal_output=True,
+                        from_sequence=safe_sequence,
+                    )
+                )
+
+            def on_success(result):
+                self._finish_output_reattach(
+                    generation,
+                    binding,
+                    safe_sequence,
+                    result,
+                    recovery_client,
+                )
+        else:
+            attachment_id = self._tab_state.attachment_id
+            if attachment_id is None:
+                self._fail_output_recovery(
+                    generation,
+                    "The terminal output attachment is unavailable",
+                )
+                return
+            self._submit_output_replay(
+                generation,
+                binding,
+                safe_sequence,
+                recovery_client,
+                attachment_id,
+            )
+            return
+        try:
+            self._bridge.submit(
+                operation,
+                on_success=on_success,
+                on_error=lambda error: self._fail_output_recovery(
+                    generation,
+                    str(error),
+                ),
+            )
+        except BaseException as error:
+            self._fail_output_recovery(generation, str(error))
+
+    def _submit_output_replay(
+        self,
+        generation: int,
+        binding,
+        start_sequence: int,
+        recovery_client,
+        attachment_id,
+    ) -> None:
+        try:
+            self._bridge.submit(
+                lambda: recovery_client.replay_terminal(
+                    ReplayRequest(
+                        session_id=self._tab_state.session_id,
+                        attachment_id=attachment_id,
+                        after_sequence=start_sequence,
+                        max_bytes=_RECOVERY_REPLAY_CHUNK_BYTES,
+                    )
+                ),
+                on_success=lambda result: self._finish_output_replay(
+                    generation,
+                    binding,
+                    start_sequence,
+                    result,
+                    recovery_client,
+                    attachment_id,
+                ),
+                on_error=lambda error: self._fail_output_recovery(
+                    generation,
+                    str(error),
+                ),
+            )
+        except BaseException as error:
+            self._fail_output_recovery(generation, str(error))
+
+    def _finish_output_replay(
+        self,
+        generation: int,
+        binding,
+        safe_sequence: int,
+        result,
+        recovery_client,
+        attachment_id,
+    ) -> None:
+        if not self._recovery_is_current(generation, binding):
+            return
+        if (
+            result.first_sequence != safe_sequence
+            or result.next_sequence < safe_sequence
+        ):
+            self._fail_output_recovery(
+                generation,
+                "The retained terminal output cannot restore this view",
+            )
+            return
+        if result.truncated and result.next_sequence == safe_sequence:
+            self._fail_output_recovery(
+                generation,
+                "The retained terminal output cannot restore this view",
+            )
+            return
+        self._recovery_replay_pending = (
+            generation,
+            binding,
+            result.next_sequence,
+            result.truncated,
+            recovery_client,
+            attachment_id,
+        )
+        binding.resume(
+            replay_end=result.next_sequence,
+            allow_live=not result.truncated,
+        )
+        self._continue_replay_if_chunk_delivered()
+
+    def _continue_replay_if_chunk_delivered(self) -> None:
+        pending = self._recovery_replay_pending
+        if pending is None:
+            return
+        (
+            generation,
+            binding,
+            end_sequence,
+            truncated,
+            recovery_client,
+            attachment_id,
+        ) = pending
+        if not self._recovery_is_current(generation, binding):
+            self._recovery_replay_pending = None
+            return
+        if self._tab_state.expected_sequence < end_sequence:
+            return
+        self._recovery_replay_pending = None
+        if truncated:
+            self._submit_output_replay(
+                generation,
+                binding,
+                end_sequence,
+                recovery_client,
+                attachment_id,
+            )
+            return
+        self._recovery_catchup_target = end_sequence
+        self._finish_output_recovery_if_caught_up()
+
+    def _finish_output_reattach(
+        self,
+        generation: int,
+        binding,
+        safe_sequence: int,
+        result,
+        recovery_client,
+    ) -> None:
+        if not self._recovery_is_current(generation, binding):
+            self._discard_recovery_attachment(recovery_client, result)
+            return
+        if (
+            result.replay_truncated
+            or result.available_start > safe_sequence
+            or result.live_sequence < safe_sequence
+        ):
+            self._fail_output_recovery(
+                generation,
+                "The retained terminal output cannot restore this view",
+            )
+            return
+        self._tab_state.attachment_id = result.attachment.id
+        self._tab_state.input_owner = result.attachment.input_owner
+        self._validate_and_resume_recovery(binding, result.live_sequence)
+        self._flush_recovery_input()
+
+    def _discard_recovery_attachment(self, client, result) -> None:
+        """Release an attachment created by a superseded reconnect."""
+
+        try:
+            self._bridge.submit(
+                lambda: client.detach_session(
+                    DetachSessionRequest(
+                        session_id=result.attachment.session_id,
+                        attachment_id=result.attachment.id,
+                    )
+                ),
+                on_success=lambda _result: None,
+                on_error=lambda _error: None,
+            )
+        except BaseException:
+            logger.debug("Discarding stale recovery attachment failed", exc_info=True)
+
+    def _recovery_is_current(self, generation: int, binding) -> bool:
+        return (
+            not self._closed
+            and generation == self._stream_generation
+            and binding is self._stream
+            and self._tab_state.state is TerminalSessionState.RECOVERING
+        )
+
+    def _validate_and_resume_recovery(self, binding, target: int) -> None:
+        self._recovery_catchup_target = target
+        binding.resume(replay_end=target)
+        if self._tab_state.expected_sequence >= target:
+            self._finish_output_recovery_if_caught_up()
+
+    def _finish_output_recovery_if_caught_up(self) -> None:
+        target = self._recovery_catchup_target
+        if (
+            self._tab_state.state is TerminalSessionState.RECOVERING
+            and target is not None
+            and self._tab_state.expected_sequence >= target
+        ):
+            self._recovery_catchup_target = None
+            self._tab_state.state = TerminalSessionState.ACTIVE
+            self._notify_state_changed()
+
+    def _fail_output_recovery(self, generation: int, message: str) -> None:
+        if generation != self._stream_generation or self._closed:
+            return
+        binding = self._stream
+        self._invalidate_output_binding()
+        self._stream = None
+        if binding is not None:
+            binding.close()
+        had_pending_input = bool(self._recovery_input)
+        self._tab_state.input_owner = False
+        self._tab_state.state = TerminalSessionState.FAILED
+        self._clear_pending_terminal_control()
+        self._notify_state_changed()
+        if self._on_continuity_lost is not None:
+            self._on_continuity_lost()
+        if had_pending_input:
+            self._on_error(
+                SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                    "Terminal input was not delivered during output recovery",
+                    session_id=self._tab_state.session_id,
+                )
+            )
+        self._on_error(
+            SshPilotError(
+                ErrorCode.TERMINAL_REPLAY_UNAVAILABLE,
+                message or "Terminal output continuity could not be restored",
+                session_id=self._tab_state.session_id,
+            )
+        )
+
+    def _queue_recovery_input(self, data: bytes) -> None:
+        if self._recovery_input_bytes + len(data) > self._max_recovery_input_bytes:
+            self._on_error(
+                SshPilotError(
+                    ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                    "Terminal input was not delivered while output recovered",
+                    session_id=self._tab_state.session_id,
+                )
+            )
+            return
+        self._recovery_input.append(data)
+        self._recovery_input_bytes += len(data)
+
+    def _flush_recovery_input(self) -> None:
+        pending = tuple(self._recovery_input)
+        self._recovery_input.clear()
+        self._recovery_input_bytes = 0
+        for data in pending:
+            self.send_input(data)
+
+    def _clear_pending_terminal_control(self) -> None:
+        self._pending_resize = None
+        self._resize_in_flight = False
+        self._recovery_input.clear()
+        self._recovery_input_bytes = 0
+
     def _on_session_closed(self, _result) -> None:
         """Handle session close completion."""
         self._unsubscribe_events()
@@ -620,6 +1039,23 @@ class DaemonTerminalSessionController:
         if self._closed:
             return
 
+        # A same-transport replay request may race already-queued live frames.
+        # Until replay reaches its response-time live boundary, only replay
+        # frames can rebuild the parser state from expected_sequence.
+        if (
+            self._tab_state.state is TerminalSessionState.RECOVERING
+            and self._recovery_catchup_target is not None
+            and self._tab_state.expected_sequence
+            < self._recovery_catchup_target
+            and not output.replay
+        ):
+            return
+
+        if self._on_output:
+            self._on_output(output.data)
+
+        # Advance only after the VTE-facing callback returned successfully.
+        # This remains the authoritative replay start for this presentation.
         self._tab_state.expected_sequence = output.next_sequence
 
         # Transition from replaying to active when we reach live data, or when
@@ -634,13 +1070,17 @@ class DaemonTerminalSessionController:
                 self._tab_state.state = TerminalSessionState.ACTIVE
                 self._notify_state_changed()
 
-        if self._on_output:
-            self._on_output(output.data)
+        # This sequence now identifies bytes delivered through the VTE-facing
+        # callback, rather than merely received or spooled by the binding.
+        if self._tab_state.state is TerminalSessionState.RECOVERING:
+            self._continue_replay_if_chunk_delivered()
+            self._finish_output_recovery_if_caught_up()
 
     def _handle_continuity_lost(self, session_id, expected, available) -> None:
         """Handle terminal continuity loss."""
-        if self._on_continuity_lost:
-            self._on_continuity_lost()
+        if self._closed or session_id != self._tab_state.session_id:
+            return
+        self._begin_output_recovery(reattach=False)
 
     def _on_open_error(self, error) -> None:
         """Handle session open error."""

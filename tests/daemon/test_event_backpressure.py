@@ -309,6 +309,16 @@ def test_terminal_overflow_preserves_control_and_healthy_peer(tmp_path):
         ),
     )
     assert len(slow.output) == queued_after_loss
+    slow.output.append(
+        _OutboundFrame(
+            b"stale-live-before-replay",
+            is_terminal=True,
+            session_id=session_id,
+            terminal_sequence=96,
+        )
+    )
+    slow.queued_terminal_bytes += len(b"stale-live-before-replay")
+    slow.queued_outbound_bytes += len(b"stale-live-before-replay")
     server._queue_replay(
         slow,
         session_id,
@@ -321,6 +331,7 @@ def test_terminal_overflow_preserves_control_and_healthy_peer(tmp_path):
     )
     assert session_id not in slow.terminal_continuity_lost
     assert any(frame.is_terminal for frame in slow.output)
+    assert all(frame.data != b"stale-live-before-replay" for frame in slow.output)
     assert healthy.closed is False
     assert healthy.queued_terminal_bytes == 0
     assert bytes(healthy.sock.sent)

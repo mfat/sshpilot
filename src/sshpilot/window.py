@@ -7217,9 +7217,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if not connection_id:
                     connection_id = connection_id_for(dialog.connection)
                 if delta_available and not changed_fields:
-                    # Nothing in the config changed, but a password/passphrase
-                    # save still needs an authoritative connection_id — the
-                    # secret worker cannot infer one from ``ok=True`` alone.
+                    # Nothing in the config changed.  A password/passphrase or
+                    # metadata-only save still needs an authoritative
+                    # connection_id, so feed a synthetic result through the
+                    # normal success pipeline.  This persists metadata without
+                    # submitting an empty connection update.
                     unchanged_result = ConnectionMutationResult(
                         connection_id=str(connection_id),
                         nickname=(connection_data.get('nickname')
@@ -7229,70 +7231,59 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                         changed=False,
                         changed_fields=(),
                     )
-                    complete_save(True, unchanged_result)
-                    if was_editing:
-                        try:
-                            new_connection = self._rebind_terminals_after_save(
-                                dialog,
-                                connection_id,
-                                connection_data.get('nickname'),
-                            )
-                            self._offer_reconnect_after_edit_save(
-                                dialog, new_connection
-                            )
-                        except Exception:
-                            pass
-                    return
-                config_patch = _build_config_patch()
-
-                # The editor generation is always the daemon snapshot loaded
-                # when the dialog opened. There is no local generation source.
-                current_generation = getattr(dialog, '_daemon_generation', None)
-
-                # Pop split params — they drive a dedicated RPC, not
-                # the normal update_connection path.
-                split_from_group = connection_data.pop('__split_from_group', None)
-                split_source = connection_data.pop('__split_source', None)
-                split_original = connection_data.pop('__split_original_nickname', None)
-
-                if split_from_group:
-                    from .api.models.connections import SplitConnectionRequest
-                    split_req = SplitConnectionRequest(
-                        connection_id=connection_id,
-                        original_host_token=split_original or connection_data.get('nickname', ''),
-                        source_config_path=split_source or '',
-                        nickname=connection_data.get('nickname'),
-                        hostname=connection_data.get('hostname'),
-                        username=connection_data.get('username'),
-                        port=connection_data.get('port'),
-                        config_patch=config_patch,
-                        expected_generation=current_generation,
-                    )
-                    operation = lambda: self.client.split_connection(split_req)
+                    if checkpoint is None:
+                        checkpoint = unchanged_result
                 else:
-                    request = UpdateConnectionRequest(
-                        nickname=(connection_data.get('nickname')
-                                  if (not delta_available or 'nickname' in changed_fields)
-                                  else UNSET),
-                        hostname=(connection_data.get('hostname')
-                                  if (not delta_available or 'hostname' in changed_fields)
-                                  else UNSET),
-                        username=(connection_data.get('username')
-                                  if (not delta_available or 'username' in changed_fields)
-                                  else UNSET),
-                        port=(connection_data.get('port')
-                              if (not delta_available or 'port' in changed_fields)
-                              else UNSET),
-                        display_name=(connection_data.get('display_name')
-                                      if (not delta_available or 'display_name' in changed_fields)
+                    config_patch = _build_config_patch()
+
+                    # The editor generation is always the daemon snapshot loaded
+                    # when the dialog opened. There is no local generation source.
+                    current_generation = getattr(dialog, '_daemon_generation', None)
+
+                    # Pop split params — they drive a dedicated RPC, not
+                    # the normal update_connection path.
+                    split_from_group = connection_data.pop('__split_from_group', None)
+                    split_source = connection_data.pop('__split_source', None)
+                    split_original = connection_data.pop('__split_original_nickname', None)
+
+                    if split_from_group:
+                        from .api.models.connections import SplitConnectionRequest
+                        split_req = SplitConnectionRequest(
+                            connection_id=connection_id,
+                            original_host_token=split_original or connection_data.get('nickname', ''),
+                            source_config_path=split_source or '',
+                            nickname=connection_data.get('nickname'),
+                            hostname=connection_data.get('hostname'),
+                            username=connection_data.get('username'),
+                            port=connection_data.get('port'),
+                            config_patch=config_patch,
+                            expected_generation=current_generation,
+                        )
+                        operation = lambda: self.client.split_connection(split_req)
+                    else:
+                        request = UpdateConnectionRequest(
+                            nickname=(connection_data.get('nickname')
+                                      if (not delta_available or 'nickname' in changed_fields)
                                       else UNSET),
-                        config_patch=config_patch,
-                        expected_generation=current_generation,
-                    )
-                    operation = lambda: self.client.update_connection(
-                        connection_id,
-                        request,
-                    )
+                            hostname=(connection_data.get('hostname')
+                                      if (not delta_available or 'hostname' in changed_fields)
+                                      else UNSET),
+                            username=(connection_data.get('username')
+                                      if (not delta_available or 'username' in changed_fields)
+                                      else UNSET),
+                            port=(connection_data.get('port')
+                                  if (not delta_available or 'port' in changed_fields)
+                                  else UNSET),
+                            display_name=(connection_data.get('display_name')
+                                          if (not delta_available or 'display_name' in changed_fields)
+                                          else UNSET),
+                            config_patch=config_patch,
+                            expected_generation=current_generation,
+                        )
+                        operation = lambda: self.client.update_connection(
+                            connection_id,
+                            request,
+                        )
             else:
                 config_patch = _build_config_patch()
                 request = CreateConnectionRequest(

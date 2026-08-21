@@ -176,6 +176,7 @@ def test_attach_with_replay(controller):
     
     # Should be in replaying state since available_start < live_sequence
     assert controller.state == TerminalSessionState.REPLAYING
+    assert controller.tab_state.expected_sequence == 0
     assert not controller.input_owner
 
 
@@ -403,18 +404,25 @@ def test_close_during_opening(controller, mock_client, mock_bridge):
     assert controller.state == TerminalSessionState.CLOSING
 
 
-def test_continuity_lost_callback(controller):
-    """Test continuity lost handling."""
+def test_continuity_lost_starts_recovery(controller, mock_bridge):
+    """A damaged stream is replaced and replayed, not marked then continued."""
     continuity_lost_calls = []
     
     def capture_continuity_lost():
         continuity_lost_calls.append(True)
     
     controller._on_continuity_lost = capture_continuity_lost
-    
+    controller._tab_state.session_id = SessionId("test-session")
+    controller._tab_state.attachment_id = AttachmentId("attachment")
+    controller._tab_state.state = TerminalSessionState.ACTIVE
+    controller._stream = Mock()
+    mock_bridge.bind_terminal.return_value = Mock()
+
     controller._handle_continuity_lost("test-session", 100, 50)
-    
-    assert len(continuity_lost_calls) == 1
+
+    assert controller.state is TerminalSessionState.RECOVERING
+    assert len(continuity_lost_calls) == 0
+    mock_bridge.submit.assert_called_once()
 
 
 def test_error_handling(controller):

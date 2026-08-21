@@ -1,9 +1,13 @@
 import struct
+import threading
+from types import SimpleNamespace
 
 import pytest
 
 from sshpilot.api.errors import ErrorCode
+from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.api.models.common import AttachmentId, SessionId
+from sshpilot.api.models.terminal import TerminalInput
 from sshpilot.api.transport.framing import (
     FramingError,
     MultiplexedFrameDecoder,
@@ -86,6 +90,47 @@ def test_terminal_input_error_frame_carries_only_stable_error_code():
     )
 
     assert decode_terminal_payload(encode_terminal_payload(frame)) == frame
+
+
+def test_client_correlates_input_error_with_unique_input_sequence():
+    sent = bytearray()
+    client = object.__new__(DaemonClient)
+    client._require_capability = lambda _capability: None
+    client._state_lock = threading.RLock()
+    client._send_lock = threading.Lock()
+    client._terminal_input_sequences = {}
+    client._closed = False
+    client._socket = SimpleNamespace(sendall=sent.extend)
+    client._terminal_sequences = {}
+    client._terminal_overflow = set()
+    terminal_items = []
+    client._queue_terminal_item = terminal_items.append
+
+    for data in (b"first", b"second"):
+        client.send_terminal_input(
+            TerminalInput(
+                session_id=_session_id(),
+                attachment_id=_attachment_id(),
+                data=data,
+            )
+        )
+
+    decoded = MultiplexedFrameDecoder().feed(bytes(sent))
+    assert [(frame.sequence, frame.data) for frame in decoded] == [
+        (0, b"first"),
+        (1, b"second"),
+    ]
+
+    assert client._receive_terminal(
+        TerminalFrame(
+            kind=TerminalFrameKind.INPUT_ERROR,
+            session_id=_session_id(),
+            attachment_id=_attachment_id(),
+            sequence=1,
+            data=ErrorCode.TERMINAL_INPUT_BACKPRESSURE.value.encode("ascii"),
+        )
+    )
+    assert terminal_items[0].details["input_sequence"] == 1
 
 
 def test_multiplexed_decoder_handles_fragmented_binary_and_json_frames():

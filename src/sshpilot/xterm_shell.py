@@ -408,15 +408,22 @@ def _build_shell_html_impl(
       e.preventDefault();
       return false;
     }}
-    if (e.type !== "keydown" || !(e.ctrlKey && e.shiftKey)) return true;
+    if (window.sshpilotShortcutPassthrough) return true;
+    if (e.type !== "keydown") return true;
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
+    const clipboardModifier = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
+    if (!clipboardModifier) return true;
     const k = e.key.toLowerCase();
     if (k === "v") {{ e.preventDefault(); send({{ type: "paste" }}); return false; }}
-    if (k === "c" || k === "x") {{
+    if (k === "c") {{
       e.preventDefault();
       send({{ type: "copy", text: term.getSelection() }});
       term.focus();
       return false;
     }}
     return true;
+  }});
+  term.onSelectionChange(function () {{
+    send({{ type: "selection-changed", hasSelection: term.hasSelection() }});
   }});
 </script></body></html>"""

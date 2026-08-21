@@ -2,7 +2,9 @@
 
 from unittest.mock import patch, MagicMock
 import socket
+from types import SimpleNamespace
 
+from sshpilot.actions import WindowActions
 from sshpilot.wol import (
     normalize_mac,
     validate_mac,
@@ -10,6 +12,21 @@ from sshpilot.wol import (
     build_magic_packet,
     get_subnet_broadcast,
 )
+
+
+def _wol_action_host(metadata):
+    connection = SimpleNamespace(
+        nickname="server",
+        hostname="192.168.1.20",
+    )
+    return SimpleNamespace(
+        config=object(),
+        connection_manager=SimpleNamespace(
+            get_metadata=MagicMock(return_value=metadata),
+        ),
+        _context_menu_connections=[connection],
+        toast_overlay=None,
+    )
 
 
 def test_normalize_mac():
@@ -39,6 +56,48 @@ def test_send_wol_invalid_mac():
 def test_send_wol_empty_mac():
     ok, msg = send_wol("")
     assert ok is False
+
+
+def test_wol_action_sends_stored_connection_metadata():
+    host = _wol_action_host({
+        "wol_mac": "aa:bb:cc:dd:ee:ff",
+        "wol_broadcast_ip": "192.168.1.255",
+        "wol_port": 7,
+    })
+
+    with patch("sshpilot.actions.wol.send_wol", return_value=(True, "sent")) as send:
+        WindowActions.on_wake_on_lan_action(host, None)
+
+    host.connection_manager.get_metadata.assert_called_once_with("server")
+    send.assert_called_once_with(
+        "aa:bb:cc:dd:ee:ff",
+        broadcast_ip="192.168.1.255",
+        port=7,
+        host="192.168.1.20",
+    )
+
+
+def test_wol_action_uses_defaults_for_optional_metadata():
+    host = _wol_action_host({"wol_mac": "aa:bb:cc:dd:ee:ff"})
+
+    with patch("sshpilot.actions.wol.send_wol", return_value=(True, "sent")) as send:
+        WindowActions.on_wake_on_lan_action(host, None)
+
+    send.assert_called_once_with(
+        "aa:bb:cc:dd:ee:ff",
+        broadcast_ip=None,
+        port=9,
+        host="192.168.1.20",
+    )
+
+
+def test_wol_action_skips_connections_without_stored_mac():
+    host = _wol_action_host({"wol_mac": ""})
+
+    with patch("sshpilot.actions.wol.send_wol") as send:
+        WindowActions.on_wake_on_lan_action(host, None)
+
+    send.assert_not_called()
 
 
 def test_build_magic_packet():

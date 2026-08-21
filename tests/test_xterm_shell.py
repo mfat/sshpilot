@@ -50,6 +50,18 @@ def test_bridge_wiring_present():
     assert 'type: "link-leave"' in html
 
 
+def test_clipboard_shortcuts_are_owned_once_and_respect_passthrough():
+    html = build_shell_html()
+    assert "window.sshpilotShortcutPassthrough" in html
+    assert "const isMac = /Mac|iPhone|iPad/" in html
+    assert "isMac ? e.metaKey : (e.ctrlKey && e.shiftKey)" in html
+    assert 'if (k === "c")' in html
+    assert 'k === "c" || k === "x"' not in html
+    assert 'type: "paste"' in html
+    assert 'type: "copy"' in html
+    assert 'type: "selection-changed"' in html
+
+
 def test_link_handler_matches_xterm_docs_pattern():
     """Shared ILinkHandler for WebLinks + OSC 8 (xtermjs.org link-handling guide)."""
     html = build_shell_html()

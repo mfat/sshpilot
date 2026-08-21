@@ -1,6 +1,9 @@
 import queue
 import threading
 
+import pytest
+
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import SessionId
 from sshpilot.api.models.terminal import TerminalOutput
 from sshpilot.api.terminal_events import TerminalSubscription
@@ -102,6 +105,38 @@ def test_interaction_lane_remains_responsive_while_session_open_waits():
     finally:
         release_open.set()
         bridge.shutdown()
+
+
+def test_terminal_input_lane_is_fifo_and_bounded():
+    dispatches = queue.Queue()
+    first_started = threading.Event()
+    release = threading.Event()
+    bridge = GtkClientBridge(
+        dispatcher=lambda callback, *args: dispatches.put((callback, args)),
+        max_pending_terminal_inputs=1,
+    )
+
+    def _blocked_input():
+        first_started.set()
+        assert release.wait(2)
+
+    try:
+        bridge.submit_terminal_input(
+            _blocked_input,
+            on_success=lambda _result: None,
+            on_error=lambda _error: None,
+        )
+        assert first_started.wait(1)
+        with pytest.raises(SshPilotError) as raised:
+            bridge.submit_terminal_input(
+                lambda: None,
+                on_success=lambda _result: None,
+                on_error=lambda _error: None,
+            )
+        assert raised.value.code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE
+    finally:
+        release.set()
+        bridge.shutdown(wait=True)
 
 
 def test_cancelled_request_discards_late_result_without_ui_callback():

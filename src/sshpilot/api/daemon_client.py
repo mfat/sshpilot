@@ -461,6 +461,8 @@ class _PendingRequest:
     method: Optional[str] = None
     started_at: float = field(default_factory=time.monotonic)
     sent: bool = False
+    terminal_reset_session: Optional[SessionId] = None
+    terminal_reset_sequence: Optional[int] = None
 
 
 @dataclass
@@ -540,6 +542,7 @@ class DaemonClient:
         ] = {}
         self._next_terminal_subscription = 1
         self._terminal_sequences: Dict[SessionId, int] = {}
+        self._terminal_input_sequences: Dict[SessionId, int] = {}
         self._terminal_overflow: set[SessionId] = set()
         self._last_event_sequence: Optional[int] = None
         self._closed = False
@@ -2210,13 +2213,19 @@ class DaemonClient:
         self._require_capability(Capability.TERMINAL_INPUT)
         if type(request) is not TerminalInput:
             raise TypeError("terminal input request is required")
+        with self._state_lock:
+            input_sequence = self._terminal_input_sequences.get(
+                request.session_id,
+                0,
+            )
+            self._terminal_input_sequences[request.session_id] = input_sequence + 1
         frame = encode_binary_frame(
             encode_terminal_payload(
                 TerminalFrame(
                     kind=TerminalFrameKind.INPUT,
                     session_id=request.session_id,
                     attachment_id=request.attachment_id,
-                    sequence=0,
+                    sequence=input_sequence,
                     data=request.data,
                 )
             )
@@ -2988,6 +2997,12 @@ class DaemonClient:
                 completed=threading.Event(),
                 method=method,
             )
+            if method == "terminal.replay":
+                pending.terminal_reset_session = SessionId(str(params["session_id"]))
+                pending.terminal_reset_sequence = int(params["after_sequence"])
+            elif method == "sessions.attach" and params.get("want_terminal_output"):
+                pending.terminal_reset_session = SessionId(str(params["session_id"]))
+                pending.terminal_reset_sequence = int(params.get("from_sequence", 0))
             mutation_may_have_been_sent = False
             sent = False
             secret_pending = None
@@ -3254,6 +3269,18 @@ class DaemonClient:
                     envelope.request_id,
                     None,
                 )
+                if (
+                    pending is not None
+                    and isinstance(envelope, SuccessResponseEnvelope)
+                    and pending.terminal_reset_session is not None
+                    and pending.terminal_reset_sequence is not None
+                ):
+                    self._terminal_sequences[
+                        pending.terminal_reset_session
+                    ] = pending.terminal_reset_sequence
+                    self._terminal_overflow.discard(
+                        pending.terminal_reset_session
+                    )
             if pending is None:
                 logger.debug(
                     "Late or unknown daemon response for cleared request id %s",
@@ -3329,6 +3356,7 @@ class DaemonClient:
                 SshPilotError(
                     code,
                     "The terminal input was rejected",
+                    details={"input_sequence": frame.sequence},
                     retryable=code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
                     session_id=frame.session_id,
                 )
