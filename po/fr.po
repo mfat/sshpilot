@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-21 12:43+0200\n"
-"PO-Revision-Date: 2026-08-21 12:43+0200\n"
+"POT-Creation-Date: 2026-08-21 20:05+0200\n"
+"PO-Revision-Date: 2026-08-21 20:22+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -1169,6 +1169,20 @@ msgstr "Terminal interactif"
 msgid "Open terminal sessions for commands that require a PTY or Ctrl+C"
 msgstr "Ouvrir des sessions de terminal pour les commandes nécessitant un PTY ou Ctrl+C"
 
+#: src/sshpilot/command_blocks.py:1157 src/sshpilot/preferences.py:2788
+#: src/sshpilot/shortcut_editor.py:72 src/sshpilot/welcome_page.py:109
+#: src/sshpilot/window.py:3385 src/sshpilot/window_help.py:170
+msgid "Command Snippets"
+msgstr "Extraits de commandes"
+
+#: src/sshpilot/command_blocks.py:1172 src/sshpilot/command_blocks.py:1592
+msgid "Use list layout"
+msgstr "Utiliser la présentation en liste"
+
+#: src/sshpilot/command_blocks.py:1172 src/sshpilot/command_blocks.py:1592
+msgid "Use tiled layout"
+msgstr "Utiliser la présentation en mosaïque"
+
 #: src/sshpilot/command_blocks.py:1162
 msgid "Add command"
 msgstr "Ajouter une commande"
@@ -2069,17 +2083,17 @@ msgstr "Ce surnom existe déjà"
 msgid "Name (A-Z)"
 msgstr "Nom (A-Z)"
 
-#: src/sshpilot/connection_sort.py:40
-msgid "Sort connections alphabetically by nickname"
-msgstr "Trier les connexions par surnom dans l’ordre alphabétique"
+#: src/sshpilot/connection_sort.py:41
+msgid "Sort connections alphabetically by display name"
+msgstr "Trier les connexions par nom d’affichage dans l’ordre alphabétique"
 
 #: src/sshpilot/connection_sort.py:46
 msgid "Name (Z-A)"
 msgstr "Nom (Z-A)"
 
-#: src/sshpilot/connection_sort.py:47
-msgid "Sort connections alphabetically by nickname in reverse"
-msgstr "Trier les connexions par surnom dans l’ordre alphabétique inverse"
+#: src/sshpilot/connection_sort.py:48
+msgid "Sort connections alphabetically by display name in reverse"
+msgstr "Trier les connexions par nom d’affichage dans l’ordre alphabétique inverse"
 
 #: src/sshpilot/core/validation/connection.py:47
 msgid "Connection name is required"
@@ -2836,10 +2850,6 @@ msgid ""
 "Log lines may contain hostnames, usernames, and file paths. Review before "
 "sharing."
 msgstr "Les lignes du journal peuvent contenir des noms d’hôte, des noms d’utilisateur et des chemins de fichiers. Vérifiez-les avant tout partage."
-
-#: src/sshpilot/macos_menubar.py:49 src/sshpilot/window.py:3532
-msgid "Create Group"
-msgstr "Créer un groupe"
 
 #: src/sshpilot/macos_menubar.py:50 src/sshpilot/shortcut_editor.py:60
 #: src/sshpilot/window.py:3533 src/sshpilot/window_help.py:167
@@ -4588,10 +4598,6 @@ msgstr "Options SSH"
 msgid "Plugins"
 msgstr "Greffons"
 
-#: src/sshpilot/preferences.py:2788
-msgid "Command Blocks"
-msgstr "Blocs de commandes"
-
 #: src/sshpilot/preferences.py:2929
 #, python-brace-format
 msgid "{backend} (unavailable)"
@@ -5129,12 +5135,12 @@ msgid "Behavior"
 msgstr "Comportement"
 
 #: src/sshpilot/preferences.py:5217
-msgid "Always Show Sidebar"
-msgstr "Toujours afficher la barre latérale"
+msgid "Open on Startup"
+msgstr "Ouvrir au démarrage"
 
 #: src/sshpilot/preferences.py:5218
-msgid "Keep the commands sidebar open on startup"
-msgstr "Maintenir la barre latérale des commandes ouverte au démarrage"
+msgid "Open Command Snippets when the window starts"
+msgstr "Ouvrir le panneau des extraits de commandes au démarrage de la fenêtre"
 
 #: src/sshpilot/preferences.py:5224
 msgid "Insert Only (no execute)"
@@ -5145,12 +5151,12 @@ msgid "Paste the command into the terminal without running it"
 msgstr "Coller la commande dans le terminal sans l’exécuter"
 
 #: src/sshpilot/preferences.py:5231
-msgid "Auto-hide Sidebar After Sending"
-msgstr "Masquer automatiquement la barre latérale après l’envoi"
+msgid "Close After Sending"
+msgstr "Fermer après l’envoi"
 
 #: src/sshpilot/preferences.py:5232
-msgid "Hide the command panel as soon as a command is sent"
-msgstr "Masquer le panneau des commandes dès qu’une commande est envoyée"
+msgid "Close Command Snippets after sending a command"
+msgstr "Fermer le panneau des extraits de commandes après l’envoi d’une commande"
 
 #: src/sshpilot/preferences.py:5269
 msgid "Production Servers"
@@ -5495,10 +5501,6 @@ msgstr "Déplacer l’onglet vers la droite"
 msgid "New Split View Tab"
 msgstr "Nouvel onglet en vue scindée"
 
-#: src/sshpilot/shortcut_editor.py:72
-msgid "Command Blocks Sidebar"
-msgstr "Barre latérale des blocs de commandes"
-
 #: src/sshpilot/shortcut_editor.py:74 src/sshpilot/window_help.py:23
 msgid "Toggle Fullscreen"
 msgstr "Basculer en plein écran"
@@ -5681,10 +5683,10 @@ msgstr "Déconnecté"
 msgid "Drop connections here to ungroup them"
 msgstr "Déposez des connexions ici pour les retirer de leur groupe"
 
-#: src/sshpilot/sidebar.py:4026
+#: src/sshpilot/sidebar.py:4035
 #, python-brace-format
-msgid "Add Connection ({shortcut}+Shift+N)"
-msgstr "Ajouter une connexion ({shortcut}+Shift+N)"
+msgid "New Connection ({shortcut}+Shift+N)"
+msgstr "Nouvelle connexion ({shortcut}+Shift+N)"
 
 #: src/sshpilot/sidebar.py:4043
 #, python-brace-format
@@ -6092,6 +6094,10 @@ msgstr "Le gestionnaire de reconnexion du démon est indisponible"
 msgid "Reconnect failed"
 msgstr "Échec de la reconnexion"
 
+#: src/sshpilot/terminal.py:1335
+msgid "Terminal input was not delivered; please try again."
+msgstr "La saisie n’a pas été transmise au terminal ; réessayez."
+
 #: src/sshpilot/terminal.py:1753 src/sshpilot/terminal.py:4181
 #, python-brace-format
 msgid "SSH exited with status {code}"
@@ -6117,6 +6123,10 @@ msgstr "Copier le lien"
 #: src/sshpilot/terminal.py:3068
 msgid "Copy\t⌘C"
 msgstr "Copier\t⌘C"
+
+#: src/sshpilot/terminal.py:3125 src/sshpilot/terminal.py:3142
+msgid "Copy as HTML"
+msgstr "Copier au format HTML"
 
 #: src/sshpilot/terminal.py:3069
 msgid "Paste\t⌘V"
@@ -6367,10 +6377,6 @@ msgstr "Nouvelle connexion"
 #: src/sshpilot/welcome_page.py:103
 msgid "Edit SSH Configuration"
 msgstr "Modifier la configuration SSH"
-
-#: src/sshpilot/welcome_page.py:109
-msgid "Snippets"
-msgstr "Extraits"
 
 #: src/sshpilot/welcome_page.py:117
 msgid "Manage Known hosts"
@@ -6653,10 +6659,10 @@ msgstr "Ne plus afficher"
 msgid "Hide Sidebar ({accels})"
 msgstr "Masquer la barre latérale ({accels})"
 
-#: src/sshpilot/window.py:1993
+#: src/sshpilot/window.py:2077
 #, python-brace-format
-msgid "Open Local Terminal ({modifier}+Shift+T)"
-msgstr "Ouvrir un terminal local ({modifier}+Shift+T)"
+msgid "New local terminal ({modifier}+Shift+T)"
+msgstr "Nouveau terminal local ({modifier}+Shift+T)"
 
 #: src/sshpilot/window.py:2112 data/io.github.mfat.sshpilot.desktop.in:4
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:7
@@ -6739,6 +6745,15 @@ msgstr "Connexions triées — {title}"
 #, python-brace-format
 msgid "Already sorted as {title}"
 msgstr "Déjà triées par {title}"
+
+#: src/sshpilot/macos_menubar.py:51 src/sshpilot/sidebar.py:4050
+#: src/sshpilot/window.py:3685
+msgid "New Group"
+msgstr "Nouveau groupe"
+
+#: src/sshpilot/macos_menubar.py:52 src/sshpilot/window.py:3686
+msgid "New Local Terminal"
+msgstr "Nouveau terminal local"
 
 #: src/sshpilot/window.py:3246
 msgid "New Split View"
@@ -7905,6 +7920,10 @@ msgid "Open in New Window"
 msgstr "Ouvrir dans une nouvelle fenêtre"
 
 #: src/sshpilot/window_tabs.py:265
+msgid "Split Top and Bottom"
+msgstr "Scinder en haut et en bas"
+
+#: src/sshpilot/window_tabs.py:265
 msgid "Default layout"
 msgstr "Disposition par défaut"
 
@@ -8022,6 +8041,38 @@ msgstr "Ajout d’un effet animé à Omnisearch"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:69
 msgid "Added workaround for French keyboard layout on macOS"
 msgstr "Ajout d’un contournement pour la disposition de clavier française sous macOS"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid ""
+"Integrated tab bar into header for a cleaner, more minimal user interface"
+msgstr ""
+"Intégration de la barre d’onglets dans la barre d’en-tête pour une interface "
+"plus claire et plus épurée"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
+msgid ""
+"Revamped Command Snippets panel - the snippets are now displayed in a "
+"floating panel"
+msgstr ""
+"Refonte du panneau des extraits de commandes : les extraits s’affichent "
+"désormais dans un panneau flottant"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:68
+msgid ""
+"Added keyboard support to Snippets - you can assign your desired shortcut "
+"for the popup"
+msgstr ""
+"Ajout de la prise en charge des raccourcis clavier pour les extraits de "
+"commandes : le raccourci d’ouverture du panneau peut désormais être "
+"personnalisé"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:69
+msgid "Added theme selector to main menu, inspired by Ptyxis"
+msgstr "Ajout d’un sélecteur de thème au menu principal, inspiré de Ptyxis"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:70
+msgid "Minor UI improvements"
+msgstr "Améliorations mineures de l’interface"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:70
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:80
