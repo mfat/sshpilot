@@ -1,6 +1,9 @@
 name: Standalone Flatpak (full device access)
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
 
 permissions:
@@ -39,7 +42,7 @@ jobs:
           manifest = pathlib.Path("flatpak/io.github.mfat.sshpilot.yaml")
           text = manifest.read_text()
 
-          # Build the exact SSH Pilot commit that dispatched this workflow,
+          # Build the exact SSH Pilot commit that triggered this workflow,
           # rather than the release commit currently pinned on Flathub.
           source_pattern = re.compile(
               r'(url:\s*"?https://github\.com/mfat/sshpilot\.git"?[ \t]*\n)'
