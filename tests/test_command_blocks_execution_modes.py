@@ -149,6 +149,33 @@ def test_single_connection_opens_new_terminal_when_none_is_open():
     )
 
 
+def test_host_selector_execution_hides_command_panel_when_open():
+    panel = object.__new__(CommandBlocksPanel)
+    panel.store = Mock()
+    panel.store._config.get_setting.return_value = False
+    connection = Mock()
+    new_terminal = Mock(is_connected=True)
+    panel.window = Mock(
+        active_terminals={},
+        connection_to_terminals={},
+        _command_popup=Mock(visible=True),
+    )
+
+    def _connect(conn, force_new):
+        panel.window.active_terminals[conn] = new_terminal
+
+    panel.window.terminal_manager.connect_to_host.side_effect = _connect
+    panel._feed_interactive_when_connected = Mock()
+
+    with patch(
+        "sshpilot.command_blocks.GLib.idle_add",
+        side_effect=lambda callback: callback(),
+    ):
+        panel._run_interactive_connections([connection], "uptime", "cmd1")
+
+    panel.window._toggle_command_blocks_panel.assert_called_once_with(False)
+
+
 def test_custom_command_dialog_routes_through_terminal_session():
     from sshpilot import command_blocks
 

@@ -2049,6 +2049,12 @@ class CommandBlocksPanel(Gtk.Box):
             self.store._config.get_setting("command_blocks.insert_only", False)
         )
 
+        # The direct-to-active-terminal path closes the floating command panel
+        # in _feed_terminal().  Targeted execution (including the host picker
+        # shown when no terminal is open) bypasses that method, so mirror its
+        # cleanup once a real target has been selected and dispatch begins.
+        self._hide_command_panel_after_target_execution()
+
         if len(connections) == 1:
             manager = getattr(self.window, "terminal_manager", None)
             if manager is None:
@@ -2084,6 +2090,22 @@ class CommandBlocksPanel(Gtk.Box):
                 )
         if cmd_id:
             self.store.record_use(cmd_id)
+
+    def _hide_command_panel_after_target_execution(self) -> None:
+        popup = getattr(self.window, "_command_popup", None)
+        if getattr(popup, "visible", False) is not True:
+            return
+
+        def _hide() -> bool:
+            try:
+                self.window._toggle_command_blocks_panel(False)
+            except Exception:
+                pass
+            return GLib.SOURCE_REMOVE
+
+        # Host selection is delivered from a popover row-activation callback;
+        # defer reparenting the floating panel until GTK finishes that callback.
+        GLib.idle_add(_hide)
 
     def _existing_terminal_for_connection(self, connection):
         """Return an open terminal for ``connection`` that still has a tab page."""
