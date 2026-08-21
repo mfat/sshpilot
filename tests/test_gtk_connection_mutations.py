@@ -1743,6 +1743,47 @@ def test_noop_save_succeeds_without_submitting_an_rpc():
     assert window.client.updated == []
 
 
+def _assert_metadata_only_save(metadata):
+    window = _MutationWindow()
+    dialog = _daemon_save_dialog(_daemon_generation=7)
+    completed = []
+    data = _basic_data(
+        nickname="demo",
+        hostname="demo.example",
+        __changed_fields=(),
+    )
+
+    window._save_connection_via_client(
+        dialog,
+        data,
+        lambda ok, *args, **kwargs: completed.append(ok),
+        pending_meta=metadata,
+    )
+
+    assert completed == []
+    assert window.client.updated == []
+    assert len(window.client_bridge.calls) == 1
+    operation, on_success, _on_error = window.client_bridge.calls[0]
+    assert operation() is True
+    assert window.client.metadata == [("demo", metadata)]
+
+    on_success(True)
+    assert completed == [True]
+
+
+def test_metadata_only_save_persists_tags_without_connection_update():
+    _assert_metadata_only_save({"tags": ["ops"]})
+
+
+def test_metadata_only_save_persists_explicitly_cleared_values():
+    _assert_metadata_only_save({
+        "tags": [],
+        "wol_mac": "",
+        "wol_broadcast_ip": "",
+        "wol_port": 9,
+    })
+
+
 def test_noop_save_with_keyfile_succeeds_without_submitting_an_rpc():
     """A no-op save on a connection with an identity file must also be local."""
     window = _MutationWindow()
