@@ -8,14 +8,12 @@ a killed daemon leaves children and ControlMasters that no socket check sees.
 
 from __future__ import annotations
 
-import os
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-import pytest
 
 from sshpilot.daemon.control_masters import owns_default_control_master_namespace
 from sshpilot.daemon.process_registry import (

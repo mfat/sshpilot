@@ -291,7 +291,7 @@ class TestOptionKeyHandler:
                 controller, 0x20ac, 0, state
             )
             assert result is True
-            backend.owner.feed_child_data.assert_called_once_with('€'.encode('utf-8'))
+            backend.owner.feed_child_data.assert_called_once_with('€'.encode())
 
 
 class TestControllerLifecycle:

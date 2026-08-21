@@ -22,7 +22,6 @@ verified on a real raster surface when gi cairo is importable.
 
 import inspect
 import math
-import sys
 import types
 
 import pytest

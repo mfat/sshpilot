@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 
 def _record_sweeps(monkeypatch) -> list:
@@ -39,7 +38,6 @@ def _record_sweeps(monkeypatch) -> list:
 def test_default_socket_daemon_retires_its_control_masters(
     daemon_factory, monkeypatch
 ):
-    import sshpilot.daemon.server as server_module
 
     server, _manager = daemon_factory()
     calls = _record_sweeps(monkeypatch)
@@ -65,7 +63,6 @@ def test_daemon_on_an_explicit_socket_leaves_shared_masters_alone(
     Sweeping from there would tear down the live sessions of the user's real
     daemon, which shares the per-user master directory.
     """
-    import sshpilot.daemon.server as server_module
 
     server, _manager = daemon_factory()
     calls = _record_sweeps(monkeypatch)
@@ -81,7 +78,6 @@ def test_control_master_sweep_survives_a_broken_socket_resolution(
     daemon_factory, monkeypatch
 ):
     """Shutdown hygiene is best-effort; it must never raise out of cleanup."""
-    import sshpilot.daemon.server as server_module
 
     server, _manager = daemon_factory()
     calls = _record_sweeps(monkeypatch)
