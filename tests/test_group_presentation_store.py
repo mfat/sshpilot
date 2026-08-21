@@ -72,6 +72,23 @@ class TestGroupManagerProjection:
         assert hierarchy[0]["children"][0]["id"] == "child"
         assert gm.sibling_index("child") == ("parent", 0)
 
+    def test_group_hierarchy_honors_presentation_order(self):
+        gm = GroupManager.__new__(GroupManager)
+        gm.groups = {
+            "second": {
+                "id": "second", "name": "Second", "parent_id": None,
+                "children": [], "order": 1,
+            },
+            "first": {
+                "id": "first", "name": "First", "parent_id": None,
+                "children": [], "order": 0,
+            },
+        }
+
+        assert [group["id"] for group in gm.get_group_hierarchy()] == [
+            "first", "second",
+        ]
+
 
 class TestGroupManagerControllerDelegation:
     def _make(self, *, controller=None, client=None):

@@ -901,17 +901,18 @@ class TerminalManager:
     def show_local_terminal(
         self,
         *,
-        title="Local Terminal",
+        title: Optional[str] = None,
         command: Optional[str] = None,
         pty_prompt: Optional[str] = None,
         pty_response: Optional[str] = None,
     ) -> bool:
         logger.info("Show local terminal tab")
         try:
+            effective_title = title or _("Terminal")
 
             class LocalConnection:
                 def __init__(self):
-                    self.nickname = title
+                    self.nickname = effective_title
                     self.hostname = "localhost"
                     self.host = self.hostname
                     self.username = os.getenv("USER", "user")
@@ -933,7 +934,7 @@ class TerminalManager:
 
                 terminal_widget.connect("connection-established", _run_command)
             terminal_widget.setup_local_shell()
-            self._add_terminal_tab(terminal_widget, title)
+            self._add_terminal_tab(terminal_widget, effective_title)
 
             # Register terminal so theme/font updates affect existing local tabs
             window = self.window
@@ -985,9 +986,11 @@ class TerminalManager:
         connection = getattr(terminal, "connection", None)
         if connection is None:
             return False
-        nickname = getattr(connection, "nickname", None)
-        if nickname == "Local Terminal":
-            return False
+        try:
+            if terminal._is_local_terminal():
+                return False
+        except Exception:
+            pass
         return hasattr(connection, "hostname")
 
     def iter_terminals(self):

@@ -110,6 +110,43 @@ def test_enabled_tab_actions_for_plugin_like_page():
     }
 
 
+def test_terminal_tab_context_menu_exposes_split_layout_actions(monkeypatch):
+    from sshpilot import window_tabs
+
+    class Terminal:
+        def _is_local_terminal(self):
+            return True
+
+    monkeypatch.setattr(window_tabs, 'TerminalWidget', Terminal)
+    enabled = window_tabs.WindowTabsMixin()._enabled_tab_actions(Terminal())
+
+    assert 'tabmenu-layout-horizontal' in enabled
+    assert 'tabmenu-layout-vertical' in enabled
+
+
+def test_split_layout_context_action_converts_right_clicked_terminal(monkeypatch):
+    from sshpilot import window_tabs
+
+    class Terminal:
+        pass
+
+    page = object()
+    terminal = Terminal()
+
+    class Stub(window_tabs.WindowTabsMixin):
+        def _tab_menu_target(self):
+            return page, terminal
+
+        def _convert_terminal_tab_to_split(self, target_page, child, mode):
+            self.converted = (target_page, child, mode)
+
+    monkeypatch.setattr(window_tabs, 'TerminalWidget', Terminal)
+    stub = Stub()
+    stub._apply_split_layout_to_target('vertical')
+
+    assert stub.converted == (page, terminal, 'vertical')
+
+
 class _FakeWidget:
     """Minimal stand-in for Gtk.Widget used by classify_tab_bar_hit."""
 
@@ -227,6 +264,25 @@ def test_tab_bar_double_click_empty_opens_local_terminal():
 
     Stub()._on_tab_bar_pressed(None, 2, 100, 5)
     assert calls == ['local']
+
+
+def test_custom_titlebar_double_click_empty_does_not_open_local_terminal():
+    from sshpilot.window_tabs import WindowTabsMixin
+
+    calls = []
+
+    class Stub(WindowTabsMixin):
+        def __init__(self):
+            self._tab_bar_in_custom_titlebar = True
+            self.tab_bar = types.SimpleNamespace()
+            empty = _FakeWidget(css_name='tabbox', parent=self.tab_bar)
+            self.tab_bar.pick = lambda x, y, flags: empty
+            self.terminal_manager = types.SimpleNamespace(
+                show_local_terminal=lambda: calls.append('local')
+            )
+
+    Stub()._on_tab_bar_pressed(None, 2, 100, 5)
+    assert calls == []
 
 
 def test_tab_bar_double_click_close_button_does_not_open_local():

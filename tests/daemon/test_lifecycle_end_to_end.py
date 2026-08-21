@@ -8,7 +8,6 @@ prove the wrong thing.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import sys
 import time

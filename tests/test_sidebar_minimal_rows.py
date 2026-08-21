@@ -148,6 +148,17 @@ def test_avatar_initials():
     assert mod._avatar_initials('alpha beta gamma') == 'AB'
 
 
+def test_initials_avatar_uses_shared_unframed_style(monkeypatch):
+    _row, mod = _make('initials')
+    label = MagicMock()
+    monkeypatch.setattr(mod.Gtk, 'Label', MagicMock(return_value=label))
+
+    avatar = mod._make_avatar(initials='PW')
+
+    assert avatar is label
+    label.add_css_class.assert_any_call('sidebar-avatar')
+
+
 def test_restore_shows_labels_and_refreshes_status():
     row, _ = _make('icon')
     row.set_compact(True)

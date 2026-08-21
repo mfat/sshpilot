@@ -106,6 +106,7 @@ def test_build_menubar_uses_existing_actions(monkeypatch):
         "app.new-connection",
         "win.create-group",
         "app.local-terminal",
+        "win.new-split-view",
         "win.save-session",
         "win.open-session",
         "win.manage-sessions",
@@ -124,6 +125,11 @@ def test_build_menubar_uses_existing_actions(monkeypatch):
         "win.toggle_sidebar",
         "win.toggle-fullscreen",
         "app.tab-overview",
+        "win.headerbar-sidebar-toggle",
+        "win.headerbar-split-view",
+        "win.headerbar-commands",
+        "win.headerbar-theme-menu",
+        "win.headerbar-local-terminal",
     ]
     assert [a for _l, a in _flatten_items(menus["Tools"])] == [
         "app.new-key",

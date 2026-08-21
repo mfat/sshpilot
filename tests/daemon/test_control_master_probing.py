@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 
 from sshpilot.daemon.control_masters import (
-    ControlMasterProbe,
     MasterState,
     list_control_paths,
     probe_control_master,

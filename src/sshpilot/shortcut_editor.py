@@ -69,7 +69,7 @@ ACTION_LABELS: Dict[str, str] = {
     'tab-move-right': _('Move Tab Right'),
     'tab-overview': _('Tab Overview'),
     'new-split-view-tab': _('New Split View Tab'),
-    'toggle-command-blocks': _('Command Blocks Sidebar'),
+    'toggle-command-blocks': _('Command Snippets'),
     'toggle_sidebar': _('Toggle Sidebar'),
     'toggle-fullscreen': _('Toggle Fullscreen'),
     'split-focus-left': _('Focus Pane Left'),

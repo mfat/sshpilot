@@ -131,6 +131,7 @@ class SearchPopup:
         self._search_only = False
         self._show_groups = True
         self._anchor = None
+        self._margins = (0, 0, 0, 0)
 
         self._build()
 
@@ -150,14 +151,17 @@ class SearchPopup:
         scrim_click.connect("pressed", lambda *_a: self.dismiss())
         self._scrim.add_controller(scrim_click)
         self._overlay.add_overlay(self._scrim)
+        self._overlay.set_measure_overlay(self._scrim, False)
 
         self._panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._panel.add_css_class("sidebar-popup")
         self._panel.set_visible(False)
         key = Gtk.EventControllerKey()
+        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         key.connect("key-pressed", self._on_key)
         self._panel.add_controller(key)
         self._overlay.add_overlay(self._panel)
+        self._overlay.set_measure_overlay(self._panel, False)
 
         self._apply_layout()
         self._apply_backdrop()
@@ -234,13 +238,26 @@ class SearchPopup:
         else:
             self._panel.remove_css_class("sidebar-popup-transparent")
 
+    def add_css_class(self, css_class: str) -> None:
+        """Add an owner-specific style class to the floating panel."""
+        if self._panel is not None:
+            self._panel.add_css_class(css_class)
+
+    def set_margins(
+        self, *, start: int = 0, end: int = 0, top: int = 0, bottom: int = 0
+    ) -> None:
+        """Inset the panel from the edges of its overlay allocation."""
+        self._margins = (start, end, top, bottom)
+        self._apply_layout()
+
     def _apply_layout(self):
         if self._panel is None:
             return
-        self._panel.set_margin_start(0)
-        self._panel.set_margin_end(0)
-        self._panel.set_margin_top(0)
-        self._panel.set_margin_bottom(0)
+        start, end, top, bottom = self._margins
+        self._panel.set_margin_start(start)
+        self._panel.set_margin_end(end)
+        self._panel.set_margin_top(top)
+        self._panel.set_margin_bottom(bottom)
         anchor = getattr(self, "_anchor", None)
         if self._position == Position.ANCHORED and anchor is not None:
             try:
@@ -265,7 +282,7 @@ class SearchPopup:
             self._position, (Gtk.Align.START, Gtk.Align.FILL, 0))
         self._panel.set_halign(halign)
         self._panel.set_valign(valign)
-        self._panel.set_margin_top(top_margin)
+        self._panel.set_margin_top(top + top_margin)
         width = self._width if self._width is not None else self._width_func()
         height = self._height if self._height is not None else -1
         self._panel.set_size_request(width, height)

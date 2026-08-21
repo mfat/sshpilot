@@ -138,12 +138,13 @@ def test_start_activation_traces_omni_attention_once(gui):
     once, without grabbing its keyboard focus, and the tracer retires by
     itself. Timing waits derive from the production duration, not arbitrary
     sleeps."""
-    from sshpilot.omni_search import _ATTENTION_MS
+    from sshpilot.omni_search import _ATTENTION_LAPS, _ATTENTION_MS
 
     win = gui.window
     omni = win._omni_search
+    attention_total_ms = _ATTENTION_MS * _ATTENTION_LAPS
     omni.dismiss(clear=True)
-    gui.pump(_ATTENTION_MS + 300)  # let any startup tracer finish
+    gui.pump(attention_total_ms + 300)  # let any startup tracer finish
 
     win.terminal_manager.show_local_terminal()
     gui.pump(200)
@@ -157,7 +158,7 @@ def test_start_activation_traces_omni_attention_once(gui):
     assert omni._attention_area.get_mapped()
     assert not _focus_is_within(win, omni.entry)
 
-    gui.pump(_ATTENTION_MS + 250)
+    gui.pump(attention_total_ms + 250)
     assert not omni.attention_active
 
     win.terminal_manager.show_local_terminal()
@@ -168,18 +169,19 @@ def test_start_activation_traces_omni_attention_once(gui):
     win.show_start_tab()
     gui.pump(50)
     assert omni.attention_active
-    gui.pump(_ATTENTION_MS + 250)
+    gui.pump(attention_total_ms + 250)
     assert not omni.attention_active
 
 
 def test_attention_never_fires_when_start_already_selected(gui):
     """Re-selecting the current Start tab is not a transition: no tracer."""
-    from sshpilot.omni_search import _ATTENTION_MS
+    from sshpilot.omni_search import _ATTENTION_LAPS, _ATTENTION_MS
 
     win = gui.window
     omni = win._omni_search
+    attention_total_ms = _ATTENTION_MS * _ATTENTION_LAPS
     omni.dismiss(clear=True)
-    gui.pump(_ATTENTION_MS + 300)
+    gui.pump(attention_total_ms + 300)
     assert win.is_start_tab_selected()
     assert not omni.attention_active
 

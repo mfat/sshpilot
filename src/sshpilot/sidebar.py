@@ -324,22 +324,20 @@ def install_sidebar_css():
           }
         }
 
-        /* Minimal (icon-only) sidebar avatars: a plain neutral circle. The
-           circle fill stays neutral for every row; group rows tint only their
-           glyph (folder icon / initials) via a per-widget provider (see
-           _set_avatar_color). */
+        /* Minimal sidebar glyphs are deliberately unframed: both connection
+           initials and group folder icons render without circular backing. */
         .sidebar-avatar {
           min-width: 28px;
           min-height: 28px;
-          border-radius: 9999px;
-          background-color: alpha(@window_fg_color, 0.15);
+          background: none;
+          box-shadow: none;
           color: @window_fg_color;
           font-weight: bold;
         }
 
-        /* Ring around a connected connection's avatar. */
+        /* Status must not reintroduce a circular ring in minimal mode. */
         .sidebar-avatar.sidebar-avatar-online {
-          box-shadow: 0 0 0 2px @success_color;
+          box-shadow: none;
         }
 
         /* Detachable sidebar popup: an opaque panel floating over the work area
@@ -350,11 +348,22 @@ def install_sidebar_css():
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
+        /* Command palette base shadow; the centered presentation below
+           replaces it with an even shadow on every side. */
+        .sidebar-popup.command-popup {
+          box-shadow: -4px 0 8px -4px rgba(0, 0, 0, 0.35);
+        }
+
+        .sidebar-popup.command-popup-centered {
+          border-radius: 12px;
+          box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
+        }
+
         /* Programmatic-only subtle transparency (see
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
-          background-color: alpha(@window_bg_color, 0.86);
+          background-color: alpha(@window_bg_color, 0.94);
         }
 
         /* Chrome-free panel for modes whose content draws its own frame
@@ -682,7 +691,7 @@ def _avatar_initials(name: Optional[str]) -> str:
 
 
 def _make_avatar(*, initials: Optional[str] = None, icon_name: Optional[str] = None) -> Gtk.Widget:
-    """A round avatar we style ourselves: a Label of initials or a folder icon."""
+    """Create a minimal-row folder avatar or unframed initials label."""
     if icon_name is not None:
         from sshpilot import icon_utils
         widget = icon_utils.new_image_from_icon_name(icon_name)
@@ -699,8 +708,8 @@ def _set_avatar_color(avatar: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     """Tint a group avatar's glyph (folder icon / initials) with ``rgba``.
 
     A provider on the widget's own style context at USER priority overrides the
-    default ``.sidebar-avatar`` foreground; the circle keeps its neutral fill so
-    only the glyph carries the group colour.
+    default ``.sidebar-avatar`` foreground, tinting the folder glyph or the
+    unframed initials text.
     """
     old = getattr(avatar, '_color_provider', None)
     if old is not None:
@@ -4023,7 +4032,7 @@ def _build_sidebar_header(window, sidebar_box):
     add_button.add_css_class('flat')
     _expand_toolbar_button(add_button)
     add_button.set_tooltip_text(
-        _('Add Connection ({shortcut}+Shift+N)').format(
+        _('New Connection ({shortcut}+Shift+N)').format(
             shortcut=get_primary_modifier_label())
     )
     add_button.connect('clicked', window.on_add_connection_clicked)
@@ -4032,6 +4041,19 @@ def _build_sidebar_header(window, sidebar_box):
     except Exception:
         pass
     header.append(add_button)
+
+    # Add group button — kept beside New Connection so the two creation
+    # actions are discoverable as one cluster.
+    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
+    new_group_button.add_css_class('flat')
+    _expand_toolbar_button(new_group_button)
+    new_group_button.set_tooltip_text(_('New Group'))
+    new_group_button.set_action_name('win.create-group')
+    try:
+        new_group_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.append(new_group_button)
 
     # Search button
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')
@@ -4163,6 +4185,7 @@ def _build_sidebar_header(window, sidebar_box):
     window.menu_button.set_icon_name('open-menu-symbolic')
     window.menu_button.set_tooltip_text(_('Menu'))
     window.menu_button.set_menu_model(window.create_menu())
+    window._install_main_menu_theme_selector()
 
     header_handle = Gtk.WindowHandle()
     header_handle.set_hexpand(True)

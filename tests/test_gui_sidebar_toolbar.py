@@ -36,3 +36,12 @@ def test_selection_toolbar_keeps_same_width_for_connections_and_groups(gui):
     empty_size = _horizontal_measure(stack)
 
     assert connection_size == group_size == empty_size
+
+
+def test_new_group_button_follows_new_connection_in_sidebar_header(gui):
+    header = gui.window._sidebar_header_handle.get_child()
+    new_connection = header.get_first_child()
+    new_group = new_connection.get_next_sibling()
+
+    assert new_group.get_action_name() == 'win.create-group'
+    assert new_group.get_child().get_icon_name() == 'folder-new-symbolic'

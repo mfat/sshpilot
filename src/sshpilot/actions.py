@@ -25,6 +25,44 @@ TIPS_BANNER_DELAY_SECONDS = 4
 logger = logging.getLogger(__name__)
 
 
+HEADERBAR_VISIBILITY_ACTIONS = (
+    ('headerbar-sidebar-toggle', 'Sidebar Toggle Button', 'ui.headerbar_show_sidebar_toggle', False),
+    ('headerbar-split-view', 'Split View Button', 'ui.headerbar_show_split_view', False),
+    ('headerbar-commands', 'Command Snippets Button', 'ui.headerbar_show_commands', True),
+    ('headerbar-theme-menu', 'Theme Menu', 'ui.headerbar_show_theme_toggle', False),
+    ('headerbar-local-terminal', 'Local Terminal Button', 'ui.headerbar_show_local_terminal', True),
+)
+
+
+def _register_headerbar_visibility_actions(window):
+    """Expose the Preferences header-bar switches as stateful menu actions."""
+    window._headerbar_visibility_actions = {}
+    if not hasattr(Gio.SimpleAction, 'new_stateful'):
+        return
+
+    config = getattr(window, 'config', None)
+
+    for action_name, _label, setting_key, default in HEADERBAR_VISIBILITY_ACTIONS:
+        enabled = bool(config.get_setting(setting_key, default)) if config else default
+        action = Gio.SimpleAction.new_stateful(
+            action_name,
+            None,
+            GLib.Variant.new_boolean(enabled),
+        )
+
+        def _on_change_state(current_action, value, *, key=setting_key):
+            visible = value.get_boolean()
+            if config:
+                config.set_setting(key, visible)
+            current_action.set_state(GLib.Variant.new_boolean(visible))
+            if hasattr(window, 'update_headerbar_buttons'):
+                window.update_headerbar_buttons()
+
+        action.connect('change-state', _on_change_state)
+        window.add_action(action)
+        window._headerbar_visibility_actions[setting_key] = action
+
+
 class WindowActions:
     """Mixin providing action handlers for :class:`MainWindow`."""
 
@@ -1181,6 +1219,8 @@ def register_fullscreen_action(window):
 
 def register_window_actions(window):
     """Register SimpleActions with the provided main window."""
+    _register_headerbar_visibility_actions(window)
+
     # Context menu action to force opening a new connection tab
     window.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
     window.open_new_connection_action.connect('activate', window.on_open_new_connection_action)
@@ -1282,6 +1322,15 @@ def register_window_actions(window):
 
     register_fullscreen_action(window)
 
+    # Main-menu command matching the title-bar split-view button.
+    if hasattr(window, 'on_open_split_view_clicked'):
+        window.new_split_view_action = Gio.SimpleAction.new('new-split-view', None)
+        window.new_split_view_action.connect(
+            'activate',
+            lambda *_args: window.on_open_split_view_clicked(None),
+        )
+        window.add_action(window.new_split_view_action)
+
     # Sidebar toggle action and accelerators
     try:
         sidebar_action = Gio.SimpleAction.new('toggle_sidebar', None)
@@ -1344,7 +1393,14 @@ def register_window_actions(window):
 
     # Application theme (header bar menu)
     if hasattr(window, '_apply_app_theme'):
-        theme_action = Gio.SimpleAction.new('set-app-theme', GLib.VariantType.new('s'))
+        saved_theme = str(window.config.get_setting('app-theme', 'default'))
+        if saved_theme not in {'default', 'light', 'dark'}:
+            saved_theme = 'default'
+        theme_action = Gio.SimpleAction.new_stateful(
+            'set-app-theme',
+            GLib.VariantType.new('s'),
+            GLib.Variant('s', saved_theme),
+        )
         theme_action.connect(
             'activate',
             lambda _action, param: window._apply_app_theme(

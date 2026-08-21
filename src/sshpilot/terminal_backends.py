@@ -523,7 +523,7 @@ class VTETerminalBackend:
         # does not reliably report a non-zero group for alternate layouts.
         if keyval_name in self._TILDE_DEAD_KEYS:
             try:
-                self.owner.feed_child_data('~'.encode('utf-8'))
+                self.owner.feed_child_data(b'~')
                 return True  # Consume event
             except Exception:
                 logger.debug("Failed to send dead key tilde", exc_info=True)

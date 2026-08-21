@@ -22,17 +22,24 @@ class DummyConfig:
 
 
 class DummyConnection:
-    def __init__(self, nickname: str, hostname: str = "", host: str = ""):
+    def __init__(
+        self,
+        nickname: str,
+        hostname: str = "",
+        host: str = "",
+        connection_id: str | None = None,
+        display_name: str = "",
+    ):
+        self.id = connection_id or nickname
         self.nickname = nickname
         self.hostname = hostname
         self.host = host or nickname
+        self.display_name = display_name
 
 
 def _build_manager() -> GroupManager:
     config = DummyConfig()
-    manager = GroupManager(config)
-    manager._save_groups = lambda: None  # type: ignore[attr-defined]
-    return manager
+    return GroupManager(config)
 
 
 def test_apply_connection_sort_changes_orders_and_is_idempotent():
@@ -70,3 +77,35 @@ def test_apply_connection_sort_changes_orders_and_is_idempotent():
     assert changed_desc is True
     assert manager.root_connections == ["beta", "alpha"]
     assert manager.groups["grp"]["connections"] == ["gamma", "delta"]
+
+
+def test_apply_connection_sort_resolves_daemon_uuid_references_by_nickname():
+    manager = _build_manager()
+    manager.root_connections = ["uuid-alpha", "uuid-zulu"]
+    connections = [
+        DummyConnection("Zulu", connection_id="uuid-zulu"),
+        DummyConnection("Alpha", connection_id="uuid-alpha"),
+    ]
+
+    assert apply_connection_sort(manager, connections, "name-desc") is True
+    assert manager.root_connections == ["uuid-zulu", "uuid-alpha"]
+
+
+def test_apply_connection_sort_uses_rendered_display_name_before_nickname():
+    manager = _build_manager()
+    manager.root_connections = ["uuid-alpha", "uuid-zulu"]
+    connections = [
+        DummyConnection(
+            "Alpha",
+            connection_id="uuid-alpha",
+            display_name="Zulu display name",
+        ),
+        DummyConnection(
+            "Zulu",
+            connection_id="uuid-zulu",
+            display_name="Alpha display name",
+        ),
+    ]
+
+    assert apply_connection_sort(manager, connections, "name-asc") is True
+    assert manager.root_connections == ["uuid-zulu", "uuid-alpha"]

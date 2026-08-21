@@ -19,7 +19,7 @@ for the window. It holds:
   on exit (no hard-coded defaults);
 * ``presentation`` — ``'start'`` or ``'terminal'``: how the *currently active*
   page is presented while fullscreen. Start keeps its normal chrome; a terminal
-  hides the sidebar and banners and folds the header bar and tab bar into the
+  hides the sidebar and banners and turns the custom tab/title bar into the
   auto-hiding top overlay described below.
 
 The controller subscribes to the tab view itself (``notify::selected-page`` and
@@ -49,14 +49,15 @@ a global accelerator could not make that distinction.
 
 Immersive terminal chrome
 -------------------------
-Terminal fullscreen is edge-to-edge: the header bar and tab bar are moved into
-the content ``Adw.ToolbarView``'s top-bar group, which is switched to
+Terminal fullscreen is edge-to-edge: the custom ``Gtk.WindowHandle`` title bar,
+including its tab bar, is already in the content ``Adw.ToolbarView``'s top-bar
+group, which is switched to
 ``extend-content-to-top-edge`` with ``reveal-top-bars`` off. That is one
 surface with one reveal property — no competing revealers or timers — and
 because the content extends underneath, revealing costs the terminal no
 allocation and produces no row/column jump.
 
-Pointing at the top edge reveals both bars together; the overlay stays up while
+Pointing at the top edge reveals the combined bar; the overlay stays up while
 the pointer is anywhere over them (the region is measured from their real
 heights, not hard-coded) and hides once it leaves. The revealed header bar is
 the ordinary one, so its window controls, menu and fullscreen toggle are all
@@ -142,7 +143,7 @@ def _ensure_macos_fullscreen_spacer_css() -> None:
     try:
         provider = Gtk.CssProvider()
         provider.load_from_data(f"""
-headerbar.{MACOS_FULLSCREEN_SPACER_CSS_CLASS} {{
+.{MACOS_FULLSCREEN_SPACER_CSS_CLASS} {{
     min-height: {MACOS_FULLSCREEN_SPACER_MIN_HEIGHT_PX}px;
 }}
 """.encode())
@@ -195,7 +196,7 @@ class WindowFullscreenController:
 
     @property
     def top_chrome_revealed(self) -> bool:
-        """True while the header bar + tab bar overlay is showing."""
+        """True while the combined header/tab bar overlay is showing."""
         return self._top_chrome_revealed
 
     # -- installation ------------------------------------------------------
@@ -375,7 +376,13 @@ class WindowFullscreenController:
         """
         if not platform_utils.is_macos():
             return
-        header_bar = getattr(self.window, 'header_bar', None)
+        set_headerbar = getattr(self.window, '_set_macos_fullscreen_headerbar', None)
+        if set_headerbar is not None:
+            set_headerbar(True)
+        header_bar = (
+            getattr(self.window, '_macos_header_bar', None)
+            or getattr(self.window, 'header_bar', None)
+        )
         if header_bar is None:
             return
         _ensure_macos_fullscreen_spacer_css()
@@ -387,13 +394,19 @@ class WindowFullscreenController:
     def _remove_macos_fullscreen_spacer(self) -> None:
         if not platform_utils.is_macos():
             return
-        header_bar = getattr(self.window, 'header_bar', None)
+        header_bar = (
+            getattr(self.window, '_macos_header_bar', None)
+            or getattr(self.window, 'header_bar', None)
+        )
         if header_bar is None:
             return
         try:
             header_bar.remove_css_class(MACOS_FULLSCREEN_SPACER_CSS_CLASS)
         except Exception:
             logger.debug('Failed to remove the macOS fullscreen spacer', exc_info=True)
+        set_headerbar = getattr(self.window, '_set_macos_fullscreen_headerbar', None)
+        if set_headerbar is not None:
+            set_headerbar(False)
 
     # -- key handling ------------------------------------------------------
 
@@ -425,7 +438,12 @@ class WindowFullscreenController:
         across the whole surface whatever height the theme gives them.
         """
         height = 0
-        for name in ('header_bar', 'tab_bar'):
+        names = ('_macos_header_bar', 'header_bar')
+        if not self._tab_bar_is_in_top_chrome():
+            # Compatibility with older/alternate window layouts where the tab
+            # bar is still its own ToolbarView top bar.
+            names += ('tab_bar',)
+        for name in names:
             widget = getattr(self.window, name, None)
             if widget is None:
                 continue
@@ -454,8 +472,20 @@ class WindowFullscreenController:
     def _toolbar_view(self):
         return getattr(self.window, '_content_toolbar_view', None)
 
+    def _tab_bar_is_in_top_chrome(self) -> bool:
+        if bool(getattr(self.window, '_tab_bar_in_custom_titlebar', False)):
+            return True
+        header = getattr(self.window, 'header_bar', None)
+        tab_bar = getattr(self.window, 'tab_bar', None)
+        if header is None or tab_bar is None:
+            return False
+        try:
+            return header.get_title_widget() is tab_bar
+        except Exception:
+            return False
+
     def _enter_immersive_chrome(self) -> bool:
-        """Fold the header bar + tab bar into one auto-hiding overlay surface.
+        """Turn the combined header/tab bar into an auto-hiding overlay.
 
         Returns False when the window has no content ToolbarView (the legacy
         non-Adw split fallback), so the caller can degrade to plain hiding.
@@ -469,7 +499,8 @@ class WindowFullscreenController:
             self._saved_extend_content = toolbar.get_extend_content_to_top_edge()
             self._saved_reveal_top_bars = toolbar.get_reveal_top_bars()
             self._saved_top_bar_style = toolbar.get_top_bar_style()
-            self._relocate_tab_bar(into_top_bars=True)
+            if not self._tab_bar_is_in_top_chrome():
+                self._relocate_tab_bar(into_top_bars=True)
             # Flat top bars are transparent once the content extends under
             # them; raised gives the revealed surface a real background.
             toolbar.set_top_bar_style(Adw.ToolbarStyle.RAISED)
@@ -493,7 +524,8 @@ class WindowFullscreenController:
         self._top_chrome_revealed = False
         toolbar = self._toolbar_view()
         try:
-            self._relocate_tab_bar(into_top_bars=False)
+            if not self._tab_bar_is_in_top_chrome():
+                self._relocate_tab_bar(into_top_bars=False)
             if toolbar is not None:
                 if self._saved_extend_content is not None:
                     toolbar.set_extend_content_to_top_edge(self._saved_extend_content)
@@ -509,11 +541,10 @@ class WindowFullscreenController:
             self._saved_top_bar_style = None
 
     def _relocate_tab_bar(self, *, into_top_bars: bool) -> None:
-        """Move the tab bar between the content flow and the top-bar group.
+        """Move a legacy standalone tab bar into/out of the top-bar group.
 
-        This is what makes one overlay out of two bars: while fullscreen the
-        tab bar is a top bar of the same ToolbarView as the header, so a single
-        reveal drives both.
+        Current windows put the tab bar inside their custom title bar and never need this;
+        retaining the fallback keeps the controller safe for alternate layouts.
         """
         toolbar = self._toolbar_view()
         tab_bar = getattr(self.window, 'tab_bar', None)
@@ -565,16 +596,19 @@ class WindowFullscreenController:
         self._set_widget_visible('broadcast_banner', False)
 
         if self._enter_immersive_chrome():
-            # Both bars are top bars of the ToolbarView now, hidden until the
-            # pointer reaches the top edge. They stay `visible` as widgets —
+            # The custom title bar is a ToolbarView top bar, hidden until the
+            # pointer reaches the top edge. It stays `visible` as a widget —
             # the ToolbarView's reveal is what shows and hides the surface.
             self._set_widget_visible('header_bar', True)
             self._sync_tab_bar_visibility()
         else:
-            # Legacy non-Adw split fallback with no ToolbarView: nothing can
-            # overlay, so hide the header and leave the tab bar in the flow
-            # rather than making tabs unreachable.
-            self._set_widget_visible('header_bar', False)
+            # Legacy split fallback has no ToolbarView overlay. The tab bar is
+            # part of the custom title bar, so keep that row visible rather
+            # than making tab navigation and window controls unreachable.
+            self._set_widget_visible(
+                'header_bar',
+                bool(getattr(self.window, '_tab_bar_in_custom_titlebar', False)),
+            )
             self._sync_tab_bar_visibility()
         self._add_fullscreen_css()
 

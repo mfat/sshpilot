@@ -729,6 +729,20 @@ def test_terminal_fullscreen_moves_both_bars_into_one_overlay_surface():
     assert toolbar.get_reveal_top_bars() is False
 
 
+def test_tab_bar_already_in_custom_titlebar_is_not_relocated_or_double_measured():
+    """The current one-row chrome keeps tabs inside its WindowHandle."""
+    win, fc = _window()
+    win._tab_bar_in_custom_titlebar = True
+    win.tab_content_box.remove(win.tab_bar)
+    win.open_terminal('A')
+
+    _f11(fc)
+
+    assert win._content_toolbar_view.top_bars == [win.header_bar]
+    assert fc._tab_bar_relocated is False
+    assert fc._reveal_region_height() == win.header_bar.height
+
+
 def test_revealed_chrome_is_opaque_over_terminal_output():
     """Flat top bars go transparent once the content extends under them.
 
@@ -1333,6 +1347,22 @@ def test_macos_fullscreen_header_bar_gets_the_menu_bar_spacer(monkeypatch):
     _f11(fc)
     assert fc.active is False
     assert spacer not in win.header_bar.css_classes
+
+
+def test_macos_spacer_and_reveal_region_include_dedicated_header_bar(monkeypatch):
+    win, fc = _window(monkeypatch, macos=True)
+    macos_header = _FakeWidget(True, height=30)
+    win._macos_header_bar = macos_header
+    win._tab_bar_in_custom_titlebar = True
+
+    fc._apply_macos_fullscreen_spacer()
+
+    assert _spacer_class() in macos_header.css_classes
+    assert _spacer_class() not in win.header_bar.css_classes
+    assert fc._reveal_region_height() == 30 + win.header_bar.height
+
+    fc._remove_macos_fullscreen_spacer()
+    assert _spacer_class() not in macos_header.css_classes
 
 
 def test_macos_start_fullscreen_keeps_the_spacer_on_the_pinned_header(monkeypatch):

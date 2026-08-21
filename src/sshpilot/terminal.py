@@ -2643,8 +2643,9 @@ class TerminalWidget(Gtk.Box):
             # Set up the terminal for local shell
             self.setup_terminal()
 
-            # Set initial title for local terminal
-            self.emit('title-changed', 'Local Terminal')
+            # Use the same neutral fallback as the local tab. Shell-provided
+            # titles can still replace it later.
+            self.emit('title-changed', _('Terminal'))
 
             # Try agent-based approach first (fixes job control in Flatpak)
             if is_flatpak() and self._try_agent_based_shell():
@@ -4190,10 +4191,18 @@ class TerminalWidget(Gtk.Box):
                 self.connection_state = ConnectionState.DISCONNECTED
                 self.is_connected = False
 
-                # Emit connection status change signal
-                if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
+                # Older in-process managers accepted runtime state pushes.  The
+                # daemon-backed ConnectionPresentationStore is deliberately
+                # read-only, so only schedule this compatibility update when
+                # the supplied manager actually implements it.
+                update_connection_state = getattr(
+                    getattr(self, 'connection_manager', None),
+                    'update_connection_state',
+                    None,
+                )
+                if callable(update_connection_state) and self.connection:
                     GLib.idle_add(
-                        self.connection_manager.update_connection_state,
+                        update_connection_state,
                         self.connection, ConnectionState.DISCONNECTED, '',
                     )
 
@@ -4244,11 +4253,19 @@ class TerminalWidget(Gtk.Box):
         # Just update the connection status and emit signals
         self.is_connected = False
 
-        # Update connection manager status with the classified state + reason.
+        # Update a legacy mutable connection manager when present.  Production
+        # GTK uses ConnectionPresentationStore, whose snapshots are read-only;
+        # terminal state and the reconnect UI above remain local presentation
+        # state and must not be pushed into that projection.
         logger.debug(f"Scheduling connection state update: {exit_state.value} ({exit_reason})")
-        if hasattr(self, 'connection_manager') and self.connection_manager and self.connection:
+        update_connection_state = getattr(
+            getattr(self, 'connection_manager', None),
+            'update_connection_state',
+            None,
+        )
+        if callable(update_connection_state) and self.connection:
             GLib.idle_add(
-                self.connection_manager.update_connection_state,
+                update_connection_state,
                 self.connection, exit_state, exit_reason or '',
             )
 

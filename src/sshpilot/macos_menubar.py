@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from gettext import gettext as _
 
+from .actions import HEADERBAR_VISIBILITY_ACTIONS
+
 from gi.repository import Gio, GLib
 
 from .file_manager_integration import should_hide_file_manager_options
@@ -46,8 +48,9 @@ def build_macos_menubar(
 
     file_menu = menu_cls()
     file_menu.append(_("New Connection"), "app.new-connection")
-    file_menu.append(_("Create Group"), "win.create-group")
-    file_menu.append(_("Local Terminal"), "app.local-terminal")
+    file_menu.append(_("New Group"), "win.create-group")
+    file_menu.append(_("New Local Terminal"), "app.local-terminal")
+    file_menu.append(_("New Split View"), "win.new-split-view")
 
     file_sessions = menu_cls()
     file_sessions.append(_("Save Session…"), "win.save-session")
@@ -77,6 +80,10 @@ def build_macos_menubar(
     view_menu.append(_("Toggle Sidebar"), "win.toggle_sidebar")
     view_menu.append(_("Toggle Full Screen"), "win.toggle-fullscreen")
     view_menu.append(_("Tab Overview"), "app.tab-overview")
+    titlebar_buttons = menu_cls()
+    for action_name, label, _key, _default in HEADERBAR_VISIBILITY_ACTIONS:
+        titlebar_buttons.append(_(label), f"win.{action_name}")
+    view_menu.append_section(None, titlebar_buttons)
     menubar.append_submenu(_("View"), view_menu)
 
     tools_menu = menu_cls()

@@ -2,7 +2,7 @@
 
 Reconstructs the shell's edit line from the raw input stream (``LineTracker``),
 queries pluggable ``SuggestionProvider``s (session history, shell history files,
-Command Blocks snippets), and produces the JSON payload the in-page popup
+Command Snippets), and produces the JSON payload the in-page popup
 (``window.sshpilotAC`` in ``xterm_shell.py``) renders.
 
 There is no shell integration (no OSC 133): the tracker is a heuristic that
@@ -160,7 +160,7 @@ class RemoteHistoryProvider:
 
 
 class CommandBlockProvider:
-    """Saved Command Blocks snippets, ranked by use_count. ``store`` may be None."""
+    """Saved Command Snippets, ranked by use_count. ``store`` may be None."""
 
     def __init__(self, store) -> None:
         self._store = store

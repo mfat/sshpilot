@@ -167,11 +167,20 @@ class WindowHelpMixin:
             ('local-terminal', _('Local Terminal')),
             ('terminal-search', _('Search in Terminal')),
             ('broadcast-command', _('Broadcast Command')),
+            ('toggle-command-blocks', _('Command Snippets')),
         ]
 
         for action_name, title in terminal_actions:
             shortcuts = current_shortcuts.get(action_name)
-            if shortcuts:
+            if action_name == 'toggle-command-blocks':
+                shortcut = Gtk.ShortcutsShortcut(
+                    title=title,
+                    action_name='win.toggle-command-blocks',
+                )
+                if not shortcuts:
+                    shortcut.set_subtitle(_('No shortcut assigned'))
+                group_terminal.add_shortcut(shortcut)
+            elif shortcuts:
                 accelerator = ' '.join(shortcuts)
                 group_terminal.add_shortcut(Gtk.ShortcutsShortcut(
                     title=title, accelerator=accelerator))

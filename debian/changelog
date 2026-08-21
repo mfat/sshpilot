@@ -1,3 +1,17 @@
+sshpilot (5.9.0-1) unstable; urgency=medium
+
+  * Release v5.9.0.
+  * Integrated tab bar into header for a cleaner, more minimal user
+    interface
+  * Revamped Command Snippets panel - the snippets are now displayed in
+    a floating panel
+  * Added keyboard support to Snippets - you can assign your desired
+    shortcut for the popup
+  * Added theme selector to main menu, inspired by Ptyxis
+  * Minor UI improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 21 Aug 2026 16:10:36 +0000
+
 sshpilot (5.8.9-1) unstable; urgency=medium
 
   * Release v5.8.9.

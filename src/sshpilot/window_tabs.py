@@ -7,7 +7,7 @@ is a pure code move with no behavior change.
 
 Covers tab close/rename/title, the tab context menus and their handlers
 (_on_tabmenu_*), file-manager embed teardown (shared with shutdown), tab
-attach/detach, drag-to-convert-to-split, and the layout toggle.
+attach/detach, drag-to-convert-to-split, and split layout actions.
 
 SplitViewTab is imported locally inside the methods that use it (a module-level
 import here would be circular: split_view -> window -> window_tabs), so those
@@ -132,7 +132,8 @@ class WindowTabsMixin:
             if page and not self._is_start_tab_page(page):
                 self._show_tab_rename_popover(page, x, y)
             return
-        if kind == 'empty':
+        if (kind == 'empty'
+                and not getattr(self, '_tab_bar_in_custom_titlebar', False)):
             try:
                 self.terminal_manager.show_local_terminal()
             except Exception as exc:
@@ -260,8 +261,8 @@ class WindowTabsMixin:
         menu.append_section(None, sec2)
 
         sec3 = Gio.Menu()
-        sec3.append_item(_item(_('Side by Side'), 'tabmenu-layout-horizontal'))
-        sec3.append_item(_item(_('Top / Bottom'), 'tabmenu-layout-vertical'))
+        sec3.append_item(_item(_('Split Side by Side'), 'tabmenu-layout-horizontal'))
+        sec3.append_item(_item(_('Split Top and Bottom'), 'tabmenu-layout-vertical'))
         sec3.append_item(_item(_('Default layout'), 'tabmenu-layout-default'))
         sec3.append_item(_item(_('Compact layout'), 'tabmenu-layout-compact'))
         menu.append_section(None, sec3)
@@ -459,7 +460,11 @@ class WindowTabsMixin:
                 is_local = child._is_local_terminal()
             except Exception:
                 is_local = False
-            enabled = common | {'tabmenu-duplicate'}
+            enabled = common | {
+                'tabmenu-duplicate',
+                'tabmenu-layout-horizontal',
+                'tabmenu-layout-vertical',
+            }
             if is_local:
                 enabled.add('tabmenu-new-local')
                 return enabled
@@ -722,6 +727,8 @@ class WindowTabsMixin:
         from .split_view import SplitViewTab
         if isinstance(child, SplitViewTab):
             child.set_layout_mode(mode)
+        elif isinstance(child, TerminalWidget):
+            self._convert_terminal_tab_to_split(page, child, mode)
 
     def _on_tabmenu_layout_horizontal(self, action, param=None):
         try:
@@ -1243,29 +1250,11 @@ class WindowTabsMixin:
     # ── layout toggle state / apply ───────────────────────────────────────────
 
     def _update_layout_toggle_state(self) -> None:
-        """Sync tab-bar H/V toggles with the selected tab."""
-        if not hasattr(self, '_layout_h_btn'):
-            return
-        try:
-            page = self.tab_view.get_selected_page()
-            child = page.get_child() if page else None
-            from .split_view import SplitViewTab
-            is_terminal_tab = isinstance(child, (TerminalWidget, SplitViewTab))
-            self._layout_h_btn.set_visible(is_terminal_tab)
-            self._layout_v_btn.set_visible(is_terminal_tab)
-            self._layout_toggle_updating[0] = True
-            try:
-                if isinstance(child, SplitViewTab):
-                    mode = child.get_layout_mode()
-                    self._layout_h_btn.set_active(mode == 'horizontal')
-                    self._layout_v_btn.set_active(mode == 'vertical')
-                else:
-                    self._layout_h_btn.set_active(False)
-                    self._layout_v_btn.set_active(False)
-            finally:
-                self._layout_toggle_updating[0] = False
-        except Exception as exc:
-            logger.debug("Failed to update layout toggle state: %s", exc)
+        """Compatibility hook retained for split-view callers.
+
+        Layout controls now live in each terminal tab's context menu, so there
+        is no selected-tab widget state to synchronize.
+        """
 
     def _apply_tab_layout_mode(self, mode: str) -> None:
         """Apply H or V layout to the current tab (converts regular tab if needed)."""
@@ -1323,6 +1312,12 @@ class WindowTabsMixin:
                 self.tab_button.set_visible(show_tabs)
             if hasattr(self, 'tab_bar'):
                 self.tab_bar.set_visible(show_tabs)
+            # The tab bar occupies the custom title bar's centre stack. When
+            # it disappears, restore the minimal-sidebar title (or the empty
+            # draggable centre) instead of leaving an invisible child selected.
+            mover = getattr(self, '_move_title_to_content_header', None)
+            if callable(mover):
+                mover(bool(getattr(self, '_sidebar_minimal', False)))
         except Exception as e:
             logger.error(f"Failed to update tab button visibility: {e}")
 
