@@ -79,7 +79,11 @@ from .sidebar import (
 )
 
 from .welcome_page import WelcomePage
-from .actions import WindowActions, register_window_actions
+from .actions import (
+    HEADERBAR_VISIBILITY_ACTIONS,
+    WindowActions,
+    register_window_actions,
+)
 from .window_broadcast import WindowBroadcastMixin
 from .window_session import WindowSessionMixin
 from .window_help import WindowHelpMixin
@@ -2320,11 +2324,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
         for attr, key, default in mapping:
+            visible = bool(self.config.get_setting(key, default))
+            action = getattr(self, '_headerbar_visibility_actions', {}).get(key)
+            if action is not None:
+                try:
+                    if action.get_state().get_boolean() != visible:
+                        action.set_state(GLib.Variant.new_boolean(visible))
+                except Exception:
+                    logger.debug("Failed to synchronize View menu action for %s", key, exc_info=True)
             btn = getattr(self, attr, None)
             if btn is None:
                 continue
             try:
-                btn.set_visible(bool(self.config.get_setting(key, default)))
+                btn.set_visible(visible)
             except Exception:
                 logger.debug("Failed to apply header-bar button visibility for %s", attr, exc_info=True)
 
@@ -3634,9 +3646,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         submenu_section.append_submenu(_('Import/Export'), import_export_menu)
 
         view_menu = Gio.Menu()
-        view_menu.append(_('Toggle Sidebar'), 'win.toggle_sidebar')
-        view_menu.append(_('Commands'), 'win.toggle-command-blocks')
-        view_menu.append_submenu(_('Theme'), self._create_theme_menu())
+        for action_name, label, _key, _default in HEADERBAR_VISIBILITY_ACTIONS:
+            view_menu.append(_(label), f'win.{action_name}')
         submenu_section.append_submenu(_('View'), view_menu)
 
         # Plugin-contributed pages live in the Tools submenu. The section

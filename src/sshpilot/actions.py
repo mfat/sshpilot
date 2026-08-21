@@ -25,6 +25,44 @@ TIPS_BANNER_DELAY_SECONDS = 4
 logger = logging.getLogger(__name__)
 
 
+HEADERBAR_VISIBILITY_ACTIONS = (
+    ('headerbar-sidebar-toggle', 'Sidebar Toggle Button', 'ui.headerbar_show_sidebar_toggle', False),
+    ('headerbar-split-view', 'Split View Button', 'ui.headerbar_show_split_view', False),
+    ('headerbar-commands', 'Commands Button', 'ui.headerbar_show_commands', True),
+    ('headerbar-theme-menu', 'Theme Menu', 'ui.headerbar_show_theme_toggle', True),
+    ('headerbar-local-terminal', 'Local Terminal Button', 'ui.headerbar_show_local_terminal', True),
+)
+
+
+def _register_headerbar_visibility_actions(window):
+    """Expose the Preferences header-bar switches as stateful menu actions."""
+    window._headerbar_visibility_actions = {}
+    if not hasattr(Gio.SimpleAction, 'new_stateful'):
+        return
+
+    config = getattr(window, 'config', None)
+
+    for action_name, _label, setting_key, default in HEADERBAR_VISIBILITY_ACTIONS:
+        enabled = bool(config.get_setting(setting_key, default)) if config else default
+        action = Gio.SimpleAction.new_stateful(
+            action_name,
+            None,
+            GLib.Variant.new_boolean(enabled),
+        )
+
+        def _on_change_state(current_action, value, *, key=setting_key):
+            visible = value.get_boolean()
+            if config:
+                config.set_setting(key, visible)
+            current_action.set_state(GLib.Variant.new_boolean(visible))
+            if hasattr(window, 'update_headerbar_buttons'):
+                window.update_headerbar_buttons()
+
+        action.connect('change-state', _on_change_state)
+        window.add_action(action)
+        window._headerbar_visibility_actions[setting_key] = action
+
+
 class WindowActions:
     """Mixin providing action handlers for :class:`MainWindow`."""
 
@@ -1181,6 +1219,8 @@ def register_fullscreen_action(window):
 
 def register_window_actions(window):
     """Register SimpleActions with the provided main window."""
+    _register_headerbar_visibility_actions(window)
+
     # Context menu action to force opening a new connection tab
     window.open_new_connection_action = Gio.SimpleAction.new('open-new-connection', None)
     window.open_new_connection_action.connect('activate', window.on_open_new_connection_action)

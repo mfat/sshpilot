@@ -23,13 +23,8 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
     monkeypatch.setattr(window_module.Gio, 'Menu', _Menu)
     monkeypatch.setattr(window_module, 'should_hide_file_manager_options', lambda: True)
 
-    theme_menu = _Menu()
-    theme_menu.append('Follow System', 'win.set-app-theme::default')
-    theme_menu.append('Light', 'win.set-app-theme::light')
-    theme_menu.append('Dark', 'win.set-app-theme::dark')
     stub = types.SimpleNamespace(
         _plugins_menu_section=None,
-        _create_theme_menu=lambda: theme_menu,
     )
 
     menu = window_module.MainWindow.create_menu(stub)
@@ -43,9 +38,11 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
     view_menu = next(submenu for _kind, label, submenu in submenus if label == 'View')
 
     assert view_menu.entries == [
-        ('item', 'Toggle Sidebar', 'win.toggle_sidebar'),
-        ('item', 'Commands', 'win.toggle-command-blocks'),
-        ('submenu', 'Theme', theme_menu),
+        ('item', 'Sidebar Toggle Button', 'win.headerbar-sidebar-toggle'),
+        ('item', 'Split View Button', 'win.headerbar-split-view'),
+        ('item', 'Commands Button', 'win.headerbar-commands'),
+        ('item', 'Theme Menu', 'win.headerbar-theme-menu'),
+        ('item', 'Local Terminal Button', 'win.headerbar-local-terminal'),
     ]
 
     root_items = [
@@ -58,3 +55,78 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
     assert ('item', 'New Group', 'win.create-group') in root_items
     assert ('item', 'New Local Terminal', 'app.local-terminal') in root_items
     assert ('item', 'New Split View', 'win.new-split-view') in root_items
+
+
+def test_headerbar_menu_action_updates_shared_preference(monkeypatch):
+    from sshpilot import actions
+
+    class Variant:
+        def __init__(self, value):
+            self.value = value
+
+        def get_boolean(self):
+            return self.value
+
+    class Action:
+        def __init__(self, name, state):
+            self.name = name
+            self.state = state
+            self.callback = None
+
+        @classmethod
+        def new_stateful(cls, name, _parameter_type, state):
+            return cls(name, state)
+
+        def connect(self, _signal, callback):
+            self.callback = callback
+
+        def get_name(self):
+            return self.name
+
+        def get_state(self):
+            return self.state
+
+        def set_state(self, state):
+            self.state = state
+
+        def change_state(self, state):
+            self.callback(self, state)
+
+    monkeypatch.setattr(actions.Gio, 'SimpleAction', Action)
+    monkeypatch.setattr(
+        actions.GLib,
+        'Variant',
+        types.SimpleNamespace(new_boolean=Variant),
+    )
+
+    class Config:
+        def __init__(self):
+            self.values = {}
+
+        def get_setting(self, key, default=None):
+            return self.values.get(key, default)
+
+        def set_setting(self, key, value):
+            self.values[key] = value
+
+    class Window:
+        def __init__(self):
+            self.config = Config()
+            self.actions = {}
+            self.update_count = 0
+
+        def add_action(self, action):
+            self.actions[action.get_name()] = action
+
+        def update_headerbar_buttons(self):
+            self.update_count += 1
+
+    window = Window()
+    actions._register_headerbar_visibility_actions(window)
+    action = window.actions['headerbar-sidebar-toggle']
+
+    assert action.get_state().get_boolean() is False
+    action.change_state(Variant(True))
+    assert window.config.values['ui.headerbar_show_sidebar_toggle'] is True
+    assert action.get_state().get_boolean() is True
+    assert window.update_count == 1

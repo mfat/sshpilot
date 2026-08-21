@@ -125,10 +125,11 @@ def test_build_menubar_uses_existing_actions(monkeypatch):
         "win.toggle_sidebar",
         "win.toggle-fullscreen",
         "app.tab-overview",
-        "win.toggle-command-blocks",
-        "win.set-app-theme::default",
-        "win.set-app-theme::light",
-        "win.set-app-theme::dark",
+        "win.headerbar-sidebar-toggle",
+        "win.headerbar-split-view",
+        "win.headerbar-commands",
+        "win.headerbar-theme-menu",
+        "win.headerbar-local-terminal",
     ]
     assert [a for _l, a in _flatten_items(menus["Tools"])] == [
         "app.new-key",

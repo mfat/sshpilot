@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from gettext import gettext as _
 
+from .actions import HEADERBAR_VISIBILITY_ACTIONS
+
 from gi.repository import Gio, GLib
 
 from .file_manager_integration import should_hide_file_manager_options
@@ -78,15 +80,10 @@ def build_macos_menubar(
     view_menu.append(_("Toggle Sidebar"), "win.toggle_sidebar")
     view_menu.append(_("Toggle Full Screen"), "win.toggle-fullscreen")
     view_menu.append(_("Tab Overview"), "app.tab-overview")
-    titlebar_commands = menu_cls()
-    titlebar_commands.append(_("Commands"), "win.toggle-command-blocks")
-    view_menu.append_section(None, titlebar_commands)
-
-    theme_menu = menu_cls()
-    theme_menu.append(_("Follow System"), "win.set-app-theme::default")
-    theme_menu.append(_("Light"), "win.set-app-theme::light")
-    theme_menu.append(_("Dark"), "win.set-app-theme::dark")
-    view_menu.append_submenu(_("Theme"), theme_menu)
+    titlebar_buttons = menu_cls()
+    for action_name, label, _key, _default in HEADERBAR_VISIBILITY_ACTIONS:
+        titlebar_buttons.append(_(label), f"win.{action_name}")
+    view_menu.append_section(None, titlebar_buttons)
     menubar.append_submenu(_("View"), view_menu)
 
     tools_menu = menu_cls()
