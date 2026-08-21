@@ -43,8 +43,55 @@ def no_dummy_provider(monkeypatch):
     monkeypatch.delenv("SSH_SK_PROVIDER", raising=False)
 
 
+@pytest.fixture(params=("enabled", "disabled"), ids=("ssh-agent-enabled", "ssh-agent-disabled"))
+def ssh_agent_mode(request, monkeypatch, tmp_path: Path):
+    """Exercise FIDO with a real agent socket present, then explicitly disabled."""
+
+    ssh_agent = shutil.which("ssh-agent")
+    ssh_add = shutil.which("ssh-add")
+    if ssh_agent is None or ssh_add is None:
+        skip_or_fail("ssh-agent and ssh-add are required for virtual HID FIDO coverage")
+
+    socket_path = tmp_path / "agent.sock"
+    process = subprocess.Popen(
+        (ssh_agent, "-D", "-a", str(socket_path)),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    try:
+        wait_until(
+            socket_path.exists,
+            timeout=10,
+            interval=0.05,
+            message="ssh-agent socket did not appear",
+        )
+        monkeypatch.setenv("SSH_AUTH_SOCK", str(socket_path))
+        monkeypatch.delenv("SSH_AGENT_PID", raising=False)
+
+        # ssh-add exits 1 for a reachable but empty agent; 2 means no agent.
+        probe = subprocess.run(
+            (ssh_add, "-l"),
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert probe.returncode in (0, 1), probe.stderr or probe.stdout
+        yield request.param
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+
+
 @pytest.fixture
-def stack(tmp_path, phase10_env):
+def stack(tmp_path, phase10_env, ssh_agent_mode):
     from tests.daemon.phase10_helpers import start_phase10_stack
 
     started = start_phase10_stack(tmp_path, env=phase10_env)
@@ -119,7 +166,7 @@ def virtual_authenticator(tmp_path: Path):
         )
 
 
-def _install_virtual_key(stack, tmp_path: Path) -> Path:
+def _install_virtual_key(stack, tmp_path: Path, ssh_agent_mode: str) -> Path:
     key_path = tmp_path / "id_ecdsa_sk"
     clean_env = {key: value for key, value in os.environ.items() if key != "SSH_SK_PROVIDER"}
     result = subprocess.run(
@@ -155,27 +202,30 @@ def _install_virtual_key(stack, tmp_path: Path) -> Path:
     )
     assert installed.returncode == 0, installed.stderr or installed.stdout
 
-    config = tmp_path / "fido_virtual_hid_config"
-    config.write_text(
-        "\n".join(
-            (
-                f"Host {stack.env.host_alias}",
-                "    HostName 127.0.0.1",
-                f"    Port {stack.env.port}",
-                f"    User {stack.env.username}",
-                "    PreferredAuthentications publickey",
-                "    PasswordAuthentication no",
-                "    PubkeyAuthentication yes",
-                "    IdentitiesOnly yes",
-                f"    IdentityFile {key_path}",
-                f"    UserKnownHostsFile {stack.env.known_hosts}",
-                "    GlobalKnownHostsFile /dev/null",
-                "    StrictHostKeyChecking yes",
-                "    LogLevel ERROR",
-            )
+    config_lines = [
+        f"Host {stack.env.host_alias}",
+        "    HostName 127.0.0.1",
+        f"    Port {stack.env.port}",
+        f"    User {stack.env.username}",
+        "    PreferredAuthentications publickey",
+        "    PasswordAuthentication no",
+        "    PubkeyAuthentication yes",
+        "    IdentitiesOnly yes",
+        f"    IdentityFile {key_path}",
+    ]
+    if ssh_agent_mode == "disabled":
+        config_lines.append("    IdentityAgent none")
+    config_lines.extend(
+        (
+            f"    UserKnownHostsFile {stack.env.known_hosts}",
+            "    GlobalKnownHostsFile /dev/null",
+            "    StrictHostKeyChecking yes",
+            "    LogLevel ERROR",
         )
-        + "\n"
     )
+
+    config = tmp_path / "fido_virtual_hid_config"
+    config.write_text("\n".join(config_lines) + "\n")
     config.chmod(0o600)
     stack.connection.auth_method = 0
     stack.connection.keyfile = str(key_path)
@@ -187,21 +237,27 @@ def _install_virtual_key(stack, tmp_path: Path) -> Path:
             "auth_method": 0,
             "keyfile": str(key_path),
             "config_root": str(config),
+            "identity_agent": "none" if ssh_agent_mode == "disabled" else "",
         }
     )
     return config
 
 
-async def test_fido_auth_round_trip_over_virtual_hid(stack, tmp_path, virtual_authenticator):
-    """MCP reaches RUNNING through OpenSSH's built-in libfido2 path."""
+async def test_fido_auth_round_trip_over_virtual_hid(
+    stack, tmp_path, virtual_authenticator, ssh_agent_mode
+):
+    """MCP reaches RUNNING with FIDO whether ssh-agent is enabled or disabled."""
 
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client
 
-    config = _install_virtual_key(stack, tmp_path)
+    config = _install_virtual_key(stack, tmp_path, ssh_agent_mode)
     assert config.is_file()
-    assert "SecurityKeyProvider" not in config.read_text()
+    config_text = config.read_text()
+    assert "SecurityKeyProvider" not in config_text
+    assert ("IdentityAgent none" in config_text) is (ssh_agent_mode == "disabled")
     assert "SSH_SK_PROVIDER" not in os.environ
+    assert os.environ.get("SSH_AUTH_SOCK")
 
     async with stdio_client(_server_parameters(stack.server.socket_path)) as (read, write):
         async with ClientSession(read, write) as session:
@@ -220,7 +276,10 @@ async def test_fido_auth_round_trip_over_virtual_hid(stack, tmp_path, virtual_au
                         for item in watching.list_sessions()
                     ),
                     timeout=60.0,
-                    message="session did not reach RUNNING after virtual HID FIDO auth",
+                    message=(
+                        "session did not reach RUNNING after virtual HID FIDO auth "
+                        f"with ssh-agent {ssh_agent_mode}"
+                    ),
                 )
             finally:
                 watching.close()
