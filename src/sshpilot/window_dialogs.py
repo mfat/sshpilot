@@ -2359,16 +2359,14 @@ class WindowConfigDialogsMixin:
                 )
                 steps = [
                     lambda _prev: controller.client.rename_group(group_id, name),
-                ]
-                if color is not None:
-                    steps.append(
-                        lambda _prev: controller.client.set_group_color(
-                            SetGroupColorRequest(
-                                group_id=GroupId(group_id),
-                                color=color or "",
-                            )
+                    lambda _prev: controller.client.set_group_color(
+                        SetGroupColorRequest(
+                            group_id=GroupId(group_id),
+                            color=color or "",
                         )
-                    )
+                    ),
+                ]
+
                 def _on_done(_result):
                     self.rebuild_connection_list()
                     if set_busy is not None:
