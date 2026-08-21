@@ -1,7 +1,7 @@
 """Regression tests for the Start-activation Omnisearch attention tracer.
 
 When the Start tab becomes current, ``OmniSearchController.request_attention``
-briefly runs a short accent-colored segment clockwise once around the docked
+briefly runs a short accent-colored segment clockwise around the docked
 search box's rounded border — a Cairo-drawn tracer, deliberately independent of
 both the resting neutral outline and the real ``:focus-within`` ring. The
 tracer must:
@@ -11,7 +11,7 @@ tracer must:
 * never touch keyboard focus;
 * always retire its frame callback/state, even if Start is left mid-lap or
   the widget is torn down;
-* travel clockwise exactly one ~700 ms lap, following live geometry.
+* travel clockwise for the configured number of laps, following live geometry.
 
 These tests bind the production methods onto minimal stand-ins (no painting),
 the same style as ``tests/test_start_tab_focus.py``, and drive the trigger
@@ -250,9 +250,12 @@ def _make_omni(window=None, *, popup_open=False, entry_focused=False, mapped=Tru
 
 # --- tracer lifecycle -------------------------------------------------------
 
-def test_request_attention_starts_tracer_and_ends_after_one_lap(timeout_queue):
+def test_request_attention_starts_tracer_and_ends_after_configured_laps(
+    timeout_queue,
+):
     omni = _make_omni()
     omni.request_attention()
+    total_us = module._ATTENTION_MS * module._ATTENTION_LAPS * 1000
 
     assert omni.attention_active
     assert omni._attention_tick_id is not None
@@ -264,12 +267,12 @@ def test_request_attention_starts_tracer_and_ends_after_one_lap(timeout_queue):
     assert omni.attention_active
     assert omni._attention_start_us == 0
 
-    # Just before a full lap: still running.
-    assert omni._attention_area.fire(module._ATTENTION_MS * 1000 - 1) is True
+    # Just before the configured lap count completes: still running.
+    assert omni._attention_area.fire(total_us - 1) is True
     assert omni.attention_active
 
-    # A full lap (or more): the tracer retires itself.
-    assert omni._attention_area.fire(module._ATTENTION_MS * 1000) is False
+    # The configured lap count complete: the tracer retires itself.
+    assert omni._attention_area.fire(total_us) is False
     assert not omni.attention_active
     assert omni._attention_tick_id is None
 
@@ -286,8 +289,10 @@ def test_repeat_request_restarts_without_stacking(timeout_queue):
     assert omni._attention_area.callback is not None
     assert omni._attention_start_us is None  # re-armed origin
 
-    omni._attention_area.fire(module._ATTENTION_MS * 1000)  # stamps origin
-    assert omni._attention_area.fire(2 * module._ATTENTION_MS * 1000) is False
+    origin_us = module._ATTENTION_MS * 1000
+    total_us = module._ATTENTION_MS * module._ATTENTION_LAPS * 1000
+    omni._attention_area.fire(origin_us)  # stamps origin
+    assert omni._attention_area.fire(origin_us + total_us) is False
     assert not omni.attention_active
     assert omni._attention_tick_id is None
 
@@ -417,8 +422,10 @@ def test_unmapped_request_defers_until_map_then_settles(timeout_queue):
     assert omni._attention_area.callback is not None
     assert omni._attention_map_handler_id is None
 
-    omni._attention_area.fire(module._ATTENTION_MS * 1000)  # stamps origin
-    assert omni._attention_area.fire(2 * module._ATTENTION_MS * 1000) is False
+    origin_us = module._ATTENTION_MS * 1000
+    total_us = module._ATTENTION_MS * module._ATTENTION_LAPS * 1000
+    omni._attention_area.fire(origin_us)  # stamps origin
+    assert omni._attention_area.fire(origin_us + total_us) is False
     assert not omni.attention_active
 
 
