@@ -1,6 +1,9 @@
 name: Standalone Flatpak (full device access)
 
 on:
+  push:
+    branches:
+      - dev
   workflow_dispatch:
 
 permissions:
