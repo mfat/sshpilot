@@ -84,7 +84,7 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
           pando_dir="$RUNNER_TEMP/pando-soft-fido2"
-          pando_commit=7249dcb5bd7cee0b4f6bf61ff5e7c23fc665
+          pando_commit=7249dcb5bd7cee0b4f6bf61ff5e7c23bb43fc665
           git clone --filter=blob:none https://github.com/pando85/soft-fido2.git "$pando_dir"
           git -C "$pando_dir" fetch --depth=1 origin "$pando_commit"
           git -C "$pando_dir" checkout --detach "$pando_commit"
