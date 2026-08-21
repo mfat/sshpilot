@@ -1,0 +1,88 @@
+name: Standalone Flatpak (full device access)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build x86_64 bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+
+    steps:
+      - name: Checkout SSH Pilot
+        uses: actions/checkout@v4
+
+      - name: Checkout current Flathub manifest
+        uses: actions/checkout@v4
+        with:
+          repository: flathub/io.github.mfat.sshpilot
+          ref: master
+          path: flatpak
+
+      - name: Prepare standalone test manifest
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          manifest = pathlib.Path("flatpak/io.github.mfat.sshpilot.yaml")
+          text = manifest.read_text()
+
+          # Build the exact SSH Pilot commit that dispatched this workflow,
+          # rather than the release commit currently pinned on Flathub.
+          source_pattern = re.compile(
+              r'(url:\s*"?https://github\.com/mfat/sshpilot\.git"?[ \t]*\n)'
+              r'(?:[ \t]*#tag:[^\n]*\n)?'
+              r'([ \t]*)commit:[ \t]*[0-9a-fA-F]+'
+          )
+          source_sha = os.environ["SOURCE_SHA"]
+
+          def replace_source(match):
+              indent = match.group(2)
+              return f"{match.group(1)}{indent}commit: {source_sha}"
+
+          text, count = source_pattern.subn(replace_source, text, count=1)
+          if count != 1:
+              raise SystemExit("Could not pin the SSH Pilot module to the workflow commit")
+
+          # This bundle is intentionally broader than the Flathub build so it
+          # can be used to test FIDO/YubiKey hidraw access. Keep every normal
+          # SSH Pilot permission, but replace DRI-only device access with all
+          # devices. Do not change the published Flathub manifest.
+          if "  - --device=all\n" not in text:
+              if "  - --device=dri\n" not in text:
+                  raise SystemExit("Expected --device=dri in the Flathub manifest")
+              text = text.replace(
+                  "  - --device=dri\n",
+                  "  - --device=all\n",
+                  1,
+              )
+
+          manifest.write_text(text)
+          PY
+
+          echo "Building commit: $SOURCE_SHA"
+          echo "Device permissions:"
+          grep -- '--device=' flatpak/io.github.mfat.sshpilot.yaml
+          grep -q -- '  - --device=all' flatpak/io.github.mfat.sshpilot.yaml
+
+      - name: Build standalone Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: sshpilot-full-device.flatpak
+          manifest-path: flatpak/io.github.mfat.sshpilot.yaml
+          cache-key: sshpilot-full-device-${{ github.sha }}
+          arch: x86_64
+          upload-artifact: true
+          artifact-name: sshpilot-full-device-x86_64-${{ github.sha }}
