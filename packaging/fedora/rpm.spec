@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.8.9}
+Version:        %{?version}%{!?version:5.9.0}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -144,6 +144,13 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Aug 21 2026 mFat <newmfat@gmail.com> - 5.9.0-1
+- Integrated tab bar into header for a cleaner, more minimal user interface
+- Revamped Command Snippets panel - the snippets are now displayed in a floating panel
+- Added keyboard support to Snippets - you can assign your desired shortcut for the popup
+- Added theme selector to main menu, inspired by Ptyxis
+- Minor UI improvements
+
 * Fri Aug 21 2026 mFat <newmfat@gmail.com> - 5.8.9-1
 - Bug fixes and improvements
 
