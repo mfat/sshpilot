@@ -33,6 +33,10 @@ jobs:
         # "<testname>current" symlink per unique tmp_path-using test name, and at
         # ~5k items that's thousands of resolve() syscalls -- slow enough on a
         # regular disk-backed /tmp to blow the job timeout.
+        # virtual_fido requires runner-level UHID/hidraw setup and an
+        # explicitly built pando85 binary; it is not claimed by this
+        # ordinary GitHub-hosted gate. It has no hosted runner job because
+        # ubuntu-latest does not provide the required UHID kernel module.
         run: |
           docker run --rm \
             --network=host \
@@ -40,8 +44,4 @@ jobs:
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            # virtual_fido requires runner-level UHID/hidraw setup and an
-            # explicitly built pando85 binary; it is not claimed by this
-            # ordinary GitHub-hosted gate. Run it only in a capability-enabled
-            # job with the required device arguments and SSHPILOT_PANDO_SOFT_FIDO2.
             pytest -ra -m "not gui and not virtual_fido" --basetemp=/dev/shm/pytest-tmp
