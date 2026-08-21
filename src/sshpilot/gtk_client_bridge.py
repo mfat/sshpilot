@@ -12,6 +12,7 @@ from typing import Callable, Dict, Optional, TypeVar
 
 from gi.repository import GLib
 
+from .api.errors import ErrorCode, SshPilotError
 from .api.models.terminal import TerminalOutput
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ T = TypeVar("T")
 # bound, not a permission to discard terminal data.
 DEFAULT_GTK_TERMINAL_PENDING_BYTES = 64 * 1024
 DEFAULT_GTK_TERMINAL_SPOOL_BYTES = 64 * 1024 * 1024
+DEFAULT_PENDING_TERMINAL_INPUTS = 256
 
 _TERMINAL_OUTPUT_RECORD = struct.Struct("!QQBQ")
 _OUTPUT_REPLAY = 1
@@ -32,6 +34,7 @@ class GtkClientRequest:
 
     def __init__(self) -> None:
         self._cancelled = threading.Event()
+        self._slot = None
 
     @property
     def cancelled(self) -> bool:
@@ -49,9 +52,12 @@ class GtkClientBridge:
         *,
         dispatcher: Callable[..., object] = GLib.idle_add,
         max_workers: int = 1,
+        max_pending_terminal_inputs: int = DEFAULT_PENDING_TERMINAL_INPUTS,
     ) -> None:
         if max_workers < 1:
             raise ValueError("GTK client bridge needs at least one worker")
+        if max_pending_terminal_inputs < 1:
+            raise ValueError("pending terminal input limit must be positive")
         self._dispatcher = dispatcher
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
@@ -60,6 +66,13 @@ class GtkClientBridge:
         self._interaction_executor = ThreadPoolExecutor(
             max_workers=1,
             thread_name_prefix="sshpilot-interaction",
+        )
+        self._terminal_input_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="sshpilot-terminal-input",
+        )
+        self._terminal_input_slots = threading.BoundedSemaphore(
+            max_pending_terminal_inputs
         )
         self._lock = threading.RLock()
         self._closed = False
@@ -78,6 +91,8 @@ class GtkClientBridge:
         on_error=None,
         max_pending_bytes: int = DEFAULT_GTK_TERMINAL_PENDING_BYTES,
         max_spool_bytes: int = DEFAULT_GTK_TERMINAL_SPOOL_BYTES,
+        start_paused: bool = False,
+        recovery_sequence: Optional[int] = None,
     ):
         """Coalesce daemon terminal callbacks onto GTK's main context."""
 
@@ -91,6 +106,8 @@ class GtkClientBridge:
             on_error=on_error,
             max_pending_bytes=max_pending_bytes,
             max_spool_bytes=max_spool_bytes,
+            start_paused=start_paused,
+            recovery_sequence=recovery_sequence,
             on_close=lambda item: self._discard_terminal_binding(item),
         )
         with self._lock:
@@ -138,6 +155,25 @@ class GtkClientBridge:
             on_discard=on_discard,
         )
 
+    def submit_terminal_input(
+        self,
+        operation: Callable[[], T],
+        *,
+        on_success: Callable[[T], None],
+        on_error: Callable[[BaseException], None],
+        on_discard: Optional[Callable[[T], None]] = None,
+    ) -> GtkClientRequest:
+        """Serialize input independently from resize/control RPCs."""
+
+        return self._submit_on(
+            self._terminal_input_executor,
+            operation,
+            on_success=on_success,
+            on_error=on_error,
+            on_discard=on_discard,
+            slot=self._terminal_input_slots,
+        )
+
     def _submit_on(
         self,
         executor: ThreadPoolExecutor,
@@ -146,12 +182,27 @@ class GtkClientBridge:
         on_success: Callable[[T], None],
         on_error: Callable[[BaseException], None],
         on_discard: Optional[Callable[[T], None]],
+        slot: Optional[threading.BoundedSemaphore] = None,
     ) -> GtkClientRequest:
         request = GtkClientRequest()
+        if slot is not None and not slot.acquire(blocking=False):
+            raise SshPilotError(
+                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
+                "The frontend terminal input queue is full",
+                retryable=True,
+            )
+        request._slot = slot
         with self._lock:
             if self._closed:
+                if slot is not None:
+                    slot.release()
                 raise RuntimeError("GTK client bridge is closed")
-            future = executor.submit(operation)
+            try:
+                future = executor.submit(operation)
+            except BaseException:
+                if slot is not None:
+                    slot.release()
+                raise
             self._requests[future] = request
             self._active_requests.add(request)
         future.add_done_callback(
@@ -228,6 +279,10 @@ class GtkClientBridge:
     def _finish_request(self, request: GtkClientRequest) -> None:
         with self._lock:
             self._active_requests.discard(request)
+            slot = request._slot
+            request._slot = None
+        if slot is not None:
+            slot.release()
 
     def shutdown(self, *, wait: bool = False, wait_timeout: float = 1.0) -> None:
         """Suppress callbacks and stop accepting work.
@@ -249,12 +304,14 @@ class GtkClientBridge:
             self._terminal_bindings.clear()
         for request in active_requests:
             request.cancel()
+            self._finish_request(request)
         for future, request in requests:
             future.cancel()
         for binding in terminal_bindings:
             binding.close()
         self._executor.shutdown(wait=wait, cancel_futures=True)
         self._interaction_executor.shutdown(wait=wait, cancel_futures=True)
+        self._terminal_input_executor.shutdown(wait=wait, cancel_futures=True)
         if wait and wait_timeout > 0:
             # ThreadPoolExecutor has no join timeout; a short sleep gives
             # cancelled workers a bounded chance to exit without hanging tests.
@@ -267,6 +324,7 @@ class GtkClientBridge:
                     for t in (
                         *getattr(self._executor, "_threads", ()),
                         *getattr(self._interaction_executor, "_threads", ()),
+                        *getattr(self._terminal_input_executor, "_threads", ()),
                     )
                 ):
                     break
@@ -295,6 +353,8 @@ class GtkTerminalBinding:
         on_error,
         max_pending_bytes,
         max_spool_bytes=DEFAULT_GTK_TERMINAL_SPOOL_BYTES,
+        start_paused=False,
+        recovery_sequence=None,
         on_close,
     ) -> None:
         if (
@@ -304,6 +364,12 @@ class GtkTerminalBinding:
             raise ValueError("GTK terminal pending byte limit must be positive")
         if type(max_spool_bytes) is not int or max_spool_bytes < 1:
             raise ValueError("GTK terminal spool byte limit must be positive")
+        if type(start_paused) is not bool:
+            raise TypeError("GTK terminal paused state must be a boolean")
+        if recovery_sequence is not None and (
+            type(recovery_sequence) is not int or recovery_sequence < 0
+        ):
+            raise ValueError("terminal recovery sequence must be non-negative")
         self._dispatcher = dispatcher
         self._on_output = on_output
         self._on_continuity_lost = on_continuity_lost
@@ -322,6 +388,9 @@ class GtkTerminalBinding:
         self._pending_bytes = 0
         self._high_water_mark = 0
         self._scheduled = False
+        self._paused = start_paused
+        self._recovery_sequence = recovery_sequence
+        self._recovery_end = None
         self._closed = False
         self._terminal_loss = None
         self._loss_reported = False
@@ -367,6 +436,25 @@ class GtkTerminalBinding:
         with self._lock:
             if self._closed or self._terminal_loss is not None:
                 return
+            if self._recovery_sequence is not None:
+                progress = (
+                    self._last_received_sequence
+                    if self._last_received_sequence is not None
+                    else self._recovery_sequence
+                )
+                if output.replay:
+                    if output.sequence != progress:
+                        self._terminal_loss = (
+                            output.session_id,
+                            progress,
+                            output.sequence,
+                        )
+                        self._schedule_locked()
+                        return
+                elif self._recovery_end is None or progress < self._recovery_end:
+                    # Live output queued before the replay response/boundary
+                    # cannot be mixed into the reconstruction stream.
+                    return
             if (
                 self._last_received_sequence is not None
                 and output.sequence != self._last_received_sequence
@@ -457,10 +545,29 @@ class GtkTerminalBinding:
             self._schedule_locked()
 
     def _schedule_locked(self) -> None:
-        if self._scheduled:
+        if self._scheduled or self._paused:
             return
         self._scheduled = True
         self._dispatcher(self._drain)
+
+    def resume(self, replay_end: Optional[int] = None) -> None:
+        """Allow a validated replay/live stream to begin GTK delivery."""
+
+        with self._lock:
+            if self._closed or not self._paused:
+                return
+            if self._recovery_sequence is not None:
+                if replay_end is None or replay_end < self._recovery_sequence:
+                    raise ValueError("terminal replay end precedes recovery start")
+                self._recovery_end = replay_end
+            self._paused = False
+            if (
+                self._spool_records
+                or self._terminal_loss is not None
+                or self._pending_eof is not None
+                or self._pending_error is not None
+            ):
+                self._schedule_locked()
 
     def _drain(self) -> bool:
         with self._lock:

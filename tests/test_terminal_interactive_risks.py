@@ -11,7 +11,18 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import AttachmentId, ConnectionId, SessionId
-from sshpilot.api.models.terminal import TerminalDimensions, TerminalOutput
+from sshpilot.api.models.sessions import (
+    AttachSessionResult,
+    AttachmentInfo,
+    SessionState,
+    SessionSummary,
+)
+from sshpilot.api.models.terminal import (
+    ReplayBounds,
+    ReplayResult,
+    TerminalDimensions,
+    TerminalOutput,
+)
 from sshpilot.api.terminal_events import TerminalSubscription
 from sshpilot.gtk_client_bridge import GtkClientBridge
 from sshpilot.terminal import TerminalWidget
@@ -49,6 +60,20 @@ class _Dispatcher:
                 pass
         raise AssertionError("GTK dispatcher did not drain")
 
+    def run_until(self, predicate, timeout: float = 2.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            remaining = max(0.001, deadline - time.monotonic())
+            try:
+                callback, args = self._items.get(timeout=remaining)
+            except queue.Empty:
+                continue
+            while callback(*args):
+                pass
+        raise AssertionError("GTK condition was not reached")
+
 
 class _TerminalClient:
     def __init__(self, name: str) -> None:
@@ -62,8 +87,18 @@ class _TerminalClient:
         self.release_first_resize = threading.Event()
         self.block_first_resize = False
         self.reject_input = False
+        self.block_input = False
+        self.release_input = threading.Event()
         self.resize_rpc_count = 0
         self.replay_rpc_count = 0
+        self.replay_start = None
+        self.recovery_frames = []
+        self.replay_truncated = False
+        self.attach_called = threading.Event()
+        self.release_attach = threading.Event()
+        self.block_attach = False
+        self.detached = []
+        self.last_resize = None
 
     def get_capabilities(self):
         return SimpleNamespace(supported=required_daemon_terminal_capabilities())
@@ -87,7 +122,7 @@ class _TerminalClient:
         self.output_callbacks = callbacks
         return TerminalSubscription(lambda: setattr(callbacks, "closed", True))
 
-    def emit_output(self, sequence: int, data: bytes) -> bool:
+    def emit_output(self, sequence: int, data: bytes, *, replay=False) -> bool:
         callbacks = self.output_callbacks
         if callbacks is None or callbacks.closed:
             return False
@@ -96,6 +131,7 @@ class _TerminalClient:
                 session_id=_SESSION_ID,
                 sequence=sequence,
                 data=data,
+                replay=replay,
             )
         )
         return True
@@ -107,6 +143,9 @@ class _TerminalClient:
 
     def send_terminal_input(self, request) -> None:
         self.rpc_order.append(("input", request.data))
+        self.input_called.set()
+        if self.block_input:
+            assert self.release_input.wait(2.0)
         if self.reject_input:
             callbacks = self.output_callbacks
             assert callbacks is not None and callbacks.on_error is not None
@@ -120,18 +159,93 @@ class _TerminalClient:
             )
         else:
             self.pty_input.append(request.data)
-        self.input_called.set()
 
     def resize_terminal(self, request) -> None:
         self.resize_rpc_count += 1
         call_number = self.resize_rpc_count
         self.rpc_order.append(("resize", request.dimensions))
+        self.last_resize = request.dimensions
         if self.block_first_resize and call_number == 1:
             self.first_resize_entered.set()
             assert self.release_first_resize.wait(2.0)
 
-    def replay_terminal(self, _request):
+    def replay_terminal(self, request):
         self.replay_rpc_count += 1
+        self.replay_start = request.after_sequence
+        replay_ends = [
+            sequence + len(data)
+            for sequence, data, is_replay in self.recovery_frames
+            if is_replay
+        ]
+        live_sequence = max(replay_ends, default=request.after_sequence)
+        returned_end = request.after_sequence
+        remaining = request.max_bytes
+        for sequence, data, replay in self.recovery_frames:
+            if not replay:
+                if request.after_sequence == self.replay_start:
+                    assert self.emit_output(sequence, data, replay=False)
+                continue
+            overlap = max(0, request.after_sequence - sequence)
+            if overlap >= len(data) or remaining == 0:
+                continue
+            chunk = data[overlap : overlap + remaining]
+            chunk_sequence = sequence + overlap
+            assert self.emit_output(chunk_sequence, chunk, replay=True)
+            returned_end = chunk_sequence + len(chunk)
+            remaining -= len(chunk)
+        truncated = self.replay_truncated or returned_end < live_sequence
+        first = (
+            request.after_sequence + 1
+            if self.replay_truncated
+            else request.after_sequence
+        )
+        return ReplayResult(
+            session_id=_SESSION_ID,
+            first_sequence=first,
+            next_sequence=returned_end,
+            bounds=ReplayBounds(
+                earliest_sequence=first,
+                latest_sequence=live_sequence,
+                retained_bytes=max(0, live_sequence - first),
+            ),
+            truncated=truncated,
+        )
+
+    def attach_session(self, request):
+        self.attach_called.set()
+        if self.block_attach:
+            assert self.release_attach.wait(2.0)
+        self.replay_start = request.from_sequence
+        for sequence, data, replay in self.recovery_frames:
+            assert self.emit_output(sequence, data, replay=replay)
+        replay_ends = [
+            sequence + len(data)
+            for sequence, data, is_replay in self.recovery_frames
+            if is_replay
+        ]
+        latest = max(replay_ends, default=request.from_sequence)
+        return AttachSessionResult(
+            session=SessionSummary(
+                id=_SESSION_ID,
+                connection_id=ConnectionId("connection-interactive-risk"),
+                state=SessionState.RUNNING,
+            ),
+            attachment=AttachmentInfo(
+                id=AttachmentId(f"attachment-{self.name}"),
+                session_id=_SESSION_ID,
+                client_id=f"client-{self.name}",
+                input_owner=True,
+            ),
+            available_start=(latest if self.replay_truncated else request.from_sequence),
+            live_sequence=latest,
+            replay_truncated=self.replay_truncated,
+        )
+
+    def detach_session(self, request):
+        self.detached.append(request.attachment_id)
+
+    def close_session(self, _request):
+        return None
 
 
 def _active_controller(client, bridge, *, on_output=None, on_error=None, on_loss=None):
@@ -152,21 +266,11 @@ def _active_controller(client, bridge, *, on_output=None, on_error=None, on_loss
 
 
 def _bind_active_stream(controller, bridge, client):
-    binding = bridge.bind_terminal(
-        client,
-        _SESSION_ID,
-        on_output=controller._handle_output,
-        on_continuity_lost=controller._handle_continuity_lost,
-        on_error=controller._on_error,
-    )
-    controller._stream = binding
+    _generation, binding = controller._replace_output_binding(client, paused=False)
+    assert binding is not None
     return binding
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="continuity loss leaves an ACTIVE binding permanently suppressing output",
-)
 def test_terminal_continuity_loss_does_not_leave_view_permanently_dead():
     dispatcher = _Dispatcher()
     bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
@@ -190,7 +294,12 @@ def test_terminal_continuity_loss_does_not_leave_view_permanently_dead():
     )
     binding = _bind_active_stream(controller, bridge, client)
     first = b"HEARTBEAT-0001\r\n"
+    replayed = b"REPLAY-AFTER-GAP\r\n"
     later = b"HEARTBEAT-0002\r\n"
+    client.recovery_frames = [
+        (len(first), b"STALE-LIVE-BEFORE-REPLAY", False),
+        (len(first), replayed, True),
+    ]
     token = "INPUT-AFTER-CONTINUITY-LOSS"
     input_widget = SimpleNamespace(
         _daemon_controller=controller,
@@ -200,7 +309,11 @@ def test_terminal_continuity_loss_does_not_leave_view_permanently_dead():
         assert client.emit_output(0, first)
         dispatcher.drain()
         client.emit_continuity(len(first), len(first) + 64)
-        assert client.emit_output(len(first) + 64, later)
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.ACTIVE
+            and replayed in output
+        )
+        assert client.emit_output(len(first) + len(replayed), later)
         dispatcher.drain()
 
         TerminalWidget._on_daemon_commit(
@@ -211,36 +324,31 @@ def test_terminal_continuity_loss_does_not_leave_view_permanently_dead():
         )
         assert client.input_called.wait(2.0)
 
-        assert output == [first]
+        assert output == [first, replayed, later]
         assert client.pty_input == [token.encode()]
-        assert binding.continuity_lost is True
         assert controller.state is TerminalSessionState.ACTIVE
-        assert resets == [(False, True)]
-        assert len(display) == 1
-        assert b"no longer available" in display[0]
-        assert client.replay_rpc_count == 0
-
-        # Contract: the view must recover, or its state must explicitly stop
-        # claiming to be a usable active terminal.
-        assert later in output or controller.state is not TerminalSessionState.ACTIVE
+        assert resets == []
+        assert display == []
+        assert client.replay_rpc_count == 1
+        assert client.replay_start == len(first)
     finally:
         binding.close()
         controller._stream = None
         bridge.shutdown(wait=True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="resize and input RPCs share one FIFO worker without resize coalescing",
-)
 def test_terminal_input_not_blocked_by_resize_backlog():
     dispatcher = _Dispatcher()
     bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
     client = _TerminalClient("client")
     client.block_first_resize = True
     controller = _active_controller(client, bridge)
-    frontend_resize_events = 24
-    sentinel = b"INPUT-SENTINEL-RESIZE"
+    frontend_resize_events = 200
+    sentinels = [
+        b"INPUT-SENTINEL-RESIZE-1",
+        b"INPUT-SENTINEL-RESIZE-2",
+        b"INPUT-SENTINEL-RESIZE-3",
+    ]
     try:
         controller.resize(TerminalDimensions(rows=25, columns=81))
         assert client.first_resize_entered.wait(2.0)
@@ -251,30 +359,101 @@ def test_terminal_input_not_blocked_by_resize_backlog():
                     columns=81 + index,
                 )
             )
-        controller.send_input(sentinel)
-        client.release_first_resize.set()
+        for sentinel in sentinels:
+            controller.send_input(sentinel)
         assert client.input_called.wait(2.0)
+        deadline = time.monotonic() + 2.0
+        while len(client.pty_input) < len(sentinels) and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert client.rpc_order == [
+            ("resize", TerminalDimensions(rows=25, columns=81)),
+            *[("input", sentinel) for sentinel in sentinels],
+        ]
+        assert client.pty_input == sentinels
+        client.release_first_resize.set()
+        dispatcher.run_until(lambda: client.resize_rpc_count == 2)
 
-        input_index = client.rpc_order.index(("input", sentinel))
-        assert client.resize_rpc_count == frontend_resize_events
-        assert input_index == frontend_resize_events
-
-        # Coalescing fewer RPCs or prioritising input ahead of stale geometry
-        # would satisfy the interactive contract. Current production does
-        # neither, placing input after every historical resize.
-        assert (
-            client.resize_rpc_count < frontend_resize_events
-            or input_index < client.resize_rpc_count
+        assert client.resize_rpc_count == 2
+        assert client.last_resize == TerminalDimensions(
+            rows=25 + frontend_resize_events - 1,
+            columns=81 + frontend_resize_events - 1,
         )
     finally:
         client.release_first_resize.set()
         bridge.shutdown(wait=True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="terminal input backpressure is neither retried nor shown as a delivery failure",
-)
+def test_unrecoverable_terminal_replay_leaves_active_and_marks_view():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    client.replay_truncated = True
+    output = []
+    errors = []
+    markers = []
+    controller = _active_controller(
+        client,
+        bridge,
+        on_output=output.append,
+        on_error=errors.append,
+        on_loss=lambda: markers.append(True),
+    )
+    binding = _bind_active_stream(controller, bridge, client)
+    prefix = b"SAFE-PREFIX"
+    try:
+        assert client.emit_output(0, prefix)
+        dispatcher.drain()
+        client.emit_continuity(len(prefix), len(prefix) + 100)
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.FAILED,
+        )
+
+        assert output == [prefix]
+        assert markers == [True]
+        assert [error.code for error in errors] == [
+            ErrorCode.TERMINAL_REPLAY_UNAVAILABLE
+        ]
+        assert controller._stream is None
+        assert controller.input_owner is False
+    finally:
+        binding.close()
+        bridge.shutdown(wait=True)
+
+
+def test_terminal_recovery_replays_multiple_bounded_chunks_in_order():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    client = _TerminalClient("client")
+    prefix = b"PREFIX"
+    first_replay = b"a" * (400 * 1024)
+    second_replay = b"b" * (400 * 1024)
+    client.recovery_frames = [
+        (len(prefix), first_replay, True),
+        (len(prefix) + len(first_replay), second_replay, True),
+    ]
+    output = []
+    controller = _active_controller(client, bridge, on_output=output.append)
+    binding = _bind_active_stream(controller, bridge, client)
+    try:
+        assert client.emit_output(0, prefix)
+        dispatcher.drain()
+        client.emit_continuity(len(prefix), len(prefix) + 1)
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.ACTIVE
+            and len(b"".join(output))
+            == len(prefix + first_replay + second_replay),
+        )
+
+        assert b"".join(output) == prefix + first_replay + second_replay
+        assert client.replay_rpc_count == 2
+        assert controller.tab_state.expected_sequence == len(
+            prefix + first_replay + second_replay
+        )
+    finally:
+        binding.close()
+        bridge.shutdown(wait=True)
+
+
 def test_terminal_input_backpressure_does_not_silently_lose_keystroke():
     dispatcher = _Dispatcher()
     bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
@@ -282,7 +461,12 @@ def test_terminal_input_backpressure_does_not_silently_lose_keystroke():
     client.reject_input = True
     visible_failures = []
     observed_errors = []
-    widget = SimpleNamespace(_on_connection_failed=visible_failures.append)
+    widget = SimpleNamespace(
+        _on_connection_failed=lambda message: pytest.fail(
+            f"input backpressure disconnected the session: {message}"
+        ),
+        _show_toast=lambda message, timeout=3: visible_failures.append(message),
+    )
 
     def _frontend_error(error):
         observed_errors.append(error)
@@ -309,22 +493,42 @@ def test_terminal_input_backpressure_does_not_silently_lose_keystroke():
             ErrorCode.TERMINAL_INPUT_BACKPRESSURE
         ]
         assert client.pty_input == []
-        assert visible_failures == []
+        assert len(visible_failures) == 1
+        assert "not delivered" in visible_failures[0].lower()
         assert [item for item in client.rpc_order if item[0] == "input"] == [
             ("input", sentinel.encode())
         ]
-
-        assert client.pty_input == [sentinel.encode()] or visible_failures
     finally:
         binding.close()
         controller._stream = None
         bridge.shutdown(wait=True)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="active reconnect updates the client pointer but leaves output subscribed to the old client",
-)
+def test_frontend_input_queue_bound_reports_undelivered_input():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(
+        dispatcher=dispatcher,
+        max_workers=1,
+        max_pending_terminal_inputs=1,
+    )
+    client = _TerminalClient("client")
+    client.block_input = True
+    errors = []
+    controller = _active_controller(client, bridge, on_error=errors.append)
+    try:
+        controller.send_input(b"first")
+        assert client.input_called.wait(2.0)
+        controller.send_input(b"second")
+
+        assert [error.code for error in errors] == [
+            ErrorCode.TERMINAL_INPUT_BACKPRESSURE
+        ]
+        assert client.pty_input == []
+    finally:
+        client.release_input.set()
+        bridge.shutdown(wait=True)
+
+
 def test_active_terminal_rebind_restores_input_and_output():
     dispatcher = _Dispatcher()
     bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
@@ -335,27 +539,106 @@ def test_active_terminal_rebind_restores_input_and_output():
     binding = _bind_active_stream(controller, bridge, old_client)
     first = b"HEARTBEAT-000001\r\n"
     second = b"HEARTBEAT-000002\r\n"
+    new_client.recovery_frames = [(len(first), second, True)]
     sentinel = b"INPUT-AFTER-CLIENT-RECONNECT"
     terminal = SimpleNamespace(_daemon_controller=controller)
     try:
         assert old_client.emit_output(0, first)
         dispatcher.drain()
+        old_callbacks = old_client.output_callbacks
 
         TerminalWidget.rebind_daemon_client(terminal, new_client)
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.ACTIVE
+            and second in output
+        )
         controller.send_input(sentinel)
         assert new_client.input_called.wait(2.0)
-        new_client_output_had_subscriber = new_client.emit_output(len(first), second)
         dispatcher.drain()
 
         assert controller._client is new_client
         assert new_client.pty_input == [sentinel]
         assert old_client.output_callbacks is not None
-        assert old_client.output_callbacks.closed is False
-        assert new_client_output_had_subscriber is False
+        assert old_client.output_callbacks.closed is True
+        assert new_client.output_callbacks is not None
+        assert new_client.output_callbacks.closed is False
         assert controller.state is TerminalSessionState.ACTIVE
+        assert output == [first, second]
+        assert new_client.replay_start == len(first)
 
-        assert second in output or controller.state is not TerminalSessionState.ACTIVE
+        old_callbacks.on_output(
+            TerminalOutput(
+                session_id=_SESSION_ID,
+                sequence=len(first) + len(second),
+                data=b"STALE-OLD-CLIENT",
+            )
+        )
+        dispatcher.drain()
+        assert output == [first, second]
     finally:
         binding.close()
         controller._stream = None
+        bridge.shutdown(wait=True)
+
+
+def test_repeated_reconnect_uses_only_latest_output_binding():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    old_client = _TerminalClient("old")
+    intermediate = _TerminalClient("intermediate")
+    current = _TerminalClient("current")
+    output = []
+    controller = _active_controller(old_client, bridge, on_output=output.append)
+    binding = _bind_active_stream(controller, bridge, old_client)
+    prefix = b"PREFIX"
+    wrong = b"INTERMEDIATE"
+    right = b"CURRENT"
+    intermediate.recovery_frames = [(len(prefix), wrong, True)]
+    current.recovery_frames = [(len(prefix), right, True)]
+    try:
+        assert old_client.emit_output(0, prefix)
+        dispatcher.drain()
+        controller.set_client(intermediate)
+        controller.set_client(current)
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.ACTIVE
+            and right in output
+        )
+
+        assert controller._client is current
+        assert output == [prefix, right]
+        assert current.output_callbacks.closed is False
+        assert old_client.output_callbacks.closed is True
+        assert intermediate.output_callbacks.closed is True
+    finally:
+        binding.close()
+        controller.close()
+        bridge.shutdown(wait=True)
+
+
+def test_close_while_output_rebind_is_pending_suppresses_late_delivery():
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    old_client = _TerminalClient("old")
+    new_client = _TerminalClient("new")
+    new_client.block_attach = True
+    new_client.recovery_frames = [(0, b"LATE-REPLAY", True)]
+    output = []
+    controller = _active_controller(old_client, bridge, on_output=output.append)
+    binding = _bind_active_stream(controller, bridge, old_client)
+    try:
+        controller.set_client(new_client)
+        assert new_client.attach_called.wait(2.0)
+        controller.close()
+        new_client.release_attach.set()
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.CLOSED,
+        )
+        dispatcher.drain()
+
+        assert output == []
+        assert controller._stream is None
+    finally:
+        new_client.release_attach.set()
+        binding.close()
         bridge.shutdown(wait=True)

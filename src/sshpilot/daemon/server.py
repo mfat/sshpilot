@@ -127,7 +127,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CLIENT_EVENT_QUEUE_LIMIT = 256
 DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
-DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 1024 * 1024
+# A normal attach may replay the complete bounded 2 MiB session history in
+# one response. Keep that operation bounded while leaving framing headroom.
+DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 3 * 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
 _COMMAND_INPUT_METHODS = frozenset(
     {
@@ -1877,6 +1879,10 @@ class DaemonServer:
         with self._event_lock:
             if state.closed or state.continuity_lost:
                 return
+            # The replay response is already queued ahead of this call. Drop
+            # live terminal frames queued before replay so the response marks
+            # one coherent replay/live boundary for the client.
+            self._drop_terminal_session_locked(state, session_id)
             state.terminal_continuity_lost.discard(session_id)
         flags = TerminalFrameFlags.REPLAY
         if replay.truncated:

@@ -1329,8 +1329,14 @@ class TerminalWidget(Gtk.Box):
             from .api.errors import ErrorCode
 
             code = getattr(error, "code", None)
+            if code is ErrorCode.TERMINAL_INPUT_BACKPRESSURE:
+                logger.warning("Terminal input was not delivered due to backpressure")
+                self._show_toast(
+                    _("Terminal input was not delivered; please try again."),
+                    timeout=5,
+                )
+                return
             if code in {
-                ErrorCode.TERMINAL_INPUT_BACKPRESSURE,
                 ErrorCode.TERMINAL_INPUT_OWNER_REQUIRED,
                 ErrorCode.TERMINAL_ATTACHMENT_REQUIRED,
                 ErrorCode.SESSION_INVALID_STATE,
@@ -1711,7 +1717,12 @@ class TerminalWidget(Gtk.Box):
                 if not old_connected:
                     GLib.idle_add(self.emit, 'connection-established')
 
-            elif daemon_state in {TerminalSessionState.OPENING, TerminalSessionState.ATTACHING, TerminalSessionState.REPLAYING}:
+            elif daemon_state in {
+                TerminalSessionState.OPENING,
+                TerminalSessionState.ATTACHING,
+                TerminalSessionState.REPLAYING,
+                TerminalSessionState.RECOVERING,
+            }:
                 self.connection_state = self.connection_state.__class__.CONNECTING
                 self.connection_state_reason = f'Daemon: {daemon_state.value}'
                 self._set_connecting_overlay_visible(True)
