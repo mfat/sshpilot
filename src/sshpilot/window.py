@@ -3311,28 +3311,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.add_css_class('inline')
         self._content_title_stack.add_named(self.tab_bar, 'tabs')
 
-        # H/V layout toggles after the last tab (tab bar end action)
-        from .split_view import create_layout_toggle_buttons
-
-        self._layout_h_btn, self._layout_v_btn, self._layout_toggle_updating = (
-            create_layout_toggle_buttons(
-                lambda: self._apply_tab_layout_mode('horizontal'),
-                lambda: self._apply_tab_layout_mode('vertical'),
-            )
-        )
-        self._layout_h_btn.set_visible(False)
-        self._layout_v_btn.set_visible(False)
-
         self.tab_button = Adw.TabButton()
         self.tab_button.set_view(self.tab_view)
         self.tab_button.connect('clicked', self.on_tab_button_clicked)
         self.tab_button.set_visible(False)  # Hidden by default, shown when tabs exist
 
-        layout_end_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        layout_end_box.append(self._layout_h_btn)
-        layout_end_box.append(self._layout_v_btn)
-        layout_end_box.append(self.tab_button)
-        self.tab_bar.set_end_action_widget(layout_end_box)
+        self.tab_bar.set_end_action_widget(self.tab_button)
 
         # Double-click on a tab to rename it inline
         rename_gesture = Gtk.GestureClick()

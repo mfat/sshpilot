@@ -7,7 +7,7 @@ is a pure code move with no behavior change.
 
 Covers tab close/rename/title, the tab context menus and their handlers
 (_on_tabmenu_*), file-manager embed teardown (shared with shutdown), tab
-attach/detach, drag-to-convert-to-split, and the layout toggle.
+attach/detach, drag-to-convert-to-split, and split layout actions.
 
 SplitViewTab is imported locally inside the methods that use it (a module-level
 import here would be circular: split_view -> window -> window_tabs), so those
@@ -460,7 +460,11 @@ class WindowTabsMixin:
                 is_local = child._is_local_terminal()
             except Exception:
                 is_local = False
-            enabled = common | {'tabmenu-duplicate'}
+            enabled = common | {
+                'tabmenu-duplicate',
+                'tabmenu-layout-horizontal',
+                'tabmenu-layout-vertical',
+            }
             if is_local:
                 enabled.add('tabmenu-new-local')
                 return enabled
@@ -723,6 +727,8 @@ class WindowTabsMixin:
         from .split_view import SplitViewTab
         if isinstance(child, SplitViewTab):
             child.set_layout_mode(mode)
+        elif isinstance(child, TerminalWidget):
+            self._convert_terminal_tab_to_split(page, child, mode)
 
     def _on_tabmenu_layout_horizontal(self, action, param=None):
         try:
@@ -1244,29 +1250,11 @@ class WindowTabsMixin:
     # ── layout toggle state / apply ───────────────────────────────────────────
 
     def _update_layout_toggle_state(self) -> None:
-        """Sync tab-bar H/V toggles with the selected tab."""
-        if not hasattr(self, '_layout_h_btn'):
-            return
-        try:
-            page = self.tab_view.get_selected_page()
-            child = page.get_child() if page else None
-            from .split_view import SplitViewTab
-            is_terminal_tab = isinstance(child, (TerminalWidget, SplitViewTab))
-            self._layout_h_btn.set_visible(is_terminal_tab)
-            self._layout_v_btn.set_visible(is_terminal_tab)
-            self._layout_toggle_updating[0] = True
-            try:
-                if isinstance(child, SplitViewTab):
-                    mode = child.get_layout_mode()
-                    self._layout_h_btn.set_active(mode == 'horizontal')
-                    self._layout_v_btn.set_active(mode == 'vertical')
-                else:
-                    self._layout_h_btn.set_active(False)
-                    self._layout_v_btn.set_active(False)
-            finally:
-                self._layout_toggle_updating[0] = False
-        except Exception as exc:
-            logger.debug("Failed to update layout toggle state: %s", exc)
+        """Compatibility hook retained for split-view callers.
+
+        Layout controls now live in each terminal tab's context menu, so there
+        is no selected-tab widget state to synchronize.
+        """
 
     def _apply_tab_layout_mode(self, mode: str) -> None:
         """Apply H or V layout to the current tab (converts regular tab if needed)."""
