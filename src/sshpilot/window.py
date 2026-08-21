@@ -201,6 +201,43 @@ def maybe_set_native_controls(widget: Gtk.Widget, value: bool = False) -> None:
             widget.set_use_native_controls(value)
         except AttributeError:
             pass  # extra safety in case of odd bindings
+
+
+def _decoration_layout_without_app_icon(layout: str | None) -> str:
+    """Keep the desktop button layout but omit its duplicate app icon/menu."""
+    raw = str(layout or 'icon:minimize,maximize,close')
+    start, separator, end = raw.partition(':')
+    if not separator:
+        end = ''
+
+    def filtered(side: str) -> str:
+        return ','.join(
+            token
+            for token in (part.strip() for part in side.split(','))
+            if token and token not in {'icon', 'menu'}
+        )
+
+    return f'{filtered(start)}:{filtered(end)}'
+
+
+def _apply_content_window_control_layout(*controls: Gtk.WindowControls) -> None:
+    """Apply the user's decoration layout without duplicating the sidebar icon."""
+    try:
+        settings = Gtk.Settings.get_default()
+        layout = (
+            settings.get_property('gtk-decoration-layout')
+            if settings is not None else None
+        )
+    except Exception:
+        layout = None
+    layout = _decoration_layout_without_app_icon(layout)
+    for control in controls:
+        try:
+            control.set_decoration_layout(layout)
+        except Exception:
+            logger.debug('Could not set content title-bar decoration layout', exc_info=True)
+
+
 _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
@@ -1966,6 +2003,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._window_controls_start = Gtk.WindowControls.new(Gtk.PackType.START)
         self._window_controls_end = Gtk.WindowControls.new(Gtk.PackType.END)
+        _apply_content_window_control_layout(
+            self._window_controls_start,
+            self._window_controls_end,
+        )
         maybe_set_native_controls(self._window_controls_start, False)
         maybe_set_native_controls(self._window_controls_end, False)
 
