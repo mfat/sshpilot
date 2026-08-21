@@ -391,6 +391,7 @@ class GtkTerminalBinding:
         self._paused = start_paused
         self._recovery_sequence = recovery_sequence
         self._recovery_end = None
+        self._recovery_live_enabled = recovery_sequence is None
         self._closed = False
         self._terminal_loss = None
         self._loss_reported = False
@@ -451,7 +452,11 @@ class GtkTerminalBinding:
                         )
                         self._schedule_locked()
                         return
-                elif self._recovery_end is None or progress < self._recovery_end:
+                elif (
+                    not self._recovery_live_enabled
+                    or self._recovery_end is None
+                    or progress < self._recovery_end
+                ):
                     # Live output queued before the replay response/boundary
                     # cannot be mixed into the reconstruction stream.
                     return
@@ -550,16 +555,24 @@ class GtkTerminalBinding:
         self._scheduled = True
         self._dispatcher(self._drain)
 
-    def resume(self, replay_end: Optional[int] = None) -> None:
-        """Allow a validated replay/live stream to begin GTK delivery."""
+    def resume(
+        self,
+        replay_end: Optional[int] = None,
+        *,
+        allow_live: bool = True,
+    ) -> None:
+        """Advance a validated recovery chunk and allow GTK delivery."""
 
         with self._lock:
-            if self._closed or not self._paused:
+            if self._closed:
                 return
             if self._recovery_sequence is not None:
                 if replay_end is None or replay_end < self._recovery_sequence:
                     raise ValueError("terminal replay end precedes recovery start")
                 self._recovery_end = replay_end
+                self._recovery_live_enabled = allow_live
+            if not self._paused:
+                return
             self._paused = False
             if (
                 self._spool_records

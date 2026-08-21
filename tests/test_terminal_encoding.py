@@ -172,7 +172,10 @@ _Gdk.Rectangle = Mock
 _Adw.Application = types.SimpleNamespace(get_default=lambda: None)
 
 # Now import the modules we want to test
+from sshpilot import terminal_backends as _terminal_backends
 from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend, PyXtermBridgeBackend
+
+_terminal_backends.GridTrackingVteTerminal = DummyVte
 
 
 class TestVTETerminalEncoding:
@@ -541,4 +544,3 @@ class TestEncodingIntegration:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
-

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import logging
 from .runtime_identity import new_terminal_id
-from gi.repository import GLib, Gtk, Vte
+from gi.repository import Gtk
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
+from .terminal_backends import GridTrackingVteTerminal
 from .terminal_session_controller import (
     DaemonTerminalSessionController,
     daemon_terminal_capabilities_missing,
@@ -34,7 +35,7 @@ class DaemonTerminalWidget(Gtk.Box):
         self._connection_id = connection_id
         self._closed = False
         self._received_bytes = 0
-        self._terminal = Vte.Terminal()
+        self._terminal = GridTrackingVteTerminal()
         self.append(self._terminal)
         self._interaction_dialogs = DaemonInteractionDialogs(
             client,
@@ -51,18 +52,10 @@ class DaemonTerminalWidget(Gtk.Box):
             on_error=self._on_error,
         )
         self._terminal.connect("commit", self._on_commit)
-        # Not "char-size-changed" (VTE docs: fires only on font/cell-metric
-        # changes, e.g. zoom, never on a widget resize) and not
-        # notify::column-count/row-count (not real GObject properties on
-        # Vte.Terminal — that notify never fires). GTK4 also removed the
-        # public size-allocate signal. Polling once per rendered frame via
-        # add_tick_callback is the only mechanism GTK4 offers for observing
-        # VTE's actual grid size — it only runs while mapped, and this only
-        # invokes _on_size_changed on an actual change. Leaving this
-        # unresolved left the remote PTY stuck at its opening size
-        # regardless of how big the window grew (GH #1164).
-        self._size_poll_state = {"size": None}
-        self._terminal.add_tick_callback(self._on_size_tick)
+        self._size_handler = self._terminal.connect(
+            "grid-size-changed",
+            self._on_size_changed,
+        )
 
     @property
     def terminal(self):
@@ -103,22 +96,7 @@ class DaemonTerminalWidget(Gtk.Box):
             return
         self._controller.send_input(text.encode("utf-8"))
 
-    def _on_size_tick(self, widget, _frame_clock) -> bool:
-        try:
-            size = (widget.get_row_count(), widget.get_column_count())
-        except Exception:
-            return GLib.SOURCE_CONTINUE
-        # Fires on the first observed size too, not just later changes —
-        # see VTETerminalBackend.connect_size_changed for why skipping the
-        # first tick left a fullscreen program (top, tmux) stuck rendering
-        # into a stale corner until the user manually resized the window.
-        state = self._size_poll_state
-        if size != state["size"]:
-            state["size"] = size
-            self._on_size_changed(widget)
-        return GLib.SOURCE_CONTINUE
-
-    def _on_size_changed(self, _terminal, _pspec=None) -> None:
+    def _on_size_changed(self, _terminal, *_details) -> None:
         if self._closed:
             return
         from .api.models.terminal import TerminalDimensions
@@ -146,6 +124,10 @@ class DaemonTerminalWidget(Gtk.Box):
         if self._closed:
             return
         self._closed = True
+        if self._size_handler is not None:
+            self._terminal.disconnect(self._size_handler)
+            self._size_handler = None
+        self._terminal.disable_grid_tracking()
         self._interaction_dialogs.close()
         # Detach by default so experimental teardown matches production policy.
         self._controller.detach()

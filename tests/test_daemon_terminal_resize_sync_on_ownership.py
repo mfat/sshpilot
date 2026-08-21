@@ -76,8 +76,8 @@ def test_first_active_transition_with_ownership_syncs_daemon_size():
         TerminalDimensions(rows=50, columns=200)
     )
     # A single synchronous read can still race GTK's layout pass; the
-    # backend's tick-poll cache must also be invalidated so a stale read
-    # here gets self-corrected on the very next frame regardless.
+    # backend's grid cache must also be invalidated so a stale read here gets
+    # self-corrected by the queued allocation pass regardless.
     terminal.backend.invalidate_size_tracking.assert_called_once_with()
 
 

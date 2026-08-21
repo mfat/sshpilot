@@ -24,6 +24,9 @@ from sshpilot.api.models.terminal import (
     TerminalOutput,
 )
 from sshpilot.api.terminal_events import TerminalSubscription
+from sshpilot.api.transport.framing import MultiplexedFrameDecoder
+from sshpilot.api.transport.terminal_frames import TerminalFrameKind
+from sshpilot.daemon.server import DaemonServer, _ClientConnection
 from sshpilot.gtk_client_bridge import GtkClientBridge
 from sshpilot.terminal import TerminalWidget
 from sshpilot.terminal_session_controller import (
@@ -248,6 +251,111 @@ class _TerminalClient:
         return None
 
 
+class _QueuedReplayClient(_TerminalClient):
+    """Drive the real server replay queue while outbound writes are stalled."""
+
+    class _StalledSocket:
+        def fileno(self):
+            return -1
+
+        def close(self):
+            return None
+
+    def __init__(self, recovery_start: int, retained: bytes, socket_path) -> None:
+        super().__init__("queued-replay")
+        self.recovery_start = recovery_start
+        self.retained = bytearray(retained)
+        self.deleted_queued_replay_bytes = 0
+        self._replay_condition = threading.Condition()
+        self._server = DaemonServer(lambda: None, socket_path=socket_path)
+        self._server_state = _ClientConnection(self._StalledSocket())
+
+    def append_during_recovery(self, data: bytes) -> None:
+        with self._replay_condition:
+            self.retained.extend(data)
+
+    def replay_terminal(self, request):
+        with self._replay_condition:
+            self.replay_rpc_count += 1
+            self.replay_start = request.after_sequence
+            queued_before = self._queued_payload_bytes()
+
+            live_sequence = self.recovery_start + len(self.retained)
+            returned_end = min(
+                live_sequence,
+                request.after_sequence + request.max_bytes,
+            )
+            offset = request.after_sequence - self.recovery_start
+            data = bytes(self.retained[offset : offset + request.max_bytes])
+            truncated = returned_end < live_sequence
+            self._server._queue_replay(
+                self._server_state,
+                _SESSION_ID,
+                SimpleNamespace(
+                    chunks=((request.after_sequence, data),),
+                    truncated=truncated,
+                    eof=False,
+                    returned_end=returned_end,
+                ),
+            )
+            if queued_before:
+                self.deleted_queued_replay_bytes += queued_before
+            result = ReplayResult(
+                session_id=_SESSION_ID,
+                first_sequence=request.after_sequence,
+                next_sequence=returned_end,
+                bounds=ReplayBounds(
+                    earliest_sequence=self.recovery_start,
+                    latest_sequence=live_sequence,
+                    retained_bytes=len(self.retained),
+                ),
+                truncated=truncated,
+            )
+            self._replay_condition.notify_all()
+            return result
+
+    def flush_queued_replay(self) -> int:
+        with self._replay_condition:
+            frames = self._decode_queued_frames()
+            self._server_state.output.clear()
+            self._server_state.queued_terminal_bytes = 0
+            self._server_state.queued_outbound_bytes = 0
+        delivered = 0
+        for frame in frames:
+            assert frame.kind is TerminalFrameKind.OUTPUT
+            delivered += len(frame.data)
+            callbacks = self.output_callbacks
+            assert callbacks is not None and not callbacks.closed
+            callbacks.on_output(
+                TerminalOutput(
+                    session_id=frame.session_id,
+                    sequence=frame.sequence,
+                    data=frame.data,
+                    replay=True,
+                )
+            )
+        return delivered
+
+    def _decode_queued_frames(self):
+        decoder = MultiplexedFrameDecoder()
+        frames = []
+        for outbound in self._server_state.output:
+            if outbound.is_terminal:
+                frames.extend(decoder.feed(outbound.data))
+        return frames
+
+    def _queued_payload_bytes(self) -> int:
+        return sum(len(frame.data) for frame in self._decode_queued_frames())
+
+    def wait_for_replay_requests(self, count: int) -> None:
+        deadline = time.monotonic() + 2.0
+        with self._replay_condition:
+            while self.replay_rpc_count < count:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0
+                self._replay_condition.wait(remaining)
+
+
 def _active_controller(client, bridge, *, on_output=None, on_error=None, on_loss=None):
     controller = DaemonTerminalSessionController(
         client=client,
@@ -449,6 +557,79 @@ def test_terminal_recovery_replays_multiple_bounded_chunks_in_order():
         assert controller.tab_state.expected_sequence == len(
             prefix + first_replay + second_replay
         )
+    finally:
+        binding.close()
+        bridge.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("replay_bytes", [700 * 1024, 1300 * 1024])
+def test_replay_request_waits_until_previous_chunk_reaches_frontend(
+    replay_bytes,
+    tmp_path,
+):
+    dispatcher = _Dispatcher()
+    bridge = GtkClientBridge(dispatcher=dispatcher, max_workers=1)
+    prefix = b"SAFE-PREFIX"
+    retained = bytes((index % 251 for index in range(replay_bytes)))
+    during_recovery = b"LIVE-DURING-RECOVERY" * 2048
+    after_recovery = b"LIVE-AFTER-BOUNDARY"
+    client = _QueuedReplayClient(
+        len(prefix),
+        retained,
+        tmp_path / "unused-replay-race.sock",
+    )
+    output = []
+    controller = _active_controller(client, bridge, on_output=output.append)
+    binding = _bind_active_stream(controller, bridge, client)
+
+    def _normal_worker_barrier():
+        reached = threading.Event()
+        bridge.submit(
+            reached.set,
+            on_success=lambda _result: None,
+            on_error=lambda error: pytest.fail(str(error)),
+        )
+        assert reached.wait(2.0)
+
+    try:
+        assert client.emit_output(0, prefix)
+        dispatcher.drain()
+        client.emit_continuity(len(prefix), len(prefix) + 1)
+        dispatcher.run_one()
+        client.wait_for_replay_requests(1)
+        dispatcher.run_one()
+
+        # If response metadata chains immediately, request #2 runs ahead of
+        # this barrier and deletes request #1's deliberately stalled frames.
+        _normal_worker_barrier()
+        assert client.replay_rpc_count == 1
+
+        client.append_during_recovery(during_recovery)
+        total_expected = len(retained) + len(during_recovery)
+        delivered = 0
+        request_count = 1
+        while delivered < total_expected:
+            delivered += client.flush_queued_replay()
+            dispatcher.drain()
+            if delivered < total_expected:
+                request_count += 1
+                client.wait_for_replay_requests(request_count)
+                dispatcher.run_one()
+
+        dispatcher.run_until(
+            lambda: controller.state is TerminalSessionState.ACTIVE,
+        )
+        assert client.emit_output(
+            len(prefix) + total_expected,
+            after_recovery,
+        )
+        dispatcher.drain()
+
+        expected = prefix + retained + during_recovery + after_recovery
+        assert b"".join(output) == expected
+        assert client.deleted_queued_replay_bytes == 0
+        assert controller.tab_state.expected_sequence == len(expected)
+        assert request_count == (total_expected + 512 * 1024 - 1) // (512 * 1024)
     finally:
         binding.close()
         bridge.shutdown(wait=True)

@@ -201,6 +201,7 @@ class DaemonTerminalSessionController:
         self._replay_catchup_target: Optional[int] = None
         self._stream_generation = 0
         self._recovery_catchup_target: Optional[int] = None
+        self._recovery_replay_pending = None
         self._resize_in_flight = False
         self._resize_sent: Optional[TerminalDimensions] = None
         self._pending_resize: Optional[TerminalDimensions] = None
@@ -713,6 +714,7 @@ class DaemonTerminalSessionController:
     def _invalidate_output_binding(self) -> None:
         self._stream_generation += 1
         self._recovery_catchup_target = None
+        self._recovery_replay_pending = None
 
     def _handle_bound_output(self, generation: int, output) -> None:
         if generation != self._stream_generation or self._closed:
@@ -852,22 +854,55 @@ class DaemonTerminalSessionController:
                 "The retained terminal output cannot restore this view",
             )
             return
-        if result.truncated:
-            if result.next_sequence == safe_sequence:
-                self._fail_output_recovery(
-                    generation,
-                    "The retained terminal output cannot restore this view",
-                )
-                return
+        if result.truncated and result.next_sequence == safe_sequence:
+            self._fail_output_recovery(
+                generation,
+                "The retained terminal output cannot restore this view",
+            )
+            return
+        self._recovery_replay_pending = (
+            generation,
+            binding,
+            result.next_sequence,
+            result.truncated,
+            recovery_client,
+            attachment_id,
+        )
+        binding.resume(
+            replay_end=result.next_sequence,
+            allow_live=not result.truncated,
+        )
+        self._continue_replay_if_chunk_delivered()
+
+    def _continue_replay_if_chunk_delivered(self) -> None:
+        pending = self._recovery_replay_pending
+        if pending is None:
+            return
+        (
+            generation,
+            binding,
+            end_sequence,
+            truncated,
+            recovery_client,
+            attachment_id,
+        ) = pending
+        if not self._recovery_is_current(generation, binding):
+            self._recovery_replay_pending = None
+            return
+        if self._tab_state.expected_sequence < end_sequence:
+            return
+        self._recovery_replay_pending = None
+        if truncated:
             self._submit_output_replay(
                 generation,
                 binding,
-                result.next_sequence,
+                end_sequence,
                 recovery_client,
                 attachment_id,
             )
             return
-        self._validate_and_resume_recovery(binding, result.next_sequence)
+        self._recovery_catchup_target = end_sequence
+        self._finish_output_recovery_if_caught_up()
 
     def _finish_output_reattach(
         self,
@@ -1038,6 +1073,7 @@ class DaemonTerminalSessionController:
         # This sequence now identifies bytes delivered through the VTE-facing
         # callback, rather than merely received or spooled by the binding.
         if self._tab_state.state is TerminalSessionState.RECOVERING:
+            self._continue_replay_if_chunk_delivered()
             self._finish_output_recovery_if_caught_up()
 
     def _handle_continuity_lost(self, session_id, expected, available) -> None:

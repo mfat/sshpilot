@@ -1378,13 +1378,13 @@ class TerminalWidget(Gtk.Box):
         )
 
     def _resync_daemon_terminal_size(self):
-        """Push the current widget size to the daemon and re-arm polling.
+        """Push the current grid to the daemon and re-arm size tracking.
 
         Called when input ownership is newly granted. A single synchronous
         read here can still race GTK's own layout pass (the widget may not
         have finished settling into its real on-screen size yet), so this
-        also invalidates the backend's tick-poll cache — that guarantees a
-        redelivery on the very next frame even if this read was stale,
+        also invalidates the backend's grid cache and queues allocation — that
+        guarantees a redelivery after layout even if this read was stale,
         without waiting for an actual further resize to produce one
         (GH #1164 follow-up).
         """
