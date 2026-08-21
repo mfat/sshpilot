@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git \
         python3 python3-pip \
         openssh-client openssh-tests sshpass \
+        fido2-tools \
         socat mosh picocom screen \
         docker.io \
     && rm -rf /var/lib/apt/lists/*

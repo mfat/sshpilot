@@ -40,4 +40,8 @@ jobs:
             -v "$PWD":/work -w /work \
             -v /var/run/docker.sock:/var/run/docker.sock \
             sshpilot-test-env \
-            pytest -ra -m "not gui" --basetemp=/dev/shm/pytest-tmp
+            # virtual_fido requires runner-level UHID/hidraw setup and an
+            # explicitly built pando85 binary; it is not claimed by this
+            # ordinary GitHub-hosted gate. Run it only in a capability-enabled
+            # job with the required device arguments and SSHPILOT_PANDO_SOFT_FIDO2.
+            pytest -ra -m "not gui and not virtual_fido" --basetemp=/dev/shm/pytest-tmp
