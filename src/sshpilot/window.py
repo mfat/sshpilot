@@ -2071,7 +2071,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Add local terminal button right after the sidebar toggle
         self.local_terminal_button = Gtk.Button()
         icon_utils.set_button_icon(self.local_terminal_button, 'utilities-terminal-symbolic')
-        self.local_terminal_button.set_tooltip_text(_('New local terminal'))
+        self.local_terminal_button.set_tooltip_text(
+            _('New local terminal ({modifier}+Shift+T)').format(
+                modifier=get_primary_modifier_label())
+        )
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
         self._headerbar_start_box.append(self.local_terminal_button)
