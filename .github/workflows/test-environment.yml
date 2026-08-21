@@ -68,7 +68,7 @@ jobs:
           lsmod | grep '^uhid' || true
           ls -l /dev/uhid || true
           sudo apt-get update
-          sudo apt-get install -y "linux-modules-extra-$(uname -r)"
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" pkg-config libudev-dev
           sudo modprobe uhid
           test -c /dev/uhid
           ls -l /dev/uhid
