@@ -61,6 +61,15 @@
 
 
 
+    <release version="5.9.0" date="2026-08-21">
+      <description>
+        <p>Integrated tab bar into header for a cleaner, more minimal user interface</p>
+        <p>Revamped Command Snippets panel - the snippets are now displayed in a floating panel</p>
+        <p>Added keyboard support to Snippets - you can assign your desired shortcut for the popup</p>
+        <p>Added theme selector to main menu, inspired by Ptyxis</p>
+        <p>Minor UI improvements</p>
+      </description>
+    </release>
     <release version="5.8.9" date="2026-08-21">
       <description>
         <p>Bug fixes and improvements</p>
