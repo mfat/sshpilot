@@ -111,14 +111,29 @@ jobs:
                   tag: v0.13.0
 
             - name: libfido2
-              buildsystem: cmake-ninja
-              config-opts:
-                - -DCMAKE_BUILD_TYPE=Release
-                - -DBUILD_EXAMPLES=OFF
-                - -DBUILD_MANPAGES=OFF
-                - -DBUILD_STATIC_LIBS=OFF
-                - -DBUILD_TOOLS=ON
-                - -DNFC_LINUX=OFF
+              buildsystem: simple
+              build-commands:
+                # GNOME 50's Flatpak toolchain already injects
+                # _FORTIFY_SOURCE=3. libfido2 1.17.0 unconditionally adds
+                # _FORTIFY_SOURCE=2 for Release builds and compiles with
+                # -Werror, making the harmless redefinition fatal. Remove only
+                # libfido2's duplicate define and retain Flatpak's level 3.
+                - sed -i '/CMAKE_C_FLAGS_RELEASE.*D_FORTIFY_SOURCE=2/d' CMakeLists.txt
+                - >-
+                  cmake -S . -B build -G Ninja
+                  -DCMAKE_INSTALL_PREFIX=/app
+                  -DCMAKE_INSTALL_LIBDIR=lib
+                  -DCMAKE_BUILD_TYPE=Release
+                  -DBUILD_TESTS=OFF
+                  -DBUILD_EXAMPLES=OFF
+                  -DBUILD_MANPAGES=OFF
+                  -DBUILD_STATIC_LIBS=OFF
+                  -DBUILD_TOOLS=ON
+                  -DNFC_LINUX=OFF
+                - cmake --build build --parallel ${FLATPAK_BUILDER_N_JOBS:-2}
+                - cmake --install build
+                - test -f /app/lib/libfido2.so
+                - pkg-config --modversion libfido2
               sources:
                 - type: git
                   url: https://github.com/Yubico/libfido2.git
@@ -186,4 +201,3 @@ jobs:
           cache-key: sshpilot-full-access-openssh-${{ steps.main.outputs.sha }}
           arch: x86_64
           upload-artifact: true
-          artifact-name: sshpilot-full-access-openssh-x86_64-${{ steps.main.outputs.sha }}
