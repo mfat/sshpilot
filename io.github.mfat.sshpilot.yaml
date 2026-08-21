@@ -24,13 +24,6 @@ cleanup:
   - '*.a'
 
 modules:
-  - name: sshpass
-    buildsystem: autotools
-    sources:
-      - type: archive
-        url: https://sourceforge.net/projects/sshpass/files/sshpass/1.09/sshpass-1.09.tar.gz
-        sha256: 71746e5e057ffe9b00b44ac40453bf47091930cba96bbea8dc48717dedc49fb7
-
   - name: ssh-copy-id
     buildsystem: simple
     build-commands:
@@ -52,8 +45,8 @@ modules:
       - '-Dgtk4=true'
     sources:
       - type: archive
-        url: https://download.gnome.org/sources/vte/0.78/vte-0.78.5.tar.xz
-        sha256: bab93bff8d8acb05fc7c81a469e0d17c853da3851ce4be2a66d4d18772163a46
+        url: https://download.gnome.org/sources/vte/0.84/vte-0.84.1.tar.xz
+        sha256: aca1caa8478aebcdbb1d67897fb3511eb7601debae6810e16a15b6fa25f31ac8
 
   - flatpak/python3-deps.yml
 
