@@ -166,6 +166,7 @@ def get_default_config() -> Dict[str, Any]:
             'folders': [],
             'commands': [],
             'defaults_loaded': False,
+            'view_layout': 'list',
             'auto_hide_sidebar': False,
             'insert_only': False,
         },

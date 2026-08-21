@@ -354,11 +354,16 @@ def install_sidebar_css():
           box-shadow: -4px 0 8px -4px rgba(0, 0, 0, 0.35);
         }
 
+        .sidebar-popup.command-popup-centered {
+          border-radius: 12px;
+          box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
+        }
+
         /* Programmatic-only subtle transparency (see
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
         .sidebar-popup.sidebar-popup-transparent {
-          background-color: alpha(@window_bg_color, 0.86);
+          background-color: alpha(@window_bg_color, 0.94);
         }
 
         /* Chrome-free panel for modes whose content draws its own frame

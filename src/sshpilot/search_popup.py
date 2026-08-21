@@ -157,6 +157,7 @@ class SearchPopup:
         self._panel.add_css_class("sidebar-popup")
         self._panel.set_visible(False)
         key = Gtk.EventControllerKey()
+        key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         key.connect("key-pressed", self._on_key)
         self._panel.add_controller(key)
         self._overlay.add_overlay(self._panel)

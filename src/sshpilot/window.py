@@ -3589,8 +3589,38 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._command_popup.set_position(Position.RIGHT)
         self._command_popup.set_margins(end=4, top=4, bottom=4)
         self._command_popup.add_css_class('command-popup')
+        self._configure_command_popup_layout(
+            getattr(self.command_blocks_panel, '_view_layout', 'list')
+        )
         logger.debug("Command blocks panel created")
         return self.command_blocks_panel
+
+    def _configure_command_popup_layout(self, _layout: str) -> None:
+        """Use one centered command palette shell for either inner layout."""
+        popup = self._command_popup
+        if popup is None:
+            return
+        from .search_popup import Backdrop, Position
+        try:
+            width = self._command_content_overlay.get_width() or 1000
+            height = self._command_content_overlay.get_height() or 720
+        except Exception:
+            width, height = 1000, 720
+        popup.set_position(Position.CENTER)
+        popup.set_size(
+            width=max(560, min(900, int(width * 0.72))),
+            height=max(360, min(640, int(height * 0.72))),
+        )
+        popup.set_margins()
+        popup.set_backdrop(Backdrop.NONE)
+        popup.set_transparent(True)
+        popup.add_css_class('command-popup-centered')
+
+    def _on_command_view_layout_changed(self, layout: str) -> None:
+        """Resize/reposition the visible command popup after its view changes."""
+        self._configure_command_popup_layout(layout)
+        if self._command_popup is not None and self._command_popup.visible:
+            self._command_popup.refresh_layout()
 
     def _command_popup_target_width(self) -> int:
         """Size the floating commands panel like the former split sidebar."""
@@ -3619,6 +3649,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 if self._ensure_command_blocks_panel() is None:
                     return
                 self._close_search_if_open()
+                self._configure_command_popup_layout(
+                    getattr(self.command_blocks_panel, '_view_layout', 'list')
+                )
                 self._command_popup.refresh_layout()
                 self._command_popup.show()
             elif self._command_popup is not None:

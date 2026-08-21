@@ -1133,6 +1133,10 @@ class CommandBlocksPanel(Gtk.Box):
         self._search_query = ""
         self._favorites_expanded = True
         self._auto_hide_timer_id = None
+        layout = str(
+            self.store._config.get_setting("command_blocks.view_layout", "list")
+        ).lower()
+        self._view_layout = "tiled" if layout == "tiled" else "list"
         self._build_ui()
         self.refresh()
 
@@ -1150,11 +1154,26 @@ class CommandBlocksPanel(Gtk.Box):
         header.set_margin_top(8)
         header.set_margin_bottom(4)
 
-        # The panel title is redundant now that the header-bar toggle button is
-        # labelled "Commands"; a hexpanding spacer keeps the add buttons right-aligned.
+        title = Gtk.Label(label=_("Commands"))
+        title.set_halign(Gtk.Align.START)
+        title.set_xalign(0)
+        title.add_css_class("heading")
+        header.append(title)
+
+        # Keep the layout and action buttons right-aligned.
         spacer = Gtk.Box()
         spacer.set_hexpand(True)
         header.append(spacer)
+
+        self._layout_toggle = Gtk.ToggleButton()
+        self._layout_toggle.set_icon_name("view-dual-symbolic")
+        self._layout_toggle.add_css_class("flat")
+        self._layout_toggle.set_active(self._view_layout == "tiled")
+        self._layout_toggle.set_tooltip_text(
+            _("Use list layout") if self._view_layout == "tiled" else _("Use tiled layout")
+        )
+        self._layout_toggle.connect("toggled", self._on_layout_toggled)
+        header.append(self._layout_toggle)
 
         add_cmd_btn = Gtk.Button()
         add_cmd_btn.set_icon_name("list-add-symbolic")
@@ -1214,6 +1233,29 @@ class CommandBlocksPanel(Gtk.Box):
         self._tree_scroll.set_child(self._tree_list)
         self._main_stack.add_named(self._tree_scroll, "tree")
 
+        # Tile page — a compact two-column view of the same commands.
+        self._tile_scroll = Gtk.ScrolledWindow()
+        self._tile_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self._tile_scroll.set_vexpand(True)
+        self._tile_flow = Gtk.FlowBox()
+        self._tile_flow.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self._tile_flow.set_activate_on_single_click(False)
+        self._tile_flow.set_homogeneous(True)
+        self._tile_flow.set_min_children_per_line(2)
+        self._tile_flow.set_max_children_per_line(2)
+        self._tile_flow.set_column_spacing(8)
+        self._tile_flow.set_row_spacing(8)
+        self._tile_flow.set_margin_start(8)
+        self._tile_flow.set_margin_end(8)
+        self._tile_flow.set_margin_top(8)
+        self._tile_flow.set_margin_bottom(8)
+        self._tile_flow.connect(
+            "child-activated",
+            lambda _flow, child: self._send_command_to_terminal(child._cmd_data, anchor=child),
+        )
+        self._tile_scroll.set_child(self._tile_flow)
+        self._main_stack.add_named(self._tile_scroll, "tiles")
+
         # Add key controller on tree list for Delete / Ctrl+E
         tree_key_ctrl = Gtk.EventControllerKey()
         tree_key_ctrl.connect("key-pressed", self._on_list_key_pressed)
@@ -1265,6 +1307,7 @@ class CommandBlocksPanel(Gtk.Box):
             if child is None:
                 break
             self._tree_list.remove(child)
+        self._clear_tile_flow()
 
         commands = self.store.get_commands()
         folders = self.store.get_folders()
@@ -1275,6 +1318,11 @@ class CommandBlocksPanel(Gtk.Box):
 
         if self._search_query:
             self._show_search_results(self._search_query)
+            return
+
+        if self._view_layout == "tiled":
+            self._populate_tiles(commands)
+            self._main_stack.set_visible_child_name("tiles")
             return
 
         self._main_stack.set_visible_child_name("tree")
@@ -1409,6 +1457,88 @@ class CommandBlocksPanel(Gtk.Box):
         self._setup_command_drag_source(row, cmd)
         return row
 
+    def _clear_tile_flow(self) -> None:
+        while True:
+            child = self._tile_flow.get_first_child()
+            if child is None:
+                return
+            self._tile_flow.remove(child)
+
+    def _populate_tiles(self, commands: list[dict]) -> None:
+        self._clear_tile_flow()
+        folders = {f["id"]: f.get("name", "") for f in self.store.get_folders()}
+        for cmd in commands:
+            tile = Gtk.FlowBoxChild()
+            tile._cmd_data = cmd
+
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            card.set_margin_top(2)
+            card.set_margin_bottom(2)
+            card.set_margin_start(2)
+            card.set_margin_end(2)
+
+            heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            heading.set_margin_top(8)
+            heading.set_margin_start(8)
+            heading.set_margin_end(4)
+            icon = Gtk.Image.new_from_icon_name("utilities-terminal-symbolic")
+            icon.set_pixel_size(16)
+            heading.append(icon)
+            title = Gtk.Label(label=cmd.get("name", ""))
+            title.set_halign(Gtk.Align.START)
+            title.set_xalign(0)
+            title.set_hexpand(True)
+            title.set_ellipsize(Pango.EllipsizeMode.END)
+            heading.append(title)
+            star = Gtk.ToggleButton()
+            star.set_icon_name(
+                "starred-symbolic" if cmd.get("is_favorite") else "non-starred-symbolic"
+            )
+            star.set_active(bool(cmd.get("is_favorite")))
+            star.add_css_class("flat")
+            star.set_tooltip_text(_("Toggle favorite"))
+            star.connect(
+                "toggled",
+                lambda btn, c=cmd: (
+                    self._toggle_favorite(c),
+                    btn.set_icon_name(
+                        "starred-symbolic" if c.get("is_favorite") else "non-starred-symbolic"
+                    ),
+                ),
+            )
+            heading.append(star)
+            card.append(heading)
+
+            subtitle_text = cmd.get("description") or cmd.get("command", "")
+            folder_name = folders.get(cmd.get("folder_id"), "")
+            if folder_name:
+                subtitle_text = f"{folder_name} · {subtitle_text}"
+            subtitle = Gtk.Label(label=subtitle_text)
+            subtitle.set_halign(Gtk.Align.START)
+            subtitle.set_xalign(0)
+            subtitle.set_wrap(True)
+            subtitle.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            subtitle.set_lines(2)
+            subtitle.set_ellipsize(Pango.EllipsizeMode.END)
+            subtitle.add_css_class("dim-label")
+            subtitle.set_margin_start(8)
+            subtitle.set_margin_end(8)
+            subtitle.set_margin_bottom(8)
+            card.append(subtitle)
+            tile.set_child(card)
+
+            context = Gtk.GestureClick()
+            context.set_button(3)
+            context.connect(
+                "pressed",
+                lambda _g, _n, _x, _y, anchor=tile, c=cmd: self._show_command_context_menu(
+                    anchor, c
+                ),
+            )
+            tile.add_controller(context)
+            self._setup_command_drag_source(tile, cmd)
+            self._tile_flow.append(tile)
+
     # ------------------------------------------------------------------
     # Search
     # ------------------------------------------------------------------
@@ -1439,6 +1569,10 @@ class CommandBlocksPanel(Gtk.Box):
             self._search_results_list.remove(child)
 
         results = self.store.search(query)
+        if self._view_layout == "tiled" and results:
+            self._populate_tiles(results)
+            self._main_stack.set_visible_child_name("tiles")
+            return
         if not results:
             # Show a 'no results' label in the search list
             lbl = Gtk.Label(label=_("No results"))
@@ -1451,6 +1585,17 @@ class CommandBlocksPanel(Gtk.Box):
                 self._search_results_list.append(row)
 
         self._main_stack.set_visible_child_name("search")
+
+    def _on_layout_toggled(self, button: Gtk.ToggleButton) -> None:
+        layout = "tiled" if button.get_active() else "list"
+        button.set_tooltip_text(
+            _("Use list layout") if layout == "tiled" else _("Use tiled layout")
+        )
+        self._view_layout = layout
+        self.store._config.set_setting("command_blocks.view_layout", layout)
+        if hasattr(self.window, "_on_command_view_layout_changed"):
+            self.window._on_command_view_layout_changed(layout)
+        self.refresh()
 
     def focus_search(self) -> None:
         self._search_toggle.set_active(True)
