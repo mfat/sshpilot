@@ -2,8 +2,7 @@ name: Tests
 
 on:
   pull_request:
-  push:
-    branches: [main, dev]
+  workflow_dispatch:
 
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
