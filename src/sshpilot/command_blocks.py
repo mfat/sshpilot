@@ -1149,6 +1149,7 @@ class CommandBlocksPanel(Gtk.Box):
 
         # --- Header ---
         header = Gtk.CenterBox()
+        header.add_css_class("command-snippets-header")
         header.set_margin_start(8)
         header.set_margin_end(8)
         header.set_margin_top(8)
@@ -1241,6 +1242,7 @@ class CommandBlocksPanel(Gtk.Box):
         self._tile_flow.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._tile_flow.set_activate_on_single_click(False)
         self._tile_flow.set_homogeneous(True)
+        self._tile_flow.set_valign(Gtk.Align.START)
         self._tile_flow.set_min_children_per_line(2)
         self._tile_flow.set_max_children_per_line(2)
         self._tile_flow.set_column_spacing(8)
@@ -1470,8 +1472,11 @@ class CommandBlocksPanel(Gtk.Box):
         for cmd in commands:
             tile = Gtk.FlowBoxChild()
             tile._cmd_data = cmd
+            tile.set_valign(Gtk.Align.START)
+            tile.set_vexpand(False)
 
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            card.set_vexpand(False)
             card.set_margin_top(2)
             card.set_margin_bottom(2)
             card.set_margin_start(2)

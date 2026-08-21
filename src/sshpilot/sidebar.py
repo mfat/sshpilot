@@ -359,6 +359,10 @@ def install_sidebar_css():
           box-shadow: 0 4px 18px rgba(0, 0, 0, 0.32);
         }
 
+        .command-snippets-header {
+          min-height: 48px;
+        }
+
         /* Programmatic-only subtle transparency (see
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
