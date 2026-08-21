@@ -301,7 +301,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Command Blocks panel (right-side sidebar)
         self.command_block_store: Optional[CommandBlockStore] = None
         self.command_blocks_panel: Optional[CommandBlocksPanel] = None
-        self.cmd_split_view = None
+        self._command_popup = None
+        self._command_panel_home = None
+        self._command_content_overlay = None
         self._command_sidebar_visible: bool = False
         self._cmd_blocks_toggle_btn = None
         self._headerbar_theme_menu_button = None
@@ -2173,6 +2175,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             on_dismiss=self._dismiss_search_popup,
             focus_func=lambda: getattr(self, 'search_entry', None),
         )
+        if bool(self.config.get_setting('command_blocks.always_show_sidebar', False)):
+            self._toggle_command_blocks_panel(True)
 
         # Outer NavigationView: work UI is the root page; Settings is pushed on
         # top (Telegram-style mode). Back / Esc pops Settings and restores work.
@@ -3501,12 +3505,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.tab_overview)
-            # Wrap only the content area (below the title bar) so the command
-            # blocks sidebar opens inside the terminal pane, not across the full window.
-            self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
-            content_box.set_content(
-                self.cmd_split_view if self.cmd_split_view is not None else content_wrapper
-            )
+            self._command_content_overlay = Gtk.Overlay()
+            self._command_content_overlay.set_hexpand(True)
+            self._command_content_overlay.set_vexpand(True)
+            self._command_content_overlay.set_child(content_wrapper)
+            content_box.set_content(self._command_content_overlay)
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
             self._set_content_widget(main_box)
@@ -3521,11 +3524,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             content_wrapper.append(self.tips_banner_container)
             content_wrapper.append(self.broadcast_banner)
             content_wrapper.append(self.tab_overview)
-            # Same: scope the sidebar to the content pane only.
-            self._wrap_content_with_command_panel(content_wrapper, set_as_window_content=False)
-            content_box.set_content(
-                self.cmd_split_view if self.cmd_split_view is not None else content_wrapper
-            )
+            self._command_content_overlay = Gtk.Overlay()
+            self._command_content_overlay.set_hexpand(True)
+            self._command_content_overlay.set_vexpand(True)
+            self._command_content_overlay.set_child(content_wrapper)
+            content_box.set_content(self._command_content_overlay)
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
             self._set_content_widget(main_box)
@@ -3536,7 +3539,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             main_box.append(self.update_banner_container)
             main_box.append(self.tips_banner_container)
             main_box.append(self.broadcast_banner)
-            main_box.append(self.tab_overview)
+            self._command_content_overlay = Gtk.Overlay()
+            self._command_content_overlay.set_hexpand(True)
+            self._command_content_overlay.set_vexpand(True)
+            self._command_content_overlay.set_child(self.tab_overview)
+            main_box.append(self._command_content_overlay)
             self._set_content_widget(main_box)
             logger.debug("Set content widget for other split view types")
 
@@ -3555,86 +3562,73 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return self.command_block_store
 
     def _ensure_command_blocks_panel(self) -> Optional[CommandBlocksPanel]:
-        """Build the command blocks sidebar on first open (or when always shown)."""
+        """Build the floating command-block panel on first open."""
         if self.command_blocks_panel is not None:
             return self.command_blocks_panel
-        if self.cmd_split_view is None:
+        overlay = getattr(self, '_command_content_overlay', None)
+        if overlay is None:
             return None
         store = self._ensure_command_block_store()
         if store is None:
             return None
         from .command_blocks import CommandBlocksPanel
+        from .search_popup import Position, SearchPopup
         self.command_blocks_panel = CommandBlocksPanel(self, store)
-        self.cmd_split_view.set_sidebar(self.command_blocks_panel)
+        self._command_panel_home = Gtk.Revealer()
+        self._command_panel_home.set_child(self.command_blocks_panel)
+        self._command_popup = SearchPopup(
+            overlay,
+            self._command_panel_home,
+            self.command_blocks_panel,
+            self._command_popup_target_width,
+            on_hidden=self._on_command_popup_hidden,
+            focus_func=lambda: (
+                self.command_blocks_panel.focus_search(), None
+            )[1],
+        )
+        self._command_popup.set_position(Position.RIGHT)
+        self._command_popup.set_margins(end=4, top=4, bottom=4)
+        self._command_popup.add_css_class('command-popup')
         logger.debug("Command blocks panel created")
         return self.command_blocks_panel
 
-    def _wrap_content_with_command_panel(self, content_widget: Gtk.Widget, *, set_as_window_content: bool = True) -> None:
-        """Build a right-side OverlaySplitView for the command blocks panel around content_widget.
-
-        When set_as_window_content is True (default) the resulting split view is
-        installed as the window content via _set_content_widget.  Pass False when
-        the caller wants to place the split view itself (e.g. as the content of an
-        inner ToolbarView so the sidebar sits next to the terminal only).
-        """
-        if not HAS_OVERLAY_SPLIT:
-            if set_as_window_content:
-                self._set_content_widget(content_widget)
-            logger.warning("Command blocks panel requires Adw.OverlaySplitView; panel disabled")
-            return
+    def _command_popup_target_width(self) -> int:
+        """Size the floating commands panel like the former split sidebar."""
         try:
-            app = self.get_application()
-            config = getattr(app, 'config', None) if app else None
-            if config is None:
-                config = getattr(self, 'config', None)
-            self.cmd_split_view = Adw.OverlaySplitView()
-            self.cmd_split_view.set_sidebar_position(Gtk.PackType.END)
-            _always_show = bool(config.get_setting('command_blocks.always_show_sidebar', False)) if config else False
-            self.cmd_split_view.set_show_sidebar(_always_show)
-            self._command_sidebar_visible = _always_show
-            if _always_show and getattr(self, '_cmd_blocks_toggle_btn', None) is not None:
-                self._updating_cmd_toggle = True
-                self._cmd_blocks_toggle_btn.set_active(True)
-                self._updating_cmd_toggle = False
-            try:
-                self.cmd_split_view.set_min_sidebar_width(240)
-                self.cmd_split_view.set_max_sidebar_width(400)
-                self.cmd_split_view.set_sidebar_width_fraction(0.28)
-            except Exception:
-                pass
-            self.cmd_split_view.set_hexpand(True)
-            self.cmd_split_view.set_vexpand(True)
+            width = int((self._command_content_overlay.get_width() or 1280) * 0.28)
+        except Exception:
+            width = 360
+        return max(240, min(400, width))
 
-            if _always_show:
-                self._ensure_command_blocks_panel()
-
-            self.cmd_split_view.set_content(content_widget)
-            if set_as_window_content:
-                self._set_content_widget(self.cmd_split_view)
-            logger.debug("Command blocks split view created")
-        except Exception as exc:
-            logger.error("Failed to create command blocks panel: %s", exc)
-            if set_as_window_content:
-                self._set_content_widget(content_widget)
+    def _on_command_popup_hidden(self) -> None:
+        """Keep the header toggle synchronized after Escape/click-outside."""
+        self._command_sidebar_visible = False
+        if self._cmd_blocks_toggle_btn is not None:
+            self._updating_cmd_toggle = True
+            self._cmd_blocks_toggle_btn.set_active(False)
+            self._updating_cmd_toggle = False
 
     def _toggle_command_blocks_panel(self, visible: bool | None = None) -> None:
-        """Show or hide the command blocks right sidebar."""
-        if self.cmd_split_view is None:
-            return
+        """Show or hide the floating command-block panel."""
         try:
             if visible is None:
-                visible = not self.cmd_split_view.get_show_sidebar()
+                visible = not bool(
+                    self._command_popup and self._command_popup.visible
+                )
             if visible:
-                self._ensure_command_blocks_panel()
-            self.cmd_split_view.set_show_sidebar(visible)
+                if self._ensure_command_blocks_panel() is None:
+                    return
+                self._close_search_if_open()
+                self._command_popup.refresh_layout()
+                self._command_popup.show()
+            elif self._command_popup is not None:
+                self._command_popup.hide()
             self._command_sidebar_visible = visible
             if self._cmd_blocks_toggle_btn is not None:
                 self._updating_cmd_toggle = True
                 self._cmd_blocks_toggle_btn.set_active(visible)
                 self._updating_cmd_toggle = False
-            if visible and self.command_blocks_panel is not None:
-                GLib.idle_add(self.command_blocks_panel.focus_search)
-            elif not visible:
+            if not visible:
                 terminal = self._get_active_terminal_widget()
                 if terminal is not None:
                     self._focus_terminal_widget(terminal)
@@ -4447,6 +4441,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._search_expanded_sidebar = (
             getattr(self, '_sidebar_minimal', False) or sidebar_hidden
         )
+        if self._command_popup is not None and self._command_popup.visible:
+            self._command_popup.hide()
         if self._search_expanded_sidebar:
             self._search_popup.show()
 

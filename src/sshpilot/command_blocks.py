@@ -1637,26 +1637,25 @@ class CommandBlocksPanel(Gtk.Box):
         if cmd_id:
             self.store.record_use(cmd_id)
 
-        if self.store._config.get_setting("command_blocks.auto_hide_sidebar", False):
-            if self._auto_hide_timer_id is not None:
-                try:
-                    GLib.source_remove(self._auto_hide_timer_id)
-                except Exception:
-                    pass
-                self._auto_hide_timer_id = None
+        if getattr(self, "_auto_hide_timer_id", None) is not None:
+            try:
+                GLib.source_remove(self._auto_hide_timer_id)
+            except Exception:
+                pass
+            self._auto_hide_timer_id = None
 
-            # Hide right away (on the next loop iteration so we don't reenter the
-            # send handler). The panel's own reveal animation keeps it smooth —
-            # no multi-second wait.
-            def _do_hide():
-                try:
-                    self.window._toggle_command_blocks_panel(False)
-                except Exception:
-                    pass
-                self._auto_hide_timer_id = None
-                return GLib.SOURCE_REMOVE
+        # A command picker is transient: dismiss it after a successful send.
+        # Defer until the next loop iteration to avoid reparenting the panel
+        # from inside its row-activation signal.
+        def _do_hide():
+            try:
+                self.window._toggle_command_blocks_panel(False)
+            except Exception:
+                pass
+            self._auto_hide_timer_id = None
+            return GLib.SOURCE_REMOVE
 
-            self._auto_hide_timer_id = GLib.idle_add(_do_hide)
+        self._auto_hide_timer_id = GLib.idle_add(_do_hide)
 
     # ------------------------------------------------------------------
     # Run command picker (called from sidebar context menu)

@@ -348,6 +348,12 @@ def install_sidebar_css():
           box-shadow: 2px 0 12px rgba(0, 0, 0, 0.35);
         }
 
+        /* Right-side command panel: retain separation on its terminal-facing
+           edge without casting a shadow above the panel. */
+        .sidebar-popup.command-popup {
+          box-shadow: -4px 0 8px -4px rgba(0, 0, 0, 0.35);
+        }
+
         /* Programmatic-only subtle transparency (see
            SearchPopup.set_transparent) — the terminal shows faintly
            through the panel while the rows stay readable. */
