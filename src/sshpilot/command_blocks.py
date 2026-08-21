@@ -1773,34 +1773,34 @@ class CommandBlocksPanel(Gtk.Box):
         data = (
             command_text.encode("utf-8") if insert_only else (command_text + "\n").encode("utf-8")
         )
-        try:
-            terminal.feed_child_data(data)
-        except Exception as exc:
-            logger.error("Failed to send command to terminal: %s", exc)
+
+        def _send() -> bool:
+            try:
+                terminal.feed_child_data(data)
+            except Exception as exc:
+                logger.error("Failed to send command to terminal: %s", exc)
+                return GLib.SOURCE_REMOVE
+            if cmd_id:
+                self.store.record_use(cmd_id)
+            return GLib.SOURCE_REMOVE
+
+        popup = getattr(self.window, "_command_popup", None)
+        if getattr(popup, "visible", False) is not True:
+            _send()
             return
 
-        if cmd_id:
-            self.store.record_use(cmd_id)
-
-        if getattr(self, "_auto_hide_timer_id", None) is not None:
-            try:
-                GLib.source_remove(self._auto_hide_timer_id)
-            except Exception:
-                pass
-            self._auto_hide_timer_id = None
-
-        # A command picker is transient: dismiss it after a successful send.
-        # Defer until the next loop iteration to avoid reparenting the panel
-        # from inside its row-activation signal.
-        def _do_hide():
+        # Reparenting the palette from inside row activation is unsafe. Hide it
+        # on the next loop iteration, then give GTK a short paint interval
+        # before delivering the command to the terminal.
+        def _hide_then_send() -> bool:
             try:
                 self.window._toggle_command_blocks_panel(False)
             except Exception:
                 pass
-            self._auto_hide_timer_id = None
+            GLib.timeout_add(120, _send)
             return GLib.SOURCE_REMOVE
 
-        self._auto_hide_timer_id = GLib.idle_add(_do_hide)
+        GLib.idle_add(_hide_then_send)
 
     # ------------------------------------------------------------------
     # Run command picker (called from sidebar context menu)
