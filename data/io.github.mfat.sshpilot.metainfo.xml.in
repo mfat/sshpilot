@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.8.9" date="2026-08-21">
+      <description>
+        <p>Bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.8.8" date="2026-08-20">
       <description>
         <p>Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on macOS)</p>
