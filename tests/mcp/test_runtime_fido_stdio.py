@@ -1,7 +1,7 @@
 """FIDO security-key authentication over the runtime MCP server.
 
 Uses OpenSSH's installed ``sk-dummy.so`` provider so the test exercises the
-real ``ed25519-sk`` authentication and daemon path without a physical key.
+real security-key authentication and daemon path without a physical key.
 The dummy provider completes presence internally, so it does not emit the
 hardware ``security_key_presence`` askpass notification.
 """
@@ -46,17 +46,29 @@ def stack(tmp_path, phase10_env):
         started.close(destroy_env=False)
 
 
-def _install_dummy_key(stack, tmp_path: Path) -> Path:
+def _require_dummy_provider() -> None:
     if not SK_DUMMY.is_file():
-        pytest.skip(f"OpenSSH dummy security-key provider is unavailable: {SK_DUMMY}")
+        message = f"OpenSSH dummy security-key provider is unavailable: {SK_DUMMY}"
+        if os.environ.get("SSHPILOT_CANONICAL_TEST_ENV") == "1":
+            pytest.fail(message)
+        pytest.skip(message)
 
-    key_path = tmp_path / "id_ed25519_sk"
+
+@pytest.fixture(scope="module", autouse=True)
+def dummy_provider_available():
+    _require_dummy_provider()
+
+
+def _install_dummy_key(stack, tmp_path: Path, sk_type: str) -> Path:
+    key_stem = sk_type.removesuffix("-sk")
+
+    key_path = tmp_path / f"id_{key_stem}_sk"
     result = subprocess.run(
         (
             "ssh-keygen",
             "-q",
             "-t",
-            "ed25519-sk",
+            sk_type,
             "-O",
             "verify-required",
             "-f",
@@ -129,13 +141,14 @@ def _install_dummy_key(stack, tmp_path: Path) -> Path:
     return config
 
 
-async def test_fido_auth_round_trip_over_stdio(stack, tmp_path):
-    """MCP opens a session through real OpenSSH ``ed25519-sk`` auth."""
+@pytest.mark.parametrize("sk_type", ("ed25519-sk", "ecdsa-sk"))
+async def test_fido_auth_round_trip_over_stdio(stack, tmp_path, sk_type):
+    """MCP opens a session through real OpenSSH SK-provider authentication."""
 
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client
 
-    config = _install_dummy_key(stack, tmp_path)
+    config = _install_dummy_key(stack, tmp_path, sk_type)
     assert config.is_file()
 
     async with stdio_client(_server_parameters(stack.server.socket_path)) as (read, write):

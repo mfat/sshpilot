@@ -25,7 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git \
         python3 python3-pip \
-        openssh-client sshpass \
+        openssh-client openssh-tests sshpass \
         socat mosh picocom screen \
         docker.io \
     && rm -rf /var/lib/apt/lists/*
@@ -48,7 +48,17 @@ RUN set -eux; \
 # purpose — gi is stubbed by the test suite.
 RUN pip3 install \
         paramiko cryptography keyring psutil certifi \
-        pytest pytest-cov pytest-xdist pexpect wakeonlan jsonschema
+        pytest pytest-cov pytest-xdist pexpect wakeonlan jsonschema \
+        --ignore-installed
+
+# The runtime MCP integration tests use the official Python SDK. Keep this
+# explicit because the base application intentionally leaves MCP optional.
+RUN pip3 install --ignore-installed mcp anyio
+
+# This image is the canonical environment for the real-tool integration gate.
+# Tests may still be run on arbitrary developer machines, where unsupported
+# hardware/provider capabilities can be skipped deliberately.
+ENV SSHPILOT_CANONICAL_TEST_ENV=1
 
 WORKDIR /work
 CMD ["pytest", "-ra"]
