@@ -1992,7 +1992,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tips_revealer.set_child(tips_body)
         self.tips_banner_container = self.tips_revealer
 
-        # Custom one-row title bar. Gtk.WindowHandle supplies window dragging,
+        # macOS creates a real header bar for native fullscreen. It is attached
+        # above the tab row only while fullscreen, giving the menu-bar spacer
+        # and top-edge reveal workaround a stable title-bar surface.
+        self._macos_header_bar = None
+        self._macos_fullscreen_header_attached = False
+        if sys.platform == 'darwin':
+            self._macos_header_bar = Adw.HeaderBar()
+            self._macos_header_bar.add_css_class('content-titlebar')
+            maybe_set_native_controls(self._macos_header_bar, False)
+
+        # Custom one-row title/tab bar. Gtk.WindowHandle supplies window dragging,
         # double-click maximise and the title-bar context menu; WindowControls
         # on both sides follow the desktop's configured button placement. The
         # centre stack shows either the full-width tab bar, the minimal-sidebar
@@ -2312,6 +2322,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
         return 0
+
+    def _add_content_top_bars(self, toolbar_view) -> None:
+        """Install the normal, single-row title chrome."""
+        toolbar_view.add_top_bar(self.header_bar)
+
+    def _set_macos_fullscreen_headerbar(self, visible: bool) -> None:
+        """Temporarily place the macOS fullscreen header above the tab row."""
+        toolbar = getattr(self, '_content_toolbar_view', None)
+        macos_header = getattr(self, '_macos_header_bar', None)
+        if toolbar is None or macos_header is None:
+            return
+        visible = bool(visible)
+        if visible == bool(getattr(self, '_macos_fullscreen_header_attached', False)):
+            return
+        try:
+            if visible:
+                # add_top_bar() appends, so reinsert the tab row after the
+                # dedicated header to guarantee top-to-bottom ordering.
+                toolbar.remove(self.header_bar)
+                toolbar.add_top_bar(macos_header)
+                toolbar.add_top_bar(self.header_bar)
+            else:
+                toolbar.remove(macos_header)
+            self._window_controls_start.set_visible(not visible)
+            self._window_controls_end.set_visible(not visible)
+            self._macos_fullscreen_header_attached = visible
+        except Exception:
+            logger.debug('Failed to update macOS fullscreen header bar', exc_info=True)
 
     def update_headerbar_buttons(self):
         """Show/hide the toggleable header-bar buttons per preferences
@@ -3461,7 +3499,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # reveal/extend properties to overlay the custom tab/title bar
             # chrome (see window_fullscreen.py).
             self._content_toolbar_view = content_box
-            content_box.add_top_bar(self.header_bar)
+            self._add_content_top_bars(content_box)
             # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)
@@ -3481,7 +3519,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         elif HAS_NAV_SPLIT:
             content_box = Adw.ToolbarView()
             self._content_toolbar_view = content_box
-            content_box.add_top_bar(self.header_bar)
+            self._add_content_top_bars(content_box)
             # Create content wrapper with banners below the title bar.
             content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             content_wrapper.append(self.update_banner_container)

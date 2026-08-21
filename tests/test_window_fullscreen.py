@@ -1349,6 +1349,22 @@ def test_macos_fullscreen_header_bar_gets_the_menu_bar_spacer(monkeypatch):
     assert spacer not in win.header_bar.css_classes
 
 
+def test_macos_spacer_and_reveal_region_include_dedicated_header_bar(monkeypatch):
+    win, fc = _window(monkeypatch, macos=True)
+    macos_header = _FakeWidget(True, height=30)
+    win._macos_header_bar = macos_header
+    win._tab_bar_in_custom_titlebar = True
+
+    fc._apply_macos_fullscreen_spacer()
+
+    assert _spacer_class() in macos_header.css_classes
+    assert _spacer_class() not in win.header_bar.css_classes
+    assert fc._reveal_region_height() == 30 + win.header_bar.height
+
+    fc._remove_macos_fullscreen_spacer()
+    assert _spacer_class() not in macos_header.css_classes
+
+
 def test_macos_start_fullscreen_keeps_the_spacer_on_the_pinned_header(monkeypatch):
     """Start keeps its chrome pinned while fullscreen, so the spacer must be
     there too — the pinned header bar is exactly what the revealed menu bar

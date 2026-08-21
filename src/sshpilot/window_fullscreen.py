@@ -376,7 +376,13 @@ class WindowFullscreenController:
         """
         if not platform_utils.is_macos():
             return
-        header_bar = getattr(self.window, 'header_bar', None)
+        set_headerbar = getattr(self.window, '_set_macos_fullscreen_headerbar', None)
+        if set_headerbar is not None:
+            set_headerbar(True)
+        header_bar = (
+            getattr(self.window, '_macos_header_bar', None)
+            or getattr(self.window, 'header_bar', None)
+        )
         if header_bar is None:
             return
         _ensure_macos_fullscreen_spacer_css()
@@ -388,13 +394,19 @@ class WindowFullscreenController:
     def _remove_macos_fullscreen_spacer(self) -> None:
         if not platform_utils.is_macos():
             return
-        header_bar = getattr(self.window, 'header_bar', None)
+        header_bar = (
+            getattr(self.window, '_macos_header_bar', None)
+            or getattr(self.window, 'header_bar', None)
+        )
         if header_bar is None:
             return
         try:
             header_bar.remove_css_class(MACOS_FULLSCREEN_SPACER_CSS_CLASS)
         except Exception:
             logger.debug('Failed to remove the macOS fullscreen spacer', exc_info=True)
+        set_headerbar = getattr(self.window, '_set_macos_fullscreen_headerbar', None)
+        if set_headerbar is not None:
+            set_headerbar(False)
 
     # -- key handling ------------------------------------------------------
 
@@ -426,7 +438,7 @@ class WindowFullscreenController:
         across the whole surface whatever height the theme gives them.
         """
         height = 0
-        names = ('header_bar',)
+        names = ('_macos_header_bar', 'header_bar')
         if not self._tab_bar_is_in_top_chrome():
             # Compatibility with older/alternate window layouts where the tab
             # bar is still its own ToolbarView top bar.
