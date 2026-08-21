@@ -1044,6 +1044,13 @@ class SplitViewTab(Gtk.Box):
         # their Paned containers; no separate unparent() needed here.
         self._rebuild_layout()
         self._update_tab_title()
+        if (len(self._panes) == 1
+                and self._panes[0].get_terminal_count() == 1
+                and not getattr(self, '_collapse_pending', False)):
+            # Pane removal can run from an inner TabView close callback. Wait
+            # until that close has settled before reparenting the survivor.
+            self._collapse_pending = True
+            GLib.idle_add(self._collapse_single_terminal_pane)
         # Close the tab if no panes remain
         if not self._panes and self._tab_page is not None:
             self.window._suppress_close_confirmation = True
@@ -1051,6 +1058,60 @@ class SplitViewTab(Gtk.Box):
                 self.window.tab_view.close_page(self._tab_page)
             finally:
                 self.window._suppress_close_confirmation = False
+
+    def _collapse_single_terminal_pane(self) -> bool:
+        """Replace a one-terminal split tab with a normal terminal tab."""
+        self._collapse_pending = False
+        if len(self._panes) != 1 or self._tab_page is None:
+            return False
+        pane = self._panes[0]
+        terminals = pane.get_terminals()
+        if len(terminals) != 1:
+            return False
+
+        terminal = terminals[0]
+        inner_page = pane._inner_tab_view.get_page(terminal)
+        title = (
+            inner_page.get_title()
+            if inner_page is not None
+            else getattr(getattr(terminal, 'connection', None), 'nickname', None)
+        ) or _("Terminal")
+
+        tab_view = self.window.tab_view
+        try:
+            position = tab_view.get_page_position(self._tab_page)
+        except Exception:
+            position = tab_view.get_n_pages()
+
+        # Detach only the widget. Closing the inner page would run its normal
+        # terminal cleanup path and disconnect the session we are preserving.
+        try:
+            terminal.unparent()
+        except Exception:
+            logger.debug("Could not detach surviving split terminal", exc_info=True)
+            return False
+
+        self.window._suppress_close_confirmation = True
+        try:
+            tab_view.close_page(self._tab_page)
+        finally:
+            self.window._suppress_close_confirmation = False
+
+        try:
+            page = tab_view.insert(terminal, position)
+        except Exception:
+            page = tab_view.append(terminal)
+        page.set_title(title)
+        try:
+            from sshpilot import icon_utils  # noqa: PLC0415
+            page.set_icon(
+                icon_utils.new_gicon_from_icon_name('utilities-terminal-symbolic')
+            )
+        except Exception:
+            pass
+        tab_view.set_selected_page(page)
+        self.window._update_tab_button_visibility()
+        return False
 
     def register_pane(self, pane: SplitPane) -> None:
         if pane not in self._panes:

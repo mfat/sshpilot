@@ -2643,8 +2643,9 @@ class TerminalWidget(Gtk.Box):
             # Set up the terminal for local shell
             self.setup_terminal()
 
-            # Set initial title for local terminal
-            self.emit('title-changed', 'Local Terminal')
+            # Use the same neutral fallback as the local tab. Shell-provided
+            # titles can still replace it later.
+            self.emit('title-changed', _('Terminal'))
 
             # Try agent-based approach first (fixes job control in Flatpak)
             if is_flatpak() and self._try_agent_based_shell():
