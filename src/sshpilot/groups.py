@@ -239,6 +239,16 @@ class GroupManager:
         return list(self.groups.values())
 
     def get_group_hierarchy(self):
+        def ordered(group_ids):
+            return sorted(
+                (group_id for group_id in group_ids if group_id in self.groups),
+                key=lambda group_id: (
+                    int(self.groups[group_id].get("order", 0) or 0),
+                    str(self.groups[group_id].get("name", "")).casefold(),
+                    group_id,
+                ),
+            )
+
         def build(group_id, active):
             group = self.groups[group_id]
             if group_id in active:
@@ -247,15 +257,17 @@ class GroupManager:
             next_active = active | {group_id}
             result["children"] = [
                 build(child_id, next_active)
-                for child_id in group.get("children", [])
-                if child_id in self.groups
+                for child_id in ordered(group.get("children", []))
             ]
             return result
 
         return [
             build(group_id, set())
-            for group_id, group in self.groups.items()
-            if group.get("parent_id") is None
+            for group_id in ordered(
+                group_id
+                for group_id, group in self.groups.items()
+                if group.get("parent_id") is None
+            )
         ]
 
     def resolve_display_group_id(self, connection_reference, context_group_id=None):

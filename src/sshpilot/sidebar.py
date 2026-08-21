@@ -4023,7 +4023,7 @@ def _build_sidebar_header(window, sidebar_box):
     add_button.add_css_class('flat')
     _expand_toolbar_button(add_button)
     add_button.set_tooltip_text(
-        _('Add Connection ({shortcut}+Shift+N)').format(
+        _('New Connection ({shortcut}+Shift+N)').format(
             shortcut=get_primary_modifier_label())
     )
     add_button.connect('clicked', window.on_add_connection_clicked)
@@ -4032,6 +4032,19 @@ def _build_sidebar_header(window, sidebar_box):
     except Exception:
         pass
     header.append(add_button)
+
+    # Add group button — kept beside New Connection so the two creation
+    # actions are discoverable as one cluster.
+    new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
+    new_group_button.add_css_class('flat')
+    _expand_toolbar_button(new_group_button)
+    new_group_button.set_tooltip_text(_('New Group'))
+    new_group_button.set_action_name('win.create-group')
+    try:
+        new_group_button.set_can_focus(False)
+    except Exception:
+        pass
+    header.append(new_group_button)
 
     # Search button
     window.search_button = icon_utils.new_button_from_icon_name('system-search-symbolic')

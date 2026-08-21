@@ -3602,8 +3602,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         new_section = Gio.Menu()
         new_section.append(_('New Connection'), 'app.new-connection')
-        new_section.append(_('Create Group'), 'win.create-group')
-        new_section.append(_('Local Terminal'), 'app.local-terminal')
+        new_section.append(_('New Group'), 'win.create-group')
+        new_section.append(_('New Local Terminal'), 'app.local-terminal')
+        new_section.append(_('New Split View'), 'win.new-split-view')
         menu.append_section(None, new_section)
 
         server_section = Gio.Menu()
@@ -3631,6 +3632,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         import_export_menu.append(_('Export Configuration'), 'win.export-config')
         import_export_menu.append(_('Import Configuration'), 'win.import-config')
         submenu_section.append_submenu(_('Import/Export'), import_export_menu)
+
+        view_menu = Gio.Menu()
+        view_menu.append(_('Toggle Sidebar'), 'win.toggle_sidebar')
+        view_menu.append(_('Commands'), 'win.toggle-command-blocks')
+        view_menu.append_submenu(_('Theme'), self._create_theme_menu())
+        submenu_section.append_submenu(_('View'), view_menu)
 
         # Plugin-contributed pages live in the Tools submenu. The section
         # object is shared/mutable, so items the plugin host appends after
@@ -3770,6 +3777,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Get all connections
         connections = self.connection_manager.get_connections()
+        # GroupManager is a snapshot-backed presentation adapter. Reapply the
+        # selected display order whenever the list is rebuilt so daemon
+        # projection refreshes don't silently restore insertion order.
+        apply_sort_to_manager(
+            self.group_manager,
+            connections,
+            self._connection_sort_last or DEFAULT_CONNECTION_SORT,
+        )
         # Attach tags so the search filter and freshly built rows see them.
         for conn in connections:
             try:

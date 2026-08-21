@@ -1282,6 +1282,15 @@ def register_window_actions(window):
 
     register_fullscreen_action(window)
 
+    # Main-menu command matching the title-bar split-view button.
+    if hasattr(window, 'on_open_split_view_clicked'):
+        window.new_split_view_action = Gio.SimpleAction.new('new-split-view', None)
+        window.new_split_view_action.connect(
+            'activate',
+            lambda *_args: window.on_open_split_view_clicked(None),
+        )
+        window.add_action(window.new_split_view_action)
+
     # Sidebar toggle action and accelerators
     try:
         sidebar_action = Gio.SimpleAction.new('toggle_sidebar', None)

@@ -22,13 +22,14 @@ class SortPreset:
         return hash(self.preset_id)
 
 
-def _name_key(connection) -> Tuple[str, str, str]:
+def _name_key(connection) -> Tuple[str, str, str, str]:
     """Return a tuple used for alphabetical sorting."""
+    display_name = str(getattr(connection, "display_name", "") or "")
     nickname = str(getattr(connection, "nickname", "") or "")
     hostname = str(getattr(connection, "hostname", "") or "")
     alias = str(getattr(connection, "host", "") or "")
-    primary = nickname or alias or hostname
-    return (primary.casefold(), alias.casefold(), hostname.casefold())
+    primary = display_name or nickname or alias or hostname
+    return (primary.casefold(), nickname.casefold(), alias.casefold(), hostname.casefold())
 
 
 DEFAULT_CONNECTION_SORT = "name-asc"
@@ -37,14 +38,14 @@ CONNECTION_SORT_PRESETS: Dict[str, SortPreset] = {
     "name-asc": SortPreset(
         preset_id="name-asc",
         title=_("Name (A-Z)"),
-        description=_("Sort connections alphabetically by nickname"),
+        description=_("Sort connections alphabetically by display name"),
         icon_name="view-sort-ascending-symbolic",
         reverse=False,
     ),
     "name-desc": SortPreset(
         preset_id="name-desc",
         title=_("Name (Z-A)"),
-        description=_("Sort connections alphabetically by nickname in reverse"),
+        description=_("Sort connections alphabetically by display name in reverse"),
         icon_name="view-sort-descending-symbolic",
         reverse=True,
     ),
@@ -85,14 +86,22 @@ def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) 
     if not preset:
         return False
 
-    lookup = {
-        getattr(conn, "nickname", None): conn
-        for conn in connections
-        if getattr(conn, "nickname", None)
-    }
+    lookup = {}
+    for connection in connections:
+        # Group/root membership is daemon-owned and stores stable connection
+        # IDs, while older state and tests may still contain nicknames. Resolve
+        # both forms to the same presentation object before deriving the name
+        # key; sorting UUID strings directly makes the button appear to do
+        # nothing in the current daemon-backed UI.
+        for reference in (
+            getattr(connection, "id", None),
+            getattr(connection, "nickname", None),
+        ):
+            if reference:
+                lookup[str(reference)] = connection
 
     def _decorated_key(nickname: str) -> Tuple:
-        connection = lookup.get(nickname)
+        connection = lookup.get(str(nickname))
         if not connection:
             fallback = nickname.casefold()
             return (True, (fallback,), fallback)
@@ -156,7 +165,9 @@ def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) 
     # Sort root groups (parent_id is None)
     _sort_groups_recursive(parent_id=None)
 
-    if changed and hasattr(group_manager, "_save_groups"):
-        group_manager._save_groups()
-
+    # This ordering is a frontend presentation preference. GroupManager is a
+    # daemon-backed projection and deliberately rejects _save_groups(); writing
+    # here would both violate ownership and abort the sidebar rebuild after its
+    # rows have been cleared. The selected preset is persisted separately by
+    # MainWindow and reapplied to each fresh projection.
     return changed

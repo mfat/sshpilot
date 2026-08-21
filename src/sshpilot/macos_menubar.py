@@ -46,8 +46,9 @@ def build_macos_menubar(
 
     file_menu = menu_cls()
     file_menu.append(_("New Connection"), "app.new-connection")
-    file_menu.append(_("Create Group"), "win.create-group")
-    file_menu.append(_("Local Terminal"), "app.local-terminal")
+    file_menu.append(_("New Group"), "win.create-group")
+    file_menu.append(_("New Local Terminal"), "app.local-terminal")
+    file_menu.append(_("New Split View"), "win.new-split-view")
 
     file_sessions = menu_cls()
     file_sessions.append(_("Save Session…"), "win.save-session")
@@ -77,6 +78,15 @@ def build_macos_menubar(
     view_menu.append(_("Toggle Sidebar"), "win.toggle_sidebar")
     view_menu.append(_("Toggle Full Screen"), "win.toggle-fullscreen")
     view_menu.append(_("Tab Overview"), "app.tab-overview")
+    titlebar_commands = menu_cls()
+    titlebar_commands.append(_("Commands"), "win.toggle-command-blocks")
+    view_menu.append_section(None, titlebar_commands)
+
+    theme_menu = menu_cls()
+    theme_menu.append(_("Follow System"), "win.set-app-theme::default")
+    theme_menu.append(_("Light"), "win.set-app-theme::light")
+    theme_menu.append(_("Dark"), "win.set-app-theme::dark")
+    view_menu.append_submenu(_("Theme"), theme_menu)
     menubar.append_submenu(_("View"), view_menu)
 
     tools_menu = menu_cls()
