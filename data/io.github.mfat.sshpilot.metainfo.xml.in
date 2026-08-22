@@ -61,6 +61,12 @@
 
 
 
+    <release version="5.9.1" date="2026-08-22">
+      <description>
+        <p>Added French translation</p>
+        <p>Minor UI improvements</p>
+      </description>
+    </release>
     <release version="5.9.0" date="2026-08-21">
       <description>
         <p>Integrated tab bar into header for a cleaner, more minimal user interface</p>
