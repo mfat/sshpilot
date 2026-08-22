@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from sshpilot.api import ErrorCode, SshPilotError
 from sshpilot.api.connection_identity import connection_id_for
+from sshpilot.connection_sort import DEFAULT_CONNECTION_SORT
 from sshpilot.window import MainWindow
 
 
@@ -81,10 +82,15 @@ class _ProjectionGroupManager:
 
 class _ProjectionWindow:
     on_projection_reset = MainWindow.on_projection_reset
+    _reset_sort_to_manual = MainWindow._reset_sort_to_manual
 
     def __init__(self):
         self.group_manager = _ProjectionGroupManager()
         self.rebuilds = 0
+        # on_projection_reset drops the UI-only sort overlay the daemon just
+        # overwrote, so the double needs the state that path reads and writes.
+        self._connection_sort_last = DEFAULT_CONNECTION_SORT
+        self.sort_button = None
         # Mirrors MainWindow.__init__'s startup-focus bookkeeping, which
         # on_projection_reset reads/writes (see "focus first row on startup",
         # 52e6eb166).
@@ -93,6 +99,9 @@ class _ProjectionWindow:
 
     def rebuild_connection_list(self):
         self.rebuilds += 1
+
+    def _update_sort_button(self):
+        pass
 
     def _focus_connection_list_first_row(self):
         self.focus_calls += 1

@@ -1102,10 +1102,7 @@ class GroupRow(Gtk.ListBoxRow):
                 if getattr(window, "_drag_in_progress", False):
                     _clear_drop_indicator(window)
                     window._drag_in_progress = False
-                    if hasattr(window, "connection_list"):
-                        window.connection_list.set_selection_mode(
-                            Gtk.SelectionMode.MULTIPLE
-                        )
+                    _restore_sidebar_selection(window)
                 if hasattr(window, "end_sidebar_drag_expand"):
                     window.end_sidebar_drag_expand()
         except Exception as e:
@@ -2422,12 +2419,7 @@ def reset_connection_list_drag_session(window) -> None:
 
     window._drag_in_progress = False
 
-    connection_list = getattr(window, "connection_list", None)
-    if connection_list is not None:
-        try:
-            connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
-        except Exception:
-            pass
+    _restore_sidebar_selection(window)
 
     # A drop rebuilds the list, destroying the dragged connection row before its
     # drag-end fires; collapse the drag-expanded strip here so it isn't missed
@@ -2465,12 +2457,58 @@ def setup_connection_list_dnd(window):
         window._connection_autoscroll_interval_ms = 16
 
 
+def _suspend_sidebar_selection(window) -> None:
+    """Turn selection off for the duration of a drag, remembering what was selected.
+
+    ``SelectionMode.NONE`` clears the ListBox selection, and switching back to
+    ``MULTIPLE`` does not bring it back. Without stashing it here the selection
+    is simply gone by the time ``rebuild_connection_list()`` samples it, so the
+    rebuild has nothing to restore and GTK parks the cursor on row 0 — the drag
+    ends with the first group row highlighted no matter where the drop landed.
+    """
+    connection_list = getattr(window, "connection_list", None)
+    if connection_list is None:
+        return
+    try:
+        window._selection_before_drag = [
+            row for row in connection_list.get_selected_rows()
+        ]
+    except Exception:
+        window._selection_before_drag = []
+    try:
+        connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
+    except Exception:
+        pass
+
+
+def _restore_sidebar_selection(window) -> None:
+    """Re-enable selection after a drag and put back what _suspend stashed."""
+    connection_list = getattr(window, "connection_list", None)
+    if connection_list is None:
+        return
+    try:
+        connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+    except Exception:
+        pass
+    saved = getattr(window, "_selection_before_drag", None)
+    window._selection_before_drag = None
+    if not saved:
+        return
+    for row in saved:
+        try:
+            # A drop can retire rows mid-drag; only re-select ones still shown.
+            if row.get_parent() is not None:
+                connection_list.select_row(row)
+        except Exception:
+            pass
+
+
 def _on_connection_list_motion(window, target, x, y):
     try:
         # Prevent row selection during drag by temporarily disabling selection
         if not hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = True
-            window.connection_list.set_selection_mode(Gtk.SelectionMode.NONE)
+            _suspend_sidebar_selection(window)
 
         # Throttle motion events to improve performance
         current_time = GLib.get_monotonic_time()
@@ -2615,7 +2653,7 @@ def _on_connection_list_leave(window, target):
     # Restore selection mode after drag
     if hasattr(window, '_drag_in_progress'):
         window._drag_in_progress = False
-        window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+        _restore_sidebar_selection(window)
     
     return True
 
@@ -3628,7 +3666,7 @@ def _on_connection_list_drop(window, target, value, x, y):
         # Restore selection mode after drag
         if hasattr(window, '_drag_in_progress'):
             window._drag_in_progress = False
-            window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+            _restore_sidebar_selection(window)
 
         # Pasteboard-safe JSON string (or bare dict in tests).
         value = decode_dnd_payload(value)
