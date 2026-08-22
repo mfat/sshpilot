@@ -306,6 +306,7 @@ class WelcomePage(Gtk.Overlay):
         box = getattr(self, '_recent_box', None)
         if box is None:
             return
+        WelcomePage._clear_box(box)
 
         previous = getattr(self, '_recent_request', None)
         if previous is not None:
@@ -313,7 +314,6 @@ class WelcomePage(Gtk.Overlay):
             self._recent_request = None
 
         if getattr(self, '_client_selection_pending', False):
-            WelcomePage._clear_box(box)
             WelcomePage._append_recent_message(
                 box,
                 _('Loading recent connections…'),
@@ -322,7 +322,6 @@ class WelcomePage(Gtk.Overlay):
 
         client = getattr(self, 'client', None)
         if client is None:
-            WelcomePage._clear_box(box)
             WelcomePage._append_recent_message(
                 box,
                 WelcomePage._recent_read_error_message(),
@@ -334,17 +333,10 @@ class WelcomePage(Gtk.Overlay):
         if bridge is not None:
             self._recent_generation = getattr(self, '_recent_generation', 0) + 1
             generation = self._recent_generation
-            # Only blank the list when there is nothing on screen yet. Every
-            # daemon event refreshes this page (see Application._handle_api_-
-            # client_event), so clearing to "Loading…" up front made the Start
-            # page flash real rows -> placeholder -> real rows on each one --
-            # a drag-and-drop reorder in the sidebar included. The rows stay
-            # put until _render_recent_connections swaps them in one go.
-            if box.get_first_child() is None:
-                WelcomePage._append_recent_message(
-                    box,
-                    _('Loading recent connections…'),
-                )
+            WelcomePage._append_recent_message(
+                box,
+                _('Loading recent connections…'),
+            )
             self._recent_request = bridge.submit(
                 client.list_connections,
                 on_success=lambda connections: self._finish_recent_read(

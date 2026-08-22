@@ -3815,7 +3815,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # omnisearch lands — re-enable by calling self._append_command_matches().
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
-        restored_focus_row = None
         for connection_uuid, group_id in selected_connection_rows:
             connection = self.connection_manager.get_connection_by_uuid(
                 connection_uuid
@@ -3823,19 +3822,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             for row in self.connection_rows.get(connection, ()):
                 if getattr(row, '_group_id', None) == group_id:
                     self.connection_list.select_row(row)
-                    if restored_focus_row is None:
-                        restored_focus_row = row
                     break
-        if restored_focus_row is not None and getattr(
-            self, '_rebuild_had_row_focus', False
-        ):
-            # Only when a row genuinely held focus before the rebuild, so this
-            # never steals focus from the search entry or a terminal.
-            try:
-                restored_focus_row.grab_focus()
-            except Exception:
-                pass
-        self._rebuild_had_row_focus = False
         if scroll_position is not None and hasattr(self, 'connection_scrolled') and self.connection_scrolled:
             vadj = self.connection_scrolled.get_vadjustment()
             if vadj:
@@ -3890,21 +3877,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 selected_connection_rows.append(
                     (connection_id, getattr(row, '_group_id', None))
                 )
-
-        # Destroying every row drops the focus it held, and GTK then parks the
-        # cursor on row 0 — which is why a drag used to end with the first group
-        # row highlighted. Remember focus here so _finish_rebuild can put it back
-        # on whatever row the user actually had.
-        self._rebuild_had_row_focus = False
-        try:
-            probe = self.connection_list.get_first_child()
-            while probe is not None:
-                if probe.has_focus():
-                    self._rebuild_had_row_focus = True
-                    break
-                probe = probe.get_next_sibling()
-        except Exception:
-            self._rebuild_had_row_focus = False
 
         # Clear existing rows
         child = self.connection_list.get_first_child()
