@@ -7,6 +7,7 @@ context so it works inside Flatpak/PyInstaller bundles.
 
 from __future__ import annotations
 
+from gettext import gettext as _
 import hashlib
 import json
 import ssl
@@ -52,7 +53,9 @@ def _read_url(url: str, timeout: int) -> bytes:
         with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx()) as resp:
             return resp.read()
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
-        raise RegistryError(f"Could not reach {url}: {exc}") from exc
+        raise RegistryError(
+            _("Could not reach {url}: {error}").format(url=url, error=exc)
+        ) from exc
 
 
 def fetch_index(url: str = DEFAULT_REGISTRY_URL, timeout: int = HTTP_TIMEOUT) -> dict:
@@ -60,9 +63,11 @@ def fetch_index(url: str = DEFAULT_REGISTRY_URL, timeout: int = HTTP_TIMEOUT) ->
     try:
         data = json.loads(raw)
     except ValueError as exc:
-        raise RegistryError(f"Invalid registry JSON: {exc}") from exc
+        raise RegistryError(
+            _("Invalid registry JSON: {error}").format(error=exc)
+        ) from exc
     if not isinstance(data, dict) or data.get("schemaVersion") != 1:
-        raise RegistryError("Unsupported or missing registry schemaVersion.")
+        raise RegistryError(_("Unsupported or missing registry schemaVersion."))
     return data
 
 
@@ -122,11 +127,11 @@ def download_package(download_url: str, checksum_url: str, dest: str,
     checksum asset. Returns the verified hash; raises RegistryError otherwise."""
     expected = _parse_checksum(_read_url(checksum_url, timeout))
     if not expected:
-        raise RegistryError("Could not read the package checksum.")
+        raise RegistryError(_("Could not read the package checksum."))
     data = _read_url(download_url, timeout)
     actual = hashlib.sha256(data).hexdigest()
     if actual != expected:
-        raise RegistryError("Checksum mismatch — refusing to install.")
+        raise RegistryError(_("Checksum mismatch — refusing to install."))
     with open(dest, "wb") as fh:
         fh.write(data)
     return actual

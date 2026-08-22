@@ -31,6 +31,7 @@ src/sshpilot/log_viewer.py
 src/sshpilot/macos_menubar.py
 src/sshpilot/main.py
 src/sshpilot/omni_search.py
+src/sshpilot/plugins/builtin/docker_manager/__init__.py
 src/sshpilot/plugins/builtin/docker_manager/dialogs.py
 src/sshpilot/plugins/builtin/docker_manager/page.py
 src/sshpilot/plugins/builtin/docker_manager/tab_compose.py
@@ -44,6 +45,7 @@ src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py
 src/sshpilot/plugins/builtin/mosh_protocol/__init__.py
 src/sshpilot/plugins/builtin/serial_protocol/__init__.py
 src/sshpilot/plugins/builtin/telnet_protocol/__init__.py
+src/sshpilot/plugins/registry_client.py
 src/sshpilot/port_utils.py
 src/sshpilot/preferences.py
 src/sshpilot/rbw_setup.py
@@ -60,6 +62,7 @@ src/sshpilot/terminal.py
 src/sshpilot/terminal_manager.py
 src/sshpilot/terminal_search.py
 src/sshpilot/text_editor.py
+src/sshpilot/theme_selector.py
 src/sshpilot/web_tab.py
 src/sshpilot/welcome_page.py
 src/sshpilot/window.py
