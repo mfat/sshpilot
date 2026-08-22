@@ -1,3 +1,11 @@
+sshpilot (5.9.1-1) unstable; urgency=medium
+
+  * Release v5.9.1.
+  * Added French translation
+  * Minor UI improvements
+
+ -- Mehdi <mah.fat@gmail.com>  Sat, 22 Aug 2026 00:25:14 +0000
+
 sshpilot (5.9.0-1) unstable; urgency=medium
 
   * Release v5.9.0.
