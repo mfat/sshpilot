@@ -142,6 +142,12 @@ jobs:
             - name: openssh
               buildsystem: simple
               build-commands:
+                # The release tag ships a generated configure script. Flatpak's
+                # git source checkout gives files fresh mtimes, which can make
+                # configure.ac appear newer than configure even though neither
+                # file was modified. Refresh configure's mtime instead of
+                # regenerating release artifacts with autoreconf.
+                - touch configure
                 - >-
                   ./configure
                   --prefix=/app
