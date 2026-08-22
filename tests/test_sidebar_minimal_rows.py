@@ -111,6 +111,7 @@ def test_restore_reapplies_nested_indentation():
 
 def test_compact_initials_style_creates_named_avatar(monkeypatch):
     row, mod = _make('initials')
+    row.connection.display_name = 'Production Web'
     fake_avatar = MagicMock()
     make_avatar = MagicMock(return_value=fake_avatar)
     monkeypatch.setattr(mod, '_make_avatar', make_avatar)
@@ -118,11 +119,24 @@ def test_compact_initials_style_creates_named_avatar(monkeypatch):
     row.set_compact(True)
 
     assert row._avatar is fake_avatar
-    # Initials derived from the nickname, not a hashed AdwAvatar.
+    # Initials are derived from the display name, not the technical nickname.
     assert make_avatar.call_args.kwargs == {'initials': 'PW'}
+    row.set_tooltip_text.assert_called_with('Production Web')
     row._content_box.prepend.assert_called_with(fake_avatar)
     fake_avatar.set_visible.assert_called_with(True)
     row.connection_icon.set_visible.assert_called_with(False)
+
+
+def test_compact_initials_refreshes_existing_avatar_from_display_name(monkeypatch):
+    row, mod = _make('initials')
+    fake_avatar = MagicMock()
+    monkeypatch.setattr(mod, '_make_avatar', MagicMock(return_value=fake_avatar))
+
+    row.set_compact(True)
+    row.connection.display_name = 'Production Database'
+    row.set_compact(True)
+
+    fake_avatar.set_text.assert_called_with('PD')
 
 
 def test_compact_avatar_filled_with_group_color(monkeypatch):

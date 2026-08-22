@@ -1,3 +1,11 @@
+sshpilot (5.9.2-1) unstable; urgency=medium
+
+  * Release v5.9.2.
+  * Fixes drag and drop reordering not working
+  * Adds manual sorting option
+
+ -- Mehdi <mah.fat@gmail.com>  Sat, 22 Aug 2026 23:11:16 +0000
+
 sshpilot (5.9.1-1) unstable; urgency=medium
 
   * Release v5.9.1.

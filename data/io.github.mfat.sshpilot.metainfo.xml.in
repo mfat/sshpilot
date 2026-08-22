@@ -61,6 +61,12 @@
 
 
 
+    <release version="5.9.2" date="2026-08-22">
+      <description>
+        <p>Fixes drag and drop reordering not working</p>
+        <p>Adds manual sorting option</p>
+      </description>
+    </release>
     <release version="5.9.1" date="2026-08-22">
       <description>
         <p>Added French translation</p>

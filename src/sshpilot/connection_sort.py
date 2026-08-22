@@ -17,6 +17,8 @@ class SortPreset:
     description: str
     icon_name: str
     reverse: bool = False
+    #: ``True`` for the pass-through preset that shows the daemon's own order.
+    manual: bool = False
 
     def __hash__(self) -> int:  # pragma: no cover - required for dataclass
         return hash(self.preset_id)
@@ -32,9 +34,21 @@ def _name_key(connection) -> Tuple[str, str, str, str]:
     return (primary.casefold(), nickname.casefold(), alias.casefold(), hostname.casefold())
 
 
-DEFAULT_CONNECTION_SORT = "name-asc"
+#: Pass-through preset: show the ordering the daemon reports, untouched.
+MANUAL_CONNECTION_SORT = "manual"
+
+#: Nothing is sorted until the user asks, so the daemon's order is the default.
+DEFAULT_CONNECTION_SORT = MANUAL_CONNECTION_SORT
 
 CONNECTION_SORT_PRESETS: Dict[str, SortPreset] = {
+    MANUAL_CONNECTION_SORT: SortPreset(
+        preset_id=MANUAL_CONNECTION_SORT,
+        title=_("Manual order"),
+        description=_("Show connections in the order you arranged them"),
+        icon_name="view-list-symbolic",
+        reverse=False,
+        manual=True,
+    ),
     "name-asc": SortPreset(
         preset_id="name-asc",
         title=_("Name (A-Z)"),
@@ -50,6 +64,9 @@ CONNECTION_SORT_PRESETS: Dict[str, SortPreset] = {
         reverse=True,
     ),
 }
+
+#: Order the sort button steps through on each click.
+CONNECTION_SORT_CYCLE = (MANUAL_CONNECTION_SORT, "name-asc", "name-desc")
 
 
 def _normalize_key(value: Optional[Sequence[str]]) -> Tuple:
@@ -77,13 +94,15 @@ def _normalize_key(value: Optional[Sequence[str]]) -> Tuple:
 
 def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) -> bool:
     """
-    Reorder connection lists managed by ``group_manager`` using ``preset_id``.
+    Reorder the frontend group projection using ``preset_id``.
 
-    Returns ``True`` when any ordering changed and persists the new order.
+    Returns ``True`` when any ordering changed.
     """
 
     preset = CONNECTION_SORT_PRESETS.get(preset_id)
-    if not preset:
+    if not preset or preset.manual:
+        # Manual order *is* the daemon projection: there is nothing to reorder,
+        # and the caller restores it by refreshing the projection instead.
         return False
 
     lookup = {}
@@ -165,9 +184,7 @@ def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) 
     # Sort root groups (parent_id is None)
     _sort_groups_recursive(parent_id=None)
 
-    # This ordering is a frontend presentation preference. GroupManager is a
-    # daemon-backed projection and deliberately rejects _save_groups(); writing
-    # here would both violate ownership and abort the sidebar rebuild after its
-    # rows have been cleared. The selected preset is persisted separately by
-    # MainWindow and reapplied to each fresh projection.
+    # GroupManager is daemon-backed. Keep sorting presentation-only here;
+    # ordinary rebuilds must preserve the authoritative daemon ordering so
+    # manual drag-and-drop reordering is not overwritten.
     return changed

@@ -85,7 +85,6 @@ def get_default_config() -> Dict[str, Any]:
             'group_row_display': 'nested',
             'use_group_color_in_tab': False,
             'use_group_color_in_terminal': False,
-            'connection_sort_last': 'name-asc',
             'sidebar_show_user_hostname': True,
             'sidebar_show_group_count': True,
             'sidebar_show_connection_status': True,
