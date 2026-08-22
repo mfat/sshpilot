@@ -13,6 +13,7 @@ image/volume cleanup.
 
 from __future__ import annotations
 
+from gettext import gettext as _
 import logging
 
 from ...api import PluginContext, SshPilotPlugin
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 _ICON = "brand-docker-symbolic"
 _LOCAL_TARGET = "__local__"
-_LOCAL_TITLE = "Local"
+_LOCAL_TITLE = _("Local")
 
 
 class Plugin(SshPilotPlugin):
@@ -36,12 +37,12 @@ class Plugin(SshPilotPlugin):
             return
         # Tools-menu "Docker Console" → sidebar selection, else Local. The page
         # itself is never opened directly; on_activate handles the click.
-        ctx.ui.register_page("manager", "Docker Console", _ICON, lambda: None,
+        ctx.ui.register_page("manager", _("Docker Console"), _ICON, lambda: None,
                              on_activate=self._open_from_tools)
         # Right-click a connection → a per-host Docker Console tab (API >= 1.7).
         register_action = getattr(ctx.ui, "register_connection_action", None)
         if callable(register_action):
-            register_action("open", "Docker Console", _ICON, self._open_host_page)
+            register_action("open", _("Docker Console"), _ICON, self._open_host_page)
 
     # --- one tab per host (reused if already open) ---------------------
     def _open_host_page(self, nickname: str) -> None:
