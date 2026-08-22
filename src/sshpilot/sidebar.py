@@ -2322,13 +2322,20 @@ class ConnectionRow(Gtk.ListBoxRow):
         if warning_icon is not None:
             warning_icon.set_visible(False)
         self.status_icon.set_visible(False)
-        self.set_tooltip_text(self.connection.nickname)
+        connection_name = (
+            getattr(self.connection, 'display_name', None)
+            or self.connection.nickname
+        )
+        self.set_tooltip_text(connection_name)
 
         if style == 'initials':
             if self._avatar is None:
                 self._avatar = _make_avatar(
-                    initials=_avatar_initials(self.connection.nickname))
+                    initials=_avatar_initials(connection_name))
                 content.prepend(self._avatar)
+            else:
+                # The display name can change while the row remains compact.
+                self._avatar.set_text(_avatar_initials(connection_name))
             self._avatar.set_visible(True)
             self.connection_icon.set_visible(False)
             # The strip always shows the group color as a fill on the avatar,
