@@ -35,6 +35,7 @@ modules:
       - type: git
         url: https://github.com/PJK/libcbor.git
         tag: v0.13.0
+        commit: 9826a4315116a588f7416912db9da6fcecd8da11
 
   - name: libfido2
     buildsystem: simple
@@ -62,6 +63,7 @@ modules:
       - type: git
         url: https://github.com/Yubico/libfido2.git
         tag: 1.17.0
+        commit: b974e7cf2ee7392134cc12c08b76a068cf250dd8
 
   - name: openssh
     buildsystem: simple
@@ -93,6 +95,7 @@ modules:
       - type: git
         url: https://github.com/openssh/openssh-portable.git
         tag: V_10_4_P1
+        commit: e8dd756725e8800fcd0b3fd71ee6b4382d1e8fab
 
   - name: ssh-copy-id
     buildsystem: simple
