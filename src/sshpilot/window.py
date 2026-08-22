@@ -3871,14 +3871,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Get all connections
         connections = self.connection_manager.get_connections()
-        # GroupManager is a snapshot-backed presentation adapter. Reapply the
-        # selected display order whenever the list is rebuilt so daemon
-        # projection refreshes don't silently restore insertion order.
-        apply_sort_to_manager(
-            self.group_manager,
-            connections,
-            self._connection_sort_last or DEFAULT_CONNECTION_SORT,
-        )
         # Attach tags so the search filter and freshly built rows see them.
         for conn in connections:
             try:

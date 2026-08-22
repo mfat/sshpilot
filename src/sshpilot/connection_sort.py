@@ -77,9 +77,9 @@ def _normalize_key(value: Optional[Sequence[str]]) -> Tuple:
 
 def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) -> bool:
     """
-    Reorder connection lists managed by ``group_manager`` using ``preset_id``.
+    Reorder the frontend group projection using ``preset_id``.
 
-    Returns ``True`` when any ordering changed and persists the new order.
+    Returns ``True`` when any ordering changed.
     """
 
     preset = CONNECTION_SORT_PRESETS.get(preset_id)
@@ -165,9 +165,7 @@ def apply_connection_sort(group_manager, connections: Iterable, preset_id: str) 
     # Sort root groups (parent_id is None)
     _sort_groups_recursive(parent_id=None)
 
-    # This ordering is a frontend presentation preference. GroupManager is a
-    # daemon-backed projection and deliberately rejects _save_groups(); writing
-    # here would both violate ownership and abort the sidebar rebuild after its
-    # rows have been cleared. The selected preset is persisted separately by
-    # MainWindow and reapplied to each fresh projection.
+    # GroupManager is daemon-backed. Keep sorting presentation-only here;
+    # ordinary rebuilds must preserve the authoritative daemon ordering so
+    # manual drag-and-drop reordering is not overwritten.
     return changed
