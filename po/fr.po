@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-21 20:05+0200\n"
-"PO-Revision-Date: 2026-08-21 20:22+0200\n"
+"POT-Creation-Date: 2026-08-22 11:52+0200\n"
+"PO-Revision-Date: 2026-08-22 11:57+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -15,6 +15,26 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: src/sshpilot/actions.py:29 src/sshpilot/preferences.py:1650
+msgid "Sidebar Toggle Button"
+msgstr "Bouton de la barre latérale"
+
+#: src/sshpilot/actions.py:30 src/sshpilot/preferences.py:1656
+msgid "Split View Button"
+msgstr "Bouton de vue scindée"
+
+#: src/sshpilot/actions.py:31 src/sshpilot/preferences.py:1662
+msgid "Command Snippets Button"
+msgstr "Bouton des extraits de commandes"
+
+#: src/sshpilot/actions.py:32 src/sshpilot/preferences.py:1667
+msgid "Theme Menu"
+msgstr "Menu du thème"
+
+#: src/sshpilot/actions.py:33 src/sshpilot/preferences.py:1672
+msgid "Local Terminal Button"
+msgstr "Bouton du terminal local"
 
 #. Split view shortcuts — registered, customizable actions; show their
 #. current (possibly overridden) accelerators like every other group.
@@ -3573,6 +3593,28 @@ msgstr "Parité"
 msgid "Stop bits"
 msgstr "Bits d’arrêt"
 
+#: src/sshpilot/plugins/registry_client.py:57
+#, python-brace-format
+msgid "Could not reach {url}: {error}"
+msgstr "Impossible de joindre {url} : {error}"
+
+#: src/sshpilot/plugins/registry_client.py:67
+#, python-brace-format
+msgid "Invalid registry JSON: {error}"
+msgstr "JSON du registre non valide : {error}"
+
+#: src/sshpilot/plugins/registry_client.py:70
+msgid "Unsupported or missing registry schemaVersion."
+msgstr "Le champ schemaVersion du registre est absent ou non pris en charge."
+
+#: src/sshpilot/plugins/registry_client.py:130
+msgid "Could not read the package checksum."
+msgstr "Impossible de lire la somme de contrôle du paquet."
+
+#: src/sshpilot/plugins/registry_client.py:134
+msgid "Checksum mismatch — refusing to install."
+msgstr "La somme de contrôle ne correspond pas — installation refusée."
+
 #: src/sshpilot/port_utils.py:117
 #, python-brace-format
 msgid "Local {lp} → {rh}:{rp}"
@@ -3829,6 +3871,22 @@ msgstr "Couleurs des groupes dans la barre latérale"
 msgid "Choose how group colors are shown in the sidebar"
 msgstr "Choisir comment les couleurs des groupes apparaissent dans la barre latérale"
 
+#: src/sshpilot/preferences.py:945
+msgid "Colored Rows"
+msgstr "Lignes colorées"
+
+#: src/sshpilot/preferences.py:946
+msgid "Color Badges"
+msgstr "Pastilles colorées"
+
+#: src/sshpilot/preferences.py:947
+msgid "Accent Bars"
+msgstr "Barres d’accentuation"
+
+#: src/sshpilot/preferences.py:948
+msgid "Color Dots"
+msgstr "Points colorés"
+
 #: src/sshpilot/preferences.py:977
 msgid "Use Group Color for Child Rows"
 msgstr "Utiliser la couleur du groupe pour ses lignes"
@@ -3916,6 +3974,10 @@ msgstr "Restaurer la session précédente"
 #: src/sshpilot/preferences.py:1227
 msgid "Open a saved session"
 msgstr "Ouvrir une session enregistrée"
+
+#: src/sshpilot/preferences.py:1263
+msgid "(no saved sessions)"
+msgstr "Aucune session enregistrée"
 
 #: src/sshpilot/preferences.py:1272
 msgid "Saved session"
@@ -4118,6 +4180,29 @@ msgstr "Icône"
 #: src/sshpilot/preferences.py:1633
 msgid "Header Bar Buttons"
 msgstr "Boutons de la barre d’en-tête"
+
+#: src/sshpilot/preferences.py:1651
+msgid ""
+"Show the button that hides/shows the sidebar (F9 still works when hidden)"
+msgstr ""
+"Afficher le bouton permettant d’afficher ou de masquer la barre latérale "
+"(F9 reste utilisable même si le bouton est masqué)"
+
+#: src/sshpilot/preferences.py:1657
+msgid "Show the split-view button (the grid icon that starts a split view)"
+msgstr "Afficher le bouton de vue scindée (l’icône en forme de grille qui ouvre une vue scindée)"
+
+#: src/sshpilot/preferences.py:1663
+msgid "Show the command snippets toggle button"
+msgstr "Afficher le bouton permettant d’afficher ou de masquer les extraits de commandes"
+
+#: src/sshpilot/preferences.py:1668
+msgid "Show the application theme menu beside the commands button"
+msgstr "Afficher le menu du thème de l’application à côté du bouton des extraits de commandes"
+
+#: src/sshpilot/preferences.py:1673
+msgid "Show the button that opens a local terminal"
+msgstr "Afficher le bouton qui ouvre un terminal local"
 
 #. Tips group at the bottom of the Interface page. Lets users
 #. re-enable the terminal tips banner after dismissing it with
@@ -5165,6 +5250,10 @@ msgstr "Serveurs de production"
 #: src/sshpilot/preferences.py:5274
 msgid "3 connections"
 msgstr "3 connexions"
+
+#: src/sshpilot/preferences.py:5521
+msgid "Using system accent color"
+msgstr "Utilisation de la couleur d’accentuation du système"
 
 #: src/sshpilot/preferences.py:6052
 msgid "Encoding"
@@ -6361,6 +6450,18 @@ msgstr "Enregistrer et envoyer"
 #: src/sshpilot/text_editor.py:1442
 msgid "Discard Changes"
 msgstr "Abandonner les modifications"
+
+#: src/sshpilot/theme_selector.py:64
+msgid "Follow System Style"
+msgstr "Style du système"
+
+#: src/sshpilot/theme_selector.py:65
+msgid "Light Style"
+msgstr "Style clair"
+
+#: src/sshpilot/theme_selector.py:66
+msgid "Dark Style"
+msgstr "Style sombre"
 
 #: src/sshpilot/web_tab.py:82
 msgid "Reload"
@@ -8069,6 +8170,10 @@ msgstr ""
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:69
 msgid "Added theme selector to main menu, inspired by Ptyxis"
 msgstr "Ajout d’un sélecteur de thème au menu principal, inspiré de Ptyxis"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid "Added French translation"
+msgstr "Ajout de la traduction française"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:70
 msgid "Minor UI improvements"
