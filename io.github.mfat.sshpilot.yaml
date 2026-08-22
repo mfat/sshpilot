@@ -24,6 +24,76 @@ cleanup:
   - '*.a'
 
 modules:
+  - name: libcbor
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DWITH_EXAMPLES=OFF
+      - -DWITH_TESTS=OFF
+    sources:
+      - type: git
+        url: https://github.com/PJK/libcbor.git
+        tag: v0.13.0
+
+  - name: libfido2
+    buildsystem: simple
+    build-commands:
+      # GNOME 50's Flatpak toolchain already injects _FORTIFY_SOURCE=3.
+      # libfido2 1.17.0 adds _FORTIFY_SOURCE=2 for Release builds and uses
+      # -Werror, so remove only the duplicate definition.
+      - sed -i '/CMAKE_C_FLAGS_RELEASE.*D_FORTIFY_SOURCE=2/d' CMakeLists.txt
+      - >-
+        cmake -S . -B build -G Ninja
+        -DCMAKE_INSTALL_PREFIX=/app
+        -DCMAKE_INSTALL_LIBDIR=lib
+        -DCMAKE_BUILD_TYPE=Release
+        -DBUILD_TESTS=OFF
+        -DBUILD_EXAMPLES=OFF
+        -DBUILD_MANPAGES=OFF
+        -DBUILD_STATIC_LIBS=OFF
+        -DBUILD_TOOLS=ON
+        -DNFC_LINUX=OFF
+      - cmake --build build --parallel ${FLATPAK_BUILDER_N_JOBS:-2}
+      - cmake --install build
+      - test -f /app/lib/libfido2.so
+      - pkg-config --modversion libfido2
+    sources:
+      - type: git
+        url: https://github.com/Yubico/libfido2.git
+        tag: 1.17.0
+
+  - name: openssh
+    buildsystem: simple
+    build-commands:
+      # The release tag ships a generated configure script. Refresh its mtime
+      # instead of regenerating release artifacts with autoreconf.
+      - touch configure
+      - >-
+        ./configure
+        --prefix=/app
+        --sysconfdir=/app/etc/ssh
+        --libexecdir=/app/libexec
+        --with-privsep-path=/app/var/empty
+        --without-pam
+        --without-kerberos5
+        --disable-strip
+      - make -j${FLATPAK_BUILDER_N_JOBS:-2}
+      - make install-nokeys
+      - test -x /app/bin/ssh
+      - test -x /app/bin/ssh-keygen
+      - test -x /app/bin/scp
+      - test -x /app/bin/sftp
+      - test -x /app/bin/ssh-agent
+      - test -x /app/bin/ssh-add
+      - test -x /app/libexec/ssh-sk-helper
+      - ldd /app/libexec/ssh-sk-helper | grep -q libfido2
+      - /app/bin/ssh -V
+    sources:
+      - type: git
+        url: https://github.com/openssh/openssh-portable.git
+        tag: V_10_4_P1
+
   - name: ssh-copy-id
     buildsystem: simple
     build-commands:
