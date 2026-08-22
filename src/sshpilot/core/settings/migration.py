@@ -168,9 +168,11 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         ui_cfg['use_group_color_in_terminal'] = bool(ui_cfg['use_group_color_in_terminal'])
         updated = True
 
-    sort_last = ui_cfg.get('connection_sort_last')
-    if not isinstance(sort_last, str):
-        ui_cfg['connection_sort_last'] = 'name-asc'
+    # ``connection_sort_last`` used to persist the sidebar sort preset. The sort
+    # is a UI-only overlay that the daemon projection drops on every refresh, so
+    # restoring it made the button advertise an order that was never applied.
+    if 'connection_sort_last' in ui_cfg:
+        del ui_cfg['connection_sort_last']
         updated = True
 
     ssh_cfg = config.get('ssh')

@@ -57,8 +57,10 @@ from .connection_display import (
     format_connection_host_display,
 )
 from .connection_sort import (
+    CONNECTION_SORT_CYCLE,
     CONNECTION_SORT_PRESETS,
     DEFAULT_CONNECTION_SORT,
+    MANUAL_CONNECTION_SORT,
     apply_connection_sort as apply_sort_to_manager,
 )
 # Port forwarding UI is now integrated into connection_dialog.py
@@ -440,14 +442,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Active tag filter (casefolded tag key), or None for all connections
         self._tag_filter = None
 
-        # Remember last chosen sort preset
-        try:
-            stored_sort = str(self.config.get_setting('ui.connection_sort_last', DEFAULT_CONNECTION_SORT))
-        except Exception:
-            stored_sort = DEFAULT_CONNECTION_SORT
-        if stored_sort not in CONNECTION_SORT_PRESETS:
-            stored_sort = DEFAULT_CONNECTION_SORT
-        self._connection_sort_last = stored_sort
+        # Sorting is a UI-only overlay on the daemon projection, and the next
+        # projection reset drops it. Persisting the preset across restarts made
+        # the button advertise a sort that was never applied, so the window
+        # always opens on the daemon's own (manual) order.
+        self._connection_sort_last = DEFAULT_CONNECTION_SORT
         self.sort_button = None
 
         # Set up window
@@ -3120,7 +3119,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _build_sort_button(self):
         from sshpilot import icon_utils
-        button = icon_utils.new_button_from_icon_name("view-sort-ascending-symbolic")
+        button = icon_utils.new_button_from_icon_name("view-list-symbolic")
         button.add_css_class('flat')
         button.set_can_focus(False)
         button.connect("clicked", self._on_sort_button_clicked)
@@ -3138,9 +3137,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return button
 
     def _next_sort_preset_id(self, current_id: str) -> str:
-        if current_id == "name-desc":
-            return "name-asc"
-        return "name-desc"
+        """Step the button through manual -> A-Z -> Z-A -> manual."""
+        try:
+            index = CONNECTION_SORT_CYCLE.index(current_id)
+        except ValueError:
+            return CONNECTION_SORT_CYCLE[0]
+        return CONNECTION_SORT_CYCLE[(index + 1) % len(CONNECTION_SORT_CYCLE)]
 
     def _update_sort_button(self):
         if not self.sort_button:
@@ -3154,11 +3156,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         next_preset_id = self._next_sort_preset_id(preset_id)
         next_preset = CONNECTION_SORT_PRESETS.get(next_preset_id)
         if next_preset:
-            tooltip = _("Sort {current} — click for {next}").format(
+            # "Sort Manual order" reads badly, so the preset titles carry the
+            # wording and the template only supplies the current/next framing.
+            tooltip = _("{current} — click for {next}").format(
                 current=preset.title, next=next_preset.title
             )
         else:
-            tooltip = _("Sort {title}").format(title=preset.title)
+            tooltip = preset.title
 
         try:
             self.sort_button.set_tooltip_text(tooltip)
@@ -3176,33 +3180,46 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             preset_id = DEFAULT_CONNECTION_SORT
             preset = CONNECTION_SORT_PRESETS[preset_id]
 
-        changed = apply_sort_to_manager(
-            self.group_manager,
-            self.connection_manager.get_connections(),
-            preset_id,
-        )
+        if preset.manual:
+            # Manual order lives in the daemon, so "unsorting" means dropping
+            # the local overlay and re-reading the authoritative projection.
+            self.group_manager.bind_connections(self.connection_manager.connections)
+            self.rebuild_connection_list()
+        else:
+            changed = apply_sort_to_manager(
+                self.group_manager,
+                self.connection_manager.get_connections(),
+                preset_id,
+            )
+            if changed:
+                self.rebuild_connection_list()
 
         self._connection_sort_last = preset_id
-        try:
-            self.config.set_setting('ui.connection_sort_last', preset_id)
-        except Exception:
-            pass
-
         self._update_sort_button()
-        if changed:
-            self.rebuild_connection_list()
+        self._notify_sort_result(preset)
 
-        self._notify_sort_result(preset, changed)
+    def _reset_sort_to_manual(self):
+        """Drop the sort overlay after the daemon replaced the projection.
 
-    def _notify_sort_result(self, preset, changed: bool):
+        ``GroupManager._refresh()`` restores the daemon ordering on every
+        projection reset, which silently discards whatever the sort button
+        applied. Without this the button keeps advertising a sort that is no
+        longer on screen, and its next click cycles on from a stale state.
+        """
+        if self._connection_sort_last == MANUAL_CONNECTION_SORT:
+            return
+        self._connection_sort_last = MANUAL_CONNECTION_SORT
+        self._update_sort_button()
+
+    def _notify_sort_result(self, preset):
         toast_overlay = getattr(self, "toast_overlay", None)
         if not toast_overlay:
             return
 
-        if changed:
-            message = _("Connections sorted — {title}").format(title=preset.title)
+        if preset.manual:
+            message = _("Showing your manual order")
         else:
-            message = _("Already sorted as {title}").format(title=preset.title)
+            message = _("Connections sorted — {title}").format(title=preset.title)
 
         toast = Adw.Toast.new(message)
         toast.set_timeout(3)
@@ -5991,6 +6008,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def on_projection_reset(self, manager, _connection=None):
         """Rebuild presentation state after an authoritative store refresh."""
         self.group_manager.bind_connections(manager.connections)
+        # bind_connections() just restored the daemon ordering, so any sort the
+        # button was advertising is gone from the list as well.
+        self._reset_sort_to_manual()
         self.rebuild_connection_list()
         if not self._initial_connection_list_focus_done:
             # The daemon-backed client attaches asynchronously (client_bridge
