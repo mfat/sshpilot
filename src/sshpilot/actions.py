@@ -13,7 +13,7 @@ from .file_manager_integration import (
 from .shortcut_utils import get_primary_modifier_label
 from .platform_utils import is_macos
 from .shortcut_utils import TOGGLE_FULLSCREEN_ACTION
-from .i18n import ui_language_codes as _ui_language_codes
+from .i18n import N_, ui_language_codes as _ui_language_codes
 from . import wol
 
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
@@ -26,11 +26,11 @@ logger = logging.getLogger(__name__)
 
 
 HEADERBAR_VISIBILITY_ACTIONS = (
-    ('headerbar-sidebar-toggle', 'Sidebar Toggle Button', 'ui.headerbar_show_sidebar_toggle', False),
-    ('headerbar-split-view', 'Split View Button', 'ui.headerbar_show_split_view', False),
-    ('headerbar-commands', 'Command Snippets Button', 'ui.headerbar_show_commands', True),
-    ('headerbar-theme-menu', 'Theme Menu', 'ui.headerbar_show_theme_toggle', False),
-    ('headerbar-local-terminal', 'Local Terminal Button', 'ui.headerbar_show_local_terminal', True),
+    ('headerbar-sidebar-toggle', N_('Sidebar Toggle Button'), 'ui.headerbar_show_sidebar_toggle', False),
+    ('headerbar-split-view', N_('Split View Button'), 'ui.headerbar_show_split_view', False),
+    ('headerbar-commands', N_('Command Snippets Button'), 'ui.headerbar_show_commands', True),
+    ('headerbar-theme-menu', N_('Theme Menu'), 'ui.headerbar_show_theme_toggle', False),
+    ('headerbar-local-terminal', N_('Local Terminal Button'), 'ui.headerbar_show_local_terminal', True),
 )
 
 

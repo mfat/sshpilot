@@ -942,10 +942,10 @@ class PreferencesWindow(Adw.NavigationPage):
         )
 
         color_display_options = Gtk.StringList()
-        color_display_options.append("Colored Rows")
-        color_display_options.append("Color Badges")
-        color_display_options.append("Accent Bars")
-        color_display_options.append("Color Dots")
+        color_display_options.append(_("Colored Rows"))
+        color_display_options.append(_("Color Badges"))
+        color_display_options.append(_("Accent Bars"))
+        color_display_options.append(_("Color Dots"))
         self.group_color_display_row.set_model(color_display_options)
 
         current_mode = 'fill'
@@ -1260,7 +1260,7 @@ class PreferencesWindow(Adw.NavigationPage):
             for name in self._startup_session_names:
                 session_model.append(name)
         else:
-            session_model.append("(no saved sessions)")
+            session_model.append(_("(no saved sessions)"))
 
         self.startup_session_row = Gtk.DropDown()
         self.startup_session_row.set_model(session_model)
@@ -1313,9 +1313,9 @@ class PreferencesWindow(Adw.NavigationPage):
         self.theme_row.set_subtitle(_("Choose light, dark, or follow system theme"))
 
         themes = Gtk.StringList()
-        themes.append("Follow System")
-        themes.append("Light")
-        themes.append("Dark")
+        themes.append(_("Follow System"))
+        themes.append(_("Light"))
+        themes.append(_("Dark"))
         self.theme_row.set_model(themes)
 
         # Load saved theme preference
@@ -1647,30 +1647,30 @@ class PreferencesWindow(Adw.NavigationPage):
             headerbar_group.add(row)
 
         _add_headerbar_switch(
-            "Sidebar Toggle Button",
-            "Show the button that hides/shows the sidebar (F9 still works when hidden)",
+            _("Sidebar Toggle Button"),
+            _("Show the button that hides/shows the sidebar (F9 still works when hidden)"),
             'ui.headerbar_show_sidebar_toggle',
             default=False,
         )
         _add_headerbar_switch(
-            "Split View Button",
-            "Show the split-view button (the grid icon that starts a split view)",
+            _("Split View Button"),
+            _("Show the split-view button (the grid icon that starts a split view)"),
             'ui.headerbar_show_split_view',
             default=False,
         )
         _add_headerbar_switch(
-            "Command Snippets Button",
-            "Show the command snippets toggle button",
+            _("Command Snippets Button"),
+            _("Show the command snippets toggle button"),
             'ui.headerbar_show_commands',
         )
         _add_headerbar_switch(
-            "Theme Menu",
-            "Show the application theme menu beside the commands button",
+            _("Theme Menu"),
+            _("Show the application theme menu beside the commands button"),
             'ui.headerbar_show_theme_toggle',
         )
         _add_headerbar_switch(
-            "Local Terminal Button",
-            "Show the button that opens a local terminal",
+            _("Local Terminal Button"),
+            _("Show the button that opens a local terminal"),
             'ui.headerbar_show_local_terminal',
         )
 
@@ -5518,7 +5518,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.accent_color_row,
             'accent-color-override',
             Gdk.RGBA(0.2, 0.5, 0.9, 1.0),
-            'Using system accent color',
+            _('Using system accent color'),
         )
 
     def _set_color_button(self, button, row, setting_name, default_rgba, default_subtitle):
