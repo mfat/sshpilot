@@ -6,6 +6,7 @@ import codecs
 import logging
 import os
 import time
+from functools import lru_cache
 from typing import Any, Callable, Mapping, Optional, Protocol, Sequence
 
 import gi
@@ -331,6 +332,45 @@ class GridTrackingVteTerminal(Vte.Terminal):
         self._grid_tracking_enabled = False
 
 
+@lru_cache(maxsize=1)
+def _vte_needs_backspace_pin() -> bool:
+    """Whether the loaded VTE aborts on an XTGETTCAP backspace query with no PTY.
+
+    VTE's ``XTERM_RQTCAP`` handler answers a ``kb``/``kbs`` request by asking
+    the PTY for its VERASE character, passing ``EraseMode::eTTY`` as the
+    fallback mode without checking that a PTY exists. On a terminal that has
+    none, ``map_erase_binding`` then trips ``assert(auto_mode != eTTY)`` and
+    aborts the process -- vim sends that query on startup, so a daemon-backed
+    tab died as soon as the user opened a file (GNOME/vte#2952, our #1186).
+
+    Introduced in 0.82.0 (earlier releases never consulted the erase binding
+    from that handler) and fixed twice: backported to the 0.82 branch in
+    0.82.4, and on the 0.84 branch in 0.84.1. The 0.83.9x development
+    snapshots sit numerically between those two and are still affected, so
+    this cannot be reduced to a single cutoff.
+
+    Checks the *runtime* library, not what we built against, and answers
+    "affected" when the version cannot be read: pinning a fixed VTE is inert,
+    while skipping an affected one brings the abort back.
+    """
+    try:
+        version = (
+            Vte.get_major_version(),
+            Vte.get_minor_version(),
+            Vte.get_micro_version(),
+        )
+    except Exception:
+        logger.debug("Could not read the VTE runtime version", exc_info=True)
+        return True
+    if version < (0, 82, 0):
+        return False
+    if (0, 82, 4) <= version < (0, 83, 0):
+        return False
+    if version >= (0, 84, 1):
+        return False
+    return True
+
+
 class VTETerminalBackend:
     """VTE based terminal backend."""
 
@@ -448,6 +488,28 @@ class VTETerminalBackend:
                 self.vte.set_word_char_options("@-./_~")
         except Exception:
             logger.debug("Could not configure VTE word selection", exc_info=True)
+
+    def prepare_pty_less_emulation(self) -> None:
+        """Make this terminal safe to drive as a pure emulator, with no PTY.
+
+        Daemon-backed sessions leave VTE without a PTY: the daemon owns the
+        real one. Affected VTE versions abort the process when a program asks
+        the terminal what its Backspace key sends -- see
+        :func:`_vte_needs_backspace_pin`. Naming the binding explicitly keeps
+        the PTY-consulting branch unreachable.
+
+        ``ASCII_BACKSPACE`` is what VTE already resolves ``AUTO`` to for a
+        key press on a PTY-less terminal, so the bytes sent are unchanged;
+        only the answer to the query changes, from "abort" to that same
+        value. Never call this on a terminal that owns a PTY: there ``AUTO``
+        resolves through the tty to ``^?``, and pinning would alter it.
+        """
+        if not _vte_needs_backspace_pin():
+            return
+        try:
+            self.vte.set_backspace_binding(Vte.EraseBinding.ASCII_BACKSPACE)
+        except Exception:
+            logger.debug("Could not pin the VTE backspace binding", exc_info=True)
 
     def set_macos_option_key_passthrough(self, enabled: bool) -> None:
         """Install or remove the macOS Option key passthrough controller."""

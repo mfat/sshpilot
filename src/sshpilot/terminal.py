@@ -1255,6 +1255,18 @@ class TerminalWidget(Gtk.Box):
         if backend is None:
             return
         self._uninstall_daemon_backend_io()
+
+        # The daemon owns the PTY, so the backend renders without one. Let it
+        # apply whatever that costs it -- on affected VTE releases a program
+        # asking the terminal what Backspace sends would otherwise abort the
+        # process (#1186). Daemon paths only: a local tab owns its PTY and
+        # must keep VTE's own defaults.
+        prepare_pty_less = getattr(backend, 'prepare_pty_less_emulation', None)
+        if callable(prepare_pty_less):
+            try:
+                prepare_pty_less()
+            except Exception:
+                logger.debug("Backend PTY-less preparation failed", exc_info=True)
         try:
             connect_commit = getattr(backend, 'connect_commit', None)
             if callable(connect_commit):
