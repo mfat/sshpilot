@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-22 11:52+0200\n"
-"PO-Revision-Date: 2026-08-22 11:57+0200\n"
+"POT-Creation-Date: 2026-08-23 10:52+0200\n"
+"PO-Revision-Date: 2026-08-23 10:53+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -2098,6 +2098,14 @@ msgstr "Le surnom est obligatoire"
 #: src/sshpilot/core/validation/connection.py:52
 msgid "Nickname already exists"
 msgstr "Ce surnom existe déjà"
+
+#: src/sshpilot/connection_sort.py:46
+msgid "Manual order"
+msgstr "Ordre manuel"
+
+#: src/sshpilot/connection_sort.py:47
+msgid "Show connections in the order you arranged them"
+msgstr "Afficher les connexions dans l’ordre que vous avez défini"
 
 #: src/sshpilot/connection_sort.py:39
 msgid "Name (A-Z)"
@@ -6827,25 +6835,21 @@ msgstr "Sombre"
 msgid "Application theme: {theme}"
 msgstr "Thème de l’application : {theme}"
 
-#: src/sshpilot/window.py:3016
+#. "Sort Manual order" reads badly, so the preset titles carry the
+#. wording and the template only supplies the current/next framing.
+#: src/sshpilot/window.py:3161
 #, python-brace-format
-msgid "Sort {current} — click for {next}"
-msgstr "Tri {current} — cliquez pour choisir {next}"
+msgid "{current} — click for {next}"
+msgstr "{current} — cliquez pour choisir {next}"
 
-#: src/sshpilot/window.py:3020
-#, python-brace-format
-msgid "Sort {title}"
-msgstr "Trier par {title}"
+#: src/sshpilot/window.py:3220
+msgid "Showing your manual order"
+msgstr "Affichage selon l’ordre que vous avez défini"
 
 #: src/sshpilot/window.py:3062
 #, python-brace-format
 msgid "Connections sorted — {title}"
 msgstr "Connexions triées — {title}"
-
-#: src/sshpilot/window.py:3064
-#, python-brace-format
-msgid "Already sorted as {title}"
-msgstr "Déjà triées par {title}"
 
 #: src/sshpilot/macos_menubar.py:51 src/sshpilot/sidebar.py:4050
 #: src/sshpilot/window.py:3685
@@ -8124,6 +8128,14 @@ msgstr "Regroupement des serveurs"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:30
 msgid "mFat"
 msgstr "mFat"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid "Fixes drag and drop reordering not working"
+msgstr "Correction de la réorganisation par glisser-déposer"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
+msgid "Adds manual sorting option"
+msgstr "Ajout d’une option de tri manuel"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:66
 msgid ""
