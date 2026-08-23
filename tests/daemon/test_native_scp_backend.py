@@ -54,7 +54,12 @@ class _Process:
     def __init__(self, returncode=0, stderr=b""):
         self.pid = 1234
         self.returncode = returncode
-        self.stderr = SimpleNamespace(read=lambda _limit: stderr)
+        # Yield the payload once, then EOF -- a real pipe returns b"" when
+        # the child closes it. Returning it forever spun the drain thread.
+        _pending = [stderr] if stderr else []
+        self.stderr = SimpleNamespace(
+            read=lambda _limit: _pending.pop(0) if _pending else b"",
+        )
         self.terminated = False
         self.killed = False
 
