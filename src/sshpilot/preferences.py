@@ -2785,7 +2785,7 @@ class PreferencesWindow(Adw.NavigationPage):
             self.add_page_to_layout(N_("Security & Credentials"), "dialog-password-symbolic", self._build_security_preferences_page)
             self.add_page_to_layout(N_("Updates"), "software-update-available-symbolic", self._build_updates_preferences_page)
             self.add_page_to_layout(N_("Plugins"), "application-x-addon-symbolic", self._create_plugins_page)
-            self.add_page_to_layout(N_("Command Snippets"), "view-list-symbolic", self._create_command_blocks_page)
+            self.add_page_to_layout(N_("Command Snippets"), "camera-flash-symbolic", self._create_command_blocks_page)
             self.add_page_to_layout(N_("Advanced"), "applications-system-symbolic", self._build_advanced_preferences_page)
 
             self._schedule_idle_page_building()

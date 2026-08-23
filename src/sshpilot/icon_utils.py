@@ -79,6 +79,7 @@ _ICON_RESOURCE_MAP = {
     'warning-outline-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/warning-outline-symbolic.svg',
     'color-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/color-symbolic.svg',
     'brand-docker-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/brand-docker-symbolic.svg',
+    'camera-flash-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/camera-flash-symbolic.svg',
     'success-small-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/success-small-symbolic.svg',
     'network-server-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/network-server-symbolic.svg',
     'preferences-desktop-keyboard-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/preferences-desktop-keyboard-symbolic.svg',
@@ -252,4 +253,3 @@ def set_button_icon(button: Gtk.Widget, icon_name: str) -> None:
     # This works for both Button and ToggleButton in GTK4
     image = new_image_from_icon_name(icon_name)
     button.set_child(image)
-
