@@ -91,6 +91,9 @@ class _ProjectionWindow:
         self._initial_connection_list_focus_done = False
         self.focus_calls = 0
 
+    def _reset_sort_to_manual(self):
+        self.sort_resets = getattr(self, 'sort_resets', 0) + 1
+
     def rebuild_connection_list(self):
         self.rebuilds += 1
 

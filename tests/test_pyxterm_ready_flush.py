@@ -29,6 +29,8 @@ def _make_backend():
     b._pending_spawn = None
     b._output_hooks = []
     b._recent_output = ""
+    b._shortcut_passthrough = False
+    b.available = False
     order = []
     b._write_to_term = lambda text, *, bulk=False: order.append(("write", text, bulk))
     b.apply_theme = lambda: order.append(("theme", None))

@@ -331,6 +331,7 @@ class _FullscreenWindow:
             'is_start_tab_selected',
             'show_start_tab',
             '_update_tab_button_visibility',
+            '_update_command_snippets_button_visibility',
             '_toggle_sidebar_visibility',
             'toggle_fullscreen',
         ):

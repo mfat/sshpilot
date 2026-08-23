@@ -268,8 +268,14 @@ def test_overview_renders_the_configured_binding_not_hardcoded_f11(monkeypatch):
     recorded = []
 
     class _Shortcut:
-        def __init__(self, title=None, accelerator=None):
+        # Tolerate keywords this test does not assert on (action_name, ...) so
+        # the double does not have to track every Gtk.ShortcutsShortcut
+        # argument the help overview grows.
+        def __init__(self, title=None, accelerator=None, **_kwargs):
             recorded.append((title, accelerator))
+
+        def set_subtitle(self, _subtitle):
+            pass
 
     class _Group:
         def __init__(self, **_kwargs):

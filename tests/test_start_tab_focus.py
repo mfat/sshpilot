@@ -133,6 +133,7 @@ class _FocusWindow:
             'is_start_tab_selected',
             'show_start_tab',
             'on_tab_selected',
+            '_update_command_snippets_button_visibility',
         ):
             setattr(self, name, getattr(MainWindow, name).__get__(self, type(self)))
 

@@ -537,6 +537,7 @@ class _TabWindow:
 
         for name in (
             '_update_content_theme_for_selected_tab',
+            '_update_command_snippets_button_visibility',
             '_update_layout_toggle_state',
             '_is_start_tab_page',
             'has_user_tabs',
