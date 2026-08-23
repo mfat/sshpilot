@@ -5,7 +5,10 @@ import signal
 
 
 def test_cleanup_process_sends_sigterm_to_pgid(monkeypatch):
-    sys.modules.pop("sshpilot.terminal", None)
+    # Drop through monkeypatch so the module is put back afterwards: leaving
+    # it removed makes later modules re-import a *different* sshpilot.terminal
+    # than the one they bound functions from at import time.
+    monkeypatch.delitem(sys.modules, "sshpilot.terminal", raising=False)
 
     gi = types.ModuleType("gi")
     gi.require_version = lambda *a, **k: None

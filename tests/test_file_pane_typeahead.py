@@ -1,5 +1,6 @@
 import importlib
 import sys
+import pytest
 import types
 
 
@@ -27,6 +28,20 @@ def _ensure_paramiko_stub():
         SSHClient=_DummySSHClient,
         AutoAddPolicy=_DummyPolicy,
     )
+
+
+@pytest.fixture(autouse=True)
+def _restore_module_registry():
+    """Undo this module's rebuilding of the gi stubs and its purge of the
+    sshpilot.file_manager chain. Both live in the process-global sys.modules,
+    so without this every module imported later in the same worker inherits
+    the stubs built here -- which is how test_macos_menubar ended up failing
+    only in full-suite order."""
+    saved = dict(sys.modules)
+    yield
+    for name in set(sys.modules) - set(saved):
+        del sys.modules[name]
+    sys.modules.update(saved)
 
 
 def _ensure_gi_stub():
