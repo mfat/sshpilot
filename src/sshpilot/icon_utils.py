@@ -1,10 +1,20 @@
 """
 Icon utility functions for loading bundled icons with fallback to system icons.
 
-Bundled icons are registered on Gtk.IconTheme via set_resource_path() in main.py.
-We resolve icons through Gio.ThemedIcon so GTK's icon-theme cache is used and
-symbolic icons are recolored correctly.  Alias entries in _ICON_RESOURCE_MAP
-(names that map to a different resource file) still load via Gio.FileIcon.
+Bundled icons are loaded directly via Gio.FileIcon pointing at our gresource
+path, not resolved by name through Gtk.IconTheme.  GTK's icon-theme name
+lookup always checks the system's configured icon theme (and its parents)
+before any app-added resource/search path, no matter the order those paths
+were registered in -- so on a system with a non-Adwaita theme installed
+(Breeze, Yaru, elementary, ...) that happens to ship an icon with the same
+name (e.g. "list-add-symbolic", "go-home-symbolic"), Gio.ThemedIcon would
+silently resolve to the *system* icon instead of our bundled one.  Loading
+by resource file directly sidesteps that name collision entirely. GTK still
+recolors these correctly as symbolic icons (via CSS/currentColor and the
+.success/.warning/.error classes) as long as the filename ends in
+"-symbolic.svg", regardless of whether the GIcon is a ThemedIcon or a
+FileIcon. Names with no bundled resource fall back to Gio.ThemedIcon so
+real system icons (e.g. MIME types for arbitrary files) still resolve.
 Resolved Gio.Icon instances are cached per icon name for the process lifetime.
 """
 
@@ -156,19 +166,14 @@ _ICON_RESOURCE_MAP = {
 }
 
 
-def _is_direct_theme_lookup(icon_name: str, resource_path: str) -> bool:
-    """True when the bundled resource file name matches the themed icon name."""
-    return resource_path.endswith(f'/{icon_name}.svg')
-
-
 def get_gicon_for_icon_name(icon_name: str) -> Gio.Icon:
-    """Return a cached Gio.Icon for icon_name (ThemedIcon or alias FileIcon)."""
+    """Return a cached Gio.Icon for icon_name (bundled FileIcon, else ThemedIcon)."""
     cached = _gicon_cache.get(icon_name)
     if cached is not None:
         return cached
 
     resource_path = _ICON_RESOURCE_MAP.get(icon_name)
-    if resource_path and not _is_direct_theme_lookup(icon_name, resource_path):
+    if resource_path:
         file_obj = Gio.File.new_for_uri(f'resource://{resource_path}')
         icon: Gio.Icon = Gio.FileIcon.new(file_obj)
     else:
