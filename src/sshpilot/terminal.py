@@ -17,6 +17,7 @@ import shutil
 import pwd
 from datetime import datetime
 from typing import Optional
+from .accessibility import set_accessible_name
 from .platform_utils import is_flatpak, is_macos
 from .terminal_backends import (
     BaseTerminalBackend,
@@ -271,6 +272,7 @@ class TerminalWidget(Gtk.Box):
         # Create the backend before calling setup_terminal
         self.backend = self._create_backend()
         self.terminal_widget = self.backend.widget
+        self._update_terminal_accessible_name()
 
         # Search overlay lives in a composed object. Create it BEFORE
         # setup_terminal(): that call runs _install_shortcuts(), which attaches
@@ -647,6 +649,27 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             logger.debug("Files panel layout restore failed", exc_info=True)
 
+    def _update_terminal_accessible_name(self) -> None:
+        """Name the emulator widget after its connection.
+
+        VTE reports every terminal as simply "Terminal", which is ambiguous once
+        a window holds several (tabs, split view). The tab page still carries the
+        connection name; this makes the terminal itself identifiable too.
+        """
+        widget = getattr(self, 'terminal_widget', None)
+        if widget is None:
+            return
+        generic = _('Terminal')
+        connection = getattr(self, 'connection', None)
+        nickname = str(getattr(connection, 'nickname', '') or '').strip()
+        # Local shells are already called "Terminal"; don't produce
+        # "Terminal: Terminal".
+        set_accessible_name(
+            widget,
+            generic if not nickname or nickname == generic
+            else _('Terminal: {name}').format(name=nickname),
+        )
+
     def _create_backend(self, preferred: Optional[str] = None) -> BaseTerminalBackend:
         """Create the terminal backend based on configuration."""
         backend_name = preferred or "vte"
@@ -814,6 +837,7 @@ class TerminalWidget(Gtk.Box):
         # Create new backend
         self.backend = self._create_backend(backend_name)
         self.terminal_widget = self.backend.widget
+        self._update_terminal_accessible_name()
 
         # Add new widget to the container
         if self.terminal_widget is not None:
