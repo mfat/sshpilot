@@ -1903,29 +1903,10 @@ class PyXtermTerminalBackend:
             logger.debug(f"Failed to select all in PyXterm backend: {e}", exc_info=True)
 
     def reset(self, clear_scrollback: bool, clear_screen: bool) -> None:
-        """Reset the emulator: parser state, charsets and DEC private modes.
-
-        ``Terminal.reset()`` runs ``coreMouseService.reset()``, which is what
-        clears a mouse-tracking protocol (``?1000``/``?1002``/``?1003``) left
-        behind by an application that exited without restoring it.  While such
-        a mode is set xterm.js routes drags to the remote instead of selecting,
-        so copy silently does nothing (GH #1178).
-
-        The previous implementation dispatched through ``TerminalManager`` and
-        ``_terminal_id``, neither of which the embedded backend ever sets, so
-        it was a silent no-op on every code path that called it.
-        """
-        if not self.available:
-            return
-        # xterm.js reset() also reinitialises the buffers, so the screen is
-        # cleared either way; clear() additionally drops the scrollback.
-        script = (
-            "(function(){ if (typeof window.term !== 'undefined') {"
-            " window.term.reset();"
-            + (" window.term.clear();" if clear_screen else "")
-            + " } return true; })();"
-        )
-        self._run_javascript(script)
+        if self._terminal_id:
+            manager = getattr(self._pyxterm, "TerminalManager", None)
+            if manager:
+                manager().reset(self._terminal_id)  # type: ignore[attr-defined]
 
     def set_font_scale(self, scale: float) -> None:
         """Set font scale/zoom for xterm.js terminal by changing fontSize option"""

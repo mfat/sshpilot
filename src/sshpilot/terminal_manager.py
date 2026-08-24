@@ -1577,22 +1577,6 @@ class TerminalManager:
         terminal._set_disconnected_banner_visible(False)
         terminal._set_connecting_overlay_visible(True)
 
-        # The widget (and its emulator) is reused for the replacement session,
-        # so DEC private modes the previous remote left set would be inherited:
-        # mouse tracking, bracketed paste, the alternate screen.  A stuck
-        # mouse-tracking mode routes drags to the remote instead of selecting,
-        # which makes copy silently do nothing for the rest of the tab's life
-        # (GH #1178).  Reset without clearing history so the tab keeps its
-        # scrollback on backends that can preserve it.
-        try:
-            backend = getattr(terminal, "backend", None)
-            if backend is not None:
-                backend.reset(False, False)
-        except Exception:
-            logger.debug(
-                "Failed to reset emulator state before reconnect", exc_info=True
-            )
-
         try:
             # The save flow re-keys every terminal from the pre-save snapshot
             # to the authoritative post-save ConnectionSummary, so the id
