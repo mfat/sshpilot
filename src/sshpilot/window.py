@@ -3143,7 +3143,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         button = icon_utils.new_button_from_icon_name("org.gnome.Settings-system-symbolic")
         button.add_css_class('flat')
         button.set_can_focus(False)
-        button.set_tooltip_text(_("Settings"))
+        # Show the effective (possibly user-customized) shortcut in the tooltip,
+        # while the accessible name stays the bare action.
+        accels = self._get_safe_current_shortcuts().get('preferences') or []
+        labels = ', '.join(
+            label for label in (_accelerator_label(a) for a in accels) if label
+        )
+        label_icon_button(
+            button,
+            _("Settings"),
+            tooltip=(
+                _("Settings ({accels})").format(accels=labels)
+                if labels else _("Settings")
+            ),
+        )
         button.connect("clicked", lambda *_: self.show_preferences())
         return button
 
