@@ -4414,18 +4414,39 @@ class TerminalWidget(Gtk.Box):
             logger.debug("copy-on-select failed", exc_info=True)
 
     def copy_text(self, *, format="text"):
-        """Copy selected text to clipboard"""
+        """Copy selected text to clipboard.
+
+        The backend confirms the clipboard actually took the write before this
+        claims success; a write the display server refuses used to still show
+        "Copied to clipboard", leaving nothing to paste and no way to tell.
+        """
         if self.backend:
+            attempted = False
+            try:
+                attempted = bool(self.backend.get_has_selection())
+            except Exception:
+                logger.debug("Could not read selection state", exc_info=True)
+
             def _completed(copied):
                 if copied:
                     self._show_toast(_("Copied to clipboard"))
+                elif attempted:
+                    # There was something to copy and it did not land: say so
+                    # rather than failing silently.
+                    self._show_toast(_("Couldn't copy to clipboard"))
 
             self.backend.copy_clipboard(format=format, on_complete=_completed)
 
-    def handle_backend_copy_result(self, copied):
-        """Report a backend-owned shortcut copy through the standard UI path."""
+    def handle_backend_copy_result(self, copied, *, attempted=False):
+        """Report a backend-owned shortcut copy through the standard UI path.
+
+        ``attempted`` distinguishes an empty selection (say nothing) from a
+        real copy the clipboard refused (tell the user).
+        """
         if copied:
             self._show_toast(_("Copied to clipboard"))
+        elif attempted:
+            self._show_toast(_("Couldn't copy to clipboard"))
 
     def paste_text(self):
         """Paste text from clipboard"""
