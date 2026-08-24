@@ -58,19 +58,24 @@ class TestDaemonTerminalClosePolicy:
         """Test detach policy behavior."""
         # Test the logic directly rather than calling the method
         from sshpilot.daemon_terminal_policy import TerminalClosePolicy, resolve_tab_close_policy
-        
-        with patch('sshpilot.daemon_terminal_policy.resolve_tab_close_policy', return_value=TerminalClosePolicy.DETACH):
-            policy = resolve_tab_close_policy(mock_config)
-            
-            # Verify correct policy is resolved
-            assert policy == TerminalClosePolicy.DETACH
-            
-            # Simulate the policy action
-            if policy == TerminalClosePolicy.DETACH:
-                mock_terminal_widget._daemon_controller.detach()
-            
-            # Verify detach was called
-            mock_terminal_widget._daemon_controller.detach.assert_called_once()
+
+        # Detach is opt-in now (the default terminates), so ask for it.
+        mock_config.get_setting = Mock(
+            side_effect=lambda key, default=None: (
+                'detach' if key == 'terminal.daemon_tab_close_policy' else default
+            )
+        )
+        policy = resolve_tab_close_policy(mock_config)
+
+        # Verify correct policy is resolved
+        assert policy == TerminalClosePolicy.DETACH
+
+        # Simulate the policy action
+        if policy == TerminalClosePolicy.DETACH:
+            mock_terminal_widget._daemon_controller.detach()
+
+        # Verify detach was called
+        mock_terminal_widget._daemon_controller.detach.assert_called_once()
 
     def test_terminate_policy(self, mock_config, mock_terminal_widget):
         """Test terminate policy behavior."""
@@ -196,6 +201,48 @@ class TestDaemonTerminalClosePolicy:
             mock_terminal_widget._daemon_controller.detach.assert_not_called()
             mock_terminal_widget._daemon_controller.close.assert_not_called()
             mock_terminal_widget.emit.assert_not_called()
+
+    def test_batch_close_terminates_instead_of_asking(self, mock_terminal_widget):
+        """A confirmed batch close must not raise one ASK dialog per tab."""
+        mock_terminal_widget._daemon_batch_close = True
+        mock_terminal_widget._view_only_overlay = None
+        # _handle_daemon_close clears the controller, so hold a reference.
+        controller = mock_terminal_widget._daemon_controller
+
+        with patch(
+            'sshpilot.daemon_terminal_policy.resolve_tab_close_policy',
+            return_value=TerminalClosePolicy.ASK,
+        ), patch.object(
+            mock_terminal_widget, '_show_daemon_close_dialog'
+        ) as mock_dialog:
+            from sshpilot.terminal import TerminalWidget
+
+            TerminalWidget._handle_daemon_close(
+                mock_terminal_widget, is_quitting=False
+            )
+
+        mock_dialog.assert_not_called()
+        controller.close.assert_called_once()
+        controller.detach.assert_not_called()
+
+    def test_batch_close_still_detaches_when_asked_to(self, mock_terminal_widget):
+        """An explicit detach preference is honored for batch closes too."""
+        mock_terminal_widget._daemon_batch_close = True
+        mock_terminal_widget._view_only_overlay = None
+        controller = mock_terminal_widget._daemon_controller
+
+        with patch(
+            'sshpilot.daemon_terminal_policy.resolve_tab_close_policy',
+            return_value=TerminalClosePolicy.DETACH,
+        ):
+            from sshpilot.terminal import TerminalWidget
+
+            TerminalWidget._handle_daemon_close(
+                mock_terminal_widget, is_quitting=False
+            )
+
+        controller.detach.assert_called_once()
+        controller.close.assert_not_called()
 
     def test_disconnect_triggers_daemon_close(self, mock_terminal_widget):
         """Test that disconnect() triggers daemon close logic."""

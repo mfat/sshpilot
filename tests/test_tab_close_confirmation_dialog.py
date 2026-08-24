@@ -235,9 +235,56 @@ def test_bulk_close_confirmation_uses_in_window_alert_dialog(fake_gtk):
     dialog.emit_response("close")
     assert close_fn_calls == [1]
     assert dialog.close_calls == 1
+    # Confirming the batch must disconnect the sessions it promised to close.
+    # Suppressing the per-tab confirmation also skips on_tab_close's disconnect,
+    # and waiting for widget destruction let daemon sessions outlive their tabs
+    # (GH #1176).
+    assert terminal.disconnect_calls == 1
+    assert terminal._daemon_batch_close is True
 
     dialog.emit_response("cancel")
     assert dialog.close_calls == 2
+
+
+def test_bulk_close_without_confirmation_still_disconnects(fake_gtk):
+    """With confirm-disconnect off, on_tab_close does the disconnecting."""
+    terminal = FakeTerminal()
+    target_page = FakePage(child=None)
+    other_page = FakePage(child=terminal)
+    tab_view = FakeTabView([target_page, other_page])
+    window = make_window(
+        tab_view=tab_view,
+        terminal_to_connection={terminal: FakeConnection(nickname="web01")},
+    )
+    window.config.settings["confirm-disconnect"] = False
+    closed = []
+
+    def close_fn():
+        for page in (other_page,):
+            closed.append(window.on_tab_close(tab_view, page))
+
+    window._confirm_then_bulk_close(target_page, close_fn, False)
+
+    assert closed == [False]
+    assert terminal.disconnect_calls == 1
+
+
+def test_bulk_close_cancel_leaves_sessions_connected(fake_gtk):
+    terminal = FakeTerminal()
+    target_page = FakePage(child=None)
+    other_page = FakePage(child=terminal)
+    tab_view = FakeTabView([target_page, other_page])
+    window = make_window(
+        tab_view=tab_view,
+        terminal_to_connection={terminal: FakeConnection(nickname="web01")},
+    )
+    close_fn_calls = []
+
+    window._confirm_then_bulk_close(target_page, lambda: close_fn_calls.append(1), False)
+    last_dialog().emit_response("cancel")
+
+    assert close_fn_calls == []
+    assert terminal.disconnect_calls == 0
 
 
 def test_single_tab_close_confirmation_uses_in_window_alert_dialog(fake_gtk):

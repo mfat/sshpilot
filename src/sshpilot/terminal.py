@@ -1585,6 +1585,14 @@ class TerminalWidget(Gtk.Box):
                     policy = resolve_app_close_policy(self.config)
             else:
                 policy = resolve_tab_close_policy(self.config)
+                # A batch close (Close Other Tabs, Close to the Right, a
+                # programmatic replace) confirms once for the whole batch, so
+                # ASK must not then raise one dialog per tab on top of it. Use
+                # an identity check so a Mock test double is not read as a batch.
+                if policy == TerminalClosePolicy.ASK and getattr(
+                    self, "_daemon_batch_close", False
+                ) is True:
+                    policy = TerminalClosePolicy.TERMINATE
 
             if policy == TerminalClosePolicy.DETACH:
                 try:

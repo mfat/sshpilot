@@ -6176,11 +6176,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         terminals is connected, and only drops to DISCONNECTED when the last one
         goes down. A richer "down" state already set on the connection (FAILED)
         is preserved rather than being flattened to DISCONNECTED.
+
+        The daemon-derived ``connection_runtime_status`` projection is what the
+        sidebar actually reads, and the DTOs it renders are frozen — so the push
+        below only lands on a legacy mutable manager, and the repaint is what
+        makes this call worth anything in daemon mode. Guarding the push matters:
+        unguarded it raised AttributeError on every call against
+        ConnectionPresentationStore, and the repaint never ran.
         """
-        # Local terminals use a lightweight LocalConnection without the status
-        # API and have no sidebar row — nothing to aggregate.
-        if not hasattr(connection, 'get_status'):
-            return
         try:
             terminals = []
             if hasattr(self, 'connection_to_terminals'):
@@ -6207,27 +6210,35 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # Priority across a connection's terminals: any live tab wins, then a
             # tab still connecting, then a failed attempt (keep its reason), else
             # disconnected.
+            reason = ''
             if any(s == ConnectionState.CONNECTED for s in states):
-                self.connection_manager.update_connection_state(connection, ConnectionState.CONNECTED)
+                state = ConnectionState.CONNECTED
             elif any(s == ConnectionState.CONNECTING for s in states):
-                self.connection_manager.update_connection_state(connection, ConnectionState.CONNECTING)
+                state = ConnectionState.CONNECTING
             elif any(s == ConnectionState.FAILED for s in states):
-                reason = ''
+                state = ConnectionState.FAILED
                 for t in terminals:
                     if _term_state(t) == ConnectionState.FAILED:
                         reason = getattr(t, 'connection_state_reason', '') or ''
                         break
-                self.connection_manager.update_connection_state(
-                    connection, ConnectionState.FAILED, reason
-                )
             elif terminals:
-                self.connection_manager.update_connection_state(connection, ConnectionState.DISCONNECTED)
+                state = ConnectionState.DISCONNECTED
             else:
                 # No terminals at all (every tab for this connection is closed):
                 # there is nothing to report, so go neutral and hide the
                 # indicator rather than showing a red "Disconnected"/"failed"
                 # icon for what is an intentional close.
-                self.connection_manager.update_connection_state(connection, ConnectionState.UNKNOWN)
+                state = ConnectionState.UNKNOWN
+
+            update_connection_state = getattr(
+                self.connection_manager, 'update_connection_state', None
+            )
+            if callable(update_connection_state):
+                update_connection_state(connection, state, reason)
+
+            for row in self._rows_for_connection(connection):
+                row.update_status()
+                row.queue_draw()
         except Exception as e:
             logger.error(f"Failed to recompute connection state: {e}")
 

@@ -847,14 +847,53 @@ class WindowTabsMixin:
                 total += 1
         return total
 
-    def _run_suppressed_close(self, close_fn):
+    def teardown_page_terminals(self, page) -> None:
+        """Disconnect every terminal a page hosts, as an ordinary close would.
+
+        Mirrors what ``on_tab_close`` does per tab, for the paths that close
+        pages with confirmation suppressed and therefore skip it.
+        """
+        child = page.get_child() if hasattr(page, 'get_child') else None
+        if child is None:
+            return
+        from .split_view import SplitViewTab
+        if isinstance(child, SplitViewTab):
+            terminals = child.get_all_terminals()
+        elif hasattr(child, 'disconnect'):
+            terminals = [child]
+        else:
+            return
+
+        # Mark the batch so an ASK close policy resolves without a dialog per
+        # tab: these closes are either already confirmed for the whole batch or
+        # programmatic.
+        for terminal in terminals:
+            try:
+                terminal._daemon_batch_close = True
+            except Exception:
+                pass
+        try:
+            if isinstance(child, SplitViewTab):
+                child.cleanup_all()
+            else:
+                child.disconnect()
+        except Exception:
+            logger.debug('Failed to tear down terminals on bulk close', exc_info=True)
+
+    def _run_suppressed_close(self, close_fn, pages=None):
         """Run a bulk close with the per-tab disconnect confirmation suppressed.
 
         The bulk close emits close-page once per page; suppressing keeps
-        on_tab_close from spawning a modal dialog for each (issue #1014). The
-        closes run synchronously, so the flag is safely reset afterwards.
-        Sessions still tear down via TerminalWidget._on_destroy.
+        on_tab_close from spawning a modal dialog for each (issue #1014) — but
+        it also skips the disconnect that handler performs, and relying on
+        TerminalWidget._on_destroy instead is not good enough: destruction waits
+        on the last Python reference, so a daemon session could outlive its tab
+        indefinitely and keep the sidebar indicator green (GH #1176). Tear the
+        pages down explicitly first. The closes run synchronously, so the flag
+        is safely reset afterwards.
         """
+        for page in list(pages or []):
+            self.teardown_page_terminals(page)
         self._suppress_close_confirmation = True
         try:
             close_fn()
@@ -874,11 +913,11 @@ class WindowTabsMixin:
         if checkbox.get_active():
             self.config.set_setting('confirm-disconnect', False)
 
-    def _on_bulk_close_response(self, dialog, response_id, close_fn, checkbox):
+    def _on_bulk_close_response(self, dialog, response_id, close_fn, checkbox, pages):
         """Handle the single confirmation dialog for a bulk tab close."""
         if response_id == 'close':
             self._persist_disconnect_opt_out(checkbox)
-            self._run_suppressed_close(close_fn)
+            self._run_suppressed_close(close_fn, pages)
         dialog.close()
 
     def _confirm_then_bulk_close(self, target_page, close_fn, after_only: bool):
@@ -916,6 +955,7 @@ class WindowTabsMixin:
                 self._on_bulk_close_response,
                 close_fn,
                 checkbox,
+                pages,
             )
             dialog.present(self)
         else:

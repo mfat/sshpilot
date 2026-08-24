@@ -9,7 +9,12 @@ class TestQuitPolicy:
     """Prove quit policy resolution works."""
 
     def test_tab_close_policy_defaults(self):
-        """Default tab close policy is DETACH."""
+        """Default tab close policy is TERMINATE.
+
+        Detaching by default orphaned a RUNNING daemon session per closed tab,
+        which kept the sidebar indicator green for a connection the user had
+        closed (GH #1176).
+        """
         from sshpilot.daemon_terminal_policy import (
             resolve_tab_close_policy,
             TerminalClosePolicy,
@@ -20,7 +25,39 @@ class TestQuitPolicy:
                 return default
 
         policy = resolve_tab_close_policy(FakeConfig())
+        assert policy == TerminalClosePolicy.TERMINATE
+
+    def test_tab_close_policy_detach(self):
+        """Tab close policy can still be set back to DETACH."""
+        from sshpilot.daemon_terminal_policy import (
+            resolve_tab_close_policy,
+            TerminalClosePolicy,
+        )
+
+        class FakeConfig:
+            def get_setting(self, key, default=None):
+                if key == "terminal.daemon_tab_close_policy":
+                    return "detach"
+                return default
+
+        policy = resolve_tab_close_policy(FakeConfig())
         assert policy == TerminalClosePolicy.DETACH
+
+    def test_tab_close_policy_unrecognized_terminates(self):
+        """An unrecognized stored value falls back to the terminate default."""
+        from sshpilot.daemon_terminal_policy import (
+            resolve_tab_close_policy,
+            TerminalClosePolicy,
+        )
+
+        class FakeConfig:
+            def get_setting(self, key, default=None):
+                if key == "terminal.daemon_tab_close_policy":
+                    return "keep-running"
+                return default
+
+        policy = resolve_tab_close_policy(FakeConfig())
+        assert policy == TerminalClosePolicy.TERMINATE
 
     def test_app_close_policy_defaults(self):
         """Default app close policy is ASK (show Keep running / Terminate)."""
