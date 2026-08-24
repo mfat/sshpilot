@@ -324,16 +324,31 @@ def daemon_readiness_user_message(readiness: DaemonTerminalReadiness) -> str:
     )
 
 
-def resolve_close_policy(config, setting_key: str) -> TerminalClosePolicy:
-    raw = str(_get_setting(config, setting_key, TerminalClosePolicy.DETACH.value) or "")
+def resolve_close_policy(
+    config,
+    setting_key: str,
+    default: TerminalClosePolicy = TerminalClosePolicy.DETACH,
+) -> TerminalClosePolicy:
+    raw = str(_get_setting(config, setting_key, default.value) or "")
     try:
         return TerminalClosePolicy(raw.strip().lower())
     except ValueError:
-        return TerminalClosePolicy.DETACH
+        return default
 
 
 def resolve_tab_close_policy(config) -> TerminalClosePolicy:
-    return resolve_close_policy(config, TAB_CLOSE_POLICY_SETTING)
+    """Resolve what closing a terminal tab does to its daemon session.
+
+    Closing a tab ends the session by default. Detaching left the session
+    RUNNING in the daemon with no tab owning it, which the sidebar (rightly)
+    kept reporting as connected, so the indicator stayed green after the user
+    had closed the connection — and the orphan then outvoted every later
+    session for that host, so even a clean ``exit`` could not turn it red
+    (GH #1176). Detach is still available, but only when asked for.
+    """
+    return resolve_close_policy(
+        config, TAB_CLOSE_POLICY_SETTING, TerminalClosePolicy.TERMINATE
+    )
 
 
 def resolve_app_close_policy(config) -> TerminalClosePolicy:

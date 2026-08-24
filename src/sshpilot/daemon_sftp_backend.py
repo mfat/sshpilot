@@ -23,8 +23,9 @@ import errno
 import logging
 import os
 import pathlib
+import threading
 from concurrent.futures import Future
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from gi.repository import GObject
 
@@ -57,6 +58,40 @@ logger = logging.getLogger(__name__)
 def daemon_file_manager_capabilities_missing(client) -> frozenset:
     """Union of SFTP + transfer capabilities the file manager backend needs."""
     return daemon_sftp_capabilities_missing(client) | daemon_transfer_capabilities_missing(client)
+
+
+# Which live backends are using each daemon SFTP service, so the last one out
+# can end it. The daemon's own attachment count cannot answer this: it counts
+# client *connections*, and every view in this app shares one, so two file
+# managers on the same service register as a single attachment.
+_SERVICE_USERS: Dict[str, Set[int]] = {}
+_SERVICE_USERS_LOCK = threading.Lock()
+
+
+def _register_service_user(service_id, user_id: int) -> None:
+    if not service_id:
+        return
+    with _SERVICE_USERS_LOCK:
+        _SERVICE_USERS.setdefault(str(service_id), set()).add(user_id)
+
+
+def _release_service_user(service_id, user_id: int) -> bool:
+    """Drop one user of *service_id*; True when nothing is using it any more."""
+    if not service_id:
+        return False
+    key = str(service_id)
+    with _SERVICE_USERS_LOCK:
+        users = _SERVICE_USERS.get(key)
+        if users is None:
+            # Never registered (torn down before the service came up, or already
+            # released): closing is still the right call for the caller that
+            # holds it, and the daemon ignores a close of an unknown service.
+            return True
+        users.discard(user_id)
+        if users:
+            return False
+        del _SERVICE_USERS[key]
+        return True
 
 
 def _remote_entry_to_file_entry(entry) -> FileEntry:
@@ -198,10 +233,12 @@ class DaemonSftpManager(GObject.GObject):
 
     def _on_service_state_changed(self, summary) -> None:
         service_id = self._sftp_controller.service_id
+        _register_service_user(service_id, id(self))
         if self._interaction_dialogs is not None and service_id is not None:
             self._interaction_dialogs.set_session(SessionId(str(service_id)))
 
     def _on_service_ready(self, summary) -> None:
+        _register_service_user(self._sftp_controller.service_id, id(self))
         logger.debug(
             "Daemon SFTP service ready for %s@%s id=%s state=%s",
             self._username,
@@ -242,12 +279,14 @@ class DaemonSftpManager(GObject.GObject):
         self.emit("connection-error", message)
 
     def close(self) -> None:
-        """Detach and stop using the service.
+        """Stop using the service, ending it when nothing else needs it.
 
-        Phase 10 policy: panel teardown detaches (``sftp.detach``) rather
-        than tearing down the daemon-owned SFTP service outright, so other
-        attachments (or a reconnect) keep a live service. Use
-        :meth:`disconnect_service` for an explicit ``sftp.close``.
+        Detaching alone left the daemon holding a READY service with no view
+        attached: an SSH connection to the host that outlived the file manager
+        that opened it, and a sidebar indicator that stayed green for a tab the
+        user had closed (GH #1193). A service is still shared when SSH
+        multiplexing reuses one across views, so end it only once the last view
+        lets go; the others keep a live service exactly as before.
         """
         if self._closed:
             return
@@ -255,14 +294,22 @@ class DaemonSftpManager(GObject.GObject):
         if self._interaction_dialogs is not None:
             self._interaction_dialogs.close()
             self._interaction_dialogs = None
-        self._sftp_controller.detach()
+        if _release_service_user(self._sftp_controller.service_id, id(self)):
+            self._sftp_controller.close()
+        else:
+            self._sftp_controller.detach()
         self._transfers.close()
 
     def disconnect_service(self) -> None:
-        """Explicitly terminate the daemon-owned SFTP service (``sftp.close``)."""
+        """Terminate the daemon-owned SFTP service now (``sftp.close``).
+
+        Unconditional: unlike :meth:`close` this does not wait for other views
+        to let go.
+        """
         if self._interaction_dialogs is not None:
             self._interaction_dialogs.close()
             self._interaction_dialogs = None
+        _release_service_user(self._sftp_controller.service_id, id(self))
         self._sftp_controller.close()
         self._transfers.close()
         self._closed = True

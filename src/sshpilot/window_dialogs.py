@@ -20,6 +20,8 @@ from typing import Any, Optional
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from gettext import gettext as _
 
+from .accessibility import set_accessible_name, set_accessible_selected
+
 logger = logging.getLogger(__name__)
 
 # Minimum content width for export/import backup dialogs.
@@ -2164,6 +2166,9 @@ class WindowConfigDialogsMixin:
             entry.set_placeholder_text(placeholder)
         entry.set_activates_default(True)
         entry.set_hexpand(True)
+        # Derive the accessible name from the prompt already shown above the
+        # entry; a bare Gtk.Entry is otherwise exposed unnamed.
+        set_accessible_name(entry, label)
         content_area.append(entry)
 
         color_button = None
@@ -2639,9 +2644,13 @@ class WindowConfigDialogsMixin:
                     return
                 if selected_row_ref is not None:
                     selected_row_ref._check.set_visible(False)
+                    set_accessible_selected(selected_row_ref, False)
                 selected_row_ref = row
                 selected_group_id = row.group_id
                 row._check.set_visible(True)
+                # The chosen row is marked only by a checkmark image, which
+                # tells assistive technology nothing; publish the state too.
+                set_accessible_selected(row, True)
                 update_confirm_state()
 
             if available_groups:
@@ -2653,10 +2662,12 @@ class WindowConfigDialogsMixin:
                     row.add_prefix(icon)
                     check = Gtk.Image.new_from_icon_name('object-select-symbolic')
                     check.set_visible(False)
+                    set_accessible_name(check, _("Selected"))
                     row.add_suffix(check)
                     row._check = check
                     row.group_id = group['id']
                     row.connect('activated', select_group_row)
+                    set_accessible_selected(row, False)
                     existing_group.add(row)
             else:
                 existing_group.set_description(_("No groups yet — create one above."))

@@ -1,4 +1,4 @@
-"""GTK-side connection status derived from daemon session lifecycle events."""
+"""GTK-side connection status derived from daemon runtime lifecycle events."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from threading import RLock
 from typing import Callable, Dict, Optional
 
 from sshpilot.api.events import CoreEvent, EventType
+from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
 from sshpilot.api.models.sessions import SessionExitInfo, SessionState, SessionSummary
 from sshpilot.connection_model import ConnectionState
 
@@ -19,6 +20,21 @@ _SESSION_EVENTS = frozenset(
         EventType.SESSION_CLOSED,
     }
 )
+
+# A file manager is a connection to the host just as much as a terminal is, and
+# the daemon runs it as an SFTP service rather than a session. Watching only the
+# session family left a host with an open file manager showing no indicator at
+# all (GH #1193).
+_SFTP_EVENTS = frozenset(
+    {
+        EventType.SFTP_CREATED,
+        EventType.SFTP_STATE_CHANGED,
+        EventType.SFTP_CLOSED,
+        EventType.SFTP_FAILED,
+    }
+)
+
+_TRACKED_EVENTS = _SESSION_EVENTS | _SFTP_EVENTS
 
 
 @dataclass(frozen=True)
@@ -33,7 +49,7 @@ UNKNOWN_RUNTIME_STATUS = ConnectionRuntimeStatus()
 
 
 class ConnectionRuntimeStatusStore:
-    """Project daemon sessions into one runtime status per connection ID."""
+    """Project daemon sessions and SFTP services into one status per connection."""
 
     def __init__(
         self,
@@ -45,6 +61,7 @@ class ConnectionRuntimeStatusStore:
     ) -> None:
         self._lock = RLock()
         self._sessions: Dict[str, SessionSummary] = {}
+        self._sftp: Dict[str, SftpServiceSummary] = {}
         self._statuses: Dict[str, ConnectionRuntimeStatus] = {}
         self._client = None
         self._subscription = None
@@ -61,7 +78,7 @@ class ConnectionRuntimeStatusStore:
             return self._statuses.get(connection_id, UNKNOWN_RUNTIME_STATUS)
 
     def attach_client(self, client) -> None:
-        """Subscribe first, then snapshot sessions without an event-loss gap."""
+        """Subscribe first, then snapshot runtime state without an event-loss gap."""
         with self._lock:
             old_subscription = self._subscription
             self._subscription = None
@@ -79,8 +96,10 @@ class ConnectionRuntimeStatusStore:
             lambda event: self._accept_event(event, generation, instance_id)
         )
         try:
-            sessions = client.list_sessions()
-            replacement = self._validated_sessions(sessions)
+            replacement = self._validated_sessions(client.list_sessions())
+            sftp_replacement = self._validated_sftp_services(
+                self._list_sftp_services(client)
+            )
         except BaseException:
             subscription.unsubscribe()
             with self._lock:
@@ -95,6 +114,7 @@ class ConnectionRuntimeStatusStore:
                 return
             previous = dict(self._statuses)
             self._sessions = replacement
+            self._sftp = sftp_replacement
             for event in sorted(self._pending_events, key=lambda item: item.sequence):
                 self._apply_event_locked(event)
             self._pending_events = []
@@ -112,6 +132,7 @@ class ConnectionRuntimeStatusStore:
             self._client = None
             previous = dict(self._statuses)
             self._sessions = {}
+            self._sftp = {}
             self._statuses = {}
             self._pending_events = []
             self._refreshing = False
@@ -125,7 +146,7 @@ class ConnectionRuntimeStatusStore:
         generation: int,
         instance_id: Optional[str],
     ) -> None:
-        if event.type not in _SESSION_EVENTS:
+        if event.type not in _TRACKED_EVENTS:
             return
         with self._lock:
             current_instance = getattr(self._client, "server_instance_id", None)
@@ -159,55 +180,104 @@ class ConnectionRuntimeStatusStore:
             )
             return True
 
+        if event.type in _SFTP_EVENTS:
+            if not isinstance(event.payload, SftpServiceSummary):
+                return False
+            self._sftp[str(event.payload.id)] = event.payload
+            return True
+
         if not isinstance(event.payload, SessionSummary):
             return False
         self._sessions[str(event.payload.id)] = event.payload
         return True
 
     def _aggregate_locked(self) -> Dict[str, ConnectionRuntimeStatus]:
-        grouped: Dict[str, list[SessionSummary]] = {}
-        for session in self._sessions.values():
-            grouped.setdefault(str(session.connection_id), []).append(session)
+        grouped: Dict[str, list] = {}
+        for record in (*self._sessions.values(), *self._sftp.values()):
+            grouped.setdefault(str(record.connection_id), []).append(record)
 
         statuses = {}
-        for connection_id, sessions in grouped.items():
-            status = self._aggregate_sessions(sessions)
+        for connection_id, records in grouped.items():
+            status = self._aggregate_records(records)
             if status.state is not ConnectionState.UNKNOWN:
                 statuses[connection_id] = status
         return statuses
 
     @staticmethod
-    def _aggregate_sessions(sessions) -> ConnectionRuntimeStatus:
-        if any(session.state is SessionState.RUNNING for session in sessions):
+    def _is_live(record) -> bool:
+        """The host is reachable right now: a running shell or a ready SFTP service."""
+        if isinstance(record, SftpServiceSummary):
+            return record.state is SftpServiceState.READY
+        return record.state is SessionState.RUNNING
+
+    @staticmethod
+    def _is_starting(record) -> bool:
+        if isinstance(record, SftpServiceSummary):
+            return record.state in {
+                SftpServiceState.CREATED,
+                SftpServiceState.STARTING,
+            }
+        return record.state in {SessionState.CREATED, SessionState.STARTING}
+
+    @staticmethod
+    def _is_failed(record) -> bool:
+        # Compared per record type on purpose: SessionState and SftpServiceState
+        # are str enums, so their like-named members compare equal across the
+        # two and a shared membership test would only work by accident.
+        if isinstance(record, SftpServiceSummary):
+            return record.state is SftpServiceState.FAILED
+        return record.state is SessionState.FAILED
+
+    @staticmethod
+    def _is_terminal_outcome(record) -> bool:
+        """Whether this record still carries a reportable "went down" result.
+
+        CLOSED is a retention/lifecycle state, not a loss of the outcome. Daemon
+        summaries retain failure/exit metadata after cleanup, so keep projecting
+        that final result instead of flashing FAILED and immediately reverting
+        the sidebar to UNKNOWN. A clean close with nothing recorded is an
+        intentional close and reports nothing at all.
+        """
+        if isinstance(record, SftpServiceSummary):
+            return record.state in {
+                SftpServiceState.FAILED,
+                SftpServiceState.CLOSING,
+            } or (
+                record.state is SftpServiceState.CLOSED
+                and record.failure is not None
+            )
+        return record.state in {
+            SessionState.FAILED,
+            SessionState.CLOSING,
+            SessionState.EXITED,
+        } or (
+            record.state is SessionState.CLOSED
+            and (record.failure is not None or record.exit_info is not None)
+        )
+
+    @classmethod
+    def _aggregate_records(cls, records) -> ConnectionRuntimeStatus:
+        """Fold a connection's sessions and SFTP services into one status.
+
+        Both are connections to the host, so either kind being live makes the
+        connection connected; only when nothing is live does the most recent
+        "went down" result get reported.
+        """
+        if any(cls._is_live(record) for record in records):
             return ConnectionRuntimeStatus(ConnectionState.CONNECTED, "Connected")
-        if any(
-            session.state in {SessionState.CREATED, SessionState.STARTING}
-            for session in sessions
-        ):
+        if any(cls._is_starting(record) for record in records):
             return ConnectionRuntimeStatus(ConnectionState.CONNECTING, "Connecting")
 
-        # CLOSED is a retention/lifecycle state, not a loss of the terminal
-        # outcome. Daemon summaries retain failure/exit metadata after cleanup,
-        # so keep projecting that final result instead of flashing FAILED and
-        # immediately reverting the sidebar to UNKNOWN.
         terminal_outcomes = [
-            session for session in sessions
-            if session.state in {
-                SessionState.FAILED,
-                SessionState.CLOSING,
-                SessionState.EXITED,
-            }
-            or (
-                session.state is SessionState.CLOSED
-                and (session.failure is not None or session.exit_info is not None)
-            )
+            record for record in records if cls._is_terminal_outcome(record)
         ]
         if terminal_outcomes:
-            latest = max(terminal_outcomes, key=lambda session: session.created_at)
-            if latest.state is SessionState.FAILED or latest.failure is not None:
+            latest = max(terminal_outcomes, key=lambda record: record.created_at)
+            if latest.failure is not None or cls._is_failed(latest):
                 reason = latest.failure.message if latest.failure is not None else ""
                 return ConnectionRuntimeStatus(ConnectionState.FAILED, reason)
-            reason = latest.exit_info.reason if latest.exit_info is not None else ""
+            exit_info = getattr(latest, "exit_info", None)
+            reason = exit_info.reason if exit_info is not None else ""
             return ConnectionRuntimeStatus(ConnectionState.DISCONNECTED, reason)
         return UNKNOWN_RUNTIME_STATUS
 
@@ -235,6 +305,31 @@ class ConnectionRuntimeStatusStore:
             if not isinstance(session, SessionSummary):
                 raise TypeError("runtime status store only accepts SessionSummary DTOs")
             replacement[str(session.id)] = session
+        return replacement
+
+    @staticmethod
+    def _list_sftp_services(client):
+        """Snapshot SFTP services, tolerating a client that cannot list them.
+
+        The session snapshot is required — without it the store would report a
+        live host as idle. A daemon too old to list SFTP services is a lesser
+        problem: file-manager-only connections stay unreported, exactly as they
+        were before, while everything else keeps working.
+        """
+        lister = getattr(client, "list_sftp_services", None)
+        if not callable(lister):
+            return ()
+        return lister()
+
+    @staticmethod
+    def _validated_sftp_services(services) -> Dict[str, SftpServiceSummary]:
+        replacement = {}
+        for service in services:
+            if not isinstance(service, SftpServiceSummary):
+                raise TypeError(
+                    "runtime status store only accepts SftpServiceSummary DTOs"
+                )
+            replacement[str(service.id)] = service
         return replacement
 
     @staticmethod

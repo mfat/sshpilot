@@ -827,8 +827,11 @@ class PreferencesWindow(Adw.NavigationPage):
         policy_model.append(_("Ask each time"))
         self.tab_close_policy_row.set_model(policy_model)
 
-        current_policy = self.config.get_setting('terminal.daemon_tab_close_policy', 'detach')
-        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 0)
+        # Default matches resolve_tab_close_policy: closing a tab ends the session.
+        current_policy = self.config.get_setting(
+            'terminal.daemon_tab_close_policy', 'terminate'
+        )
+        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 1)
         self.tab_close_policy_row.set_selected(policy_index)
         self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
         daemon_group.add(self.tab_close_policy_row)
@@ -3888,7 +3891,7 @@ class PreferencesWindow(Adw.NavigationPage):
         """Persist the tab close policy preference."""
         try:
             policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
-            policy = policy_map.get(row.get_selected(), 'detach')
+            policy = policy_map.get(row.get_selected(), 'terminate')
             self.config.set_setting('terminal.daemon_tab_close_policy', policy)
         except Exception as exc:
             logger.error("Failed to update tab close policy: %s", exc)

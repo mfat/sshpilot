@@ -61,6 +61,13 @@
 
 
 
+    <release version="5.9.4" date="2026-08-24">
+      <description>
+        <p>Improved drag &amp; drop for connections across groups</p>
+        <p>Improved connection status reporting</p>
+        <p>Minor bug fixes</p>
+      </description>
+    </release>
     <release version="5.9.3" date="2026-08-24">
       <description>
         <p>Bug fixes and UI improvements</p>

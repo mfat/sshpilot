@@ -1,3 +1,12 @@
+sshpilot (5.9.4-1) unstable; urgency=medium
+
+  * Release v5.9.4.
+  * Improved drag & drop for connections across groups
+  * Improved connection status reporting
+  * Minor bug fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 24 Aug 2026 19:51:12 +0000
+
 sshpilot (5.9.3-1) unstable; urgency=medium
 
   * Release v5.9.3.

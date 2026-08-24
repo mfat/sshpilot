@@ -188,15 +188,26 @@ def _build_secret_stub():
 # first so the ``'gi' not in sys.modules`` guard then leaves it untouched. If the
 # real import fails (no PyGObject), fall through to the stubs so the normal suite
 # still collects. Default behaviour (no env var) is unchanged.
-_USE_REAL_GTK = os.environ.get('SSHPILOT_GUI_TESTS') == '1'
+#
+# The Dogtail suite (``-m e2e``, see tests/e2e/) needs the same thing for a
+# different reason: it never imports sshpilot, but pyatspi/Atspi are PyGObject
+# bindings and cannot load against the stub.
+_E2E_TESTS = os.environ.get('SSHPILOT_E2E_TESTS') == '1'
+_USE_REAL_GTK = os.environ.get('SSHPILOT_GUI_TESTS') == '1' or _E2E_TESTS
 _real_gtk_available = False
 if _USE_REAL_GTK:
     try:
         import gi  # real PyGObject; populates sys.modules['gi'] + repository
 
-        gi.require_version('Gtk', '4.0')
-        gi.require_version('Adw', '1')
-        from gi.repository import Gtk, Adw, Gio, GLib  # noqa: F401
+        # Only the in-process GUI suite pins GTK 4 here. Dogtail hard-requires
+        # GTK 3 (for its X11 rawinput module), and a namespace can only be
+        # loaded at one version per process — so the out-of-process e2e suite,
+        # which drives GTK 4 in the *app* and never renders anything itself,
+        # must leave the version unpinned.
+        if not _E2E_TESTS:
+            gi.require_version('Gtk', '4.0')
+            gi.require_version('Adw', '1')
+            from gi.repository import Gtk, Adw, Gio, GLib  # noqa: F401
 
         _real_gtk_available = True
     except Exception:

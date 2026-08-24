@@ -2141,13 +2141,25 @@ def main():
         except Exception:
             return 1
 
+    # AT-SPI names the application node after g_get_prgname(), which otherwise
+    # follows argv[0]: "sshpilot" when packaged, but "run.py" or "python3" when
+    # run from source. Pin it so assistive technology and UI automation see one
+    # stable application name however the app was started.
+    GLib.set_prgname('sshpilot')
+    GLib.set_application_name('SSH Pilot')
+
     verbose = opts.verbose or opts.diagnostics
+    # GUI tests launch a second, throwaway instance alongside a developer's own
+    # running copy; without a distinct application id GApplication would just
+    # hand the launch off to that copy. Same shape as SSHPILOT_SSH_DIR: an
+    # environment hook the app reads, no extra production surface.
     app = SshPilotApplication(
         verbose=verbose,
         quiet=opts.quiet,
         isolated=opts.isolated,
         log_gtk_warnings=opts.log_gtk_warnings or opts.diagnostics,
         fatal_warnings=opts.fatal_warnings,
+        application_id=os.environ.get('SSHPILOT_APP_ID') or None,
     )
     return app.run(sys.argv)
 

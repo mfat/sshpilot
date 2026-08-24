@@ -119,12 +119,18 @@ class WindowSessionMixin:
         return {'tabs': tabs}
 
     def _close_all_tabs(self):
-        """Close every user tab; the pinned Start tab is kept."""
+        """Close every user tab; the pinned Start tab is kept.
+
+        Suppressing the confirmation also skips on_tab_close's disconnect, so
+        each page is torn down explicitly — otherwise a daemon session outlives
+        its tab until the widget is finally garbage collected (GH #1176).
+        """
         self._suppress_close_confirmation = True
         try:
             for page in list(self.tab_view.get_pages()):
                 if self._is_start_tab_page(page):
                     continue
+                self.teardown_page_terminals(page)
                 try:
                     self.tab_view.close_page(page)
                 except Exception:
