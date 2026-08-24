@@ -18,7 +18,11 @@ import pytest
 
 pytest.importorskip("gi")
 
-from sshpilot.api.daemon_client import DaemonClient, SECRET_INTERACTION_REQUEST_TIMEOUT
+from sshpilot.api.daemon_client import (
+    DaemonClient,
+    SECRET_INTERACTION_REQUEST_TIMEOUT,
+    SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT,
+)
 
 
 def _client_for_recording():
@@ -48,6 +52,11 @@ def _client_for_recording():
         lambda c: c.keepassxc_create_database("/tmp/x.kdbx"),
         lambda c: c.keepassxc_unlock(),
         lambda c: c.remember_master_password(),
+        lambda c: c.export_secret_backup(
+            destination="/tmp/backup.spbk",
+            options={"encrypted": True},
+        ),
+        lambda c: c.preview_backup(source="/tmp/backup.spbk"),
     ],
     ids=[
         "unlock_secrets",
@@ -59,6 +68,8 @@ def _client_for_recording():
         "keepassxc_create_database",
         "keepassxc_unlock",
         "remember_master_password",
+        "export_secret_backup",
+        "preview_backup",
     ],
 )
 def test_interactive_secret_rpc_uses_the_long_timeout(call, monkeypatch):
@@ -77,6 +88,24 @@ def test_interactive_secret_rpc_uses_the_long_timeout(call, monkeypatch):
     assert len(calls) == 1
     _method, _params, kwargs = calls[0]
     assert kwargs.get("request_timeout") == SECRET_INTERACTION_REQUEST_TIMEOUT
+
+
+def test_secret_backup_import_uses_multi_interaction_timeout(monkeypatch):
+    from sshpilot.api.transport import codec
+
+    monkeypatch.setattr(
+        codec,
+        "secret_transfer_result_from_wire",
+        lambda _result: SimpleNamespace(),
+    )
+
+    client, calls = _client_for_recording()
+    client.import_secret_backup(source="/tmp/backup.spbk")
+
+    assert len(calls) == 1
+    method, _params, kwargs = calls[0]
+    assert method == "secrets.transfer.import"
+    assert kwargs.get("request_timeout") == SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT
 
 
 def test_non_interactive_secret_rpc_keeps_the_default_timeout():

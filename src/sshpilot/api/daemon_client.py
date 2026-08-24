@@ -304,6 +304,12 @@ KEY_GENERATION_REQUEST_TIMEOUT = 185.0
 # while the daemon is legitimately still waiting on the user, which then
 # looks like a dead daemon and drives a reconnect loop that never recovers.
 SECRET_INTERACTION_REQUEST_TIMEOUT = 130.0
+# Local backup import can present up to three sequential passphrase
+# interactions when decryption fails. Give the complete RPC enough time for
+# every daemon-bounded interaction rather than timing out between attempts.
+SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT = (
+    3 * SECRET_INTERACTION_REQUEST_TIMEOUT
+)
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
@@ -2101,7 +2107,11 @@ class DaemonClient:
             "options": dict(options or {}),
             "mirror_logins": bool(mirror_logins),
         }
-        result = self._request("secrets.transfer.export", params)
+        result = self._request(
+            "secrets.transfer.export",
+            params,
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire
 
@@ -2113,7 +2123,9 @@ class DaemonClient:
         """Import a secret backup. Runs inside the daemon; returns counts/warnings only."""
         self._require_capability(Capability.SECRETS_TRANSFER)
         result = self._request(
-            "secrets.transfer.import", {"source": source, "options": dict(options or {})}
+            "secrets.transfer.import",
+            {"source": source, "options": dict(options or {})},
+            request_timeout=SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT,
         )
         try:
             from sshpilot.api.transport.codec import secret_transfer_result_from_wire
@@ -2127,7 +2139,11 @@ class DaemonClient:
 
         Metadata only — no decrypted value is ever returned."""
         self._require_capability(Capability.SECRETS_TRANSFER)
-        result = self._request("secrets.transfer.preview", {"source": source})
+        result = self._request(
+            "secrets.transfer.preview",
+            {"source": source},
+            request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
+        )
         if not isinstance(result, dict):
             self._fail_protocol("The daemon returned an invalid backup preview")
         return result
