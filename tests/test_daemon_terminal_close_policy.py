@@ -144,25 +144,47 @@ class TestDaemonTerminalClosePolicy:
 
         mock_terminal_widget._daemon_controller.detach.assert_not_called()
 
-    def test_dialog_detach_response(self, mock_terminal_widget):
-        """Test dialog detach response."""
-        # Set up daemon controller mock properly
-        mock_controller = Mock()
-        mock_terminal_widget._daemon_controller = mock_controller
-        
+    def test_dialog_does_not_offer_detach(self, mock_terminal_widget):
+        """Detach is not a choice the ask dialog presents (GH #1176)."""
+        mock_terminal_widget._daemon_controller = Mock()
+
         with patch('gi.repository.Adw') as mock_adw:
             mock_dialog = Mock()
             mock_adw.AlertDialog.new.return_value = mock_dialog
 
-            # Call _show_daemon_close_dialog
             from sshpilot.terminal import TerminalWidget
             TerminalWidget._show_daemon_close_dialog(mock_terminal_widget)
 
-            # Simulate detach response
-            TerminalWidget._on_daemon_close_dialog_response(mock_terminal_widget, mock_dialog, "detach")
+            offered = [call.args[0] for call in mock_dialog.add_response.call_args_list]
+            assert offered == ["terminate", "cancel"]
+            # Cancel is the safe default now that detach is gone.
+            mock_dialog.set_default_response.assert_called_once_with("cancel")
 
-            # Verify detach was called
-            mock_controller.detach.assert_called_once()
+    def test_dialog_without_a_window_closes_rather_than_stranding(
+        self, mock_terminal_widget
+    ):
+        """No window to ask in must not leave an unowned RUNNING session."""
+        mock_controller = Mock()
+        mock_terminal_widget._daemon_controller = mock_controller
+        mock_terminal_widget.get_root = Mock(return_value=None)
+
+        from sshpilot.terminal import TerminalWidget
+        TerminalWidget._show_daemon_close_dialog(mock_terminal_widget)
+
+        mock_controller.close.assert_called_once()
+        mock_controller.detach.assert_not_called()
+
+    def test_dialog_detach_response_is_still_honored(self, mock_terminal_widget):
+        """The handler keeps working for a caller that does offer detach."""
+        mock_controller = Mock()
+        mock_terminal_widget._daemon_controller = mock_controller
+
+        from sshpilot.terminal import TerminalWidget
+        TerminalWidget._on_daemon_close_dialog_response(
+            mock_terminal_widget, Mock(), "detach"
+        )
+
+        mock_controller.detach.assert_called_once()
 
     def test_dialog_terminate_response(self, mock_terminal_widget):
         """Test dialog terminate response."""

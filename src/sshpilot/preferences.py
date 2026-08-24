@@ -821,17 +821,23 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Action when closing daemon-backed terminal tabs")
         )
 
+        # Detach is deliberately not offered: it orphaned a RUNNING daemon
+        # session per closed tab and left the host showing as connected
+        # (GH #1176). The policy resolver still honors a hand-written
+        # "detach", so the capability survives for anyone who wants it.
         policy_model = Gtk.StringList()
-        policy_model.append(_("Detach (keep session running)"))
         policy_model.append(_("Terminate (end session)"))
         policy_model.append(_("Ask each time"))
         self.tab_close_policy_row.set_model(policy_model)
 
-        # Default matches resolve_tab_close_policy: closing a tab ends the session.
+        # Default matches resolve_tab_close_policy: closing a tab ends the
+        # session. A config still carrying "detach" shows Terminate without
+        # being rewritten -- set_selected runs before the handler is connected,
+        # so only an actual user choice persists a new value.
         current_policy = self.config.get_setting(
             'terminal.daemon_tab_close_policy', 'terminate'
         )
-        policy_index = {'detach': 0, 'terminate': 1, 'ask': 2}.get(current_policy, 1)
+        policy_index = {'terminate': 0, 'ask': 1}.get(current_policy, 0)
         self.tab_close_policy_row.set_selected(policy_index)
         self.tab_close_policy_row.connect('notify::selected', self.on_tab_close_policy_changed)
         daemon_group.add(self.tab_close_policy_row)
@@ -3890,7 +3896,7 @@ class PreferencesWindow(Adw.NavigationPage):
     def on_tab_close_policy_changed(self, row, _pspec):
         """Persist the tab close policy preference."""
         try:
-            policy_map = {0: 'detach', 1: 'terminate', 2: 'ask'}
+            policy_map = {0: 'terminate', 1: 'ask'}
             policy = policy_map.get(row.get_selected(), 'terminate')
             self.config.set_setting('terminal.daemon_tab_close_policy', policy)
         except Exception as exc:

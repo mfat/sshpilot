@@ -33,6 +33,9 @@ def get_default_config() -> Dict[str, Any]:
             'paste_on_right_click': False,
             'encoding': 'UTF-8',
             'macos_option_key_passthrough': False,
+            # A fresh install never had the retired "detach" tab-close policy,
+            # so it starts already migrated (see settings.migration).
+            'daemon_tab_close_policy_migrated': True,
         },
         'secrets': {
             # Secret storage backend: 'auto' (platform default), 'libsecret',

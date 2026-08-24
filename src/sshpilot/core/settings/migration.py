@@ -52,6 +52,21 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         terminal_cfg['encoding'] = 'UTF-8'
         updated = True
 
+    # --- Tab close policy: retire a stored "detach" once ----------------
+    # Detaching left the daemon holding a RUNNING session with no tab owning
+    # it, so the sidebar kept the host green after the user had closed the
+    # connection, and that orphan then outvoted every session opened later
+    # (GH #1176). Closing a tab ends its session now. The marker makes this a
+    # one-shot rewrite rather than a standing rule: detach stays a supported
+    # value for anyone who deliberately sets it again, it is simply no longer
+    # offered in Preferences.
+    if not terminal_cfg.get('daemon_tab_close_policy_migrated'):
+        stored_policy = terminal_cfg.get('daemon_tab_close_policy')
+        if isinstance(stored_policy, str) and stored_policy.strip().lower() == 'detach':
+            terminal_cfg['daemon_tab_close_policy'] = 'terminate'
+        terminal_cfg['daemon_tab_close_policy_migrated'] = True
+        updated = True
+
     # macOS Option key passthrough (new setting)
     if 'macos_option_key_passthrough' not in terminal_cfg:
         terminal_cfg['macos_option_key_passthrough'] = False
