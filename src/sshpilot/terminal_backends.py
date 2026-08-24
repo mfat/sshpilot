@@ -14,7 +14,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
 
-from gi.repository import GLib, GObject, Gtk
+from gi.repository import GObject, Gtk
 from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_color
 
 
@@ -71,37 +71,6 @@ def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> O
 # CSS absolute units: 1pt = 1/72in, 1px = 1/96in → 1pt = 96/72 px.
 # Pango/VTE and the Preferences font preview use points; xterm.js fontSize is CSS px.
 _PT_TO_CSS_PX = 96.0 / 72.0
-
-
-# A clipboard write is only observably complete once the display backend has
-# settled ownership.  Sampled immediately after ``set()`` ``is_local()`` still
-# reports the local content and answers True even for writes the compositor
-# went on to refuse; it is accurate from roughly one main-loop turn onward.
-_CLIPBOARD_VERIFY_DELAY_MS = 50
-
-
-def verify_clipboard_ownership(clipboard, on_result: Callable[[bool], None]) -> None:
-    """Report whether *clipboard* is owned by this process, once that settles.
-
-    ``Gdk.Clipboard.is_local()`` is "the clipboard was last claimed by the
-    running application" -- the only signal GTK4 offers about whether a write
-    landed, since ``set()``/``set_text()`` return void and raise nothing when
-    the compositor declines (an unfocused Wayland surface, most commonly).
-    """
-
-    def _check() -> bool:
-        ok = False
-        try:
-            ok = bool(clipboard.is_local())
-        except Exception:  # noqa: BLE001
-            logger.debug("Could not verify clipboard ownership", exc_info=True)
-        try:
-            on_result(ok)
-        except Exception:  # noqa: BLE001
-            logger.debug("Clipboard verification callback raised", exc_info=True)
-        return False
-
-    GLib.timeout_add(_CLIPBOARD_VERIFY_DELAY_MS, _check)
 
 
 class TerminalBackendCapabilityError(RuntimeError):
@@ -1152,35 +1121,20 @@ class VTETerminalBackend:
         format: str = "text",
         on_complete: Optional[Callable[[bool], None]] = None,
     ) -> None:
-        selected = None
+        copied = False
         try:
             vte_format = Vte.Format.HTML if format == "html" else Vte.Format.TEXT
             # Validate the payload itself, rather than merely trusting the
-            # selection flag: null/empty selections are not copies.
+            # selection flag.  This also gives the success notification the
+            # same semantics as Ptyxis: null/empty selections are not copies.
             selected = self.vte.get_text_selected(vte_format)
             if selected:
                 self.vte.copy_clipboard_format(vte_format)
+                copied = True
         except Exception:
             logger.debug("Failed to copy VTE selection", exc_info=True)
-            selected = None
-        if on_complete is None:
-            return
-        if not selected:
-            on_complete(False)
-            return
-        # VTE writes the clipboard for us, so confirm the write the same way the
-        # PyXterm path does rather than reporting success just because there was
-        # a selection -- that is what let the toast claim a copy the compositor
-        # had refused.
-        clipboard = None
-        try:
-            clipboard = self.vte.get_clipboard()
-        except Exception:  # noqa: BLE001
-            logger.debug("Could not resolve VTE clipboard", exc_info=True)
-        if clipboard is None:
-            on_complete(True)
-            return
-        verify_clipboard_ownership(clipboard, on_complete)
+        if on_complete is not None:
+            on_complete(copied)
 
     def get_has_selection(self) -> bool:
         return bool(self.vte.get_has_selection())
@@ -1841,16 +1795,6 @@ class PyXtermTerminalBackend:
         return display.get_clipboard()
 
     def _set_system_clipboard_text(self, text: str) -> bool:
-        """Write *text* and report whether the clipboard actually took it.
-
-        ``Gdk.Clipboard.set()`` returns void and never fails loudly: on Wayland
-        the compositor grants ownership asynchronously, so a write from an
-        unfocused surface is silently dropped.  Reporting success from "the
-        text was non-empty" (what Ptyxis does, and what this did) makes the
-        "Copied to clipboard" toast lie.  Callers that want the truth should
-        use :meth:`set_system_clipboard_text_verified` instead; this synchronous
-        form is kept for callers that only need the write attempted.
-        """
         if not text:
             return False
         clipboard = self._get_system_clipboard()
@@ -1858,40 +1802,6 @@ class PyXtermTerminalBackend:
             return False
         clipboard.set(text)
         return True
-
-    def set_system_clipboard_text_verified(
-        self, text: str, on_result: Callable[[bool], None]
-    ) -> None:
-        """Write *text*, then report whether this process actually owns the
-        clipboard afterwards.
-
-        ``Gdk.Clipboard.is_local()`` is documented as "the clipboard was last
-        claimed by the running application", which is exactly the question the
-        toast needs answered.  It cannot be sampled synchronously: immediately
-        after ``set()`` it still reports the local content and only settles once
-        the backend has heard back, so the check is deferred one short beat.
-        """
-        wrote = False
-        try:
-            wrote = self._set_system_clipboard_text(text)
-        except Exception:  # noqa: BLE001
-            logger.debug("Clipboard set failed", exc_info=True)
-            on_result(False)
-            return
-        if not wrote:
-            on_result(False)
-            return
-        clipboard = None
-        try:
-            clipboard = self._get_system_clipboard()
-        except Exception:  # noqa: BLE001
-            logger.debug("Could not resolve clipboard for verification", exc_info=True)
-        if clipboard is None:
-            # Nothing to interrogate (headless): the write is all we know, and
-            # claiming failure here would be its own kind of lie.
-            on_result(True)
-            return
-        verify_clipboard_ownership(clipboard, on_result)
 
     def _paste_text(self, text: str) -> None:
         """Inject clipboard text into xterm.js (fires onData → PTY bridge)."""
@@ -2532,44 +2442,27 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self.paste_clipboard()
         elif kind == "copy":
             # Selection posted from JS (shortcut or copy_clipboard).
-            text = payload.get("text") or ""
-            request_id = payload.get("requestId")
-            callback = self._clipboard_copy_callbacks.pop(request_id, None)
-
-            def _report(copied: bool, _text=text, _cb=callback, _rid=request_id):
-                if _cb is not None:
-                    _cb(copied)
-                elif _rid is None:
-                    self._report_shortcut_copy(copied, attempted=bool(_text))
-
+            copied = False
             try:
-                self.set_system_clipboard_text_verified(text, _report)
+                copied = self._set_system_clipboard_text(payload.get("text") or "")
             except Exception:  # noqa: BLE001
                 logger.debug("Failed to set system clipboard from PyXterm", exc_info=True)
-                _report(False)
-
-    def _report_shortcut_copy(self, copied: bool, *, attempted: bool) -> None:
-        """Route a backend-owned shortcut copy to the standard UI path.
-
-        Embedded xterm.js owns its keyboard shortcut so WebKit and a GTK bubble
-        controller cannot both process the same event, so the result has to be
-        reported here rather than through ``copy_clipboard``'s completion.
-        ``attempted`` separates "there was nothing selected" (stay quiet) from
-        "we tried to copy and the clipboard refused" (worth telling the user).
-        """
-        owner = self.owner
-        if owner is None or not hasattr(owner, "handle_backend_copy_result"):
-            return
-        try:
-            owner.handle_backend_copy_result(copied, attempted=attempted)
-        except TypeError:
-            # Older/stubbed owners accept only the boolean.
-            try:
-                owner.handle_backend_copy_result(copied)
-            except Exception:  # noqa: BLE001
-                logger.debug("handle_backend_copy_result raised", exc_info=True)
-        except Exception:  # noqa: BLE001
-            logger.debug("handle_backend_copy_result raised", exc_info=True)
+            request_id = payload.get("requestId")
+            callback = self._clipboard_copy_callbacks.pop(request_id, None)
+            if callback is not None:
+                callback(copied)
+            elif request_id is None:
+                # Embedded xterm.js owns its keyboard shortcut so WebKit and a
+                # GTK bubble controller cannot both process the same event.
+                # Report the actual write through the same UI completion path
+                # used by context-menu copies.
+                owner = self.owner
+                if owner is not None and hasattr(owner, "handle_backend_copy_result"):
+                    try:
+                        owner.handle_backend_copy_result(copied)
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "handle_backend_copy_result raised", exc_info=True)
 
     # ---- autocomplete (Termius-style popup, engine in autocomplete.py) -------
 

@@ -1,23 +1,8 @@
 """Focused clipboard-result contracts for the VTE backend."""
 
-import pytest
 from unittest.mock import MagicMock
 
 from sshpilot.terminal_backends import VTETerminalBackend, Vte
-from sshpilot import terminal_backends
-
-
-@pytest.fixture(autouse=True)
-def _synchronous_clipboard_verification(monkeypatch):
-    """Clipboard success is confirmed via a deferred ``is_local()`` check, which
-    needs a main loop.  These tests cover routing, not the verification itself,
-    so resolve it inline and successfully; the verification has its own tests."""
-    monkeypatch.setattr(
-        terminal_backends, "verify_clipboard_ownership",
-        lambda clipboard, on_result: on_result(True),
-    )
-
-
 
 
 def _backend(selected):
