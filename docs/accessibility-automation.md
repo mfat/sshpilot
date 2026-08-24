@@ -6,7 +6,18 @@ this build — GTK 4.22.4, libadwaita 1.9.3, at-spi2 2.58.2, dogtail 0.9.11,
 PyGObject 3.56, on a GNOME/Wayland session.
 
 The executable form of this document is `tests/e2e/` (see its README for how to
-run it). The cheap, display-free part is `tests/test_accessibility_metadata.py`.
+run it). The cheap, display-free part is `tests/test_accessibility_metadata.py`,
+which parses **every** module under `src/sshpilot/` — so a name added to a
+dialog nobody has touched yet is held to the same rules as one in the sidebar.
+
+What that guard does *not* claim is full coverage of icon-only controls. It
+checks the names we set; it cannot tell an icon-only button that still has only
+a tooltip from a labelled one that legitimately has both. Roughly 180
+`set_tooltip_text` calls remain across the package, most of them on controls
+that already carry a visible label. Converting the genuinely icon-only
+remainder to `label_icon_button` is follow-up work, done screen by screen with
+the Dogtail suite to confirm each one; the helper and the guard are in place
+for it.
 
 Everything was measured on GNOME/Wayland. X11 and headless runs are untested.
 

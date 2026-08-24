@@ -36,6 +36,7 @@ class FakeGtk:
 
     class AccessibleState:
         EXPANDED = "state:expanded"
+        SELECTED = "state:selected"
 
 
 class RecordingWidget:
@@ -114,6 +115,25 @@ def test_expanded_none_resets_the_state(gtk):
     assert widget.state_resets == ["state:expanded"]
 
 
+def test_selected_state_is_sent_as_a_plain_int(gtk):
+    """``SELECTED`` is a tristate too, so the same int rule applies to it."""
+    widget = RecordingWidget()
+    accessibility.set_accessible_selected(widget, True)
+    accessibility.set_accessible_selected(widget, False)
+    assert widget.states == [
+        (["state:selected"], [1]),
+        (["state:selected"], [0]),
+    ]
+    for _states, values in widget.states:
+        assert all(type(value) is int for value in values)
+
+
+def test_selected_none_resets_the_state(gtk):
+    widget = RecordingWidget()
+    accessibility.set_accessible_selected(widget, None)
+    assert widget.state_resets == ["state:selected"]
+
+
 def test_label_icon_button_separates_the_name_from_the_tooltip(gtk):
     button = RecordingWidget()
     accessibility.label_icon_button(
@@ -140,6 +160,7 @@ def test_helpers_are_inert_without_gtk():
     """The unit suite runs against a stubbed ``gi``; nothing may explode."""
     assert accessibility.set_accessible_name(object(), "x") is False
     assert accessibility.set_accessible_expanded(object(), True) is False
+    assert accessibility.set_accessible_selected(object(), True) is False
     accessibility.label_icon_button(None, "x")  # must not raise
 
 
@@ -149,8 +170,6 @@ def test_helpers_are_inert_without_gtk():
 _SHORTCUT_MARKERS = re.compile(
     r"Ctrl\+|Cmd\+|Alt\+|Shift\+|\{shortcut\}|\{modifier\}|\{accels\}|\{accel\}"
 )
-
-_SCANNED_MODULES = ("sidebar.py", "window.py", "terminal.py", "omni_search.py")
 
 
 def _literal_strings(node: ast.AST) -> list:
@@ -164,9 +183,15 @@ def _literal_strings(node: ast.AST) -> list:
 
 
 def _accessible_name_expressions():
-    """Yield ``(module, lineno, expression)`` for every accessible name we set."""
-    for module in _SCANNED_MODULES:
-        path = SRC / module
+    """Yield ``(module, lineno, expression)`` for every accessible name we set.
+
+    The scan covers the whole package rather than the handful of modules that
+    happened to need names first: a name added anywhere — a dialog, a command
+    block, a key manager — is bound by the same rules, and a guard that only
+    watched four files would have let the next one through.
+    """
+    for path in sorted(SRC.rglob("*.py")):
+        module = str(path.relative_to(SRC))
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
