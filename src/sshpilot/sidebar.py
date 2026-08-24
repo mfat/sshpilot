@@ -2006,7 +2006,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             "source_group_id": (
                 next(iter(source_group_ids)) if len(source_group_ids) == 1 else None
             ),
-            "source_group_coherent": len(source_group_ids) == 1,
         }
 
         if window:
@@ -3645,13 +3644,6 @@ def _on_connection_list_drop(window, target, value, x, y):
         if drop_type == "connection":
             connection_nicknames: List[str] = []
             source_group_id = value.get("source_group_id")
-            if value.get("source_group_coherent") is False:
-                _show_sidebar_dnd_error(
-                    window,
-                    ValueError("Selected connections must share one displayed group"),
-                )
-                return False
-
             payload = value.get("connections")
             if isinstance(payload, list):
                 for item in payload:
