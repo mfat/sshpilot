@@ -4923,11 +4923,13 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.delete_group_button.connect('clicked', window.on_delete_group_clicked)
     window.group_toolbar.append(window.delete_group_button)
     
-    # Minimize-to-strip chevron: lives at the start of the bottom toolbar (full
+    # Minimize-to-strip button: lives at the start of the bottom toolbar (full
     # mode only; the whole toolbar is hidden in the strip). Collapses to icons.
-    minimize_button = icon_utils.new_button_from_icon_name('go-previous-symbolic')
+    # box-left/box-right (bundled) show the panel the button acts on, which
+    # reads as "collapse this sidebar" far better than a bare chevron did.
+    minimize_button = icon_utils.new_button_from_icon_name('box-left-symbolic')
     minimize_button.add_css_class('flat')
-    # Natural (unstretched) height so it matches the lone expand chevron rather
+    # Natural (unstretched) height so it matches the lone expand button rather
     # than growing to the taller action-button row height.
     minimize_button.set_valign(Gtk.Align.CENTER)
     minimize_button.set_tooltip_text(_('Minimize sidebar to icons'))
@@ -4974,20 +4976,19 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window._sidebar_toolbar_clip = _horizontal_clip(toolbar)
     sidebar_box.append(window._sidebar_toolbar_clip)
 
-    # Expand chevron: the strip-mode counterpart, pinned to the very bottom of
+    # Expand button: the strip-mode counterpart, pinned to the very bottom of
     # the sidebar (the vexpanding list above pushes it down). Only shown while
     # minimal; visibility is toggled in _apply_sidebar_minimal_chrome.
     expand_button = Gtk.Button()
-    # go-next (not pan-end): matches the collapse chevron's go-previous arrow
-    # weight; pan-* icons are smaller glyphs and look undersized beside it.
-    icon_utils.set_button_icon(expand_button, 'go-next-symbolic')
+    # Mirror of the collapse button's box-left, so the pair reads as one control.
+    icon_utils.set_button_icon(expand_button, 'box-right-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
     expand_button.add_css_class('flat')
     expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
     # Wrap in a .toolbar bar so the button gets the same compact Adwaita metrics
-    # as the collapse chevron (which lives in the bottom .toolbar box); a bare
+    # as the collapse button (which lives in the bottom .toolbar box); a bare
     # flat button uses larger default padding and looks a different size. Centre
-    # the bar so the natural-width chevron sits mid-strip, not left-aligned.
+    # the bar so the natural-width button sits mid-strip, not left-aligned.
     expand_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
     expand_bar.add_css_class('toolbar')
     expand_bar.set_halign(Gtk.Align.CENTER)
