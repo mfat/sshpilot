@@ -1638,33 +1638,28 @@ class TerminalWidget(Gtk.Box):
             logger.error(f"Failed to handle daemon close: {e}")
 
     def _show_daemon_close_dialog(self):
-        """Ask whether to end the session, for the ASK close policy.
-
-        Detach is not offered: a detached session stays RUNNING in the daemon
-        with no tab owning it, which kept the sidebar green for a connection
-        the user had closed (GH #1176). The only question here is whether to go
-        through with ending it -- the same shape as the quit confirmation. The
-        policy itself still supports detach for a config that asks for it.
-        """
+        """Show close policy dialog for daemon terminals."""
         try:
             from gi.repository import Adw
 
             root = self.get_root() if hasattr(self, 'get_root') else None
             if not root:
-                # No window to ask in: close rather than strand the session.
-                self._daemon_controller.close()
+                # Fall back to detach if no parent window
+                self._daemon_controller.detach()
                 return
 
             dialog = Adw.AlertDialog.new(
                 "Close Terminal Session",
-                "End the remote terminal session?"
+                "What should happen to the remote terminal session?"
             )
 
+            dialog.add_response("detach", "Detach")
             dialog.add_response("terminate", "Terminate")
             dialog.add_response("cancel", "Cancel")
 
             dialog.set_response_appearance("terminate", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("cancel")
+            dialog.set_response_appearance("detach", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("detach")
             dialog.set_close_response("cancel")
 
             dialog.connect("response", self._on_daemon_close_dialog_response)
@@ -1672,15 +1667,11 @@ class TerminalWidget(Gtk.Box):
 
         except Exception as e:
             logger.error(f"Failed to show daemon close dialog: {e}")
-            # Close on error rather than leaving an unowned session behind.
-            self._daemon_controller.close()
+            # Fall back to detach on error
+            self._daemon_controller.detach()
 
     def _on_daemon_close_dialog_response(self, dialog, response):
-        """Handle daemon close dialog response.
-
-        ``detach`` is still accepted so a caller that offers it (a config-driven
-        detach flow) keeps working, but the dialog above no longer presents it.
-        """
+        """Handle daemon close dialog response."""
         try:
             if response == "detach":
                 self._daemon_controller.detach()
@@ -1688,21 +1679,22 @@ class TerminalWidget(Gtk.Box):
             elif response == "terminate":
                 self._daemon_controller.close()
                 logger.debug(f"User chose to terminate daemon session {self._daemon_tab_state.session_id}")
-            else:
-                return  # Cancel, or anything unrecognized: do not close
+            elif response == "cancel":
+                return  # Don't close
 
-            # Only detach/terminate reach here; cancel returned above.
-            self._uninstall_daemon_backend_io()
-            self._daemon_mode = False
-            self._daemon_controller = None
-            self._daemon_tab_state = None
-            self._hide_view_only_indicator()
+            # Clean up daemon state if we proceeded with close
+            if response != "cancel":
+                self._uninstall_daemon_backend_io()
+                self._daemon_mode = False
+                self._daemon_controller = None
+                self._daemon_tab_state = None
+                self._hide_view_only_indicator()
 
-            # Update connection state
-            self.is_connected = False
+                # Update connection state
+                self.is_connected = False
 
-            # Emit connection-lost signal to close the tab
-            self.emit('connection-lost')
+                # Emit connection-lost signal to close the tab
+                self.emit('connection-lost')
 
         except Exception as e:
             logger.error(f"Failed to handle daemon close dialog response: {e}")
