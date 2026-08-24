@@ -102,6 +102,31 @@ module top, mark the module `pytest.mark.gui`, and use the `gui` fixture
 `respond`). See `tests/test_gui_tab_close.py` for examples. They are NOT for pixel-gesture,
 drag-and-drop, VTE-scraping, or live-SSH bugs — use unit tests there.
 
+### Running accessibility/UI automation tests (Dogtail, marker `e2e`)
+
+`tests/e2e/` launches the **real** app as a subprocess and drives it through
+the AT-SPI accessibility bus — no imports of SSH Pilot's Python, no GTK
+callbacks, no screen coordinates. Also opt-in, also excluded from the default
+run:
+
+```bash
+SSHPILOT_E2E_TESTS=1 pytest tests/e2e -m e2e -p no:cacheprovider -o addopts=""
+```
+
+`-o addopts=""` drops the repo default `-n 12`: each test opens a window and
+they must not run in parallel. Needs a graphical session with an accessibility
+bus plus `python3-dogtail` / `python3-pyatspi` — see
+`requirements-gui-tests.txt` and `tests/e2e/README.md`. Artifacts for failures
+(accessible tree, app stdout/stderr, app logs, action log, screenshot when one
+can be taken) land in `build/e2e-artifacts/`.
+
+Accessible names, roles and states are a contract: read
+[docs/accessibility-automation.md](docs/accessibility-automation.md) before
+changing them, and keep new icon-only controls out of trouble by using
+`sshpilot.accessibility.label_icon_button()` rather than relying on GTK's
+tooltip fallback (which drags the keyboard shortcut into the accessible name).
+`tests/test_accessibility_metadata.py` enforces that part without a display.
+
 ## Frontend-neutral API changes
 
 Before changing `sshpilot.api`, the client/core ownership boundary, or behaviour

@@ -25,6 +25,7 @@ try:
 except Exception:  # pragma: no cover - only where gi cairo is absent
     Gcairo = None
 
+from .accessibility import set_accessible_name
 from .cli_connect import validate_cli_tokens
 from .shortcut_utils import DOUBLE_SHIFT_SHORTCUT
 
@@ -590,6 +591,10 @@ class OmniSearchController:
         self.entry = Gtk.SearchEntry()
         self.entry.set_can_focus(True)
         self._update_placeholder()
+        # The placeholder is the only visible text and GTK does not expose it
+        # as an accessible name; and it carries the (rebindable) shortcut, so
+        # it would not be a stable one either.
+        set_accessible_name(self.entry, _("Search connections and commands"))
         self.entry.add_css_class("omni-search-entry")
         self.entry.connect("search-changed", self._on_search_changed)
         self.entry.connect("activate", lambda *_args: self.activate_selected())

@@ -19,6 +19,12 @@ from .dnd_payload import (
     set_internal_drag_icon,
 )
 from .platform_utils import is_macos
+from .accessibility import (
+    label_icon_button,
+    set_accessible_description,
+    set_accessible_expanded,
+    set_accessible_name,
+)
 from .connection_model import Connection
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
@@ -965,7 +971,7 @@ class GroupRow(Gtk.ListBoxRow):
         # Split-view button — only visible on hover
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
-        self.split_view_button.set_tooltip_text(_("Open in Split View"))
+        label_icon_button(self.split_view_button, _("Open in Split View"))
         self.split_view_button.set_valign(Gtk.Align.CENTER)
         self.split_view_button.set_opacity(0.0)
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
@@ -976,7 +982,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.edit_button = icon_utils.new_button_from_icon_name("document-edit-symbolic")
         self.edit_button.add_css_class("flat")
         self.edit_button.add_css_class("group-edit-button")
-        self.edit_button.set_tooltip_text(_("Edit Group"))
+        label_icon_button(self.edit_button, _("Edit Group"))
         self.edit_button.set_valign(Gtk.Align.CENTER)
         self.edit_button.set_opacity(0.0)  # Hidden by default but reserves space
         self.edit_button.connect("clicked", self._on_edit_clicked)
@@ -1037,7 +1043,8 @@ class GroupRow(Gtk.ListBoxRow):
 
     def _update_display(self):
         from sshpilot import icon_utils
-        if self.group_info.get("expanded", True):
+        expanded = bool(self.group_info.get("expanded", True))
+        if expanded:
             icon_utils.set_button_icon(self.expand_button, "pan-down-symbolic")
         else:
             icon_utils.set_button_icon(self.expand_button, "pan-end-symbolic")
@@ -1048,11 +1055,30 @@ class GroupRow(Gtk.ListBoxRow):
             if c in self.connections_dict
         ]
         count = len(actual_connections)
-        group_name = GLib.markup_escape_text(str(self.group_info['name']))
+        raw_name = str(self.group_info['name'])
+        group_name = GLib.markup_escape_text(raw_name)
         self.name_label.set_markup(f"<b>{group_name}</b>")
         self.count_label.set_text(_("{count} connections").format(count=count))
+        # The header's text lives in child labels, so GTK leaves the list item
+        # itself unnamed; say what the row is as well as which group it is.
+        set_accessible_name(self, self._accessible_row_name(raw_name))
+        set_accessible_description(
+            self, _("{count} connections").format(count=count)
+        )
+        set_accessible_expanded(self, expanded)
+        # The chevron is icon-only; name it after what activating it does, so
+        # it reads correctly and matches the row's expanded state. Name only —
+        # it has never carried a tooltip, and this is not the place to add one.
+        set_accessible_name(
+            self.expand_button,
+            _("Collapse group") if expanded else _("Expand group"),
+        )
         self._apply_group_color_style()
 
+
+    def _accessible_row_name(self, group_name: str) -> str:
+        """What this row is, for AT-SPI. Overridden by tag sections."""
+        return _("Connection group: {name}").format(name=group_name)
 
     def _on_expand_clicked(self, button):
         self._toggle_expand()
@@ -1414,10 +1440,14 @@ class TagGroupRow(GroupRow):
         # The edit button renames the tag (across all tagged connections);
         # the split-view button works as inherited — the action only reads
         # group_info['connections'] / ['name'], so a synthetic group is fine.
-        self.edit_button.set_tooltip_text(_("Rename Tag"))
+        label_icon_button(self.edit_button, _("Rename Tag"))
         if group_info.get("untagged"):
             # The Untagged section is not a real tag — nothing to rename.
             self.edit_button.set_visible(False)
+
+    def _accessible_row_name(self, group_name: str) -> str:
+        # A tag section is not a user-created group; don't call it one.
+        return _("Tag: {name}").format(name=group_name)
 
     def apply_row_style(self, flat: bool | None = None) -> None:
         # Tag group headers always use osd styling.
@@ -1593,7 +1623,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
-        self.file_manager_button.set_tooltip_text(_("Manage Files"))
+        label_icon_button(self.file_manager_button, _("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
         self.file_manager_button.set_opacity(0.0)  # Hidden by default but reserves space
         if file_manager_callback:
@@ -1619,8 +1649,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.effective_warning_icon.add_css_class("flat")
         self.effective_warning_icon.add_css_class("warning")
         self.effective_warning_icon.set_valign(Gtk.Align.CENTER)
-        self.effective_warning_icon.set_tooltip_text(
-            _("Global SSH config changes this connection's effective settings — click to compare"))
+        label_icon_button(
+            self.effective_warning_icon,
+            _("Effective SSH config differs"),
+            tooltip=_("Global SSH config changes this connection's effective settings — click to compare"),
+        )
         self.effective_warning_icon.set_visible(False)
         self.effective_warning_icon.set_opacity(0.0)
         self.effective_warning_icon.connect("clicked", self._on_effective_warning_clicked)
@@ -1644,10 +1677,26 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         self.set_selectable(True)
 
+        # The row's text lives in child labels, so GTK exposes the list item
+        # itself with an empty accessible name. Name it after the connection so
+        # a screen reader (and AT-SPI automation) can identify the row.
+        self._update_accessible_identity()
+
         self.update_status()
         self._update_forwarding_indicators()
         self._setup_drag_source()
         self._apply_group_color_style()
+
+    def _update_accessible_identity(self) -> None:
+        """Publish the connection's name/target as the row's a11y identity."""
+        connection_name = (
+            getattr(self.connection, "display_name", None)
+            or getattr(self.connection, "nickname", "")
+        )
+        set_accessible_name(self, connection_name)
+        set_accessible_description(
+            self, _format_connection_host_display(self.connection) or None
+        )
 
     def set_display_group_id(self, group_id: Optional[str]) -> None:
         """Set which group this row is listed under and refresh its color."""
@@ -2381,6 +2430,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
             self._apply_host_label_text(include_port=True)
+        self._update_accessible_identity()
         self._update_forwarding_indicators()
         self.update_status()
         # The above repopulate labels/indicators that the strip hides; re-apply
@@ -4029,13 +4079,25 @@ def _horizontal_clip(child: Gtk.Widget) -> Gtk.ScrolledWindow:
 def _build_sidebar_header(window, sidebar_box):
     """Build the sidebar action header (add/search/filter/sort/menu)."""
     # Sidebar header
-    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    # TOOLBAR, not the default generic role: GTK drops the accessible name of
+    # a generic container, so a label alone would be silently ignored — and a
+    # row of action buttons is a toolbar anyway. accessible-role is
+    # construct-only, hence the constructor argument.
+    header = Gtk.Box(
+        orientation=Gtk.Orientation.HORIZONTAL,
+        spacing=6,
+        accessible_role=Gtk.AccessibleRole.TOOLBAR,
+    )
     header.set_hexpand(True)
     header.set_homogeneous(True)
     header.set_margin_start(12)
     header.set_margin_end(12)
     header.set_margin_top(12)
     header.set_margin_bottom(6)
+    # A row of icon-only buttons in an unnamed container gives a screen reader
+    # nothing to orient by; GNOME's coding guidelines ask for a label on
+    # "panels that provide logical groupings".
+    set_accessible_name(header, _('Connection list actions'))
     
     # # Title
     # title_label = Gtk.Label()
@@ -4049,9 +4111,11 @@ def _build_sidebar_header(window, sidebar_box):
     add_button = icon_utils.new_button_from_icon_name('list-add-symbolic')
     add_button.add_css_class('flat')
     _expand_toolbar_button(add_button)
-    add_button.set_tooltip_text(
-        _('New Connection ({shortcut}+Shift+N)').format(
-            shortcut=get_primary_modifier_label())
+    label_icon_button(
+        add_button,
+        _('New Connection'),
+        tooltip=_('New Connection ({shortcut}+Shift+N)').format(
+            shortcut=get_primary_modifier_label()),
     )
     add_button.connect('clicked', window.on_add_connection_clicked)
     try:
@@ -4065,7 +4129,7 @@ def _build_sidebar_header(window, sidebar_box):
     new_group_button = icon_utils.new_button_from_icon_name('folder-new-symbolic')
     new_group_button.add_css_class('flat')
     _expand_toolbar_button(new_group_button)
-    new_group_button.set_tooltip_text(_('New Group'))
+    label_icon_button(new_group_button, _('New Group'))
     new_group_button.set_action_name('win.create-group')
     try:
         new_group_button.set_can_focus(False)
@@ -4079,8 +4143,11 @@ def _build_sidebar_header(window, sidebar_box):
     _expand_toolbar_button(window.search_button)
     # Platform-aware shortcut in tooltip
     shortcut = 'Cmd+F' if is_macos() else 'Ctrl+F'
-    window.search_button.set_tooltip_text(
-        _('Search Connections ({shortcut})').format(shortcut=shortcut))
+    label_icon_button(
+        window.search_button,
+        _('Search Connections'),
+        tooltip=_('Search Connections ({shortcut})').format(shortcut=shortcut),
+    )
     window.search_button.connect('clicked', lambda *_: window.focus_search_entry())
     try:
         window.search_button.set_can_focus(False)
@@ -4093,7 +4160,19 @@ def _build_sidebar_header(window, sidebar_box):
         try:
             icon = 'view-conceal-symbolic' if window._hide_hosts else 'view-reveal-symbolic'
             icon_utils.set_button_icon(btn, icon)
-            btn.set_tooltip_text(_('Show hostnames') if window._hide_hosts else _('Hide hostnames'))
+            action = _('Show hostnames') if window._hide_hosts else _('Hide hostnames')
+            # The name follows the action the button performs, which is what a
+            # screen reader needs; the current state is in the description so it
+            # is still readable without acting on the button.
+            label_icon_button(
+                btn,
+                action,
+                tooltip=action,
+                description=(
+                    _('Hostnames are hidden') if window._hide_hosts
+                    else _('Hostnames are shown')
+                ),
+            )
         except Exception:
             pass
 
@@ -4130,7 +4209,7 @@ def _build_sidebar_header(window, sidebar_box):
     tag_button.add_css_class('flat')
     _expand_toolbar_button(tag_button)
     tag_button.set_icon_name('tag-symbolic')
-    tag_button.set_tooltip_text(_('Filter by tag'))
+    label_icon_button(tag_button, _('Filter by tag'))
 
     filter_action = Gio.SimpleAction.new_stateful(
         'filter-tag', GLib.VariantType.new('s'), GLib.Variant('s', '')
@@ -4201,7 +4280,7 @@ def _build_sidebar_header(window, sidebar_box):
     # MenuButton uses set_icon_name() which goes through icon theme
     # We'll use set_icon_name() - the icon theme should find our bundled icon
     window.menu_button.set_icon_name('open-menu-symbolic')
-    window.menu_button.set_tooltip_text(_('Menu'))
+    label_icon_button(window.menu_button, _('Main menu'), tooltip=_('Menu'))
     window.menu_button.set_menu_model(window.create_menu())
     window._install_main_menu_theme_selector()
 
@@ -4225,6 +4304,8 @@ def _build_sidebar_search(window, sidebar_box):
     # Search entry for filtering connections
     window.search_entry = Gtk.SearchEntry()
     window.search_entry.set_placeholder_text(_('Search connections'))
+    # GTK does not expose placeholder text as an accessible name.
+    set_accessible_name(window.search_entry, _('Search connections'))
     window.search_entry.connect('search-changed', window.on_search_changed)
     window.search_entry.connect('stop-search', window.on_search_stopped)
     search_key = Gtk.EventControllerKey()
@@ -4262,6 +4343,8 @@ def _create_sidebar_connection_list(window, sidebar_box):
     
     window.connection_list = Gtk.ListBox()
     window.connection_list.add_css_class("navigation-sidebar")
+    # The sidebar has no visible heading, so name the list itself.
+    set_accessible_name(window.connection_list, _('Connections'))
     window.connection_list.set_hexpand(True)
     window.connection_list.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
     try:
@@ -4736,9 +4819,14 @@ def _build_sidebar_toolbar(window, sidebar_box):
     from sshpilot import icon_utils
     
     # Connection toolbar buttons
-    window.connection_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    window.connection_toolbar = Gtk.Box(
+        orientation=Gtk.Orientation.HORIZONTAL,
+        spacing=6,
+        accessible_role=Gtk.AccessibleRole.TOOLBAR,
+    )
     window.connection_toolbar.set_hexpand(True)
     window.connection_toolbar.set_homogeneous(True)
+    set_accessible_name(window.connection_toolbar, _('Connection actions'))
 
     # Edit button
     window.edit_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')
@@ -4753,9 +4841,11 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.copy_key_button = icon_utils.new_button_from_icon_name('dialog-password-symbolic')
     window.copy_key_button.add_css_class('flat')
     _expand_toolbar_button(window.copy_key_button)
-    window.copy_key_button.set_tooltip_text(
-        _('Copy public key to server for passwordless login ({shortcut}+Shift+K)').format(
-            shortcut=get_primary_modifier_label())
+    label_icon_button(
+        window.copy_key_button,
+        _('Copy Key to Server'),
+        tooltip=_('Copy public key to server for passwordless login ({shortcut}+Shift+K)').format(
+            shortcut=get_primary_modifier_label()),
     )
     window.copy_key_button.set_sensitive(False)
     window.copy_key_button.connect('clicked', window.on_copy_key_to_server_clicked)
@@ -4775,9 +4865,11 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.manage_files_button.add_css_class('flat')
     _expand_toolbar_button(window.manage_files_button)
     primary_label = get_primary_modifier_label()
-    window.manage_files_button.set_tooltip_text(
-        _("Open file manager for remote server ({shortcut}+Shift+O)").format(
-            shortcut=primary_label)
+    label_icon_button(
+        window.manage_files_button,
+        _("Manage Files"),
+        tooltip=_("Open file manager for remote server ({shortcut}+Shift+O)").format(
+            shortcut=primary_label),
     )
     window.manage_files_button.set_sensitive(False)
     window.manage_files_button.connect('clicked', window.on_manage_files_button_clicked)
@@ -4804,9 +4896,14 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.connection_toolbar.append(window.delete_button)
     
     # Group toolbar buttons
-    window.group_toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    window.group_toolbar = Gtk.Box(
+        orientation=Gtk.Orientation.HORIZONTAL,
+        spacing=6,
+        accessible_role=Gtk.AccessibleRole.TOOLBAR,
+    )
     window.group_toolbar.set_hexpand(True)
     window.group_toolbar.set_homogeneous(True)
+    set_accessible_name(window.group_toolbar, _('Group actions'))
 
     # Rename group button
     window.rename_group_button = icon_utils.new_button_from_icon_name('document-edit-symbolic')

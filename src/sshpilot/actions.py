@@ -6,6 +6,7 @@ import random
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
 
+from .accessibility import set_accessible_name
 from .file_manager_integration import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
@@ -562,6 +563,7 @@ class WindowActions:
         )
         entry = Gtk.Entry()
         entry.set_placeholder_text(_("Session name"))
+        set_accessible_name(entry, _("Session name"))
         entry.set_activates_default(True)
         dialog.set_extra_child(entry)
         dialog.add_response('cancel', _("Cancel"))
@@ -823,6 +825,7 @@ class WindowActions:
         )
         entry = Gtk.Entry()
         entry.set_text(name)
+        set_accessible_name(entry, _("Session name"))
         entry.set_activates_default(True)
         dialog.set_extra_child(entry)
         dialog.add_response('cancel', _("Cancel"))

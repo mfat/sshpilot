@@ -42,6 +42,7 @@ HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
 
+from .accessibility import label_icon_button, set_accessible_name
 from .connection_model import Connection, ConnectionState
 from .gtk.connection_store import ConnectionPresentationStore
 from .gtk.daemon_connection_services import DaemonConnectionServices
@@ -2062,8 +2063,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sidebar_accels = self._get_safe_current_shortcuts().get('toggle_sidebar') or ['F9']
 
         accel_labels = ', '.join(_accelerator_label(a) for a in sidebar_accels)
-        self.sidebar_toggle_button.set_tooltip_text(
-            _('Hide Sidebar ({accels})').format(accels=accel_labels))
+        label_icon_button(
+            self.sidebar_toggle_button,
+            _('Toggle Sidebar'),
+            tooltip=_('Hide Sidebar ({accels})').format(accels=accel_labels),
+        )
         # Button should not appear pressed when sidebar is visible
         self.sidebar_toggle_button.set_active(False)
         self.sidebar_toggle_button.connect('toggled', self.on_sidebar_toggle)
@@ -2072,9 +2076,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Add local terminal button right after the sidebar toggle
         self.local_terminal_button = Gtk.Button()
         icon_utils.set_button_icon(self.local_terminal_button, 'utilities-terminal-symbolic')
-        self.local_terminal_button.set_tooltip_text(
-            _('New local terminal ({modifier}+Shift+T)').format(
-                modifier=get_primary_modifier_label())
+        label_icon_button(
+            self.local_terminal_button,
+            _('New Local Terminal'),
+            tooltip=_('New local terminal ({modifier}+Shift+T)').format(
+                modifier=get_primary_modifier_label()),
         )
         self.local_terminal_button.add_css_class('flat')
         self.local_terminal_button.set_action_name('app.local-terminal')
@@ -3115,7 +3121,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         }
         saved = str(self.config.get_setting('app-theme', 'default'))
         current = labels.get(saved, labels['default'])
-        btn.set_tooltip_text(_('Application theme: {theme}').format(theme=current))
+        label_icon_button(
+            btn,
+            _('Application theme'),
+            tooltip=_('Application theme: {theme}').format(theme=current),
+            description=current,
+        )
 
     def _build_sort_button(self):
         from sshpilot import icon_utils
@@ -3164,10 +3175,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         else:
             tooltip = preset.title
 
-        try:
-            self.sort_button.set_tooltip_text(tooltip)
-        except Exception:
-            pass
+        # The tooltip names the *next* preset and changes on every click, so
+        # it is no basis for an accessible name; keep the name fixed and put
+        # the current preset in the description.
+        label_icon_button(
+            self.sort_button,
+            _("Sort Connections"),
+            tooltip=tooltip,
+            description=preset.title,
+        )
 
     def _on_sort_button_clicked(self, *_args):
         current = self._connection_sort_last or DEFAULT_CONNECTION_SORT
@@ -3387,7 +3403,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from sshpilot import icon_utils as _iu
         self.split_view_button = Gtk.Button()
         _iu.set_button_icon(self.split_view_button, 'view-grid-symbolic')
-        self.split_view_button.set_tooltip_text(_('New Split View'))
+        label_icon_button(self.split_view_button, _('New Split View'))
         self.split_view_button.add_css_class('flat')
         self.split_view_button.connect('clicked', self.on_open_split_view_clicked)
         self._headerbar_start_box.append(self.split_view_button)
@@ -3398,13 +3414,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._headerbar_theme_menu_button = Gtk.MenuButton()
         _cmd_icon_utils.set_button_icon(self._headerbar_theme_menu_button, 'dark-mode-symbolic')
         self._headerbar_theme_menu_button.add_css_class('flat')
-        self._headerbar_theme_menu_button.set_tooltip_text(_('Application theme'))
+        label_icon_button(self._headerbar_theme_menu_button, _('Application theme'))
         self._headerbar_theme_menu_button.set_menu_model(self._create_theme_menu())
 
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
-        self._cmd_blocks_toggle_btn.set_tooltip_text(_('Command Snippets'))
+        label_icon_button(self._cmd_blocks_toggle_btn, _('Command Snippets'))
         self._updating_cmd_toggle = False
 
         def _on_cmd_toggle_btn_toggled(btn):
@@ -3479,6 +3495,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Create command entry
         self.broadcast_entry = Gtk.Entry()
         self.broadcast_entry.set_placeholder_text(_("e.g., ls -la"))
+        # The banner title is a sibling label, and GTK/PyGObject cannot publish
+        # a labelled-by relation, so name the entry directly.
+        set_accessible_name(self.broadcast_entry, _("Broadcast Command"))
         self.broadcast_entry.set_hexpand(True)
         self.broadcast_entry.connect('activate', self.on_broadcast_entry_activate)
         self.broadcast_entry.connect('changed', self.on_broadcast_entry_changed)
@@ -4199,9 +4218,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             labels = ', '.join(
                 label for label in (_accelerator_label(a) for a in accels) if label
             )
-            button.set_tooltip_text(
-                _('Exit Fullscreen ({accels})').format(accels=labels)
-                if labels else _('Exit Fullscreen')
+            label_icon_button(
+                button,
+                _('Exit Fullscreen'),
+                tooltip=(
+                    _('Exit Fullscreen ({accels})').format(accels=labels)
+                    if labels else _('Exit Fullscreen')
+                ),
             )
         except Exception:
             logger.debug('Failed to build fullscreen button tooltip', exc_info=True)

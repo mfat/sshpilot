@@ -1,0 +1,42 @@
+# Dependencies for the Dogtail/AT-SPI GUI accessibility suite (tests/e2e/).
+#
+# Deliberately NOT in requirements.txt or requirements-dev.txt: none of this is
+# needed to build, ship, or unit-test SSH Pilot. It is only needed to drive the
+# running app through the accessibility bus on a graphical session.
+#
+# Dogtail and pyatspi are PyGObject-based and are packaged by every major
+# distro; installing them from PyPI into a venv generally does NOT work,
+# because they need the AT-SPI 2.0 and GTK 3.0 GObject-introspection typelibs.
+# Install the system packages instead:
+#
+#   Fedora / RHEL:
+#       sudo dnf install python3-dogtail python3-pyatspi \
+#                        at-spi2-core gtk3
+#
+#   Debian / Ubuntu:
+#       sudo apt install python3-dogtail python3-pyatspi \
+#                        at-spi2-core libgtk-3-0
+#
+#   Arch:
+#       sudo pacman -S python-atspi at-spi2-core gtk3
+#       # dogtail is in the AUR
+#
+# Then run pytest from an interpreter that can see the system site-packages
+# (a plain system python3, or a venv created with --system-site-packages).
+#
+# Runtime requirements beyond the packages:
+#   * a graphical session (Wayland or X11) with an at-spi2 accessibility bus
+#     -- `busctl --user list | grep org.a11y.Bus` should show it;
+#   * GTK 4 and libadwaita, i.e. whatever it already takes to run SSH Pilot.
+#
+# The GNOME "toolkit-accessibility" GSetting does NOT need to be on: that gate
+# is a GTK 3/atk-bridge concept. GTK 4 always exports its AT-SPI tree when the
+# bus exists, and tests/e2e/harness.py switches dogtail's check off rather than
+# rewriting a developer's desktop settings.
+
+-r requirements-dev.txt
+
+# Listed for completeness / for images that really can build them from source.
+# Prefer the distro packages above.
+# dogtail
+# pyatspi
