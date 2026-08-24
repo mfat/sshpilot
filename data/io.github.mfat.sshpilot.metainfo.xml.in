@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.9.3" date="2026-08-24">
+      <description>
+        <p>Bug fixes and UI improvements</p>
+      </description>
+    </release>
     <release version="5.9.2" date="2026-08-22">
       <description>
         <p>Fixes drag and drop reordering not working</p>
