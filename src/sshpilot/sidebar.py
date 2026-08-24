@@ -3645,6 +3645,19 @@ def _on_connection_list_drop(window, target, value, x, y):
             connection_nicknames: List[str] = []
             source_group_id = value.get("source_group_id")
             payload = value.get("connections")
+            # A selection spanning several displayed groups reports
+            # source_group_id=None, exactly like a root-level drag. Only a
+            # coherent single-source drag may reorder in place ("preserve");
+            # a mixed one has to leave its old groups ("exclusive"), or the
+            # store rejects the move.
+            source_group_coherent = not (
+                isinstance(payload, list)
+                and len({
+                    item.get("display_group_id")
+                    for item in payload
+                    if isinstance(item, dict)
+                }) > 1
+            )
             if isinstance(payload, list):
                 for item in payload:
                     if isinstance(item, dict):
@@ -3730,7 +3743,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                             position="above" if first_connection else None,
                             mode=(
                                 "preserve"
-                                if source_group_id == target_group_id
+                                if source_group_coherent
+                                and source_group_id == target_group_id
                                 else "exclusive"
                             ),
                         )
@@ -3755,7 +3769,8 @@ def _on_connection_list_drop(window, target, value, x, y):
                                 position=position,
                                 mode=(
                                     "preserve"
-                                    if source_group_id == target_group_id
+                                    if source_group_coherent
+                                    and source_group_id == target_group_id
                                     else "exclusive"
                                 ),
                             )
