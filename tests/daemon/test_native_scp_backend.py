@@ -1,3 +1,4 @@
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -7,6 +8,12 @@ import pytest
 from sshpilot.api import ErrorCode
 from sshpilot.api.models import ConnectionId, SessionId, StartScpTransferRequest, TransferDirection, TransferId
 from sshpilot.daemon.native_scp_backend import NativeScpBackend
+
+# These tests drive fake processes, so nothing here should ever wait on a real
+# one. Production's 5s default is deliberately not inherited: a fake whose
+# stderr never reaches EOF would silently cost 10s per process attempt instead
+# of failing, which is exactly how a spinning drain thread went unnoticed.
+_UNIT_WAIT_TIMEOUT = 0.01
 
 
 class _Broker:
@@ -54,7 +61,12 @@ class _Process:
     def __init__(self, returncode=0, stderr=b""):
         self.pid = 1234
         self.returncode = returncode
-        self.stderr = SimpleNamespace(read=lambda _limit: stderr)
+        # Yield the payload once, then EOF -- a real pipe returns b"" when
+        # the child closes it. Returning it forever spun the drain thread.
+        _pending = [stderr] if stderr else []
+        self.stderr = SimpleNamespace(
+            read=lambda _limit: _pending.pop(0) if _pending else b"",
+        )
         self.terminated = False
         self.killed = False
 
@@ -102,7 +114,7 @@ def test_native_backend_builds_literal_multi_source_argv_without_shell():
     provider = _Provider()
     broker = _Broker()
     popen = _Popen([_Process()])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     backend.run(
         _request(),
@@ -128,12 +140,72 @@ def test_native_backend_builds_literal_multi_source_argv_without_shell():
     assert "secret-token" not in repr(_request())
 
 
-def test_native_backend_drains_large_stderr_without_deadlock():
+class _RealProcessProvider:
+    """Launch an actual child instead of a fake, for the OS-level drain test."""
+
+    def __init__(self, argv):
+        self._argv = argv
+
+    def prepare_daemon_scp_target(self, connection_id):
+        return "alice@example.test"
+
+    def prepare_daemon_scp_launch(self, connection_id, **kwargs):
+        return tuple(self._argv), {"PATH": "/usr/bin:/bin"}
+
+
+@pytest.mark.integration
+def test_native_backend_survives_a_child_that_floods_stderr():
+    """The deadlock the drain thread exists to prevent is an OS property.
+
+    A child writing past the pipe buffer (~64KB) blocks in write() until
+    someone reads, while the parent blocks in wait() for an exit that cannot
+    come. No fake can reproduce that -- the buffer, not Python, is what
+    deadlocks -- so this spawns a real process that writes far more than the
+    pipe holds. It is also the only test here that exercises real EOF
+    semantics, which is what a hand-written fake stream gets wrong.
+    """
+    flood = 1_000_000
+    provider = _RealProcessProvider([
+        sys.executable,
+        "-c",
+        f"import sys; sys.stderr.write('x' * {flood}); sys.stderr.flush()",
+    ])
+    backend = NativeScpBackend(provider, _Broker())
+
+    # Run on a worker so a genuine deadlock fails this test instead of hanging
+    # the session: with the drain broken, run() never returns at all, and an
+    # unbounded call here would stall CI until the job timeout rather than
+    # reporting anything useful.
+    outcome: list = []
+
+    def _run():
+        outcome.append(backend.run(
+            _request(sources=("/tmp/source",)),
+            connection_target="alice@example.test",
+            connection_id=ConnectionId("demo"),
+            transfer_id=TransferId("transfer-flood"),
+            cancel_event=threading.Event(),
+        ))
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout=30)
+    assert not worker.is_alive(), (
+        "run() never returned: the child filled the stderr pipe and blocked in "
+        "write() while the parent waited for an exit that cannot come"
+    )
+
+    result = outcome[0]
+    assert result.returncode == 0
+    assert len(result.stderr) <= 64 * 1024
+
+
+def test_native_backend_bounds_the_stderr_tail():
     provider = _Provider()
     broker = _Broker()
     large = b"x" * (128 * 1024)
     popen = _Popen([_Process(returncode=0, stderr=large)])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     result = backend.run(
         _request(sources=("/tmp/source",)),
@@ -156,7 +228,7 @@ def test_native_backend_marks_modern_and_legacy_process_groups():
         _Process(returncode=1, stderr=b"subsystem request failed"),
         _Process(returncode=0),
     ])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     backend.run(
         _request(sources=("/tmp/source",)),
@@ -179,7 +251,7 @@ def test_native_backend_retries_once_with_legacy_protocol_for_sftp_failure():
         _Process(returncode=1, stderr=b"subsystem request failed"),
         _Process(returncode=0),
     ])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     result = backend.run(
         _request(sources=("/tmp/source",)),
@@ -197,7 +269,7 @@ def test_native_backend_does_not_retry_authentication_failure():
     provider = _Provider()
     broker = _Broker()
     popen = _Popen([_Process(returncode=1, stderr=b"Permission denied (publickey)")])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     with pytest.raises(Exception) as exc_info:
         backend.run(
@@ -254,7 +326,7 @@ def test_native_backend_cancellation_terminates_process():
     broker = _Broker()
     process = _Process(returncode=None)
     popen = _Popen([process])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
     cancelled = threading.Event()
     cancelled.set()
 
@@ -276,7 +348,7 @@ def test_native_backend_scopes_interactions_to_public_transfer_id():
     provider = _Provider()
     broker = _Broker()
     popen = _Popen([_Process()])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     backend.run(
         _request(),
@@ -301,7 +373,7 @@ def test_native_backend_commits_remembered_secret_before_cleanup():
     provider = _Provider()
     broker = _Broker()
     popen = _Popen([_Process(returncode=0)])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     result = backend.run(
         _request(sources=("/tmp/source",)),
@@ -320,7 +392,7 @@ def test_native_backend_failure_does_not_commit_remembered_secret():
     provider = _Provider()
     broker = _Broker()
     popen = _Popen([_Process(returncode=1, stderr=b"Permission denied (publickey)")])
-    backend = NativeScpBackend(provider, broker, popen=popen)
+    backend = NativeScpBackend(provider, broker, popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT)
 
     with pytest.raises(Exception):
         backend.run(

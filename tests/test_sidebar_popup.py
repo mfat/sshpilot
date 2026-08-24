@@ -32,6 +32,7 @@ def _popup():
     p._search_only = False
     p._show_groups = True
     p._anchor = None
+    p._margins = (0, 0, 0, 0)
     p._overlay = MagicMock()
     return p
 

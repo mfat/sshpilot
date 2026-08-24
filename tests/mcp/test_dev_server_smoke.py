@@ -12,13 +12,19 @@ import tempfile
 from pathlib import Path
 
 import pytest
+
+# ``mcp`` is an optional extra (pyproject: mcp>=2.0.0) and this module needs
+# the 2.x server API that sshpilot.mcp imports. Gate on that module rather
+# than on the ``mcp`` package name: an older 1.x install imports as ``mcp``
+# perfectly well and would fail here at runtime instead of skipping.
+pytest.importorskip("mcp.server.mcpserver")
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC = str(REPO_ROOT / "src")
 
-pytestmark = pytest.mark.asyncio
+pytestmark = pytest.mark.anyio
 
 
 def _server_parameters(root: Path) -> StdioServerParameters:

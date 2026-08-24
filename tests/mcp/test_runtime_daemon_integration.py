@@ -14,6 +14,12 @@ from typing import AsyncIterator
 import anyio
 import pytest
 
+# ``mcp`` is an optional extra (pyproject: mcp>=2.0.0) and this module needs
+# the 2.x server API that sshpilot.mcp imports. Gate on that module rather
+# than on the ``mcp`` package name: an older 1.x install imports as ``mcp``
+# perfectly well and would fail here at runtime instead of skipping.
+pytest.importorskip("mcp.server.mcpserver")
+
 from sshpilot.api.daemon_client import DaemonClient
 from sshpilot.daemon import DaemonServer
 from sshpilot.mcp.runtime.policy import RuntimePolicy

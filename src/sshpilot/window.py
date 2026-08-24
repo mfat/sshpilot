@@ -3402,7 +3402,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._headerbar_theme_menu_button.set_menu_model(self._create_theme_menu())
 
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
-        _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'system-run-symbolic')
+        _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
         self._cmd_blocks_toggle_btn.set_tooltip_text(_('Command Snippets'))
         self._updating_cmd_toggle = False

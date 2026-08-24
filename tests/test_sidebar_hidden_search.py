@@ -5,6 +5,9 @@ from sshpilot.window import MainWindow
 
 class _Window:
     _sidebar_minimal = False
+    # _expand_sidebar_for_search dismisses the command popup before detaching
+    # the sidebar; MainWindow.__init__ leaves it None until one is built.
+    _command_popup = None
     _expand_sidebar_for_search = MainWindow._expand_sidebar_for_search
     activate_search_entry = MainWindow.activate_search_entry
 

@@ -16,6 +16,12 @@ from pathlib import Path
 
 import pytest
 
+# ``mcp`` is an optional extra (pyproject: mcp>=2.0.0) and this module needs
+# the 2.x server API that sshpilot.mcp imports. Gate on that module rather
+# than on the ``mcp`` package name: an older 1.x install imports as ``mcp``
+# perfectly well and would fail here at runtime instead of skipping.
+pytest.importorskip("mcp.server.mcpserver")
+
 from tests.daemon.phase10_helpers import (
     require_phase10_container,
     wait_until,
