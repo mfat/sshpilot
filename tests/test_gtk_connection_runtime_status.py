@@ -2,6 +2,11 @@ from datetime import datetime, timedelta, timezone
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connections import ConnectionSummary
+from sshpilot.api.models.operations import (
+    ServiceFailure,
+    SftpServiceState,
+    SftpServiceSummary,
+)
 from sshpilot.api.models.sessions import (
     SessionExitInfo,
     SessionFailure,
@@ -34,6 +39,16 @@ def session(
     )
 
 
+def sftp(service_id, connection_id, state, *, failure=None, created_at=None):
+    return SftpServiceSummary(
+        id=service_id,
+        connection_id=connection_id,
+        state=state,
+        created_at=created_at or datetime.now(timezone.utc),
+        failure=failure,
+    )
+
+
 class Subscription:
     def __init__(self):
         self.closed = False
@@ -43,9 +58,10 @@ class Subscription:
 
 
 class Client:
-    def __init__(self, instance_id, sessions):
+    def __init__(self, instance_id, sessions, sftp_services=()):
         self.server_instance_id = instance_id
         self.sessions = list(sessions)
+        self.sftp_services = list(sftp_services)
         self.callback = None
         self.subscription = Subscription()
 
@@ -55,6 +71,9 @@ class Client:
 
     def list_sessions(self):
         return list(self.sessions)
+
+    def list_sftp_services(self):
+        return list(self.sftp_services)
 
     def emit(self, event_type, payload, sequence, *, session_id=None):
         self.callback(
@@ -255,3 +274,156 @@ def test_sidebar_resolves_daemon_runtime_status_without_mutating_dto():
 
     assert row._resolve_status() == (ConnectionState.CONNECTED, "Connected")
     assert row._is_online() is True
+
+
+# --- SFTP services (GH #1193) -----------------------------------------------
+
+
+def test_ready_sftp_service_marks_the_connection_connected():
+    """A file manager is a connection to the host, same as a terminal is."""
+    dto = connection()
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [],
+            [sftp("sftp-1", dto.id, SftpServiceState.READY)],
+        )
+    )
+
+    assert store.status_for(dto) == ConnectionRuntimeStatus(
+        ConnectionState.CONNECTED,
+        "Connected",
+    )
+
+
+def test_sftp_lifecycle_events_drive_the_indicator():
+    changed = []
+    client = Client("daemon-a", [])
+    store = ConnectionRuntimeStatusStore(
+        on_changed=lambda connection_id, status: changed.append(
+            (connection_id, status)
+        )
+    )
+    store.attach_client(client)
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
+
+    client.emit(
+        EventType.SFTP_CREATED,
+        sftp("sftp-1", "connection-1", SftpServiceState.STARTING),
+        1,
+    )
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTING
+
+    client.emit(
+        EventType.SFTP_STATE_CHANGED,
+        sftp("sftp-1", "connection-1", SftpServiceState.READY),
+        2,
+    )
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+    # Closing the file manager is an intentional close: report nothing rather
+    # than a red "disconnected" for something the user closed on purpose.
+    client.emit(
+        EventType.SFTP_CLOSED,
+        sftp("sftp-1", "connection-1", SftpServiceState.CLOSED),
+        3,
+    )
+    assert store.status_for("connection-1").state is ConnectionState.UNKNOWN
+    assert changed[-1] == ("connection-1", ConnectionRuntimeStatus())
+
+
+def test_failed_sftp_service_reports_its_reason():
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [],
+            [
+                sftp(
+                    "sftp-1",
+                    "connection-1",
+                    SftpServiceState.FAILED,
+                    failure=ServiceFailure("sftp_startup_failed", "Permission denied"),
+                )
+            ],
+        )
+    )
+
+    assert store.status_for("connection-1") == ConnectionRuntimeStatus(
+        ConnectionState.FAILED,
+        "Permission denied",
+    )
+
+
+def test_live_sftp_service_outranks_a_failed_session():
+    """Either kind being live means the host is connected."""
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [
+                session(
+                    "session-1",
+                    "connection-1",
+                    SessionState.FAILED,
+                    failure=SessionFailure("session_startup_failed", "no route"),
+                )
+            ],
+            [sftp("sftp-1", "connection-1", SftpServiceState.READY)],
+        )
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+def test_closing_a_terminal_keeps_a_live_file_manager_connected():
+    """Closing one tab must not clear a host the file manager still holds."""
+    client = Client(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+        [sftp("sftp-1", "connection-1", SftpServiceState.READY)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+
+    client.emit(
+        EventType.SESSION_CLOSED,
+        session("session-1", "connection-1", SessionState.CLOSED),
+        1,
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+
+
+def test_sftp_services_are_kept_apart_by_connection():
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [],
+            [
+                sftp("sftp-1", "connection-1", SftpServiceState.READY),
+                sftp("sftp-2", "connection-2", SftpServiceState.CLOSED),
+            ],
+        )
+    )
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
+    assert store.status_for("connection-2").state is ConnectionState.UNKNOWN
+
+
+def test_client_without_sftp_listing_still_tracks_sessions():
+    """A daemon too old to list SFTP services must not break the store."""
+
+    class SessionOnlyClient(Client):
+        list_sftp_services = None
+
+    client = SessionOnlyClient(
+        "daemon-a",
+        [session("session-1", "connection-1", SessionState.RUNNING)],
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(client)
+
+    assert store.status_for("connection-1").state is ConnectionState.CONNECTED
