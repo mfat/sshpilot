@@ -3489,7 +3489,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._terminal_theme_menu_button = Gtk.MenuButton()
         _cmd_icon_utils.set_button_icon(
-            self._terminal_theme_menu_button, 'color-symbolic'
+            self._terminal_theme_menu_button, 'brush-monitor-symbolic'
         )
         self._terminal_theme_menu_button.add_css_class('flat')
         selected_theme = str(
