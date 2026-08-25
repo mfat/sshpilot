@@ -60,18 +60,26 @@ from gettext import gettext as _
 logger = logging.getLogger(__name__)
 
 
-def _reveal_after_unlock(app_window, anchor, start_worker):
-    """Run ``start_worker`` once the secret backend is unlocked.
+def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
+    """Run ``start_worker`` once the secret backend is confirmed unlocked.
 
     Password/passphrase reveal is a best-effort background fetch: a locked
     session backend (Bitwarden/Vaultwarden) silently resolves lookups to
     nothing, which used to leave the field blank with no indication the
     secret exists (#1199). Query the backend's lock state first and, if it
-    needs unlocking, prompt through the daemon-owned unlock flow before
-    fetching — mirroring the save-path gate (``_needs_secret_unlock_before_save``).
-    ``start_worker`` always runs afterwards; a still-locked backend (unlock
-    declined or failed) just keeps returning nothing, same as before this gate
-    existed.
+    needs unlocking — or the state can't be determined at all, which is
+    treated conservatively as locked, mirroring the save-path gate
+    (``_needs_secret_unlock_before_save``) — prompt through the daemon-owned
+    unlock flow before fetching.
+
+    ``start_worker`` runs only once ``prompt_unlock`` reports the backend is
+    actually unlocked. A declined/failed/unreachable unlock must not attempt
+    a lookup that is guaranteed to resolve to nothing: on a locked backend
+    that would record a false "no secret saved" result (e.g. clearing
+    ``_password_saved``), permanently hiding a secret that *is* saved. When
+    declined, ``on_declined`` runs instead so callers can reset any "reveal
+    pending" bookkeeping to allow a later retry (after the vault is unlocked
+    some other way).
     """
     controller = getattr(app_window, 'secrets_controller', None)
     state = None
@@ -79,10 +87,18 @@ def _reveal_after_unlock(app_window, anchor, start_worker):
         try:
             state = controller.load_state()
         except Exception:
+            logger.debug("Secret backend state query failed; treating as locked", exc_info=True)
             state = None
-    if state is not None and (state.needs_unlock or state.login_required):
+    if state is None or state.needs_unlock or state.login_required:
         from .secret_unlock_dialog import prompt_unlock
-        prompt_unlock(anchor, on_done=lambda _ok: start_worker())
+
+        def _after_unlock(ok):
+            if ok:
+                start_worker()
+            elif on_declined:
+                on_declined()
+
+        prompt_unlock(anchor, on_done=_after_unlock)
         return
     start_worker()
 
@@ -1368,7 +1384,10 @@ class FileListEditor(Adw.PreferencesGroup):
 
             threading.Thread(target=worker, daemon=True).start()
 
-        _reveal_after_unlock(parent, parent, _start_worker)
+        def _on_declined():
+            row._pass_reveal_pending = False
+
+        _reveal_after_unlock(parent, parent, _start_worker, on_declined=_on_declined)
 
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
@@ -2387,7 +2406,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
             threading.Thread(target=worker, daemon=True).start()
 
-        _reveal_after_unlock(parent, self, _start_worker)
+        def _on_declined():
+            self._password_reveal_pending = False
+
+        _reveal_after_unlock(parent, self, _start_worker, on_declined=_on_declined)
 
     def _capture_editor_delta_baseline(self):
         """Capture the authoritative form values used to build update deltas."""

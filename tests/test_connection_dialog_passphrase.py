@@ -26,6 +26,23 @@ class DummyEntry:
         return None
 
 
+class DummyPasswordEntry(DummyEntry):
+    """A DummyEntry that also tracks peek/reveal visibility state."""
+
+    def __init__(self, text=""):
+        super().__init__(text)
+        self._visible = False
+
+    def set_visibility(self, value):
+        self._visible = bool(value)
+
+    def get_visibility(self):
+        return self._visible
+
+    def set_show_peek_icon(self, *_args, **_kwargs):
+        return None
+
+
 class DummySubtitleRow(DummyEntry):
     def __init__(self, text=""):
         super().__init__(text)
@@ -658,12 +675,17 @@ def test_daemon_editor_loads_password_from_protected_reveal(monkeypatch):
     class Bridge:
         pass
 
+    class UnlockedController:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=False)
+
     client = DaemonClient()
     parent = types.SimpleNamespace(
         connection_manager=object(),  # read-only projection, no secret access
         client=client,
         client_bridge=Bridge(),
         _daemon_ready=lambda: True,
+        secrets_controller=UnlockedController(),
     )
 
     dialog = ConnectionDialog.__new__(ConnectionDialog)
@@ -797,7 +819,7 @@ def test_daemon_editor_prompts_unlock_before_loading_password(monkeypatch):
 
 
 def test_daemon_editor_skips_reveal_worker_gate_when_already_unlocked(monkeypatch):
-    """No stored state, or an already-unlocked backend, must not prompt."""
+    """An already-unlocked backend must not prompt."""
     import sshpilot.connection_dialog as dialog_module
 
     class DaemonClient:
@@ -842,6 +864,212 @@ def test_daemon_editor_skips_reveal_worker_gate_when_already_unlocked(monkeypatc
     assert len(pending_threads) == 1
 
 
+def test_password_peek_gates_on_unlock_and_recovers_after_decline(monkeypatch):
+    """Peeking a saved password while locked must prompt to unlock rather than
+    silently revealing nothing. A declined/cancelled unlock must not wedge
+    ``_password_reveal_pending`` forever — a later peek (after the vault is
+    unlocked some other way) must still be able to succeed."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class DaemonClient:
+        def reveal_connection_password(self, connection_id):
+            return bytearray(b"hunter2")
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=DaemonClient(),
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=Controller(),
+    )
+
+    dialog = ConnectionDialog.__new__(ConnectionDialog)
+    dialog.parent_window = parent
+    dialog.connection = types.SimpleNamespace(nickname="web", username="root")
+    dialog.password_row = DummyPasswordEntry("")
+    dialog.password_row.set_visibility(True)
+    dialog._password_saved = True
+
+    pending_threads = []
+    idle_calls = []
+    unlock_results = [False, True]
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        on_done(unlock_results.pop(0))
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib, "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+
+    # First peek: unlock declined -> no reveal attempted, pending flag cleared.
+    dialog._on_password_visibility_changed()
+    assert pending_threads == []
+    assert dialog._password_reveal_pending is False
+
+    # Second peek: unlock succeeds -> reveal proceeds and completes normally.
+    dialog._on_password_visibility_changed()
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert dialog.password_row.get_text() == "hunter2"
+    assert dialog._password_reveal_pending is False
+
+
+def test_reveal_after_unlock_runs_worker_directly_when_unlocked():
+    """Unit coverage of the shared gate: an already-unlocked backend runs the
+    worker with no unlock prompt at all."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=False)
+
+    app_window = types.SimpleNamespace(secrets_controller=Controller())
+    calls = []
+    dialog_module._reveal_after_unlock(
+        app_window, object(), lambda: calls.append("worker"))
+    assert calls == ["worker"]
+
+
+def test_reveal_after_unlock_runs_worker_only_when_unlock_succeeds(monkeypatch):
+    """#1201 review: the worker must run when (and only when) prompt_unlock
+    reports success — never unconditionally after the prompt merely returns."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    app_window = types.SimpleNamespace(secrets_controller=Controller())
+    anchor = object()
+    calls = []
+    unlock_calls = []
+
+    def fake_prompt_unlock(passed_anchor, on_done=None, **_kw):
+        unlock_calls.append(passed_anchor)
+        on_done(True)
+
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+    dialog_module._reveal_after_unlock(
+        app_window, anchor, lambda: calls.append("worker"))
+    assert unlock_calls == [anchor]
+    assert calls == ["worker"]
+
+
+def test_reveal_after_unlock_skips_worker_and_runs_on_declined_when_unlock_fails(monkeypatch):
+    """A cancelled/failed unlock must not attempt a doomed lookup — that would
+    otherwise record a false "no secret saved" result. ``on_declined`` runs
+    instead so the caller can reset "reveal pending" bookkeeping."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    app_window = types.SimpleNamespace(secrets_controller=Controller())
+    calls = []
+    declined = []
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        on_done(False)
+
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+    dialog_module._reveal_after_unlock(
+        app_window, object(), lambda: calls.append("worker"),
+        on_declined=lambda: declined.append(1))
+    assert calls == []
+    assert declined == [1]
+
+
+def test_reveal_after_unlock_gates_on_login_required(monkeypatch):
+    """``login_required`` alone (no ``needs_unlock``) must still gate the
+    reveal — the daemon-owned unlock flow handles both states."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=True)
+
+    app_window = types.SimpleNamespace(secrets_controller=Controller())
+    calls = []
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        calls.append("prompted")
+        on_done(True)
+
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+    dialog_module._reveal_after_unlock(
+        app_window, object(), lambda: calls.append("worker"))
+    assert calls == ["prompted", "worker"]
+
+
+def test_reveal_after_unlock_treats_missing_controller_as_locked(monkeypatch):
+    """No reachable secrets_controller (e.g. daemon capability not advertised)
+    must be treated conservatively as locked, mirroring
+    ``_needs_secret_unlock_before_save`` — never a fail-open straight fetch."""
+    import sshpilot.connection_dialog as dialog_module
+
+    app_window = types.SimpleNamespace()  # no secrets_controller attribute at all
+    calls = []
+    unlock_calls = []
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        unlock_calls.append(anchor)
+        on_done(False)
+
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+    dialog_module._reveal_after_unlock(
+        app_window, object(), lambda: calls.append("worker"))
+    assert unlock_calls  # gated through prompt_unlock rather than fetching straight away
+    assert calls == []
+
+
+def test_reveal_after_unlock_treats_state_query_failure_as_locked(monkeypatch):
+    """A transient failure reading lock state must not be treated as
+    "unlocked" — that would reproduce #1199 by reading a possibly-locked
+    backend without ever prompting."""
+    import sshpilot.connection_dialog as dialog_module
+
+    class BrokenController:
+        def load_state(self):
+            raise RuntimeError("daemon unreachable")
+
+    app_window = types.SimpleNamespace(secrets_controller=BrokenController())
+    calls = []
+    unlock_calls = []
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        unlock_calls.append(anchor)
+        on_done(True)
+
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+    dialog_module._reveal_after_unlock(
+        app_window, object(), lambda: calls.append("worker"))
+    assert unlock_calls
+    assert calls == ["worker"]
+
+
 def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
     import sshpilot.connection_dialog as dialog_module
     from sshpilot.connection_dialog import FileListEditor
@@ -857,12 +1085,17 @@ def test_daemon_editor_loads_passphrase_from_protected_reveal(monkeypatch):
     class Bridge:
         pass
 
+    class UnlockedController:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=False, login_required=False)
+
     client = DaemonClient()
     parent = types.SimpleNamespace(
         connection_manager=object(),  # read-only projection, no secret access
         client=client,
         client_bridge=Bridge(),
         _daemon_ready=lambda: True,
+        secrets_controller=UnlockedController(),
     )
 
     ed = FileListEditor.__new__(FileListEditor)
@@ -972,6 +1205,75 @@ def test_filelisteditor_prompts_unlock_before_loading_passphrase(monkeypatch):
     callback, (value,) = idle_calls[0]
     callback(value)
     assert entry.get_text() == "key-secret"
+
+
+def test_passphrase_peek_gates_on_unlock_and_recovers_after_decline(monkeypatch):
+    """Same #1201 review concern as the password peek, for the key editor:
+    a declined unlock must clear ``row._pass_reveal_pending`` so a later peek
+    can still succeed instead of being wedged forever."""
+    import sshpilot.connection_dialog as dialog_module
+    from sshpilot.connection_dialog import FileListEditor
+
+    class DaemonClient:
+        def reveal_key_passphrase(self, key_path):
+            return bytearray(b"key-secret")
+
+    class Controller:
+        def load_state(self):
+            return types.SimpleNamespace(needs_unlock=True, login_required=False)
+
+    parent = types.SimpleNamespace(
+        connection_manager=object(),
+        client=DaemonClient(),
+        client_bridge=object(),
+        _daemon_ready=lambda: True,
+        secrets_controller=Controller(),
+    )
+
+    ed = FileListEditor.__new__(FileListEditor)
+    ed._connection_manager = parent.connection_manager
+    ed._parent_window = parent
+
+    entry = DummyPasswordEntry("")
+    entry.set_visibility(True)
+    row = types.SimpleNamespace(_pass_initial="", _pass_entry=entry, _pass_saved=True)
+    norm = "/home/demo/.ssh/id_ed25519"
+
+    pending_threads = []
+    idle_calls = []
+    unlock_results = [False, True]
+
+    class DeferredThread:
+        def __init__(self, target, daemon=False):
+            self.target = target
+
+        def start(self):
+            pending_threads.append(self)
+
+    def fake_prompt_unlock(anchor, on_done=None, **_kw):
+        on_done(unlock_results.pop(0))
+
+    monkeypatch.setattr(dialog_module.threading, "Thread", DeferredThread)
+    monkeypatch.setattr(
+        dialog_module.GLib, "idle_add",
+        lambda callback, *args: idle_calls.append((callback, args)),
+    )
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+
+    # First peek: unlock declined -> no reveal attempted, pending flag cleared.
+    ed._on_passphrase_visibility_changed(row, entry, norm)
+    assert pending_threads == []
+    assert row._pass_reveal_pending is False
+
+    # Second peek: unlock succeeds -> reveal proceeds and completes normally.
+    ed._on_passphrase_visibility_changed(row, entry, norm)
+    assert len(pending_threads) == 1
+    pending_threads[0].target()
+    callback, (value,) = idle_calls[0]
+    callback(value)
+    assert entry.get_text() == "key-secret"
+    assert row._pass_reveal_pending is False
 
 
 def test_unavailable_editor_does_not_read_passphrase_from_projection_manager():
