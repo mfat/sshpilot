@@ -255,11 +255,10 @@ def review_commit(scope: RepoScope, base: str = "HEAD") -> dict:
     if not git.is_git_repo():
         raise ArchitectureError(f"not a git repository: {scope.root}")
     try:
-        status = git.status()
+        changed = git.changed_paths(base=base)
         diff = git.diff(base=base, stat_only=True)
     except GitError as error:
         raise ArchitectureError(str(error)) from error
-    changed = [entry["path"] for entry in status["entries"]]
     classifications: Dict[str, List[str]] = {}
     for path in changed:
         layer = _classify_path(path)

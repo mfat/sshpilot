@@ -80,6 +80,20 @@ def test_run_reports_subprocess_failure_explicitly():
     assert result["timed_out"] is False
 
 
+def test_run_does_not_leak_mcp_server_control_environment(monkeypatch):
+    monkeypatch.setenv("SSHPILOT_MCP_ROOT", "/configured/server/root")
+    monkeypatch.setenv("SSHPILOT_MCP_MUTATE", "1")
+    result = execution._run(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(sorted(k for k in os.environ if k.startswith('SSHPILOT_MCP_')))",
+        ]
+    )
+    assert result["success"] is True
+    assert result["stdout"].strip() == "[]"
+
+
 def test_run_reports_timeout_explicitly():
     result = execution._run(
         [sys.executable, "-c", "import time; time.sleep(1)"],

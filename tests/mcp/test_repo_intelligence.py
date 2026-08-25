@@ -203,6 +203,16 @@ def test_git_diff_stat_only(git_repo):
     assert "app.py" in diff["diff"]
 
 
+def test_git_changed_paths_includes_commits_after_base_and_untracked(git_repo):
+    _git(git_repo, "add", "app.py")
+    _git(git_repo, "commit", "-q", "-m", "second commit")
+    (git_repo / "untracked.py").write_text("value = 1\n")
+
+    paths = GitInspector(git_repo).changed_paths(base="HEAD~1")
+
+    assert paths == ["app.py", "untracked.py"]
+
+
 def test_git_rejects_invalid_input(git_repo):
     inspector = GitInspector(git_repo)
     with pytest.raises(GitError):

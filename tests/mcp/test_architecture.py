@@ -168,6 +168,30 @@ def test_review_commit_classifies_layers(tmp_path):
     assert result["boundary_crossed"] is True
 
 
+def test_review_commit_classifies_changes_committed_after_base(tmp_path):
+    root = tmp_path / "repo"
+    path = root / "src" / "sshpilot" / "mcp" / "dev" / "server.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("before\n")
+    import subprocess
+
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+        ["add", "."],
+        ["commit", "-q", "-m", "initial"],
+    ):
+        subprocess.run(["git", "-C", str(root), *args], check=True)
+    path.write_text("after\n")
+    subprocess.run(["git", "-C", str(root), "commit", "-qam", "change"], check=True)
+
+    result = architecture.review_commit(RepoScope(root), base="HEAD~1")
+
+    assert result["changed_total"] == 1
+    assert result["by_layer"] == {"mcp": ["src/sshpilot/mcp/dev/server.py"]}
+
+
 def test_classify_path():
     assert architecture._classify_path("src/sshpilot/core/x.py") == "core"
     assert architecture._classify_path("src/sshpilot/gtk/x.py") == "frontend"
