@@ -2041,6 +2041,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             spacing=0,
         )
 
+        # This titlebar is a hand-built GtkBox, not an AdwHeaderBar, so nothing
+        # centres its children: GtkBox defaults them to Gtk.Align.FILL and they
+        # stretch to the full 46px row. A flat button then paints its hover
+        # highlight 46px tall next to a 34px tab pill, and sits 6px higher than
+        # the pills it lines up with. AdwHeaderBar centres both its packed
+        # widgets and its window controls at their natural 34px; match that so
+        # every element in the row shares the tab pills' baseline.
+        for _row_widget in (
+            self._window_controls_start,
+            self._window_controls_end,
+            self._headerbar_start_box,
+            self._headerbar_end_box,
+        ):
+            _row_widget.set_valign(Gtk.Align.CENTER)
+
         self._content_title_stack = Gtk.Stack()
         self._content_title_stack.set_hexpand(True)
         self._content_title_stack.set_transition_type(Gtk.StackTransitionType.NONE)
