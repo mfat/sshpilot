@@ -256,6 +256,12 @@ def test_save_before_initial_load_completes_starts_no_mutation(monkeypatch):
     assert client.removed == 0
     assert client.listed == 1  # load started, save ignored while busy
     client.list_block.set()
+    # Do not let the real worker outlive this test. Once monkeypatch teardown
+    # restores the suite-wide GTK stubs, a late idle callback would render with
+    # different widget classes and surface as an unhandled thread exception in
+    # whichever test happens to run next.
+    assert _wait_until(lambda: editor._operation_in_flight is False)
+    assert editor.listbox.children
 
 
 def test_double_click_save_starts_one_mutation(monkeypatch):
