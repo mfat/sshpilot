@@ -462,6 +462,121 @@ def test_unavailable_destination_evidence_cannot_carry_anchor():
 
 
 @pytest.mark.parametrize(
+    "hostname,port,anchor_hostname,anchor_port",
+    [
+        ("server-a", 22, "server-b", 22),
+        ("server-a", 22, "server-a", 2222),
+    ],
+)
+def test_trustworthy_projection_rejects_literal_destination_mismatch(
+    hostname, port, anchor_hostname, anchor_port
+):
+    with pytest.raises(ValueError, match="literal destination"):
+        ConnectionIdentityProjection(
+            alias="foo",
+            hostname=hostname,
+            port=port,
+            destination_evidence=StaticDestinationEvidence.trustworthy(
+                anchor_hostname, anchor_port
+            ),
+        )
+
+
+def test_trustworthy_projection_rejects_missing_literal_hostname():
+    with pytest.raises(ValueError, match="non-empty literal hostname"):
+        ConnectionIdentityProjection(
+            alias="foo",
+            hostname=None,
+            port=22,
+            destination_evidence=StaticDestinationEvidence.trustworthy(
+                "server-a", 22
+            ),
+        )
+
+
+def test_trustworthy_projection_rejects_missing_literal_port():
+    with pytest.raises(ValueError, match="literal port"):
+        ConnectionIdentityProjection(
+            alias="foo",
+            hostname="server-a",
+            port=None,
+            destination_evidence=StaticDestinationEvidence.trustworthy(
+                "server-a", 22
+            ),
+        )
+
+
+@pytest.mark.parametrize("bad_port", [0, 65536])
+def test_trustworthy_projection_rejects_invalid_literal_port(bad_port):
+    with pytest.raises(ValueError, match="literal port"):
+        ConnectionIdentityProjection(
+            alias="foo",
+            hostname="server-a",
+            port=bad_port,
+            destination_evidence=StaticDestinationEvidence.trustworthy(
+                "server-a", 22
+            ),
+        )
+
+
+@pytest.mark.parametrize("hostname,port", [("server-a", 22), ("server-a", 2222)])
+def test_trustworthy_projection_accepts_agreeing_literal_and_anchor(hostname, port):
+    item = ConnectionIdentityProjection(
+        alias="foo",
+        hostname=hostname,
+        port=port,
+        destination_evidence=StaticDestinationEvidence.trustworthy(hostname, port),
+    )
+    assert item.destination_anchor == (hostname, port)
+
+
+def test_inconsistent_trustworthy_projection_rejected_at_construction():
+    """The dangerous case: a literal destination that disagrees with a
+    trustworthy anchor must never reach serialization. It has to fail here,
+    at construction, not later at daemon restart when the registry is
+    reloaded from disk.
+    """
+    with pytest.raises(ValueError):
+        ConnectionIdentityProjection(
+            alias="foo",
+            hostname="server-a",
+            port=22,
+            destination_evidence=StaticDestinationEvidence.trustworthy(
+                "server-b", 2222
+            ),
+        )
+
+
+def test_from_record_produces_agreeing_literal_and_anchor_for_explicit_port(tmp_path):
+    root = tmp_path / "config"
+    root.write_text(
+        "Host example\n    HostName server.example.com\n    Port 2222\n",
+        encoding="utf-8",
+    )
+    record = load_ssh_configuration(root, isolated=True).connections[0]
+    item = ConnectionIdentityProjection.from_record(record, declaration_order=0)
+    assert item.destination_evidence.status is DestinationEvidenceStatus.TRUSTWORTHY
+    assert (item.hostname, item.port) == item.destination_anchor == (
+        "server.example.com",
+        2222,
+    )
+
+
+def test_from_record_produces_agreeing_literal_and_anchor_for_default_port(tmp_path):
+    root = tmp_path / "config"
+    root.write_text(
+        "Host example\n    HostName server.example.com\n", encoding="utf-8"
+    )
+    record = load_ssh_configuration(root, isolated=True).connections[0]
+    item = ConnectionIdentityProjection.from_record(record, declaration_order=0)
+    assert item.destination_evidence.status is DestinationEvidenceStatus.TRUSTWORTHY
+    assert (item.hostname, item.port) == item.destination_anchor == (
+        "server.example.com",
+        22,
+    )
+
+
+@pytest.mark.parametrize(
     "mode,values",
     [
         (IdentityFileEvidenceMode.UNSPECIFIED, ("a",)),
