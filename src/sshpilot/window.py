@@ -2022,6 +2022,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             spacing=0,
         )
         self._content_header_box.add_css_class('toolbar')
+        # Keep the titlebar height stable when the Start tab hides the tab bar.
+        # Adw.TabBar's natural height includes its tab-pill padding, so without
+        # this floor the empty title-stack state becomes visibly shorter.
+        self._content_header_box.set_size_request(-1, 46)
 
         self._window_controls_start = Gtk.WindowControls.new(Gtk.PackType.START)
         self._window_controls_end = Gtk.WindowControls.new(Gtk.PackType.END)
@@ -3424,6 +3428,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
+        # Reduce the visual gap between the Local Terminal button and the
+        # first tab without changing the spacing around the window controls.
+        self.tab_bar.set_margin_start(-4)
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
         self.tab_bar.add_css_class('inline')

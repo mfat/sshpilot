@@ -117,3 +117,14 @@
     padding-top: 0;
     padding-bottom: 0;
 }
+
+/* The custom titlebar uses real GtkWindowControls, but their default button
+   hover background creates a box around the control group. Keep the override
+   local to these controls so ordinary application buttons retain their
+   Adwaita hover treatment. */
+.content-titlebar windowcontrols > button,
+.content-titlebar windowcontrols > button:hover,
+.content-titlebar windowcontrols > button:active {
+    background: transparent;
+    box-shadow: none;
+}
