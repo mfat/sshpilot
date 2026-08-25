@@ -67,6 +67,10 @@ from sshpilot.logging_support import log_context
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
 DEFAULT_HOST_KEY_INTERACTION_TIMEOUT = 180.0
 DEFAULT_PRESENCE_INTERACTION_TIMEOUT = 600.0
+# Backup export/import encryption passphrase prompts are a short, self-contained
+# step in an otherwise fast local operation — 120s (tuned for SSH auth retries)
+# leaves the UI looking hung far longer than the prompt itself warrants.
+DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT = 30.0
 DEFAULT_COMPLETED_INTERACTION_LIMIT = 100
 DEFAULT_ASKPASS_WORKERS = 4
 DEFAULT_ASKPASS_QUEUE_LIMIT = 32
@@ -772,14 +776,16 @@ class InteractionBroker:
         connection_id: ConnectionId,
         interaction_type: InteractionType,
         prompt: InteractionPrompt,
+        timeout: Optional[float] = None,
     ) -> Optional[bytearray]:
         """Collect one secret for a daemon-owned non-process operation."""
-        result = self._request_client_secret_result(
+        result, _state = self._request_client_secret_result(
             owner_client_id=owner_client_id,
             session_id=session_id,
             connection_id=connection_id,
             interaction_type=interaction_type,
             prompt=prompt,
+            timeout=timeout,
         )
         return None if result is None else result.secret
 
@@ -791,21 +797,48 @@ class InteractionBroker:
         connection_id: ConnectionId,
         interaction_type: InteractionType,
         prompt: InteractionPrompt,
+        timeout: Optional[float] = None,
     ) -> tuple[Optional[bytearray], RememberPolicy]:
         """Like :meth:`request_client_secret`, but also reports the
         ``remember_policy`` the client attached to its response (e.g. a
         "remember this" checkbox) — needed by callers that offer to persist
         the secret without a second prompt."""
-        result = self._request_client_secret_result(
+        result, _state = self._request_client_secret_result(
             owner_client_id=owner_client_id,
             session_id=session_id,
             connection_id=connection_id,
             interaction_type=interaction_type,
             prompt=prompt,
+            timeout=timeout,
         )
         if result is None:
             return None, RememberPolicy.DO_NOT_STORE
         return result.secret, result.remember_policy
+
+    def request_client_secret_with_status(
+        self,
+        *,
+        owner_client_id: ClientId,
+        session_id: SessionId,
+        connection_id: ConnectionId,
+        interaction_type: InteractionType,
+        prompt: InteractionPrompt,
+        timeout: Optional[float] = None,
+    ) -> tuple[Optional[bytearray], InteractionState]:
+        """Like :meth:`request_client_secret`, but also reports the
+        interaction's final :class:`InteractionState`. Callers that need to
+        tell an explicit user cancellation apart from a timed-out prompt
+        (rather than collapsing both into a bare ``None``) should use this
+        instead of :meth:`request_client_secret`."""
+        result, state = self._request_client_secret_result(
+            owner_client_id=owner_client_id,
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=interaction_type,
+            prompt=prompt,
+            timeout=timeout,
+        )
+        return (None if result is None else result.secret), state
 
     def _request_client_secret_result(
         self,
@@ -815,8 +848,10 @@ class InteractionBroker:
         connection_id: ConnectionId,
         interaction_type: InteractionType,
         prompt: InteractionPrompt,
-    ) -> Optional[InteractionResult]:
-        """Run one direct-scope interaction and return its raw result.
+        timeout: Optional[float] = None,
+    ) -> tuple[Optional[InteractionResult], InteractionState]:
+        """Run one direct-scope interaction and return its raw result plus
+        its final :class:`InteractionState`.
 
         Registering ``owner_client_id`` as the session's direct scope owner
         (via ``_direct_scope_owners``) is what makes the server actually
@@ -836,6 +871,7 @@ class InteractionBroker:
                 raise ValueError("protected interaction scope is already active")
             self._direct_scope_owners[session_id] = owner_client_id
         result: Optional[InteractionResult] = None
+        state = InteractionState.CANCELLED
         try:
             summary = self.create(
                 session_id=session_id,
@@ -843,11 +879,12 @@ class InteractionBroker:
                 interaction_type=interaction_type,
                 prompt=prompt,
                 attempt=1,
+                timeout=timeout,
             )
-            result = self.wait_for_result(summary.id)
+            result, state = self._wait_for_result_with_state(summary.id)
             if result is None or result.secret is None:
-                return None
-            return result
+                return None, state
+            return result, state
         finally:
             with self._condition:
                 self._direct_scope_owners.pop(session_id, None)
@@ -1083,6 +1120,20 @@ class InteractionBroker:
         *,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Optional[InteractionResult]:
+        result, _state = self._wait_for_result_with_state(
+            interaction_id, cancel_check=cancel_check
+        )
+        return result
+
+    def _wait_for_result_with_state(
+        self,
+        interaction_id: InteractionId,
+        *,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> tuple[Optional[InteractionResult], InteractionState]:
+        """Like :meth:`wait_for_result`, but also returns the interaction's
+        final state so callers can distinguish ``CANCELLED`` from
+        ``EXPIRED`` instead of both collapsing to ``None``."""
         changed_summary: Optional[InteractionSummary] = None
         with self._condition:
             record = self._record_locked(interaction_id)
@@ -1122,9 +1173,10 @@ class InteractionBroker:
                 record.result_taken = True
                 result = record.result
                 record.result = None
+            final_state = record.summary.state
         if changed_summary is not None:
             self._publish(EventType.INTERACTION_STATE_CHANGED, changed_summary)
-        return result
+        return result, final_state
 
     @staticmethod
     def _transport_is_closed(transport: socket.socket) -> bool:

@@ -248,6 +248,13 @@ class FakeBroker:
             result, "remember_policy", RememberPolicy.DO_NOT_STORE
         )
 
+    def request_client_secret_with_status(self, *, owner_client_id, **kwargs) -> Any:
+        from sshpilot.api.models.interactions import InteractionState
+
+        secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+        state = InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+        return secret, state
+
 
 def _write_settings(path: Path, secrets: Optional[Dict[str, Any]] = None) -> Path:
     config = {
@@ -297,6 +304,132 @@ def _all_strings(value: Any, out: Optional[List[str]] = None) -> List[str]:
         for item in value:
             _all_strings(item, out)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Issue #1200: encrypted backup export — encrypted roundtrip, shorter
+# operation-specific timeout, and cancellation vs. expiration messaging.
+# ---------------------------------------------------------------------------
+
+def test_export_backup_encrypted_roundtrip_decrypts_with_correct_password(tmp_path):
+    """The full ``SecretBackendService.export_backup`` surface (interaction broker
+    included, not just the lower ``daemon_export_backup`` helper): the produced
+    ``.spbk`` is genuinely encrypted, decrypts with the correct passphrase, and a
+    wrong passphrase fails cleanly instead of returning garbage."""
+    from sshpilot.backup_archive import (
+        SpbkPassphraseError,
+        is_spbk,
+        read_spbk,
+        spbk_is_encrypted,
+    )
+
+    service, _manager, _backends, broker, _path = _make_service(
+        tmp_path, expected_secrets=["s3cr3t"])
+    dest = tmp_path / "encrypted.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    assert is_spbk(str(dest))
+    assert spbk_is_encrypted(str(dest))
+    # The passphrase went through the protected interaction, never as a param.
+    assert broker.created and broker.created[0][1]["interaction_type"].value == "password"
+
+    manifest = read_spbk(str(dest), "s3cr3t")
+    assert "app_config" in manifest
+
+    with pytest.raises(SpbkPassphraseError):
+        read_spbk(str(dest), "wrong-password")
+
+
+def test_export_backup_uses_shorter_backup_encryption_timeout(tmp_path):
+    """The encryption-passphrase interaction must use the shorter, operation-
+    specific backup-encryption timeout, not the general 120s secret timeout."""
+    from sshpilot.daemon.interaction_broker import (
+        DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
+    )
+
+    service, _manager, _backends, broker, _path = _make_service(
+        tmp_path, expected_secrets=["s3cr3t"])
+    dest = tmp_path / "encrypted.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    assert len(broker.created) == 1
+    _interaction_id, kwargs = broker.created[0]
+    assert kwargs.get("timeout") == DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT
+
+
+def test_export_backup_reports_timeout_distinctly_from_cancellation(tmp_path):
+    """A timed-out encryption prompt must not be reported with the same message
+    as an explicit user cancellation (issue #1200: the old code always said
+    'Encryption cancelled', even when the user never touched anything)."""
+    from sshpilot.api.models.interactions import InteractionState
+
+    class _ExpiredBroker(FakeBroker):
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            self.create(**kwargs)
+            return None, InteractionState.EXPIRED
+
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path, broker=_ExpiredBroker())
+    result = service.export_backup(
+        destination=str(tmp_path / "never-written.spbk"),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status == SecretOperationState.INTERACTION_REQUIRED
+    assert result.message == "Encryption password request timed out"
+
+
+def test_export_backup_reports_explicit_cancellation(tmp_path):
+    """An actual user cancellation must still read as a cancellation, distinct
+    from the timeout message above."""
+    from sshpilot.api.models.interactions import InteractionState
+
+    class _CancelledBroker(FakeBroker):
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            self.create(**kwargs)
+            return None, InteractionState.CANCELLED
+
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path, broker=_CancelledBroker())
+    result = service.export_backup(
+        destination=str(tmp_path / "never-written.spbk"),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status == SecretOperationState.INTERACTION_REQUIRED
+    assert result.message == "Encryption cancelled"
+
+
+def test_export_backup_unencrypted_never_prompts(tmp_path):
+    """Unencrypted export must not touch the interaction broker at all — it
+    should be unaffected by any of the encrypted-export changes above."""
+    service, _manager, _backends, broker, _path = _make_service(tmp_path)
+    dest = tmp_path / "plain.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": False},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    assert broker.created == []
+
+    from sshpilot.backup_archive import is_spbk, spbk_is_encrypted
+
+    assert is_spbk(str(dest))
+    assert not spbk_is_encrypted(str(dest))
 
 
 # ---------------------------------------------------------------------------
@@ -1069,6 +1202,15 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
             result = self.wait_for_result(summary.id)
             return None if result is None else result.secret
 
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            from sshpilot.api.models.interactions import InteractionState
+
+            secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+            state = (
+                InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+            )
+            return secret, state
+
     calls = []
 
     def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest, **_kwargs):
@@ -1123,6 +1265,15 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
             summary = self.create(**kwargs)
             result = self.wait_for_result(summary.id)
             return None if result is None else result.secret
+
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            from sshpilot.api.models.interactions import InteractionState
+
+            secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+            state = (
+                InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+            )
+            return secret, state
 
     def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest, **_kwargs):
         return SecretTransferResult(
