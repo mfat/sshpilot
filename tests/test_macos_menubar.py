@@ -128,6 +128,7 @@ def test_build_menubar_uses_existing_actions(monkeypatch):
         "win.headerbar-sidebar-toggle",
         "win.headerbar-split-view",
         "win.headerbar-commands",
+        "win.headerbar-terminal-theme",
         "win.headerbar-theme-menu",
         "win.headerbar-local-terminal",
     ]
