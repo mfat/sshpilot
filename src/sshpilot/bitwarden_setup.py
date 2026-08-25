@@ -364,6 +364,17 @@ def progress_dialog(parent, heading, message, *, on_cancel=None):
     win.set_modal(True)
     if parent is not None:
         win.set_transient_for(_modal_parent(parent))
+        # Adw.Window instances are not necessarily registered with the
+        # Gtk.Application just because they have a transient parent.  Register
+        # this modal so routed daemon prompts (notably the backup passphrase)
+        # can discover it and parent themselves above the spinner instead of
+        # appearing behind it.
+        try:
+            from .window_dialogs import associate_window_with_parent_application
+
+            associate_window_with_parent_application(win, _modal_parent(parent))
+        except Exception:
+            logger.debug("Could not register progress dialog with application", exc_info=True)
     win.set_title(heading)
     win.set_resizable(False)
     win.set_default_size(420, 170)

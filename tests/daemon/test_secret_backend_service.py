@@ -432,6 +432,48 @@ def test_export_backup_unencrypted_never_prompts(tmp_path):
     assert not spbk_is_encrypted(str(dest))
 
 
+def test_export_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
+    """Metadata requests must remain responsive while export waits for input.
+
+    The export used to hold ``SecretBackendService._lock`` across the
+    passphrase interaction.  A concurrent ``secrets.state.get`` then waited
+    until the five-second client RPC timeout, which disconnected the peer and
+    cancelled the export.
+    """
+    service, _manager, _backends, _broker, _path = _make_service(tmp_path)
+    prompt_started = threading.Event()
+    release_prompt = threading.Event()
+
+    def _blocked_prompt(*_args, **_kwargs):
+        prompt_started.set()
+        assert release_prompt.wait(2.0)
+        from sshpilot.api.models.interactions import InteractionState
+        return None, InteractionState.CANCELLED
+
+    monkeypatch.setattr(service, "_prompt_for_secret_with_status", _blocked_prompt)
+    export_result = []
+    export_thread = threading.Thread(
+        target=lambda: export_result.append(service.export_backup(
+            destination=str(tmp_path / "cancelled.spbk"),
+            options={"encrypted": True},
+            owner_client_id="client-1",
+        ))
+    )
+    export_thread.start()
+    assert prompt_started.wait(1.0)
+
+    state_result = []
+    state_thread = threading.Thread(target=lambda: state_result.append(service.get_state()))
+    state_thread.start()
+    state_thread.join(1.0)
+    assert not state_thread.is_alive(), "secrets.state.get was blocked by the prompt"
+
+    release_prompt.set()
+    export_thread.join(1.0)
+    assert not export_thread.is_alive()
+    assert export_result[0].status == SecretOperationState.INTERACTION_REQUIRED
+
+
 # ---------------------------------------------------------------------------
 # Deadlock regressions (timeout-bounded)
 # ---------------------------------------------------------------------------

@@ -1021,37 +1021,45 @@ class SecretBackendService:
             config = self._load_strict()
             self._apply_environment(config)
             opts = dict(options or {})
-            passphrase = None
-            if opts.get("encrypted"):
-                from sshpilot.daemon.interaction_broker import (
-                    DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
-                )
 
-                prompt, state = self._prompt_for_secret_with_status(
-                    "Enter a passphrase to encrypt the backup",
-                    owner_client_id=owner_client_id,
-                    timeout=DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
-                )
-                if prompt is None:
-                    message = (
-                        "Encryption password request timed out"
-                        if state is InteractionState.EXPIRED
-                        else "Encryption cancelled"
-                    )
-                    return SecretTransferResult(
-                        operation="export",
-                        path=destination,
-                        counts={},
-                        warnings=(),
-                        status=SecretOperationState.INTERACTION_REQUIRED,
-                        message=message,
-                    )
-                passphrase = prompt.decode("utf-8", "replace")
-                _clear_secret(prompt)
-            from sshpilot.daemon.secret_transfer import (
-                daemon_export_backup,
+        # Never wait for a protected UI interaction while holding the service
+        # lock.  The frontend may query metadata (notably secrets.state.get)
+        # while the passphrase dialog is open; holding this lock here makes
+        # that harmless query block until the client request timeout, which
+        # then closes the peer and cancels the export interaction.
+        passphrase = None
+        if opts.get("encrypted"):
+            from sshpilot.daemon.interaction_broker import (
+                DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
             )
 
+            prompt, state = self._prompt_for_secret_with_status(
+                "Enter a passphrase to encrypt the backup",
+                owner_client_id=owner_client_id,
+                timeout=DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
+            )
+            if prompt is None:
+                message = (
+                    "Encryption password request timed out"
+                    if state is InteractionState.EXPIRED
+                    else "Encryption cancelled"
+                )
+                return SecretTransferResult(
+                    operation="export",
+                    path=destination,
+                    counts={},
+                    warnings=(),
+                    status=SecretOperationState.INTERACTION_REQUIRED,
+                    message=message,
+                )
+            passphrase = prompt.decode("utf-8", "replace")
+            _clear_secret(prompt)
+
+        from sshpilot.daemon.secret_transfer import daemon_export_backup
+
+        # Keep the actual manager/file operation serialized with other service
+        # operations, but do not serialize the human interaction above.
+        with self._lock:
             return daemon_export_backup(
                 self._manager,
                 destination=destination,
