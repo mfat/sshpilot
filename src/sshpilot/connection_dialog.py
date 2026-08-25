@@ -857,8 +857,14 @@ class KeyChooserDialog(Adw.Window):
             try:
                 browse = Adw.ButtonRow(title=_("Browse…"), start_icon_name="folder-symbolic")
             except AttributeError:
-                # Adw.ButtonRow requires libadwaita >= 1.6
+                # Adw.ButtonRow requires libadwaita >= 1.6 (GNOME 47). On older
+                # runtimes such as Ubuntu 24.04 (libadwaita 1.5) we fall back to
+                # an AdwActionRow — which defaults to activatable=FALSE, so
+                # GtkListBox never emits ::row-activated for it and the
+                # "activated" handler below can never fire. That is why Browse
+                # silently did nothing there (issue #1103); make it activatable.
                 browse = Adw.ActionRow(title=_("Browse…"))
+                browse.set_activatable(True)
                 try:
                     browse.add_prefix(Gtk.Image.new_from_icon_name("folder-symbolic"))
                 except Exception:
@@ -942,6 +948,8 @@ class KeyChooserDialog(Adw.Window):
         self.close()
 
     def _on_browse_clicked(self, *_a):
+        logger.debug("Key chooser: Browse row activated")
+
         def _chosen(path):
             if path:
                 self._on_add(path)
@@ -2153,6 +2161,7 @@ class ConnectionDialog(
             # KeyChooserDialog), the caller must pass that dialog as
             # ``parent`` — otherwise the same "hidden behind a modal" bug
             # reappears one layer up (issue #1103 regression).
+            logger.debug("Opening file chooser %r parented to %r", title, parent or self)
             dialog.open(parent or self, None, _done)
         except Exception:
             logger.debug("Failed to open file chooser", exc_info=True)
