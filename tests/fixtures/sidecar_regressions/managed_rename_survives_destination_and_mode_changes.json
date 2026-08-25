@@ -1,0 +1,16 @@
+{
+  "name": "managed_rename_survives_destination_and_mode_changes",
+  "description": "Broad smoke regression: a managed rename (raw-editor path), a managed destination change, an external port edit, two mode toggles, a restart, and a no-op reload must all preserve UUID continuity and never lose the display name.",
+  "initial_connections": [
+    {"ref": "prod", "hostname": "prod.example", "username": "deploy"}
+  ],
+  "operations": [
+    {"op": "managed_rename", "ref": "prod", "suffix": "renamed", "use_raw_editor": true},
+    {"op": "managed_change_destination", "ref": "prod", "hostname": "prod2.example", "username": "deploy"},
+    {"op": "toggle_mode"},
+    {"op": "external_change_port", "ref": "prod", "port": 2222},
+    {"op": "toggle_mode"},
+    {"op": "restart"},
+    {"op": "explicit_reload_idempotent"}
+  ]
+}

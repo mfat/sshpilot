@@ -27,6 +27,10 @@ from sshpilot.core.connections.identity_reconciliation import (
     reconcile_identities,
     registry_from_records,
 )
+from sshpilot.core.connections.identity_repository_adapter import (
+    reconcile_identity_state,
+)
+from sshpilot.core.connections.identity_state_v2 import IdentityStateV2
 from sshpilot.core.connections.repository import ConnectionRepository
 from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
 from sshpilot.core.connections.ssh_config_store import SshConfigStore
@@ -354,6 +358,78 @@ def test_tombstones_do_not_resurrect_for_different_alias():
     assert result.matched == ()
     assert result.deleted == ()
     assert result.created[0].uuid == "created-1"
+
+
+def test_stale_ambiguous_identity_is_not_reused_as_match_evidence():
+    """A still-ambiguous identity must not be live match evidence forever.
+
+    Unlike a tombstone (see ``test_tombstones_do_not_resurrect_for_different_
+    alias``), an identity that is still ambiguous after one reconciliation
+    pass is carried forward *unchanged and non-tombstoned* by
+    ``reconcile_identity_state`` (identity_repository_adapter.py) so a later
+    pass can still resolve it. But that means its frozen, pre-ambiguity
+    projection stays eligible as ordinary EXACT_ALIAS/anchor evidence on
+    *every* subsequent pass -- including against a completely unrelated new
+    connection that happens to reuse its old (now-free) alias. Found via
+    tests/sidecar/test_sidecar_stateful.py's stateful Hypothesis suite.
+    """
+    from sshpilot.core.connections.identity_state_v2 import new_uuid4
+
+    uuids = iter(new_uuid4() for _ in range(10))
+    state = IdentityStateV2()
+
+    # Pass 1: two distinct, unambiguous connections.
+    state = reconcile_identity_state(
+        state,
+        [projection("host1", hostname="a.example"), projection("host2", hostname="b.example")],
+        ssh_config_revision="r1",
+        uuid_factory=lambda: next(uuids),
+    )
+    host1_uuid = next(
+        identity.uuid for identity in state.identities if identity.projection.alias == "host1"
+    )
+
+    # Pass 2: both connections rename, and the second overwrites its
+    # destination to collide with the first's -- an unresolvable two-way
+    # collision (the adversarial case tests/sidecar's external_collide_and_
+    # rename rule drives against the real repository).
+    state = reconcile_identity_state(
+        state,
+        [projection("host3", hostname="a.example"), projection("host4", hostname="a.example")],
+        ssh_config_revision="r2",
+        uuid_factory=lambda: next(uuids),
+    )
+    assert state.pending_ambiguities, "the collision must still be pending"
+    stale = next(identity for identity in state.identities if identity.uuid == host1_uuid)
+    assert not stale.tombstone
+    assert stale.projection.alias == "host1"  # frozen at its pre-ambiguity alias
+
+    # Pass 3: the collision persists untouched, while an unrelated *new*
+    # connection reuses the now-free alias "host1" at an unrelated
+    # destination. It must get a fresh identity, not the stale one.
+    state = reconcile_identity_state(
+        state,
+        [
+            projection("host3", hostname="a.example"),
+            projection("host4", hostname="a.example"),
+            projection("host1", hostname="c.example"),
+        ],
+        ssh_config_revision="r3",
+        uuid_factory=lambda: next(uuids),
+    )
+    new_host1 = next(
+        identity for identity in state.identities
+        if not identity.tombstone and identity.projection.alias == "host1"
+    )
+    assert new_host1.uuid != host1_uuid, (
+        "a brand-new connection reusing a freed alias must not inherit a "
+        "stale identity that is still unresolved from an unrelated ambiguity"
+    )
+    retired_ghost = next(identity for identity in state.identities if identity.uuid == host1_uuid)
+    assert retired_ghost.tombstone, (
+        "the ghost's own frozen alias is now conclusively claimed elsewhere; "
+        "it must retire rather than linger as a second live claimant"
+    )
 
 
 def test_registry_serialization_and_restart_are_idempotent():

@@ -1,0 +1,13 @@
+{
+  "name": "external_two_way_collision",
+  "description": "Two connections at different destinations are pushed onto the same destination and renamed simultaneously by an external edit (the 'Customer A' / 'Customer B' adversarial case from the test spec). Whatever sshPilot decides (matched, ambiguous, or create/delete), a display name marker must never end up attached to the wrong logical connection.",
+  "initial_connections": [
+    {"ref": "a", "hostname": "server-a.example", "username": "deploy"},
+    {"ref": "b", "hostname": "server-b.example", "username": "deploy"}
+  ],
+  "operations": [
+    {"op": "external_collide_and_rename", "a": "a", "b": "b"},
+    {"op": "restart"},
+    {"op": "explicit_reload_idempotent"}
+  ]
+}

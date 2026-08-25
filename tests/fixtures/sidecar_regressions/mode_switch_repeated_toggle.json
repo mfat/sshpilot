@@ -1,0 +1,16 @@
+{
+  "name": "mode_switch_repeated_toggle",
+  "description": "Historical bug class (see commit 0f0a7a13, 'fix for the display name reset issue during mode switching'): toggling default<->isolated mode repeatedly must never lose or misattribute a connection's display name, even across more than one round trip through tombstoning.",
+  "initial_connections": [
+    {"ref": "prod", "hostname": "prod.example", "username": "deploy"}
+  ],
+  "operations": [
+    {"op": "toggle_mode"},
+    {"op": "toggle_mode"},
+    {"op": "toggle_mode"},
+    {"op": "toggle_mode"},
+    {"op": "restart"},
+    {"op": "toggle_mode"},
+    {"op": "restart"}
+  ]
+}

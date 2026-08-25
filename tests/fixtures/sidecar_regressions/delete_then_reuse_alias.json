@@ -1,0 +1,12 @@
+{
+  "name": "delete_then_reuse_alias",
+  "description": "A connection is deleted, then a brand-new connection is created reusing the exact same alias string. The new connection must get a fresh UUID/display name and must never resurrect the deleted identity's metadata (see test_delete_then_alias_reuse_allocates_new_uuid_and_keeps_tombstone in test_connection_repository_uuid_integration.py for the underlying production contract).",
+  "initial_connections": [
+    {"ref": "prod", "hostname": "prod.example"}
+  ],
+  "operations": [
+    {"op": "managed_delete", "ref": "prod"},
+    {"op": "add_connection_reusing_deleted_alias", "as": "prod2", "hostname": "other.example"},
+    {"op": "restart"}
+  ]
+}
