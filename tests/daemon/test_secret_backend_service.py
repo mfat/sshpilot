@@ -474,6 +474,88 @@ def test_export_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkey
     assert export_result[0].status == SecretOperationState.INTERACTION_REQUIRED
 
 
+def _encrypted_backup(tmp_path, name="encrypted.spbk"):
+    """Produce a genuinely encrypted ``.spbk`` through the service surface."""
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path, expected_secrets=["s3cr3t"])
+    dest = tmp_path / name
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    return dest
+
+
+def _assert_state_stays_responsive(service, run, monkeypatch):
+    """Run *run* with the decryption prompt blocked and assert that a
+    concurrent ``secrets.state.get`` still returns.
+
+    Same failure as the export regression above: holding
+    ``SecretBackendService._lock`` across the passphrase interaction makes the
+    metadata query wait for the five-second client RPC timeout, which
+    disconnects the peer and cancels the interaction being waited on.
+    """
+    prompt_started = threading.Event()
+    release_prompt = threading.Event()
+    prompt_released = []
+
+    def _blocked_prompt(*_args, **_kwargs):
+        prompt_started.set()
+        prompt_released.append(release_prompt.wait(5.0))
+        return None
+
+    monkeypatch.setattr(service, "_prompt_for_secret", _blocked_prompt)
+    op_result: List[Any] = []
+    op_thread = threading.Thread(target=lambda: op_result.append(run()), daemon=True)
+    op_thread.start()
+    try:
+        assert prompt_started.wait(2.0), "the passphrase prompt was never reached"
+        state_thread = threading.Thread(target=service.get_state, daemon=True)
+        state_thread.start()
+        state_thread.join(1.0)
+        assert not state_thread.is_alive(), "secrets.state.get was blocked by the prompt"
+    finally:
+        release_prompt.set()
+    op_thread.join(2.0)
+    assert not op_thread.is_alive()
+    assert prompt_released == [True]
+    return op_result[0]
+
+
+def test_import_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
+    """Encrypted import must not hold the service lock across its prompt."""
+    source = _encrypted_backup(tmp_path)
+    target = tmp_path / "import"
+    target.mkdir()
+    service, _manager, _backends, _broker, _path = _make_service(target)
+    result = _assert_state_stays_responsive(
+        service,
+        lambda: service.import_backup(
+            source=str(source), options={}, owner_client_id="client-1"),
+        monkeypatch,
+    )
+    assert result.status == SecretOperationState.INTERACTION_REQUIRED
+    assert result.message == "Decryption cancelled"
+
+
+def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
+    """Encrypted preview must not hold the service lock across its prompt."""
+    source = _encrypted_backup(tmp_path)
+    target = tmp_path / "preview"
+    target.mkdir()
+    service, _manager, _backends, _broker, _path = _make_service(target)
+    public = _assert_state_stays_responsive(
+        service,
+        lambda: service.preview_backup(source=str(source), owner_client_id="client-1"),
+        monkeypatch,
+    )
+    assert public.get("encrypted") is True
+    assert public.get("error") == "Decryption cancelled"
+
+
 # ---------------------------------------------------------------------------
 # Deadlock regressions (timeout-bounded)
 # ---------------------------------------------------------------------------
