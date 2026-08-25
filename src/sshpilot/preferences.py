@@ -21,6 +21,7 @@ from .file_manager_integration import (
 )
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
+from .terminal_theme_selector import TERMINAL_SCHEME_KEYS
 
 
 import gi
@@ -202,13 +203,7 @@ from .file_manager_integration import (  # noqa: E402,F401
 # themes are user-selectable — Config also defines 'dark'/'light', which are
 # deliberately omitted from the picker. Keep this in sync with the keys in
 # Config.load_builtin_themes(); tests/test_preferences_scheme_keys.py enforces it.
-SCHEME_KEYS = (
-    'default', 'black_on_white', 'solarized_dark', 'solarized_light',
-    'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark',
-    'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon',
-    'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe',
-    'catppuccin_macchiato', 'catppuccin_mocha',
-)
+SCHEME_KEYS = TERMINAL_SCHEME_KEYS
 
 
 @functools.lru_cache(maxsize=1)
@@ -1665,6 +1660,11 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Command Snippets Button"),
             _("Show the command snippets toggle button"),
             'ui.headerbar_show_commands',
+        )
+        _add_headerbar_switch(
+            _("Terminal Theme Button"),
+            _("Show the color-scheme button on terminal tabs"),
+            'ui.headerbar_show_terminal_theme',
         )
         _add_headerbar_switch(
             _("Theme Menu"),

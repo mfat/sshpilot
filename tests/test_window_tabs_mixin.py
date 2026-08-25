@@ -147,6 +147,40 @@ def test_split_layout_context_action_converts_right_clicked_terminal(monkeypatch
     assert stub.converted == (page, terminal, 'vertical')
 
 
+def test_terminal_theme_button_visibility_honors_headerbar_preference(monkeypatch):
+    from sshpilot import window_tabs
+
+    terminal = types.SimpleNamespace(get_visible=lambda: True)
+    page = types.SimpleNamespace(get_child=lambda: terminal)
+    button = types.SimpleNamespace(visible=None)
+    button.set_visible = lambda visible: setattr(button, 'visible', visible)
+
+    class Config:
+        allowed = False
+
+        def get_setting(self, key, default):
+            assert key == 'ui.headerbar_show_terminal_theme'
+            return self.allowed
+
+    class Stub(window_tabs.WindowTabsMixin):
+        config = Config()
+        tab_view = types.SimpleNamespace(get_selected_page=lambda: page)
+        _terminal_theme_menu_button = button
+
+        def _is_start_tab_page(self, _page):
+            return False
+
+    monkeypatch.setattr(window_tabs, '_is_terminal_widget', lambda child: child is terminal)
+
+    stub = Stub()
+    stub._update_terminal_theme_button_visibility()
+    assert button.visible is False
+
+    stub.config.allowed = True
+    stub._update_terminal_theme_button_visibility()
+    assert button.visible is True
+
+
 class _FakeWidget:
     """Minimal stand-in for Gtk.Widget used by classify_tab_bar_hit."""
 
