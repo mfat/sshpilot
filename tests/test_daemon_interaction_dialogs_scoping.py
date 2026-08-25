@@ -319,7 +319,13 @@ def test_present_parent_uses_visible_window_directly(monkeypatch):
 
 def test_present_parent_main_window_prefers_visible_modal_secondary(monkeypatch):
     """A modal secondary must host the prompt even when Wayland still reports
-    MainWindow as the active application window."""
+    MainWindow as the active application window.
+
+    This exercises the resolution algorithm given a window already present in
+    ``app.get_windows()`` — it assumes registration, it doesn't prove it. A
+    bare ``Adw.Window`` (e.g. the real ``ConnectionDialog``) only ends up in
+    that list if something calls ``associate_window_with_parent_application``
+    on it (see ``tests/test_prompt_parent.py`` for that half)."""
     monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
 
     app = SimpleNamespace()
