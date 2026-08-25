@@ -11,9 +11,6 @@ sanitizer re-identifies the embedded shell as sshPilot and nothing else.
 import sys
 import types
 
-from sshpilot.terminal import sanitize_local_shell_env
-
-
 def _ensure_cairo_stub():
     if 'cairo' not in sys.modules:
         sys.modules['cairo'] = types.SimpleNamespace()
@@ -34,7 +31,7 @@ def test_sanitize_local_shell_env_strips_apple_terminal_identity(monkeypatch):
     import sshpilot.terminal as terminal
 
     monkeypatch.setattr(terminal, "is_macos", lambda: True)
-    sanitized = sanitize_local_shell_env(_apple_terminal_env())
+    sanitized = terminal.sanitize_local_shell_env(_apple_terminal_env())
 
     assert sanitized["TERM_PROGRAM"] == "sshPilot"
     assert "TERM_PROGRAM_VERSION" not in sanitized
@@ -51,7 +48,7 @@ def test_sanitize_local_shell_env_does_not_mutate_source(monkeypatch):
     monkeypatch.setattr(terminal, "is_macos", lambda: True)
     source = _apple_terminal_env()
     before = dict(source)
-    sanitize_local_shell_env(source)
+    terminal.sanitize_local_shell_env(source)
     assert source == before, "the helper must not mutate the caller's dict"
 
 
@@ -60,7 +57,7 @@ def test_sanitize_local_shell_env_non_macos_unchanged(monkeypatch):
 
     monkeypatch.setattr(terminal, "is_macos", lambda: False)
     source = _apple_terminal_env()
-    sanitized = sanitize_local_shell_env(source)
+    sanitized = terminal.sanitize_local_shell_env(source)
     assert sanitized == source
     assert sanitized is not source, "the helper still returns a copy"
 
@@ -69,7 +66,9 @@ def test_sanitize_local_shell_env_sets_program_even_when_absent(monkeypatch):
     import sshpilot.terminal as terminal
 
     monkeypatch.setattr(terminal, "is_macos", lambda: True)
-    sanitized = sanitize_local_shell_env({"HOME": "/Users/test", "PATH": "/usr/bin"})
+    sanitized = terminal.sanitize_local_shell_env(
+        {"HOME": "/Users/test", "PATH": "/usr/bin"}
+    )
     assert sanitized["TERM_PROGRAM"] == "sshPilot"
     assert "TERM_PROGRAM_VERSION" not in sanitized
     assert "TERM_SESSION_ID" not in sanitized
