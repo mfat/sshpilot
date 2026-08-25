@@ -104,3 +104,16 @@
 .omni-search-open .omni-search-entry {
     border-radius: 8px 8px 0 0;
 }
+
+/* Content titlebar: tab row spacing (window.py builds
+   GtkWindowHandle.content-titlebar > GtkBox.toolbar > GtkStack > AdwTabBar).
+   Adwaita's .toolbar class adds 6px on every side, which stacks on top of the
+   6px AdwTabBox already puts around the 34px tab pills — 12px of chrome
+   between the tabs and the terminal. Ptyxis drops the same padding for its
+   fullscreen tab row (src/style.css, "Keep padding within visual bell area").
+   Only the vertical padding goes: the horizontal 6px still separates the tab
+   row from the window controls. */
+.content-titlebar > box.toolbar {
+    padding-top: 0;
+    padding-bottom: 0;
+}
