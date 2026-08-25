@@ -154,6 +154,10 @@ class DaemonInteractionDialogs:
     def _resolve_present_parent(self):
         """Return the window the interaction dialog should be presented on.
 
+        A visible explicit secondary window keeps hosting its own prompts.
+        When the configured parent is the main window, a visible modal
+        secondary window takes precedence so prompts cannot appear behind it.
+
         The configured parent is used only when it is a *visible* window. A
         window that is not on screen must never be force-presented behind the
         prompt: an embedded FileManagerWindow whose content was detached into a
@@ -163,17 +167,72 @@ class DaemonInteractionDialogs:
         live application window is resolved instead.
         """
         parent = self._parent
+
         if self._parent_window_is_visible(parent):
-            return parent
+            return self._resolve_topmost_if_main_window(parent)
+
         from .window_dialogs import resolve_app_modal_parent
 
         try:
-            return resolve_app_modal_parent(self._parent)
+            resolved = resolve_app_modal_parent(self._parent)
         except RuntimeError:
-            root = self._parent.get_root()
+            try:
+                root = self._parent.get_root()
+            except Exception:
+                root = None
+
             if self._parent_window_is_visible(root):
-                return root
+                return self._resolve_topmost_if_main_window(root)
+
             return self._parent
+
+        return self._resolve_topmost_if_main_window(resolved)
+
+    @staticmethod
+    def _resolve_topmost_if_main_window(window):
+        """Prefer a blocking modal secondary window over the app main window."""
+        try:
+            app = window.get_application()
+        except Exception:
+            try:
+                app = Gtk.Application.get_default()
+            except Exception:
+                app = None
+
+        if app is None:
+            return window
+
+        try:
+            windows = list(app.get_windows())
+        except Exception:
+            windows = []
+
+        main_window = getattr(app, "window", None)
+        if main_window is None:
+            main_window = next(
+                (
+                    candidate
+                    for candidate in windows
+                    if candidate.__class__.__name__ == "MainWindow"
+                ),
+                None,
+            )
+
+        if window is not main_window:
+            return window
+
+        try:
+            active_window = app.get_active_window()
+        except Exception:
+            active_window = None
+
+        from .window_dialogs import resolve_topmost_prompt_parent
+
+        return resolve_topmost_prompt_parent(
+            windows,
+            active_window,
+            main_window,
+        )
 
     @staticmethod
     def _parent_window_is_visible(widget) -> bool:

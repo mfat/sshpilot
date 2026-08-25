@@ -239,17 +239,31 @@ def immediate_idle(monkeypatch):
 
 
 class _FakeWindow:
-    """Minimal Gtk.Window stand-in exposing visibility + root."""
+    """Minimal Gtk.Window stand-in for dialog-parent resolution tests."""
 
-    def __init__(self, visible: bool):
+    def __init__(
+        self,
+        visible: bool,
+        *,
+        modal: bool = False,
+        application=None,
+    ):
         self._visible = visible
+        self._modal = modal
+        self._application = application
         self._root = self
 
     def get_visible(self):
         return self._visible
 
+    def get_modal(self):
+        return self._modal
+
     def get_root(self):
         return self._root
+
+    def get_application(self):
+        return self._application
 
 
 def test_present_parent_skips_invisible_window_shell(monkeypatch):
@@ -281,10 +295,15 @@ def test_present_parent_uses_visible_window_directly(monkeypatch):
     keeps hosting its own prompts — no re-parenting to the main window."""
     monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
 
-    visible_window = _FakeWindow(visible=True)
-
     def _must_not_resolve(_from_widget):
         raise AssertionError("visible window must be used directly")
+
+    app = SimpleNamespace()
+    main_window = _FakeWindow(visible=True, application=app)
+    visible_window = _FakeWindow(visible=True, application=app)
+    app.window = main_window
+    app.get_windows = lambda: [main_window, visible_window]
+    app.get_active_window = lambda: visible_window
 
     monkeypatch.setattr(
         "sshpilot.window_dialogs.resolve_app_modal_parent",
@@ -295,6 +314,39 @@ def test_present_parent_uses_visible_window_directly(monkeypatch):
     dialogs = _RecordingDialogs(client, _SyncBridge(), parent=visible_window)
 
     assert dialogs._resolve_present_parent() is visible_window
+    dialogs.close()
+
+
+def test_present_parent_main_window_prefers_visible_modal_secondary(monkeypatch):
+    """A modal secondary must host the prompt even when Wayland still reports
+    MainWindow as the active application window.
+
+    This exercises the resolution algorithm given a window already present in
+    ``app.get_windows()`` — it assumes registration, it doesn't prove it. A
+    bare ``Adw.Window`` (e.g. the real ``ConnectionDialog``) only ends up in
+    that list if something calls ``associate_window_with_parent_application``
+    on it (see ``tests/test_prompt_parent.py`` for that half)."""
+    monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
+
+    app = SimpleNamespace()
+    main_window = _FakeWindow(visible=True, application=app)
+    connection_window = _FakeWindow(
+        visible=True,
+        modal=True,
+        application=app,
+    )
+    app.window = main_window
+    app.get_windows = lambda: [main_window, connection_window]
+    app.get_active_window = lambda: main_window
+
+    client = _FakeClient()
+    dialogs = _RecordingDialogs(
+        client,
+        _SyncBridge(),
+        parent=main_window,
+    )
+
+    assert dialogs._resolve_present_parent() is connection_window
     dialogs.close()
 
 
@@ -855,13 +907,16 @@ def test_secret_session_event_is_claimed_and_presented_end_to_end(
     of calling _present_secret directly. Every other SecretsInteractionPresenter
     test in this file skips straight to _present_secret, so none of them would
     catch a break in event delivery, subscription, or the is_secret_service_session
-    filter itself. This is the one test that would."""
+    filter itself. Also verifies that a master-password prompt is parented to a
+    blocking modal secondary window rather than MainWindow."""
     from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
 
     monkeypatch.setattr(dialogs_mod.Gtk, "Window", _FakeWindow)
     client = _FakeClient()
+    calls = {}
 
-    def fake_show(**_kwargs):
+    def fake_show(**kwargs):
+        calls.update(kwargs)
         return "hunter2"
 
     monkeypatch.setattr("sshpilot.window_dialogs.show_ssh_password_dialog", fake_show)
@@ -869,13 +924,28 @@ def test_secret_session_event_is_claimed_and_presented_end_to_end(
         "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
     )
 
-    parent = _FakeWindow(visible=True)
-    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=parent)
+    app = SimpleNamespace()
+    main_window = _FakeWindow(visible=True, application=app)
+    connection_window = _FakeWindow(
+        visible=True,
+        modal=True,
+        application=app,
+    )
+    app.window = main_window
+    app.get_windows = lambda: [main_window, connection_window]
+    app.get_active_window = lambda: main_window
+
+    dialogs = SecretsInteractionPresenter(
+        client,
+        _SyncBridge(),
+        parent=main_window,
+    )
     summary = _master_password_summary("keepassxc")
 
     client.emit(summary)
 
     assert client.claims == [summary.id], "claim_interaction was never called"
+    assert calls["parent_window"] is connection_window
     assert client.secrets and client.secrets[-1][2] == b"hunter2"
     dialogs.close()
 

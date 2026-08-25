@@ -1596,6 +1596,12 @@ class ConnectionDialog(
         # Set modal and transient parent to ensure dialog stays on top
         self.set_modal(True)
         self.set_transient_for(parent)
+        # Register with the app so routed prompts (e.g. a vault master-password
+        # unlock triggered while this dialog is open) can find this modal
+        # window as their parent — a bare Adw.Window is otherwise absent from
+        # Gtk.Application.get_windows().
+        from .window_dialogs import associate_window_with_parent_application
+        associate_window_with_parent_application(self, parent)
         # Set default size for better UX
         self.set_default_size(600, 700)
         

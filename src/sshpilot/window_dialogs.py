@@ -177,7 +177,9 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
     win :func:`Gtk.Application.get_active_window`). Resolution:
 
     1. The active window, if it is a visible modal secondary window.
-    2. Any other visible modal secondary window (last = most recently mapped).
+    2. Any other visible modal secondary window (``windows`` is expected in
+       :func:`Gtk.Application.get_windows` order — most recently focused
+       first — so the first match is the most recently focused).
     3. The active window, if visible (non-modal secondary window, e.g. FM).
     4. The main window.
 
@@ -202,11 +204,34 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
     if modal_secondary:
         if active_window in modal_secondary:
             return active_window
-        return modal_secondary[-1]
+        return modal_secondary[0]
     if active_window is not None and active_window is not main_window \
             and _visible(active_window):
         return active_window
     return main_window
+
+
+def associate_window_with_parent_application(window, parent) -> None:
+    """Register *window* with *parent*'s :class:`Gtk.Application`.
+
+    A bare ``Adw.Window``/``Gtk.Window`` is absent from
+    :func:`Gtk.Application.get_windows` unless it is explicitly associated —
+    ``set_transient_for`` alone does not register it. Anything that presents
+    itself as a blocking modal secondary (SCP browse, the connection editor,
+    …) must call this so :func:`resolve_topmost_prompt_parent` can find it
+    when a routed prompt (e.g. a vault master-password unlock) needs to stack
+    above it instead of the main window.
+    """
+    try:
+        app = parent.get_application() if parent is not None else None
+    except Exception:
+        app = None
+    if app is None:
+        return
+    try:
+        window.set_application(app)
+    except Exception:
+        pass
 
 
 def present_for_modal_dialog(window: Gtk.Window) -> None:
