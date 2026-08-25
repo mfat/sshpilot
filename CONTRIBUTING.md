@@ -78,6 +78,14 @@ tracking pre-existing environment-specific failures as non-strict `xfail`; it's
 currently empty — prefer an explicit `skipif` inside the test itself over
 adding to it, so CI skips cleanly instead of relying on a non-strict XPASS.
 
+## Coding-agent MCP setup
+
+SSH Pilot includes a checkout-confined developer MCP server that exposes API
+tracing, architecture checks, change validation, and allowlisted focused test
+runs. Follow the [MCP quickstart](docs/mcp/README.md) to connect Codex or any
+stdio-capable MCP client. Configure `sshpilot-mcp-dev` by default; the
+privileged runtime server is opt-in and documented separately.
+
 ### Running GUI tests (real GTK)
 
 

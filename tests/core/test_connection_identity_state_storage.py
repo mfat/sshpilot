@@ -25,6 +25,8 @@ from sshpilot.core.connections.identity_state_v2 import (
     PendingAmbiguity,
     PersistedIdentity,
     ReferenceKind,
+    _projection_from_dict,
+    _projection_to_dict,
     classify_identity_transaction_recovery,
 )
 from sshpilot.core.connections.ssh_config_loader import load_ssh_configuration
@@ -655,6 +657,22 @@ def test_corrupt_sidecar_is_not_replaced_during_recovery(tmp_path: Path):
         recover_pending_identity_transaction(sidecar, actual_ssh_revision="rev-new")
     assert sidecar.read_text(encoding="utf-8") == "{broken"
     assert intent_path.exists()
+
+
+def test_trustworthy_projection_round_trips_through_real_v2_serialization():
+    original = ConnectionIdentityProjection(
+        alias="prod",
+        hostname="server-a",
+        port=2222,
+        username="deploy",
+        destination_evidence=StaticDestinationEvidence.trustworthy("server-a", 2222),
+        username_literal="deploy",
+        username_is_explicit=True,
+        identity_file_evidence=IdentityFileEvidence.unspecified(),
+    )
+    restored = _projection_from_dict(_projection_to_dict(original))
+    assert restored == original
+    assert restored.destination_anchor == original.destination_anchor
 
 
 def test_unsafe_metadata_cannot_be_written_to_v2_or_intent(tmp_path: Path):

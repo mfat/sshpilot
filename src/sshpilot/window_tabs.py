@@ -1364,6 +1364,11 @@ class WindowTabsMixin:
 
     def _update_command_snippets_button_visibility(self) -> None:
         """Show snippets only while the selected tab visibly contains a terminal."""
+        update_theme_button = getattr(
+            self, "_update_terminal_theme_button_visibility", None
+        )
+        if callable(update_theme_button):
+            update_theme_button()
         button = getattr(self, "_cmd_blocks_toggle_btn", None)
         if button is None:
             return
@@ -1390,6 +1395,41 @@ class WindowTabsMixin:
         if not visible and getattr(self, "_command_popup", None) is not None:
             if self._command_popup.visible:
                 self._toggle_command_blocks_panel(False)
+
+    def _update_terminal_theme_button_visibility(self) -> None:
+        """Show the terminal color chooser only for terminal-bearing tabs."""
+        button = getattr(self, "_terminal_theme_menu_button", None)
+        if button is None:
+            return
+
+        try:
+            allowed = bool(
+                self.config.get_setting('ui.headerbar_show_terminal_theme', True)
+            )
+        except Exception:
+            allowed = True
+
+        visible = False
+        try:
+            page = self.tab_view.get_selected_page()
+            child = page.get_child() if page is not None else None
+            if allowed and page is not None and not self._is_start_tab_page(page):
+                if _is_terminal_widget(child):
+                    visible = bool(child.get_visible())
+                else:
+                    from .split_view import SplitViewTab
+                    if isinstance(child, SplitViewTab):
+                        terminal = self._get_active_terminal_widget()
+                        visible = bool(
+                            terminal is not None and terminal.get_visible()
+                        )
+        except Exception:
+            logger.debug(
+                "Failed to determine terminal theme button visibility",
+                exc_info=True,
+            )
+
+        button.set_visible(visible)
 
     def on_tab_detached(self, tab_view, page, position):
         """Handle tab detached"""

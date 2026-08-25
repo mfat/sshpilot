@@ -7,8 +7,8 @@ Read-only, AST-based checks over the current checkout:
 * public API review (generated schema + AST-scanned exports),
 * interaction-scope tracing (how interaction methods attach to stable resource
   scopes: session / SFTP service / operation),
-* commit review (which layers a commit touches and whether the API surface or
-  its generated artifacts changed).
+* commit review and validation planning (which layers a commit touches, which
+  focused tests apply, and whether API/generated contracts are still clean).
 
 All checks are read-only and never mutate the repository.
 """
@@ -255,11 +255,10 @@ def review_commit(scope: RepoScope, base: str = "HEAD") -> dict:
     if not git.is_git_repo():
         raise ArchitectureError(f"not a git repository: {scope.root}")
     try:
-        status = git.status()
+        changed = git.changed_paths(base=base)
         diff = git.diff(base=base, stat_only=True)
     except GitError as error:
         raise ArchitectureError(str(error)) from error
-    changed = [entry["path"] for entry in status["entries"]]
     classifications: Dict[str, List[str]] = {}
     for path in changed:
         layer = _classify_path(path)
@@ -281,6 +280,209 @@ def review_commit(scope: RepoScope, base: str = "HEAD") -> dict:
         "generated_artifacts_changed": artifacts_changed,
         "diff_stat": diff.get("diff", ""),
         "recommend_api_drift_check": api_changed or artifacts_changed,
+    }
+
+
+def plan_api_change(scope: RepoScope, method: str) -> dict:
+    """Return the authoritative surfaces to inspect when changing an API method.
+
+    This complements generic code graphs: it starts from the generated public
+    contract, then names the SSH Pilot-specific source, capability, handler,
+    generated-artifact, documentation, and headless-test obligations.
+    """
+    from . import api_surface
+
+    try:
+        trace = api_surface.inspect_method(scope, method)
+    except api_surface.ApiNotFoundError as error:
+        raise ArchitectureError(str(error)) from error
+
+    checklist = [
+        {
+            "surface": "typed-api",
+            "paths": ["src/sshpilot/api/"],
+            "reason": "Update the public request/result/event/error models and client contract.",
+        },
+        {
+            "surface": "daemon-dispatch",
+            "paths": ["src/sshpilot/daemon/"],
+            "reason": "Keep authoritative state and process ownership in the daemon.",
+        },
+        {
+            "surface": "capabilities",
+            "paths": ["src/sshpilot/api/capabilities.py"],
+            "reason": "Advertise availability only when the full implementation exists.",
+        },
+        {
+            "surface": "contracts-and-docs",
+            "paths": [
+                "tests/api/",
+                "tests/architecture/",
+                "docs/api/",
+                "docs/api/generated/",
+            ],
+            "reason": "Update contract tests, generated artifacts, and the API changelog when applicable.",
+        },
+    ]
+    return {
+        "check": "api-change-plan",
+        "method": method,
+        "trace": trace,
+        "checklist": checklist,
+        "validation": [
+            "check_api_drift",
+            "validate_api_artifacts",
+            "check_frontend_neutrality",
+            "run_tests(suite='api')",
+            "run_tests(suite='architecture')",
+        ],
+        "wire_protocol_note": (
+            "Do not bump the wire protocol unless compatibility actually changes."
+        ),
+    }
+
+
+def recommend_tests(scope: RepoScope, paths: List[str]) -> dict:
+    """Recommend focused headless checks for repository-relative changed paths."""
+    if not paths:
+        raise ArchitectureError("paths must contain at least one repository-relative path")
+
+    normalized: List[str] = []
+    for path in paths:
+        if not isinstance(path, str) or not path.strip():
+            raise ArchitectureError("every path must be a non-empty string")
+        candidate = path.replace("\\", "/")
+        if candidate.startswith("./"):
+            candidate = candidate[2:]
+        drive_absolute = len(candidate) >= 2 and candidate[1] == ":"
+        if (
+            not candidate
+            or candidate == "."
+            or candidate.startswith("/")
+            or drive_absolute
+            or ".." in candidate.split("/")
+        ):
+            raise ArchitectureError(f"path must stay inside the repository: {path!r}")
+        try:
+            scope.resolve(candidate)
+        except ScopeError as error:
+            raise ArchitectureError(str(error)) from error
+        if candidate not in normalized:
+            normalized.append(candidate)
+
+    layers = {_classify_path(path) for path in normalized}
+    suites: Set[str] = set()
+    checks: Set[str] = {"run_lint"}
+    reasons: List[str] = []
+
+    if "architecture" in layers or layers & {"api", "core", "daemon", "frontend", "mcp"}:
+        suites.add("architecture")
+        checks.add("check_frontend_neutrality")
+        reasons.append("Internal or frontend boundaries changed.")
+    if "api" in layers or "generated-artifacts" in layers:
+        suites.add("api")
+        checks.update({"check_api_drift", "validate_api_artifacts"})
+        reasons.append("The public API contract or generated API artifacts changed.")
+    if "core" in layers:
+        suites.add("core")
+        reasons.append("Core application behavior changed.")
+    if "daemon" in layers:
+        suites.add("daemon")
+        reasons.append("Authoritative daemon behavior changed.")
+    if "mcp" in layers:
+        suites.add("mcp")
+        reasons.append("An MCP server or trust boundary changed.")
+    for suite in ("architecture", "api", "core", "daemon", "mcp", "cli", "integration"):
+        if any(path == f"tests/{suite}" or path.startswith(f"tests/{suite}/") for path in normalized):
+            suites.add(suite)
+            reasons.append(f"The {suite} test suite itself changed.")
+
+    focused_tests: Set[str] = set()
+    source_stems: Set[str] = set()
+    for path in normalized:
+        if not path.endswith(".py") or path.startswith("tests/"):
+            continue
+        parts = path.split("/")
+        stem = parts[-1][:-3]
+        source_stems.add(stem)
+        if len(parts) >= 2:
+            source_stems.add(f"{parts[-2]}_{stem}")
+    for path in normalized:
+        if path.startswith("tests/") and path.endswith(".py"):
+            try:
+                if scope.resolve(path).is_file():
+                    focused_tests.add(path)
+            except ScopeError:
+                pass
+    if source_stems:
+        for relative in scope.iter_files(include_suffixes={".py"}):
+            text = str(relative)
+            basename = text.rsplit("/", 1)[-1]
+            if text.startswith("tests/") and any(
+                basename.startswith(f"test_{stem}") for stem in source_stems
+            ):
+                focused_tests.add(text)
+
+    return {
+        "check": "test-recommendations",
+        "paths": normalized,
+        "layers": sorted(layers),
+        "focused_tests": sorted(focused_tests),
+        "suites": sorted(suites),
+        "checks": sorted(checks),
+        "reasons": reasons,
+        "commands": [
+            *[f"python -m pytest -q {path}" for path in sorted(focused_tests)],
+            *[f"python -m pytest -q tests/{suite}" for suite in sorted(suites)],
+        ],
+    }
+
+
+def validate_change(scope: RepoScope, base: str = "HEAD") -> dict:
+    """Run safe static/contract checks and recommend tests for current changes.
+
+    This intentionally does not run test suites automatically. It performs the
+    fast architecture checks, executes the existing generated-artifact check
+    when API surfaces changed, and returns explicit focused test commands.
+    """
+    from . import api_surface, execution
+
+    review = review_commit(scope, base=base)
+    changed_paths = sorted(
+        path for paths in review["by_layer"].values() for path in paths
+    )
+    recommendations = (
+        recommend_tests(scope, changed_paths)
+        if changed_paths
+        else {
+            "check": "test-recommendations",
+            "paths": [],
+            "layers": [],
+            "focused_tests": [],
+            "suites": [],
+            "checks": [],
+            "reasons": ["No working-tree changes detected."],
+            "commands": [],
+        }
+    )
+    neutrality = check_frontend_neutrality(scope)
+    api_drift = None
+    artifacts = None
+    clean = neutrality["clean"]
+    if review["recommend_api_drift_check"]:
+        api_drift = api_surface.check_drift(scope)
+        artifacts = execution.check_api_artifacts(scope)
+        clean = clean and api_drift["clean"] and artifacts["success"]
+
+    return {
+        "check": "change-validation",
+        "base": base,
+        "clean": clean,
+        "review": review,
+        "frontend_neutrality": neutrality,
+        "api_drift": api_drift,
+        "api_artifacts": artifacts,
+        "recommended_tests": recommendations,
     }
 
 

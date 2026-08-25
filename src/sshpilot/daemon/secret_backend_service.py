@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ConnectionId, SessionId
 from sshpilot.api.models.interactions import (
+    InteractionState,
     InteractionType,
     PasswordPrompt,
     RememberPolicy,
@@ -1016,31 +1017,51 @@ class SecretBackendService:
         mirror_logins: bool = False,
         owner_client_id,
     ) -> SecretTransferResult:
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
-            opts = dict(options or {})
-            passphrase = None
-            if opts.get("encrypted"):
-                prompt = self._prompt_for_secret(
-                    "Enter a passphrase to encrypt the backup",
-                    owner_client_id=owner_client_id,
-                )
-                if prompt is None:
-                    return SecretTransferResult(
-                        operation="export",
-                        path=destination,
-                        counts={},
-                        warnings=(),
-                        status=SecretOperationState.INTERACTION_REQUIRED,
-                        message="Encryption cancelled",
-                    )
-                passphrase = prompt.decode("utf-8", "replace")
-                _clear_secret(prompt)
-            from sshpilot.daemon.secret_transfer import (
-                daemon_export_backup,
+        opts = dict(options or {})
+
+        # Never wait for a protected UI interaction while holding the service
+        # lock.  The frontend may query metadata (notably secrets.state.get)
+        # while the passphrase dialog is open; holding this lock here makes
+        # that harmless query block until the client request timeout, which
+        # then closes the peer and cancels the export interaction.
+        passphrase = None
+        if opts.get("encrypted"):
+            from sshpilot.daemon.interaction_broker import (
+                DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
             )
 
+            prompt, state = self._prompt_for_secret_with_status(
+                "Enter a passphrase to encrypt the backup",
+                owner_client_id=owner_client_id,
+                timeout=DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
+            )
+            if prompt is None:
+                message = (
+                    "Encryption password request timed out"
+                    if state is InteractionState.EXPIRED
+                    else "Encryption cancelled"
+                )
+                return SecretTransferResult(
+                    operation="export",
+                    path=destination,
+                    counts={},
+                    warnings=(),
+                    status=SecretOperationState.INTERACTION_REQUIRED,
+                    message=message,
+                )
+            passphrase = prompt.decode("utf-8", "replace")
+            _clear_secret(prompt)
+
+        from sshpilot.daemon.secret_transfer import daemon_export_backup
+
+        # Keep the actual manager/file operation serialized with other service
+        # operations, but do not serialize the human interaction above.  The
+        # environment/selection is applied here rather than before the prompt:
+        # a concurrent lock() or update_selection() during the interaction
+        # would otherwise leave the export running against a different (or
+        # locked) backend, silently producing a backup with no credentials.
+        with self._lock:
+            self._apply_environment(self._load_strict())
             return daemon_export_backup(
                 self._manager,
                 destination=destination,
@@ -1067,29 +1088,40 @@ class SecretBackendService:
         protected interaction; the decrypted manifest is cached so the
         following import never re-prompts.
         """
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
-            from sshpilot.daemon.secret_transfer import daemon_preview_backup
+        from sshpilot.daemon.secret_transfer import daemon_preview_backup
 
+        with self._lock:
+            self._apply_environment(self._load_strict())
             public, manifest = daemon_preview_backup(
                 self._manager, source=source, settings_path=self._path
             )
-            if manifest is None and public.get("encrypted") and not public.get("error"):
-                prompt = self._prompt_for_secret(
-                    "Enter the passphrase to decrypt the backup",
-                    owner_client_id=owner_client_id,
-                )
-                if prompt is None:
-                    return {**public, "error": "Decryption cancelled"}
-                passphrase = prompt.decode("utf-8", "replace")
-                _clear_secret(prompt)
-                public, manifest = daemon_preview_backup(
-                    self._manager,
-                    source=source,
-                    passphrase=passphrase,
-                    settings_path=self._path,
-                )
+            if manifest is not None:
+                self._cache_manifest(self._manifest_key("file", source), manifest)
+                return public
+            if not public.get("encrypted") or public.get("error"):
+                return public
+
+        # The passphrase interaction runs without the service lock: holding it
+        # here makes a concurrent metadata query (notably secrets.state.get,
+        # which has a five-second client timeout) block until that timeout,
+        # which closes the peer and cancels this very interaction.
+        prompt = self._prompt_for_secret(
+            "Enter the passphrase to decrypt the backup",
+            owner_client_id=owner_client_id,
+        )
+        if prompt is None:
+            return {**public, "error": "Decryption cancelled"}
+        passphrase = prompt.decode("utf-8", "replace")
+        _clear_secret(prompt)
+
+        with self._lock:
+            self._apply_environment(self._load_strict())
+            public, manifest = daemon_preview_backup(
+                self._manager,
+                source=source,
+                passphrase=passphrase,
+                settings_path=self._path,
+            )
             if manifest is not None:
                 self._cache_manifest(self._manifest_key("file", source), manifest)
             return public
@@ -1148,12 +1180,10 @@ class SecretBackendService:
         options: Optional[Dict[str, Any]] = None,
         owner_client_id,
     ) -> SecretTransferResult:
+        opts = dict(options or {})
         with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
-            opts = dict(options or {})
+            self._apply_environment(self._load_strict())
             manifest = self._pop_cached_manifest(self._manifest_key("file", source))
-            passphrase = None
             needs_prompt = bool(opts.get("encrypted"))
             if manifest is None and not needs_prompt:
                 # The daemon decides: prompt only for genuinely encrypted .spbk.
@@ -1164,30 +1194,42 @@ class SecretBackendService:
                     needs_prompt = bool(is_spbk(src) and spbk_is_encrypted(src))
                 except Exception:
                     needs_prompt = False
-            from sshpilot.daemon.secret_transfer import (
-                daemon_import_backup,
-            )
 
-            # A wrong passphrase is retried through fresh protected interactions,
-            # bounded so a corrupt file cannot loop forever.
-            result = None
-            for attempt in range(self._MAX_IMPORT_PASSPHRASE_ATTEMPTS):
-                if manifest is None and (needs_prompt or attempt > 0):
-                    prompt = self._prompt_for_secret(
-                        "Enter the passphrase to decrypt the backup",
-                        owner_client_id=owner_client_id,
+        from sshpilot.daemon.secret_transfer import (
+            daemon_import_backup,
+        )
+
+        # A wrong passphrase is retried through fresh protected interactions,
+        # bounded so a corrupt file cannot loop forever.
+        passphrase = None
+        result = None
+        for attempt in range(self._MAX_IMPORT_PASSPHRASE_ATTEMPTS):
+            if manifest is None and (needs_prompt or attempt > 0):
+                # Prompt without the service lock: holding it across the
+                # interaction makes a concurrent metadata query (notably
+                # secrets.state.get, which has a five-second client timeout)
+                # block until that timeout, which closes the peer and cancels
+                # this very interaction.
+                prompt = self._prompt_for_secret(
+                    "Enter the passphrase to decrypt the backup",
+                    owner_client_id=owner_client_id,
+                )
+                if prompt is None:
+                    return SecretTransferResult(
+                        operation="import",
+                        path=source,
+                        counts={},
+                        warnings=(),
+                        status=SecretOperationState.INTERACTION_REQUIRED,
+                        message="Decryption cancelled",
                     )
-                    if prompt is None:
-                        return SecretTransferResult(
-                            operation="import",
-                            path=source,
-                            counts={},
-                            warnings=(),
-                            status=SecretOperationState.INTERACTION_REQUIRED,
-                            message="Decryption cancelled",
-                        )
-                    passphrase = prompt.decode("utf-8", "replace")
-                    _clear_secret(prompt)
+                passphrase = prompt.decode("utf-8", "replace")
+                _clear_secret(prompt)
+            # The restore itself stays serialized with every other service
+            # operation, and re-applies the environment so a selection change
+            # during the interaction above cannot leave it on a stale backend.
+            with self._lock:
+                self._apply_environment(self._load_strict())
                 result = daemon_import_backup(
                     self._manager,
                     source=source,
@@ -1197,18 +1239,18 @@ class SecretBackendService:
                     manifest=manifest,
                     connection_store_restore=self._connection_store_restore,
                 )
-                last_attempt = attempt + 1 >= self._MAX_IMPORT_PASSPHRASE_ATTEMPTS
-                if (
-                    result.status is SecretOperationState.FAILED
-                    and passphrase is not None
-                    and "passphrase" in (result.message or "").lower()
-                    and not last_attempt
-                ):
-                    passphrase = None
-                    needs_prompt = True
-                    continue
-                return result
+            last_attempt = attempt + 1 >= self._MAX_IMPORT_PASSPHRASE_ATTEMPTS
+            if (
+                result.status is SecretOperationState.FAILED
+                and passphrase is not None
+                and "passphrase" in (result.message or "").lower()
+                and not last_attempt
+            ):
+                passphrase = None
+                needs_prompt = True
+                continue
             return result
+        return result
 
     # -- manifest preview cache (import preview -> apply, one passphrase prompt) --
 
@@ -1535,9 +1577,31 @@ class SecretBackendService:
 
         Returns the secret as a bytearray (the caller must clear it), or ``None``
         when the interaction was cancelled, expired, or the broker is unavailable.
+        See :meth:`_prompt_for_secret_with_status` for why this is routed
+        through ``request_client_secret`` rather than a bare create() +
+        wait_for_result().
+        """
+        secret, _state = self._prompt_for_secret_with_status(
+            message, owner_client_id=owner_client_id
+        )
+        return secret
 
-        Routed through ``request_client_secret`` (not a bare ``create()`` +
-        ``wait_for_result()``): the server only forwards
+    def _prompt_for_secret_with_status(
+        self,
+        message: str,
+        *,
+        owner_client_id,
+        timeout: Optional[float] = None,
+    ) -> Tuple[Optional[bytearray], InteractionState]:
+        """Like :meth:`_prompt_for_secret`, but also returns the interaction's
+        final :class:`InteractionState` so callers can tell an explicit user
+        cancellation apart from a timed-out prompt, and can request a
+        shorter-than-default ``timeout`` for a self-contained prompt (e.g.
+        the backup encryption passphrase) without touching the timeout used
+        by every other secret prompt.
+
+        Routed through ``request_client_secret_with_status`` (not a bare
+        ``create()`` + ``wait_for_result()``): the server only forwards
         INTERACTION_CREATED/STATE_CHANGED events for a synthetic
         ``secret-session-N`` scope to a client that is registered as that
         scope's owner (see ``DaemonServer._client_can_interact``) — a
@@ -1554,7 +1618,7 @@ class SecretBackendService:
             )
         session_id = _next_secret_session_id()
         connection_id = ConnectionId(f"secret-{session_id}")
-        return self._broker.request_client_secret(
+        return self._broker.request_client_secret_with_status(
             owner_client_id=owner_client_id,
             session_id=session_id,
             connection_id=connection_id,
@@ -1567,6 +1631,7 @@ class SecretBackendService:
                 can_remember=False,
                 stored_secret_available=False,
             ),
+            timeout=timeout,
         )
 
     def _prompt_for_master_password(

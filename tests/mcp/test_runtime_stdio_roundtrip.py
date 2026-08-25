@@ -136,7 +136,7 @@ async def test_stdio_handshake_and_read_tools(daemon_socket):
     async with stdio_client(_server_parameters(daemon_socket)) as (read, write):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
-            assert init.server_info.name == "sshpilot-runtime-mcp"
+            assert init.server_info.name == "sshpilot-mcp-runtime"
 
             tools = await session.list_tools()
             names = {tool.name for tool in tools.tools}

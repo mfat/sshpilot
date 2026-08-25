@@ -177,7 +177,9 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
     win :func:`Gtk.Application.get_active_window`). Resolution:
 
     1. The active window, if it is a visible modal secondary window.
-    2. Any other visible modal secondary window (last = most recently mapped).
+    2. Any other visible modal secondary window (``windows`` is expected in
+       :func:`Gtk.Application.get_windows` order — most recently focused
+       first — so the first match is the most recently focused).
     3. The active window, if visible (non-modal secondary window, e.g. FM).
     4. The main window.
 
@@ -202,11 +204,34 @@ def resolve_topmost_prompt_parent(windows, active_window, main_window):
     if modal_secondary:
         if active_window in modal_secondary:
             return active_window
-        return modal_secondary[-1]
+        return modal_secondary[0]
     if active_window is not None and active_window is not main_window \
             and _visible(active_window):
         return active_window
     return main_window
+
+
+def associate_window_with_parent_application(window, parent) -> None:
+    """Register *window* with *parent*'s :class:`Gtk.Application`.
+
+    A bare ``Adw.Window``/``Gtk.Window`` is absent from
+    :func:`Gtk.Application.get_windows` unless it is explicitly associated —
+    ``set_transient_for`` alone does not register it. Anything that presents
+    itself as a blocking modal secondary (SCP browse, the connection editor,
+    …) must call this so :func:`resolve_topmost_prompt_parent` can find it
+    when a routed prompt (e.g. a vault master-password unlock) needs to stack
+    above it instead of the main window.
+    """
+    try:
+        app = parent.get_application() if parent is not None else None
+    except Exception:
+        app = None
+    if app is None:
+        return
+    try:
+        window.set_application(app)
+    except Exception:
+        pass
 
 
 def present_for_modal_dialog(window: Gtk.Window) -> None:
@@ -1211,12 +1236,66 @@ class WindowConfigDialogsMixin:
         warn.connect('response', on_warn)
         warn.present()
 
+    def _run_local_export(self, *, export_path, connections, options, encrypt):
+        """Run the daemon-owned ``.spbk`` export off the GTK main thread.
+
+        The daemon RPC below blocks on the encryption passphrase interaction
+        (when ``encrypt``): the interaction can only be claimed and answered
+        once the GTK main loop is free to process it, so the RPC must not run
+        on the calling (GTK) thread — see ``_export_to_ssh_server``/
+        ``_run_daemon_import`` for the same pattern. Running it inline on the
+        caller used to deadlock the export until the interaction expired
+        (issue #1200)."""
+        controller = self._secrets_controller()
+        from .bitwarden_backup_setup import progress_dialog
+        cancelled = {'v': False}
+        _set_status, close_spinner = progress_dialog(
+            self, _("Export Backup"),
+            _("Exporting backup — this may take a while…"),
+            on_cancel=lambda: cancelled.__setitem__('v', True))
+
+        def worker():
+            try:
+                result = controller.export_backup(
+                    destination=export_path,
+                    connection_ids=self._connection_ids_for(connections),
+                    options={**options, 'encrypted': bool(encrypt)})
+                payload = ('ok', result)
+            except Exception as e:
+                logger.error(f"Export failed: {e}")
+                payload = ('error', str(e))
+            GLib.idle_add(lambda: (_report(payload), False)[1])
+
+        def _report(p):
+            if cancelled['v']:
+                return   # user cancelled the wait
+            close_spinner()
+            if p[0] != 'ok':
+                self._simple_dialog(_("Export Failed"), p[1])
+                return
+            result = p[1]
+            if result.status.value != 'success':
+                self._simple_dialog(
+                    _("Export Failed"),
+                    result.message or _("Unknown error"))
+                return
+            counts = result.counts or {}
+            msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
+                    "included; encryption: {}.").format(
+                export_path, counts.get('credentials', 0),
+                counts.get('private_keys', 0),
+                _("on") if encrypt else _("off"))
+            if result.warnings:
+                msg += "\n\n" + "\n\n".join(result.warnings)
+            self._simple_dialog(_("Export Successful"), msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def _choose_export_path(self, connections, encrypt, options):
         """Pick a ``.spbk`` path (GTK file picker), then run the daemon-owned export.
 
         ``encrypt`` is a flag: the passphrase itself is collected by a protected
         interaction inside the daemon, so it never passes through this window."""
-        controller = self._secrets_controller()
         file_dialog = Gtk.FileDialog()
         file_dialog.set_title(_("Export Backup"))
         file_dialog.set_initial_name(
@@ -1252,29 +1331,9 @@ class WindowConfigDialogsMixin:
                 export_path += '.spbk'
 
             def do_export(*_args):
-                try:
-                    result = controller.export_backup(
-                        destination=export_path,
-                        connection_ids=self._connection_ids_for(connections),
-                        options={**options, 'encrypted': bool(encrypt)})
-                except Exception as e:
-                    logger.error(f"Export failed: {e}")
-                    self._simple_dialog(_("Export Failed"), str(e))
-                    return
-                if result.status.value != 'success':
-                    self._simple_dialog(
-                        _("Export Failed"),
-                        result.message or _("Unknown error"))
-                    return
-                counts = result.counts or {}
-                msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
-                        "included; encryption: {}.").format(
-                    export_path, counts.get('credentials', 0),
-                    counts.get('private_keys', 0),
-                    _("on") if encrypt else _("off"))
-                if result.warnings:
-                    msg += "\n\n" + "\n\n".join(result.warnings)
-                self._simple_dialog(_("Export Successful"), msg)
+                self._run_local_export(
+                    export_path=export_path, connections=connections,
+                    options=options, encrypt=encrypt)
 
             self._run_after_vault_unlock_for_secrets(
                 do_export,

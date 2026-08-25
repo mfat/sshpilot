@@ -186,6 +186,7 @@ everywhere Flatpak does.
 - Architecture reference: [docs/architecture.md](docs/architecture.md)
 - Diagnostics & logging: [docs/diagnostics.md](docs/diagnostics.md)
 - In-repo developer and platform docs: [docs/](docs/)
+- Coding-agent setup: [SSH Pilot MCP quickstart](docs/mcp/README.md)
 - Writing plugins (protocols & UI pages): [docs/plugins/](docs/plugins/writing-plugins.md)
 
 ## Telegram Channel
@@ -226,4 +227,3 @@ USDT (TRC20)
 ```
 TAvQWVD83DB3QuDspnMh4uiJ7hi4Jzcr6X
 ```
-

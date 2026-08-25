@@ -8,72 +8,9 @@ Tests verify that:
 4. UTF-8/UTF-16 are not wrapped (native xterm.js support)
 """
 
-import sys
-import types
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Mock GTK/GObject before importing terminal modules
-class DummyGObject:
-    class SignalFlags:
-        RUN_FIRST = 0
-    
-    @staticmethod
-    def connect(*args, **kwargs):
-        return 12345
-    
-    @staticmethod
-    def disconnect(*args, **kwargs):
-        pass
-
-class DummyGLib:
-    @staticmethod
-    def timeout_add_seconds(*args, **kwargs):
-        return 0
-    
-    @staticmethod
-    def idle_add(func, *args):
-        func(*args)
-        return 0
-
-class DummyGtk:
-    class Box:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def connect(self, *args, **kwargs):
-            return 12345
-    
-    class Orientation:
-        VERTICAL = 0
-    
-    class EventSequenceState:
-        CLAIMED = 1
-    
-    class Widget:
-        pass
-    
-    class GestureClick:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def set_button(self, *args, **kwargs):
-            pass
-        
-        def connect(self, *args, **kwargs):
-            return 12345
-    
-    class ScrolledWindow:
-        def __init__(self, *args, **kwargs):
-            pass
-        
-        def set_child(self, *args, **kwargs):
-            pass
 
 class DummyVte:
     def __init__(self):
@@ -115,67 +52,44 @@ class DummyVte:
     def reset(self, *args, **kwargs):
         pass
 
+
 class DummyPango:
     SCALE = 1024
-    
+
     class FontDescription:
         def __init__(self):
             self._family = "Monospace"
             self._size = 12 * 1024
-        
+
         @staticmethod
-        def from_string(font_string):
-            desc = DummyPango.FontDescription()
-            return desc
-        
+        def from_string(_font_string):
+            return DummyPango.FontDescription()
+
         def set_family(self, family):
             self._family = family
-        
+
         def get_family(self):
             return self._family
-        
+
         def set_size(self, size):
             self._size = size
-        
+
         def get_size(self):
             return self._size
 
-# Copy concrete dummies as attributes onto the conftest-provided gi.repository
-# submodules rather than replacing them — replacing the submodule slots would
-# clobber the auto-creating _DummyGIModule that later-collected tests rely on
-# (see #985).
-from gi.repository import GObject as _GObject
-from gi.repository import GLib as _GLib
-from gi.repository import Gtk as _Gtk
-from gi.repository import Pango as _Pango
-from gi.repository import Vte as _Vte
-from gi.repository import Gdk as _Gdk
-from gi.repository import Adw as _Adw
 
-
-def _attach(target, source):
-    """Set every non-dunder attribute of *source* onto *target*."""
-    for name in dir(source):
-        if name.startswith("__"):
-            continue
-        setattr(target, name, getattr(source, name))
-
-
-_attach(_GObject, DummyGObject)
-_attach(_GLib, DummyGLib)
-_attach(_Gtk, DummyGtk)
-_attach(_Pango, DummyPango)
-_Vte.Terminal = DummyVte
-_Vte.PtyFlags = types.SimpleNamespace(DEFAULT=0)
-_Gdk.BUTTON_SECONDARY = 3
-_Gdk.Rectangle = Mock
-_Adw.Application = types.SimpleNamespace(get_default=lambda: None)
-
-# Now import the modules we want to test
+# Use the suite-wide GI stubs from conftest. Mutating their Gtk/GObject/Adw
+# types during collection leaks into every subsequently collected test module.
+# Patch only the backend module globals these tests actually need, and let
+# monkeypatch restore them after every test.
 from sshpilot import terminal_backends as _terminal_backends
 from sshpilot.terminal_backends import VTETerminalBackend, PyXtermTerminalBackend, PyXtermBridgeBackend
 
-_terminal_backends.GridTrackingVteTerminal = DummyVte
+
+@pytest.fixture(autouse=True)
+def _encoding_backend_stubs(monkeypatch):
+    monkeypatch.setattr(_terminal_backends, "GridTrackingVteTerminal", DummyVte)
+    monkeypatch.setattr(_terminal_backends, "Pango", DummyPango)
 
 
 class TestVTETerminalEncoding:

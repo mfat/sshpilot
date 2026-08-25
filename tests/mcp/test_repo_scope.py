@@ -2,6 +2,7 @@
 
 import pytest
 
+from sshpilot.mcp import _scope
 from sshpilot.mcp._scope import RepoScope, ScopeError, SSHPILOT_MCP_ROOT
 
 
@@ -53,6 +54,11 @@ def test_discover_requires_root(tmp_path, monkeypatch):
     empty = tmp_path / "empty"
     empty.mkdir()
     monkeypatch.delenv(SSHPILOT_MCP_ROOT, raising=False)
+    # The system temporary directory can itself live inside a checkout (or be
+    # a Git root in a shared agent environment), so explicitly simulate a
+    # marker-free ancestor chain for this negative-path test.
+    monkeypatch.setattr(_scope, "_GIT_MARKER", ".missing-git-marker")
+    monkeypatch.setattr(_scope, "_PROJECT_MARKERS", ())
     monkeypatch.chdir(empty)
     with pytest.raises(ScopeError):
         RepoScope.discover()

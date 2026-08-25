@@ -9,7 +9,7 @@ entries are rewritten, not accumulated.
   typed API (`src/sshpilot/api/**`, `DaemonClient`), generated API artifacts
   (`docs/api/generated/schema.json`), and a large test suite.
 - **MCP foundation (step 1) complete**: `RepoScope` (root discovery +
-  read-only path confinement), `sshpilot-dev-mcp` stdio server backed by the
+  read-only path confinement), `sshpilot-mcp-dev` stdio server backed by the
   official `mcp` SDK, root launcher + console script, `mcp` optional extra.
 - **Dev MCP repository intelligence (step 2) complete** — the server now
   exposes typed tools:
@@ -27,6 +27,9 @@ entries are rewritten, not accumulated.
     `trace_interaction_scope`, `review_commit` (architecture/regression
     intelligence; `review_public_api` reports only public model classes from
     `sshpilot.api.models.__all__`, not validators or conversion helpers)
+  - `plan_api_change`, `recommend_tests`, `validate_change` (authoritative
+    API-change checklist, path-to-headless-test recommendations, and combined
+    working-tree contract validation for coding agents)
   - `run_tests`, `run_lint`, `validate_api_artifacts` (controlled local
     execution; argv-only allowlists, never arbitrary shell). `run_tests`
     accepts an optional repository-relative test `path` for focused runs.
@@ -118,6 +121,11 @@ entries are rewritten, not accumulated.
   stdio smoke coverage includes the focused `run_tests(path=...)` path;
   `tests/api`, `tests/core`, ruff, and `generate_api_artifacts --check` are
   green.
+- **Contributor onboarding**: `docs/mcp/README.md` is the canonical five-minute
+  quickstart with Codex/generic stdio configuration, verification calls,
+  runtime policy, tool workflows, and troubleshooting. It is linked from the
+  repository README, contributor guide, and documentation index; drift tests
+  ensure all dev tools and runtime policy variables remain documented.
 
 ## What is being worked on
 

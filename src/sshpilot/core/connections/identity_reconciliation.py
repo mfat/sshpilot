@@ -266,6 +266,21 @@ class ConnectionIdentityProjection:
             raise TypeError("projection identity files must be a tuple")
         if not isinstance(self.destination_evidence, StaticDestinationEvidence):
             raise TypeError("destination evidence must be StaticDestinationEvidence")
+        if self.destination_evidence.status is DestinationEvidenceStatus.TRUSTWORTHY:
+            if not isinstance(self.hostname, str) or not self.hostname:
+                raise ValueError(
+                    "trustworthy destination evidence requires a non-empty literal hostname"
+                )
+            if type(self.port) is not int or not 1 <= self.port <= 65535:
+                raise ValueError(
+                    "trustworthy destination evidence requires a literal port between 1 and 65535"
+                )
+            literal_anchor = DestinationAnchor(self.hostname, self.port).as_tuple()
+            if literal_anchor != self.destination_evidence.anchor.as_tuple():
+                raise ValueError(
+                    "projection literal destination must match trustworthy "
+                    "destination evidence anchor"
+                )
         if not isinstance(self.identity_file_evidence, IdentityFileEvidence):
             raise TypeError("identity file evidence must be IdentityFileEvidence")
         if self.username_is_explicit and not self.username_literal:

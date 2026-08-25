@@ -21,6 +21,7 @@ from .file_manager_integration import (
 )
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
+from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
 
 
 import gi
@@ -202,13 +203,7 @@ from .file_manager_integration import (  # noqa: E402,F401
 # themes are user-selectable — Config also defines 'dark'/'light', which are
 # deliberately omitted from the picker. Keep this in sync with the keys in
 # Config.load_builtin_themes(); tests/test_preferences_scheme_keys.py enforces it.
-SCHEME_KEYS = (
-    'default', 'black_on_white', 'solarized_dark', 'solarized_light',
-    'monokai', 'dracula', 'nord', 'gruvbox_dark', 'one_dark',
-    'tomorrow_night', 'material_dark', 'rose_pine', 'rose_pine_moon',
-    'rose_pine_dawn', 'catppuccin_latte', 'catppuccin_frappe',
-    'catppuccin_macchiato', 'catppuccin_mocha',
-)
+SCHEME_KEYS = TERMINAL_SCHEME_KEYS
 
 
 @functools.lru_cache(maxsize=1)
@@ -526,7 +521,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 self._update_header_title(title)
 
     def _add_terminal_appearance_groups(self, terminal_page):
-        """Add Terminal appearance and color-scheme preview groups."""
+        """Add Terminal appearance and color-scheme palette groups."""
         # Terminal appearance group
         appearance_group = Adw.PreferencesGroup(title=_("Appearance"))
 
@@ -544,60 +539,28 @@ class PreferencesWindow(Adw.NavigationPage):
 
         appearance_group.add(self.font_row)
 
-        # Terminal color scheme
-        self.color_scheme_row = Adw.ComboRow()
-        self.color_scheme_row.set_title(_("Color Scheme"))
-        self.color_scheme_row.set_subtitle(_("Terminal color theme"))
-
-        # Names come straight from Config.terminal_themes (single source of truth)
+        # Terminal color scheme palette. Names and colors come straight from
+        # Config.terminal_themes, while TerminalThemeChooser owns the visual
+        # palette card layout shared with the terminal headerbar.
         themes = getattr(self.config, 'terminal_themes', {}) or {}
-        color_schemes = Gtk.StringList()
-        for key in SCHEME_KEYS:
-            color_schemes.append(themes.get(key, {}).get('name', key))
-        self.color_scheme_row.set_model(color_schemes)
-
-        # Select the saved scheme; fall back to the first entry if unknown
         current_scheme_key = self.config.get_setting('terminal.theme', 'default')
-        try:
-            current_index = SCHEME_KEYS.index(current_scheme_key)
-        except ValueError:
-            current_index = 0
-            self.config.set_setting('terminal.theme', SCHEME_KEYS[0])
-        self.color_scheme_row.set_selected(current_index)
+        if current_scheme_key not in SCHEME_KEYS or current_scheme_key not in themes:
+            current_scheme_key = SCHEME_KEYS[0]
+            self.config.set_setting('terminal.theme', current_scheme_key)
 
-        self.color_scheme_row.connect('notify::selected', self.on_color_scheme_changed)
-
-        appearance_group.add(self.color_scheme_row)
+        self.terminal_theme_chooser = TerminalThemeChooser(
+            themes,
+            current_scheme_key,
+            self._on_terminal_theme_selected,
+        )
+        palette_group = Adw.PreferencesGroup(title=_("Color Scheme"))
+        palette_container = Adw.Bin()
+        palette_container.set_child(self.terminal_theme_chooser.widget)
+        palette_group.add(palette_container)
 
         self._initialize_encoding_selector(appearance_group)
-
-        # Color scheme preview
-        preview_group = Adw.PreferencesGroup(title=_("Preview"))
-        preview_group.set_margin_top(18)  # Add more spacing above "Preview" label
-
-        # Create preview terminal widget
-        self.color_preview_terminal = Gtk.DrawingArea()
-        self.color_preview_terminal.set_draw_func(self.draw_color_preview)
-        self.color_preview_terminal.set_size_request(400, 120)
-        self.color_preview_terminal.add_css_class("terminal-preview")
-
-        # Create a standard Adwaita container with rounded corners
-        preview_container = Adw.Bin()
-        preview_container.add_css_class("card")
-        preview_container.set_margin_top(6)  # Reduce spacing between label and preview
-
-        # Add some margin around the preview
-        preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        preview_box.set_margin_top(12)
-        preview_box.set_margin_bottom(12)
-        preview_box.set_margin_start(12)
-        preview_box.set_margin_end(12)
-        preview_box.append(self.color_preview_terminal)
-
-        preview_container.set_child(preview_box)
-        preview_group.add(preview_container)
-        appearance_group.add(preview_group)
         terminal_page.add(appearance_group)
+        terminal_page.add(palette_group)
 
     def _add_terminal_backend_group(self, terminal_page):
         """Add the Terminal backend selection group."""
@@ -1665,6 +1628,11 @@ class PreferencesWindow(Adw.NavigationPage):
             _("Command Snippets Button"),
             _("Show the command snippets toggle button"),
             'ui.headerbar_show_commands',
+        )
+        _add_headerbar_switch(
+            _("Terminal Theme Button"),
+            _("Show the color-scheme button on terminal tabs"),
+            'ui.headerbar_show_terminal_theme',
         )
         _add_headerbar_switch(
             _("Theme Menu"),
@@ -6432,81 +6400,15 @@ class PreferencesWindow(Adw.NavigationPage):
         # Only new terminals will use the new backend setting
         logger.info(f"Terminal backend changed to {backend_id} (will apply to new terminals only)")
 
-    def on_color_scheme_changed(self, combo_row, param):
-        """Handle terminal color scheme change"""
-        selected = combo_row.get_selected()
-        config_key = SCHEME_KEYS[selected] if selected < len(SCHEME_KEYS) else 'default'
-
-        logger.info(f"Terminal color scheme changed to: {config_key}")
-
-        self.config.set_setting('terminal.theme', config_key)
-        self.apply_color_scheme_to_terminals(config_key)
-
-        # Refresh the color preview
-        if hasattr(self, 'color_preview_terminal'):
-            self.color_preview_terminal.queue_draw()
-
-    def draw_color_preview(self, drawing_area, cr, width, height):
-        """Draw a preview of the selected color scheme.
-
-        Content and metrics scale with the widget size so the preview stays
-        legible on HiDPI displays instead of using fixed pixel offsets.
-        """
-        colors = self.get_color_scheme_colors(
-            self.config.get_setting('terminal.theme', 'default')
-        )
-        fg = self.hex_to_rgba(colors.get('foreground', '#ffffff'))
-        blue = self.hex_to_rgba(colors.get('blue', '#0088ff'))
-        green = self.hex_to_rgba(colors.get('green', '#00ff00'))
-
-        # Background fills the whole area
-        cr.set_source_rgba(*self.hex_to_rgba(colors.get('background', '#000000')))
-        cr.paint()
-
-        # Scale font/line metrics to the widget so it renders crisply at any size
-        rows = [
-            (fg,    "user@host:~$ ls -la"),
-            (blue,  "drwxr-xr-x  user  documents/"),
-            (fg,    "-rw-r--r--  user  readme.txt"),
-            (green, "-rwxr-xr-x  user  deploy.sh"),
-            (fg,    "user@host:~$ "),
-        ]
-        margin = max(6.0, height * 0.08)
-        line_h = (height - 2 * margin) / len(rows)
-        cr.set_font_size(max(9.0, line_h * 0.62))
-        baseline = margin + line_h * 0.72
-        for color, text in rows:
-            cr.set_source_rgba(*color)
-            cr.move_to(margin, baseline)
-            cr.show_text(text)
-            baseline += line_h
-
-    def get_color_scheme_colors(self, scheme_key):
-        """Get colors for a specific color scheme"""
-        # Derive preview colors from Config.terminal_themes (single source of
-        # truth). ANSI palette order: [0]black [1]red [2]green [3]yellow
-        # [4]blue [5]magenta [6]cyan ...
+    def _on_terminal_theme_selected(self, scheme_key):
+        """Persist a palette selection and apply it to active terminals."""
         themes = getattr(self.config, 'terminal_themes', {}) or {}
-        theme = themes.get(scheme_key) or themes.get('default') or {}
-        palette = theme.get('palette') or []
+        if scheme_key not in SCHEME_KEYS or scheme_key not in themes:
+            scheme_key = SCHEME_KEYS[0]
 
-        def _p(index, fallback):
-            return palette[index] if index < len(palette) else fallback
-
-        return {
-            'background': theme.get('background', '#000000'),
-            'foreground': theme.get('foreground', '#ffffff'),
-            'green': _p(2, '#00ff00'),
-            'blue': _p(4, '#0088ff'),
-        }
-
-    def hex_to_rgba(self, hex_color):
-        """Convert hex color to RGBA values (0-1 range)"""
-        hex_color = hex_color.lstrip('#')
-        r = int(hex_color[0:2], 16) / 255.0
-        g = int(hex_color[2:4], 16) / 255.0
-        b = int(hex_color[4:6], 16) / 255.0
-        return (r, g, b, 1.0)
+        logger.info("Terminal color scheme changed to: %s", scheme_key)
+        self.config.set_setting('terminal.theme', scheme_key)
+        self.apply_color_scheme_to_terminals(scheme_key)
 
     def _is_internal_file_manager_enabled(self) -> bool:
         """Return ``True`` when the application uses the built-in file manager."""

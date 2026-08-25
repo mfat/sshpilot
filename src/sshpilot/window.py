@@ -310,6 +310,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._command_sidebar_visible: bool = False
         self._cmd_blocks_toggle_btn = None
         self._headerbar_theme_menu_button = None
+        self._terminal_theme_menu_button = None
+        self._terminal_theme_chooser = None
 
         # Update notification
         self.update_banner = None
@@ -1034,6 +1036,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._sync_theme_menu_button()
             except Exception:
                 logger.debug("Failed to sync theme toggle button", exc_info=True)
+            return
+
+        if key == 'terminal.theme':
+            self._sync_terminal_theme_selector(str(value))
             return
 
     def _schedule_startup_tasks(self):
@@ -2016,6 +2022,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             spacing=0,
         )
         self._content_header_box.add_css_class('toolbar')
+        # Keep the titlebar height stable when the Start tab hides the tab bar.
+        # Adw.TabBar's natural height includes its tab-pill padding, so without
+        # this floor the empty title-stack state becomes visibly shorter.
+        self._content_header_box.set_size_request(-1, 46)
 
         self._window_controls_start = Gtk.WindowControls.new(Gtk.PackType.START)
         self._window_controls_end = Gtk.WindowControls.new(Gtk.PackType.END)
@@ -2034,6 +2044,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=0,
         )
+
+        # This titlebar is a hand-built GtkBox, not an AdwHeaderBar, so nothing
+        # centres its children: GtkBox defaults them to Gtk.Align.FILL and they
+        # stretch to the full 46px row. A flat button then paints its hover
+        # highlight 46px tall next to a 34px tab pill, and sits 6px higher than
+        # the pills it lines up with. AdwHeaderBar centres both its packed
+        # widgets and its window controls at their natural 34px; match that so
+        # every element in the row shares the tab pills' baseline.
+        for _row_widget in (
+            self._window_controls_start,
+            self._window_controls_end,
+            self._headerbar_start_box,
+            self._headerbar_end_box,
+        ):
+            _row_widget.set_valign(Gtk.Align.CENTER)
 
         self._content_title_stack = Gtk.Stack()
         self._content_title_stack.set_hexpand(True)
@@ -2367,6 +2392,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ('sidebar_toggle_button', 'ui.headerbar_show_sidebar_toggle', False),
             ('split_view_button', 'ui.headerbar_show_split_view', False),
             ('_cmd_blocks_toggle_btn', 'ui.headerbar_show_commands', True),
+            ('_terminal_theme_menu_button', 'ui.headerbar_show_terminal_theme', True),
             ('_headerbar_theme_menu_button', 'ui.headerbar_show_theme_toggle', False),
             ('_headerbar_local_terminal_button', 'ui.headerbar_show_local_terminal', True),
         )
@@ -3128,6 +3154,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             description=current,
         )
 
+    def _on_terminal_theme_selected(self, theme_key: str) -> None:
+        """Persist a terminal scheme selected from the tab-bar chooser."""
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        if theme_key not in themes:
+            theme_key = 'default'
+        self.config.set_setting('terminal.theme', theme_key)
+        popover = getattr(self._terminal_theme_menu_button, 'get_popover', lambda: None)()
+        if popover is not None:
+            popover.popdown()
+
+    def _sync_terminal_theme_selector(self, theme_key: str | None = None) -> None:
+        """Keep the terminal color button and chooser aligned with Config."""
+        themes = getattr(self.config, 'terminal_themes', {}) or {}
+        key = str(theme_key or self.config.get_setting('terminal.theme', 'default'))
+        if key not in themes:
+            key = 'default'
+        chooser = getattr(self, '_terminal_theme_chooser', None)
+        if chooser is not None:
+            chooser.set_selected(key)
+        button = getattr(self, '_terminal_theme_menu_button', None)
+        if button is None:
+            return
+        name = str((themes.get(key) or {}).get('name') or key)
+        label_icon_button(
+            button,
+            _('Terminal color scheme'),
+            tooltip=_('Terminal color scheme: {theme}').format(theme=name),
+            description=name,
+        )
+
     def _build_sort_button(self):
         from sshpilot import icon_utils
         button = icon_utils.new_button_from_icon_name("view-list-symbolic")
@@ -3372,6 +3428,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
+        # Reduce the visual gap between the Local Terminal button and the
+        # first tab without changing the spacing around the window controls.
+        self.tab_bar.set_margin_start(-4)
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
         self.tab_bar.add_css_class('inline')
@@ -3430,6 +3489,29 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         label_icon_button(self._headerbar_theme_menu_button, _('Application theme'))
         self._headerbar_theme_menu_button.set_menu_model(self._create_theme_menu())
 
+        # Terminal color schemes use the same compact color-button/popover
+        # pattern as the SSH config editor. The button is only shown when the
+        # selected tab contains a terminal.
+        from .terminal_theme_selector import TerminalThemeChooser
+
+        self._terminal_theme_menu_button = Gtk.MenuButton()
+        _cmd_icon_utils.set_button_icon(
+            self._terminal_theme_menu_button, 'brush-monitor-symbolic'
+        )
+        self._terminal_theme_menu_button.add_css_class('flat')
+        selected_theme = str(
+            self.config.get_setting('terminal.theme', 'default')
+        )
+        self._terminal_theme_chooser = TerminalThemeChooser(
+            getattr(self.config, 'terminal_themes', {}) or {},
+            selected_theme,
+            self._on_terminal_theme_selected,
+        )
+        terminal_theme_popover = Gtk.Popover()
+        terminal_theme_popover.set_child(self._terminal_theme_chooser.widget)
+        self._terminal_theme_menu_button.set_popover(terminal_theme_popover)
+        self._sync_terminal_theme_selector(selected_theme)
+
         self._cmd_blocks_toggle_btn = Gtk.ToggleButton()
         _cmd_icon_utils.set_button_icon(self._cmd_blocks_toggle_btn, 'camera-flash-symbolic')
         self._cmd_blocks_toggle_btn.add_css_class('flat')
@@ -3457,6 +3539,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._headerbar_end_box.append(self.fullscreen_button)
 
         self._headerbar_end_box.append(self._cmd_blocks_toggle_btn)
+        self._headerbar_end_box.append(self._terminal_theme_menu_button)
         self._headerbar_end_box.append(self._headerbar_theme_menu_button)
         self._headerbar_end_box.append(self.menu_button)
         self._update_command_snippets_button_visibility()

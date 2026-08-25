@@ -42,7 +42,7 @@ test = [
     "jsonschema",
     "paramiko>=3.4",
 ]
-# Optional MCP servers (sshpilot-mcp-dev and, later, sshpilot-mcp-runtime),
+# Optional MCP servers (sshpilot-mcp-dev and sshpilot-mcp-runtime),
 # kept out of the base install to keep it lean.
 mcp = [
     "mcp>=2.0.0",

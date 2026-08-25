@@ -1,4 +1,4 @@
-"""``sshpilot-runtime-mcp``: privileged daemon/API integration server.
+"""``sshpilot-mcp-runtime``: privileged daemon/API integration server.
 
 Consumes ``DaemonClient`` (from ``sshpilot.api``) exclusively: it never calls
 daemon internals, never spawns SSH binaries, and never bypasses daemon
@@ -19,7 +19,7 @@ from typing import Any
 from .jsonable import to_jsonable
 from .policy import PermissionLevel, PolicyError, RuntimePolicy
 
-SERVER_NAME = "sshpilot-runtime-mcp"
+SERVER_NAME = "sshpilot-mcp-runtime"
 SERVER_VERSION = "0.1.0"
 
 
@@ -613,7 +613,7 @@ def create_server(handle: RuntimeHandle) -> Any:
 
 
 def main() -> int:
-    """Entry point for the ``sshpilot-runtime-mcp`` console script.
+    """Entry point for the ``sshpilot-mcp-runtime`` console script.
 
     Connects via :class:`DaemonClient` (socket path from ``SSHPILOT_MCP_SOCKET``
     or the daemon default), reads the policy from environment opt-ins, and runs
@@ -629,7 +629,7 @@ def main() -> int:
         else:
             client = DaemonClient()
     except Exception as error:  # noqa: BLE001 - connection failure surfaced verbatim
-        print(f"sshpilot-runtime-mcp: could not connect to daemon: {error}", file=sys.stderr)
+        print(f"sshpilot-mcp-runtime: could not connect to daemon: {error}", file=sys.stderr)
         return 1
     server = create_server(RuntimeHandle(client, policy))
     try:

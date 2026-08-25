@@ -358,18 +358,8 @@ def probe_bitwarden_status(controller=None, *, force_refresh: bool = False) -> B
     return status
 
 
-def progress_dialog(parent, heading, message, *, on_cancel=None):
-    """Spinner dialog; returns ``(set_status, close)``."""
-    win = Adw.Window()
-    win.set_modal(True)
-    if parent is not None:
-        win.set_transient_for(_modal_parent(parent))
-    win.set_title(heading)
-    win.set_resizable(False)
-    win.set_default_size(420, 170)
-
-    toolbar = Adw.ToolbarView()
-    toolbar.add_top_bar(Adw.HeaderBar())
+def _progress_content(message):
+    """The shared spinner + status-label body: ``(content, spinner, label)``."""
     content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
     content.set_valign(Gtk.Align.CENTER)
     content.set_vexpand(True)
@@ -387,6 +377,89 @@ def progress_dialog(parent, heading, message, *, on_cancel=None):
     label.set_halign(Gtk.Align.CENTER)
     content.append(spinner)
     content.append(label)
+    return content, spinner, label
+
+
+def progress_dialog(parent, heading, message, *, on_cancel=None):
+    """Spinner dialog; returns ``(set_status, close)``.
+
+    An in-window ``Adw.Dialog``, not a modal ``Adw.Window`` toplevel.  The
+    routed daemon prompts this spinner waits on — the backup passphrase, a
+    vault unlock — are themselves ``Adw.Dialog``s, and libadwaita hosts a
+    dialog *inside* a window and destroys it together with that window.  As a
+    separate toplevel this spinner covered those prompts; registering it with
+    the application so they could parent to it instead hosted a 480px-wide
+    prompt inside a 420x170 non-resizable window and tore it down the moment
+    the operation finished.  Presented on the same window, libadwaita stacks
+    the two and neither problem exists.
+    """
+    if not hasattr(Adw, "Dialog"):
+        return _progress_window(parent, heading, message, on_cancel=on_cancel)
+
+    content, spinner, label = _progress_content(message)
+    toolbar = Adw.ToolbarView()
+    toolbar.add_top_bar(Adw.HeaderBar())
+    toolbar.set_content(content)
+
+    dialog = Adw.Dialog()
+    dialog.set_title(heading)
+    dialog.set_content_width(420)
+    dialog.set_child(toolbar)
+
+    state = {"closed": False}
+
+    def _on_closed(*_args):
+        # Only a user dismissal gets here first: close() below marks the state
+        # before closing, so the operation's own teardown is not read as a
+        # cancellation.
+        if state["closed"]:
+            return
+        state["closed"] = True
+        spinner.stop()
+        if on_cancel:
+            on_cancel()
+
+    dialog.connect("closed", _on_closed)
+    dialog.present(_modal_parent(parent) if parent is not None else None)
+
+    def close():
+        if state["closed"]:
+            return
+        state["closed"] = True
+        spinner.stop()
+        try:
+            dialog.force_close()
+        except Exception:
+            logger.debug("Could not close the progress dialog", exc_info=True)
+
+    return label.set_text, close
+
+
+def _progress_window(parent, heading, message, *, on_cancel=None):
+    """libadwaita < 1.5 fallback: the spinner as its own modal toplevel.
+
+    Without ``Adw.Dialog`` there is no in-window presentation, so the spinner
+    has to be registered with the application for routed prompts to stack above
+    it rather than behind it — see :func:`progress_dialog` for why that trade
+    is not made on 1.5+.
+    """
+    win = Adw.Window()
+    win.set_modal(True)
+    if parent is not None:
+        win.set_transient_for(_modal_parent(parent))
+        try:
+            from .window_dialogs import associate_window_with_parent_application
+
+            associate_window_with_parent_application(win, _modal_parent(parent))
+        except Exception:
+            logger.debug("Could not register progress dialog with application", exc_info=True)
+    win.set_title(heading)
+    win.set_resizable(False)
+    win.set_default_size(420, 170)
+
+    toolbar = Adw.ToolbarView()
+    toolbar.add_top_bar(Adw.HeaderBar())
+    content, spinner, label = _progress_content(message)
     toolbar.set_content(content)
     win.set_content(toolbar)
 

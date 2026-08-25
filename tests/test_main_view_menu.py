@@ -60,6 +60,7 @@ def test_view_submenu_exposes_titlebar_commands(monkeypatch):
         ('item', 'Sidebar Toggle Button', 'win.headerbar-sidebar-toggle'),
         ('item', 'Split View Button', 'win.headerbar-split-view'),
         ('item', 'Command Snippets Button', 'win.headerbar-commands'),
+        ('item', 'Terminal Theme Button', 'win.headerbar-terminal-theme'),
         ('item', 'Theme Menu', 'win.headerbar-theme-menu'),
         ('item', 'Local Terminal Button', 'win.headerbar-local-terminal'),
     ]
@@ -153,3 +154,10 @@ def test_headerbar_menu_action_updates_shared_preference(monkeypatch):
     assert window.config.values['ui.headerbar_show_sidebar_toggle'] is True
     assert action.get_state().get_boolean() is True
     assert window.update_count == 1
+
+    theme_action = window.actions['headerbar-terminal-theme']
+    assert theme_action.get_state().get_boolean() is True
+    theme_action.change_state(Variant(False))
+    assert window.config.values['ui.headerbar_show_terminal_theme'] is False
+    assert theme_action.get_state().get_boolean() is False
+    assert window.update_count == 2

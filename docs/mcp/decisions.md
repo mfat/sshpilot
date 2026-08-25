@@ -7,7 +7,7 @@ without updating this file.
 
 Status: Accepted
 
-Decision: `sshpilot-dev-mcp` (repository intelligence) and `sshpilot-runtime-mcp`
+Decision: `sshpilot-mcp-dev` (repository intelligence) and `sshpilot-mcp-runtime`
 (daemon/API integration) are two separate servers with different security
 boundaries. They are never merged into one omnipotent server.
 
@@ -54,6 +54,11 @@ detect drift between the API and the MCP surface.
 Reason: one authoritative SSH Pilot API, least duplication, and drift detection
 over hand-maintained schemas.
 
+Enforcement: the architecture suite checks that every runtime MCP wrapper has
+the same parameter surface as its policy-enforcing `RuntimeHandle` method, and
+the runtime policy suite checks every tool-to-client mapping against
+`DaemonClient`.
+
 ## D005 — Runtime authorization model
 
 Status: Accepted
@@ -74,8 +79,8 @@ operations.
 Status: Accepted
 
 Decision: MCP servers live under `src/sshpilot/mcp/` as separate subpackages
-(`dev`, later `runtime`), stay GTK/GI-free, and ship as setuptools console
-scripts (`sshpilot-mcp-dev`). The official `mcp` SDK is an optional extra
+(`dev`, `runtime`), stay GTK/GI-free, and ship as setuptools console scripts
+(`sshpilot-mcp-dev`, `sshpilot-mcp-runtime`). The official `mcp` SDK is an optional extra
 (`pip install 'sshpilot[mcp]'`) rather than a base dependency. The repo
 `_scope` module stays pure stdlib so path-safety tests run without the SDK.
 

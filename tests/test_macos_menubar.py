@@ -239,8 +239,12 @@ def _stub_gi_for_app_init(monkeypatch):
     monkeypatch.setattr(repository.Gio, "SimpleAction", _FakeSimpleAction)
     monkeypatch.setattr(repository.Adw.Application, "__init__", lambda self, *a, **k: None)
     monkeypatch.setattr(repository.Gio.Application, "__init__", lambda self, *a, **k: None)
-    monkeypatch.setattr(repository.Adw.Application, "do_startup", lambda self: None)
-    monkeypatch.setattr(repository.Gio.Application, "do_startup", lambda self: None)
+    monkeypatch.setattr(
+        repository.Adw.Application, "do_startup", lambda self: None, raising=False
+    )
+    monkeypatch.setattr(
+        repository.Gio.Application, "do_startup", lambda self: None, raising=False
+    )
     monkeypatch.setattr(mm, "build_macos_menubar", lambda **kw: "MENU")
 
     import sshpilot.main as main_module

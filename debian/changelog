@@ -1,3 +1,14 @@
+sshpilot (5.9.5-1) unstable; urgency=medium
+
+  * Release v5.9.5.
+  * Added new terminal theme selector, added option to access it from
+    tab bar
+  * Fixed vault unlock issue
+  * Fixed backup encryption issue
+  * Minor UI fixes
+
+ -- Mehdi <mah.fat@gmail.com>  Tue, 25 Aug 2026 20:25:13 +0000
+
 sshpilot (5.9.4-1) unstable; urgency=medium
 
   * Release v5.9.4.

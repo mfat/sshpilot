@@ -87,6 +87,17 @@ def _output_text(value) -> str:
     return str(value)
 
 
+def _subprocess_env() -> dict[str, str]:
+    """Return a test/check environment without MCP server control inputs."""
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("SSHPILOT_MCP_")
+    }
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
 def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
     try:
         proc = subprocess.run(
@@ -94,7 +105,7 @@ def _run(argv: List[str], timeout: float = EXECUTION_TIMEOUT_SECONDS) -> dict:
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=_subprocess_env(),
         )
     except subprocess.TimeoutExpired as error:
         return {

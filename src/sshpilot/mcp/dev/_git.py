@@ -103,6 +103,25 @@ class GitInspector:
             commits.append({"sha": sha, "subject": subject})
         return {"commits": commits, "total": len(commits)}
 
+    def changed_paths(self, base: Optional[str] = "HEAD") -> List[str]:
+        """Return paths changed between *base* and the working tree.
+
+        Unlike ``status()``, this includes changes already committed after an
+        older base revision. Untracked working-tree paths are appended so the
+        default ``HEAD`` view remains complete.
+        """
+        if base is None:
+            base = "HEAD"
+        if not isinstance(base, str) or not _REVISION_RE.match(base):
+            raise GitError(f"invalid revision: {base!r}")
+        output = self._require(["diff", "--name-only", "-z", base, "--"])
+        paths = [path for path in output.split("\x00") if path]
+        for entry in self.status()["entries"]:
+            path = entry["path"]
+            if entry["state"] == "??" and path not in paths:
+                paths.append(path)
+        return paths
+
     def diff(
         self,
         base: Optional[str] = "HEAD",

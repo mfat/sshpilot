@@ -60,6 +60,49 @@ from gettext import gettext as _
 logger = logging.getLogger(__name__)
 
 
+def _reveal_after_unlock(app_window, anchor, start_worker, on_declined=None):
+    """Run ``start_worker`` once the secret backend is confirmed unlocked.
+
+    Password/passphrase reveal is a best-effort background fetch: a locked
+    session backend (Bitwarden/Vaultwarden) silently resolves lookups to
+    nothing, which used to leave the field blank with no indication the
+    secret exists (#1199). Query the backend's lock state first and, if it
+    needs unlocking — or the state can't be determined at all, which is
+    treated conservatively as locked, mirroring the save-path gate
+    (``_needs_secret_unlock_before_save``) — prompt through the daemon-owned
+    unlock flow before fetching.
+
+    ``start_worker`` runs only once ``prompt_unlock`` reports the backend is
+    actually unlocked. A declined/failed/unreachable unlock must not attempt
+    a lookup that is guaranteed to resolve to nothing: on a locked backend
+    that would record a false "no secret saved" result (e.g. clearing
+    ``_password_saved``), permanently hiding a secret that *is* saved. When
+    declined, ``on_declined`` runs instead so callers can reset any "reveal
+    pending" bookkeeping to allow a later retry (after the vault is unlocked
+    some other way).
+    """
+    controller = getattr(app_window, 'secrets_controller', None)
+    state = None
+    if controller is not None:
+        try:
+            state = controller.load_state()
+        except Exception:
+            logger.debug("Secret backend state query failed; treating as locked", exc_info=True)
+            state = None
+    if state is None or state.needs_unlock or state.login_required:
+        from .secret_unlock_dialog import prompt_unlock
+
+        def _after_unlock(ok):
+            if ok:
+                start_worker()
+            elif on_declined:
+                on_declined()
+
+        prompt_unlock(anchor, on_done=_after_unlock)
+        return
+    start_worker()
+
+
 def _editor_details_to_connection(details):
     """Adapt a daemon ``ConnectionEditorDetails`` DTO to a form source.
 
@@ -814,8 +857,14 @@ class KeyChooserDialog(Adw.Window):
             try:
                 browse = Adw.ButtonRow(title=_("Browse…"), start_icon_name="folder-symbolic")
             except AttributeError:
-                # Adw.ButtonRow requires libadwaita >= 1.6
+                # Adw.ButtonRow requires libadwaita >= 1.6 (GNOME 47). On older
+                # runtimes such as Ubuntu 24.04 (libadwaita 1.5) we fall back to
+                # an AdwActionRow — which defaults to activatable=FALSE, so
+                # GtkListBox never emits ::row-activated for it and the
+                # "activated" handler below can never fire. That is why Browse
+                # silently did nothing there (issue #1103); make it activatable.
                 browse = Adw.ActionRow(title=_("Browse…"))
+                browse.set_activatable(True)
                 try:
                     browse.add_prefix(Gtk.Image.new_from_icon_name("folder-symbolic"))
                 except Exception:
@@ -899,6 +948,8 @@ class KeyChooserDialog(Adw.Window):
         self.close()
 
     def _on_browse_clicked(self, *_a):
+        logger.debug("Key chooser: Browse row activated")
+
         def _chosen(path):
             if path:
                 self._on_add(path)
@@ -1273,20 +1324,23 @@ class FileListEditor(Adw.PreferencesGroup):
                 pass
             return False
 
-        def worker():
-            try:
-                secret = client.reveal_key_passphrase(norm)
+        def _start_worker():
+            def worker():
                 try:
-                    value = secret.decode('utf-8')
-                finally:
-                    secret[:] = b'\0' * len(secret)
-                    secret.clear()
-            except Exception:
-                logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
-                value = False
-            GLib.idle_add(_apply, value)
+                    secret = client.reveal_key_passphrase(norm)
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                except Exception:
+                    logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
+                    value = False
+                GLib.idle_add(_apply, value)
 
-        threading.Thread(target=worker, daemon=True).start()
+            threading.Thread(target=worker, daemon=True).start()
+
+        _reveal_after_unlock(parent, parent, _start_worker)
 
     def _on_passphrase_visibility_changed(self, row, pass_entry, norm):
         try:
@@ -1321,21 +1375,27 @@ class FileListEditor(Adw.PreferencesGroup):
             row._pass_reveal_pending = False
             return False
 
-        def worker():
-            value = ''
-            try:
-                secret = client.reveal_key_passphrase(norm)
-                try:
-                    value = secret.decode('utf-8')
-                finally:
-                    secret[:] = b'\0' * len(secret)
-                    secret.clear()
-            except Exception:
-                logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
+        def _start_worker():
+            def worker():
                 value = ''
-            GLib.idle_add(apply, value)
+                try:
+                    secret = client.reveal_key_passphrase(norm)
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                except Exception:
+                    logger.warning("Daemon key passphrase reveal unavailable", exc_info=True)
+                    value = ''
+                GLib.idle_add(apply, value)
 
-        threading.Thread(target=worker, daemon=True).start()
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _on_declined():
+            row._pass_reveal_pending = False
+
+        _reveal_after_unlock(parent, parent, _start_worker, on_declined=_on_declined)
 
     def _commit_passphrase(self, pass_entry, path, norm, force=False):
         """Validate an edited passphrase; persistence is deferred to dialog save."""
@@ -1596,6 +1656,12 @@ class ConnectionDialog(
         # Set modal and transient parent to ensure dialog stays on top
         self.set_modal(True)
         self.set_transient_for(parent)
+        # Register with the app so routed prompts (e.g. a vault master-password
+        # unlock triggered while this dialog is open) can find this modal
+        # window as their parent — a bare Adw.Window is otherwise absent from
+        # Gtk.Application.get_windows().
+        from .window_dialogs import associate_window_with_parent_application
+        associate_window_with_parent_application(self, parent)
         # Set default size for better UX
         self.set_default_size(600, 700)
         
@@ -2095,6 +2161,7 @@ class ConnectionDialog(
             # KeyChooserDialog), the caller must pass that dialog as
             # ``parent`` — otherwise the same "hidden behind a modal" bug
             # reappears one layer up (issue #1103 regression).
+            logger.debug("Opening file chooser %r parented to %r", title, parent or self)
             dialog.open(parent or self, None, _done)
         except Exception:
             logger.debug("Failed to open file chooser", exc_info=True)
@@ -2273,23 +2340,26 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 pass
             return False
 
-        def worker():
-            try:
-                from .api.connection_identity import connection_id_for
-                secret = client.reveal_connection_password(
-                    connection_id_for(self.connection)
-                )
+        def _start_worker():
+            def worker():
                 try:
-                    value = secret.decode('utf-8')
-                finally:
-                    secret[:] = b'\0' * len(secret)
-                    secret.clear()
-            except Exception:
-                logger.warning("Daemon connection password reveal unavailable", exc_info=True)
-                value = False
-            GLib.idle_add(_apply, value)
+                    from .api.connection_identity import connection_id_for
+                    secret = client.reveal_connection_password(
+                        connection_id_for(self.connection)
+                    )
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                except Exception:
+                    logger.warning("Daemon connection password reveal unavailable", exc_info=True)
+                    value = False
+                GLib.idle_add(_apply, value)
 
-        threading.Thread(target=worker, daemon=True).start()
+            threading.Thread(target=worker, daemon=True).start()
+
+        _reveal_after_unlock(parent, self, _start_worker)
 
     def _on_password_visibility_changed(self, *_args):
         try:
@@ -2325,24 +2395,30 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._password_reveal_pending = False
             return False
 
-        def worker():
-            value = ''
-            try:
-                from .api.connection_identity import connection_id_for
-                secret = client.reveal_connection_password(
-                    connection_id_for(self.connection)
-                )
-                try:
-                    value = secret.decode('utf-8')
-                finally:
-                    secret[:] = b'\0' * len(secret)
-                    secret.clear()
-            except Exception:
-                logger.warning("Daemon connection password reveal unavailable", exc_info=True)
+        def _start_worker():
+            def worker():
                 value = ''
-            GLib.idle_add(apply, value)
+                try:
+                    from .api.connection_identity import connection_id_for
+                    secret = client.reveal_connection_password(
+                        connection_id_for(self.connection)
+                    )
+                    try:
+                        value = secret.decode('utf-8')
+                    finally:
+                        secret[:] = b'\0' * len(secret)
+                        secret.clear()
+                except Exception:
+                    logger.warning("Daemon connection password reveal unavailable", exc_info=True)
+                    value = ''
+                GLib.idle_add(apply, value)
 
-        threading.Thread(target=worker, daemon=True).start()
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _on_declined():
+            self._password_reveal_pending = False
+
+        _reveal_after_unlock(parent, self, _start_worker, on_declined=_on_declined)
 
     def _capture_editor_delta_baseline(self):
         """Capture the authoritative form values used to build update deltas."""
