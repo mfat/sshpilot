@@ -245,6 +245,94 @@ def test_expiry_wakes_waiter_and_rejects_late_response() -> None:
         broker.close()
 
 
+def test_request_client_secret_with_status_reports_expired_not_cancelled(
+    broker: InteractionBroker,
+) -> None:
+    """Issue #1200: a timed-out backup-encryption prompt must be reported as
+    EXPIRED, not collapsed into the same ``None`` a user cancellation returns —
+    the ``timeout`` override (used for the shorter backup-encryption prompt) is
+    exercised here, independent of the broker's configured default."""
+    secret, state = broker.request_client_secret_with_status(
+        owner_client_id=CLIENT_A,
+        session_id=SessionId("secret-timeout-1"),
+        connection_id=ConnectionId("secret-timeout-1"),
+        interaction_type=InteractionType.PASSWORD,
+        prompt=PasswordPrompt(
+            username="Secret backend", hostname="secret backend", port=22,
+            attempt=1, can_remember=False, stored_secret_available=False),
+        timeout=0.03,
+    )
+    assert secret is None
+    assert state is InteractionState.EXPIRED
+
+
+def test_request_client_secret_with_status_reports_explicit_cancel(
+    broker: InteractionBroker,
+) -> None:
+    """A real user cancellation must still report CANCELLED, distinct from
+    a timeout — see the EXPIRED counterpart above."""
+    session_id = SessionId("secret-cancel-1")
+    connection_id = ConnectionId("secret-cancel-1")
+    outcome: dict = {}
+
+    def waiter() -> None:
+        secret, state = broker.request_client_secret_with_status(
+            owner_client_id=CLIENT_A,
+            session_id=session_id,
+            connection_id=connection_id,
+            interaction_type=InteractionType.PASSWORD,
+            prompt=PasswordPrompt(
+                username="Secret backend", hostname="secret backend", port=22,
+                attempt=1, can_remember=False, stored_secret_available=False),
+        )
+        outcome["secret"] = secret
+        outcome["state"] = state
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    try:
+        interaction = None
+        deadline = time.monotonic() + 1.0
+        while interaction is None and time.monotonic() < deadline:
+            for candidate in broker.list(CLIENT_A):
+                if candidate.session_id == session_id:
+                    interaction = candidate
+                    break
+            if interaction is None:
+                time.sleep(0.01)
+        assert interaction is not None, "interaction was never created"
+        broker.claim(interaction.id, CLIENT_A)
+        broker.respond(
+            InteractionDecisionRequest(
+                interaction_id=interaction.id,
+                secret_decision=SecretDecision.CANCEL,
+                remember_policy=RememberPolicy.DO_NOT_STORE,
+            ),
+            CLIENT_A,
+        )
+    finally:
+        thread.join(1)
+    assert not thread.is_alive()
+    assert outcome["secret"] is None
+    assert outcome["state"] is InteractionState.CANCELLED
+
+
+def test_backup_encryption_timeout_constant_is_shorter_than_default_secret_timeout() -> None:
+    """Pins the ~30s design target for the backup-encryption prompt (issue
+    #1200): far shorter than the general 120s secret-interaction timeout, so
+    an unattended export fails fast instead of looking hung for two minutes."""
+    from sshpilot.daemon.interaction_broker import (
+        DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
+        DEFAULT_SECRET_INTERACTION_TIMEOUT,
+    )
+
+    assert DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT == 30.0
+    assert (
+        DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT
+        < DEFAULT_SECRET_INTERACTION_TIMEOUT
+    )
+
+
 def test_session_cancel_and_close_leave_no_active_interactions(
     broker: InteractionBroker,
 ) -> None:

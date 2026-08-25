@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ConnectionId, SessionId
 from sshpilot.api.models.interactions import (
+    InteractionState,
     InteractionType,
     PasswordPrompt,
     RememberPolicy,
@@ -1022,18 +1023,28 @@ class SecretBackendService:
             opts = dict(options or {})
             passphrase = None
             if opts.get("encrypted"):
-                prompt = self._prompt_for_secret(
+                from sshpilot.daemon.interaction_broker import (
+                    DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
+                )
+
+                prompt, state = self._prompt_for_secret_with_status(
                     "Enter a passphrase to encrypt the backup",
                     owner_client_id=owner_client_id,
+                    timeout=DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
                 )
                 if prompt is None:
+                    message = (
+                        "Encryption password request timed out"
+                        if state is InteractionState.EXPIRED
+                        else "Encryption cancelled"
+                    )
                     return SecretTransferResult(
                         operation="export",
                         path=destination,
                         counts={},
                         warnings=(),
                         status=SecretOperationState.INTERACTION_REQUIRED,
-                        message="Encryption cancelled",
+                        message=message,
                     )
                 passphrase = prompt.decode("utf-8", "replace")
                 _clear_secret(prompt)
@@ -1535,9 +1546,31 @@ class SecretBackendService:
 
         Returns the secret as a bytearray (the caller must clear it), or ``None``
         when the interaction was cancelled, expired, or the broker is unavailable.
+        See :meth:`_prompt_for_secret_with_status` for why this is routed
+        through ``request_client_secret`` rather than a bare create() +
+        wait_for_result().
+        """
+        secret, _state = self._prompt_for_secret_with_status(
+            message, owner_client_id=owner_client_id
+        )
+        return secret
 
-        Routed through ``request_client_secret`` (not a bare ``create()`` +
-        ``wait_for_result()``): the server only forwards
+    def _prompt_for_secret_with_status(
+        self,
+        message: str,
+        *,
+        owner_client_id,
+        timeout: Optional[float] = None,
+    ) -> Tuple[Optional[bytearray], InteractionState]:
+        """Like :meth:`_prompt_for_secret`, but also returns the interaction's
+        final :class:`InteractionState` so callers can tell an explicit user
+        cancellation apart from a timed-out prompt, and can request a
+        shorter-than-default ``timeout`` for a self-contained prompt (e.g.
+        the backup encryption passphrase) without touching the timeout used
+        by every other secret prompt.
+
+        Routed through ``request_client_secret_with_status`` (not a bare
+        ``create()`` + ``wait_for_result()``): the server only forwards
         INTERACTION_CREATED/STATE_CHANGED events for a synthetic
         ``secret-session-N`` scope to a client that is registered as that
         scope's owner (see ``DaemonServer._client_can_interact``) — a
@@ -1554,7 +1587,7 @@ class SecretBackendService:
             )
         session_id = _next_secret_session_id()
         connection_id = ConnectionId(f"secret-{session_id}")
-        return self._broker.request_client_secret(
+        return self._broker.request_client_secret_with_status(
             owner_client_id=owner_client_id,
             session_id=session_id,
             connection_id=connection_id,
@@ -1567,6 +1600,7 @@ class SecretBackendService:
                 can_remember=False,
                 stored_secret_available=False,
             ),
+            timeout=timeout,
         )
 
     def _prompt_for_master_password(

@@ -839,6 +839,11 @@ def test_real_daemon_login_params_are_identifiers_only(tmp_path):
         def request_client_secret(self, *, owner_client_id, **kwargs):
             return None
 
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            from sshpilot.api.models.interactions import InteractionState
+
+            return None, InteractionState.CANCELLED
+
     socket_path = tmp_path / "secrets2.sock"
     socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     settings_path = tmp_path / "config2.json"
