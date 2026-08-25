@@ -64,6 +64,9 @@ EXPECTED_TOOLS = frozenset(
         "git_log",
         "git_diff",
         "find_tests",
+        "plan_api_change",
+        "recommend_tests",
+        "validate_change",
     }
 )
 
@@ -227,3 +230,40 @@ def test_dev_server_exposes_typed_tools():
         {name for name in decorated}
         & {"run", "execute_action", "dispatch", "sftp_action"}
     )
+
+
+def test_runtime_tool_signatures_match_runtime_handle():
+    """Manual MCP wrappers may not drift from the policy-enforcing handle."""
+    tree = _tree(SOURCE / "runtime" / "server.py")
+    handle = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "RuntimeHandle"
+    )
+    create_server = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "create_server"
+    )
+
+    def parameters(node: ast.FunctionDef) -> list[str]:
+        positional = [*node.args.posonlyargs, *node.args.args]
+        return [arg.arg for arg in positional + node.args.kwonlyargs if arg.arg != "self"]
+
+    handle_methods = {
+        node.name: parameters(node)
+        for node in handle.body
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
+    }
+    tool_methods = {}
+    for node in ast.walk(create_server):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "tool"
+            for decorator in node.decorator_list
+        ):
+            tool_methods[node.name] = parameters(node)
+
+    assert set(tool_methods) == set(handle_methods)
+    assert tool_methods == handle_methods

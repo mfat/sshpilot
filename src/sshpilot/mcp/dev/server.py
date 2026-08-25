@@ -1,4 +1,4 @@
-"""sshpilot-dev-mcp server: contributor-safe repository intelligence.
+"""sshpilot-mcp-dev server: contributor-safe repository intelligence.
 
 The ``mcp`` package is imported lazily so this module stays importable (and
 unit-testable for path safety) in environments without the optional MCP
@@ -8,13 +8,13 @@ dependency.
 from __future__ import annotations
 
 import sys
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from .._scope import RepoScope, ScopeError
 from . import api_surface, architecture, execution, search, symbols, test_discovery
 from ._git import GitInspector, GitError
 
-SERVER_NAME = "sshpilot-dev-mcp"
+SERVER_NAME = "sshpilot-mcp-dev"
 SERVER_VERSION = "0.1.0"
 DEFAULT_MAX_FILE_BYTES = 64 * 1024
 
@@ -254,6 +254,45 @@ def create_server(scope: Optional[RepoScope] = None) -> Any:
             raise ValueError(str(error)) from error
 
     @server.tool()
+    def plan_api_change(method: str) -> dict:
+        """Plan a safe change to an existing client or daemon API method.
+
+        Returns the live method trace plus the typed API, daemon dispatch,
+        capability, generated-artifact, documentation, and headless-test
+        surfaces contributors must review.
+        """
+        try:
+            return architecture.plan_api_change(scope, method)
+        except architecture.ArchitectureError as error:
+            raise ValueError(str(error)) from error
+
+    @server.tool()
+    def recommend_tests(paths: List[str]) -> dict:
+        """Recommend focused headless tests and checks for changed paths.
+
+        Paths must be repository-relative. Recommendations are derived from
+        SSH Pilot's architecture layers and existing test filenames; this tool
+        does not execute the tests.
+        """
+        try:
+            return architecture.recommend_tests(scope, paths)
+        except architecture.ArchitectureError as error:
+            raise ValueError(str(error)) from error
+
+    @server.tool()
+    def validate_change(base: str = "HEAD") -> dict:
+        """Validate current changes against SSH Pilot-specific contracts.
+
+        Runs safe frontend-neutrality and applicable API/artifact checks, then
+        returns focused test recommendations. Test suites remain explicit
+        follow-up calls through ``run_tests``.
+        """
+        try:
+            return architecture.validate_change(scope, base=base)
+        except (architecture.ArchitectureError, execution.ExecutionError) as error:
+            raise ValueError(str(error)) from error
+
+    @server.tool()
     def run_tests(suite: str, path: Optional[str] = None) -> dict:
         """Run one selected pytest suite (architecture/api/core/daemon/mcp).
 
@@ -299,7 +338,7 @@ def main() -> int:
         from mcp.server.mcpserver import MCPServer  # noqa: F401
     except ImportError:
         print(
-            "sshpilot-dev-mcp requires the optional 'mcp' dependency: "
+            "sshpilot-mcp-dev requires the optional 'mcp' dependency: "
             "pip install 'sshpilot[mcp]'",
             file=sys.stderr,
         )
@@ -307,7 +346,7 @@ def main() -> int:
     try:
         server = create_server()
     except ScopeError as error:
-        print(f"sshpilot-dev-mcp: {error}", file=sys.stderr)
+        print(f"sshpilot-mcp-dev: {error}", file=sys.stderr)
         return 1
     server.run()
     return 0

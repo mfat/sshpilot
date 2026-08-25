@@ -39,11 +39,23 @@ def _server_parameters(root: Path) -> StdioServerParameters:
     )
 
 
+def _documented_launcher_parameters(root: Path) -> StdioServerParameters:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["SSHPILOT_MCP_ROOT"] = str(root)
+    return StdioServerParameters(
+        command=sys.executable,
+        args=[str(REPO_ROOT / "sshpilot-mcp-dev")],
+        cwd=str(REPO_ROOT),
+        env=env,
+    )
+
+
 async def test_stdio_handshake_and_tools():
     async with stdio_client(_server_parameters(REPO_ROOT)) as (read, write):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
-            assert init.server_info.name == "sshpilot-dev-mcp"
+            assert init.server_info.name == "sshpilot-mcp-dev"
 
             tools = await session.list_tools()
             names = {tool.name for tool in tools.tools}
@@ -61,10 +73,18 @@ async def test_stdio_handshake_and_tools():
                 "list_api_methods",
                 "trace_api_method",
                 "check_api_drift",
+                "plan_api_change",
+                "recommend_tests",
+                "validate_change",
             } <= names
             run_tests = next(tool for tool in tools.tools if tool.name == "run_tests")
             assert "path" in run_tests.input_schema["properties"]
             assert "suite" in run_tests.input_schema["required"]
+            recommend_tests = next(
+                tool for tool in tools.tools if tool.name == "recommend_tests"
+            )
+            assert recommend_tests.input_schema["properties"]["paths"]["type"] == "array"
+            assert "paths" in recommend_tests.input_schema["required"]
 
 
 async def test_repo_info_reports_confined_root():
@@ -76,6 +96,15 @@ async def test_repo_info_reports_confined_root():
             text = result.content[0].text
             assert str(REPO_ROOT.resolve()) in text
             assert "True" in text or "true" in text  # git_repository
+
+
+async def test_documented_source_launcher_over_stdio():
+    async with stdio_client(_documented_launcher_parameters(REPO_ROOT)) as (read, write):
+        async with ClientSession(read, write) as session:
+            init = await session.initialize()
+            assert init.server_info.name == "sshpilot-mcp-dev"
+            result = await session.call_tool("repo_info", {})
+            assert not result.is_error
 
 
 async def test_read_text_file_roundtrip():

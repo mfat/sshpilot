@@ -75,6 +75,69 @@ def test_trace_interaction_scope_rejects_unknown(repo):
         architecture.trace_interaction_scope(repo, "open_session")
 
 
+def test_plan_api_change_reports_authoritative_surfaces(repo):
+    result = architecture.plan_api_change(repo, "open_session")
+    assert result["check"] == "api-change-plan"
+    assert result["trace"]["name"] == "open_session"
+    assert result["trace"]["wire_methods"]
+    assert {entry["surface"] for entry in result["checklist"]} == {
+        "typed-api",
+        "daemon-dispatch",
+        "capabilities",
+        "contracts-and-docs",
+    }
+    assert "check_api_drift" in result["validation"]
+
+
+def test_plan_api_change_rejects_unknown_method(repo):
+    with pytest.raises(architecture.ArchitectureError):
+        architecture.plan_api_change(repo, "not_a_real_method")
+
+
+def test_recommend_tests_for_api_and_mcp_paths(repo):
+    result = architecture.recommend_tests(
+        repo,
+        ["src/sshpilot/api/daemon_client.py", "src/sshpilot/mcp/dev/server.py"],
+    )
+    assert result["check"] == "test-recommendations"
+    assert {"api", "mcp", "architecture"} <= set(result["suites"])
+    assert {"check_api_drift", "validate_api_artifacts"} <= set(result["checks"])
+    assert "tests/mcp/test_dev_server_smoke.py" in result["focused_tests"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../outside.py", "/tmp/outside.py", "C:\\outside.py", "./", ""],
+)
+def test_recommend_tests_rejects_unsafe_paths(repo, path):
+    with pytest.raises(architecture.ArchitectureError):
+        architecture.recommend_tests(repo, [path])
+
+
+def test_validate_change_combines_checks_and_recommendations(repo, monkeypatch):
+    monkeypatch.setattr(
+        architecture,
+        "review_commit",
+        lambda scope, base="HEAD": {
+            "check": "commit-review",
+            "base": base,
+            "changed_total": 1,
+            "by_layer": {"core": ["src/sshpilot/core/identity_service.py"]},
+            "boundary_crossed": False,
+            "api_surface_changed": False,
+            "generated_artifacts_changed": False,
+            "diff_stat": "",
+            "recommend_api_drift_check": False,
+        },
+    )
+    result = architecture.validate_change(repo)
+    assert result["check"] == "change-validation"
+    assert result["clean"] is True
+    assert result["api_drift"] is None
+    assert result["api_artifacts"] is None
+    assert {"architecture", "core"} <= set(result["recommended_tests"]["suites"])
+
+
 def test_review_commit_classifies_layers(tmp_path):
     root = tmp_path / "repo"
     root.mkdir()
