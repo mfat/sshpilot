@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-25 08:02+0200\n"
-"PO-Revision-Date: 2026-08-25 08:04+0200\n"
+"POT-Creation-Date: 2026-08-26 11:00+0200\n"
+"PO-Revision-Date: 2026-08-26 11:01+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -27,6 +27,10 @@ msgstr "Bouton de vue scindée"
 #: src/sshpilot/actions.py:31 src/sshpilot/preferences.py:1662
 msgid "Command Snippets Button"
 msgstr "Bouton des extraits de commandes"
+
+#: src/sshpilot/actions.py:33 src/sshpilot/preferences.py:1633
+msgid "Terminal Theme Button"
+msgstr "Bouton du jeu de couleurs du terminal"
 
 #: src/sshpilot/actions.py:32 src/sshpilot/preferences.py:1667
 msgid "Theme Menu"
@@ -3681,10 +3685,6 @@ msgstr "Choisir"
 msgid "Color Scheme"
 msgstr "Jeu de couleurs"
 
-#: src/sshpilot/preferences.py:550
-msgid "Terminal color theme"
-msgstr "Thème de couleurs du terminal"
-
 #. Color scheme preview
 #: src/sshpilot/preferences.py:575
 #: src/sshpilot/resources/ui/monospace_font_dialog.ui:87
@@ -4210,6 +4210,10 @@ msgstr "Afficher le bouton de vue scindée (l’icône en forme de grille qui ou
 #: src/sshpilot/preferences.py:1663
 msgid "Show the command snippets toggle button"
 msgstr "Afficher le bouton permettant d’afficher ou de masquer les extraits de commandes"
+
+#: src/sshpilot/preferences.py:1634
+msgid "Show the color-scheme button on terminal tabs"
+msgstr "Afficher le bouton du jeu de couleurs pour les onglets de terminal"
 
 #: src/sshpilot/preferences.py:1668
 msgid "Show the application theme menu beside the commands button"
@@ -6445,6 +6449,19 @@ msgstr "{count}+"
 msgid "{index}/{count}"
 msgstr "{index}/{count}"
 
+#: src/sshpilot/terminal_theme_selector.py:171
+#, python-brace-format
+msgid "Use {theme} terminal colors"
+msgstr "Utiliser le jeu de couleurs {theme} pour le terminal"
+
+#: src/sshpilot/terminal_theme_selector.py:207
+msgid "The quick brown fox jumps over the lazy dog"
+msgstr "Portez ce vieux whisky au juge blond qui fume"
+
+#: src/sshpilot/terminal_theme_selector.py:248
+msgid "Palette"
+msgstr "Palette"
+
 #: src/sshpilot/text_editor.py:160
 #, python-brace-format
 msgid "Edit {file_name}"
@@ -6900,6 +6917,15 @@ msgstr "Sombre"
 #, python-brace-format
 msgid "Application theme: {theme}"
 msgstr "Thème de l’application : {theme}"
+
+#: src/sshpilot/window.py:3182
+msgid "Terminal color scheme"
+msgstr "Jeu de couleurs du terminal"
+
+#: src/sshpilot/window.py:3183
+#, python-brace-format
+msgid "Terminal color scheme: {theme}"
+msgstr "Jeu de couleurs du terminal : {theme}"
 
 #: src/sshpilot/window.py:3156
 #, python-brace-format
@@ -7601,6 +7627,10 @@ msgstr "Revenir"
 msgid "Export Unencrypted"
 msgstr "Exporter sans chiffrement"
 
+#: src/sshpilot/window_dialogs.py:1254
+msgid "Exporting backup — this may take a while…"
+msgstr "Exportation de la sauvegarde — cette opération peut prendre un certain temps…"
+
 #: src/sshpilot/window_dialogs.py:1223
 msgid "sshPilot backup (*.spbk)"
 msgstr "Sauvegarde sshPilot (*.spbk)"
@@ -8207,6 +8237,21 @@ msgstr "Regroupement des serveurs"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:30
 msgid "mFat"
 msgstr "mFat"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid ""
+"Added new terminal theme selector, added option to access it from tab bar"
+msgstr ""
+"Ajout d’un nouveau sélecteur de jeu de couleurs du terminal et d’une option "
+"permettant d’y accéder depuis la barre d’onglets"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
+msgid "Fixed vault unlock issue"
+msgstr "Correction d’un problème de déverrouillage du coffre-fort"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:68
+msgid "Fixed backup encryption issue"
+msgstr "Correction d’un problème de chiffrement des sauvegardes"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:66
 msgid "Improved drag & drop for connections across groups"
