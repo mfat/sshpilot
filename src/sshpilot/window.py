@@ -365,15 +365,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             on_changed=self._on_runtime_connection_status_changed,
         )
 
-        # Lazy, cached, off-main-thread check of each connection against its
-        # effective SSH config (shows a warning icon on mismatched rows).
-        from .effective_config_check import EffectiveConfigChecker
-        self.effective_config_checker = EffectiveConfigChecker(
-            self.connection_manager,
-            on_result=self._on_effective_config_result,
-            client_provider=lambda: getattr(self, "client", None),
-        )
-
         # Menu section that plugin pages append to (built before create_menu
         # runs during setup_ui; the host mutates it on bind).
         self._plugins_menu_section = Gio.Menu()
@@ -564,9 +555,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if self._confirmed_operation_mode is not None
             else None
         )
-        checker = getattr(self, "effective_config_checker", None)
-        if checker is not None:
-            checker.invalidate()
         self._refresh_operation_mode_scope()
         self.secrets_controller = self._build_secrets_controller()
         self._attach_secrets_interaction_presenter()
@@ -1660,59 +1648,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         rows = self._get_target_connection_rows(prefer_context=prefer_context)
         return self._connections_from_rows(rows)
 
-    def _on_effective_config_result(self, nickname: str, differs: bool):
-        """Background checker result (main thread): update matching rows' icons."""
-        try:
-            for conn, rows in list(self.connection_rows.items()):
-                if getattr(conn, 'nickname', None) != nickname:
-                    continue
-                for row in (rows if isinstance(rows, list) else [rows]):
-                    if hasattr(row, 'set_effective_warning'):
-                        row.set_effective_warning(differs)
-        except Exception:
-            logger.debug("Failed to apply effective-config result", exc_info=True)
-        return False
-
-    def _invalidate_effective_check(self, nickname, connection=None):
-        """Drop a cached effective-config result; optionally recompute now.
-
-        Called when a connection's own block changes. Pass ``connection`` to
-        re-check it immediately (rows updated via the result callback).
-        """
-        checker = getattr(self, 'effective_config_checker', None)
-        if checker is None or not nickname:
-            return
-        try:
-            checker.invalidate(nickname)
-            if connection is not None:
-                checker.schedule(connection)
-        except Exception:
-            logger.debug("effective-config invalidate failed", exc_info=True)
-
-    def _request_effective_warning(self, row, connection):
-        """Resolve a hovered row from cache or enqueue its background check.
-
-        Called only from the row's hover handler, never while building the list.
-        """
-        checker = getattr(self, 'effective_config_checker', None)
-        if checker is None:
-            return
-        try:
-            status = checker.status(getattr(connection, 'nickname', '') or '')
-            if status is not None and hasattr(row, 'set_effective_warning'):
-                row.set_effective_warning(status)
-            checker.schedule(connection)
-        except Exception:
-            logger.debug("Failed to prime effective-config warning", exc_info=True)
-
     def _reload_ssh_config(self, create_missing=True):
         """Compatibility callback: refresh only from the attached daemon."""
         try:
             self.connection_manager.refresh()
             self.group_manager.bind_connections(self.connection_manager.get_connections())
-            checker = getattr(self, 'effective_config_checker', None)
-            if checker is not None:
-                checker.invalidate()
             self.rebuild_connection_list()
         except Exception as error:
             logger.error("Failed to refresh daemon connection state: %s", error)
@@ -4210,7 +4150,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self.group_manager,
             self.config,
             file_manager_callback=self._open_manage_files_for_connection,
-            effective_warning_callback=self._request_effective_warning,
             status_resolver=status_resolver,
             display_group_id=display_group_id,
             in_tag_section=in_tag_section,
@@ -5183,7 +5122,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 file_manager_window=None,
                 language_id="sshconfig",
                 show_outline=True,
-                on_saved=self._on_ssh_config_editor_saved,
             )
 
             # Window/taskbar title; the header title shows the daemon-resolved
@@ -5196,24 +5134,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"Failed to open SSH config editor: {e}")
             self.show_toast(_("Could not open the SSH config editor."))
-
-    def _on_ssh_config_editor_saved(self):
-        """SSH config editor wrote the config: refresh effective-config warnings.
-
-        A global-scope edit (e.g. removing a ``Host *`` block) can change every
-        connection's effective config, so drop ALL cached checker results and
-        recompute — fresh results reach sidebar rows via the checker callback.
-        """
-        checker = getattr(self, 'effective_config_checker', None)
-        if checker is None:
-            return
-        try:
-            checker.invalidate()
-            for connection in self.connection_manager.get_connections():
-                checker.schedule(connection)
-        except Exception:
-            logger.debug("effective-config refresh after config save failed",
-                         exc_info=True)
 
     def show_connection_selection_for_ssh_copy(self):
         """Open the ssh-copy-id dialog with no server preselected; its

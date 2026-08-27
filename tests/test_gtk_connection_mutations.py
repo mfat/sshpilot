@@ -153,9 +153,6 @@ class _MutationWindow:
     def _rows_for_connection(self, connection):
         return []
 
-    def _invalidate_effective_check(self, nickname, connection=None):
-        return None
-
     def _warn_if_effective_config_differs(self, connection, connection_data):
         return None
 

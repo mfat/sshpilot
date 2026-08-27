@@ -1510,7 +1510,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         group_manager: GroupManager,
         config,
         file_manager_callback=None,
-        effective_warning_callback=None,
         status_resolver=None,
         display_group_id: Optional[str] = None,
         in_tag_section: bool = False,
@@ -1524,7 +1523,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._in_tag_section = in_tag_section
         _apply_sidebar_row_style(self, config, in_tag_section=in_tag_section)
         self._file_manager_callback = file_manager_callback
-        self._effective_warning_callback = effective_warning_callback
         self._status_resolver = status_resolver
         self._tint_provider = None
         self._color_badge_provider = None
@@ -1641,30 +1639,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.status_icon.set_visible(False)
         content.append(self.status_icon)
 
-        # Warning shown when global SSH config overrides/adds settings for this
-        # host. Populated lazily by the background EffectiveConfigChecker; hidden
-        # until a result arrives, so it adds nothing to row build. Clicking it
-        # opens the effective-config viewer for this connection.
-        self.effective_warning_icon = icon_utils.new_button_from_icon_name("warning-outline-symbolic")
-        self.effective_warning_icon.add_css_class("flat")
-        self.effective_warning_icon.add_css_class("warning")
-        self.effective_warning_icon.set_valign(Gtk.Align.CENTER)
-        label_icon_button(
-            self.effective_warning_icon,
-            _("Effective SSH config differs"),
-            tooltip=_("Global SSH config changes this connection's effective settings — click to compare"),
-        )
-        self.effective_warning_icon.set_visible(False)
-        self.effective_warning_icon.set_opacity(0.0)
-        self.effective_warning_icon.connect("clicked", self._on_effective_warning_clicked)
-        content.append(self.effective_warning_icon)
-        self._effective_warning_differs = False
-
-        warning_motion_controller = Gtk.EventControllerMotion()
-        warning_motion_controller.connect("enter", self._on_button_enter)
-        warning_motion_controller.connect("leave", self._on_button_leave)
-        self.effective_warning_icon.add_controller(warning_motion_controller)
-
         # Now add the content to main_box
         main_box.append(content)
         
@@ -1734,17 +1708,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._is_hovering = True
         if self.file_manager_button and self._file_manager_callback:
             self.file_manager_button.set_opacity(1.0)
-        if (
-            not getattr(self, '_compact', False)
-            and self._effective_warning_callback
-            and getattr(self.connection, 'protocol', 'ssh') == 'ssh'
-        ):
-            try:
-                self._effective_warning_callback(self, self.connection)
-            except Exception:
-                logger.debug("Failed to request effective-config check",
-                             exc_info=True)
-        self._update_effective_warning_reveal()
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
@@ -1757,7 +1720,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._is_hovering = True
         if self.file_manager_button:
             self.file_manager_button.set_opacity(1.0)
-        self._update_effective_warning_reveal()
 
     def _on_button_leave(self, controller):
         """Handle mouse leaving the button"""
@@ -1768,18 +1730,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Hide row actions when the pointer is no longer hovering."""
         if not self._is_hovering and self.file_manager_button:
             self.file_manager_button.set_opacity(0.0)
-        self._update_effective_warning_reveal()
         return False  # Don't repeat
-
-    def _update_effective_warning_reveal(self) -> None:
-        icon = getattr(self, 'effective_warning_icon', None)
-        if icon is None:
-            return
-        reveal = (
-            getattr(self, '_effective_warning_differs', False)
-            and getattr(self, '_is_hovering', False)
-        )
-        icon.set_opacity(1.0 if reveal else 0.0)
 
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -2333,10 +2284,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._info_box.set_visible(True)
             self.indicator_box.set_visible(True)
             self.file_manager_button.set_visible(True)
-            warning_icon = getattr(self, 'effective_warning_icon', None)
-            if warning_icon is not None:
-                warning_icon.set_visible(
-                    getattr(self, '_effective_warning_differs', False))
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
             self.connection_icon.remove_css_class('conn-status-up')
             try:
@@ -2366,9 +2313,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         self.color_dot.set_visible(False)
         self.file_manager_button.set_visible(False)
-        warning_icon = getattr(self, 'effective_warning_icon', None)
-        if warning_icon is not None:
-            warning_icon.set_visible(False)
         self.status_icon.set_visible(False)
         connection_name = (
             getattr(self.connection, 'display_name', None)
@@ -2396,28 +2340,6 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.connection_icon.set_visible(True)
 
         self._refresh_compact_status()
-
-    def set_effective_warning(self, differs: bool) -> None:
-        """Show/hide the "global config overrides this host" warning icon."""
-        try:
-            self._effective_warning_differs = bool(differs)
-            self.effective_warning_icon.set_visible(
-                self._effective_warning_differs
-                and not getattr(self, '_compact', False)
-            )
-            self._update_effective_warning_reveal()
-        except Exception:
-            pass
-
-    def _on_effective_warning_clicked(self, _button) -> None:
-        """Open the effective-config viewer for this connection."""
-        try:
-            window = self.get_root()
-            opener = getattr(window, "show_effective_config_for_connection", None)
-            if callable(opener):
-                opener(self.connection)
-        except Exception:
-            logger.debug("Failed to open effective config viewer from row", exc_info=True)
 
     def update_display(self):
         if hasattr(self.connection, "nickname") and hasattr(self, "nickname_label"):
