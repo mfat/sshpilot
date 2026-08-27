@@ -7,7 +7,7 @@ msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-08-26 11:00+0200\n"
-"PO-Revision-Date: 2026-08-26 11:01+0200\n"
+"PO-Revision-Date: 2026-08-27 09:09+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -3892,7 +3892,7 @@ msgstr "Lignes colorées"
 
 #: src/sshpilot/preferences.py:946
 msgid "Color Badges"
-msgstr "Pastilles colorées"
+msgstr "Étiquettes colorées"
 
 #: src/sshpilot/preferences.py:947
 msgid "Accent Bars"
