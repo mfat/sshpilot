@@ -6792,38 +6792,50 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         if PluginCapability.KEY_DEPLOYMENT not in capabilities_for(connection):
             return
-        dialogs = None
-        try:
-            from .authorized_keys_window import AuthorizedKeysWindow
-            from .api.models import SessionId
-            from .api.models.operations import OpenSftpRequest
-            from .api.connection_identity import connection_id_for
-            bridge = getattr(self, "client_bridge", None)
-            if bridge is not None:
-                # Attach the interaction presenter before opening the service
-                # so a password/host-key prompt during the handshake is never
-                # missed (same ordering as the daemon SFTP backend).
-                from .daemon_interaction_dialogs import DaemonInteractionDialogs
-                dialogs = DaemonInteractionDialogs(self.client, bridge, self)
-            service = self.client.open_sftp(OpenSftpRequest(connection_id=connection_id_for(connection)))
-            if dialogs is not None:
-                dialogs.set_session(SessionId(str(service.id)))
-            window = AuthorizedKeysWindow(
-                parent=self,
-                client=self.client,
-                service_id=service.id,
-                connection=connection,
-                key_manager=getattr(self, "key_manager", None),
-                interaction_dialogs=dialogs,
-            )
-            if dialogs is not None:
-                # Prompts must stack above the editor window, not the main one.
-                dialogs.set_parent(window)
-            window.present()
-        except Exception as exc:
-            if dialogs is not None:
-                dialogs.close()
-            logger.error("Failed to open authorized_keys editor: %s", type(exc).__name__)
+
+        def _open():
+            dialogs = None
+            try:
+                from .authorized_keys_window import AuthorizedKeysWindow
+                from .api.models import SessionId
+                from .api.models.operations import OpenSftpRequest
+                from .api.connection_identity import connection_id_for
+                bridge = getattr(self, "client_bridge", None)
+                if bridge is not None:
+                    # Attach the interaction presenter before opening the service
+                    # so a password/host-key prompt during the handshake is never
+                    # missed (same ordering as the daemon SFTP backend).
+                    from .daemon_interaction_dialogs import DaemonInteractionDialogs
+                    dialogs = DaemonInteractionDialogs(self.client, bridge, self)
+                service = self.client.open_sftp(OpenSftpRequest(connection_id=connection_id_for(connection)))
+                if dialogs is not None:
+                    dialogs.set_session(SessionId(str(service.id)))
+                window = AuthorizedKeysWindow(
+                    parent=self,
+                    client=self.client,
+                    service_id=service.id,
+                    connection=connection,
+                    key_manager=getattr(self, "key_manager", None),
+                    interaction_dialogs=dialogs,
+                )
+                if dialogs is not None:
+                    # Prompts must stack above the editor window, not the main one.
+                    dialogs.set_parent(window)
+                window.present()
+            except Exception as exc:
+                if dialogs is not None:
+                    dialogs.close()
+                logger.error("Failed to open authorized_keys editor: %s", type(exc).__name__)
+
+        # A locked session-backed vault has no stored credential for the
+        # daemon to hand off, so unlock it first the same way opening the
+        # file manager does (TerminalManager._maybe_unlock_secrets_then) -
+        # otherwise the daemon falls back to a raw host-password prompt
+        # when it opens the SFTP service above.
+        terminal_manager = getattr(self, "terminal_manager", None)
+        if terminal_manager is not None and terminal_manager._maybe_unlock_secrets_then(_open):
+            return
+        _open()
 
     def on_edit_connection_action(self, action, param=None):
         """Handle edit connection action from context menu"""
@@ -7041,7 +7053,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ) or find_any_terminal()
             self._launch_external_terminal_spec(spec, terminal_command)
 
-        self._submit_external_terminal_launch(connection, on_success)
+        def _submit():
+            self._submit_external_terminal_launch(connection, on_success)
+
+        # A locked session-backed vault has no stored credential for the
+        # daemon to hand off, so unlock it first the same way opening a
+        # terminal tab does (TerminalManager._maybe_unlock_secrets_then) -
+        # otherwise the daemon falls back to a raw host-password prompt.
+        terminal_manager = getattr(self, "terminal_manager", None)
+        if terminal_manager is not None and terminal_manager._maybe_unlock_secrets_then(_submit):
+            return
+        _submit()
 
     def _open_connection_in_external_terminal(self, connection):
         """Open a daemon-prepared connection in the preferred terminal."""
