@@ -20,6 +20,7 @@ waits on the protected interaction), and ``on_done`` fires on the GLib main loop
 
 import logging
 import threading
+import time
 from gettext import gettext as _
 
 import gi
@@ -315,6 +316,40 @@ def _unlock_result_outcome(result):
     return False, None
 
 
+# Bound/interval for riding out a busy controller, matching the connect gate in
+# terminal_manager._load_secret_state_with_retry (~10s worst case).
+_BUSY_RETRY_ATTEMPTS = 40
+_BUSY_RETRY_INTERVAL = 0.25
+
+
+def _read_riding_busy(read, description):
+    """Run one controller read, riding out a controller busy with another
+    guarded operation. Returns ``None`` when it stays busy or the read fails.
+
+    ``SecretBackendsController`` rejects overlapping guarded operations with
+    ``RuntimeError("...already in progress")``, and it has to: firing a second
+    daemon secrets request while an unlock interaction holds the daemon's
+    secrets lock would block until the client request timeout, which tears down
+    the transport and cancels that very interaction. But startup runs two
+    controller users at once — this unlock check and the startup diagnostics'
+    metadata reads (``main.AppWindow._schedule_startup_diagnostics``) — so
+    treating a busy controller as "nothing to do" made the master-password
+    prompt appear only on the runs that won the race.
+
+    Must be called off the main thread: it sleeps between attempts, and the
+    reads themselves are blocking daemon RPCs."""
+    for _attempt in range(_BUSY_RETRY_ATTEMPTS):
+        try:
+            return read()
+        except RuntimeError:
+            time.sleep(_BUSY_RETRY_INTERVAL)
+        except Exception:
+            logger.debug("startup %s query failed", description, exc_info=True)
+            return None
+    logger.debug("startup %s query still busy after retries", description)
+    return None
+
+
 def unlock_at_startup(window):
     """If the selected session-backed secret backend is locked, unlock it at startup.
 
@@ -324,34 +359,44 @@ def unlock_at_startup(window):
     never falls back to GTK-owned secret code. A selected-but-unavailable backend
     gets the same notice as the manual path.
 
+    The daemon reads run on a worker (they are blocking RPCs — a locked KeePassXC
+    database alone costs ~0.6s — and may have to wait out a controller busy with
+    the startup diagnostics), and every prompt is raised back on the GLib main
+    loop.
+
     Safe to schedule via ``GLib.idle_add`` from the application's activation. Returns
     ``False`` so it runs once when used as an idle source."""
     controller = getattr(window, "secrets_controller", None)
     if controller is None:
         return False
-    try:
-        state = controller.load_state()
-    except Exception:
-        logger.debug("startup unlock state query failed", exc_info=True)
-        return False
-    if state.login_required:
-        _prompt_not_signed_in(window, state.selected_backend)
-        return False
-    if state.needs_unlock:
-        prompt_unlock(window)
-        return False
-    # Already unlocked / passive backend. Still surface a selected-but-unavailable
-    # backend once, like the manual path does (the daemon reports it as needing no
-    # unlock, so without this check the user would never hear about it).
-    try:
-        registry = controller.load_registry()
-    except Exception:
-        logger.debug("startup registry query failed", exc_info=True)
-        return False
-    for backend in getattr(registry, "backends", ()):
-        if getattr(backend, "selected", False) and not getattr(backend, "available", False):
-            _prompt_unavailable_backend(window, backend)
-            return False
+
+    def _on_main(callback):
+        GLib.idle_add(lambda: (callback(), False)[1])
+
+    def _worker():
+        state = _read_riding_busy(controller.load_state, "unlock state")
+        if state is None:
+            return
+        if state.login_required:
+            _on_main(lambda: _prompt_not_signed_in(window, state.selected_backend))
+            return
+        if state.needs_unlock:
+            _on_main(lambda: prompt_unlock(window))
+            return
+        # Already unlocked / passive backend. Still surface a selected-but-unavailable
+        # backend once, like the manual path does (the daemon reports it as needing no
+        # unlock, so without this check the user would never hear about it).
+        registry = _read_riding_busy(controller.load_registry, "registry")
+        if registry is None:
+            return
+        for backend in getattr(registry, "backends", ()):
+            if getattr(backend, "selected", False) and not getattr(backend, "available", False):
+                _on_main(lambda b=backend: _prompt_unavailable_backend(window, b))
+                return
+
+    threading.Thread(
+        target=_worker, name="sshpilot-startup-vault-unlock", daemon=True
+    ).start()
     return False
 
 
