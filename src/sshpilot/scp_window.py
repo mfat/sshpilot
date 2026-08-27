@@ -281,8 +281,29 @@ class ScpWindowController:
         except Exception as e:
             logger.error(f'Upload dialog failed: {e}')
 
-    def _prompt_scp_download(self, connection, _sftp_service_id=None):
-        """Show a typed daemon-backed remote browser for SCP downloads."""
+    def _prompt_scp_download(
+        self, connection, _sftp_service_id=None, _secret_unlock_attempted=False,
+    ):
+        """Show a typed daemon-backed remote browser for SCP downloads.
+
+        A locked session-backed vault has no stored credential for the
+        daemon to hand off, so unlock it first the same way a terminal
+        connect does (TerminalManager._maybe_unlock_secrets_then) - otherwise
+        the daemon falls back to a raw host-password prompt when it opens
+        the SFTP browse service below.
+        """
+        if not _secret_unlock_attempted:
+            terminal_manager = getattr(self.window, "terminal_manager", None)
+            if terminal_manager is not None:
+                def _retry():
+                    self._prompt_scp_download(
+                        connection, _sftp_service_id=_sftp_service_id,
+                        _secret_unlock_attempted=True,
+                    )
+
+                if terminal_manager._maybe_unlock_secrets_then(_retry):
+                    return
+
         from .api import Capability
         from .api.models import ConnectionId
         from .remote_path_utils import (

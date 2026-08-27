@@ -614,6 +614,48 @@ def test_scp_download_browser_is_presented_before_sftp_ready(monkeypatch):
     assert controller._sftp_browser_controller is not None
 
 
+def test_scp_download_browser_gates_on_vault_unlock(monkeypatch):
+    """A locked session-backed vault must be unlocked before the SCP
+    download browser opens its SFTP listing session - mirrors the gate
+    used before starting the actual transfer (start_scp_transfer)."""
+    from unittest import mock
+
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    _patch_browser_widgets(monkeypatch)
+    _Dialog.instances = []
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    captured_retry = []
+    terminal_manager = mock.Mock()
+    terminal_manager._maybe_unlock_secrets_then = mock.Mock(
+        side_effect=lambda retry: (captured_retry.append(retry), True)[1]
+    )
+    controller.window.terminal_manager = terminal_manager
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1")
+    )
+
+    # Gated: no SFTP browse session must have started yet.
+    assert bridge.submitted == []
+    assert len(captured_retry) == 1
+
+    # Once the vault is unlocked, the retry must proceed without re-gating.
+    captured_retry[0]()
+
+    assert len(bridge.submitted) == 1
+    assert controller._sftp_browser_controller is not None
+    terminal_manager._maybe_unlock_secrets_then.assert_called_once()
+
+
 def test_scp_download_browser_populates_large_listing_incrementally(monkeypatch):
     monkeypatch.setattr(
         dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
