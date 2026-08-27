@@ -505,6 +505,37 @@ class SshPilotApplication(Adw.Application):
             daemon=True,
         ).start()
 
+    def _schedule_startup_vault_unlock(self, retries_left: int = 25) -> None:
+        """Prompt to unlock a locked session-backed secret backend once the
+        daemon client selection settles.
+
+        ``window.secrets_controller`` is still ``None`` on the first main-loop
+        iteration — client selection (``MainWindow._begin_daemon_client_selection``)
+        resolves asynchronously — so scheduling this via a single ``idle_add``
+        right after activation always saw ``secrets_controller is None`` and
+        silently no-opped (``unlock_at_startup``'s very first check), meaning the
+        startup unlock prompt never actually appeared. Poll briefly (~5s) for the
+        selection to finish, mirroring ``_schedule_startup_diagnostics``.
+        """
+        window = getattr(self, "window", None) or self.props.active_window
+        pending = (
+            True if window is None
+            else bool(getattr(window, "_api_client_selection_pending", False))
+        )
+        if pending and retries_left > 0:
+            GLib.timeout_add(
+                200,
+                lambda: (
+                    self._schedule_startup_vault_unlock(retries_left - 1),
+                    False,
+                )[1],
+            )
+            return
+        if window is None:
+            return
+        from . import secret_unlock_dialog
+        secret_unlock_dialog.unlock_at_startup(window)
+
     def _load_app_style(self):
         """Load the bundled application stylesheet once, at APPLICATION priority."""
         display = Gdk.Display.get_default()
@@ -545,13 +576,12 @@ class SshPilotApplication(Adw.Application):
 
         # If a session-backed secret backend (Bitwarden/Vaultwarden) is selected and
         # locked, prompt to unlock it now (password dialog + spinner) so the vault is
-        # ready before the first connection. Scheduled on idle so it runs after the
-        # connection manager's deferred backend-selection init.
+        # ready before the first connection. Polls for the daemon client selection
+        # (see ``_schedule_startup_vault_unlock``) rather than a single idle_add,
+        # since ``secrets_controller`` is not populated on the first main-loop
+        # iteration.
         try:
-            win = self.window or self.props.active_window
-            if win is not None:
-                from . import secret_unlock_dialog
-                GLib.idle_add(secret_unlock_dialog.unlock_at_startup, win)
+            self._schedule_startup_vault_unlock()
         except Exception as exc:
             logger.debug(f"Failed to schedule startup vault unlock: {exc}")
 
