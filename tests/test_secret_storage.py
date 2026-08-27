@@ -1405,6 +1405,27 @@ def test_bitwarden_needs_login_is_cached_between_connections(monkeypatch):
     assert fake.calls == [['login', '--check']]
 
 
+def test_bitwarden_cached_needs_login_never_spawns_bw(monkeypatch):
+    # The daemon's backend registry describes every backend while holding the
+    # secrets service lock, so it must be able to read known account state
+    # without paying for (and blocking every other secrets query behind) a cold
+    # `bw login --check` Node start-up.
+    fake = FakeBw(status="unauthenticated")
+    b = _make_backend(monkeypatch, fake)
+
+    assert b.cached_needs_login() is None           # never probed -> unknown
+    assert fake.calls == []
+
+    assert b.needs_login() is True
+    assert b.cached_needs_login() is True
+    assert fake.calls == [['login', '--check']]
+
+    # A different CLI profile invalidates the cache the same way needs_login() does.
+    monkeypatch.setenv("BITWARDENCLI_APPDATA_DIR", "/profiles/work")
+    assert b.cached_needs_login() is None
+    assert fake.calls == [['login', '--check']]
+
+
 def test_bitwarden_needs_login_force_refresh_detects_external_login(monkeypatch):
     # Preferences can explicitly refresh after the account changes outside sshPilot.
     fake = FakeBw(status="unauthenticated")

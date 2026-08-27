@@ -4,6 +4,22 @@ from __future__ import annotations
 
 from typing import Any
 
+# Stand-in shown wherever host details are suppressed by the privacy toggle
+# (the eye button in the sidebar header).
+HIDDEN_HOST_PLACEHOLDER = "••••••••••"
+
+
+def hosts_hidden(window: Any) -> bool:
+    """Report whether ``window`` currently hides host details."""
+    return bool(getattr(window, "_hide_hosts", False))
+
+
+def mask_host_display(text: str, hide: bool) -> str:
+    """Replace host text with the privacy placeholder while hosts are hidden."""
+    if hide and text:
+        return HIDDEN_HOST_PLACEHOLDER
+    return text
+
 
 def get_connection_host(connection: Any) -> str:
     """Return the configured hostname for a connection when available."""

@@ -91,7 +91,7 @@ def _install_unlock_harness(monkeypatch):
     )
 
     class SyncThread:
-        def __init__(self, target, args=(), kwargs=None, daemon=None):
+        def __init__(self, target, args=(), kwargs=None, daemon=None, name=None):
             self.target = target
             self.args = args
             self.kwargs = kwargs or {}
@@ -220,6 +220,7 @@ def test_unlock_at_startup_noop_without_controller(monkeypatch):
 
 
 def test_unlock_at_startup_unlocks_when_needed(monkeypatch):
+    _install_unlock_harness(monkeypatch)
     controller = _FakeController(state=_FakeState(needs_unlock=True))
     window = _FakeParent(controller)
     prompted = []
@@ -229,7 +230,81 @@ def test_unlock_at_startup_unlocks_when_needed(monkeypatch):
     assert prompted == [window]
 
 
+def test_unlock_at_startup_rides_out_a_busy_controller(monkeypatch):
+    """Startup runs this check alongside the startup diagnostics' own controller
+    reads. The controller rejects overlapping guarded operations, so giving up on
+    the first "already in progress" made the master-password prompt appear only
+    on the runs that won that race."""
+    _install_unlock_harness(monkeypatch)
+    monkeypatch.setattr(d.time, "sleep", lambda _seconds: None)
+
+    controller = _FakeController(state=_FakeState(needs_unlock=True))
+    attempts = []
+
+    def load_state():
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise RuntimeError("a secret backend operation is already in progress")
+        return controller.state
+
+    controller.load_state = load_state
+    window = _FakeParent(controller)
+    prompted = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+
+    assert d.unlock_at_startup(window) is False
+    assert len(attempts) == 3
+    assert prompted == [window]
+
+
+def test_unlock_at_startup_gives_up_after_bounded_retries(monkeypatch):
+    """A controller that never frees up must not retry forever (or prompt on
+    state it could not read)."""
+    _install_unlock_harness(monkeypatch)
+    monkeypatch.setattr(d.time, "sleep", lambda _seconds: None)
+
+    controller = _FakeController(state=_FakeState(needs_unlock=True))
+    attempts = []
+
+    def load_state():
+        attempts.append(1)
+        raise RuntimeError("a secret backend operation is already in progress")
+
+    controller.load_state = load_state
+    window = _FakeParent(controller)
+    prompted = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+
+    assert d.unlock_at_startup(window) is False
+    assert len(attempts) == d._BUSY_RETRY_ATTEMPTS
+    assert prompted == []
+
+
+def test_unlock_at_startup_reads_state_off_the_main_thread(monkeypatch):
+    """The daemon reads are blocking RPCs (a locked KeePassXC database alone
+    costs ~0.6s), so they must not run on the GTK main loop."""
+    started = []
+
+    class _RecordingThread:
+        def __init__(self, target, args=(), kwargs=None, daemon=None, name=None):
+            self.target = target
+            self.daemon = daemon
+
+        def start(self):
+            started.append(self.daemon)
+
+    monkeypatch.setattr(d.threading, "Thread", _RecordingThread)
+    controller = _FakeController(state=_FakeState(needs_unlock=True))
+    calls = []
+    controller.load_state = lambda: calls.append(1)
+
+    assert d.unlock_at_startup(_FakeParent(controller)) is False
+    assert started == [True]   # worker started, daemon thread
+    assert calls == []         # nothing read on the caller's (main) thread
+
+
 def test_unlock_at_startup_noop_for_available_passive_backend(monkeypatch):
+    _install_unlock_harness(monkeypatch)
     class Descriptor:
         name = "rbw"
         selected = True
@@ -253,6 +328,8 @@ def test_unlock_at_startup_noop_for_available_passive_backend(monkeypatch):
 
 
 def test_unlock_at_startup_notices_unavailable_selected_backend(monkeypatch):
+    _install_unlock_harness(monkeypatch)
+
     class Descriptor:
         name = "bitwarden"
         selected = True
@@ -276,6 +353,7 @@ def test_unlock_at_startup_notices_unavailable_selected_backend(monkeypatch):
 
 
 def test_unlock_at_startup_notices_when_not_signed_in(monkeypatch):
+    _install_unlock_harness(monkeypatch)
     controller = _FakeController(
         state=_FakeState(needs_unlock=True, login_required=True, selected_backend="bitwarden")
     )

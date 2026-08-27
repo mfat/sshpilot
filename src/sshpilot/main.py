@@ -486,13 +486,13 @@ class SshPilotApplication(Adw.Application):
                 )[1],
             )
             return
-        # print_startup_info() reads the secret backend registry through a
-        # blocking daemon RPC (SecretBackendsController.load_registry());
-        # building that registry can shell out to e.g. `bw login --check`,
-        # which alone has been observed to take 3+ seconds. Called directly
-        # from this GLib timeout callback that froze the whole GTK main loop
-        # for the duration — nothing here touches widgets, so run it off the
-        # main thread instead.
+        # print_startup_info() reads secret backend metadata through blocking
+        # daemon RPCs (SecretBackendsController.load_state/registry/…), and
+        # rides out a controller busy with the startup vault unlock — which
+        # lasts as long as the user takes to answer the master-password prompt
+        # (startup_info._daemon_read). Called directly from this GLib timeout
+        # callback that froze the whole GTK main loop for the duration —
+        # nothing here touches widgets, so run it off the main thread instead.
         confirmed_mode = getattr(window, "_confirmed_operation_mode", None)
         threading.Thread(
             target=print_startup_info,

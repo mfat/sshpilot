@@ -967,6 +967,23 @@ class BitwardenBackend(SecretBackend):
                 logger.debug("bw login --check failed: %s", exc)
                 return False
 
+    def cached_needs_login(self) -> Optional[bool]:
+        """The cached account state, or ``None`` when it has never been probed.
+
+        Lets a caller that only *lists* backend metadata (the daemon's backend
+        registry) report account state it already knows without paying for a
+        cold ``bw login --check`` — a Node start-up that has been measured at
+        ~3s and which runs while the secrets service lock is held, stalling
+        every other secrets query (notably the connect path's state read)
+        behind it."""
+        if not self._bin:
+            return False
+        profile = os.environ.get("BITWARDENCLI_APPDATA_DIR", "")
+        with self._lock:
+            if self._needs_login is not None and self._login_profile == profile:
+                return self._needs_login
+            return None
+
     def invalidate_login_state(self) -> None:
         """Forget the cached CLI account state before an explicit status refresh."""
         with self._lock:

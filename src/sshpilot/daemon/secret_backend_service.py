@@ -1521,6 +1521,39 @@ class SecretBackendService:
         except Exception:
             return False
 
+    def _descriptor_login_required(self, backend, name: str, *, selected: bool) -> bool:
+        """Account state for one registry entry, without a cold CLI probe for a
+        backend nobody selected.
+
+        ``get_registry`` describes *every* registered backend while holding the
+        service lock, so any probe it runs stalls concurrent secrets queries —
+        including the ``secrets.state.get`` the connect path waits on before it
+        may open a session. Bitwarden's ``needs_login()`` spawns ``bw login
+        --check`` (a ~3s Node start-up) the first time it is asked, which made
+        the app's startup diagnostics registry read block the first connection
+        for that long. The selected backend is still probed for real (its
+        account state drives the unlock prompt); an unselected one reports what
+        is already cached and otherwise ``False`` — the authoritative answer for
+        the backend that matters comes from ``get_state``/``unlock``, which
+        query the selected backend directly."""
+        if backend is None or name != "bitwarden":
+            return False
+        if not selected:
+            cached = getattr(backend, "cached_needs_login", None)
+            if callable(cached):
+                try:
+                    value = cached()
+                except Exception:
+                    return False
+                return bool(value) if value is not None else False
+        probe = getattr(backend, "needs_login", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe())
+        except Exception:
+            return False
+
     def _descriptor(
         self,
         name: str,
@@ -1542,14 +1575,9 @@ class SecretBackendService:
             available=available,
         )
         locked = decision.kind == SecretDecisionKind.UNLOCK_REQUIRED
-        login_required = False
-        if backend is not None and name == "bitwarden" and callable(
-            getattr(backend, "needs_login", None)
-        ):
-            try:
-                login_required = bool(backend.needs_login())
-            except Exception:
-                login_required = False
+        login_required = self._descriptor_login_required(
+            backend, name, selected=selected
+        )
         label = _backend_label(name)
         capabilities = _backend_capabilities(name)
         diagnostic = ""

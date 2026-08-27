@@ -1,3 +1,12 @@
+sshpilot (5.9.7-1) unstable; urgency=medium
+
+  * Release v5.9.7.
+  * Faster startup
+  * Vault unlock prompt now displayed on startup
+  * Privacy toggle hides hostnames and IP addresses in start page too
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 27 Aug 2026 23:44:32 +0000
+
 sshpilot (5.9.6-1) unstable; urgency=medium
 
   * Release v5.9.6.

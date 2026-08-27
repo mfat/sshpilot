@@ -262,6 +262,62 @@ def test_startup_info_storage_reads_through_daemon_client():
     assert storage['available_backends'] == ["keepassxc"]
 
 
+def test_daemon_read_waits_out_a_busy_controller(monkeypatch):
+    """The storage section shares the window's SecretBackendsController with the
+    startup vault unlock, which rejects overlapping operations and can hold the
+    controller for as long as the user takes to answer the master-password
+    prompt. Giving up printed a fabricated "unknown" Secure Storage section on
+    exactly the runs where a vault was being unlocked; the diagnostics worker
+    waits instead (nothing but the console banner waits on it)."""
+    from sshpilot import startup_info as si
+
+    monkeypatch.setattr(si.time, "sleep", lambda _seconds: None)
+    attempts = []
+
+    class BusyController:
+        def load_state(self):
+            attempts.append(1)
+            if len(attempts) < 4:
+                raise RuntimeError("a secret backend operation is already in progress")
+            return "state"
+
+    assert si._daemon_read(BusyController(), "state") == "state"
+    assert len(attempts) == 4
+
+
+def test_daemon_read_gives_up_on_a_controller_that_never_frees_up():
+    from sshpilot import startup_info as si
+
+    attempts = []
+
+    class AlwaysBusyController:
+        def load_state(self):
+            attempts.append(1)
+            raise RuntimeError("a secret backend operation is already in progress")
+
+    assert si._daemon_read(AlwaysBusyController(), "state", timeout=0.01) is None
+    assert attempts  # tried at least once, then bailed out instead of hanging
+
+
+def test_daemon_read_does_not_retry_a_failed_daemon_request():
+    """Transport/daemon failures are not "busy" — re-running a request whose
+    transport is already gone would only stall the banner."""
+    from sshpilot import startup_info as si
+    from sshpilot.api.errors import ErrorCode, SshPilotError
+
+    attempts = []
+
+    class FailingController:
+        def load_state(self):
+            attempts.append(1)
+            raise SshPilotError(
+                ErrorCode.TRANSPORT_TIMEOUT, "The daemon request timed out"
+            )
+
+    assert si._daemon_read(FailingController(), "state") is None
+    assert len(attempts) == 1
+
+
 def test_startup_info_has_no_secret_storage_import():
     """GTK diagnostics must never import secret_storage (daemon owns backends)."""
     import ast

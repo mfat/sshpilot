@@ -61,6 +61,13 @@
 
 
 
+    <release version="5.9.7" date="2026-08-27">
+      <description>
+        <p>Faster startup</p>
+        <p>Vault unlock prompt now displayed on startup</p>
+        <p>Privacy toggle hides hostnames and IP addresses in start page too</p>
+      </description>
+    </release>
     <release version="5.9.6" date="2026-08-27">
       <description>
         <p>Fixed subgroups not inheriting parent group color</p>
