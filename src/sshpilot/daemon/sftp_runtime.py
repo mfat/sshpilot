@@ -1869,25 +1869,50 @@ class SftpServiceRuntime:
             code = _ERRNO_TO_ERROR_CODE.get(
                 getattr(exc, "errno", None), ErrorCode.SFTP_COMMAND_FAILED
             )
-            return SshPilotError(
+            error = SshPilotError(
                 code,
                 "The SFTP command failed",
                 details=details,
                 connection_id=record.connection_id,
             )
-        if isinstance(exc, (EOFError, OSError)):
-            return SshPilotError(
+        elif isinstance(exc, (EOFError, OSError)):
+            error = SshPilotError(
                 ErrorCode.SFTP_PROTOCOL_LOST,
                 "The SFTP connection was lost",
                 details=details,
                 connection_id=record.connection_id,
             )
-        return SshPilotError(
-            ErrorCode.SFTP_PROTOCOL_ERROR,
-            "The SFTP command failed",
-            details=details,
-            connection_id=record.connection_id,
-        )
+        else:
+            error = SshPilotError(
+                ErrorCode.SFTP_PROTOCOL_ERROR,
+                "The SFTP command failed",
+                details=details,
+                connection_id=record.connection_id,
+            )
+        if error.code is ErrorCode.SFTP_PROTOCOL_LOST:
+            # A live operation just proved the underlying process/connection
+            # is dead (e.g. the network dropped mid-session). There is no
+            # background health check on a READY service, so without this
+            # the record would keep reporting READY forever and no client
+            # (e.g. a file-manager tab) would ever learn it needs to
+            # reconnect -- every subsequent op would keep silently failing
+            # the same way. Flip to FAILED and publish it through the same
+            # path startup failures use, so the existing FAILED-event
+            # handling (DaemonSftpServiceController._on_open_accepted ->
+            # on_error -> connection-error -> Retry UI) picks it up.
+            self._fail_dead_connection(record, error)
+        return error
+
+    def _fail_dead_connection(self, record: _SftpRecord, error: SshPilotError) -> None:
+        event = None
+        with self._lock:
+            if record.state is SftpServiceState.READY:
+                record.failure = ServiceFailure(
+                    code=error.code.value, message=error.message
+                )
+                event = self._transition_locked(record, SftpServiceState.FAILED)
+        if event is not None:
+            self._publish((event,))
 
     def _ready_record_for_read(
         self,
