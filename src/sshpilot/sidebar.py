@@ -27,9 +27,11 @@ from .accessibility import (
 )
 from .connection_model import Connection
 from .connection_display import (
+    HIDDEN_HOST_PLACEHOLDER,
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
     format_connection_host_display as _format_connection_host_display,
+    hosts_hidden as _hosts_hidden,
 )
 from .context_menu import IconContextMenu
 from .file_manager_integration import (
@@ -2156,12 +2158,12 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
             window = self.get_root()
-            hide = bool(getattr(window, "_hide_hosts", False)) if window else False
+            hide = _hosts_hidden(window) if window else False
         except Exception:
             hide = False
 
         if hide:
-            self.host_label.set_text("••••••••••")
+            self.host_label.set_text(HIDDEN_HOST_PLACEHOLDER)
             self.host_label.set_tooltip_text('')
             return
 
@@ -4153,6 +4155,13 @@ def _build_sidebar_header(window, sidebar_box):
                 for row in (rows if isinstance(rows, list) else [rows]):
                     if hasattr(row, 'apply_hide_hosts'):
                         row.apply_hide_hosts(window._hide_hosts)
+            # The Start page lists the same hosts under Recent/Pinned
+            welcome_view = getattr(window, 'welcome_view', None)
+            if welcome_view is not None and hasattr(welcome_view, 'apply_hide_hosts'):
+                try:
+                    welcome_view.apply_hide_hosts(window._hide_hosts)
+                except Exception:
+                    logger.debug("Failed to update Start page hostnames", exc_info=True)
             # Update icon/tooltip
             _update_eye_icon(btn)
         except Exception:

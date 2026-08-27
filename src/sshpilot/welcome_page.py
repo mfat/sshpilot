@@ -11,6 +11,7 @@ from gi.repository import Gtk, Adw, Gdk, GLib
 from gettext import gettext as _
 
 from .api.errors import SshPilotError
+from .connection_display import hosts_hidden, mask_host_display
 from .platform_utils import is_macos
 from . import icon_utils
 
@@ -420,6 +421,9 @@ class WelcomePage(Gtk.Overlay):
         box = getattr(self, '_recent_box', None)
         if box is None or getattr(self, '_closed', False):
             return
+        # Keep the snapshot so the privacy toggle can re-render the rows without
+        # a fresh (asynchronous) read that would flash the loading placeholder.
+        self._recent_snapshot = (list(connections), read_error)
         WelcomePage._clear_box(box)
 
         def _last_used(conn):
@@ -447,13 +451,26 @@ class WelcomePage(Gtk.Overlay):
             )
             return
 
+        hide = hosts_hidden(getattr(self, 'window', None))
         rows = [
             self._min_row(
-                conn.nickname, conn.display_target,
+                conn.nickname, mask_host_display(conn.display_target, hide),
                 lambda _b, c=conn: self._connect_connection_summary(c))
             for conn in recent
         ]
         box.append(self._min_section(_('Recent'), rows))
+
+    def apply_hide_hosts(self, hide: bool | None = None):
+        """Re-render Recent/Pinned so host text follows the privacy toggle."""
+        if getattr(self, '_closed', False):
+            return
+        self._populate_pinned_box()
+        snapshot = getattr(self, '_recent_snapshot', None)
+        if snapshot is None:
+            # Nothing rendered yet (still loading or never read); the pending
+            # render already reads the current state.
+            return
+        WelcomePage._render_recent_connections(self, *snapshot)
 
     def set_client(self, client, *, bridge=None):
         """Install the selected application client and refresh through it."""
@@ -569,10 +586,11 @@ class WelcomePage(Gtk.Overlay):
             if n in conn_map
         ][:4]
         if pinned:
+            hide = hosts_hidden(getattr(self, 'window', None))
             rows = []
             for conn in pinned:
                 row = self._min_row(
-                    conn.nickname, self._conn_target(conn),
+                    conn.nickname, mask_host_display(self._conn_target(conn), hide),
                     lambda _b, c=conn: self.window.terminal_manager.connect_to_host(c))
                 self._attach_pinned_context_menu(row, conn)
                 rows.append(row)
