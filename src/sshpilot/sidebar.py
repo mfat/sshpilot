@@ -2813,7 +2813,10 @@ def _group_reorder_seam_at_y(window, y, dragged_group_id):
 
     def _scan(parent_id):
         siblings = _sibling_group_rows(window, parent_id)
-        if len(siblings) < 2:
+        # A single sibling still has a valid "above" seam at its top edge
+        # (e.g. unnesting a subgroup above an only-child top-level group);
+        # only bail when there's nothing to seam against at all.
+        if not siblings:
             return None
         for i, row in enumerate(siblings):
             if row.group_id == dragged_group_id:
