@@ -440,6 +440,21 @@ class SftpServiceRuntime:
         self._target_locks: Dict[Tuple[Any, ...], _TargetLockEntry] = {}
         self._accepting_commands = True
         self._closed = False
+        self._authenticated_callback: Optional[Callable[[SessionId], None]] = None
+
+    def set_authenticated_callback(
+        self, callback: Optional[Callable[[SessionId], None]]
+    ) -> None:
+        """Notify the owner once an SFTP handshake confirms authentication.
+
+        Mirrors ``SessionRuntime.set_authenticated_callback`` — without this,
+        a "Remember password" checked on the SFTP askpass prompt (file
+        manager) is captured into the broker's pending-remember state but
+        never flushed to the password store, because only terminal sessions
+        called ``InteractionBroker.mark_authenticated``.
+        """
+
+        self._authenticated_callback = callback
 
     def subscribe_events(self, callback: CoreEventCallback) -> Subscription:
         with self._lock:
@@ -543,6 +558,7 @@ class SftpServiceRuntime:
             )
             return
         terminate_after_start = True
+        became_ready = False
         events: List[CoreEvent] = []
         with self._lock:
             if record.state is SftpServiceState.STARTING:
@@ -550,10 +566,13 @@ class SftpServiceRuntime:
                 record.started_at = self._clock()
                 events.append(self._transition_locked(record, SftpServiceState.READY))
                 terminate_after_start = False
+                became_ready = True
             elif record.state is SftpServiceState.CLOSING:
                 record.handle = handle
                 terminate_after_start = False
         self._publish(events)
+        if became_ready and self._authenticated_callback is not None:
+            self._authenticated_callback(spec.session_id)
         if terminate_after_start:
             try:
                 handle.terminate()
