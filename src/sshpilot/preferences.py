@@ -942,7 +942,7 @@ class PreferencesWindow(Adw.NavigationPage):
         self.child_rows_color_row = Adw.SwitchRow()
         self.child_rows_color_row.set_title(_("Use Group Color for Child Rows"))
         self.child_rows_color_row.set_subtitle(
-            _("Apply the group's color to its connection rows as well")
+            _("Apply the group's color to its connections and subgroups as well")
         )
         try:
             child_rows_pref = bool(

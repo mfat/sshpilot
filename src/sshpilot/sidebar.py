@@ -1295,8 +1295,36 @@ class GroupRow(Gtk.ListBoxRow):
 
     def _apply_group_color_style(self):
         # Keep our own colour when set; otherwise inherit the nearest coloured
-        # ancestor so nested groups read as part of their parent.
-        rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
+        # ancestor so nested groups read as part of their parent. When "Use
+        # Group Color for Child Rows" is on, a coloured ancestor overrides our
+        # own colour too, so a subgroup always reads as part of its parent.
+        own_rgba = None
+        parent_id = None
+        try:
+            group_info = self.group_manager.groups.get(self.group_id)
+        except Exception:
+            group_info = None
+        if group_info:
+            own_rgba = _parse_color(group_info.get('color'))
+            parent_id = group_info.get('parent_id')
+
+        ancestor_rgba = (
+            _resolve_group_color_by_id(self.group_manager, parent_id)
+            if parent_id else None
+        )
+
+        config = getattr(self.group_manager, 'config', None)
+        try:
+            color_children = bool(
+                config.get_setting('ui.group_color_child_rows', False)
+            ) if config else False
+        except Exception:
+            color_children = False
+
+        if color_children and ancestor_rgba:
+            rgba = ancestor_rgba
+        else:
+            rgba = own_rgba or ancestor_rgba
         # In the minimal strip the colour is strictly a fill on the avatar,
         # never a row treatment — expand/collapse re-runs this via
         # _update_display, which would otherwise bring the accent bar back.
