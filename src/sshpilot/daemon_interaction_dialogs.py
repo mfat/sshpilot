@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from gettext import gettext as _
 from typing import Optional
 
 from gi.repository import Adw, GLib, Gtk
@@ -545,7 +546,14 @@ class DaemonInteractionDialogs:
         prompt: PasswordPrompt,
         parent: Gtk.Widget,
     ) -> None:
-        """Use the standard password UI, then submit through the broker."""
+        """Use the standard password UI, then submit through the broker.
+
+        ``prompt.can_remember`` reflects whether the daemon's password store is
+        available (see ``InteractionBroker.request_client_secret``); the
+        "Remember password" checkbox flows through ``RememberPolicy`` on the
+        same interaction response, same as the master-password unlock dialog
+        in ``SecretsInteractionPresenter._present_master_password``.
+        """
         from .window_dialogs import present_for_modal_dialog, show_ssh_password_dialog
 
         # ``parent`` is resolved from the app window in _present().  Explicitly
@@ -553,18 +561,28 @@ class DaemonInteractionDialogs:
         # helper's parent_window escape hatch.
         present_for_modal_dialog(parent)
         self._dialogs[summary.id] = None
+        remember = [False]
         try:
             value = show_ssh_password_dialog(
                 parent_window=parent,
                 display_name=f"{prompt.username}@{prompt.hostname}",
                 host=prompt.hostname,
                 username=prompt.username,
-                allow_store=False,
+                allow_store=bool(prompt.can_remember),
+                store_label=_("Remember password"),
+                on_store=lambda _password: remember.__setitem__(0, True),
             )
         finally:
             self._dialogs.pop(summary.id, None)
         if value:
-            self._submit_secret(summary, bytearray(value.encode("utf-8")))
+            policy = (
+                RememberPolicy.STORE_AFTER_SUCCESS
+                if remember[0]
+                else RememberPolicy.DO_NOT_STORE
+            )
+            self._submit_secret(
+                summary, bytearray(value.encode("utf-8")), remember_policy=policy
+            )
         else:
             self._cancel_secret(summary)
 
