@@ -809,6 +809,92 @@ def test_registry_lists_descriptors_and_availability(tmp_path):
     assert keepassxc.capabilities == ("unlock", "lock", "create_database")
 
 
+class CachingLoginBackend(FakeBackend):
+    """Models BitwardenBackend: ``needs_login()`` is a slow CLI probe whose
+    result is cached, plus a ``cached_needs_login()`` that never spawns."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.login_probes = 0
+        self._login_cache: Optional[bool] = None
+
+    def needs_login(self, *, force_refresh: bool = False) -> bool:
+        self.login_probes += 1
+        self._login_cache = self._needs_login
+        return self._needs_login
+
+    def cached_needs_login(self) -> Optional[bool]:
+        return self._login_cache
+
+
+def _service_with_caching_bitwarden(tmp_path, *, secrets=None, selected="auto"):
+    backends = {
+        "libsecret": FakeBackend("libsecret", session_backed=False),
+        "keyring": FakeBackend("keyring", session_backed=False),
+        "bitwarden": CachingLoginBackend("bitwarden", needs_login=True),
+        "rbw": FakeBackend("rbw", needs_login=True),
+        "keepassxc": FakeBackend("keepassxc"),
+        "agent": FakeBackend("agent", session_backed=False),
+    }
+    return _make_service(
+        tmp_path, secrets=secrets, backends=backends, selected=selected
+    )
+
+
+def test_registry_does_not_cold_probe_an_unselected_bitwarden_login(tmp_path):
+    """``get_registry`` runs under the service lock, so any probe it makes
+    blocks concurrent secrets queries — including the ``get_state`` the connect
+    path waits on before opening a session. Bitwarden's login probe is a ~3s
+    ``bw login --check``; describing a backend the user has not selected must
+    not pay it (that delayed the first connection after startup, where the
+    app's startup diagnostics reads the registry)."""
+    service, _manager, backends, _broker, _path = _service_with_caching_bitwarden(
+        tmp_path
+    )
+    bitwarden_backend = backends["bitwarden"]
+
+    registry = service.get_registry()
+
+    assert bitwarden_backend.login_probes == 0
+    bitwarden = next(b for b in registry.backends if b.name == "bitwarden")
+    assert bitwarden.selected is False
+    assert bitwarden.login_required is False  # unknown reads as "not blocking"
+
+
+def test_registry_reports_cached_login_state_for_an_unselected_bitwarden(tmp_path):
+    """Skipping the cold probe must not throw away account state the daemon has
+    already learned."""
+    service, _manager, backends, _broker, _path = _service_with_caching_bitwarden(
+        tmp_path
+    )
+    bitwarden_backend = backends["bitwarden"]
+    assert bitwarden_backend.needs_login() is True  # warm the cache
+
+    registry = service.get_registry()
+
+    assert bitwarden_backend.login_probes == 1  # no second probe
+    bitwarden = next(b for b in registry.backends if b.name == "bitwarden")
+    assert bitwarden.login_required is True
+
+
+def test_registry_probes_the_selected_bitwarden_login(tmp_path):
+    """The selected backend's account state drives the unlock prompt, so it is
+    still probed for real."""
+    service, _manager, backends, _broker, _path = _service_with_caching_bitwarden(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        selected="bitwarden",
+    )
+    bitwarden_backend = backends["bitwarden"]
+
+    registry = service.get_registry()
+
+    assert bitwarden_backend.login_probes == 1
+    bitwarden = next(b for b in registry.backends if b.name == "bitwarden")
+    assert bitwarden.selected is True
+    assert bitwarden.login_required is True
+
+
 def test_registry_selected_flag_follows_config(tmp_path):
     service, *_ = _make_service(
         tmp_path, secrets={"backend": "keepassxc", "session_timeout": 0}
