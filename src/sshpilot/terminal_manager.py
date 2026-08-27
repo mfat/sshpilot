@@ -2,6 +2,7 @@ from .api.connection_identity import connection_id_for
 import os
 import logging
 import threading
+import time
 from typing import Optional
 
 
@@ -89,6 +90,29 @@ class TerminalManager:
                     logger.error("Failed to rebind terminal to new daemon client", exc_info=True)
 
     # Connecting/disconnecting hosts
+    def _load_secret_state_with_retry(self, controller):
+        """Load secret-backend state, riding out a transient "busy" controller.
+
+        Must be called off the main thread. The controller rejects overlapping
+        guarded operations with RuntimeError("...already in progress"), and a
+        concurrent operation can hold it for as long as the user takes to
+        answer a master-password prompt (e.g. the startup vault-unlock) - not
+        milliseconds. Treating that RuntimeError as "no unlock needed" (the old
+        behavior) silently skipped the unlock prompt and let SSH's own askpass
+        fire for the host instead. Bound/interval mirrors
+        _refresh_forget_master_row in preferences.py (~10s worst case).
+        """
+        for _attempt in range(40):
+            try:
+                return controller.load_state()
+            except RuntimeError:
+                time.sleep(0.25)
+            except Exception:
+                logger.error("Secret unlock prompt failed", exc_info=True)
+                return None
+        logger.debug("secret backend state query still busy after retries")
+        return None
+
     def _maybe_unlock_secrets_then(self, retry, _allow_reprompt: bool = True) -> bool:
         """If the selected secret backend is session-backed and locked, show the unlock
         prompt and call ``retry`` when it finishes; return True. Otherwise return False so
@@ -98,58 +122,65 @@ class TerminalManager:
         and that prompt resolves with the vault **still locked** (the user deferred it),
         we don't silently start a background terminal — we re-show *our own* prompt once so
         the user can unlock for this connection. After that one re-prompt we proceed
-        regardless (the user cancelling their own prompt falls back to SSH's own prompt)."""
-        try:
-            controller = getattr(self.window, "secrets_controller", None)
-            if controller is None:
-                # A missing daemon controller is not permission to inspect or
-                # unlock a frontend-owned backend.
-                return False
-            state = controller.load_state()
-            if not state.needs_unlock and not state.login_required:
-                return False
-            from .secret_unlock_dialog import prompt_unlock
+        regardless (the user cancelling their own prompt falls back to SSH's own prompt).
 
-            def _show_unlock():
-                def _on_done(_success):
-                    still_locked = False
-                    try:
-                        current = controller.load_state()
-                        still_locked = bool(current.needs_unlock or current.login_required)
-                    except Exception:
-                        still_locked = False
-                    if (
-                        still_locked
-                        and _allow_reprompt
-                        and not owned[0]
-                        and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)
-                    ):
-                        return  # rode a deferred prompt -> our own prompt now drives the retry
-                    retry()
-
-                owned = [True]
-                owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
-
-            # A vault that isn't signed in can't be unlocked. Re-read that
-            # daemon-owned state before deciding whether to show the prompt.
-            def _probe():
-                try:
-                    needs_login = bool(controller.load_state().login_required)
-                except Exception:
-                    needs_login = False
-                GLib.idle_add(lambda: (_after_probe(needs_login), False)[1])
-
-            def _after_probe(needs_login):
-                if needs_login:
-                    retry()  # not signed in -> can't autofill; connect normally
-                    return
-                _show_unlock()
-
-            threading.Thread(target=_probe, daemon=True).start()
-            return True
-        except Exception as exc:
-            logger.error("Secret unlock prompt failed: %s", exc)
+        The state check itself always runs off the main thread (see
+        _load_secret_state_with_retry) since it may need to wait out a
+        concurrent guarded operation; ``retry`` is invoked once the outcome is
+        known, so this always returns True when a controller is present."""
+        controller = getattr(self.window, "secrets_controller", None)
+        if controller is None:
+            # A missing daemon controller is not permission to inspect or
+            # unlock a frontend-owned backend.
             return False
+
+        from .secret_unlock_dialog import prompt_unlock
+
+        def _show_unlock():
+            def _on_done(_success):
+                still_locked = False
+                try:
+                    current = controller.load_state()
+                    still_locked = bool(current.needs_unlock or current.login_required)
+                except Exception:
+                    still_locked = False
+                if (
+                    still_locked
+                    and _allow_reprompt
+                    and not owned[0]
+                    and self._maybe_unlock_secrets_then(retry, _allow_reprompt=False)
+                ):
+                    return  # rode a deferred prompt -> our own prompt now drives the retry
+                retry()
+
+            owned = [True]
+            owned[0] = bool(prompt_unlock(self.window, on_done=_on_done))
+
+        # A vault that isn't signed in can't be unlocked. Re-read that
+        # daemon-owned state before deciding whether to show the prompt.
+        def _probe():
+            state = self._load_secret_state_with_retry(controller)
+            needs_login = bool(state.login_required) if state is not None else False
+            GLib.idle_add(lambda: (_after_probe(needs_login), False)[1])
+
+        def _after_probe(needs_login):
+            if needs_login:
+                retry()  # not signed in -> can't autofill; connect normally
+                return
+            _show_unlock()
+
+        def _initial_check():
+            state = self._load_secret_state_with_retry(controller)
+            GLib.idle_add(lambda: (_after_initial(state), False)[1])
+
+        def _after_initial(state):
+            if state is None or (not state.needs_unlock and not state.login_required):
+                retry()  # unlocked, no vault configured, or state undeterminable
+                return
+            threading.Thread(target=_probe, daemon=True).start()
+
+        threading.Thread(target=_initial_check, daemon=True).start()
+        return True
 
     def connect_to_host(
         self,
