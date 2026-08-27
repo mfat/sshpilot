@@ -7,6 +7,7 @@ import sys
 import platform
 import shutil
 import logging
+import time
 from typing import Optional
 
 try:
@@ -38,16 +39,54 @@ _DAEMON_READ_METHODS = {
 }
 
 
-def _daemon_read(reader, name):
+# A ``SecretBackendsController`` rejects an operation overlapping another with
+# RuntimeError("...already in progress"). Startup's own vault unlock holds it for
+# as long as the user takes to answer the master-password prompt, so these reads
+# wait it out generously: nothing waits on this worker but the console banner
+# itself, and giving up would print a fabricated "unknown" storage section on
+# exactly the runs where a vault is being unlocked. Poll fast for the brief
+# metadata-read contention, then slowly for the human-scale one.
+_BUSY_FAST_INTERVAL = 0.25
+_BUSY_FAST_WINDOW = 2.0
+_BUSY_SLOW_INTERVAL = 1.0
+_BUSY_TIMEOUT = 120.0
+
+
+def _daemon_read(reader, name, *, timeout: float = _BUSY_TIMEOUT):
     """One metadata read through a controller (``load_*``) or client (``get_secret_*``).
 
-    Returns ``None`` when the reader lacks the method or the daemon errors out, so
-    diagnostics degrade to "unavailable" instead of failing the whole bundle."""
+    A controller busy with another guarded operation is waited out (see above);
+    a transport/daemon failure is not (those raise ``SshPilotError``, which is
+    not a ``RuntimeError``, and retrying a request that already timed out would
+    only re-run a read whose transport is gone).
+
+    Returns ``None`` when the reader lacks the method, the daemon errors out, or
+    the controller never frees up, so diagnostics degrade to "unknown" instead of
+    failing the whole bundle."""
     for attr in _DAEMON_READ_METHODS.get(name, ()):
         fn = getattr(reader, attr, None)
-        if callable(fn):
+        if not callable(fn):
+            continue
+        started = time.monotonic()
+        deadline = started + timeout
+        while True:
             try:
                 return fn()
+            except RuntimeError:
+                now = time.monotonic()
+                if now >= deadline:
+                    logger.debug(
+                        "startup diagnostics: secret %s still busy after %.0fs",
+                        name,
+                        timeout,
+                    )
+                    return None
+                interval = (
+                    _BUSY_FAST_INTERVAL
+                    if now - started < _BUSY_FAST_WINDOW
+                    else _BUSY_SLOW_INTERVAL
+                )
+                time.sleep(min(interval, deadline - now))
             except Exception:
                 return None
     return None
