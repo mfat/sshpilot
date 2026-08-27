@@ -614,6 +614,48 @@ def test_scp_download_browser_is_presented_before_sftp_ready(monkeypatch):
     assert controller._sftp_browser_controller is not None
 
 
+def test_scp_download_browser_gates_on_vault_unlock(monkeypatch):
+    """A locked session-backed vault must be unlocked before the SCP
+    download browser opens its SFTP listing session - mirrors the gate
+    used before starting the actual transfer (start_scp_transfer)."""
+    from unittest import mock
+
+    monkeypatch.setattr(
+        dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
+    )
+    _patch_browser_widgets(monkeypatch)
+    _Dialog.instances = []
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+
+    captured_retry = []
+    terminal_manager = mock.Mock()
+    terminal_manager._maybe_unlock_secrets_then = mock.Mock(
+        side_effect=lambda retry: (captured_retry.append(retry), True)[1]
+    )
+    controller.window.terminal_manager = terminal_manager
+
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1")
+    )
+
+    # Gated: no SFTP browse session must have started yet.
+    assert bridge.submitted == []
+    assert len(captured_retry) == 1
+
+    # Once the vault is unlocked, the retry must proceed without re-gating.
+    captured_retry[0]()
+
+    assert len(bridge.submitted) == 1
+    assert controller._sftp_browser_controller is not None
+    terminal_manager._maybe_unlock_secrets_then.assert_called_once()
+
+
 def test_scp_download_browser_populates_large_listing_incrementally(monkeypatch):
     monkeypatch.setattr(
         dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args)
@@ -792,3 +834,62 @@ def test_scp_download_browser_presenter_never_steals_other_scopes(monkeypatch):
     assert client.claims == []
     controller._close_sftp_browser_controller()
     assert dialogs._closed
+
+
+def test_scp_transfer_gates_on_vault_unlock(monkeypatch):
+    """A locked session-backed vault must be unlocked before SCP starts -
+    mirrors the gate used before opening a terminal/file-manager connection
+    (TerminalManager._maybe_unlock_secrets_then)."""
+    from unittest import mock
+
+    class Label:
+        def set_wrap(self, _value):
+            return None
+
+        def set_halign(self, _value):
+            return None
+
+        def set_text(self, _value):
+            return None
+
+    class Dialog:
+        def __init__(self, _title):
+            self.content_box = SimpleNamespace(append=lambda _item: None)
+            self.cancel_btn = SimpleNamespace()
+
+        def connect(self, *_args):
+            return None
+
+        def present(self, *_args):
+            return None
+
+    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", Dialog)
+    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", Label)
+    client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
+    controller = _controller(client)
+
+    captured_retry = []
+    terminal_manager = mock.Mock()
+    terminal_manager._maybe_unlock_secrets_then = mock.Mock(
+        side_effect=lambda retry: (captured_retry.append(retry), True)[1]
+    )
+    controller.window.terminal_manager = terminal_manager
+
+    controller.start_scp_transfer(
+        SimpleNamespace(id="demo", nickname="demo"),
+        ["/tmp/a file"],
+        "/remote/drop",
+        direction="upload",
+    )
+
+    # Gated: the transfer must not have started yet.
+    assert client.started == []
+    assert len(captured_retry) == 1
+
+    # Once the vault is unlocked, the retry must proceed without re-gating.
+    captured_retry[0]()
+
+    operation, on_success, _on_error = controller.window.client_bridge.calls[0]
+    on_success(operation())
+    assert len(client.started) == 1
+    terminal_manager._maybe_unlock_secrets_then.assert_called_once()

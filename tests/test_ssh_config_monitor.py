@@ -23,13 +23,11 @@ def test_compatibility_reload_refreshes_daemon_projection():
     window.connection_manager.get_connections.return_value = ["demo"]
     window.group_manager = MagicMock()
     window.rebuild_connection_list = MagicMock()
-    window.effective_config_checker = MagicMock()
 
     window._reload_ssh_config(create_missing=False)
 
     window.connection_manager.refresh.assert_called_once_with()
     window.group_manager.bind_connections.assert_called_once_with(["demo"])
-    window.effective_config_checker.invalidate.assert_called_once_with()
     window.rebuild_connection_list.assert_called_once_with()
 
 

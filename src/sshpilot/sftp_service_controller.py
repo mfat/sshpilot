@@ -827,11 +827,26 @@ class DaemonSftpServiceController:
             self._on_state_changed(summary)
         if became_ready and self._on_ready is not None:
             self._on_ready(summary)
-        if summary.state is SftpServiceState.FAILED and self._on_error is not None:
-            message = summary.failure.message if summary.failure else "SFTP failed"
+        if (
+            summary.state in (SftpServiceState.FAILED, SftpServiceState.CLOSED)
+            and self._on_error is not None
+        ):
+            # CLOSED is included alongside FAILED because a self-initiated
+            # close/detach never reaches here: close() unsubscribes from
+            # events before sending the close RPC, and both close()/detach()
+            # set local state via _mark(), not this event-driven path. A
+            # CLOSED event that does arrive here means the service went away
+            # for a reason this tab did not initiate (e.g. another attached
+            # client closed a shared/reused service), so it must be
+            # surfaced the same way a FAILED event is.
+            if summary.state is SftpServiceState.FAILED:
+                message = summary.failure.message if summary.failure else "SFTP failed"
+            else:
+                message = "The SFTP service was closed"
             logger.warning(
-                "SFTP service %s FAILED for connection %s: %s",
+                "SFTP service %s %s for connection %s: %s",
                 summary.id,
+                summary.state.value,
                 self._connection_id,
                 message,
             )

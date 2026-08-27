@@ -534,6 +534,41 @@ class WindowActions:
         except Exception as e:
             logger.error(f"Failed to show delete group dialog: {e}")
 
+    def on_move_group_to_root_action(self, action, param=None):
+        """Move a nested subgroup out to the top level (ungroup it from its parent)."""
+        try:
+            selected_row = getattr(self, '_context_menu_group_row', None)
+            if not selected_row:
+                selected_row = self.connection_list.get_selected_row()
+            if not selected_row or not hasattr(selected_row, 'group_id'):
+                return
+
+            group_id = selected_row.group_id
+            group_info = self.group_manager.groups.get(group_id)
+            if not group_info or not group_info.get('parent_id'):
+                return
+
+            controller = getattr(self.group_manager, 'controller', None)
+            if controller is None:
+                self._simple_dialog(
+                    _("Service unavailable"),
+                    _("Connect to the sshPilot daemon before moving groups."),
+                )
+                return
+
+            from .sidebar import _submit_group_dnd_place, _sidebar_projection_generation
+
+            index = len(self.group_manager.get_ordered_siblings(None))
+            _submit_group_dnd_place(
+                self,
+                group_id,
+                None,
+                index,
+                expected_generation=_sidebar_projection_generation(self),
+            )
+        except Exception as e:
+            logger.error(f"Failed to move group to top level: {e}")
+
     def on_export_config_action(self, action, param=None):
         """Handle export configuration action"""
         try:

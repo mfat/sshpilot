@@ -628,6 +628,103 @@ def test_closing_event_leaves_ready_and_rejects_ops(controller, mock_bridge):
     mock_bridge.submit.assert_not_called()
 
 
+def test_closed_event_fires_on_error_and_leaves_service_stuck(controller, mock_bridge):
+    """READY → CLOSED must fire on_error, same as FAILED (see companion
+    test_failed_event_fires_on_error below).
+
+    A CLOSED event reaching here (as opposed to a self-initiated close/
+    detach, which sets local state via _mark() and never reaches
+    _on_open_accepted for its own close) means the service went away for a
+    reason this tab did not request -- e.g. another attached client closed a
+    shared/reused service. Previously this fired no signal at all, leaving
+    the file manager tab's connection-error UI
+    (FileManagerWindow._on_connection_error) permanently silent.
+    """
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
+
+    errors = []
+    controller._on_error = errors.append
+
+    generation = 1
+    with controller._lock:
+        controller._generation = generation
+
+    ready = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    closed = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.CLOSED,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    controller._on_open_accepted(ready, generation)
+    assert controller.state is SftpControllerState.READY
+
+    controller._on_open_accepted(closed, generation)
+    assert controller.state is SftpControllerState.CLOSED
+
+    op_errors = []
+    controller.list_directory(
+        "/tmp",
+        on_success=lambda _r: pytest.fail("must not succeed once closed"),
+        on_error=op_errors.append,
+    )
+    assert len(op_errors) == 1
+    assert op_errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+    mock_bridge.submit.assert_not_called()
+
+    assert len(errors) == 1
+    assert errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+    assert "closed" in str(errors[0]).lower()
+
+
+def test_failed_event_fires_on_error(controller, mock_bridge):
+    """READY → FAILED must fire on_error — same signal CLOSED fires above."""
+    from datetime import datetime, timezone
+
+    from sshpilot.api.models.operations import (
+        ServiceFailure,
+        SftpServiceState,
+        SftpServiceSummary,
+    )
+
+    errors = []
+    controller._on_error = errors.append
+
+    generation = 1
+    with controller._lock:
+        controller._generation = generation
+
+    ready = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.READY,
+        created_at=datetime.now(timezone.utc),
+    )
+    failed = SftpServiceSummary(
+        id=SftpServiceId("svc-1"),
+        connection_id=ConnectionId("conn-1"),
+        state=SftpServiceState.FAILED,
+        created_at=datetime.now(timezone.utc),
+        failure=ServiceFailure(code="sftp_connection_lost", message="The SFTP connection was lost"),
+    )
+
+    controller._on_open_accepted(ready, generation)
+    controller._on_open_accepted(failed, generation)
+
+    assert controller.state is SftpControllerState.FAILED
+    assert len(errors) == 1
+    assert errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+    assert "SFTP connection was lost" in str(errors[0])
+
+
 def test_created_event_keeps_opening_before_ready(controller):
     from datetime import datetime, timezone
 

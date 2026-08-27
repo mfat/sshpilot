@@ -140,8 +140,30 @@ class WindowFileManagerMixin:
             return
         self._open_manage_files_now_for_connection(connection)
 
-    def _open_manage_files_now_for_connection(self, connection, force_builtin=False):
-        """Actually open the file manager (no prompts, no gating)."""
+    def _open_manage_files_now_for_connection(
+        self, connection, force_builtin=False, _secret_unlock_attempted=False
+    ):
+        """Open the file manager, first unlocking a locked session-backed vault.
+
+        A locked vault (e.g. KDBX with "remember master password" off) has no
+        stored credential for the daemon's SFTP broker to hand off, so without
+        this gate the daemon falls back to a raw host-password/askpass prompt
+        instead of the vault master-password prompt. Mirrors the same gate
+        already used before opening a terminal connection
+        (TerminalManager._maybe_unlock_secrets_then).
+        """
+        if not _secret_unlock_attempted:
+            terminal_manager = getattr(self, "terminal_manager", None)
+            if terminal_manager is not None:
+                def _retry():
+                    self._open_manage_files_now_for_connection(
+                        connection,
+                        force_builtin=force_builtin,
+                        _secret_unlock_attempted=True,
+                    )
+
+                if terminal_manager._maybe_unlock_secrets_then(_retry):
+                    return
 
         nickname = getattr(connection, 'nickname', None) or getattr(connection, 'hostname', None) or getattr(connection, 'host', None) or getattr(connection, 'username', 'Remote Host')
         host_value = _get_connection_host(connection) or _get_connection_alias(connection)

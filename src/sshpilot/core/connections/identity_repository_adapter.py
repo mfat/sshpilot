@@ -188,18 +188,80 @@ def reconcile_identity_state(
     remaining_new = tuple(
         projection for projection in projections if projection.alias not in explicit_new_aliases
     )
-    result = reconcile_identities(
-        remaining_old,
-        remaining_new,
+
+    # An identity still ambiguous coming into this pass was carried forward
+    # unchanged and non-tombstoned (see the ``ambiguous_uuids`` branch below),
+    # so its frozen, pre-ambiguity projection would otherwise remain live
+    # EXACT_ALIAS/anchor evidence on every later pass -- including against a
+    # completely unrelated new connection that merely reuses its old, now-
+    # free alias. Route each such identity through its own constrained
+    # rematch against only its own pending ambiguity's candidate aliases
+    # (still using this pass's fresh evidence, so a genuine disambiguating
+    # edit -- e.g. one candidate's destination changing -- still resolves it
+    # normally); everything else reconciles exactly as before.
+    still_ambiguous_uuids = {
+        uuid for ambiguity in state.pending_ambiguities for uuid in ambiguity.old_uuids
+    }
+    ambiguity_candidate_aliases = {
+        candidate.alias
+        for ambiguity in state.pending_ambiguities
+        for candidate in ambiguity.new_projections
+    }
+    ambiguous_old = tuple(
+        entry for entry in remaining_old if entry.uuid in still_ambiguous_uuids
+    )
+    ordinary_old = tuple(
+        entry for entry in remaining_old if entry.uuid not in still_ambiguous_uuids
+    )
+    ambiguous_new = tuple(
+        projection for projection in remaining_new
+        if projection.alias in ambiguity_candidate_aliases
+    )
+    ordinary_new = tuple(
+        projection for projection in remaining_new
+        if projection.alias not in ambiguity_candidate_aliases
+    )
+    # A ghost's frozen alias can coincide with an unrelated projection that
+    # legitimately belongs to the ordinary pool (its own alias was simply
+    # reused elsewhere once freed). Two live, non-tombstoned identities must
+    # never share one alias, and EXACT_ALIAS is unconditional evidence by
+    # design (see MatchReason.EXACT_ALIAS's "cannot be stolen" contract) --
+    # so a ghost cannot be given a chance to contest that alias without
+    # reintroducing the original bug. Retire it instead: its own frozen
+    # alias is conclusively no longer available to reclaim, so nothing sound
+    # remains to resolve its ambiguity by.
+    ordinary_new_aliases = {projection.alias for projection in ordinary_new}
+    retiring_ghost_uuids = {
+        entry.uuid for entry in ambiguous_old
+        if entry.projection.alias in ordinary_new_aliases
+    }
+    if retiring_ghost_uuids:
+        ambiguous_old = tuple(
+            entry for entry in ambiguous_old if entry.uuid not in retiring_ghost_uuids
+        )
+    ambiguity_result = reconcile_identities(
+        ambiguous_old,
+        ambiguous_new,
         uuid_factory=uuid_factory,
         allow_tombstone_resurrection=allow_tombstone_resurrection,
     )
-    matches = tuple(explicit_matches) + result.matched
-    deleted_uuids = {entry.uuid for entry in result.deleted}
+    ordinary_result = reconcile_identities(
+        ordinary_old,
+        ordinary_new,
+        uuid_factory=uuid_factory,
+        allow_tombstone_resurrection=allow_tombstone_resurrection,
+    )
+    combined_matched = ambiguity_result.matched + ordinary_result.matched
+    combined_created = ambiguity_result.created + ordinary_result.created
+    combined_deleted = ambiguity_result.deleted + ordinary_result.deleted
+    combined_ambiguous = ambiguity_result.ambiguous + ordinary_result.ambiguous
+
+    matches = tuple(explicit_matches) + combined_matched
+    deleted_uuids = {entry.uuid for entry in combined_deleted} | retiring_ghost_uuids
     ambiguous_uuids = {
-        entry.uuid for item in result.ambiguous for entry in item.old
+        entry.uuid for item in combined_ambiguous for entry in item.old
     }
-    created = {entry.uuid: entry for entry in result.created}
+    created = {entry.uuid: entry for entry in combined_created}
     next_generation = state.sidecar_generation
     identities = []
     for identity in state.identities:
@@ -245,7 +307,7 @@ def reconcile_identity_state(
             old_uuids=tuple(entry.uuid for entry in item.old),
             new_projections=item.new,
         )
-        for item in result.ambiguous
+        for item in combined_ambiguous
     )
     groups, root = _placement_values(
         state.groups,

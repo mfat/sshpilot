@@ -581,23 +581,34 @@ class WindowTabsMixin:
             conn = self.terminal_to_connection.get(child)
             if conn is None:
                 return
-            from .file_manager_integration import create_internal_file_manager_tab
-            host_value = _get_connection_host(conn) or _get_connection_alias(conn)
-            port_value = getattr(conn, 'port', 22)
-            widget, controller = create_internal_file_manager_tab(
-                user=str(getattr(conn, 'username', '') or ''),
-                host=str(host_value or ''),
-                port=port_value if port_value and port_value != 22 else None,
-                nickname=str(getattr(conn, 'nickname', '') or host_value or ''),
-                parent_window=self,
-                connection=conn,
-                connection_manager=self.connection_manager,
-            )
-            self._track_internal_file_manager_window(controller, widget=widget)
-            child.set_file_panel(
-                widget,
-                teardown=lambda: self._teardown_file_manager_embed(widget),
-            )
+
+            def _embed():
+                from .file_manager_integration import create_internal_file_manager_tab
+                host_value = _get_connection_host(conn) or _get_connection_alias(conn)
+                port_value = getattr(conn, 'port', 22)
+                widget, controller = create_internal_file_manager_tab(
+                    user=str(getattr(conn, 'username', '') or ''),
+                    host=str(host_value or ''),
+                    port=port_value if port_value and port_value != 22 else None,
+                    nickname=str(getattr(conn, 'nickname', '') or host_value or ''),
+                    parent_window=self,
+                    connection=conn,
+                    connection_manager=self.connection_manager,
+                )
+                self._track_internal_file_manager_window(controller, widget=widget)
+                child.set_file_panel(
+                    widget,
+                    teardown=lambda: self._teardown_file_manager_embed(widget),
+                )
+
+            # A locked session-backed vault has no stored credential for the
+            # daemon to hand off, so unlock it first the same way opening the
+            # file manager tab does (TerminalManager._maybe_unlock_secrets_then)
+            # - otherwise the daemon falls back to a raw host-password prompt.
+            terminal_manager = getattr(self, "terminal_manager", None)
+            if terminal_manager is not None and terminal_manager._maybe_unlock_secrets_then(_embed):
+                return
+            _embed()
         except Exception as exc:
             logger.error("Show files below terminal failed: %s", exc)
 
@@ -771,7 +782,18 @@ class WindowTabsMixin:
             if conn is None:
                 logger.debug("File manager tab has no connection for new window")
                 return
-            self._launch_external_file_manager(conn)
+
+            def _launch():
+                self._launch_external_file_manager(conn)
+
+            # A locked session-backed vault has no stored credential for the
+            # daemon to hand off, so unlock it first the same way opening the
+            # file manager does (TerminalManager._maybe_unlock_secrets_then) -
+            # otherwise the daemon falls back to a raw host-password prompt.
+            terminal_manager = getattr(self, "terminal_manager", None)
+            if terminal_manager is not None and terminal_manager._maybe_unlock_secrets_then(_launch):
+                return
+            _launch()
         except Exception as exc:
             logger.error("Tab file manager new window failed: %s", exc)
 

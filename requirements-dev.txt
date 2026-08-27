@@ -13,6 +13,9 @@ pytest>=7.0
 pytest-cov
 pytest-xdist
 jsonschema
+# Stateful property-based stress tests for the connection identity sidecar
+# (tests/sidecar/): see docs/architecture/connection-identity-persistence.md.
+hypothesis>=6.100
 # Test-only: test_combined_auth.py uses paramiko as a mock SSH server to
 # validate the native auth path; not a runtime dependency.
 paramiko>=3.4

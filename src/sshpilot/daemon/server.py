@@ -701,6 +701,9 @@ class DaemonServer:
                     self._connection_service,
                     operation_lifecycle=self._operation_runtime,
                 )
+            self._sftp_runtime.set_authenticated_callback(
+                self._interaction_broker.mark_authenticated
+            )
             forward_builder = getattr(
                 self._connection_service, "prepare_daemon_forward_launch", None
             )

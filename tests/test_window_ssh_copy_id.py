@@ -38,6 +38,9 @@ def _window():
     window.client = MagicMock()
     window.client.deploy_key.return_value = _summary()
     window.client.get_operation.return_value = _summary()
+    # No secrets-controller-gating in these tests - they exercise the deploy
+    # RPC itself, not the vault-unlock gate (covered separately).
+    window.terminal_manager = None
     return window
 
 
@@ -63,6 +66,7 @@ def _capture_timeout(monkeypatch):
 
 def test_runner_requires_daemon_client():
     window = MagicMock()
+    window.terminal_manager = None
     deploy_key = window.client.deploy_key
     window.client = None
     runner = _runner(window)
@@ -75,6 +79,7 @@ def test_runner_requires_daemon_client():
 
 def test_runner_requires_daemon_key_id():
     window = MagicMock()
+    window.terminal_manager = None
     runner = _runner(window)
 
     runner.run(_connection(), SimpleNamespace(key_id=None))
@@ -198,3 +203,30 @@ def test_runner_cancel_stops_polling(monkeypatch):
     window.client.cancel_operation.assert_called_once_with("op:7")
     assert source_removed == [poll_id]
     assert runner._operation_id is None
+
+
+def test_runner_gates_on_vault_unlock(monkeypatch):
+    """A locked session-backed vault must be unlocked before ssh-copy-id
+    deploys - mirrors the gate used before opening a terminal/file-manager
+    connection (TerminalManager._maybe_unlock_secrets_then)."""
+    window = _window()
+    runner = _runner(window)
+
+    captured_retry = []
+    terminal_manager = MagicMock()
+    terminal_manager._maybe_unlock_secrets_then = MagicMock(
+        side_effect=lambda retry: (captured_retry.append(retry), True)[1]
+    )
+    window.terminal_manager = terminal_manager
+
+    runner.run(_connection(), _key(), force=True)
+
+    # Gated: deployment must not have started yet.
+    window.client.deploy_key.assert_not_called()
+    assert len(captured_retry) == 1
+
+    # Once the vault is unlocked, the retry must proceed without re-gating.
+    captured_retry[0]()
+
+    window.client.deploy_key.assert_called_once()
+    terminal_manager._maybe_unlock_secrets_then.assert_called_once()
