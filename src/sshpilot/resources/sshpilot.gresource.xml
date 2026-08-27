@@ -26,6 +26,7 @@
     <file alias="error-outline-symbolic.svg">icons/scalable/actions/error-outline-symbolic.svg</file>
     <file alias="info-outline-symbolic.svg">icons/scalable/actions/info-outline-symbolic.svg</file>
     <file alias="color-symbolic.svg">icons/scalable/actions/color-symbolic.svg</file>
+    <file alias="brush-monitor-symbolic.svg">icons/scalable/actions/brush-monitor-symbolic.svg</file>
     <file alias="document-properties-symbolic.svg">icons/scalable/actions/document-properties-symbolic.svg</file>
     <file alias="document-save-symbolic.svg">icons/scalable/actions/document-save-symbolic.svg</file>
     <file alias="document-send-symbolic.svg">icons/scalable/actions/document-send-symbolic.svg</file>

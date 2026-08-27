@@ -248,6 +248,13 @@ class FakeBroker:
             result, "remember_policy", RememberPolicy.DO_NOT_STORE
         )
 
+    def request_client_secret_with_status(self, *, owner_client_id, **kwargs) -> Any:
+        from sshpilot.api.models.interactions import InteractionState
+
+        secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+        state = InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+        return secret, state
+
 
 def _write_settings(path: Path, secrets: Optional[Dict[str, Any]] = None) -> Path:
     config = {
@@ -297,6 +304,256 @@ def _all_strings(value: Any, out: Optional[List[str]] = None) -> List[str]:
         for item in value:
             _all_strings(item, out)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Issue #1200: encrypted backup export — encrypted roundtrip, shorter
+# operation-specific timeout, and cancellation vs. expiration messaging.
+# ---------------------------------------------------------------------------
+
+def test_export_backup_encrypted_roundtrip_decrypts_with_correct_password(tmp_path):
+    """The full ``SecretBackendService.export_backup`` surface (interaction broker
+    included, not just the lower ``daemon_export_backup`` helper): the produced
+    ``.spbk`` is genuinely encrypted, decrypts with the correct passphrase, and a
+    wrong passphrase fails cleanly instead of returning garbage."""
+    from sshpilot.backup_archive import (
+        SpbkPassphraseError,
+        is_spbk,
+        read_spbk,
+        spbk_is_encrypted,
+    )
+
+    service, _manager, _backends, broker, _path = _make_service(
+        tmp_path, expected_secrets=["s3cr3t"])
+    dest = tmp_path / "encrypted.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    assert is_spbk(str(dest))
+    assert spbk_is_encrypted(str(dest))
+    # The passphrase went through the protected interaction, never as a param.
+    assert broker.created and broker.created[0][1]["interaction_type"].value == "password"
+
+    manifest = read_spbk(str(dest), "s3cr3t")
+    assert "app_config" in manifest
+
+    with pytest.raises(SpbkPassphraseError):
+        read_spbk(str(dest), "wrong-password")
+
+
+def test_export_backup_uses_shorter_backup_encryption_timeout(tmp_path):
+    """The encryption-passphrase interaction must use the shorter, operation-
+    specific backup-encryption timeout, not the general 120s secret timeout."""
+    from sshpilot.daemon.interaction_broker import (
+        DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
+    )
+
+    service, _manager, _backends, broker, _path = _make_service(
+        tmp_path, expected_secrets=["s3cr3t"])
+    dest = tmp_path / "encrypted.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    assert len(broker.created) == 1
+    _interaction_id, kwargs = broker.created[0]
+    assert kwargs.get("timeout") == DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT
+
+
+def test_export_backup_reports_timeout_distinctly_from_cancellation(tmp_path):
+    """A timed-out encryption prompt must not be reported with the same message
+    as an explicit user cancellation (issue #1200: the old code always said
+    'Encryption cancelled', even when the user never touched anything)."""
+    from sshpilot.api.models.interactions import InteractionState
+
+    class _ExpiredBroker(FakeBroker):
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            self.create(**kwargs)
+            return None, InteractionState.EXPIRED
+
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path, broker=_ExpiredBroker())
+    result = service.export_backup(
+        destination=str(tmp_path / "never-written.spbk"),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status == SecretOperationState.INTERACTION_REQUIRED
+    assert result.message == "Encryption password request timed out"
+
+
+def test_export_backup_reports_explicit_cancellation(tmp_path):
+    """An actual user cancellation must still read as a cancellation, distinct
+    from the timeout message above."""
+    from sshpilot.api.models.interactions import InteractionState
+
+    class _CancelledBroker(FakeBroker):
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            self.create(**kwargs)
+            return None, InteractionState.CANCELLED
+
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path, broker=_CancelledBroker())
+    result = service.export_backup(
+        destination=str(tmp_path / "never-written.spbk"),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status == SecretOperationState.INTERACTION_REQUIRED
+    assert result.message == "Encryption cancelled"
+
+
+def test_export_backup_unencrypted_never_prompts(tmp_path):
+    """Unencrypted export must not touch the interaction broker at all — it
+    should be unaffected by any of the encrypted-export changes above."""
+    service, _manager, _backends, broker, _path = _make_service(tmp_path)
+    dest = tmp_path / "plain.spbk"
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": False},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    assert broker.created == []
+
+    from sshpilot.backup_archive import is_spbk, spbk_is_encrypted
+
+    assert is_spbk(str(dest))
+    assert not spbk_is_encrypted(str(dest))
+
+
+def test_export_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
+    """Metadata requests must remain responsive while export waits for input.
+
+    The export used to hold ``SecretBackendService._lock`` across the
+    passphrase interaction.  A concurrent ``secrets.state.get`` then waited
+    until the five-second client RPC timeout, which disconnected the peer and
+    cancelled the export.
+    """
+    service, _manager, _backends, _broker, _path = _make_service(tmp_path)
+    prompt_started = threading.Event()
+    release_prompt = threading.Event()
+
+    def _blocked_prompt(*_args, **_kwargs):
+        prompt_started.set()
+        assert release_prompt.wait(2.0)
+        from sshpilot.api.models.interactions import InteractionState
+        return None, InteractionState.CANCELLED
+
+    monkeypatch.setattr(service, "_prompt_for_secret_with_status", _blocked_prompt)
+    export_result = []
+    export_thread = threading.Thread(
+        target=lambda: export_result.append(service.export_backup(
+            destination=str(tmp_path / "cancelled.spbk"),
+            options={"encrypted": True},
+            owner_client_id="client-1",
+        ))
+    )
+    export_thread.start()
+    assert prompt_started.wait(1.0)
+
+    state_result = []
+    state_thread = threading.Thread(target=lambda: state_result.append(service.get_state()))
+    state_thread.start()
+    state_thread.join(1.0)
+    assert not state_thread.is_alive(), "secrets.state.get was blocked by the prompt"
+
+    release_prompt.set()
+    export_thread.join(1.0)
+    assert not export_thread.is_alive()
+    assert export_result[0].status == SecretOperationState.INTERACTION_REQUIRED
+
+
+def _encrypted_backup(tmp_path, name="encrypted.spbk"):
+    """Produce a genuinely encrypted ``.spbk`` through the service surface."""
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path, expected_secrets=["s3cr3t"])
+    dest = tmp_path / name
+    result = service.export_backup(
+        destination=str(dest),
+        options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                 "secrets": False, "private_keys": False, "encrypted": True},
+        owner_client_id="client-1",
+    )
+    assert result.status.value == "success", result.message
+    return dest
+
+
+def _assert_state_stays_responsive(service, run, monkeypatch):
+    """Run *run* with the decryption prompt blocked and assert that a
+    concurrent ``secrets.state.get`` still returns.
+
+    Same failure as the export regression above: holding
+    ``SecretBackendService._lock`` across the passphrase interaction makes the
+    metadata query wait for the five-second client RPC timeout, which
+    disconnects the peer and cancels the interaction being waited on.
+    """
+    prompt_started = threading.Event()
+    release_prompt = threading.Event()
+    prompt_released = []
+
+    def _blocked_prompt(*_args, **_kwargs):
+        prompt_started.set()
+        prompt_released.append(release_prompt.wait(5.0))
+        return None
+
+    monkeypatch.setattr(service, "_prompt_for_secret", _blocked_prompt)
+    op_result: List[Any] = []
+    op_thread = threading.Thread(target=lambda: op_result.append(run()), daemon=True)
+    op_thread.start()
+    try:
+        assert prompt_started.wait(2.0), "the passphrase prompt was never reached"
+        state_thread = threading.Thread(target=service.get_state, daemon=True)
+        state_thread.start()
+        state_thread.join(1.0)
+        assert not state_thread.is_alive(), "secrets.state.get was blocked by the prompt"
+    finally:
+        release_prompt.set()
+    op_thread.join(2.0)
+    assert not op_thread.is_alive()
+    assert prompt_released == [True]
+    return op_result[0]
+
+
+def test_import_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
+    """Encrypted import must not hold the service lock across its prompt."""
+    source = _encrypted_backup(tmp_path)
+    target = tmp_path / "import"
+    target.mkdir()
+    service, _manager, _backends, _broker, _path = _make_service(target)
+    result = _assert_state_stays_responsive(
+        service,
+        lambda: service.import_backup(
+            source=str(source), options={}, owner_client_id="client-1"),
+        monkeypatch,
+    )
+    assert result.status == SecretOperationState.INTERACTION_REQUIRED
+    assert result.message == "Decryption cancelled"
+
+
+def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
+    """Encrypted preview must not hold the service lock across its prompt."""
+    source = _encrypted_backup(tmp_path)
+    target = tmp_path / "preview"
+    target.mkdir()
+    service, _manager, _backends, _broker, _path = _make_service(target)
+    public = _assert_state_stays_responsive(
+        service,
+        lambda: service.preview_backup(source=str(source), owner_client_id="client-1"),
+        monkeypatch,
+    )
+    assert public.get("encrypted") is True
+    assert public.get("error") == "Decryption cancelled"
 
 
 # ---------------------------------------------------------------------------
@@ -1069,6 +1326,15 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
             result = self.wait_for_result(summary.id)
             return None if result is None else result.secret
 
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            from sshpilot.api.models.interactions import InteractionState
+
+            secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+            state = (
+                InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+            )
+            return secret, state
+
     calls = []
 
     def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest, **_kwargs):
@@ -1123,6 +1389,15 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
             summary = self.create(**kwargs)
             result = self.wait_for_result(summary.id)
             return None if result is None else result.secret
+
+        def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+            from sshpilot.api.models.interactions import InteractionState
+
+            secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+            state = (
+                InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+            )
+            return secret, state
 
     def _fake_import(_manager, *, source, options, passphrase, settings_path, manifest, **_kwargs):
         return SecretTransferResult(

@@ -267,3 +267,160 @@ def test_key_chooser_dialog_passes_itself_as_browse_parent():
         "KeyChooserDialog must pass itself as the parent for the browse "
         "callback, not rely on the callback defaulting to some other window"
     )
+
+
+# ---------------------------------------------------------------------------
+# "Browse…" row must be clickable on libadwaita < 1.6 (issue #1103)
+# ---------------------------------------------------------------------------
+# Regression: the key chooser's Browse row prefers ``Adw.ButtonRow``
+# (libadwaita >= 1.6) and falls back to ``Adw.ActionRow`` on older runtimes such
+# as Ubuntu 24.04 (libadwaita 1.5). ``Adw.ActionRow`` defaults to
+# ``activatable=False``, and GtkListBox skips ::row-activated for
+# non-activatable rows — so the "activated" handler never fired and Browse did
+# nothing at all, silently, no matter how the file chooser was parented.
+
+import pytest
+
+
+class _FakeRow:
+    """Minimal stand-in for Adw.ActionRow recording activation wiring."""
+
+    def __init__(self, title=None, **_kwargs):
+        self.title = title
+        self.activatable = False
+        self.handlers = {}
+        self.prefixes = []
+
+    def set_activatable(self, value):
+        self.activatable = bool(value)
+
+    def add_prefix(self, widget):
+        self.prefixes.append(widget)
+
+    def connect(self, signal, handler):
+        self.handlers[signal] = handler
+
+    def get_title(self):
+        return self.title
+
+
+class _FakeGroup:
+    def __init__(self):
+        self.rows = []
+
+    def add(self, row):
+        self.rows.append(row)
+
+
+def _adw_stub_without_button_row(monkeypatch):
+    """Patch ``connection_dialog.Adw`` to emulate libadwaita < 1.6."""
+    from sshpilot import connection_dialog
+
+    class _Adw:
+        PreferencesGroup = _FakeGroup
+        ActionRow = _FakeRow
+
+        def __getattr__(self, name):  # pragma: no cover - defensive
+            raise AttributeError(name)
+
+    stub = _Adw()
+    monkeypatch.setattr(connection_dialog, 'Adw', stub)
+    return stub
+
+
+def _build_disk_page_rows(monkeypatch, on_browse):
+    from sshpilot import connection_dialog
+    from sshpilot.connection_dialog import KeyChooserDialog
+
+    _adw_stub_without_button_row(monkeypatch)
+    monkeypatch.setattr(
+        connection_dialog.Gtk, 'Image',
+        types.SimpleNamespace(new_from_icon_name=lambda name: name),
+        raising=False,
+    )
+
+    captured = {}
+
+    self = types.SimpleNamespace(
+        _on_browse=on_browse,
+        _existing=set(),
+        _checks=[],
+        _placeholder_row=lambda text: _FakeRow(title=text),
+        _wrap_group=lambda group: captured.setdefault('group', group),
+        _on_browse_clicked=lambda *_a: None,
+    )
+    types.MethodType(KeyChooserDialog.__dict__['_build_disk_page'], self)([])
+    return captured['group'].rows
+
+
+def _find_browse_row(rows):
+    for row in rows:
+        if 'Browse' in (row.get_title() or ''):
+            return row
+    return None
+
+
+def test_browse_row_is_activatable_on_old_libadwaita(monkeypatch):
+    """Without Adw.ButtonRow the AdwActionRow fallback must be made
+    activatable, or clicking Browse is a silent no-op."""
+    rows = _build_disk_page_rows(monkeypatch, lambda chosen, parent: None)
+    browse = _find_browse_row(rows)
+
+    assert browse is not None, "Browse row missing from the disk page"
+    assert browse.activatable, (
+        "The Adw.ActionRow fallback must set activatable=True; GtkListBox "
+        "never emits ::row-activated for a non-activatable row, so Browse "
+        "silently does nothing on libadwaita < 1.6 (Ubuntu 24.04)"
+    )
+    assert 'activated' in browse.handlers
+
+
+@pytest.mark.gui
+def test_browse_row_activation_reaches_callback_with_real_gtk(monkeypatch):
+    """End-to-end signal path on real widgets: activating the fallback row in
+    its GtkListBox must invoke the browse callback."""
+    from gi.repository import Adw, Gtk
+
+    if not getattr(Adw.ActionRow, '__module__', '').startswith('gi.repository'):
+        pytest.skip('GTK is stubbed (headless/CI); real PyGObject not loaded')
+
+    from sshpilot import connection_dialog
+    from sshpilot.connection_dialog import KeyChooserDialog
+
+    class _AdwWithoutButtonRow:
+        def __getattr__(self, name):
+            if name == 'ButtonRow':
+                raise AttributeError(name)
+            return getattr(Adw, name)
+
+    monkeypatch.setattr(connection_dialog, 'Adw', _AdwWithoutButtonRow())
+
+    parents = []
+    self = types.SimpleNamespace(
+        _on_browse=lambda chosen, parent: parents.append(parent),
+        _on_add=lambda path: None,
+        close=lambda: None,
+        _existing=set(),
+        _checks=[],
+    )
+    for name in ('_build_disk_page', '_wrap_group', '_placeholder_row',
+                 '_on_browse_clicked'):
+        setattr(self, name, types.MethodType(KeyChooserDialog.__dict__[name], self))
+
+    page = self._build_disk_page([])
+
+    def _walk(widget):
+        child = widget.get_first_child()
+        while child is not None:
+            yield child
+            yield from _walk(child)
+            child = child.get_next_sibling()
+
+    listbox = next(w for w in _walk(page) if isinstance(w, Gtk.ListBox))
+    row = next(w for w in _walk(page)
+               if isinstance(w, Adw.PreferencesRow) and 'Browse' in (w.get_title() or ''))
+
+    assert row.get_activatable()
+    listbox.emit('row-activated', row)
+
+    assert parents == [self], "Activating the Browse row must call on_browse"

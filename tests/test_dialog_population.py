@@ -291,3 +291,33 @@ def test_dialog_load_save_round_trip(tmp_path):
     assert captured["identity_agent"] == "~/.ssh/agent.sock"
     assert captured["add_keys_to_agent"] == "confirm"
     assert "ciphers" in captured["extra_ssh_config"].lower()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not _real_gtk_available(), reason="needs real libadwaita (gi is stubbed under the suite)")
+def test_dialog_registers_with_parents_application():
+    """A routed prompt (e.g. a vault master-password unlock while this dialog
+    is open, issue #1197) finds its parent through Gtk.Application.get_windows().
+    A bare Adw.Window is absent from that list unless it is explicitly
+    registered, so the dialog must associate itself with its parent's
+    application on construction."""
+    from gi.repository import Gio, Gtk
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    class CM:
+        connections = []
+        isolated_mode = False
+        def load_ssh_keys(self): return []
+        def get_key_passphrase(self, p): return ""
+        def find_connection_by_nickname(self, n): return None
+        def get_password(self, h, u): return None
+        def format_ssh_config_entry(self, data): return ""
+
+    app = Gtk.Application(application_id="org.sshpilot.test.dialog_registration")
+    app.register(Gio.Cancellable())
+    parent = Gtk.Window(application=app)
+
+    dlg = ConnectionDialog(parent, connection=None, connection_manager=CM())
+
+    assert dlg.get_application() is app
+    assert dlg in list(app.get_windows())

@@ -2022,6 +2022,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             spacing=0,
         )
         self._content_header_box.add_css_class('toolbar')
+        # Keep the titlebar height stable when the Start tab hides the tab bar.
+        # Adw.TabBar's natural height includes its tab-pill padding, so without
+        # this floor the empty title-stack state becomes visibly shorter.
+        self._content_header_box.set_size_request(-1, 46)
 
         self._window_controls_start = Gtk.WindowControls.new(Gtk.PackType.START)
         self._window_controls_end = Gtk.WindowControls.new(Gtk.PackType.END)
@@ -2040,6 +2044,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             orientation=Gtk.Orientation.HORIZONTAL,
             spacing=0,
         )
+
+        # This titlebar is a hand-built GtkBox, not an AdwHeaderBar, so nothing
+        # centres its children: GtkBox defaults them to Gtk.Align.FILL and they
+        # stretch to the full 46px row. A flat button then paints its hover
+        # highlight 46px tall next to a 34px tab pill, and sits 6px higher than
+        # the pills it lines up with. AdwHeaderBar centres both its packed
+        # widgets and its window controls at their natural 34px; match that so
+        # every element in the row shares the tab pills' baseline.
+        for _row_widget in (
+            self._window_controls_start,
+            self._window_controls_end,
+            self._headerbar_start_box,
+            self._headerbar_end_box,
+        ):
+            _row_widget.set_valign(Gtk.Align.CENTER)
 
         self._content_title_stack = Gtk.Stack()
         self._content_title_stack.set_hexpand(True)
@@ -3409,6 +3428,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.tab_bar.set_autohide(False)
         self.tab_bar.set_expand_tabs(False)
         self.tab_bar.set_hexpand(True)
+        # Reduce the visual gap between the Local Terminal button and the
+        # first tab without changing the spacing around the window controls.
+        self.tab_bar.set_margin_start(-4)
         # The tab bar fills the custom title bar's centre stack. "inline"
         # avoids drawing another toolbar surface inside the WindowHandle row.
         self.tab_bar.add_css_class('inline')
@@ -3474,7 +3496,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         self._terminal_theme_menu_button = Gtk.MenuButton()
         _cmd_icon_utils.set_button_icon(
-            self._terminal_theme_menu_button, 'color-symbolic'
+            self._terminal_theme_menu_button, 'brush-monitor-symbolic'
         )
         self._terminal_theme_menu_button.add_css_class('flat')
         selected_theme = str(

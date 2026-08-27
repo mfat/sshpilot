@@ -61,6 +61,14 @@
 
 
 
+    <release version="5.9.5" date="2026-08-25">
+      <description>
+        <p>Added new terminal theme selector, added option to access it from tab bar</p>
+        <p>Fixed vault unlock issue</p>
+        <p>Fixed backup encryption issue</p>
+        <p>Minor UI fixes</p>
+      </description>
+    </release>
     <release version="5.9.4" date="2026-08-24">
       <description>
         <p>Improved drag &amp; drop for connections across groups</p>

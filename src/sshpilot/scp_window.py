@@ -136,12 +136,8 @@ class ScpWindowController:
             # Register with the app so routed askpass prompts can find this modal
             # window as their parent (a bare Adw.Window is absent from
             # Gtk.Application.get_windows()).
-            try:
-                app = self.window.get_application()
-                if app is not None:
-                    win.set_application(app)
-            except Exception:
-                pass
+            from .window_dialogs import associate_window_with_parent_application
+            associate_window_with_parent_application(win, self.window)
 
             toolbar = Adw.ToolbarView()
             win.set_content(toolbar)
@@ -329,12 +325,8 @@ class ScpWindowController:
             # Register with the app so routed askpass prompts can find this
             # modal window as their parent (a bare Adw.Window is absent from
             # Gtk.Application.get_windows() and get_active_window()).
-            try:
-                app = self.window.get_application()
-                if app is not None:
-                    dialog.set_application(app)
-            except Exception:
-                pass
+            from .window_dialogs import associate_window_with_parent_application
+            associate_window_with_parent_application(dialog, self.window)
 
             # Attach the interaction presenter before opening the SFTP service
             # so authentication prompts are visible even while this browser is

@@ -558,6 +558,13 @@ class _OneShotBroker:
         result = self.wait_for_result(summary.id)
         return None if result is None else result.secret
 
+    def request_client_secret_with_status(self, *, owner_client_id, **kwargs):
+        from sshpilot.api.models.interactions import InteractionState
+
+        secret = self.request_client_secret(owner_client_id=owner_client_id, **kwargs)
+        state = InteractionState.CANCELLED if secret is None else InteractionState.ANSWERED
+        return secret, state
+
 
 def test_service_preview_caches_manifest_so_import_never_reprompts(monkeypatch, tmp_path):
     config_dir, _ = _isolate_paths(monkeypatch, tmp_path)
