@@ -2478,7 +2478,7 @@ def _on_connection_list_motion(window, target, x, y):
                 return Gdk.DragAction.MOVE
         window._last_motion_time = current_time
 
-        if getattr(window, "_dragged_connections", None):
+        if getattr(window, "_dragged_connections", None) or hasattr(window, "_dragged_group_id"):
             _show_ungrouped_area(window)
         _update_connection_autoscroll(window, y)
 
@@ -3058,6 +3058,7 @@ def _create_ungrouped_area(window):
     ungrouped_row.ungrouped_area = True
 
     window._ungrouped_area_row = ungrouped_row
+    window._ungrouped_area_label = label
     return ungrouped_row
 
 
@@ -3152,6 +3153,12 @@ def _show_ungrouped_area(window):
             return
 
         ungrouped_row = _create_ungrouped_area(window)
+        label = getattr(window, "_ungrouped_area_label", None)
+        if label is not None:
+            if hasattr(window, "_dragged_group_id"):
+                label.set_label(_("Drop here to move to the top level"))
+            else:
+                label.set_label(_("Drop connections here to ungroup them"))
         window.connection_list.append(ungrouped_row)
         window._ungrouped_area_visible = True
     except Exception as e:
@@ -4379,10 +4386,13 @@ def _attach_connection_list_context_menu(window):
                     menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window._open_tag_group_split(row)),
                 )
             elif hasattr(row, 'group_id'):
+                group_info = window.group_manager.groups.get(row.group_id, {})
+                is_nested = bool(group_info.get('parent_id'))
                 menu.add_section(
                     menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: window.on_edit_group_action(None, None)),
                     menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_group_in_split_view_action(None, None)),
                     menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: window.on_run_command_action()),
+                    menu.add_item('edit-undo-symbolic', _('Ungroup'), lambda: window.on_move_group_to_root_action(None, None)) if is_nested else None,
                     menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: window.on_delete_group_action(None, None)),
                 )
             else:
