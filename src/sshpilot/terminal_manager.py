@@ -494,7 +494,7 @@ class TerminalManager:
             window.connection_manager,
             group_color=group_color,
         )
-        terminal._reconnect_handler = self.reconnect_terminal
+        terminal._reconnect_handler = self._reconnect_terminal_gated
         terminal.connect("connection-established", self.on_terminal_connected)
         terminal.connect(
             "connection-failed",
@@ -576,7 +576,7 @@ class TerminalManager:
                     window.connection_manager,
                     group_color=group_color,
                 )
-                terminal._reconnect_handler = self.reconnect_terminal
+                terminal._reconnect_handler = self._reconnect_terminal_gated
                 if group_name:
                     setattr(terminal, "group_name", group_name)
                 return terminal
@@ -589,7 +589,7 @@ class TerminalManager:
             window.connection_manager,
             group_color=group_color,
         )
-        terminal._reconnect_handler = self.reconnect_terminal
+        terminal._reconnect_handler = self._reconnect_terminal_gated
         terminal.connect("connection-established", self.on_terminal_connected)
         terminal.connect("connection-failed", lambda w, e: logger.error(f"Connection failed: {e}"))
         terminal.connect("connection-lost", self.on_terminal_disconnected)
@@ -607,24 +607,31 @@ class TerminalManager:
         window.terminal_to_connection[terminal] = connection
         window.active_terminals[connection] = terminal
 
+        def _start_pane_session():
+            try:
+                connection_id = connection_id_for(connection)
+                terminal.start_daemon_session(
+                    window.client,
+                    window.client_bridge,
+                    connection_id,
+                )
+                terminal.apply_theme()
+                terminal.queue_terminal_draw()
+            except Exception as exc:
+                logger.error(
+                    "Failed to initialize daemon session for pane type=%s",
+                    type(exc).__name__,
+                )
+                self._unregister_terminal(connection, terminal)
+
         def _set_terminal_colors():
             try:
                 if use_daemon:
-                    try:
-                        connection_id = connection_id_for(connection)
-                        terminal.start_daemon_session(
-                            window.client,
-                            window.client_bridge,
-                            connection_id,
-                        )
-                        terminal.apply_theme()
-                        terminal.queue_terminal_draw()
-                    except Exception as exc:
-                        logger.error(
-                            "Failed to initialize daemon session for pane type=%s",
-                            type(exc).__name__,
-                        )
-                        self._unregister_terminal(connection, terminal)
+                    # A locked session-backed vault has no stored credential for
+                    # the daemon to hand off; unlock it first the same way a
+                    # fresh connect does (see _maybe_unlock_secrets_then).
+                    if not self._maybe_unlock_secrets_then(_start_pane_session):
+                        _start_pane_session()
                     return
 
             except Exception as exc:
@@ -1548,7 +1555,7 @@ class TerminalManager:
         try:
             logger.debug(f"Attempting to reconnect terminal for {connection.nickname}")
 
-            if not self.reconnect_terminal(terminal):
+            if not self._reconnect_terminal_gated(terminal):
                 logger.error("Failed to reconnect with new settings")
                 GLib.idle_add(self._show_reconnect_error, connection)
                 return False
@@ -1560,6 +1567,27 @@ class TerminalManager:
             GLib.idle_add(self._show_reconnect_error, connection, str(e))
 
         return False  # Don't repeat the timeout
+
+    def _reconnect_terminal_gated(self, terminal) -> bool:
+        """Unlock a locked session-backed vault before reconnecting.
+
+        A terminal can outlive the vault's own lock (e.g. KeePassXC's idle
+        timeout firing while the connection was dropped), so a reconnect must
+        re-check it the same way a fresh connect does - otherwise the daemon
+        finds no stored credential to hand off and falls back to a raw
+        host-password prompt instead of the vault-unlock prompt.
+        """
+        def _retry():
+            if self.reconnect_terminal(terminal) is False:
+                terminal._set_connecting_overlay_visible(False)
+                terminal._record_error_detail(_('Reconnect failed to start'))
+                terminal._set_disconnected_banner_visible(
+                    True, _('Reconnect failed to start')
+                )
+
+        if self._maybe_unlock_secrets_then(_retry):
+            return True
+        return self.reconnect_terminal(terminal)
 
     def reconnect_terminal(self, terminal) -> bool:
         """Open a fresh daemon session in an existing terminal widget."""

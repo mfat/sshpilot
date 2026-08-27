@@ -102,7 +102,7 @@ class TestDaemonActivationOwnership:
             manager.connect_to_host(connection)
 
             terminal.start_daemon_session.assert_called_once()
-            assert terminal._reconnect_handler == manager.reconnect_terminal
+            assert terminal._reconnect_handler == manager._reconnect_terminal_gated
             connection.native_connect.assert_not_called()
             connection.connect.assert_not_called()
             unlock.assert_called()
@@ -151,7 +151,11 @@ class TestDaemonActivationOwnership:
         window.active_terminals[connection] = terminal
         manager = TerminalManager(window)
 
-        with patch.object(manager, "reconnect_terminal", return_value=True) as reopen:
+        with patch.object(
+            manager, "_maybe_unlock_secrets_then", return_value=False
+        ), patch.object(
+            manager, "reconnect_terminal", return_value=True
+        ) as reopen:
             assert manager._reconnect_terminal(connection) is False
 
         reopen.assert_called_once_with(terminal)

@@ -811,7 +811,26 @@ class SshCopyIdRunner:
         self._poll_id = None
         self._interaction_dialogs = None
 
-    def run(self, connection, ssh_key, force=False):
+    def run(self, connection, ssh_key, force=False, _secret_unlock_attempted=False):
+        """Deploy the given key to the connection's authorized_keys.
+
+        A locked session-backed vault has no stored credential for the
+        daemon to hand off, so unlock it first the same way a terminal
+        connect does (TerminalManager._maybe_unlock_secrets_then) - otherwise
+        the daemon falls back to a raw host-password prompt.
+        """
+        if not _secret_unlock_attempted:
+            terminal_manager = getattr(self.window, "terminal_manager", None)
+            if terminal_manager is not None:
+                def _retry():
+                    self.run(
+                        connection, ssh_key, force=force,
+                        _secret_unlock_attempted=True,
+                    )
+
+                if terminal_manager._maybe_unlock_secrets_then(_retry):
+                    return
+
         client = getattr(self.window, "client", None)
         key_id = getattr(ssh_key, "key_id", None)
         if client is None or not key_id:

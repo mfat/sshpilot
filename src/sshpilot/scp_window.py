@@ -959,8 +959,29 @@ class ScpWindowController:
         except Exception as e:
             logger.error(f'File selection failed: {e}')
 
-    def start_scp_transfer(self, connection, sources, destination, *, direction: str):
-        """Start native SCP through the daemon transfer API."""
+    def start_scp_transfer(
+        self, connection, sources, destination, *, direction: str,
+        _secret_unlock_attempted: bool = False,
+    ):
+        """Start native SCP through the daemon transfer API.
+
+        A locked session-backed vault has no stored credential for the
+        daemon to hand off, so unlock it first the same way a terminal
+        connect does (TerminalManager._maybe_unlock_secrets_then) - otherwise
+        the daemon falls back to a raw host-password prompt.
+        """
+        if not _secret_unlock_attempted:
+            terminal_manager = getattr(self.window, "terminal_manager", None)
+            if terminal_manager is not None:
+                def _retry():
+                    self.start_scp_transfer(
+                        connection, sources, destination,
+                        direction=direction, _secret_unlock_attempted=True,
+                    )
+
+                if terminal_manager._maybe_unlock_secrets_then(_retry):
+                    return
+
         from .api import Capability
         from .api.models import (
             CancelTransferRequest,
