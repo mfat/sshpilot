@@ -6,7 +6,7 @@ import logging
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
 
-from gi.repository import Gtk, Adw, Gdk, GLib
+from gi.repository import Gtk, Adw, Gdk, GdkPixbuf, GLib
 
 from gettext import gettext as _
 
@@ -16,6 +16,10 @@ from .platform_utils import is_macos
 from . import icon_utils
 
 logger = logging.getLogger(__name__)
+
+# The app icon, bundled rather than looked up in the icon theme so it also
+# renders from a source checkout where hicolor has nothing installed.
+_BRAND_MARK_RESOURCE = '/io/github/mfat/sshpilot/sshpilot.svg'
 
 
 
@@ -130,6 +134,31 @@ class WelcomePage(Gtk.Overlay):
 
         return box
 
+    # --- Brand mark ---
+
+    def _build_brand_mark(self, size: int = 96):
+        """The app icon above the search field.
+
+        Rasterised from the bundled resource rather than the icon theme: this
+        is a full-colour mark, not a symbolic icon, and the resource is present
+        even when the app runs from a source checkout.
+        """
+        img = Gtk.Image()
+        img.set_pixel_size(size)
+        img.set_halign(Gtk.Align.CENTER)
+        img.set_margin_bottom(20)
+        # Decorative: the search field beside it carries the accessible name.
+        img.set_accessible_role(Gtk.AccessibleRole.PRESENTATION)
+        try:
+            # Rasterise at 2x so the mark stays crisp on HiDPI displays.
+            pixbuf = GdkPixbuf.Pixbuf.new_from_resource_at_scale(
+                _BRAND_MARK_RESOURCE, size * 2, size * 2, True)
+            img.set_from_paintable(Gdk.Texture.new_for_pixbuf(pixbuf))
+        except Exception:
+            logger.debug("Start page mark unavailable", exc_info=True)
+            img.set_visible(False)
+        return img
+
     # --- Main view ---
 
     def _build_minimal_view(self, current_shortcuts):
@@ -150,10 +179,17 @@ class WelcomePage(Gtk.Overlay):
         search_clamp.set_margin_start(24)
         search_clamp.set_margin_end(24)
         search_clamp.set_margin_bottom(28)
-        search_clamp.set_valign(Gtk.Align.END)
-        search_clamp.set_vexpand(True)
         search_clamp.set_child(self.omni_home)
-        outer.append(search_clamp)
+
+        # The mark rides directly above the search field; the pair stays pinned
+        # to the bottom of the top half so the field keeps its midpoint anchor.
+        head = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        head.set_hexpand(True)
+        head.set_vexpand(True)
+        head.set_valign(Gtk.Align.END)
+        head.append(self._build_brand_mark())
+        head.append(search_clamp)
+        outer.append(head)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
