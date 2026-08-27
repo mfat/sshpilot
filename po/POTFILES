@@ -61,6 +61,7 @@ src/sshpilot/sshcopyid_window.py
 src/sshpilot/terminal.py
 src/sshpilot/terminal_manager.py
 src/sshpilot/terminal_search.py
+src/sshpilot/terminal_theme_selector.py
 src/sshpilot/text_editor.py
 src/sshpilot/theme_selector.py
 src/sshpilot/web_tab.py

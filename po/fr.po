@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-23 10:52+0200\n"
-"PO-Revision-Date: 2026-08-23 10:53+0200\n"
+"POT-Creation-Date: 2026-08-26 11:00+0200\n"
+"PO-Revision-Date: 2026-08-26 11:01+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -27,6 +27,10 @@ msgstr "Bouton de vue scindée"
 #: src/sshpilot/actions.py:31 src/sshpilot/preferences.py:1662
 msgid "Command Snippets Button"
 msgstr "Bouton des extraits de commandes"
+
+#: src/sshpilot/actions.py:33 src/sshpilot/preferences.py:1633
+msgid "Terminal Theme Button"
+msgstr "Bouton du jeu de couleurs du terminal"
 
 #: src/sshpilot/actions.py:32 src/sshpilot/preferences.py:1667
 msgid "Theme Menu"
@@ -3049,6 +3053,13 @@ msgstr "Commande SSH non valide"
 msgid "Connect using SSH"
 msgstr "Se connecter avec SSH"
 
+#. The placeholder is the only visible text and GTK does not expose it
+#. as an accessible name; and it carries the (rebindable) shortcut, so
+#. it would not be a stable one either.
+#: src/sshpilot/omni_search.py:597
+msgid "Search connections and commands"
+msgstr "Rechercher des connexions et des commandes"
+
 #: src/sshpilot/omni_search.py:658
 msgid "Press Shift twice to search connections, tools or type ssh commands"
 msgstr "Appuyez deux fois sur Shift pour rechercher des connexions ou des outils, ou saisir des commandes ssh"
@@ -3674,10 +3685,6 @@ msgstr "Choisir"
 msgid "Color Scheme"
 msgstr "Jeu de couleurs"
 
-#: src/sshpilot/preferences.py:550
-msgid "Terminal color theme"
-msgstr "Thème de couleurs du terminal"
-
 #. Color scheme preview
 #: src/sshpilot/preferences.py:575
 #: src/sshpilot/resources/ui/monospace_font_dialog.ui:87
@@ -4203,6 +4210,10 @@ msgstr "Afficher le bouton de vue scindée (l’icône en forme de grille qui ou
 #: src/sshpilot/preferences.py:1663
 msgid "Show the command snippets toggle button"
 msgstr "Afficher le bouton permettant d’afficher ou de masquer les extraits de commandes"
+
+#: src/sshpilot/preferences.py:1634
+msgid "Show the color-scheme button on terminal tabs"
+msgstr "Afficher le bouton du jeu de couleurs pour les onglets de terminal"
 
 #: src/sshpilot/preferences.py:1668
 msgid "Show the application theme menu beside the commands button"
@@ -5744,12 +5755,35 @@ msgstr "<b>Ajouter au groupe</b>"
 msgid "{count} connections"
 msgstr "Nombre de connexions : {count}"
 
+#: src/sshpilot/sidebar.py:1074
+msgid "Collapse group"
+msgstr "Replier le groupe"
+
+#: src/sshpilot/sidebar.py:1074
+msgid "Expand group"
+msgstr "Déplier le groupe"
+
+#: src/sshpilot/sidebar.py:1081
+#, python-brace-format
+msgid "Connection group: {name}"
+msgstr "Groupe de connexions : {name}"
+
 #. The edit button renames the tag (across all tagged connections);
 #. the split-view button works as inherited — the action only reads
 #. group_info['connections'] / ['name'], so a synthetic group is fine.
 #: src/sshpilot/sidebar.py:1404 src/sshpilot/window_dialogs.py:2476
 msgid "Rename Tag"
 msgstr "Renommer l’étiquette"
+
+#. A tag section is not a user-created group; don't call it one.
+#: src/sshpilot/sidebar.py:1450
+#, python-brace-format
+msgid "Tag: {name}"
+msgstr "Étiquette : {name}"
+
+#: src/sshpilot/sidebar.py:1654
+msgid "Effective SSH config differs"
+msgstr "La configuration SSH effective diffère"
 
 #: src/sshpilot/sidebar.py:1610
 msgid ""
@@ -5780,10 +5814,21 @@ msgstr "Déconnecté"
 msgid "Drop connections here to ungroup them"
 msgstr "Déposez des connexions ici pour les retirer de leur groupe"
 
+#. A row of icon-only buttons in an unnamed container gives a screen reader
+#. nothing to orient by; GNOME's coding guidelines ask for a label on
+#. "panels that provide logical groupings".
+#: src/sshpilot/sidebar.py:4100
+msgid "Connection list actions"
+msgstr "Actions de la liste des connexions"
+
 #: src/sshpilot/sidebar.py:4035
 #, python-brace-format
 msgid "New Connection ({shortcut}+Shift+N)"
 msgstr "Nouvelle connexion ({shortcut}+Shift+N)"
+
+#: src/sshpilot/sidebar.py:4148
+msgid "Search Connections"
+msgstr "Rechercher des connexions"
 
 #: src/sshpilot/sidebar.py:4043
 #, python-brace-format
@@ -5798,6 +5843,14 @@ msgstr "Afficher les noms d’hôte"
 msgid "Hide hostnames"
 msgstr "Masquer les noms d’hôte"
 
+#: src/sshpilot/sidebar.py:4172
+msgid "Hostnames are hidden"
+msgstr "Les noms d’hôte sont masqués"
+
+#: src/sshpilot/sidebar.py:4173
+msgid "Hostnames are shown"
+msgstr "Les noms d’hôte sont affichés"
+
 #: src/sshpilot/sidebar.py:4093
 msgid "Filter by tag"
 msgstr "Filtrer par étiquette"
@@ -5805,6 +5858,10 @@ msgstr "Filtrer par étiquette"
 #: src/sshpilot/sidebar.py:4114
 msgid "All Connections"
 msgstr "Toutes les connexions"
+
+#: src/sshpilot/sidebar.py:4283
+msgid "Main menu"
+msgstr "Menu principal"
 
 #: src/sshpilot/sidebar.py:4164
 msgid "Menu"
@@ -5883,6 +5940,10 @@ msgstr "Retirer de la page de démarrage"
 msgid "Pin to Start Page"
 msgstr "Épingler à la page de démarrage"
 
+#: src/sshpilot/sidebar.py:4829
+msgid "Connection actions"
+msgstr "Actions de la connexion"
+
 #: src/sshpilot/sidebar.py:4716
 #, python-brace-format
 msgid "Copy public key to server for passwordless login ({shortcut}+Shift+K)"
@@ -5900,6 +5961,10 @@ msgstr "Ouvrir la connexion dans le terminal système"
 #: src/sshpilot/sidebar.py:4760
 msgid "Delete Connection"
 msgstr "Supprimer la connexion"
+
+#: src/sshpilot/sidebar.py:4906
+msgid "Group actions"
+msgstr "Actions du groupe"
 
 #: src/sshpilot/sidebar.py:4774
 msgid "Rename Group"
@@ -6162,6 +6227,11 @@ msgstr "Enregistrer cette connexion pour la prochaine fois ?"
 msgid "Save as new connection"
 msgstr "Enregistrer comme nouvelle connexion"
 
+#: src/sshpilot/terminal.py:670
+#, python-brace-format
+msgid "Terminal: {name}"
+msgstr "Terminal : {name}"
+
 #: src/sshpilot/terminal.py:884
 msgid "Reason"
 msgstr "Motif"
@@ -6378,6 +6448,19 @@ msgstr "{count}+"
 #, python-brace-format
 msgid "{index}/{count}"
 msgstr "{index}/{count}"
+
+#: src/sshpilot/terminal_theme_selector.py:171
+#, python-brace-format
+msgid "Use {theme} terminal colors"
+msgstr "Utiliser le jeu de couleurs {theme} pour le terminal"
+
+#: src/sshpilot/terminal_theme_selector.py:207
+msgid "The quick brown fox jumps over the lazy dog"
+msgstr "Portez ce vieux whisky au juge blond qui fume"
+
+#: src/sshpilot/terminal_theme_selector.py:248
+msgid "Palette"
+msgstr "Palette"
 
 #: src/sshpilot/text_editor.py:160
 #, python-brace-format
@@ -6835,12 +6918,30 @@ msgstr "Sombre"
 msgid "Application theme: {theme}"
 msgstr "Thème de l’application : {theme}"
 
+#: src/sshpilot/window.py:3182
+msgid "Terminal color scheme"
+msgstr "Jeu de couleurs du terminal"
+
+#: src/sshpilot/window.py:3183
+#, python-brace-format
+msgid "Terminal color scheme: {theme}"
+msgstr "Jeu de couleurs du terminal : {theme}"
+
+#: src/sshpilot/window.py:3156
+#, python-brace-format
+msgid "Settings ({accels})"
+msgstr "Paramètres ({accels})"
+
 #. "Sort Manual order" reads badly, so the preset titles carry the
 #. wording and the template only supplies the current/next framing.
 #: src/sshpilot/window.py:3161
 #, python-brace-format
 msgid "{current} — click for {next}"
 msgstr "{current} — cliquez pour choisir {next}"
+
+#: src/sshpilot/window.py:3196
+msgid "Sort Connections"
+msgstr "Trier les connexions"
 
 #: src/sshpilot/window.py:3220
 msgid "Showing your manual order"
@@ -7526,6 +7627,10 @@ msgstr "Revenir"
 msgid "Export Unencrypted"
 msgstr "Exporter sans chiffrement"
 
+#: src/sshpilot/window_dialogs.py:1254
+msgid "Exporting backup — this may take a while…"
+msgstr "Exportation de la sauvegarde — cette opération peut prendre un certain temps…"
+
 #: src/sshpilot/window_dialogs.py:1223
 msgid "sshPilot backup (*.spbk)"
 msgstr "Sauvegarde sshPilot (*.spbk)"
@@ -7897,6 +8002,10 @@ msgstr "Facultatif"
 msgid "Existing Groups"
 msgstr "Groupes existants"
 
+#: src/sshpilot/window_dialogs.py:2665
+msgid "Selected"
+msgstr "Sélectionné"
+
 #: src/sshpilot/window_dialogs.py:2664
 msgid "No groups yet — create one above."
 msgstr "Aucun groupe — créez-en un ci-dessus."
@@ -8128,6 +8237,33 @@ msgstr "Regroupement des serveurs"
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:30
 msgid "mFat"
 msgstr "mFat"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid ""
+"Added new terminal theme selector, added option to access it from tab bar"
+msgstr ""
+"Ajout d’un nouveau sélecteur de jeu de couleurs du terminal et d’une option "
+"permettant d’y accéder depuis la barre d’onglets"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
+msgid "Fixed vault unlock issue"
+msgstr "Correction d’un problème de déverrouillage du coffre-fort"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:68
+msgid "Fixed backup encryption issue"
+msgstr "Correction d’un problème de chiffrement des sauvegardes"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:66
+msgid "Improved drag & drop for connections across groups"
+msgstr "Amélioration du glisser-déposer des connexions entre les groupes"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:67
+msgid "Improved connection status reporting"
+msgstr "Amélioration de l’indication de l’état des connexions"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:68
+msgid "Minor bug fixes"
+msgstr "Corrections de bogues mineurs"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:66
 msgid "Fixes drag and drop reordering not working"
