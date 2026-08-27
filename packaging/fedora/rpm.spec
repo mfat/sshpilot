@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.9.5}
+Version:        %{?version}%{!?version:5.9.6}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -144,6 +144,11 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Aug 27 2026 mFat <newmfat@gmail.com> - 5.9.6-1
+- Fixed subgroups not inheriting parent group color
+- Added option to remeber passwords to password prompts
+- Minor fixes to DnD in sidebar
+
 * Tue Aug 25 2026 mFat <newmfat@gmail.com> - 5.9.5-1
 - Added new terminal theme selector, added option to access it from tab bar
 - Fixed vault unlock issue

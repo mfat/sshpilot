@@ -1,3 +1,12 @@
+sshpilot (5.9.6-1) unstable; urgency=medium
+
+  * Release v5.9.6.
+  * Fixed subgroups not inheriting parent group color
+  * Added option to remeber passwords to password prompts
+  * Minor fixes to DnD in sidebar
+
+ -- Mehdi <mah.fat@gmail.com>  Thu, 27 Aug 2026 20:23:27 +0000
+
 sshpilot (5.9.5-1) unstable; urgency=medium
 
   * Release v5.9.5.
