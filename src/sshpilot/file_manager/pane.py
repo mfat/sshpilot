@@ -2122,6 +2122,8 @@ class FilePane(Gtk.Box):
 
     def _on_retry_load_clicked(self, _btn) -> None:
         path = self._load_error_path or self._current_path
+        if not path and self._is_remote:
+            path = "~"
         if path:
             self.emit("path-changed", path)
 
