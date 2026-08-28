@@ -32,6 +32,7 @@ from .portal_docs import (
 )
 from .properties_dialog import PropertiesDialog
 from .common import FileEntry
+from .format_utils import _human_time
 
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,27 @@ def _file_manager_window_cls():
 # rounded corners/background; this just keeps the list/grid views from
 # painting their own view background over the card (visible in dark mode).
 _browser_card_css_installed = False
+_COLUMN_VIEW_MIN_GTK = (4, 12)
+
+
+def _column_view_supported(gtk_module: Any = None) -> bool:
+    """True when ``Gtk.ColumnViewCell`` can be used (GTK 4.12+).
+
+    Older GTK 4 still has ``Gtk.ColumnView``, but its column factories pass
+    ``Gtk.ListItem`` rather than ``Gtk.ColumnViewCell``. We keep the previous
+    ``Gtk.ListView`` implementation on those versions.
+    """
+    gtk = Gtk if gtk_module is None else gtk_module
+    try:
+        version = (int(gtk.MAJOR_VERSION), int(gtk.MINOR_VERSION))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if version < _COLUMN_VIEW_MIN_GTK:
+        return False
+    return (
+        getattr(gtk, "ColumnView", None) is not None
+        and getattr(gtk, "ColumnViewCell", None) is not None
+    )
 
 
 def _ensure_browser_card_css() -> None:
@@ -101,6 +123,7 @@ def _ensure_browser_card_css() -> None:
         provider = Gtk.CssProvider()
         provider.load_from_data(b"""
 .fm-browser-card listview,
+.fm-browser-card columnview,
 .fm-browser-card gridview {
     background: transparent;
 }
@@ -165,8 +188,10 @@ class FilePane(Gtk.Box):
         # entries vanish unpredictably. The factory's bind/unbind pair makes
         # explicit add/discard reliable.
         self._bound_list_icons: set = set()
-        # Currently-bound list row boxes, so deferred folder item-counts can be
+        # Currently-bound Size-column labels (ColumnView) and legacy list-row
+        # boxes (ListView fallback), so deferred folder item-counts can be
         # written into visible rows in place (no list-store rebuild).
+        self._bound_size_labels: set = set()
         self._bound_list_boxes: set = set()
         self._bound_grid_images: set = set()
 
@@ -180,15 +205,12 @@ class FilePane(Gtk.Box):
         self._selection_anchor: Optional[int] = None
 
         self._suppress_next_context_menu: bool = False
+        self._syncing_column_sort: bool = False
+        self._use_column_view: bool = False
+        self._list_columns: Dict[str, Any] = {}
+        self._entries: List[FileEntry] = []
 
-        list_factory = Gtk.SignalListItemFactory()
-        list_factory.connect("setup", self._on_list_setup)
-        list_factory.connect("bind", self._on_list_bind)
-        list_factory.connect("unbind", self._on_list_unbind)
-        list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
-        list_view.add_css_class("rich-list")
-        list_view.set_can_focus(True)  # Enable keyboard focus for typeahead
-        # Navigate on row activation (double click / Enter)
+        list_view = self._create_list_widget()
         self._list_view = list_view
         list_view.connect("activate", self._on_list_activate)
 
@@ -497,6 +519,7 @@ class FilePane(Gtk.Box):
         # Initialize view button icon and direction states
         self._update_view_button_icon()
         self._update_sort_direction_states()
+        self._sync_column_sort_indicator()
 
         self._typeahead_buffer: str = ""
         self._typeahead_last_time: float = 0.0
@@ -583,7 +606,244 @@ class FilePane(Gtk.Box):
     def _on_path_entry(self, entry: Gtk.Entry) -> None:
         self.emit("path-changed", entry.get_text() or "/")
 
-    def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item):
+    def _create_list_widget(self) -> Gtk.Widget:
+        """List mode: ColumnView on GTK 4.12+, legacy ListView otherwise."""
+        if _column_view_supported():
+            try:
+                view = self._create_column_view()
+                self._use_column_view = True
+                return view
+            except Exception:
+                logger.debug(
+                    "Gtk.ColumnView unavailable, falling back to Gtk.ListView",
+                    exc_info=True,
+                )
+        self._use_column_view = False
+        self._list_columns = {}
+        return self._create_legacy_list_view()
+
+    def _create_legacy_list_view(self) -> Gtk.ListView:
+        """Pre-4.12 list: icon + name + size/count in a single ``Gtk.ListView``."""
+        list_factory = Gtk.SignalListItemFactory()
+        list_factory.connect("setup", self._on_list_setup)
+        list_factory.connect("bind", self._on_list_bind)
+        list_factory.connect("unbind", self._on_list_unbind)
+        list_view = Gtk.ListView(model=self._selection_model, factory=list_factory)
+        list_view.add_css_class("rich-list")
+        list_view.set_can_focus(True)
+        return list_view
+
+    def _create_column_view(self) -> Gtk.ColumnView:
+        """Build the Nautilus-style details list (Name / Size / Modified).
+
+        Factories receive ``Gtk.ColumnViewCell`` (GTK 4.12+). Header clicks are
+        wired through per-column ``Gtk.CustomSorter`` objects; the actual order
+        still comes from ``_sort_entries`` so directories stay grouped first.
+        """
+        column_view = Gtk.ColumnView(model=self._selection_model)
+        column_view.set_can_focus(True)
+        column_view.set_hexpand(True)
+        if hasattr(column_view, "set_single_click_activate"):
+            column_view.set_single_click_activate(False)
+        if hasattr(column_view, "set_enable_rubberband"):
+            column_view.set_enable_rubberband(True)
+
+        name_factory = Gtk.SignalListItemFactory()
+        name_factory.connect("setup", self._on_name_setup)
+        name_factory.connect("bind", self._on_name_bind)
+        name_factory.connect("unbind", self._on_name_unbind)
+
+        size_factory = Gtk.SignalListItemFactory()
+        size_factory.connect("setup", self._on_size_setup)
+        size_factory.connect("bind", self._on_size_bind)
+        size_factory.connect("unbind", self._on_size_unbind)
+
+        modified_factory = Gtk.SignalListItemFactory()
+        modified_factory.connect("setup", self._on_modified_setup)
+        modified_factory.connect("bind", self._on_modified_bind)
+
+        name_column = self._make_list_column("name", _("Name"), name_factory, expand=True)
+        size_column = self._make_list_column(
+            "size", _("Size"), size_factory, fixed_width=96
+        )
+        modified_column = self._make_list_column(
+            "modified", _("Modified"), modified_factory, fixed_width=148
+        )
+        column_view.append_column(name_column)
+        column_view.append_column(size_column)
+        column_view.append_column(modified_column)
+        self._list_columns = {
+            "name": name_column,
+            "size": size_column,
+            "modified": modified_column,
+        }
+
+        sorter = column_view.get_sorter()
+        if sorter is not None:
+            sorter.connect("changed", self._on_column_sorter_changed)
+        return column_view
+
+    def _make_list_column(
+        self,
+        column_id: str,
+        title: str,
+        factory: Gtk.SignalListItemFactory,
+        *,
+        expand: bool = False,
+        fixed_width: Optional[int] = None,
+    ) -> Gtk.ColumnViewColumn:
+        column = Gtk.ColumnViewColumn(title=title, factory=factory)
+        column.set_expand(expand)
+        if hasattr(column, "set_id"):
+            column.set_id(column_id)
+        if hasattr(column, "set_resizable"):
+            column.set_resizable(True)
+        if fixed_width is not None and hasattr(column, "set_fixed_width"):
+            column.set_fixed_width(fixed_width)
+        # A sorter is required for the header to be clickable; comparison is a
+        # no-op because ``_sort_entries`` owns the real order.
+        column.set_sorter(Gtk.CustomSorter.new(None))
+        return column
+
+    def _attach_list_cell_controllers(self, widget: Gtk.Widget, cell) -> None:
+        drag_source = Gtk.DragSource()
+        drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
+        drag_source.connect("prepare", self._on_drag_prepare)
+        drag_source.connect("drag-begin", self._on_drag_begin)
+        drag_source.connect("drag-end", self._on_drag_end)
+        widget.add_controller(drag_source)
+
+        right_click_gesture = Gtk.GestureClick()
+        right_click_gesture.set_button(Gdk.BUTTON_SECONDARY)
+        right_click_gesture.connect("pressed", self._on_list_item_right_click, cell)
+        widget.add_controller(right_click_gesture)
+
+    def _entry_from_cell(self, cell) -> Tuple[Optional[int], Optional[FileEntry]]:
+        position = cell.get_position()
+        entry = None
+        if position is not None and 0 <= position < len(self._entries):
+            entry = self._entries[position]
+        return position, entry
+
+    @staticmethod
+    def _size_column_text(entry: FileEntry) -> str:
+        if entry.is_dir:
+            if entry.item_count is not None:
+                return f"{entry.item_count} items"
+            return "—"
+        return FilePane._format_size(entry.size)
+
+    @staticmethod
+    def _modified_column_text(entry: FileEntry) -> str:
+        if not entry.modified:
+            return "—"
+        return _human_time(entry.modified)
+
+    def _on_name_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        from ..icon_utils import new_image_from_icon_name
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
+        icon.set_valign(Gtk.Align.CENTER)
+        name_label = Gtk.Label(xalign=0)
+        name_label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        name_label.set_hexpand(True)
+        box.append(icon)
+        box.append(name_label)
+        box.set_hexpand(True)
+        box.icon = icon
+        box.name_label = name_label
+        self._attach_list_cell_controllers(box, cell)
+        cell.set_child(box)
+
+    def _on_name_bind(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        box = cell.get_child()
+        icon: Gtk.Image = box.icon
+        name_label: Gtk.Label = box.name_label
+
+        # Cells are pooled; reset pixel size every bind so zoom applies
+        # without rebuilding the store.
+        icon.set_pixel_size(self._list_icon_px())
+        self._bound_list_icons.add(icon)
+
+        position, entry = self._entry_from_cell(cell)
+        box.drag_position = position
+
+        if entry is None:
+            value = cell.get_item().get_string()
+            name_label.set_text(value)
+            name_label.set_tooltip_text(value)
+            from ..icon_utils import set_icon_from_name
+            is_dir = value.endswith('/')
+            raw_name = value[:-1] if is_dir else value
+            set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
+            return
+
+        display_name = entry.name + ("/" if entry.is_dir else "")
+        name_label.set_text(display_name)
+        name_label.set_tooltip_text(display_name)
+        from ..icon_utils import set_icon_from_name
+        set_icon_from_name(icon, self._resolve_entry_icon(entry.name, entry.is_dir))
+        box._pane_entry = entry
+        box._pane_index = position
+
+    def _on_name_unbind(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        box = cell.get_child()
+        if box is None:
+            return
+        icon = getattr(box, "icon", None)
+        if icon is not None:
+            self._bound_list_icons.discard(icon)
+
+    def _on_size_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        label = Gtk.Label(xalign=1)
+        label.set_halign(Gtk.Align.END)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.add_css_class("dim-label")
+        self._attach_list_cell_controllers(label, cell)
+        cell.set_child(label)
+
+    def _on_size_bind(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        label = cell.get_child()
+        position, entry = self._entry_from_cell(cell)
+        label.drag_position = position
+        if entry is None:
+            label.set_text("—")
+            label.set_tooltip_text(None)
+            return
+        text = self._size_column_text(entry)
+        label.set_text(text)
+        label.set_tooltip_text(text)
+        label._pane_entry = entry
+        self._bound_size_labels.add(label)
+
+    def _on_size_unbind(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        label = cell.get_child()
+        if label is not None:
+            self._bound_size_labels.discard(label)
+
+    def _on_modified_setup(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        label = Gtk.Label(xalign=1)
+        label.set_halign(Gtk.Align.END)
+        label.set_ellipsize(Pango.EllipsizeMode.END)
+        label.add_css_class("dim-label")
+        self._attach_list_cell_controllers(label, cell)
+        cell.set_child(label)
+
+    def _on_modified_bind(self, factory: Gtk.SignalListItemFactory, cell) -> None:
+        label = cell.get_child()
+        position, entry = self._entry_from_cell(cell)
+        label.drag_position = position
+        if entry is None:
+            label.set_text("—")
+            label.set_tooltip_text(None)
+            return
+        text = self._modified_column_text(entry)
+        label.set_text(text)
+        label.set_tooltip_text(text)
+        label._pane_entry = entry
+
+    def _on_list_setup(self, factory: Gtk.SignalListItemFactory, item) -> None:
+        """Legacy ListView row used when ColumnViewCell is unavailable."""
         from ..icon_utils import new_image_from_icon_name
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         icon = new_image_from_icon_name("folder-symbolic", size=self._list_icon_px())
@@ -600,47 +860,22 @@ class FilePane(Gtk.Box):
         box.append(name_label)
         box.append(metadata_label)
         box.set_hexpand(True)
-        # Store references as Python attributes instead of deprecated set_data
         box.icon = icon
         box.name_label = name_label
         box.metadata_label = metadata_label
-        
-        # Add drag source for file operations
-        drag_source = Gtk.DragSource()
-        drag_source.set_actions(Gdk.DragAction.COPY | Gdk.DragAction.MOVE)
-        drag_source.connect("prepare", self._on_drag_prepare)
-        drag_source.connect("drag-begin", self._on_drag_begin)
-        drag_source.connect("drag-end", self._on_drag_end)
-        box.add_controller(drag_source)
-        
-        # Add right-click gesture to select item and show context menu
-        right_click_gesture = Gtk.GestureClick()
-        right_click_gesture.set_button(Gdk.BUTTON_SECONDARY)
-        right_click_gesture.connect("pressed", self._on_list_item_right_click, item)
-        box.add_controller(right_click_gesture)
-        
+        self._attach_list_cell_controllers(box, item)
         item.set_child(box)
 
-    def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item):
+    def _on_list_bind(self, factory: Gtk.SignalListItemFactory, item) -> None:
         box = item.get_child()
-        # Access references as Python attributes instead of deprecated get_data
         icon: Gtk.Image = box.icon
         name_label: Gtk.Label = box.name_label
         metadata_label: Gtk.Label = box.metadata_label
 
-        # Row widgets are pooled by GtkListView; reset the pixel size every
-        # bind so zoom changes are visible without rebuilding the widget.
         icon.set_pixel_size(self._list_icon_px())
-        # Track this icon so a zoom event can update it in place without
-        # rebuilding the list store.
         self._bound_list_icons.add(icon)
 
-        position = item.get_position()
-        entry: Optional[FileEntry] = None
-        if position is not None and 0 <= position < len(self._entries):
-            entry = self._entries[position]
-            
-        # Store position in the box for drag operations
+        position, entry = self._entry_from_cell(item)
         box.drag_position = position
 
         if entry is None:
@@ -658,28 +893,16 @@ class FilePane(Gtk.Box):
         display_name = entry.name + ("/" if entry.is_dir else "")
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
-
-        if entry.is_dir:
-            if entry.item_count is not None:
-                count_text = f"{entry.item_count} items"
-                metadata_label.set_text(count_text)
-                metadata_label.set_tooltip_text(count_text)
-            else:
-                metadata_label.set_text("—")
-                metadata_label.set_tooltip_text(None)
-        else:
-            size_text = self._format_size(entry.size)
-            metadata_label.set_text(size_text)
-            metadata_label.set_tooltip_text(size_text)
-
+        text = self._size_column_text(entry)
+        metadata_label.set_text(text)
+        metadata_label.set_tooltip_text(None if text == "—" else text)
         from ..icon_utils import set_icon_from_name
         set_icon_from_name(icon, self._resolve_entry_icon(entry.name, entry.is_dir))
-
         box._pane_entry = entry
         box._pane_index = position
         self._bound_list_boxes.add(box)
 
-    def _on_list_unbind(self, factory: Gtk.SignalListItemFactory, item):
+    def _on_list_unbind(self, factory: Gtk.SignalListItemFactory, item) -> None:
         box = item.get_child()
         if box is None:
             return
@@ -692,15 +915,23 @@ class FilePane(Gtk.Box):
         """Apply background-computed folder item-counts to the current listing.
 
         Mutates the shared ``FileEntry`` objects (so rows bound later read the
-        count in ``_on_list_bind``) and refreshes the subtitle of any currently
-        visible folder row in place — no list-store rebuild, so scroll position
-        and selection are preserved. Ignored if the user has navigated away.
+        count) and refreshes currently visible Size cells (ColumnView) or the
+        legacy metadata label (ListView) in place — no list-store rebuild, so
+        scroll position and selection are preserved. Ignored if the user has
+        navigated away.
         """
         if not counts or path != self._current_path or not self._is_remote:
             return
         for entry in self._cached_entries:
             if entry.is_dir and entry.name in counts:
                 entry.item_count = counts[entry.name]
+        for label in list(self._bound_size_labels):
+            entry = getattr(label, "_pane_entry", None)
+            if entry is None or not entry.is_dir or entry.name not in counts:
+                continue
+            count_text = f"{entry.item_count} items"
+            label.set_text(count_text)
+            label.set_tooltip_text(count_text)
         for box in list(self._bound_list_boxes):
             entry = getattr(box, "_pane_entry", None)
             if entry is None or not entry.is_dir or entry.name not in counts:
@@ -1059,6 +1290,7 @@ class FilePane(Gtk.Box):
         if self._sort_key != sort_key:
             self._sort_key = sort_key
             self._refresh_sorted_entries(preserve_selection=True)
+            self._sync_column_sort_indicator()
 
     def _on_sort_direction(self, descending: bool) -> None:
         """Handle sort direction selection from menu."""
@@ -1066,6 +1298,54 @@ class FilePane(Gtk.Box):
             self._sort_descending = descending
             self._refresh_sorted_entries(preserve_selection=True)
             self._update_sort_direction_states()
+            self._sync_column_sort_indicator()
+
+    def _on_column_sorter_changed(self, sorter, *_args) -> None:
+        """Keep Python sort in sync when the user clicks a column header."""
+        if self._syncing_column_sort or not getattr(self, "_use_column_view", False):
+            return
+        get_column = getattr(sorter, "get_primary_sort_column", None)
+        get_order = getattr(sorter, "get_primary_sort_order", None)
+        if not callable(get_column) or not callable(get_order):
+            return
+        column = get_column()
+        if column is None:
+            return
+        key = column.get_id() if hasattr(column, "get_id") else None
+        if key not in ("name", "size", "modified"):
+            return
+        descending = get_order() == Gtk.SortType.DESCENDING
+        if key == self._sort_key and descending == self._sort_descending:
+            return
+        self._sort_key = key
+        self._sort_descending = descending
+        self._refresh_sorted_entries(preserve_selection=True)
+        self._update_sort_direction_states()
+
+    def _sync_column_sort_indicator(self) -> None:
+        """Mirror the current sort key/direction onto the ColumnView headers."""
+        if not getattr(self, "_use_column_view", False):
+            return
+        view = getattr(self, "_list_view", None)
+        columns = getattr(self, "_list_columns", None)
+        if view is None or not columns or not hasattr(view, "sort_by_column"):
+            return
+        column = columns.get(self._sort_key)
+        if column is None:
+            return
+        direction = (
+            Gtk.SortType.DESCENDING if self._sort_descending else Gtk.SortType.ASCENDING
+        )
+        self._syncing_column_sort = True
+        try:
+            # Clear first to avoid a double triangle
+            # (https://gitlab.gnome.org/GNOME/gtk/-/issues/4696).
+            view.sort_by_column(None, Gtk.SortType.ASCENDING)
+            view.sort_by_column(column, direction)
+        except Exception:
+            logger.debug("Failed to sync column sort indicator", exc_info=True)
+        finally:
+            self._syncing_column_sort = False
 
     def _update_view_button_icon(self) -> None:
         """Update the split button icon based on current view mode."""
@@ -1130,9 +1410,9 @@ class FilePane(Gtk.Box):
         return popover
 
 
-    def _on_list_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, list_item: Gtk.ListItem) -> None:
+    def _on_list_item_right_click(self, gesture: Gtk.GestureClick, n_press: int, x: float, y: float, cell) -> None:
         """Handle right-click on a list item: select it and show context menu."""
-        position = list_item.get_position()
+        position = cell.get_position()
         if position is not None and 0 <= position < len(self._entries):
             # Check if the clicked item is already selected
             is_selected = False
@@ -1153,7 +1433,7 @@ class FilePane(Gtk.Box):
             self._selection_anchor = position
         
         # Show context menu at click position
-        box = list_item.get_child()
+        box = cell.get_child()
         if box:
             # Convert coordinates to the view widget's coordinate space
             view_widget = self._list_view
@@ -1340,64 +1620,44 @@ class FilePane(Gtk.Box):
 
     def _is_click_on_empty_space(self, widget: Gtk.Widget, x: float, y: float) -> bool:
         """Check if the click is on empty space (not on an item)."""
-        # Determine which view is active
         visible_child = self._stack.get_visible_child()
         if visible_child is None:
             return True
-        
-        # Find the actual view widget (list or grid) in the scrolled window
+
         view_widget = None
-        for child in visible_child:
-            if isinstance(child, Gtk.ScrolledWindow):
-                scrolled_child = child.get_child()
-                if scrolled_child == self._list_view:
-                    view_widget = self._list_view
-                elif scrolled_child == self._grid_view:
-                    view_widget = self._grid_view
-                break
-        
+        if isinstance(visible_child, Gtk.ScrolledWindow):
+            view_widget = visible_child.get_child()
+        else:
+            view_widget = visible_child
+
         if view_widget is None:
             return True
-        
+
         try:
-            # Convert coordinates to view widget's coordinate space
             widget_x, widget_y = widget.translate_coordinates(view_widget, x, y)
             if widget_x is None or widget_y is None:
                 return True
-            
-            # Use pick() to find which child widget is at the coordinates
+
             picked = view_widget.pick(widget_x, widget_y, Gtk.PickFlags.DEFAULT)
             if picked is None:
                 return True
-            
-            # Check if we picked an actual item (not just the view widget itself)
-            # For ListView: check if we picked a list item or its child
-            if isinstance(view_widget, Gtk.ListView):
-                # Walk up the widget tree to see if we hit a list item
+
+            if view_widget is self._list_view:
                 current = picked
                 while current and current != view_widget:
-                    # If we find a widget that has the drag_position attribute, it's an item
-                    if hasattr(current, 'drag_position'):
-                        return False
-                    # If we find a box that's a list item child, it's an item
-                    if isinstance(current, Gtk.Box) and hasattr(current, '_pane_entry'):
+                    if hasattr(current, "drag_position") or hasattr(current, "_pane_entry"):
                         return False
                     current = current.get_parent()
-                # If we only hit the view widget itself, it's empty space
                 return picked == view_widget
-            
-            # For GridView: check if we picked a button (grid item)
-            elif isinstance(view_widget, Gtk.GridView):
-                # Walk up the widget tree to see if we hit a button
+
+            if view_widget is self._grid_view:
                 current = picked
                 while current and current != view_widget:
-                    # If we find a button with drag_position, it's an item
-                    if isinstance(current, Gtk.Button) and hasattr(current, 'drag_position'):
+                    if isinstance(current, Gtk.Button) and hasattr(current, "drag_position"):
                         return False
                     current = current.get_parent()
-                # If we only hit the view widget itself, it's empty space
                 return picked == view_widget
-            
+
             return True
         except Exception as e:
             logger.debug(f"Error checking if click is on empty space: {e}")
@@ -2210,7 +2470,7 @@ class FilePane(Gtk.Box):
         target_path = os.path.join(base_path, entry.name)
         self.emit("path-changed", target_path)
 
-    def _on_list_activate(self, _list_view: Gtk.ListView, position: int) -> None:
+    def _on_list_activate(self, _list_view, position: int) -> None:
         self._navigate_to_entry(position)
 
     def _sort_entries(self, entries: Iterable[FileEntry]) -> List[FileEntry]:
@@ -2697,7 +2957,8 @@ class FilePane(Gtk.Box):
         Returns ``None`` when the cursor isn't over a directory row — callers
         then drop into the pane's current path. Walks up from the picked
         leaf widget looking for the per-row ``drag_position`` attribute set
-        by ``_on_list_bind`` / ``_on_grid_bind``; that gives us an index into
+        by ``_on_name_bind`` / ``_on_size_bind`` / ``_on_grid_bind``; that
+        gives us an index into
         ``self._entries`` so we can check ``is_dir``.
         """
         try:
@@ -2831,7 +3092,14 @@ class FilePane(Gtk.Box):
             flags = getattr(Gtk, "ListScrollFlags", None)
             focus_flag = getattr(flags, "FOCUS", 1) if flags is not None else 1
             try:
+                # Gtk.ListView / Gtk.GridView: scroll_to(pos, flags)
                 scroll_to(position, focus_flag)
+            except TypeError:
+                try:
+                    # Gtk.ColumnView (4.12+): scroll_to(pos, column, flags, scroll)
+                    scroll_to(position, None, focus_flag, None)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
