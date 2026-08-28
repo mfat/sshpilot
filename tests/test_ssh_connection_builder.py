@@ -377,3 +377,74 @@ def test_authored_forward_agent_no_is_emitted_so_a_global_yes_cannot_win():
         )
     )
     assert "ForwardAgent=no" in argv
+
+
+# --- Advanced tab (extra_ssh_config) ---------------------------------------
+
+
+def test_authored_advanced_options_are_emitted():
+    # These reached OpenSSH only by being written into the Host block, which an
+    # earlier `Host *` beats — the tab showed `Compression no` while the
+    # session ran with `Compression yes`.
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            extra_ssh_config="compression no\nstricthostkeychecking yes",
+            authored=("hostname", "compression", "stricthostkeychecking"),
+        )
+    )
+    assert "compression=no" in argv
+    assert "stricthostkeychecking=yes" in argv
+
+
+def test_structural_and_accumulating_advanced_options_are_not_emitted():
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            extra_ssh_config=(
+                "include other.conf\n"
+                "sendenv LC_ONE\n"
+                "remotecommand tail -f /var/log/syslog"
+            ),
+            authored=("hostname", "include", "sendenv", "remotecommand"),
+        )
+    )
+    joined = " ".join(argv)
+    # `-o Include=` is meaningless, SendEnv appends rather than replaces, and
+    # RemoteCommand is composed from a typed field.
+    assert "Include=" not in joined
+    assert "sendenv=" not in joined.lower()
+    assert "remotecommand=" not in joined.lower()
+
+
+def test_repeated_advanced_directive_is_left_to_the_config():
+    # Only the first `-o` for a keyword takes effect, so emitting would silently
+    # drop the second SetEnv line.
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            extra_ssh_config="setenv A=1\nsetenv B=2",
+            authored=("hostname", "setenv"),
+        )
+    )
+    assert "setenv=" not in " ".join(argv).lower()
+
+
+def test_authored_keepalive_suppresses_the_app_default():
+    # ssh_overrides precede authored options in argv and the command line is
+    # first-obtained-value-wins, so an injected default would beat the value the
+    # user set on the Advanced tab.
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            extra_ssh_config="serveraliveinterval 30",
+            authored=("hostname", "serveraliveinterval"),
+        )
+    )
+    assert "serveraliveinterval=30" in argv
+    assert "ServerAliveInterval=15" not in argv
+
+
+def test_default_keepalive_still_applies_without_an_authored_one():
+    argv = _argv(_config_connection(hostname="web.example.com", authored=("hostname",)))
+    assert "ServerAliveInterval=15" in argv

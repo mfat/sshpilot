@@ -829,10 +829,14 @@ def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
     Preferences (the explicit value lands in ``ssh_overrides`` and/or the
     ``keepalive_interval`` app key) — so user values always win. The global
     opt-out (``ssh.apply_default_keepalive`` = False) disables injection
-    entirely; that is also the escape hatch for anyone who set their own
-    ServerAliveInterval only in ~/.ssh/config (we intentionally don't run an
-    extra ``ssh -G`` here — that would add a second probe to every connect — and
-    overriding with a default keepalive is harmless, just a probe cadence).
+    entirely.
+
+    A ``ServerAliveInterval`` authored in the Host block also suppresses the
+    default: it is re-emitted as an authored option and passed in through
+    *overrides*. That matters for correctness, not just probe cadence —
+    ``ssh_overrides`` are placed ahead of authored options in argv, and the
+    command line is first-obtained-value-wins, so an injected default would
+    otherwise beat the value the user set on the Advanced tab.
     """
     try:
         if not bool(app_ssh_config.get('apply_default_keepalive', True)):
@@ -847,9 +851,12 @@ def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
                 return
         except (TypeError, ValueError):
             pass
+        # Case-insensitive: a keepalive re-emitted from an authored config
+        # directive keeps that directive's own spelling, and OpenSSH option
+        # names are case-insensitive anyway.
         if isinstance(overrides, (list, tuple)):
             for entry in overrides:
-                if entry and 'ServerAliveInterval' in str(entry):
+                if entry and 'serveraliveinterval' in str(entry).lower():
                     return
 
         interval = int(app_ssh_config.get('default_keepalive_interval', 15) or 15)
@@ -975,7 +982,75 @@ def _authored_ssh_options(connection) -> Tuple[Dict[str, Any], List[str]]:
         if directive in authored and _text(attribute):
             _option(MANAGED_OPTION_KEYWORDS[directive], _text(attribute))
 
+    options.extend(_authored_extra_options(_text('extra_ssh_config')))
     return kwargs, options
+
+
+# Directives from the Advanced tab that must never become ``-o`` options.
+#
+# Structural: an ``-o Host=`` / ``-o Match=`` / ``-o Include=`` is meaningless
+# or harmful on the command line, and all three appear in the tab's keyword
+# list.
+_EXTRA_OPTION_STRUCTURAL = frozenset({'host', 'match', 'include'})
+# Owned by the launch request itself, which composes them from typed fields.
+_EXTRA_OPTION_RUNTIME_OWNED = frozenset({
+    'remotecommand', 'localcommand', 'permitlocalcommand', 'requesttty',
+})
+# The command line cannot make these authoritative: they append to whatever the
+# config already resolved, so emitting one leaves the inherited value in force
+# and merely adds a second entry. ``SetEnv``/``SendEnv`` are here for a sharper
+# reason — a repeated ``-o SetEnv=`` keeps only the FIRST, so a block authoring
+# two of them would silently lose the rest.
+_EXTRA_OPTION_ACCUMULATING = frozenset({
+    'identityfile', 'certificatefile',
+    'localforward', 'remoteforward', 'dynamicforward',
+    'setenv', 'sendenv',
+})
+
+
+def _authored_extra_options(extra_ssh_config: str) -> List[str]:
+    """``-o`` argv for Advanced-tab directives, so a global cannot override them.
+
+    Everything on the Advanced tab is authored by definition — it is parsed
+    from this block's own lines — but it previously reached OpenSSH only by
+    being written into the Host block, which an earlier ``Host *`` beats. The
+    tab showed ``Compression no`` while the session ran with ``Compression
+    yes``.
+
+    A directive authored more than once is skipped: only the first ``-o`` for a
+    given keyword takes effect, so emitting would drop the user's later lines.
+    Skipped directives keep working exactly as before, resolved from the file.
+    """
+    if not extra_ssh_config:
+        return []
+
+    parsed: List[Tuple[str, str]] = []
+    counts: Dict[str, int] = {}
+    for raw_line in extra_ssh_config.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        keyword, _sep, value = line.partition(' ')
+        keyword = keyword.strip().rstrip('=').strip()
+        value = value.strip()
+        if not keyword or not value:
+            continue
+        lowered = keyword.lower()
+        counts[lowered] = counts.get(lowered, 0) + 1
+        parsed.append((keyword, value))
+
+    options: List[str] = []
+    for keyword, value in parsed:
+        lowered = keyword.lower()
+        if (
+            lowered in _EXTRA_OPTION_STRUCTURAL
+            or lowered in _EXTRA_OPTION_RUNTIME_OWNED
+            or lowered in _EXTRA_OPTION_ACCUMULATING
+            or counts[lowered] > 1
+        ):
+            continue
+        options.extend(['-o', f'{keyword}={value}'])
+    return options
 
 
 def build_ssh_connection(
@@ -1079,10 +1154,19 @@ def build_ssh_connection(
             if isinstance(raw_overrides, (list, tuple)):
                 overrides = [str(entry) for entry in raw_overrides if entry]
 
+        # Directives this Host block authored are re-emitted as argv so the
+        # session uses what the editor shows, even when an earlier `Host *`
+        # block would otherwise win. Resolved before keepalive injection: an
+        # authored ServerAliveInterval has to suppress the app default, which
+        # is placed earlier in argv and would beat it.
+        authored_kwargs, authored_options = _authored_ssh_options(connection)
+
         # Default keepalive injection into the overrides list (core builder
         # appends ssh_overrides verbatim).
         keepalive_cmd: List[str] = []
-        _maybe_append_default_keepalive(keepalive_cmd, overrides, app_ssh_config)
+        _maybe_append_default_keepalive(
+            keepalive_cmd, list(overrides) + authored_options, app_ssh_config
+        )
         overrides = list(overrides) + keepalive_cmd
 
         auth = resolve_native_auth(
@@ -1138,12 +1222,8 @@ def build_ssh_connection(
         # its own argv via _build_base_ssh_command.
         executable = 'scp' if ctx.command_type == 'scp' else 'ssh'
 
-        # Directives this Host block authored are re-emitted as argv so the
-        # session uses what the editor shows, even when an earlier `Host *`
-        # block would otherwise win. Appended after the auth layer's options so
-        # a deliberate runtime decision still takes precedence.
-        authored_kwargs, authored_options = _authored_ssh_options(connection)
-
+        # Authored options are appended after the auth layer's own options, so
+        # a deliberate runtime decision (an agent bypass, say) still wins.
         req = SSHLaunchRequest(
             destination=native_target,
             executable=executable,
