@@ -1063,22 +1063,28 @@ class BackupManager:
         if not isinstance(data, dict):
             return False, "Import data must be a JSON object"
 
-        try:
-            from sshpilot.core.import_export import migrate_payload, plan_import
-            from sshpilot.core.errors import CoreError
-
-            migrated = migrate_payload(data)
-        except CoreError as exc:
-            return False, str(exc.message or exc)
-        except Exception as exc:
-            return False, str(exc)
-
-        # Check version (legacy path still requires app_config for full restores)
-        version = migrated.get('version')
+        # The version has to be read from the payload itself, before migration.
+        # ``migrate_payload`` defaults a missing version to the current schema
+        # and stamps it into its copy, so asking the migrated copy can never
+        # answer None: this guard passed anything, and any JSON file carrying an
+        # ``app_config`` object became a valid backup that import then merged
+        # into — or replaced — the user's real configuration.
+        # ``schema_version`` is honoured as the same alias migration accepts.
+        version = data.get('version', data.get('schema_version'))
         if version is None:
             return False, "Missing 'version' field in import data"
         if not isinstance(version, int) or version > BACKUP_VERSION:
             return False, f"Unsupported backup version: {version}"
+
+        try:
+            from sshpilot.core.import_export import migrate_payload, plan_import
+            from sshpilot.core.errors import CoreError
+
+            migrate_payload(data)
+        except CoreError as exc:
+            return False, str(exc.message or exc)
+        except Exception as exc:
+            return False, str(exc)
 
         # Check required fields. New .spbk files may intentionally omit settings,
         # but legacy JSON imports still require an app config section.

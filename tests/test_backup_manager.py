@@ -1385,3 +1385,42 @@ def test_restore_without_local_session_state_drops_the_imported_one(monkeypatch,
         {"terminal": {"daemon_session_restore_state": [{"session_id": "theirs"}]}}
     )
     assert "daemon_session_restore_state" not in out["terminal"]
+
+
+def _validating_manager(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    return bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+
+
+def test_import_rejects_a_payload_with_no_version(monkeypatch, tmp_path):
+    """A file with no version is not a backup.
+
+    The version used to be read back from ``migrate_payload``'s copy, which
+    defaults a missing version to the current schema and stamps it in — so the
+    guard could never fire, and any JSON carrying an ``app_config`` object
+    validated as a backup that import would then merge into (or replace) the
+    user's real configuration.
+    """
+    mgr = _validating_manager(monkeypatch, tmp_path)
+    ok, error = mgr._validate_import_data({"app_config": {"ui": {}}})
+    assert ok is False
+    assert error == "Missing 'version' field in import data"
+
+
+def test_import_accepts_the_schema_version_alias(monkeypatch, tmp_path):
+    """``schema_version`` is the alias migration itself accepts; reading the
+    version earlier must not start rejecting payloads that use it."""
+    mgr = _validating_manager(monkeypatch, tmp_path)
+    ok, error = mgr._validate_import_data({"schema_version": 1, "app_config": {}})
+    assert ok is True, error
+
+
+def test_import_version_bounds(monkeypatch, tmp_path):
+    mgr = _validating_manager(monkeypatch, tmp_path)
+    assert mgr._validate_import_data({"version": 1, "app_config": {}})[0] is True
+    # Newer than this build understands, and older than any real schema.
+    assert mgr._validate_import_data({"version": 99, "app_config": {}}) == (
+        False, "Unsupported backup version: 99")
+    assert mgr._validate_import_data({"version": 0, "app_config": {}})[0] is False
+    assert mgr._validate_import_data({"version": "x", "app_config": {}}) == (
+        False, "Unsupported backup version: x")
