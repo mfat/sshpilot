@@ -310,6 +310,31 @@ SECRET_INTERACTION_REQUEST_TIMEOUT = 130.0
 SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT = (
     3 * SECRET_INTERACTION_REQUEST_TIMEOUT
 )
+# Every RPC that reaches a secret backend can drive an external vault CLI
+# (``bw``, ``rbw``, ``pass``/gpg) — a process start-up plus a network round
+# trip, not a local lookup. Measured against Bitwarden: ``bw edit item`` 8.3s,
+# ``bw list items`` 7.4s, ``bw sync`` 4.8s. Under the 5s default the client
+# declared the transport dead mid-write; because the write had in fact landed,
+# the connection dialog reported that secure storage had "rejected" a password
+# it had just saved. A hung-but-connected daemon is the only thing this delays
+# noticing — a daemon that dies closes the socket, which is seen at once.
+SECRET_BACKEND_REQUEST_TIMEOUT = 60.0
+# Connection/plugin secret RPCs. The ``secrets.*`` namespace is covered by
+# prefix; these live under ``connections.*`` next to ordinary metadata calls
+# that must keep the short default, so they are named explicitly.
+SECRET_BACKEND_METHODS = frozenset({
+    "connections.store_password",
+    "connections.delete_password",
+    "connections.has_password",
+    "connections.reveal_password",
+    "connections.store_passphrase",
+    "connections.delete_passphrase",
+    "connections.has_passphrase",
+    "connections.reveal_passphrase",
+    "connections.store_plugin_secret",
+    "connections.get_plugin_secret",
+    "connections.delete_plugin_secret",
+})
 DEFAULT_CLIENT_EVENT_DISPATCH_LIMIT = 256
 _EVENT_STOP = object()
 receive_frame = receive_multiplexed_frame
@@ -2967,6 +2992,20 @@ class DaemonClient:
             self._fail_protocol("The daemon returned invalid capabilities")
         self._log_daemon_identity()
 
+    def _default_timeout_for(self, method: str) -> float:
+        """The timeout for *method* when the caller named none.
+
+        Anything that reaches a secret backend gets
+        :data:`SECRET_BACKEND_REQUEST_TIMEOUT` instead of the generic default:
+        the daemon is waiting on an external vault CLI whose normal round trip
+        is several seconds. A caller that passes ``request_timeout`` explicitly
+        (the interactive secret RPCs, which wait on a human) always wins, and a
+        client configured with a longer timeout keeps it.
+        """
+        if method.startswith("secrets.") or method in SECRET_BACKEND_METHODS:
+            return max(self._timeout, SECRET_BACKEND_REQUEST_TIMEOUT)
+        return self._timeout
+
     def _request(
         self,
         method: str,
@@ -2982,7 +3021,9 @@ class DaemonClient:
         request_timeout: Optional[float] = None,
     ):
         effective_timeout = (
-            self._timeout if request_timeout is None else float(request_timeout)
+            self._default_timeout_for(method)
+            if request_timeout is None
+            else float(request_timeout)
         )
         if effective_timeout <= 0:
             raise ValueError("daemon request timeout must be positive")

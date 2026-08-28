@@ -4040,9 +4040,25 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                             )
                     if not ok:
                         break
-            except Exception:
+            except Exception as exc:
                 logger.exception("Failed to save connection secrets")
                 ok = False
+                # A secure-storage write that never answered is not a refusal:
+                # the daemon may well have completed it (a vault CLI round trip
+                # outran the RPC). Saying "rejected" there sends the user to
+                # re-save a password that is already stored.
+                from .api.errors import ErrorCode, SshPilotError
+
+                if isinstance(exc, SshPilotError) and exc.code in {
+                    ErrorCode.MUTATION_AMBIGUOUS,
+                    ErrorCode.TRANSPORT_TIMEOUT,
+                }:
+                    self._save_meta_error = _(
+                        "The connection settings were saved, but secure storage "
+                        "did not answer in time. The password may have been "
+                        "stored anyway — reopen the connection to check before "
+                        "saving it again."
+                    )
             GLib.idle_add(self._finish_secret_save, ok,
                           close_spinner, spinner, True, pipeline)
 
