@@ -147,8 +147,15 @@ class SSHConnectionValidator:
         # Pure structural validation (avoid DNS on typing to reduce lag)
         return self._validate_hostname(hostname)
 
-    def validate_port(self, port: str, context: str = "SSH") -> 'ValidationResult':
+    def validate_port(
+        self, port: str, context: str = "SSH", allow_empty: bool = False
+    ) -> 'ValidationResult':
         if not port or not str(port).strip():
+            if allow_empty:
+                # Empty means "inherit": the Host block authors no ``Port`` and
+                # OpenSSH resolves it, possibly from a global block. Requiring a
+                # value forced one into the config and overrode that global.
+                return ValidationResult(True, "")
             return ValidationResult(False, _("Port is required"), "error")
         try:
             port_num = int(str(port).strip())

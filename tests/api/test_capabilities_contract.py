@@ -45,3 +45,15 @@ def test_launcher_validates_capabilities_before_returning_client():
     source = DaemonLauncher._connect.__code__.co_names
     assert "get_capabilities" in source
     assert "MISSING_CAPABILITY" in source
+
+
+def test_update_request_accepts_empty_port_as_the_clear_signal():
+    """`""` clears an authored Port; anything else non-numeric stays invalid."""
+    import pytest
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+
+    assert UpdateConnectionRequest(port="").port == ""
+    assert UpdateConnectionRequest(port=2200).port == 2200
+    for bad in ("22a", "abc", 0, 70000):
+        with pytest.raises(ValueError):
+            UpdateConnectionRequest(port=bad)

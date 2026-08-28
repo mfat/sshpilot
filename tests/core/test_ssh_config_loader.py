@@ -508,3 +508,40 @@ def test_explicitly_cleared_username_returns_to_inheriting(tmp_path):
     after = _only_record(load_ssh_configuration(path, isolated=True), "web")
     assert "user" not in after.authored_directives
     assert "User alice" not in path.read_text(encoding="utf-8")
+
+
+def test_clearing_the_port_returns_the_host_to_the_inherited_one(tmp_path):
+    """An emptied Port field must remove the line, like an emptied username.
+
+    Forcing a port on every save is what stopped a global ``Port`` from ever
+    applying: the block always carried one, and the launch path always emitted
+    ``-p`` for it.
+    """
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+    from sshpilot.api.models.identity import ConnectionId
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    Port 2323\n\nHost web\n    HostName web.example.com\n    Port 2200\n",
+        encoding="utf-8",
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(path),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(
+        repo, client_name="test", allow_cross_thread_commands=True
+    )
+
+    service.update_connection(ConnectionId("web"), UpdateConnectionRequest(port=""))
+
+    text = path.read_text(encoding="utf-8")
+    assert "Port 2200" not in text
+    assert "Host *\n    Port 2323\n" in text  # the global is untouched
+    after = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "port" not in after.authored_directives

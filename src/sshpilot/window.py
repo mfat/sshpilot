@@ -7620,7 +7620,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     nickname=connection_data.get('nickname', ''),
                     hostname=connection_data.get('hostname', ''),
                     username=connection_data.get('username', ''),
-                    port=connection_data.get('port', 22),
+                    # A new connection needs a concrete port; an empty field
+                    # means "inherit", and 22 is what OpenSSH falls back to, so
+                    # the formatter still omits the Port line for it.
+                    port=connection_data.get('port') or 22,
                     protocol='ssh',
                     display_name=connection_data.get('display_name', ''),
                     config_patch=config_patch,

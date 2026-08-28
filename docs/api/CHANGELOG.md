@@ -11,7 +11,22 @@ notes remain separate.
   correctness fixes within the current 0.40 contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.43 (current)
+## API 0.44 (current)
+
+### API 0.44 clearable connection port
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `UpdateConnectionRequest.port`
+  now accepts `""` to mean "clear the authored Port so the host inherits
+  again". A 0.43 daemon validates the field as an integer in 1-65535 and
+  rejects the empty string, so a newer client's clear request is not
+  wire-compatible with it.
+- This mirrors how an emptied `username` already clears `User`. Without it a
+  port could never be un-authored: `None` means preserve for the core identity
+  fields, so the editor had no way to express "no Port line", and every saved
+  connection carried one — permanently overriding a global `Port`.
+- Integer values and `UNSET`/`None` are unchanged; only the empty string is new.
+
+## Historical API entries
 
 ### API 0.43 launch-command introspection
 
@@ -30,8 +45,6 @@ notes remain separate.
 - Carries no secrets: only `SSH_AUTH_SOCK` crosses in the environment, and the
   daemon's private askpass transport is injected later by the interaction
   broker and is deliberately absent from this argv.
-
-## Historical API entries
 
 ### API 0.42 authored-directive evidence
 

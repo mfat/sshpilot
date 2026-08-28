@@ -94,7 +94,8 @@ class ConnectionDialogValidationMixin:
         elif field_name == 'hostname':
             result = self.validator.validate_hostname(text, allow_empty=True)
         elif field_name == 'port':
-            result = self.validator.validate_port(text, context)
+            # Empty means "inherit from SSH config", not "invalid".
+            result = self.validator.validate_port(text, context, allow_empty=True)
         elif field_name == 'username':
             # Empty means "inherit from SSH config", not "invalid".
             result = self.validator.validate_username(text, allow_empty=True)

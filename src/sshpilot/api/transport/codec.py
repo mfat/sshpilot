@@ -2397,7 +2397,10 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if username is not UNSET and username is not None:
         username = _text(username, "connection username", allow_empty=True)
     if port is not UNSET and port is not None:
-        port = _integer(port, "connection port")
+        # An empty string is the explicit "clear the authored Port" signal.
+        port = "" if (type(port) is str and not port.strip()) else _integer(
+            port, "connection port"
+        )
 
     raw_patch = data.get("config_patch")
     config_patch: Dict[str, Any] = {}

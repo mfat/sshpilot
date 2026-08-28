@@ -4477,7 +4477,7 @@ first-generation value and is enforced like any other.
 | `nickname` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `hostname` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `username` | `str | None | UNSET` | No | ``UNSET`` | No |
-| `port` | `int | None | UNSET` | No | ``UNSET`` | No |
+| `port` | `int | str | None | UNSET` | No | ``UNSET`` | No |
 | `display_name` | `str | None | UNSET` | No | ``UNSET`` | No |
 | `config_patch` | `Mapping[str, Any]` | No | `{}` | No |
 | `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |

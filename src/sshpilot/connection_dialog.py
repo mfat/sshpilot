@@ -2617,7 +2617,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "nickname": text("nickname_row"),
             "hostname": text("hostname_row"),
             "username": text("username_row"),
-            "port": int(text("port_row", "22") or "22"),
+            "port": (int(t) if (t := text("port_row")) else ""),
             "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
             "auth_method": int(self.auth_toggle.get_active()) if hasattr(self, "auth_toggle") else 0,
             "key_select_mode": self._selected_key_mode(),
@@ -2739,10 +2739,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
+                # Only an authored Port belongs in the row. When it is
+                # inherited the row starts empty and the resolved value is
+                # filled in dimmed by _load_inherited_values_async; if that
+                # cannot run, empty still correctly means "inherit".
+                authored = getattr(self.connection, 'authored_directives', None)
                 try:
-                    self.port_row.set_text(str(int(self.connection.port) if self.connection.port else 22))
+                    if authored is not None and 'port' not in authored:
+                        self.port_row.set_text("")
+                    else:
+                        self.port_row.set_text(
+                            str(int(self.connection.port) if self.connection.port else 22)
+                        )
                 except Exception:
-                    self.port_row.set_text("22")
+                    self.port_row.set_text("")
 
             # Load proxy settings (without triggering inline completion)
             if hasattr(self.connection, 'proxy_jump'):
@@ -3961,7 +3971,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'nickname': self.nickname_row.get_text().strip(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
-            'port': int(self.port_row.get_text().strip() or '22'),
+            # "" means inherit: the block authors no Port and OpenSSH resolves
+            # it. Coercing to 22 here is what forced a Port line into every
+            # block and overrode a global Port.
+            'port': (
+                int(self.port_row.get_text().strip())
+                if self.port_row.get_text().strip()
+                else ''
+            ),
             'auth_method': self._selected_auth_method(),
             'keyfile': keyfile_value,
             'identity_files': identity_files,

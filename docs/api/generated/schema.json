@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.43",
+  "api_implementation_version": "0.44",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -7083,7 +7083,7 @@
           "name": "port",
           "required": false,
           "sensitive": false,
-          "type": "int | None | UNSET"
+          "type": "int | str | None | UNSET"
         },
         {
           "default": "`UNSET`",
