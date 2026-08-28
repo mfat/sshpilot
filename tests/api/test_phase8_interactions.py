@@ -148,6 +148,12 @@ def test_structured_secret_prompt_round_trips_without_rendered_text() -> None:
     assert interaction_summary_from_wire(wire) == summary
 
 
+def test_secret_prompt_parameter_keys_cover_every_kind() -> None:
+    from sshpilot.api.models.interactions import _SECRET_PROMPT_PARAMETER_KEYS
+
+    assert set(_SECRET_PROMPT_PARAMETER_KEYS) == set(SecretPromptKind)
+
+
 def test_structured_secret_prompt_rejects_unknown_kind_and_invalid_parameters() -> None:
     now = datetime.now(timezone.utc)
     summary = InteractionSummary(

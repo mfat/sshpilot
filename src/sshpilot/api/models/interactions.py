@@ -92,6 +92,8 @@ _SECRET_PROMPT_PARAMETER_KEYS = {
     SecretPromptKind.BACKUP_ENCRYPT: frozenset(),
     SecretPromptKind.BACKUP_DECRYPT: frozenset(),
 }
+if set(_SECRET_PROMPT_PARAMETER_KEYS) != set(SecretPromptKind):
+    raise RuntimeError("secret prompt parameter keys must cover every SecretPromptKind")
 
 
 @dataclass(frozen=True)
