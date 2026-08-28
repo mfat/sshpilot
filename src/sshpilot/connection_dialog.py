@@ -2367,7 +2367,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             try:
                 row.disconnect(handler_id)
                 row.remove_css_class('dim-label')
-                row.set_tooltip_text(None)
+                self._set_row_inherited_note(row, '')
             except Exception:
                 logger.debug("Could not reset inherited row %s", row_name, exc_info=True)
         self._inherited_row_handlers = {}
@@ -2387,8 +2387,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self._applying_inherited_value = False
 
         row.add_css_class('dim-label')
-        row.set_tooltip_text(
-            _('Inherited from your SSH configuration. Edit to set it for this host.')
+        # Composed with any validation message rather than replacing it: a row
+        # has one tooltip, and setting it directly made whichever ran last win.
+        self._set_row_inherited_note(
+            row,
+            _('Inherited from your SSH configuration. Edit to set it for this host.'),
         )
         handlers[row_name] = row.connect(
             'changed', lambda _row, name=row_name: self._on_inherited_row_edited(name)
@@ -2409,7 +2412,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         row = getattr(self, row_name, None)
         if row is not None:
             row.remove_css_class('dim-label')
-            row.set_tooltip_text(None)
+            self._set_row_inherited_note(row, '')
         handlers = getattr(self, '_inherited_row_handlers', None) or {}
         handler_id = handlers.pop(row_name, None)
         if handler_id is not None and row is not None:

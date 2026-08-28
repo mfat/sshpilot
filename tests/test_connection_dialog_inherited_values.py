@@ -15,6 +15,9 @@ import types
 import pytest
 
 from sshpilot.connection_dialog import ConnectionDialog
+from sshpilot.connection_dialog_validation import (
+    ConnectionDialogValidationMixin as Validation,
+)
 
 
 def _real_gtk_available():
@@ -55,6 +58,17 @@ def _dialog(**rows):
     # exercise the real signal path rather than only the helpers.
     dialog._on_inherited_row_edited = (
         lambda name: ConnectionDialog._on_inherited_row_edited(dialog, name)
+    )
+    dialog._set_row_inherited_note = (
+        lambda row, note: Validation._set_row_inherited_note(dialog, row, note)
+    )
+    dialog._refresh_row_tooltip = (
+        lambda row: Validation._refresh_row_tooltip(dialog, row)
+    )
+    dialog._row_set_message = (
+        lambda row, message, is_error=True: Validation._row_set_message(
+            dialog, row, message, is_error
+        )
     )
     return dialog
 
@@ -173,3 +187,71 @@ def test_every_inheritable_row_maps_to_a_real_directive_and_save_field():
         "identityfile", "certificatefile",
         "localforward", "remoteforward", "dynamicforward",
     }
+
+
+# --- tooltip composition ----------------------------------------------------
+#
+# A row has one tooltip but two things to say: what validation thinks of the
+# text, and whether the value is inherited. Setting it directly made whichever
+# ran last erase the other.
+
+
+def _result(message, is_valid=True, severity="info"):
+    return types.SimpleNamespace(message=message, is_valid=is_valid, severity=severity)
+
+
+@needs_adw
+@pytest.mark.parametrize("inherit_first", [True, False])
+def test_validation_and_inheritance_tooltips_are_combined(inherit_first):
+    row = _entry_row("Port")
+    dialog = _dialog(port_row=row)
+    steps = [
+        lambda: ConnectionDialog._show_inherited_value(dialog, "port_row", row, "2323"),
+        lambda: Validation._apply_validation_to_row(
+            dialog, row, _result("Valid port number")
+        ),
+    ]
+    for step in steps if inherit_first else reversed(steps):
+        step()
+
+    tooltip = row.get_tooltip_text()
+    assert "Valid port number" in tooltip
+    assert "Inherited" in tooltip
+
+
+@needs_adw
+def test_validation_error_and_inheritance_note_both_survive():
+    row = _entry_row("Port")
+    dialog = _dialog(port_row=row)
+    ConnectionDialog._show_inherited_value(dialog, "port_row", row, "2323")
+
+    Validation._apply_validation_to_row(
+        dialog, row, _result("Port must be between 1-65535", is_valid=False, severity="error")
+    )
+
+    tooltip = row.get_tooltip_text()
+    assert "Port must be between 1-65535" in tooltip
+    assert "Inherited" in tooltip
+
+
+@needs_adw
+def test_clearing_validation_keeps_the_inheritance_note():
+    row = _entry_row("Username")
+    dialog = _dialog(username_row=row)
+    ConnectionDialog._show_inherited_value(dialog, "username_row", row, "tom")
+
+    Validation._row_clear_message(dialog, row)
+
+    assert "Inherited" in row.get_tooltip_text()
+
+
+@needs_adw
+def test_adopting_a_row_drops_only_the_inheritance_half():
+    row = _entry_row("Port")
+    dialog = _dialog(port_row=row)
+    ConnectionDialog._show_inherited_value(dialog, "port_row", row, "2323")
+    Validation._apply_validation_to_row(dialog, row, _result("Valid port number"))
+
+    ConnectionDialog._on_inherited_row_edited(dialog, "port_row")
+
+    assert row.get_tooltip_text() == "Valid port number"

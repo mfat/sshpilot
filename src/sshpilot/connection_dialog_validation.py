@@ -28,19 +28,51 @@ from gettext import gettext as _
 
 
 class ConnectionDialogValidationMixin:
+    # A row can carry two independent notes: what validation says about the
+    # text, and whether the value is inherited from ssh_config. Both are shown
+    # through the one tooltip a row has, so neither may call
+    # ``set_tooltip_text`` directly — whichever ran last would erase the other.
+    # They are stored separately on the row and composed here.
+
+    def _set_row_inherited_note(self, row, note: str) -> None:
+        """Record (or clear, with '') the inherited-value note for *row*."""
+        try:
+            row._sshpilot_inherited_note = note or ""
+            self._refresh_row_tooltip(row)
+        except Exception:
+            pass
+
+    def _refresh_row_tooltip(self, row) -> None:
+        """Rebuild a row's tooltip from its validation and inheritance notes."""
+        parts = [
+            text for text in (
+                getattr(row, '_sshpilot_validation_message', ''),
+                getattr(row, '_sshpilot_inherited_note', ''),
+            ) if text
+        ]
+        tooltip = "\n".join(parts) or None
+        try:
+            if hasattr(row, 'set_tooltip_text'):
+                row.set_tooltip_text(tooltip)
+        except Exception:
+            pass
+        try:
+            entry = row.get_child() if hasattr(row, 'get_child') else None
+            if entry is not None and hasattr(entry, 'set_tooltip_text'):
+                entry.set_tooltip_text(tooltip)
+        except Exception:
+            pass
+
     def _apply_validation_to_row(self, row, result):
         try:
             if hasattr(row, 'set_subtitle'):
                 row.set_subtitle(result.message or "")
         except Exception:
             pass
-        # Tooltips on row and entry
+        # Tooltip is shared with the inherited-value note; compose, never set.
         try:
-            if hasattr(row, 'set_tooltip_text'):
-                row.set_tooltip_text(result.message or None)
-            entry = row.get_child() if hasattr(row, 'get_child') else None
-            if entry is not None and hasattr(entry, 'set_tooltip_text'):
-                entry.set_tooltip_text(result.message or None)
+            row._sshpilot_validation_message = result.message or ""
+            self._refresh_row_tooltip(row)
         except Exception:
             pass
         # CSS classes: clear, then set per severity
@@ -125,16 +157,11 @@ class ConnectionDialogValidationMixin:
                 row.set_subtitle(message or "")
         except Exception:
             pass
-        # Also mirror the message into tooltips for visibility/accessibility
+        # Mirrored into the tooltip for visibility/accessibility, composed with
+        # any inherited-value note rather than replacing it.
         try:
-            if hasattr(row, 'set_tooltip_text'):
-                row.set_tooltip_text(message or None)
-        except Exception:
-            pass
-        try:
-            entry = row.get_child() if hasattr(row, 'get_child') else None
-            if entry is not None and hasattr(entry, 'set_tooltip_text'):
-                entry.set_tooltip_text(message or None)
+            row._sshpilot_validation_message = message or ""
+            self._refresh_row_tooltip(row)
         except Exception:
             pass
         try:
