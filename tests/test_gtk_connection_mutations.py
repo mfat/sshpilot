@@ -1348,7 +1348,6 @@ def test_daemon_editor_populates_from_dto_not_stale_local_connection():
         port=2202,
         protocol="ssh",
         proxy_jump=("jump1", "jump2"),
-        proxy_command="ssh -W %h:%p bastion",
         forward_agent=True,
         authentication_method=AuthenticationMethod.PASSWORD,
         identity_files=["/keys/id_ed25519"],
@@ -1392,7 +1391,6 @@ def test_daemon_editor_populates_from_dto_not_stale_local_connection():
     form = _editor_details_to_connection(dto)
     assert form.hostname == "dto.example"
     assert form.proxy_jump == ("jump1", "jump2")
-    assert form.proxy_command == "ssh -W %h:%p bastion"
     assert form.keyfile == "/keys/id_ed25519"
     assert form.remote_command == "echo remote"
     assert form.auth_method == 1

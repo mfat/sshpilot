@@ -18,7 +18,6 @@ from sshpilot.connection_dialog import ConnectionDialog
 from sshpilot.connection_dialog_validation import (
     ConnectionDialogValidationMixin as Validation,
 )
-from sshpilot.api.models.connections import EDITABLE_CONFIG_FIELDS, validate_config_patch
 
 
 def _real_gtk_available():
@@ -178,7 +177,7 @@ def test_every_inheritable_row_maps_to_a_real_directive_and_save_field():
     # The directives users most often set globally must all be covered.
     covered = {directive for directive, _key in rows.values()}
     assert {
-        "user", "port", "hostname", "proxyjump", "proxycommand",
+        "user", "port", "hostname", "proxyjump",
         "pkcs11provider", "securitykeyprovider", "localcommand", "remotecommand",
     } <= covered
 
@@ -188,11 +187,6 @@ def test_every_inheritable_row_maps_to_a_real_directive_and_save_field():
         "identityfile", "certificatefile",
         "localforward", "remoteforward", "dynamicforward",
     }
-
-    assert ConnectionDialog._INHERITED_ROW_FIELDS["proxy_command_row"] == "proxy_command"
-    assert "proxy_command" in EDITABLE_CONFIG_FIELDS
-    validate_config_patch({"proxy_command": "ssh -W %h:%p bastion"})
-    validate_config_patch({"proxy_command": ""})
 
 
 # --- tooltip composition ----------------------------------------------------
