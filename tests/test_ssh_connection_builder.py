@@ -448,3 +448,33 @@ def test_authored_keepalive_suppresses_the_app_default():
 def test_default_keepalive_still_applies_without_an_authored_one():
     argv = _argv(_config_connection(hostname="web.example.com", authored=("hostname",)))
     assert "ServerAliveInterval=15" in argv
+
+
+def test_batch_mode_only_appears_under_the_none_interaction_policy():
+    """Guards what "Copy SSH Command" hands the user.
+
+    A copied command carrying BatchMode=yes cannot prompt for a password or an
+    unknown host key, so the copy path must not use the external-terminal
+    (`none`) policy that adds it.
+    """
+    conn = _config_connection(
+        hostname="web.example.com", username="alice", port=2200,
+        authored=("hostname", "user", "port"),
+    )
+
+    def _argv_for(policy):
+        return build_ssh_connection(
+            ConnectionContext(
+                connection=conn,
+                command_type="ssh",
+                native_mode=True,
+                interaction_policy=policy,
+            )
+        ).command
+
+    assert "BatchMode=yes" in _argv_for("none")
+    for policy in ("normal", "broker"):
+        argv = _argv_for(policy)
+        assert "BatchMode=yes" not in argv
+        # Still the real command: authored values are enforced either way.
+        assert "-l" in argv and argv[argv.index("-l") + 1] == "alice"

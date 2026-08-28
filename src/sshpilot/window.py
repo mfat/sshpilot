@@ -6784,6 +6784,66 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to open effective config viewer", exc_info=True)
 
+    def on_copy_ssh_command_action(self, action=None, param=None):
+        """Copy the SSH command this connection actually runs to the clipboard.
+
+        The command is composed by the daemon, which owns launch preparation —
+        GTK never rebuilds it, so what lands on the clipboard is the same argv
+        the session is started with. It carries no secrets; the private askpass
+        transport is added later by the interaction broker and is process-local.
+        """
+        connection = getattr(self, '_context_menu_connection', None)
+        if connection is None:
+            row = self.connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+        if connection is None:
+            return
+        if not self._daemon_ready():
+            self._show_daemon_unavailable_dialog()
+            return
+
+        def _on_success(spec):
+            try:
+                self.get_clipboard().set(shlex.join(tuple(spec.argv)))
+                self._show_copy_ssh_command_toast()
+            except Exception:
+                logger.debug("Failed to copy SSH command", exc_info=True)
+
+        try:
+            self.client_bridge.submit(
+                lambda: self.client.get_launch_command(
+                    connection_id_for(connection)
+                ),
+                on_success=_on_success,
+                on_error=self._on_copy_ssh_command_error,
+            )
+        except Exception as error:
+            self._on_copy_ssh_command_error(error)
+
+    def _show_copy_ssh_command_toast(self) -> None:
+        """Confirm the copy; the clipboard gives no other feedback."""
+        try:
+            if not getattr(self, 'toast_overlay', None):
+                return
+            self.toast_overlay.add_toast(Adw.Toast.new(_("SSH command copied")))
+        except Exception:
+            logger.debug("Could not show copy confirmation", exc_info=True)
+
+    def _on_copy_ssh_command_error(self, error) -> None:
+        from .api import ErrorCode
+
+        if getattr(error, "code", None) is ErrorCode.UNSUPPORTED_CAPABILITY:
+            self._error_dialog(
+                _("SSH command unavailable"),
+                _("This daemon cannot prepare the SSH command for this connection."),
+            )
+            return
+        logger.debug("Daemon launch-command lookup failed: %s", error)
+        self._error_dialog(
+            _("SSH command unavailable"),
+            _("The SSH command for this connection could not be prepared."),
+        )
+
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:

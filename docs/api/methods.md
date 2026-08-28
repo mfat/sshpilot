@@ -8,6 +8,7 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 <!-- api-method: subscribe_broadcast_output -->
 <!-- api-method: get_plugin_setting -->
 <!-- api-method: prepare_external_terminal_launch -->
+<!-- api-method: get_launch_command -->
 <!-- api-method: get_effective_config -->
 <!-- api-method: check_unsaved_host -->
 <!-- api-method: set_operation_mode -->
@@ -51,6 +52,7 @@ direct core service compositions are test-only and are not client choices.
 | `get_operation_mode` | Daemon only | `operation.mode` |
 | `check_unsaved_host` | Implemented | `connections.read` |
 | `prepare_external_terminal_launch` | Daemon only | `terminal.external_launch` |
+| `get_launch_command` | Implemented | `terminal.external_launch` |
 | `get_effective_config` | Implemented | `connections.config.read` |
 | `store_connection_password` | Implemented | `connections.secrets.write` |
 | `clear_session_connection_password` | Daemon only | `connections.secrets.write` |
@@ -155,6 +157,7 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: get_plugin_setting status=daemon-only capability=plugins.settings.read -->
 <!-- api-method-contract: get_ssh_config_text status=implemented capability=connections.config.read -->
 <!-- api-method-contract: prepare_external_terminal_launch status=implemented capability=terminal.external_launch -->
+<!-- api-method-contract: get_launch_command status=implemented capability=terminal.external_launch -->
 <!-- api-method-contract: get_effective_config status=implemented capability=connections.config.read -->
 <!-- api-method-contract: check_unsaved_host status=implemented capability=connections.read -->
 <!-- api-method-contract: set_operation_mode status=daemon-only capability=operation.mode -->
@@ -431,6 +434,7 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.get_editor capability=connections.config.read -->
 <!-- api-daemon-method: connections.get_ssh_config_text capability=connections.config.read -->
 <!-- api-daemon-method: connections.prepare_external_terminal_launch capability=terminal.external_launch -->
+<!-- api-daemon-method: connections.get_launch_command capability=terminal.external_launch -->
 <!-- api-daemon-method: connections.get_effective_config capability=connections.config.read -->
 <!-- api-daemon-method: connections.check_unsaved_host capability=connections.read -->
 <!-- api-daemon-method: daemon.set_operation_mode capability=operation.mode -->

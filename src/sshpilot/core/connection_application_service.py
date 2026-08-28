@@ -77,6 +77,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
@@ -225,6 +226,44 @@ class ConnectionApplicationService:
         argv, environment = self.prepare_daemon_terminal_launch(
             connection_id,
             interaction_policy="none",
+        )
+        approved_environment = tuple(
+            sorted(
+                (name, value)
+                for name, value in environment.items()
+                if name == "SSH_AUTH_SOCK"
+            )
+        )
+        details = self.get_connection(connection_id)
+        return ExternalTerminalLaunchSpec(
+            argv=tuple(argv),
+            environment=approved_environment,
+            display_name=details.nickname,
+            secret_autofill_supported=False,
+        )
+
+    def get_launch_command(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        """Return the SSH command this connection actually runs.
+
+        Uses the ``normal`` interaction policy — the one a real in-app session
+        launches with — so the argv matches what OpenSSH is executed with.
+        :meth:`prepare_external_terminal_launch` deliberately uses ``none``,
+        which adds ``BatchMode=yes``/``StrictHostKeyChecking=yes``; that is
+        correct for handing a session to a terminal emulator but wrong as an
+        answer to "what does this connection run", and a copied BatchMode
+        command cannot prompt for a password or an unknown host key.
+
+        The daemon's private askpass transport is injected later, by the
+        interaction broker, and is process-local — it is deliberately not part
+        of this argv, which is meant to be readable and re-runnable by hand.
+        Only ``SSH_AUTH_SOCK`` crosses in the environment, and no secret does.
+        """
+        self._assert_command_thread()
+        argv, environment = self.prepare_daemon_terminal_launch(
+            connection_id,
+            interaction_policy="normal",
         )
         approved_environment = tuple(
             sorted(

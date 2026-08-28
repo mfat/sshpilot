@@ -9,7 +9,8 @@ from sshpilot.core.connection_application_service import (
 def test_connection_service_only_declares_connection_operations():
     assert set(IMPLEMENTED_CLIENT_METHOD_CAPABILITIES) == {
         "close", "get_capabilities", "get_connection", "get_connection_editor",
-        "get_ssh_config_text", "get_effective_config", "check_unsaved_host", "prepare_external_terminal_launch", "save_ssh_config_text",
+        "get_ssh_config_text", "get_effective_config", "check_unsaved_host", "prepare_external_terminal_launch", "get_launch_command",
+        "save_ssh_config_text",
         "list_connections", "create_connection", "duplicate_connection",
         "delete_connection", "store_connection_password",
         "set_session_connection_password",

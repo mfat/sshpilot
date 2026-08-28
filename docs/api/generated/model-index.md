@@ -1537,7 +1537,7 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** Daemon-prepared, non-secret launch data for an external terminal.
 
-**Related methods:** `prepare_external_terminal_launch`
+**Related methods:** `get_launch_command`, `prepare_external_terminal_launch`
 **Related events:** None
 
 | Field | Type | Required | Default | Sensitive |

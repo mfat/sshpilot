@@ -202,6 +202,7 @@ DAEMON_METHOD_CAPABILITIES = {
     "daemon.get_operation_mode": Capability.OPERATION_MODE,
     "connections.get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "connections.prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "connections.get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "connections.save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "connections.store_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "connections.set_session_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -442,6 +443,7 @@ DEFERRED_DAEMON_METHODS = frozenset(
         "connections.get_effective_config",
         "connections.check_unsaved_host",
         "connections.prepare_external_terminal_launch",
+        "connections.get_launch_command",
         "connections.get_ssh_config_text",
         "connections.save_ssh_config_text",
         "daemon.set_operation_mode",
@@ -692,6 +694,7 @@ class RequestDispatcher:
             "daemon.get_operation_mode": self._handle_get_operation_mode,
             "connections.get_ssh_config_text": self._handle_get_ssh_config_text,
             "connections.prepare_external_terminal_launch": self._handle_prepare_external_terminal_launch,
+            "connections.get_launch_command": self._handle_get_launch_command,
             "connections.save_ssh_config_text": self._handle_save_ssh_config_text,
             "connections.store_password": self._handle_store_connection_password,
         "connections.set_session_password": self._handle_set_session_connection_password,
@@ -1330,6 +1333,26 @@ class RequestDispatcher:
         return DeferredResult(
             operation=lambda: external_terminal_launch_spec_to_wire(
                 self._connections.prepare_external_terminal_launch(typed_id)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+            connection_id=typed_id,
+        )
+
+    def _handle_get_launch_command(
+        self,
+        request: RequestEnvelope,
+        _state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"connection_id"}:
+            raise ValueError("connections.get_launch_command requires connection_id")
+        connection_id = request.params["connection_id"]
+        if type(connection_id) is not str or not connection_id.strip():
+            raise ValueError("connection_id must be a non-empty string")
+        typed_id = ConnectionId(connection_id)
+        return DeferredResult(
+            operation=lambda: external_terminal_launch_spec_to_wire(
+                self._connections.get_launch_command(typed_id)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

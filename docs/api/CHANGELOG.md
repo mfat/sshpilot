@@ -11,7 +11,27 @@ notes remain separate.
   correctness fixes within the current 0.40 contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.42 (current)
+## API 0.43 (current)
+
+### API 0.43 launch-command introspection
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `connections.get_launch_command`
+  is a new method: a 0.42 daemon advertising `terminal.external_launch` does
+  not implement it, so capability advertisement alone no longer implies the
+  method is present.
+- Returns the SSH argv a connection actually runs, as an
+  `ExternalTerminalLaunchSpec` (no new model). It resolves with the `normal`
+  interaction policy — the one a real in-app session launches with — unlike
+  `prepare_external_terminal_launch`, which deliberately uses `none` and so
+  adds `BatchMode=yes`/`StrictHostKeyChecking=yes`. That is right for handing a
+  session to a terminal emulator but wrong as an answer to "what does this
+  connection run", and such a command cannot prompt for a password or an
+  unknown host key.
+- Carries no secrets: only `SSH_AUTH_SOCK` crosses in the environment, and the
+  daemon's private askpass transport is injected later by the interaction
+  broker and is deliberately absent from this argv.
+
+## Historical API entries
 
 ### API 0.42 authored-directive evidence
 
@@ -29,8 +49,6 @@ notes remain separate.
   re-emitted as command-line options, so an editor value can no longer be
   silently overridden by an earlier `Host *` block, while an unauthored one
   keeps inheriting. Defaults are never emitted.
-
-## Historical API entries
 
 ### API 0.41 operation-mode file visibility
 

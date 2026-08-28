@@ -798,6 +798,37 @@ def test_external_terminal_launch_is_daemon_prepared_and_non_secret():
     assert "password" not in repr(spec).lower()
 
 
+def test_launch_command_uses_the_policy_a_real_session_launches_with():
+    """`get_launch_command` must answer "what does this connection run".
+
+    `prepare_external_terminal_launch` deliberately uses the ``none`` policy,
+    which adds BatchMode/StrictHostKeyChecking. Copying that would hand the
+    user a command that cannot prompt for a password or an unknown host key.
+    """
+    seen = []
+
+    class LaunchProvider:
+        def prepare_terminal_launch(
+            self, connection_id, *, interaction_policy="none", remote_command=None, force_tty=False
+        ):
+            seen.append(interaction_policy)
+            return ("/usr/bin/ssh", "-p", "2200", "-l", "alice", "web"), {
+                "SSH_AUTH_SOCK": "/run/user/1000/ssh-agent.sock",
+                "SSH_ASKPASS": "/should-not-cross",
+            }
+
+    service = ConnectionApplicationService(
+        FakeRepository([_record()]), launch_provider=LaunchProvider(), client_name="test"
+    )
+    spec = service.get_launch_command(ConnectionId("web"))
+    assert seen == ["normal"]
+    assert spec.argv == ("/usr/bin/ssh", "-p", "2200", "-l", "alice", "web")
+    # The daemon's private askpass transport never reaches a copyable command.
+    assert spec.environment == (("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock"),)
+    assert "askpass" not in repr(spec).lower()
+    assert "password" not in repr(spec).lower()
+
+
 def test_missing_launch_provider_raises_startup_error():
     repo = FakeRepository([_record()])
     service = ConnectionApplicationService(repo, client_name="test")
