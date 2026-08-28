@@ -15,6 +15,7 @@ src/sshpilot/connection_dialog_validation.py
 src/sshpilot/connection_manager.py
 src/sshpilot/connection_sort.py
 src/sshpilot/core/validation/connection.py
+src/sshpilot/daemon_interaction_dialogs.py
 src/sshpilot/daemon_quit_policy.py
 src/sshpilot/daemon_sessions_dialog.py
 src/sshpilot/daemon_terminal_policy.py

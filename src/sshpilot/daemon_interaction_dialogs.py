@@ -281,18 +281,18 @@ class DaemonInteractionDialogs:
             return
         changed = prompt.status in {HostKeyStatus.CHANGED, HostKeyStatus.REVOKED}
         heading = (
-            "SSH host key changed"
+            _("SSH host key changed")
             if changed
-            else "Verify this SSH host"
+            else _("Verify this SSH host")
         )
         body = (
             f"{prompt.hostname}:{prompt.port}\n"
             f"{prompt.key_type}\n{prompt.fingerprint}"
         )
         dialog = Adw.AlertDialog(heading=heading, body=body)
-        dialog.add_response("reject", "Reject")
+        dialog.add_response("reject", _("Reject"))
         if not changed:
-            dialog.add_response("accept", "Accept")
+            dialog.add_response("accept", _("Accept"))
             dialog.set_response_appearance(
                 "accept",
                 Adw.ResponseAppearance.SUGGESTED,
@@ -337,13 +337,15 @@ class DaemonInteractionDialogs:
             self._present_shared_password(summary, prompt, parent)
             return
         if isinstance(prompt, PassphrasePrompt):
-            heading = f"Passphrase for {prompt.key_display_name}"
+            heading = _("Passphrase for {key_display_name}").format(
+                key_display_name=prompt.key_display_name
+            )
         elif isinstance(prompt, ChallengePrompt):
-            heading = "SSH authentication challenge"
+            heading = _("SSH authentication challenge")
         elif isinstance(prompt, PresencePrompt):
-            heading = "Security key required"
+            heading = _("Security key required")
         elif isinstance(prompt, ConfirmationPrompt):
-            heading = "Confirm SSH operation"
+            heading = _("Confirm SSH operation")
         else:
             return
         dialog = Adw.AlertDialog(
@@ -353,14 +355,16 @@ class DaemonInteractionDialogs:
                 if isinstance(
                     prompt, (ChallengePrompt, PresencePrompt, ConfirmationPrompt)
                 )
-                else "Enter and confirm a new passphrase."
+                else _("Enter and confirm a new passphrase.")
                 if isinstance(prompt, PassphrasePrompt)
                 and prompt.confirmation_required
-                else f"Authentication attempt {summary.attempt}"
+                else _("Authentication attempt {attempt}").format(
+                    attempt=summary.attempt
+                )
             ),
         )
         if isinstance(prompt, PresencePrompt):
-            dialog.add_response("close", "Close")
+            dialog.add_response("close", _("Close"))
             dialog.set_close_response("close")
             dialog.connect(
                 "response",
@@ -370,8 +374,8 @@ class DaemonInteractionDialogs:
             dialog.present(parent)
             return
         if isinstance(prompt, ConfirmationPrompt):
-            dialog.add_response("no", "No")
-            dialog.add_response("yes", "Yes")
+            dialog.add_response("no", _("No"))
+            dialog.add_response("yes", _("Yes"))
             dialog.set_response_appearance("yes", Adw.ResponseAppearance.SUGGESTED)
             dialog.set_default_response("yes")
             dialog.set_close_response("no")
@@ -396,15 +400,15 @@ class DaemonInteractionDialogs:
         confirmation_entry = None
         mismatch_label = None
         if isinstance(prompt, PassphrasePrompt) and prompt.confirmation_required:
-            entry = Adw.PasswordEntryRow(title="Passphrase")
-            confirmation_entry = Adw.PasswordEntryRow(title="Confirm passphrase")
+            entry = Adw.PasswordEntryRow(title=_("Passphrase"))
+            confirmation_entry = Adw.PasswordEntryRow(title=_("Confirm passphrase"))
             group = Adw.PreferencesGroup()
             group.add(entry)
             group.add(confirmation_entry)
             content.append(group)
 
             mismatch_label = Gtk.Label(
-                label="Passphrases do not match",
+                label=_("Passphrases do not match"),
                 xalign=0,
                 visible=False,
             )
@@ -422,10 +426,10 @@ class DaemonInteractionDialogs:
             )
             content.append(entry)
         dialog.set_extra_child(content)
-        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("cancel", _("Cancel"))
         dialog.add_response(
             "submit",
-            "Yes" if isinstance(prompt, ConfirmationPrompt) else "Continue",
+            _("Yes") if isinstance(prompt, ConfirmationPrompt) else _("Continue"),
         )
         dialog.set_response_appearance(
             "submit",
