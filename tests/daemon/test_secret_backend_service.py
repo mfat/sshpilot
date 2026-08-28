@@ -1179,8 +1179,11 @@ def test_two_step_retry_reuses_the_master_password(tmp_path):
         "alice@example.com", twofa_method="0", owner_client_id="client-1"
     )
     assert second.logged_in is True
-    # One further prompt, and it is the code — not the password again.
+    # One further prompt, and it is the code — not the password again. Each
+    # prompt names what it asks for, so the dialog heading is right.
     assert len(broker.created) == 2
+    assert broker.created[0][1]["prompt"].username == "Bitwarden sign-in"
+    assert broker.created[1][1]["prompt"].username == "Two-step login code"
     assert "two-step login code" in broker.created[1][1]["prompt"].hostname
     assert bw.login_results[
         ("login_with_password", "alice@example.com", "0", SENTINEL_2FA, None)
