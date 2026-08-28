@@ -291,6 +291,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def __init__(self, *args, isolated: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        # GTK4 binds F10 to the menubar on each window; the GTK3
+        # gtk-menu-bar-accel setting no longer exists. Disable it here as well
+        # as on Gtk.Application.window-added so F10 reaches htop/mc/vim even
+        # if this window is constructed without an application.
+        try:
+            self.set_handle_menubar_accel(False)
+        except Exception:
+            logger.debug("Could not disable handle-menubar-accel")
 
         # Icon theme path is already registered in main.py load_resources()
         # No need to register again here

@@ -242,17 +242,10 @@ def _stub_gi_for_app_init(monkeypatch):
         def new(cls, name, param_type=None):
             return _FakeAction(name, param_type)
 
-    class _FakeSettings:
-        def set_property(self, name, value):
-            return None
-
     def _noop_init(self, *a, **k):
         return None
 
     monkeypatch.setattr(main_module.Gio, "SimpleAction", _FakeSimpleAction)
-    monkeypatch.setattr(
-        main_module.Gtk.Settings, "get_default", staticmethod(lambda: _FakeSettings())
-    )
     for cls in main_module.SshPilotApplication.__mro__[1:]:
         if cls is object:
             continue
