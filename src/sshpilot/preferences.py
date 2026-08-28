@@ -2411,17 +2411,14 @@ class PreferencesWindow(Adw.NavigationPage):
         ssh_settings_page.set_title("SSH")
         ssh_settings_page.set_icon_name("network-workgroup-symbolic")
 
+        # Group description wraps fully; ActionRow subtitles ellipsize at one
+        # line by default, which is too tight for this precedence note.
         help_group = Adw.PreferencesGroup()
-        help_row = Adw.ActionRow()
-        help_row.set_title(_("Custom SSH Options"))
-        help_row.set_subtitle(
-            _("These settings override values from your ~/.ssh/config.")
+        help_group.set_title(_("Custom SSH Options"))
+        help_group.set_description(
+            _("These settings apply to all connections and override values from "
+              "~/.ssh/config. Explicit per-connection settings always win.")
         )
-        if hasattr(help_row, "set_activatable"):
-            help_row.set_activatable(False)
-        if hasattr(help_row, "set_selectable"):
-            help_row.set_selectable(False)
-        help_group.add(help_row)
 
         advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
 
