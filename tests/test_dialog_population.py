@@ -91,7 +91,7 @@ class TestParserPopulatesDialogData:
         extra = (load_record(tmp_path).data.get("extra_ssh_config") or "").lower()
         for modelled in (
             "identityfile", "certificatefile", "hostname", "port ", "user ",
-            "proxyjump", "forwardagent", "forwardx11", "localforward",
+            "proxyjump", "proxycommand", "forwardagent", "forwardx11", "localforward",
             "identitiesonly", "identityagent", "addkeystoagent",
             "pkcs11provider", "securitykeyprovider",
         ):
@@ -272,6 +272,7 @@ def test_dialog_load_save_round_trip(tmp_path):
         data={}, aliases=[], local_command="", remote_command="", pre_command="",
         forwarding_rules=[], identity_agent="~/.ssh/agent.sock", add_keys_to_agent="confirm",
         pkcs11_provider="", security_key_provider="",
+        proxy_command="ssh -W %h:%p bastion",
     )
     dlg.connection = conn
     dlg.is_editing = True
@@ -290,6 +291,7 @@ def test_dialog_load_save_round_trip(tmp_path):
     assert captured["certificate_files"] == ["/h/.ssh/a-cert.pub"]
     assert captured["identity_agent"] == "~/.ssh/agent.sock"
     assert captured["add_keys_to_agent"] == "confirm"
+    assert captured["proxy_command"] == "ssh -W %h:%p bastion"
     assert "ciphers" in captured["extra_ssh_config"].lower()
 
 
