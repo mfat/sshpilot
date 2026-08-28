@@ -472,7 +472,6 @@ class ConnectionContext:
     port_forwarding_rules: Optional[List[Dict]] = None  # Port forwarding rules
     remote_command: Optional[str] = None  # Remote command to execute
     local_command: Optional[str] = None  # Local command to execute
-    extra_ssh_config: Optional[str] = None  # Extra SSH config options (from advanced tab)
     known_hosts_path: Optional[str] = None  # Custom known hosts file
     native_mode: bool = False  # Use native SSH mode (minimal command)
     interaction_policy: str = "normal"
