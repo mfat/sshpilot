@@ -106,7 +106,10 @@ DEFAULT_LIST_LIMIT = 2000
 DEFAULT_MAX_FILE_BYTES = 1024 * 1024
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
 DEFAULT_TERMINATE_GRACE_SECONDS = 2.0
+DEFAULT_PROCESS_POLL_INTERVAL = 0.02
 _LOCAL_AUTHORIZED_KEYS_MARKER = "~/.ssh/authorized_keys"
+
+SftpExitCallback = Callable[[Optional[int]], None]
 
 
 def _file_revision(content: bytes, exists: bool) -> str:
@@ -158,7 +161,9 @@ class SftpProcessHandle(Protocol):
 class SftpProcessRunner(Protocol):
     """Narrow launch boundary, mirroring ``SessionProcessRunner``."""
 
-    def start(self, spec: SessionLaunchSpec) -> SftpProcessHandle: ...
+    def start(
+        self, spec: SessionLaunchSpec, on_exit: SftpExitCallback
+    ) -> SftpProcessHandle: ...
 
     def close(self) -> None: ...
 
@@ -166,7 +171,10 @@ class SftpProcessRunner(Protocol):
 class UnsupportedSftpProcessRunner:
     """Default runner until a daemon launch builder is wired in."""
 
-    def start(self, spec: SessionLaunchSpec) -> SftpProcessHandle:
+    def start(
+        self, spec: SessionLaunchSpec, on_exit: SftpExitCallback
+    ) -> SftpProcessHandle:
+        del on_exit
         raise SshPilotError(
             ErrorCode.SFTP_SERVICE_NOT_READY,
             "SFTP service startup requires daemon runtime support",
@@ -178,11 +186,20 @@ class UnsupportedSftpProcessRunner:
 
 
 class _SubprocessSftpHandle:
-    def __init__(self, process: "subprocess.Popen", client: OpenSSHSFTPClient) -> None:
+    def __init__(
+        self,
+        process: "subprocess.Popen",
+        client: OpenSSHSFTPClient,
+        on_exit: SftpExitCallback,
+        unregister: Callable[["_SubprocessSftpHandle"], None],
+    ) -> None:
         self._process = process
         self.client = client
+        self._on_exit = on_exit
+        self._unregister = unregister
         self._lock = threading.Lock()
         self._terminated = False
+        self._notified = False
 
     def terminate(self) -> None:
         with self._lock:
@@ -201,10 +218,27 @@ class _SubprocessSftpHandle:
 
     def wait(self, timeout: float) -> bool:
         try:
-            self._process.wait(timeout=max(0.0, timeout))
-            return True
+            return_code = self._process.wait(timeout=max(0.0, timeout))
         except subprocess.TimeoutExpired:
             return False
+        self._notify(return_code)
+        return True
+
+    def poll_and_notify(self) -> bool:
+        return_code = self._process.poll()
+        if return_code is None:
+            return False
+        self._notify(return_code)
+        return True
+
+    def _notify(self, return_code: int) -> None:
+        with self._lock:
+            if self._notified:
+                return
+            self._notified = True
+        forget_owned_process(self._process.pid)
+        self._unregister(self)
+        self._on_exit(return_code)
 
 
 class SubprocessSftpProcessRunner:
@@ -215,6 +249,11 @@ class SubprocessSftpProcessRunner:
     SFTP launch — production wiring goes through the same
     ``InteractionBroker``/askpass path as terminal sessions (see
     ``DaemonServer._prepare_sftp_launch``).
+
+    A shared reaper thread polls live handles the same way
+    ``SubprocessSessionProcessRunner`` does, so an unexpected ``ssh`` exit
+    (network drop, remote reboot) fails the SFTP service immediately instead
+    of leaving the file-manager tab READY until the next operation.
     """
 
     def __init__(
@@ -222,16 +261,28 @@ class SubprocessSftpProcessRunner:
         command_builder: Callable[[SessionLaunchSpec], Tuple[Sequence[str], Dict[str, str]]],
         *,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        poll_interval: float = DEFAULT_PROCESS_POLL_INTERVAL,
     ) -> None:
         if not callable(command_builder):
             raise TypeError("SFTP command builder must be callable")
+        if poll_interval <= 0:
+            raise ValueError("SFTP process poll interval must be positive")
         self._command_builder = command_builder
         self._connect_timeout = float(connect_timeout)
-        self._lock = threading.Lock()
+        self._poll_interval = float(poll_interval)
+        self._condition = threading.Condition()
         self._handles: Set[_SubprocessSftpHandle] = set()
         self._closed = False
+        self._thread = threading.Thread(
+            target=self._reaper_main,
+            name="sshpilot-sftp-reaper",
+            daemon=True,
+        )
+        self._thread.start()
 
-    def start(self, spec: SessionLaunchSpec) -> SftpProcessHandle:
+    def start(
+        self, spec: SessionLaunchSpec, on_exit: SftpExitCallback
+    ) -> SftpProcessHandle:
         argv, environment = self._command_builder(spec)
         argv = tuple(argv)
         if not argv or any(type(item) is not str or not item for item in argv):
@@ -240,7 +291,7 @@ class SubprocessSftpProcessRunner:
                 "The SFTP launch command is invalid",
                 connection_id=spec.connection_id,
             )
-        with self._lock:
+        with self._condition:
             if self._closed:
                 raise RuntimeError("SFTP process runner is closed")
         process = subprocess.Popen(
@@ -270,13 +321,14 @@ class SubprocessSftpProcessRunner:
                 connection_id=spec.connection_id,
             ) from exc
         record_owned_process_or_abandon(process, kind=KIND_SFTP)
-        handle = _SubprocessSftpHandle(process, client)
-        with self._lock:
+        handle = _SubprocessSftpHandle(process, client, on_exit, self._unregister)
+        with self._condition:
             if self._closed:
                 handle.terminate()
-                forget_owned_process(process.pid)
+                handle.wait(DEFAULT_TERMINATE_GRACE_SECONDS)
                 raise RuntimeError("SFTP process runner is closed")
             self._handles.add(handle)
+            self._condition.notify()
         return handle
 
     @staticmethod
@@ -289,18 +341,40 @@ class SubprocessSftpProcessRunner:
                 pass
 
     def close(self) -> None:
-        with self._lock:
+        with self._condition:
             if self._closed:
                 return
             self._closed = True
             handles = tuple(self._handles)
-            self._handles.clear()
+            self._condition.notify_all()
         for handle in handles:
             try:
                 handle.terminate()
                 handle.wait(DEFAULT_TERMINATE_GRACE_SECONDS)
             except Exception:  # pragma: no cover - best effort
                 continue
+        if self._thread is not threading.current_thread():
+            self._thread.join(timeout=1.0)
+
+    def _unregister(self, handle: _SubprocessSftpHandle) -> None:
+        with self._condition:
+            self._handles.discard(handle)
+            self._condition.notify_all()
+
+    def _reaper_main(self) -> None:
+        while True:
+            with self._condition:
+                if self._closed and not self._handles:
+                    return
+                handles = tuple(self._handles)
+                if not handles:
+                    self._condition.wait()
+                    continue
+            for handle in handles:
+                handle.poll_and_notify()
+            with self._condition:
+                if self._handles and not self._closed:
+                    self._condition.wait(self._poll_interval)
 
 
 @dataclass
@@ -544,7 +618,12 @@ class SftpServiceRuntime:
             if spec is None:
                 raise RuntimeError("starting SFTP service has no launch specification")
         try:
-            handle = self._runner.start(spec)
+            handle = self._runner.start(
+                spec,
+                lambda return_code, sid=service_id: self._on_process_exit(
+                    sid, return_code
+                ),
+            )
             if handle is None:
                 raise TypeError("SFTP runner returned no process handle")
         except SshPilotError as error:
@@ -598,6 +677,39 @@ class SftpServiceRuntime:
             code = ErrorCode.SFTP_SERVICE_NOT_READY
             message = "The SFTP session could not be established"
         self._startup_failed(self._records.get(service_id), code, message, guarded=True)
+
+    def _on_process_exit(
+        self, service_id: SftpServiceId, return_code: Optional[int]
+    ) -> None:
+        """Fail a live SFTP service as soon as its ``ssh`` child exits.
+
+        Terminals discover a dead session the same way (process reaper →
+        SESSION_EXITED). Without this, a file-manager tab stayed READY until
+        the next listdir hit a broken pipe.
+        """
+        del return_code
+        with self._lock:
+            record = self._records.get(service_id)
+            if record is None:
+                return
+            state = record.state
+        if state is SftpServiceState.STARTING:
+            self._startup_failed(
+                record,
+                ErrorCode.SFTP_SERVICE_NOT_READY,
+                "The SFTP session could not be established",
+            )
+            return
+        if state is not SftpServiceState.READY:
+            return
+        self._fail_dead_connection(
+            record,
+            SshPilotError(
+                ErrorCode.SFTP_PROTOCOL_LOST,
+                "The SFTP connection was lost",
+                connection_id=record.connection_id,
+            ),
+        )
 
     def _startup_failed(
         self,
@@ -1910,15 +2022,10 @@ class SftpServiceRuntime:
             )
         if error.code is ErrorCode.SFTP_PROTOCOL_LOST:
             # A live operation just proved the underlying process/connection
-            # is dead (e.g. the network dropped mid-session). There is no
-            # background health check on a READY service, so without this
-            # the record would keep reporting READY forever and no client
-            # (e.g. a file-manager tab) would ever learn it needs to
-            # reconnect -- every subsequent op would keep silently failing
-            # the same way. Flip to FAILED and publish it through the same
-            # path startup failures use, so the existing FAILED-event
-            # handling (DaemonSftpServiceController._on_open_accepted ->
-            # on_error -> connection-error -> Retry UI) picks it up.
+            # is dead. The process reaper usually gets there first; this
+            # covers protocol EOF while the ssh child is still listed as
+            # alive. Flip to FAILED so the file-manager Retry UI appears
+            # without waiting for another click.
             self._fail_dead_connection(record, error)
         return error
 

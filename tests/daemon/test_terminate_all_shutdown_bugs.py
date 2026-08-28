@@ -78,7 +78,7 @@ class _FakeSftpHandle:
 
 
 class _FakeSftpRunner:
-    def start(self, _spec):
+    def start(self, _spec, _on_exit=None):
         return _FakeSftpHandle()
 
     def close(self):
