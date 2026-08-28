@@ -2678,6 +2678,8 @@ Synthetic representation:
 | `attempt` | `int` | Yes | — | No |
 | `can_remember` | `bool` | Yes | — | No |
 | `stored_secret_available` | `bool` | Yes | — | No |
+| `secret_prompt_kind` | `SecretPromptKind | None` | No | `null` | No |
+| `secret_prompt_parameters` | `Mapping[str, str]` | No | `{}` | No |
 
 Synthetic representation:
 
@@ -2687,6 +2689,8 @@ Synthetic representation:
   "can_remember": false,
   "hostname": "example.invalid",
   "port": 22,
+  "secret_prompt_kind": null,
+  "secret_prompt_parameters": {},
   "stored_secret_available": false,
   "username": "user"
 }

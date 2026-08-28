@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from sshpilot.api.errors import SshPilotError
+from sshpilot.api.models import SecretPromptKind
 from sshpilot.api.models.secrets import (
     REVISION_CONFLICT,
     SecretOperationState,
@@ -1182,9 +1183,18 @@ def test_two_step_retry_reuses_the_master_password(tmp_path):
     # One further prompt, and it is the code — not the password again. Each
     # prompt names what it asks for, so the dialog heading is right.
     assert len(broker.created) == 2
-    assert broker.created[0][1]["prompt"].username == "Bitwarden sign-in"
-    assert broker.created[1][1]["prompt"].username == "Two-step login code"
-    assert "two-step login code" in broker.created[1][1]["prompt"].hostname
+    password_prompt = broker.created[0][1]["prompt"]
+    code_prompt = broker.created[1][1]["prompt"]
+    assert password_prompt.secret_prompt_kind is SecretPromptKind.BITWARDEN_SIGN_IN
+    assert dict(password_prompt.secret_prompt_parameters) == {
+        "email": "alice@example.com"
+    }
+    assert code_prompt.secret_prompt_kind is SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN
+    assert dict(code_prompt.secret_prompt_parameters) == {
+        "email": "alice@example.com"
+    }
+    assert password_prompt.username == password_prompt.hostname == ""
+    assert code_prompt.username == code_prompt.hostname == ""
     assert bw.login_results[
         ("login_with_password", "alice@example.com", "0", SENTINEL_2FA, None)
     ] == (True, "", False)
@@ -1220,7 +1230,10 @@ def test_two_step_password_is_dropped_once_the_flow_ends(tmp_path):
     service.bitwarden_login(
         "alice@example.com", twofa_method="0", owner_client_id="client-1"
     )
-    assert "master password" in broker.created[2][1]["prompt"].hostname
+    assert (
+        broker.created[2][1]["prompt"].secret_prompt_kind
+        is SecretPromptKind.BITWARDEN_SIGN_IN
+    )
 
 
 def test_wrong_two_step_code_keeps_the_password_for_the_retry(tmp_path):
@@ -1245,9 +1258,13 @@ def test_wrong_two_step_code_keeps_the_password_for_the_retry(tmp_path):
     assert accepted.logged_in is True
     # password, code, code — the password was never asked for twice.
     assert len(broker.created) == 3
-    assert "master password" in broker.created[0][1]["prompt"].hostname
+    assert (
+        broker.created[0][1]["prompt"].secret_prompt_kind
+        is SecretPromptKind.BITWARDEN_SIGN_IN
+    )
     assert all(
-        "two-step login code" in entry[1]["prompt"].hostname
+        entry[1]["prompt"].secret_prompt_kind
+        is SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN
         for entry in broker.created[1:]
     )
 
