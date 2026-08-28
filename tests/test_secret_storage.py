@@ -1221,6 +1221,27 @@ def test_bitwarden_login_needs_2fa_no_provider_selected():
     ) is False
 
 
+def test_bitwarden_login_needs_2fa_code_is_required():
+    """The message a two-step account actually returns.
+
+    ``bw login --response`` answers ``{"success": false, "message": "Code is
+    required."}`` — it names neither "two-step" nor a provider, so the wizard
+    used to treat it as an ordinary sign-in failure and send the user back to
+    the email page, which re-asked for the master password instead of the
+    two-step code.
+    """
+    assert ss.BitwardenBackend._login_needs_2fa("Code is required.") is True
+    assert ss.BitwardenBackend._login_needs_2fa("Code required") is True
+    # A code was already supplied: a repeat is a wrong-code error, not a re-prompt.
+    assert ss.BitwardenBackend._login_needs_2fa(
+        "Code is required.", twofa_code="123456",
+    ) is False
+    # Unrelated failures stay unrelated.
+    assert ss.BitwardenBackend._login_needs_2fa(
+        "Username or password is incorrect. Try again.",
+    ) is False
+
+
 def test_bitwarden_login_with_api_key(monkeypatch):
     fake = FakeBw(status="unauthenticated")
     b = _make_backend(monkeypatch, fake)

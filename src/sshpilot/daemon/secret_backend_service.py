@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock, Timer
 from typing import Any, Dict, List, Optional, Tuple
@@ -139,11 +140,38 @@ class SecretBackendService:
         # Bounded re-prompts for a wrong import passphrase; each retry goes through
         # a fresh protected interaction so the secret never travels as an RPC param.
         self._MAX_IMPORT_PASSPHRASE_ATTEMPTS = 3
+        # A two-step Bitwarden sign-in takes two RPCs: the first learns that a
+        # code is required, the second carries the method the user then picked.
+        # Without this handoff the second one re-prompts for the master password
+        # the user just typed, which reads as "it asked for my password again
+        # instead of the code".  Single-use, expires on its own, never leaves
+        # this process, and never appears in a result, log or diagnostic.
+        self._pending_login: Optional[Dict[str, Any]] = None
+        self._pending_login_timer: Optional[Timer] = None
+        self._PENDING_LOGIN_TTL = 180.0
 
     def attach_interaction_broker(self, broker: Any) -> None:
         """Inject the daemon's interaction broker once it exists (the broker is
         created per-session-runtime, after this service is composed)."""
         self._broker = broker
+
+    @contextmanager
+    def _locked_operation(self):
+        """Hold the service lock for one backend operation, re-applying the
+        configured environment first.
+
+        Every interactive lifecycle path (login, unlock, database creation,
+        remember) releases the lock across its human interactions — waiting for
+        a dialog while holding it stalls concurrent metadata queries, notably
+        the ``secrets.state.get`` with a five-second client timeout, and that
+        timeout closes the peer and cancels the very interaction being waited
+        on.  Those paths then run each backend step inside this helper so a
+        selection or configuration change made during the prompt cannot leave
+        the operation running against a stale environment.
+        """
+        with self._lock:
+            self._apply_environment(self._load_strict())
+            yield
 
     # ------------------------------------------------------------------
     # Configuration (daemon-owned ``secrets.*``)
@@ -280,9 +308,7 @@ class SecretBackendService:
     # ------------------------------------------------------------------
 
     def unlock(self, *, owner_client_id) -> SecretUnlockResult:
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
+        with self._locked_operation():
             decision = self._selected_decision()
             backend = self._manager.selected_backend()
             name = backend.name if backend is not None else "none"
@@ -304,45 +330,49 @@ class SecretBackendService:
                     backend=name,
                     message="The selected vault requires sign-in before unlock",
                 )
-            if decision.kind == SecretDecisionKind.UNLOCK_REQUIRED:
-                master = self._remembered_master_password()
-                remember = False
-                if master is None:
-                    secret, remember = self._prompt_for_master_password(
-                        name, owner_client_id=owner_client_id
-                    )
-                    if secret is None:
-                        return SecretUnlockResult(
-                            kind=UnlockResultKind.INTERACTION_REQUIRED,
-                            backend=name,
-                            message="Unlock cancelled",
-                        )
-                    try:
-                        master = secret.decode("utf-8", "replace")
-                    finally:
-                        _clear_secret(secret)
-                try:
-                    ok = self._manager.unlock_selected(master)
-                    # Store the password already collected for unlock — never a
-                    # second prompt just to remember it.
-                    if ok and remember:
-                        self._store_master_password(name, master)
-                finally:
-                    master = ""  # drop the protected value after use
-                if not ok:
-                    return SecretUnlockResult(
-                        kind=UnlockResultKind.BACKEND_UNAVAILABLE,
-                        backend=name,
-                        message="The vault could not be unlocked",
-                    )
+            if decision.kind != SecretDecisionKind.UNLOCK_REQUIRED:
                 return SecretUnlockResult(
                     kind=UnlockResultKind.UNLOCKED,
                     backend=name,
                 )
-            return SecretUnlockResult(
-                kind=UnlockResultKind.UNLOCKED,
-                backend=name,
+            master = self._remembered_master_password()
+
+        remember = False
+        if master is None:
+            # The master-password dialog runs without the service lock — see
+            # :meth:`_locked_operation`.
+            secret, remember = self._prompt_for_master_password(
+                name, owner_client_id=owner_client_id
             )
+            if secret is None:
+                return SecretUnlockResult(
+                    kind=UnlockResultKind.INTERACTION_REQUIRED,
+                    backend=name,
+                    message="Unlock cancelled",
+                )
+            try:
+                master = secret.decode("utf-8", "replace")
+            finally:
+                _clear_secret(secret)
+        try:
+            with self._locked_operation():
+                ok = self._manager.unlock_selected(master)
+                # Store the password already collected for unlock — never a
+                # second prompt just to remember it.
+                if ok and remember:
+                    self._store_master_password(name, master)
+        finally:
+            master = ""  # drop the protected value after use
+        if not ok:
+            return SecretUnlockResult(
+                kind=UnlockResultKind.BACKEND_UNAVAILABLE,
+                backend=name,
+                message="The vault could not be unlocked",
+            )
+        return SecretUnlockResult(
+            kind=UnlockResultKind.UNLOCKED,
+            backend=name,
+        )
 
     def lock(self) -> SecretBackendState:
         with self._lock:
@@ -357,6 +387,7 @@ class SecretBackendService:
                     logger.debug("secret backend lock failed", exc_info=True)
             # Locking invalidates any decrypted preview manifests.
             self._clear_cached_manifests()
+            self._forget_login_password()
             return self._state_from(semantic)
 
     # ------------------------------------------------------------------
@@ -428,6 +459,12 @@ class SecretBackendService:
             if not email:
                 raise ValueError("email is required")
 
+        # Every prompt below runs without the service lock — see
+        # :meth:`_locked_operation`.  A retry that only adds the two-step method
+        # reuses the password from the attempt that asked for a code, so the
+        # user types it once for the whole sign-in.
+        password_text = self._take_login_password(email, owner_client_id)
+        if password_text is None:
             password = self._prompt_for_secret(
                 f"Enter the Bitwarden master password for {email}",
                 owner_client_id=owner_client_id,
@@ -440,66 +477,84 @@ class SecretBackendService:
                 )
             password_text = password.decode("utf-8", "replace")
             _clear_secret(password)
-            try:
-                # Auth-challenge client secret is only collected when the backend
-                # sign-in later reports it is required — it never travels in RPC
-                # parameters and is cleared right after the retry.
+        try:
+            # Auth-challenge client secret is only collected when the backend
+            # sign-in later reports it is required — it never travels in RPC
+            # parameters and is cleared right after the retry.
+            with self._locked_operation():
                 ok, detail, needs_2fa = self._bitwarden_login_with_password(
                     bw, email, password_text, twofa_method=twofa_method, twofa_code=None,
                     auth_client_secret=None,
                 )
 
-                if not ok and not needs_2fa and _login_needs_challenge(detail):
-                    client_secret = self._prompt_for_secret(
-                        "Enter the Bitwarden API client secret to complete the "
-                        "authentication challenge",
-                        owner_client_id=owner_client_id,
+            if not ok and not needs_2fa and _login_needs_challenge(detail):
+                client_secret = self._prompt_for_secret(
+                    "Enter the Bitwarden API client secret to complete the "
+                    "authentication challenge",
+                    owner_client_id=owner_client_id,
+                )
+                if client_secret is None:
+                    self._forget_login_password()
+                    return BitwardenStatus(
+                        logged_in=False, unlocked=False, needs_login=True,
+                        email=email, server_url=_server_url(config),
+                        profile=_profile(config),
+                        message="Authentication challenge cancelled",
                     )
-                    if client_secret is None:
-                        return BitwardenStatus(
-                            logged_in=False, unlocked=False, needs_login=True,
-                            email=email, server_url=_server_url(config),
-                            profile=_profile(config),
-                            message="Authentication challenge cancelled",
-                        )
-                    challenge_text = client_secret.decode("utf-8", "replace")
-                    _clear_secret(client_secret)
-                    try:
+                challenge_text = client_secret.decode("utf-8", "replace")
+                _clear_secret(client_secret)
+                try:
+                    with self._locked_operation():
                         ok, detail, needs_2fa = self._bitwarden_login_with_password(
                             bw, email, password_text, twofa_method=twofa_method,
                             twofa_code=None, auth_client_secret=challenge_text,
                         )
-                    finally:
-                        challenge_text = ""
+                finally:
+                    challenge_text = ""
 
-                if needs_2fa and twofa_method:
-                    code = self._prompt_for_secret(
-                        f"Enter the two-step login code for {email}",
-                        owner_client_id=owner_client_id,
+            if needs_2fa and twofa_method:
+                code = self._prompt_for_secret(
+                    f"Enter the two-step login code for {email}",
+                    owner_client_id=owner_client_id,
+                )
+                if code is None:
+                    # The user still owes a code: hold the password so picking
+                    # the method again does not re-ask for it.
+                    self._remember_login_password(email, owner_client_id, password_text)
+                    return BitwardenStatus(
+                        logged_in=False, unlocked=False, needs_login=True,
+                        email=email, server_url=_server_url(config),
+                        profile=_profile(config),
+                        twofa_required=True, message="Two-step login cancelled",
                     )
-                    if code is None:
-                        return BitwardenStatus(
-                            logged_in=False, unlocked=False, needs_login=True,
-                            email=email, server_url=_server_url(config),
-                            profile=_profile(config),
-                            twofa_required=True, message="Two-step login cancelled",
-                        )
-                    code_text = code.decode("utf-8", "replace")
-                    _clear_secret(code)
-                    try:
+                code_text = code.decode("utf-8", "replace")
+                _clear_secret(code)
+                try:
+                    with self._locked_operation():
                         ok, detail, needs_2fa = self._bitwarden_login_with_password(
                             bw, email, password_text, twofa_method=twofa_method,
                             twofa_code=code_text, auth_client_secret=None,
                         )
-                    finally:
-                        code_text = ""
+                finally:
+                    code_text = ""
 
+            with self._locked_operation():
                 # Mirror the CLI "log in and unlock in one step": a successful login
                 # can still leave the vault locked, so unlock with the password we have.
                 if ok and password_text and not self._safe_is_unlocked(bw):
                     if not self._safe(lambda: bw.unlock(password_text)):
                         ok = False
                         detail = "Bitwarden vault unlock failed"
+
+                # Sign-in stalled on the two-step step — either it asked for a
+                # code, or it already carried a method and the code was wrong.
+                # Both send the frontend back to the two-step page, which calls
+                # straight back, so keep the password for that retry.  Any other
+                # outcome ends the flow.
+                if not ok and (needs_2fa or twofa_method):
+                    self._remember_login_password(email, owner_client_id, password_text)
+                else:
+                    self._forget_login_password()
 
                 return BitwardenStatus(
                     logged_in=ok,
@@ -511,8 +566,8 @@ class SecretBackendService:
                     twofa_required=needs_2fa,
                     message=detail if not ok else "",
                 )
-            finally:
-                password_text = ""
+        finally:
+            password_text = ""
 
     def bitwarden_api_key_login(self, client_id: str, *, owner_client_id) -> BitwardenStatus:
         with self._lock:
@@ -524,19 +579,23 @@ class SecretBackendService:
             client_id = (client_id or "").strip()
             if not client_id:
                 raise ValueError("client_id is required")
-            secret = self._prompt_for_secret(
-                f"Enter the API key client secret for {client_id}",
-                owner_client_id=owner_client_id,
+
+        # The client-secret prompt runs without the service lock — see
+        # :meth:`_locked_operation`.
+        secret = self._prompt_for_secret(
+            f"Enter the API key client secret for {client_id}",
+            owner_client_id=owner_client_id,
+        )
+        if secret is None:
+            return BitwardenStatus(
+                logged_in=False, unlocked=False, needs_login=True,
+                email="", server_url=_server_url(config), profile=_profile(config),
+                message="Login cancelled",
             )
-            if secret is None:
-                return BitwardenStatus(
-                    logged_in=False, unlocked=False, needs_login=True,
-                    email="", server_url=_server_url(config), profile=_profile(config),
-                    message="Login cancelled",
-                )
-            secret_text = secret.decode("utf-8", "replace")
-            _clear_secret(secret)
-            try:
+        secret_text = secret.decode("utf-8", "replace")
+        _clear_secret(secret)
+        try:
+            with self._locked_operation():
                 try:
                     ok, detail = bw.login_with_api_key(client_id, secret_text)
                 except Exception:
@@ -551,8 +610,8 @@ class SecretBackendService:
                     profile=_profile(config),
                     message=detail if not ok else "",
                 )
-            finally:
-                secret_text = ""
+        finally:
+            secret_text = ""
 
     def bitwarden_sso_login(self, identifier: Optional[str] = None) -> BitwardenStatus:
         with self._lock:
@@ -577,23 +636,25 @@ class SecretBackendService:
             )
 
     def bitwarden_unlock(self, *, owner_client_id) -> BitwardenStatus:
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
+        with self._locked_operation():
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
                 raise self._unavailable("Bitwarden is unavailable")
             if self._safe_is_unlocked(bw):
                 return _bitwarden_status(bw)
-            secret = self._prompt_for_secret(
-                "Enter the Bitwarden master password to unlock the vault",
-                owner_client_id=owner_client_id,
-            )
-            if secret is None:
-                return _bitwarden_status(bw, message="Unlock cancelled")
-            secret_text = secret.decode("utf-8", "replace")
-            _clear_secret(secret)
-            try:
+
+        # The master-password prompt runs without the service lock — see
+        # :meth:`_locked_operation`.
+        secret = self._prompt_for_secret(
+            "Enter the Bitwarden master password to unlock the vault",
+            owner_client_id=owner_client_id,
+        )
+        if secret is None:
+            return _bitwarden_status(bw, message="Unlock cancelled")
+        secret_text = secret.decode("utf-8", "replace")
+        _clear_secret(secret)
+        try:
+            with self._locked_operation():
                 try:
                     ok = bool(bw.unlock(secret_text))
                 except Exception:
@@ -603,8 +664,8 @@ class SecretBackendService:
                     bw,
                     message="" if ok else "Bitwarden unlock failed",
                 )
-            finally:
-                secret_text = ""
+        finally:
+            secret_text = ""
 
     def bitwarden_sync(self) -> BitwardenStatus:
         with self._lock:
@@ -630,6 +691,7 @@ class SecretBackendService:
                 except Exception:
                     logger.debug("Bitwarden lock failed", exc_info=True)
             self._clear_cached_manifests()
+            self._forget_login_password()
             return _bitwarden_status(bw)
 
     def bitwarden_logout(self) -> BitwardenStatus:
@@ -643,6 +705,7 @@ class SecretBackendService:
                 bw.logout()
             except Exception:
                 logger.debug("Bitwarden logout failed", exc_info=True)
+            self._forget_login_password()
             return _bitwarden_status(bw, force_refresh=True)
 
     # ------------------------------------------------------------------
@@ -723,9 +786,7 @@ class SecretBackendService:
         The master password is collected through a protected interaction — it
         never appears in RPC parameters and is cleared immediately after use.
         """
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
+        with self._locked_operation():
             backend = self._manager.get_backend("keepassxc")
             if backend is None or not self._safe(lambda: backend.is_available()):
                 return SecretOperationResult(
@@ -740,50 +801,55 @@ class SecretBackendService:
                     backend="keepassxc",
                     message="A database path is required",
                 )
-            password = self._prompt_for_secret(
-                "Enter a master password for the new KeePass database",
-                owner_client_id=owner_client_id,
-            )
-            if password is None:
-                return SecretOperationResult(
-                    state=SecretOperationState.INTERACTION_REQUIRED,
-                    backend="keepassxc",
-                    message="Database creation cancelled",
-                )
-            try:
-                password_text = password.decode("utf-8", "replace")
-            finally:
-                _clear_secret(password)
-            try:
-                ok = backend.create_database(
-                    path, password_text, keyfile=(keyfile or None)
-                )
-                # Mirror the GUI "create and unlock in one step": the password is
-                # in hand, so unlock so it isn't asked again.
-                if ok and not self._safe_is_unlocked(backend):
-                    try:
-                        ok = bool(backend.unlock(password_text))
-                    except Exception:
-                        logger.debug("KDBX auto-unlock after create failed", exc_info=True)
-                        ok = False
-            except Exception:
-                logger.debug("KDBX database creation failed", exc_info=True)
-                ok = False
-            finally:
-                password_text = ""
+
+        # The master-password prompt runs without the service lock — see
+        # :meth:`_locked_operation`.
+        password = self._prompt_for_secret(
+            "Enter a master password for the new KeePass database",
+            owner_client_id=owner_client_id,
+        )
+        if password is None:
             return SecretOperationResult(
-                state=(
-                    SecretOperationState.SUCCESS
-                    if ok else SecretOperationState.FAILED
-                ),
+                state=SecretOperationState.INTERACTION_REQUIRED,
                 backend="keepassxc",
-                message="" if ok else "The KeePass database could not be created or unlocked",
+                message="Database creation cancelled",
             )
+        try:
+            password_text = password.decode("utf-8", "replace")
+        finally:
+            _clear_secret(password)
+        try:
+            with self._locked_operation():
+                try:
+                    ok = backend.create_database(
+                        path, password_text, keyfile=(keyfile or None)
+                    )
+                    # Mirror the GUI "create and unlock in one step": the password
+                    # is in hand, so unlock so it isn't asked again.
+                    if ok and not self._safe_is_unlocked(backend):
+                        try:
+                            ok = bool(backend.unlock(password_text))
+                        except Exception:
+                            logger.debug(
+                                "KDBX auto-unlock after create failed", exc_info=True
+                            )
+                            ok = False
+                except Exception:
+                    logger.debug("KDBX database creation failed", exc_info=True)
+                    ok = False
+        finally:
+            password_text = ""
+        return SecretOperationResult(
+            state=(
+                SecretOperationState.SUCCESS
+                if ok else SecretOperationState.FAILED
+            ),
+            backend="keepassxc",
+            message="" if ok else "The KeePass database could not be created or unlocked",
+        )
 
     def keepassxc_unlock(self, *, owner_client_id) -> SecretOperationResult:
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
+        with self._locked_operation():
             backend = self._manager.get_backend("keepassxc")
             if backend is None:
                 return SecretOperationResult(
@@ -791,37 +857,45 @@ class SecretBackendService:
                     backend="keepassxc",
                     message="KeePassXC is unavailable",
                 )
-            if not self._safe_is_unlocked(backend):
-                master = self._remembered_master_password()
-                if master is None:
-                    secret = self._prompt_for_secret(
-                        "Enter the master password to unlock the KeePass database",
-                        owner_client_id=owner_client_id,
-                    )
-                    if secret is None:
-                        return SecretOperationResult(
-                            state=SecretOperationState.INTERACTION_REQUIRED,
-                            backend="keepassxc",
-                            message="Unlock cancelled",
-                        )
-                    try:
-                        master = secret.decode("utf-8", "replace")
-                    finally:
-                        _clear_secret(secret)
-                try:
-                    ok = self._safe(lambda: backend.unlock(master))
-                finally:
-                    master = ""  # drop the protected value after use
-                if not ok:
-                    return SecretOperationResult(
-                        state=SecretOperationState.FAILED,
-                        backend="keepassxc",
-                        message="The KeePass database could not be unlocked",
-                    )
-            return SecretOperationResult(
-                state=SecretOperationState.SUCCESS,
-                backend="keepassxc",
+            if self._safe_is_unlocked(backend):
+                return SecretOperationResult(
+                    state=SecretOperationState.SUCCESS,
+                    backend="keepassxc",
+                )
+            master = self._remembered_master_password()
+
+        if master is None:
+            # The master-password prompt runs without the service lock — see
+            # :meth:`_locked_operation`.
+            secret = self._prompt_for_secret(
+                "Enter the master password to unlock the KeePass database",
+                owner_client_id=owner_client_id,
             )
+            if secret is None:
+                return SecretOperationResult(
+                    state=SecretOperationState.INTERACTION_REQUIRED,
+                    backend="keepassxc",
+                    message="Unlock cancelled",
+                )
+            try:
+                master = secret.decode("utf-8", "replace")
+            finally:
+                _clear_secret(secret)
+        try:
+            with self._locked_operation():
+                ok = self._safe(lambda: backend.unlock(master))
+        finally:
+            master = ""  # drop the protected value after use
+        if not ok:
+            return SecretOperationResult(
+                state=SecretOperationState.FAILED,
+                backend="keepassxc",
+                message="The KeePass database could not be unlocked",
+            )
+        return SecretOperationResult(
+            state=SecretOperationState.SUCCESS,
+            backend="keepassxc",
+        )
 
     def keepassxc_lock(self) -> SecretOperationResult:
         with self._lock:
@@ -853,8 +927,7 @@ class SecretBackendService:
         :meth:`unlock` calls :meth:`_store_master_password` directly instead,
         reusing the password just collected for unlock so it never re-prompts.
         """
-        with self._lock:
-            self._apply_environment(self._load_strict())
+        with self._locked_operation():
             backend = self._manager.selected_backend()
             name = getattr(backend, "name", "none") or "none"
             if backend is None or not getattr(backend, "session_backed", False):
@@ -863,24 +936,28 @@ class SecretBackendService:
                     backend=name,
                     message="Only session-backed vaults can remember their master password",
                 )
-            secret = self._prompt_for_secret(
-                f"Enter the master password to remember for {name}",
-                owner_client_id=owner_client_id,
+
+        # The master-password prompt runs without the service lock — see
+        # :meth:`_locked_operation`.
+        secret = self._prompt_for_secret(
+            f"Enter the master password to remember for {name}",
+            owner_client_id=owner_client_id,
+        )
+        if secret is None:
+            return SecretOperationResult(
+                state=SecretOperationState.INTERACTION_REQUIRED,
+                backend=name,
+                message="Remember cancelled",
             )
-            if secret is None:
-                return SecretOperationResult(
-                    state=SecretOperationState.INTERACTION_REQUIRED,
-                    backend=name,
-                    message="Remember cancelled",
-                )
-            try:
-                password = secret.decode("utf-8", "replace")
-            finally:
-                _clear_secret(secret)
-            try:
+        try:
+            password = secret.decode("utf-8", "replace")
+        finally:
+            _clear_secret(secret)
+        try:
+            with self._locked_operation():
                 return self._store_master_password(name, password)
-            finally:
-                password = ""
+        finally:
+            password = ""
 
     def _store_master_password(self, name: str, password: str) -> SecretOperationResult:
         """Save *password* (already known — no interaction here) in the OS
@@ -1312,9 +1389,11 @@ class SecretBackendService:
         self._manifest_cache.clear()
 
     def shutdown(self) -> None:
-        """Clear cached decrypted manifests (daemon exit hook)."""
+        """Clear cached decrypted manifests and any held sign-in password
+        (daemon exit hook)."""
         with self._lock:
             self._clear_cached_manifests()
+        self._forget_login_password()
 
     def list_bitwarden_backups(self) -> List[Dict[str, str]]:
         """List Bitwarden backup-note metadata (id/name/date only)."""
@@ -1707,6 +1786,55 @@ class SecretBackendService:
             RememberPolicy.REPLACE_STORED_AFTER_SUCCESS,
         )
         return secret, remember
+
+    def _remember_login_password(
+        self, email: str, owner_client_id, password: str
+    ) -> None:
+        """Hold the master password for the two-step retry that follows.
+
+        Only ever called when the sign-in ended "a two-step code is required":
+        the frontend answers that by asking which method to use and calling
+        :meth:`bitwarden_login` straight back, and that call must not re-prompt
+        for the password the user just typed.  The entry is bound to the client
+        and the email it was collected for, is consumed by the first matching
+        retry, and expires on its own so an abandoned wizard does not leave it
+        behind.
+        """
+        with self._lock:
+            self._forget_login_password()
+            self._pending_login = {
+                "email": email,
+                "owner_client_id": owner_client_id,
+                "password": password,
+            }
+            timer = Timer(self._PENDING_LOGIN_TTL, self._forget_login_password)
+            timer.daemon = True
+            self._pending_login_timer = timer
+            timer.start()
+
+    def _take_login_password(self, email: str, owner_client_id) -> Optional[str]:
+        """Consume the password held for *email* by this client, if any."""
+        with self._lock:
+            pending = self._pending_login
+            if (
+                pending is None
+                or pending["email"] != email
+                or pending["owner_client_id"] != owner_client_id
+            ):
+                return None
+            password = pending["password"]
+            self._forget_login_password()
+            return password
+
+    def _forget_login_password(self) -> None:
+        """Drop any held master password (retry consumed it, it expired, or the
+        vault was locked / signed out)."""
+        with self._lock:
+            self._pending_login = None
+            timer = self._pending_login_timer
+            self._pending_login_timer = None
+        if timer is not None:
+            timer.cancel()
 
     def _bitwarden_login_with_password(
         self,
