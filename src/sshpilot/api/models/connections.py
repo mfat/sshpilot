@@ -114,6 +114,7 @@ EDITABLE_CONFIG_FIELDS = frozenset({
     "pkcs11_provider", "security_key_provider",
     "pubkey_auth_no",
     "proxy_jump", "forward_agent",
+    "forward_agent_explicit_no", "forward_agent_target",
     "forwarding_rules", "x11_forwarding",
     "pre_command", "local_command", "remote_command",
     "extra_ssh_config",
@@ -158,9 +159,15 @@ def _validate_field_value(key: str, value: Any) -> None:
     elif key in ("auth_method", "key_select_mode"):
         if not isinstance(value, int) or value < 0:
             raise ValueError(f"{key} must be a non-negative integer")
-    elif key in ("x11_forwarding", "pubkey_auth_no", "forward_agent"):
+    elif key in (
+        "x11_forwarding", "pubkey_auth_no", "forward_agent",
+        "forward_agent_explicit_no",
+    ):
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be a boolean")
+    elif key == "forward_agent_target":
+        if type(value) is not str:
+            raise ValueError("forward_agent_target must be a string")
     elif key in ("identity_files", "certificate_files", "proxy_jump", "aliases"):
         if not isinstance(value, (list, tuple)):
             raise ValueError(f"{key} must be a list")
@@ -413,7 +420,7 @@ class ConnectionEditorDetails(ConnectionDetails):
     # Routing
     forward_agent: bool = False
     forward_agent_explicit_no: bool = False
-    forward_agent_target: str = ""  # preserved, no widget
+    forward_agent_target: str = ""  # socket path / $ENV; empty when yes/no
     proxy_command: str = ""  # preserved, no widget
     # Forwarding
     forwarding_rules: Tuple[ForwardingRule, ...] = ()
