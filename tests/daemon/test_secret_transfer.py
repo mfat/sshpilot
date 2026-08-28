@@ -1241,6 +1241,6 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "14359" in logged
     assert "3 credential(s), 2 private key(s)" in logged
-    # The counts reach the UI, and private keys are named as what to drop.
+    # The counts reach the UI, alongside a hint about trimming the backup.
     assert result.counts == {"credentials": 3, "private_keys": 2}
-    assert any("Private keys" in warning for warning in result.warnings)
+    assert any("largest part" in warning for warning in result.warnings)

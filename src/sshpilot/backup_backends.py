@@ -71,6 +71,38 @@ def encode_manifest_note(manifest: dict) -> str:
     return f"{BACKUP_NOTE_MAGIC}\n{packed}"
 
 
+# What a reader recognizes as one part of a backup, and the manifest keys it
+# spans. Used only to explain a refused note.
+_NOTE_SECTIONS = (
+    ("app settings", ("app_config",)),
+    ("SSH config", ("ssh_config", "ssh_config_files")),
+    ("known hosts", ("known_hosts",)),
+    ("credentials", ("credentials",)),
+    ("private keys", ("private_keys",)),
+)
+
+
+def largest_note_section(manifest: dict) -> tuple:
+    """``(label, characters)`` for the part of *manifest* that costs the encoded
+    note the most, or ``("", 0)`` when nothing stands out.
+
+    Measured by re-encoding without each section rather than by raw size: the
+    note is gzipped, so repetitive settings text can be a fraction of its raw
+    size while high-entropy key material costs close to its own. Only run when
+    a note is about to be refused, so the extra passes never matter.
+    """
+    full = len(encode_manifest_note(manifest))
+    label, cost = "", 0
+    for name, keys in _NOTE_SECTIONS:
+        if not any(manifest.get(key) for key in keys):
+            continue
+        without = {k: v for k, v in manifest.items() if k not in keys}
+        saved = full - len(encode_manifest_note(without))
+        if saved > cost:
+            label, cost = name, saved
+    return label, cost
+
+
 def decode_manifest_note(note: str) -> dict:
     parts = (note or "").split("\n", 1)
     if len(parts) != 2 or parts[0].strip() != BACKUP_NOTE_MAGIC:
@@ -119,9 +151,14 @@ class BitwardenBackupBackend:
     def export(self, manifest: dict, *, passphrase: Optional[str] = None) -> BackupEntry:
         content = encode_manifest_note(manifest)
         if len(content) > BW_NOTE_MAX_CHARS:
+            # Name what is actually big. Guessing wastes the user's time: which
+            # part dominates depends entirely on the vault — app settings can
+            # outweigh private keys several times over.
+            label, cost = largest_note_section(manifest)
+            largest = f" Most of it is {label} ({cost} characters)." if label else ""
             raise BackupTooLargeForNote(
                 f"This backup is {len(content)} characters — larger than the Bitwarden note "
-                f"limit ({BW_NOTE_MAX_CHARS}). Export to a .spbk file instead.")
+                f"limit ({BW_NOTE_MAX_CHARS}).{largest} Export to a .spbk file instead.")
         item_id = self._bw.create_or_update_secure_note(self._item_name, content)
         if not item_id:
             raise BackupError("Bitwarden did not save the backup note (is the vault unlocked?)")

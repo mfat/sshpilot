@@ -215,3 +215,49 @@ def test_prompt_unlock_targets_given_backend():
     owned = sud.prompt_unlock(None, backend=FakeBackend(), on_done=lambda ok: calls.append(ok))
     assert owned is True
     assert calls == [True]
+
+
+def test_bitwarden_too_large_names_the_dominant_part():
+    """The refusal must say what is big, not guess.
+
+    Which part dominates depends on the vault: an app config with a long
+    session-restore blob can outweigh the private keys several times over, so
+    a fixed "private keys are the problem" hint sends the user to uncheck the
+    wrong box.
+    """
+    bw = FakeBw()
+    backend = BitwardenBackupBackend(bw, item_name="sshPilot Backup big")
+    manifest = {
+        "version": 1,
+        "ssh_config": "Host a\n",
+        "private_keys": [{"path": "/k", "content": "short"}],
+        # Incompressible, so it cannot be squeezed under the limit.
+        "app_config": {"blob": base64.b64encode(os.urandom(30000)).decode("ascii")},
+    }
+    with pytest.raises(BackupTooLargeForNote) as excinfo:
+        backend.export(manifest)
+    message = str(excinfo.value)
+    assert "app settings" in message
+    assert "private keys" not in message
+    assert bw.items == {}
+
+
+def test_largest_note_section_measures_encoded_cost_not_raw_size():
+    """Compression decides the cost: a large but repetitive section can be
+    cheaper than a small high-entropy one."""
+    from sshpilot.backup_backends import largest_note_section
+
+    manifest = {
+        "app_config": {"repeated": "sshpilot " * 4000},          # ~36k raw, compresses away
+        "private_keys": [{"content": base64.b64encode(os.urandom(3000)).decode("ascii")}],
+    }
+    label, cost = largest_note_section(manifest)
+    assert label == "private keys"
+    assert cost > 0
+
+
+def test_largest_note_section_ignores_absent_parts():
+    from sshpilot.backup_backends import largest_note_section
+
+    label, cost = largest_note_section({"version": 1, "credentials": [], "app_config": {}})
+    assert (label, cost) == ("", 0)

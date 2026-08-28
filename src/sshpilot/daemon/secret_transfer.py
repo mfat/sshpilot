@@ -306,12 +306,13 @@ def daemon_export_backup(
                 counts.get("credentials", 0),
                 counts.get("private_keys", 0),
             )
-            too_large = ["The backup is too large for a Bitwarden note."]
-            if counts.get("private_keys"):
-                too_large.append(
-                    "Private keys make up most of a backup's size — excluding them "
-                    "may bring it under the limit."
-                )
+            # The message names the part that dominates this particular backup
+            # (see ``largest_note_section``), so the warning stays generic.
+            too_large = (
+                "The backup is too large for a Bitwarden note.",
+                "Leaving out the largest part, or exporting fewer connections, "
+                "may bring it under the limit.",
+            )
             return SecretTransferResult(
                 operation="export",
                 path=destination,
