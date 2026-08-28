@@ -13,6 +13,7 @@ from gi.repository import Gtk
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
 from .terminal_backends import GridTrackingVteTerminal
+from .terminal_input import commit_payload_to_bytes
 from .terminal_session_controller import (
     DaemonTerminalSessionController,
     daemon_terminal_capabilities_missing,
@@ -91,10 +92,10 @@ class DaemonTerminalWidget(Gtk.Box):
     def last_sequence(self) -> int:
         return self._controller.tab_state.expected_sequence
 
-    def _on_commit(self, _terminal, text, _size) -> None:
+    def _on_commit(self, _terminal, text, size) -> None:
         if self._closed:
             return
-        self._controller.send_input(text.encode("utf-8"))
+        self._controller.send_input(commit_payload_to_bytes(text, size))
 
     def _on_size_changed(self, _terminal, *_details) -> None:
         if self._closed:

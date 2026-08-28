@@ -26,6 +26,9 @@ def test_bridge_wiring_present():
     html = build_shell_html()
     assert "window.webkit.messageHandlers.sshpilotPty.postMessage" in html
     assert '"type": "input"' in html or "type: \"input\"" in html or "type:\"input\"" in html
+    assert "term.onBinary" in html
+    assert 'encoding: "binary"' in html
+    assert "btoa(d)" in html
     assert 'send({ type: "ready"' in html or 'type: "ready"' in html
     # Ready is synchronous after fit; one rAF refines size/focus (not double-rAF).
     assert "requestAnimationFrame" in html

@@ -677,7 +677,9 @@ class PreferencesWindow(Adw.NavigationPage):
         self.paste_on_right_click_switch = Adw.SwitchRow()
         self.paste_on_right_click_switch.set_title(_("Paste on right-click"))
         self.paste_on_right_click_switch.set_subtitle(
-            _("Right-click pastes; Shift+right-click opens the menu")
+            _("Right-click pastes; Shift+right-click opens the menu. "
+              "Disabled automatically while a remote app (htop, vim, tmux) "
+              "is using the mouse.")
         )
         paste_on_right_click_active = bool(self.config.get_setting('terminal.paste_on_right_click', False))
         self.paste_on_right_click_switch.set_active(paste_on_right_click_active)

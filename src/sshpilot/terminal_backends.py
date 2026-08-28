@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import codecs
 import logging
 import os
@@ -19,6 +20,23 @@ from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_col
 
 
 logger = logging.getLogger(__name__)
+
+
+def _pyxterm_input_to_commit(payload: Mapping[str, Any]) -> tuple[Any, int, str]:
+    """Return ``(commit_text, byte_size, autocomplete_text)`` for an input message.
+
+    UTF-8 keystrokes stay strings with a UTF-8 byte length (VTE commit parity).
+    X10 mouse arrives as ``encoding=binary`` base64 and is forwarded as bytes.
+    """
+    data = payload.get("data", "")
+    if payload.get("encoding") == "binary":
+        if isinstance(data, (bytes, bytearray, memoryview)):
+            raw = bytes(data)
+        else:
+            raw = base64.b64decode(data or "", validate=False)
+        return raw, len(raw), ""
+    text = data if isinstance(data, str) else data.decode("utf-8", "replace")
+    return text, len(text.encode("utf-8")), text
 
 
 def _fetch_remote_history_via_daemon(root, connection, timeout: float = 15) -> Optional[str]:
@@ -2378,18 +2396,22 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 except Exception:  # noqa: BLE001
                     logger.debug("handle_search_results raised", exc_info=True)
         elif kind == "input":
-            data = payload.get("data", "")
+            commit_text, commit_size, autocomplete_text = _pyxterm_input_to_commit(
+                payload
+            )
             if self._bridge is not None:
-                self._bridge.write(data)
+                if isinstance(commit_text, (bytes, bytearray, memoryview)):
+                    self._bridge.write(bytes(commit_text))
+                else:
+                    self._bridge.write(commit_text)
             elif self._commit_cb is not None:
                 # Daemon (or other no-local-PTY) mode: surface keystrokes via the
                 # same commit callback VTE uses, so TerminalWidget stays backend-agnostic.
                 try:
-                    text = data if isinstance(data, str) else data.decode("utf-8", "replace")
-                    self._commit_cb(self.widget, text, len(text))
+                    self._commit_cb(self.widget, commit_text, commit_size)
                 except Exception:  # noqa: BLE001
                     logger.debug("commit callback raised", exc_info=True)
-            self._feed_autocomplete(data if isinstance(data, str) else "")
+            self._feed_autocomplete(autocomplete_text)
         elif kind == "resize":
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
             if self._bridge is not None:

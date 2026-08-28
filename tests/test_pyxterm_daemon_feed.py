@@ -281,6 +281,48 @@ def test_pyxterm_input_without_bridge_fires_commit_callback():
     assert commits == [("ls\r", 3)]
 
 
+def test_pyxterm_binary_input_preserves_x10_mouse_bytes():
+    import base64
+
+    commits = []
+    written = []
+    b = object.__new__(PyXtermBridgeBackend)
+    b.owner = None
+    b.widget = object()
+    b._bridge = None
+    b._js_ready = True
+    b._autocompleter = None
+    b._commit_cb = None
+    b._size_changed_cb = None
+    b.connect_commit(lambda widget, text, size: commits.append((text, size)))
+
+    raw = b"\x1b[M\x20\xe8("
+    b._on_pty_message(
+        None,
+        _FakeJsValue(
+            {
+                "type": "input",
+                "encoding": "binary",
+                "data": base64.b64encode(raw).decode("ascii"),
+            }
+        ),
+    )
+    assert commits == [(raw, len(raw))]
+
+    b._bridge = type("Bridge", (), {"write": staticmethod(written.append)})()
+    b._on_pty_message(
+        None,
+        _FakeJsValue(
+            {
+                "type": "input",
+                "encoding": "binary",
+                "data": base64.b64encode(raw).decode("ascii"),
+            }
+        ),
+    )
+    assert written == [raw]
+
+
 def test_pyxterm_resize_without_bridge_fires_size_callback():
     sizes = []
     b = object.__new__(PyXtermBridgeBackend)

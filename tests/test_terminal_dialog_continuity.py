@@ -421,3 +421,16 @@ def test_dialog_input_bytes_still_reach_controller_after_output_continuity_loss(
         b"\x1b",
         b"\x03",
     ]
+
+
+def test_dialog_x10_mouse_commit_keeps_high_bytes():
+    sent = []
+    widget = SimpleNamespace(
+        _daemon_controller=SimpleNamespace(send_input=sent.append),
+        has_input_ownership=True,
+    )
+    # X10 mouse: CSI M + button + x + y. Column 200 is byte 232.
+    text = "\x1b[M" + chr(32) + chr(232) + chr(40)
+    TerminalWidget._on_daemon_commit(widget, None, text, 6)
+    assert sent == [text.encode("latin-1")]
+    assert sent[0][4] == 232

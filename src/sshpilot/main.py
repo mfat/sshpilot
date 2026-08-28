@@ -167,6 +167,27 @@ from .platform_utils import is_macos, get_data_dir, get_state_dir
 from .file_manager_integration import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
+
+def apply_terminal_menu_bar_accel_setting(settings=None) -> None:
+    """Clear GTK's F10 menu-bar accelerator so function keys reach the terminal.
+
+    GTK defaults ``gtk-menu-bar-accel`` to F10, which opens the application
+    menu instead of sending F10 to htop/mc/vim. Terminal emulators (GNOME
+    Terminal, Ptyxis) clear this setting. Pass-through mode cannot fix it
+    because F10 is not an sshPilot shortcut.
+    """
+    if settings is None:
+        try:
+            settings = Gtk.Settings.get_default()
+        except Exception:
+            settings = None
+    if settings is None:
+        return
+    try:
+        settings.set_property("gtk-menu-bar-accel", "")
+    except Exception:
+        logger.debug("Could not clear gtk-menu-bar-accel", exc_info=True)
+
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
@@ -448,6 +469,7 @@ class SshPilotApplication(Adw.Application):
         builds never call ``install_menubar``.
         """
         Adw.Application.do_startup(self)
+        apply_terminal_menu_bar_accel_setting()
 
         if getattr(self, "_macos_menubar_installed", False):
             return
