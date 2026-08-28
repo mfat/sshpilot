@@ -780,12 +780,31 @@ def _build_base_ssh_command(
         except Exception:
             pass
 
-    _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
+    # Directives this Host block authored, emitted before the app-wide
+    # Preferences below so the connection's own values win — the same rule the
+    # session command follows. Without them this path resolved everything from
+    # the config file, so a global `Host *` could send ssh-copy-id to a
+    # different account than the editor displayed.
+    #
+    # ssh-copy-id accepts only -i/-p/-o/-f/-n/-s/-x, so nothing here may use a
+    # long flag: `-l` in particular is rejected, hence `-o User=`.
+    authored_kwargs, authored_options = _authored_ssh_options(connection)
+    if 'username' in authored_kwargs:
+        cmd.extend(['-o', f"User={authored_kwargs['username']}"])
+    if 'proxy_jump' in authored_kwargs:
+        cmd.extend(['-o', f"ProxyJump={','.join(authored_kwargs['proxy_jump'])}"])
+    if 'proxy_command' in authored_kwargs:
+        cmd.extend(['-o', f"ProxyCommand={authored_kwargs['proxy_command']}"])
+    cmd.extend(authored_options)
 
-    # Apply port if specified and not default
-    port = getattr(connection, 'port', None)
-    if port and port != 22:
+    # Port: authored values are emitted even when they equal 22, since pinning
+    # 22 against an inherited Port is a deliberate choice.
+    port = authored_kwargs.get('port', getattr(connection, 'port', None))
+    authored_port = 'port' in authored_kwargs
+    if port and (port != 22 or authored_port):
         cmd.extend(['-P' if command_type == 'scp' else '-p', str(port)])
+
+    _append_app_ssh_overrides(cmd, app_ssh_config, is_copy_id=is_copy_id)
 
     _append_identity_and_proxy(cmd, config, is_copy_id=is_copy_id)
 

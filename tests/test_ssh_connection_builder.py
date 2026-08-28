@@ -551,3 +551,45 @@ def test_preferences_still_apply_when_the_connection_sets_nothing():
 
     assert "Compression=yes" in argv
     assert "ConnectTimeout=15" in argv
+
+
+def test_ssh_copy_id_installs_to_the_account_the_editor_shows():
+    """Key deployment must not resolve the account from a global block.
+
+    ssh-copy-id builds its argv through a different function than a session,
+    and it emitted no User at all — so with a global `Host * User tom` the key
+    was installed into tom's authorized_keys while the editor said alice.
+    """
+    import types
+
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    conn = _config_connection(
+        hostname="web.example.com",
+        username="alice",
+        port=2200,
+        authored=("hostname", "user", "port"),
+    )
+    argv = _build_base_ssh_command(
+        conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
+    )
+
+    assert "User=alice" in argv
+    assert "-p" in argv and argv[argv.index("-p") + 1] == "2200"
+    # ssh-copy-id rejects the long flags ssh accepts.
+    for rejected in ("-l", "-J", "-A", "-C", "-v"):
+        assert rejected not in argv
+
+
+def test_ssh_copy_id_leaves_unauthored_values_to_the_config():
+    import types
+
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    conn = _config_connection(hostname="web.example.com", authored=("hostname",))
+    argv = _build_base_ssh_command(
+        conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
+    )
+
+    assert not any(token.startswith("User=") for token in argv)
+    assert "-p" not in argv
