@@ -63,6 +63,9 @@ def test_compose_ssh_overrides_verbosity_and_timeouts():
     assert "ConnectTimeout=10" in overrides
     assert "ServerAliveInterval=30" in overrides
     assert overrides.count("-v") == 2
-    assert "-C" in overrides
+    # Compression is an option, not the ``-C`` flag: ``-C`` force-enables it
+    # wherever it sits, so a connection's own "Compression no" could never win.
+    assert "Compression=yes" in overrides
+    assert "-C" not in overrides
     assert "BatchMode=yes" in overrides
     assert "LogLevel=DEBUG2" in overrides

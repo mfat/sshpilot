@@ -214,7 +214,7 @@ def test_ssh_and_scp_argv_carry_identical_override_fragment():
         "ServerAliveInterval=45",
         "ServerAliveCountMax=6",
         "StrictHostKeyChecking=accept-new",
-        "-C",
+        "Compression=yes",
         "LogLevel=DEBUG2",
     ):
         assert fragment in joined

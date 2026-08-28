@@ -121,18 +121,22 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
     """Compose a deterministic ``ProcessSpec`` from *req*.
 
     Argument order (stable, tested):
-    executable, ``-F`` config, ``ssh_overrides``, explicit ``-o``/flags,
-    identity/certificate/proxy/forward options, destination, remote command.
+    executable, ``-F`` config, explicit ``-o``/flags, identity/certificate/
+    proxy/forward options, ``extra_options``, ``ssh_overrides``, destination,
+    remote command.
+
+    ``ssh_overrides`` carries the app-wide Preferences settings and comes
+    *last*, because OpenSSH takes the first value it obtains for an option.
+    They are defaults: anything a connection sets for itself is emitted earlier
+    and therefore wins. Placing them first — as this once did — made a global
+    Preferences value silently override the per-connection setting the editor
+    displayed.
     """
     _validate_request(req)
     argv: List[str] = [req.executable or "ssh"]
 
     if req.config_file:
         argv.extend(["-F", str(req.config_file)])
-
-    for entry in req.ssh_overrides or []:
-        if entry:
-            argv.append(str(entry))
 
     if req.batch_mode or req.launch_mode == LaunchMode.BATCH:
         if "BatchMode=yes" not in argv:
@@ -185,6 +189,11 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
     for opt in req.extra_options or []:
         if opt:
             argv.append(str(opt))
+
+    # App-wide Preferences last: they lose to everything above (see docstring).
+    for entry in req.ssh_overrides or []:
+        if entry:
+            argv.append(str(entry))
 
     if req.force_tty:
         argv.append("-t")

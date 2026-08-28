@@ -832,10 +832,9 @@ def _maybe_append_default_keepalive(cmd, overrides, app_ssh_config):
 
     A ``ServerAliveInterval`` authored in the Host block also suppresses the
     default: it is re-emitted as an authored option and passed in through
-    *overrides*. That matters for correctness, not just probe cadence —
-    ``ssh_overrides`` are placed ahead of authored options in argv, and the
-    command line is first-obtained-value-wins, so an injected default would
-    otherwise beat the value the user set on the Advanced tab.
+    *overrides*. Argv order alone now protects it — Preferences and the
+    injected default both sit after the authored options — but suppressing it
+    keeps the command free of an option that could never take effect.
     """
     try:
         if not bool(app_ssh_config.get('apply_default_keepalive', True)):
@@ -1116,7 +1115,9 @@ def build_ssh_connection(
     # settings (IdentityFile, port forwarding, X11, RemoteCommand, ...), so the
     # command stays minimal: `ssh -F <config> host`. This builder owns only the
     # runtime concerns that do NOT live in ~/.ssh/config:
-    #   * app-level ssh_overrides (verbosity/timeouts/keepalive written by the app)
+    #   * app-level ssh_overrides (verbosity/timeouts/keepalive from
+    #     Preferences), emitted last so they act as defaults a connection's own
+    #     settings can override
     #   * batch mode preference
     #   * the authentication environment: askpass + keyring autofill for key
     #     passphrases (with an optional agent bypass), or sshpass for a stored

@@ -478,3 +478,76 @@ def test_batch_mode_only_appears_under_the_none_interaction_policy():
         assert "BatchMode=yes" not in argv
         # Still the real command: authored values are enforced either way.
         assert "-l" in argv and argv[argv.index("-l") + 1] == "alice"
+
+
+# --- Preferences act as defaults, not overrides -----------------------------
+
+
+def test_preferences_lose_to_a_connections_own_settings():
+    """Preferences ▸ SSH are defaults; the connection's own values win.
+
+    They used to be emitted first, and OpenSSH takes the first value it
+    obtains, so a global Preferences value silently beat the per-connection
+    setting the editor displayed.
+    """
+    import types
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+
+    prefs = {
+        "compression": True,
+        "strict_host_key_checking": "accept-new",
+        "keepalive_interval": 60,
+        "connection_timeout": 15,
+    }
+    app_config = types.SimpleNamespace(
+        get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
+    )
+    conn = _config_connection(
+        hostname="web.example.com",
+        extra_ssh_config=(
+            "stricthostkeychecking yes\ncompression no\nserveraliveinterval 30"
+        ),
+        authored=(
+            "hostname", "stricthostkeychecking", "compression", "serveraliveinterval"
+        ),
+    )
+    argv = build_ssh_connection(
+        ConnectionContext(connection=conn, config=app_config, command_type="ssh")
+    ).command
+
+    def _index(fragment):
+        return next(i for i, token in enumerate(argv) if token == fragment)
+
+    # Every Preferences option trails the connection's own option for the same
+    # setting, which is what makes OpenSSH prefer the connection's value.
+    for own, preference in (
+        ("stricthostkeychecking=yes", "StrictHostKeyChecking=accept-new"),
+        ("compression=no", "Compression=yes"),
+        ("serveraliveinterval=30", "ServerAliveInterval=60"),
+    ):
+        assert _index(own) < _index(preference), argv
+
+    # Preferences still supply what the connection does not set.
+    assert "ConnectTimeout=15" in argv
+
+
+def test_preferences_still_apply_when_the_connection_sets_nothing():
+    import types
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+
+    prefs = {"compression": True, "connection_timeout": 15}
+    app_config = types.SimpleNamespace(
+        get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
+    )
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(hostname="web.example.com", authored=("hostname",)),
+            config=app_config,
+            command_type="ssh",
+        )
+    ).command
+
+    assert "Compression=yes" in argv
+    assert "ConnectTimeout=15" in argv
