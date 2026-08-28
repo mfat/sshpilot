@@ -19,7 +19,10 @@ from ..api.models import (
     PasswordPrompt,
     RememberPolicy,
 )
-from ..daemon.secret_backend_service import is_secret_service_session
+from ..daemon.secret_backend_service import (
+    MASTER_PASSWORD_PROMPT_TITLE,
+    is_secret_service_session,
+)
 from ..daemon_interaction_dialogs import DaemonInteractionDialogs
 
 
@@ -67,9 +70,51 @@ class SecretsInteractionPresenter(DaemonInteractionDialogs):
     def _present_secret(self, summary, parent) -> None:
         prompt = summary.prompt
         if isinstance(prompt, PasswordPrompt):
-            self._present_master_password(summary, prompt, parent)
+            if prompt.username == MASTER_PASSWORD_PROMPT_TITLE:
+                self._present_master_password(summary, prompt, parent)
+            else:
+                self._present_titled_secret(summary, prompt, parent)
             return
         super()._present_secret(summary, parent)
+
+    def _present_titled_secret(self, summary, prompt: PasswordPrompt, parent) -> None:
+        """Any other protected secret the daemon asks for: a two-step login
+        code, an API client secret, a backup passphrase.
+
+        These used to render through :meth:`_present_master_password`, so a
+        dialog collecting a two-step code was headed "Unlock …" and asked for
+        "the master password" — naming the wrong secret entirely. The daemon
+        sends the heading in ``username`` (what is being asked for) and the
+        sentence in ``hostname`` (see
+        ``SecretBackendService._prompt_for_secret_with_status``); no remember
+        checkbox, since none of these are stored.
+        """
+        from ..window_dialogs import present_for_modal_dialog, show_ssh_password_dialog
+
+        present_for_modal_dialog(parent)
+        self._dialogs[summary.id] = None
+        heading = prompt.username
+        body = prompt.hostname
+        if body and not body.endswith((".", "?", "!")):
+            body = f"{body}."
+        try:
+            value = show_ssh_password_dialog(
+                parent_window=parent,
+                display_name=heading,
+                heading=heading,
+                body=body,
+                allow_store=False,
+            )
+        finally:
+            self._dialogs.pop(summary.id, None)
+        if value:
+            self._submit_secret(
+                summary,
+                bytearray(value.encode("utf-8")),
+                remember_policy=RememberPolicy.DO_NOT_STORE,
+            )
+        else:
+            self._cancel_secret(summary)
 
     def _present_master_password(self, summary, prompt: PasswordPrompt, parent) -> None:
         """A vault master-password unlock — its own dialog, not the SSH host

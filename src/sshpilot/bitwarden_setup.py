@@ -1102,7 +1102,11 @@ def _login_wizard(window, controller, on_done: Callable[[bool], None]):
                     _finish_ok()
                 elif needs_2fa and not twofa_method:
                     _twofa_method_page()
-                elif needs_2fa and twofa_method:
+                elif twofa_method:
+                    # A sign-in that already carried a method failed on the
+                    # two-step step (a wrong or expired code reports no further
+                    # 2FA requirement): stay on the two-step page so the user
+                    # retries the code, instead of restarting from the email.
                     _twofa_method_page(error=_format_bitwarden_login_error(detail))
                 else:
                     _email_page(error=_format_bitwarden_login_error(detail))

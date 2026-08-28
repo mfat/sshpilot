@@ -19,7 +19,9 @@ import pytest
 pytest.importorskip("gi")
 
 from sshpilot.api.daemon_client import (
+    DEFAULT_REQUEST_TIMEOUT,
     DaemonClient,
+    SECRET_BACKEND_REQUEST_TIMEOUT,
     SECRET_INTERACTION_REQUEST_TIMEOUT,
     SECRET_TRANSFER_IMPORT_REQUEST_TIMEOUT,
 )
@@ -125,3 +127,68 @@ def test_non_interactive_secret_rpc_keeps_the_default_timeout():
     assert len(calls) == 1
     _method, _params, kwargs = calls[0]
     assert kwargs.get("request_timeout") is None
+
+
+# ---------------------------------------------------------------------------
+# A backend RPC that never prompts still waits on an external vault CLI.
+# Regression: saving a connection password with Bitwarden selected ran
+# ``bw edit item`` for 8.3s, so the 5s default failed the transport mid-write
+# — and because the write had landed, the dialog reported that secure storage
+# had "rejected" a password it had just saved.
+# ---------------------------------------------------------------------------
+
+
+def _timeout_client(timeout: float = DEFAULT_REQUEST_TIMEOUT):
+    client = DaemonClient.__new__(DaemonClient)
+    client._timeout = timeout
+    return client
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "connections.store_password",
+        "connections.delete_password",
+        "connections.has_password",
+        "connections.reveal_password",
+        "connections.store_passphrase",
+        "connections.delete_passphrase",
+        "connections.has_passphrase",
+        "connections.reveal_passphrase",
+        "connections.store_plugin_secret",
+        "connections.get_plugin_secret",
+        "connections.delete_plugin_secret",
+        "secrets.state.get",
+        "secrets.backends.get",
+        "secrets.bitwarden.status",
+        "secrets.bitwarden.sync",
+        "secrets.transfer.list_bitwarden",
+    ],
+)
+def test_vault_backed_rpc_gets_the_backend_timeout(method):
+    assert _timeout_client()._default_timeout_for(method) == (
+        SECRET_BACKEND_REQUEST_TIMEOUT
+    )
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "connections.list",
+        "connections.update",
+        "connections.snapshot",
+        "sessions.list",
+        "system.handshake",
+    ],
+)
+def test_ordinary_rpc_keeps_the_short_default(method):
+    """Only the vault-backed calls pay the longer wait — everything else must
+    still notice an unresponsive daemon quickly."""
+    assert _timeout_client()._default_timeout_for(method) == DEFAULT_REQUEST_TIMEOUT
+
+
+def test_a_longer_configured_client_timeout_is_never_shortened():
+    client = _timeout_client(timeout=SECRET_BACKEND_REQUEST_TIMEOUT * 2)
+    assert client._default_timeout_for("connections.store_password") == (
+        SECRET_BACKEND_REQUEST_TIMEOUT * 2
+    )

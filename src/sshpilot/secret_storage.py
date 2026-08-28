@@ -1015,6 +1015,11 @@ class BitwardenBackend(SecretBackend):
         lower = (message or "").lower().strip().rstrip(".")
         if lower == "login failed":
             return True
+        # ``bw login`` on a two-step account answers "Code is required." — the
+        # word "code" never appears alongside "required" in any other CLI login
+        # failure, and the message names neither "two-step" nor a provider.
+        if "code" in lower and "required" in lower:
+            return True
         return any(
             token in lower
             for token in (
@@ -1106,7 +1111,17 @@ class BitwardenBackend(SecretBackend):
                     self._store_session_token(token)
             return True, "", False
         detail = self._login_error_message(result)
-        return False, detail, self._login_needs_2fa(detail, twofa_code=code)
+        needs_2fa = self._login_needs_2fa(detail, twofa_code=code)
+        # The CLI's own message decides whether the wizard offers the two-step
+        # method page next, so record it: without this a failed sign-in leaves
+        # only "rc=1" in the log and the classification cannot be checked. The
+        # message is CLI text — the password travels in the environment and the
+        # two-step code is never logged.
+        logger.debug(
+            "bw login failed: %s (two-step=%s, method=%s, code supplied=%s)",
+            detail, needs_2fa, method or "none", bool(code),
+        )
+        return False, detail, needs_2fa
 
     def login_with_api_key(self, client_id: str, client_secret: str) -> Tuple[bool, str]:
         """Sign in with a personal API key. Returns ``(success, error_detail)``."""

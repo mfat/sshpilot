@@ -295,11 +295,29 @@ def daemon_export_backup(
                 mirror_to=(backend if mirror_logins else None),
             )
         except BackupTooLargeForNote as exc:
+            counts = dict(getattr(mgr, "last_export_counts", {}) or {})
+            # Every other failure here is logged; this one was returned to the
+            # UI and logged nowhere, so a user who read "Export failed" and went
+            # looking for the reason found no trace of the export at all.
+            logger.warning(
+                "Bitwarden backup export refused: %s "
+                "(%d credential(s), %d private key(s))",
+                exc,
+                counts.get("credentials", 0),
+                counts.get("private_keys", 0),
+            )
+            # The message names the part that dominates this particular backup
+            # (see ``largest_note_section``), so the warning stays generic.
+            too_large = (
+                "The backup is too large for a Bitwarden note.",
+                "Leaving out the largest part, or exporting fewer connections, "
+                "may bring it under the limit.",
+            )
             return SecretTransferResult(
                 operation="export",
                 path=destination,
-                counts=dict(getattr(mgr, "last_export_counts", {})),
-                warnings=("The backup is too large for a Bitwarden note.",),
+                counts=counts,
+                warnings=tuple(too_large),
                 status=SecretOperationState.FAILED,
                 message=str(exc),
             )

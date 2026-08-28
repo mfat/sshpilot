@@ -10,6 +10,7 @@ every public surface.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -36,6 +37,35 @@ SENTINEL_MASTER = "SENTINEL_MASTER_9f2a"
 SENTINEL_2FA = "SENTINEL_2FA_77b1"
 SENTINEL_CLIENT_SECRET = "SENTINEL_CLIENT_SECRET_c4e0"
 SENTINEL_CHALLENGE = "SENTINEL_CHALLENGE_3d81"
+
+
+@pytest.fixture(autouse=True)
+def _restore_secret_environment():
+    """Undo the process-wide environment every service here writes.
+
+    ``SecretBackendService._apply_environment`` mirrors the selected backend and
+    the profile/database paths into ``os.environ`` (the daemon owns those, and
+    spawned backends read them).  Without restoring them, a test that selects
+    e.g. Bitwarden leaks that selection into the rest of the worker process, and
+    a later test using the *real* secret manager (``askpass_utils`` passphrase
+    storage) then stores against an unrelated backend and fails.
+    """
+    names = (
+        "SSHPILOT_SECRET_BACKEND",
+        "SSHPILOT_SECRET_SESSION_TIMEOUT",
+        "BITWARDENCLI_APPDATA_DIR",
+        "SSHPILOT_KDBX_DATABASE",
+        "SSHPILOT_KDBX_KEYFILE",
+    )
+    saved = {name: os.environ.get(name) for name in names}
+    try:
+        yield
+    finally:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 class FakeBackend:
@@ -556,6 +586,79 @@ def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monke
     assert public.get("error") == "Decryption cancelled"
 
 
+# Every interactive lifecycle route, the way the frontend calls it.  These used
+# to hold ``SecretBackendService._lock`` across their prompt: the reported
+# symptom was the Bitwarden master-password dialog being replaced by "The
+# daemon request timed out" moments after the email step — a concurrent
+# ``secrets.state.get`` waited out its five-second client timeout, which failed
+# the transport and cancelled the interaction the dialog was showing.
+_PROMPTING_LIFECYCLE_ROUTES = {
+    "unlock": lambda service, tmp_path: service.unlock(owner_client_id="client-1"),
+    "bitwarden_login": lambda service, tmp_path: service.bitwarden_login(
+        "alice@example.com", owner_client_id="client-1"
+    ),
+    "bitwarden_api_key_login": lambda service, tmp_path: service.bitwarden_api_key_login(
+        "user.abc123", owner_client_id="client-1"
+    ),
+    "bitwarden_unlock": lambda service, tmp_path: service.bitwarden_unlock(
+        owner_client_id="client-1"
+    ),
+    "keepassxc_create_database": lambda service, tmp_path: service.keepassxc_create_database(
+        str(tmp_path / "new.kdbx"), owner_client_id="client-1"
+    ),
+    "keepassxc_unlock": lambda service, tmp_path: service.keepassxc_unlock(
+        owner_client_id="client-1"
+    ),
+    "remember_master_password": lambda service, tmp_path: service.remember_master_password(
+        owner_client_id="client-1"
+    ),
+}
+
+
+@pytest.mark.parametrize("route", sorted(_PROMPTING_LIFECYCLE_ROUTES))
+def test_lifecycle_prompts_do_not_block_metadata_state(tmp_path, monkeypatch, route):
+    """No lifecycle route may hold the service lock across its interaction."""
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        selected="bitwarden",
+    )
+    # Signed in but locked: the state every prompting route is reached from.
+    backends["bitwarden"]._needs_login = False
+    run = _PROMPTING_LIFECYCLE_ROUTES[route]
+
+    prompt_started = threading.Event()
+    release_prompt = threading.Event()
+    prompt_released: List[bool] = []
+
+    def _blocked_prompt(*_args, **_kwargs):
+        prompt_started.set()
+        prompt_released.append(release_prompt.wait(5.0))
+        return None
+
+    def _blocked_master_prompt(*_args, **_kwargs):
+        return _blocked_prompt(), False
+
+    monkeypatch.setattr(service, "_prompt_for_secret", _blocked_prompt)
+    monkeypatch.setattr(service, "_prompt_for_master_password", _blocked_master_prompt)
+
+    op_thread = threading.Thread(target=lambda: run(service, tmp_path), daemon=True)
+    op_thread.start()
+    try:
+        assert prompt_started.wait(2.0), f"{route} never reached its prompt"
+        state_thread = threading.Thread(target=service.get_state, daemon=True)
+        state_thread.start()
+        state_thread.join(1.0)
+        assert not state_thread.is_alive(), (
+            f"secrets.state.get was blocked by the {route} prompt"
+        )
+    finally:
+        release_prompt.set()
+    op_thread.join(2.0)
+    assert not op_thread.is_alive()
+    assert prompt_released == [True]
+
+
 # ---------------------------------------------------------------------------
 # Deadlock regressions (timeout-bounded)
 # ---------------------------------------------------------------------------
@@ -1031,6 +1134,139 @@ def test_bitwarden_login_2fa_prompts_for_code(tmp_path):
     status = service.bitwarden_login("alice@example.com", twofa_method="0", owner_client_id="client-1")
     assert status.logged_in is True
     assert status.twofa_required is False
+
+
+def _twostep_service(tmp_path, *, secrets_queue):
+    """A Bitwarden that refuses the first sign-in with "a code is required"
+    and accepts it once the code is supplied."""
+    service, _manager, backends, broker, _ = _make_service(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=secrets_queue,
+    )
+    bw = backends["bitwarden"]
+    bw._needs_login = True
+    # No method yet (the wizard has not asked which one), then the method
+    # without a code — both stall on the two-step code.
+    for method in (None, "0"):
+        bw.login_results[
+            ("login_with_password", "alice@example.com", method, None, None)
+        ] = (False, "Code is required.", True)
+    bw.login_results[
+        ("login_with_password", "alice@example.com", "0", SENTINEL_2FA, None)
+    ] = (True, "", False)
+    return service, bw, broker
+
+
+def test_two_step_retry_reuses_the_master_password(tmp_path):
+    """The two-step sign-in asks for the master password once, then the code.
+
+    The wizard needs two calls — the first learns a code is required, the
+    second carries the method the user picked. The second used to open a fresh
+    master-password prompt, so the user saw the password dialog again where
+    they expected the two-step code.
+    """
+    service, bw, broker = _twostep_service(
+        tmp_path, secrets_queue=[SENTINEL_MASTER, SENTINEL_2FA]
+    )
+
+    first = service.bitwarden_login("alice@example.com", owner_client_id="client-1")
+    assert first.logged_in is False
+    assert first.twofa_required is True
+    assert len(broker.created) == 1  # the master password only
+
+    second = service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-1"
+    )
+    assert second.logged_in is True
+    # One further prompt, and it is the code — not the password again. Each
+    # prompt names what it asks for, so the dialog heading is right.
+    assert len(broker.created) == 2
+    assert broker.created[0][1]["prompt"].username == "Bitwarden sign-in"
+    assert broker.created[1][1]["prompt"].username == "Two-step login code"
+    assert "two-step login code" in broker.created[1][1]["prompt"].hostname
+    assert bw.login_results[
+        ("login_with_password", "alice@example.com", "0", SENTINEL_2FA, None)
+    ] == (True, "", False)
+
+
+def test_two_step_password_is_not_reused_by_another_client(tmp_path):
+    """The held password belongs to the client and email that produced it."""
+    service, _bw, broker = _twostep_service(
+        tmp_path, secrets_queue=[SENTINEL_MASTER, SENTINEL_MASTER, SENTINEL_2FA]
+    )
+    service.bitwarden_login("alice@example.com", owner_client_id="client-1")
+    assert len(broker.created) == 1
+
+    service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-2"
+    )
+    # A different client gets its own master-password prompt (then the code).
+    assert len(broker.created) == 3
+
+
+def test_two_step_password_is_dropped_once_the_flow_ends(tmp_path):
+    """Nothing is held after a sign-in that no longer owes a code."""
+    service, _bw, broker = _twostep_service(
+        tmp_path, secrets_queue=[SENTINEL_MASTER, SENTINEL_2FA, SENTINEL_MASTER]
+    )
+    service.bitwarden_login("alice@example.com", owner_client_id="client-1")
+    service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-1"
+    )
+    assert service._pending_login is None
+
+    # A later sign-in prompts for the password again.
+    service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-1"
+    )
+    assert "master password" in broker.created[2][1]["prompt"].hostname
+
+
+def test_wrong_two_step_code_keeps_the_password_for_the_retry(tmp_path):
+    """A wrong code re-asks for the code only — the password is still held."""
+    service, bw, broker = _twostep_service(
+        tmp_path, secrets_queue=[SENTINEL_MASTER, "000000", SENTINEL_2FA]
+    )
+    bw.login_results[
+        ("login_with_password", "alice@example.com", "0", "000000", None)
+    ] = (False, "Two-step token is invalid. Try again.", False)
+
+    service.bitwarden_login("alice@example.com", owner_client_id="client-1")
+    rejected = service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-1"
+    )
+    assert rejected.logged_in is False
+    assert service._pending_login is not None
+
+    accepted = service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-1"
+    )
+    assert accepted.logged_in is True
+    # password, code, code — the password was never asked for twice.
+    assert len(broker.created) == 3
+    assert "master password" in broker.created[0][1]["prompt"].hostname
+    assert all(
+        "two-step login code" in entry[1]["prompt"].hostname
+        for entry in broker.created[1:]
+    )
+
+
+def test_locking_drops_a_held_two_step_password(tmp_path):
+    """Locking the vault discards the password held for a two-step retry."""
+    service, _bw, broker = _twostep_service(
+        tmp_path, secrets_queue=[SENTINEL_MASTER, SENTINEL_MASTER, SENTINEL_2FA]
+    )
+    service.bitwarden_login("alice@example.com", owner_client_id="client-1")
+    assert service._pending_login is not None
+
+    service.bitwarden_lock()
+    assert service._pending_login is None
+
+    service.bitwarden_login(
+        "alice@example.com", twofa_method="0", owner_client_id="client-1"
+    )
+    assert len(broker.created) == 3  # password prompted again, then the code
 
 
 def test_bitwarden_auth_challenge_retries_with_client_secret(tmp_path):

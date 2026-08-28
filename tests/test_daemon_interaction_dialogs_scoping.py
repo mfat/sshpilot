@@ -974,3 +974,122 @@ def test_master_password_remember_checkbox_sets_store_after_success(monkeypatch)
 
     assert client.responded[-1].remember_policy is RememberPolicy.STORE_AFTER_SUCCESS
     dialogs.close()
+
+
+def _titled_secret_summary(title: str, message: str):
+    """A secret-session PASSWORD interaction as produced by
+    ``SecretBackendService._prompt_for_secret`` — ``username`` is the heading
+    naming what is asked for and ``hostname`` the sentence under it."""
+    now = datetime.now(timezone.utc)
+    return InteractionSummary(
+        id=new_interaction_id(),
+        session_id=SessionId("secret-session-1"),
+        connection_id=ConnectionId("secret-1"),
+        type=InteractionType.PASSWORD,
+        state=InteractionState.PENDING,
+        created_at=now,
+        expires_at=now + timedelta(minutes=5),
+        attempt=1,
+        prompt=PasswordPrompt(
+            username=title,
+            hostname=message,
+            port=22,
+            attempt=1,
+            can_remember=False,
+            stored_secret_available=False,
+        ),
+    )
+
+
+def test_two_step_code_prompt_does_not_ask_for_a_master_password(monkeypatch):
+    """Regression: every daemon secret prompt rendered through the
+    master-password dialog, so the two-step login code was collected by a
+    dialog headed "Unlock …" that asked for "the master password" — the wrong
+    secret by name. It must name the code it is actually asking for."""
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    client = _FakeClient()
+    calls = {}
+
+    def fake_show(**kwargs):
+        calls.update(kwargs)
+        return "123456"
+
+    monkeypatch.setattr("sshpilot.window_dialogs.show_ssh_password_dialog", fake_show)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
+    summary = _titled_secret_summary(
+        "Two-step login code", "Enter the two-step login code for alice@example.com"
+    )
+
+    dialogs._present_secret(summary, parent=SimpleNamespace())
+
+    assert calls["heading"] == "Two-step login code"
+    assert calls["body"] == "Enter the two-step login code for alice@example.com."
+    assert "master password" not in str(calls).lower()
+    assert "unlock" not in str(calls).lower()
+    # Nothing here is storable, so the dialog offers no remember checkbox.
+    assert calls["allow_store"] is False
+    assert client.secrets[-1][2] == b"123456"
+    assert client.responded[-1].remember_policy is RememberPolicy.DO_NOT_STORE
+    dialogs.close()
+
+
+def test_backup_passphrase_prompt_names_the_passphrase(monkeypatch):
+    """The same dialog serves every other daemon secret request."""
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    client = _FakeClient()
+    calls = {}
+
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.show_ssh_password_dialog",
+        lambda **kwargs: (calls.update(kwargs), "s3cr3t")[1],
+    )
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
+    dialogs._present_secret(
+        _titled_secret_summary(
+            "Decrypt backup", "Enter the passphrase to decrypt the backup"
+        ),
+        parent=SimpleNamespace(),
+    )
+
+    assert calls["heading"] == "Decrypt backup"
+    assert calls["body"] == "Enter the passphrase to decrypt the backup."
+    assert "master password" not in str(calls).lower()
+    dialogs.close()
+
+
+def test_master_password_prompt_still_uses_its_own_dialog(monkeypatch):
+    """The unlock prompt keeps its dedicated dialog and remember checkbox —
+    it is told apart by the reserved ``username`` the daemon sends."""
+    from sshpilot.daemon.secret_backend_service import MASTER_PASSWORD_PROMPT_TITLE
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    client = _FakeClient()
+    calls = {}
+
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.show_ssh_password_dialog",
+        lambda **kwargs: (calls.update(kwargs), "hunter2")[1],
+    )
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
+    summary = _master_password_summary("keepassxc")
+    assert summary.prompt.username == MASTER_PASSWORD_PROMPT_TITLE
+
+    dialogs._present_secret(summary, parent=SimpleNamespace())
+
+    assert calls["heading"] == "Unlock KeePassXC"
+    assert calls["allow_store"] is True
+    dialogs.close()

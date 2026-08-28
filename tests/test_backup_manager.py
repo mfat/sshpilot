@@ -1302,3 +1302,125 @@ def test_apply_parsed_treats_unsupported_version_result_as_non_fatal(monkeypatch
     assert mgr.last_connection_store_warnings == [
         "connection_store section version is unsupported; skipped"
     ]
+
+
+def test_export_drops_machine_local_session_state(monkeypatch, tmp_path):
+    """A backup carries settings, not this machine's running state.
+
+    ``terminal.daemon_session_restore_state`` is a list of live daemon sessions
+    (session ids, the owning daemon instance, replay sequence numbers). It is
+    dead once that daemon exits, so restoring it elsewhere points the app at
+    sessions that never existed there — and it is the largest thing in a real
+    config, which is what pushed a Bitwarden backup note over its size limit.
+    """
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    (tmp_path / "config.json").write_text(json.dumps({
+        "terminal": {
+            "font": "Monospace 11",
+            "daemon_session_restore_state": [
+                {"session_id": "s1", "daemon_instance_id": "d1", "last_sequence": 42},
+            ],
+        },
+        "ui": {"window_width": 1200},
+    }), encoding="utf-8")
+
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    data = mgr._build_export_data({"app_settings": True, "ssh_config": False,
+                                   "known_hosts": False, "secrets": False,
+                                   "private_keys": False})
+
+    terminal = data["app_config"]["terminal"]
+    assert "daemon_session_restore_state" not in terminal
+    assert terminal["font"] == "Monospace 11"        # real settings still exported
+    assert data["app_config"]["ui"]["window_width"] == 1200
+
+
+def test_export_does_not_mutate_the_live_config_file(monkeypatch, tmp_path):
+    """Trimming the export must not strip the running app's own state."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({
+        "terminal": {"daemon_session_restore_state": [{"session_id": "s1"}]},
+    }), encoding="utf-8")
+
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    mgr._build_export_data({"app_settings": True, "ssh_config": False,
+                            "known_hosts": False, "secrets": False,
+                            "private_keys": False})
+
+    on_disk = json.loads(config_file.read_text(encoding="utf-8"))
+    assert on_disk["terminal"]["daemon_session_restore_state"] == [{"session_id": "s1"}]
+
+
+def test_restore_keeps_local_session_state(monkeypatch, tmp_path):
+    """An older backup still carries the source machine's session state; a
+    restore must neither import it nor lose the local one."""
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+
+    class LocalConfig(FakeConfig):
+        def __init__(self):
+            self.config_data = {
+                "terminal": {"daemon_session_restore_state": [{"session_id": "mine"}]},
+            }
+
+    mgr = bm.BackupManager(LocalConfig(), FakeConnMgr([]))
+    imported = {
+        "terminal": {
+            "font": "Source Font 12",
+            "daemon_session_restore_state": [{"session_id": "theirs"}],
+        },
+    }
+    out = mgr._app_config_for_restore(imported)
+
+    assert out["terminal"]["daemon_session_restore_state"] == [{"session_id": "mine"}]
+    assert out["terminal"]["font"] == "Source Font 12"   # real settings still restored
+    # The caller's dict is untouched.
+    assert imported["terminal"]["daemon_session_restore_state"] == [{"session_id": "theirs"}]
+
+
+def test_restore_without_local_session_state_drops_the_imported_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    mgr = bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+    out = mgr._app_config_for_restore(
+        {"terminal": {"daemon_session_restore_state": [{"session_id": "theirs"}]}}
+    )
+    assert "daemon_session_restore_state" not in out["terminal"]
+
+
+def _validating_manager(monkeypatch, tmp_path):
+    monkeypatch.setattr(bm, "get_config_dir", lambda: str(tmp_path))
+    return bm.BackupManager(FakeConfig(), FakeConnMgr([]))
+
+
+def test_import_rejects_a_payload_with_no_version(monkeypatch, tmp_path):
+    """A file with no version is not a backup.
+
+    The version used to be read back from ``migrate_payload``'s copy, which
+    defaults a missing version to the current schema and stamps it in — so the
+    guard could never fire, and any JSON carrying an ``app_config`` object
+    validated as a backup that import would then merge into (or replace) the
+    user's real configuration.
+    """
+    mgr = _validating_manager(monkeypatch, tmp_path)
+    ok, error = mgr._validate_import_data({"app_config": {"ui": {}}})
+    assert ok is False
+    assert error == "Missing 'version' field in import data"
+
+
+def test_import_accepts_the_schema_version_alias(monkeypatch, tmp_path):
+    """``schema_version`` is the alias migration itself accepts; reading the
+    version earlier must not start rejecting payloads that use it."""
+    mgr = _validating_manager(monkeypatch, tmp_path)
+    ok, error = mgr._validate_import_data({"schema_version": 1, "app_config": {}})
+    assert ok is True, error
+
+
+def test_import_version_bounds(monkeypatch, tmp_path):
+    mgr = _validating_manager(monkeypatch, tmp_path)
+    assert mgr._validate_import_data({"version": 1, "app_config": {}})[0] is True
+    # Newer than this build understands, and older than any real schema.
+    assert mgr._validate_import_data({"version": 99, "app_config": {}}) == (
+        False, "Unsupported backup version: 99")
+    assert mgr._validate_import_data({"version": 0, "app_config": {}})[0] is False
+    assert mgr._validate_import_data({"version": "x", "app_config": {}}) == (
+        False, "Unsupported backup version: x")

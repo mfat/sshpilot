@@ -43,6 +43,33 @@ DEFAULT_BACKUP_OPTIONS = {
     'secrets': True,
     'private_keys': False,
 }
+
+# Settings that record what this machine is *doing*, not what the user has
+# chosen. They are dropped on the way into a backup and kept local on the way
+# out (a backup written before this still carries them).
+#
+# ``terminal.daemon_session_restore_state`` is the list of live daemon sessions
+# to reattach — session ids, the daemon instance id that owns them, and each
+# session's replay sequence number. Every entry is dead the moment that daemon
+# exits, let alone on another machine, so restoring it can only point the app
+# at sessions that do not exist. It is also, by a wide margin, the largest
+# thing in a real config (13,871 of 34,783 characters in the one that made a
+# Bitwarden note overflow), so backing it up is pure cost.
+MACHINE_LOCAL_SETTINGS = (
+    ('terminal', 'daemon_session_restore_state'),
+)
+
+
+def _without_machine_local_settings(config: Dict[str, Any]) -> Dict[str, Any]:
+    """A copy of *config* with this machine's runtime state removed."""
+    trimmed = dict(config)
+    for section, key in MACHINE_LOCAL_SETTINGS:
+        subtree = trimmed.get(section)
+        if isinstance(subtree, dict) and key in subtree:
+            subtree = dict(subtree)
+            subtree.pop(key, None)
+            trimmed[section] = subtree
+    return trimmed
 DEFAULT_RESTORE_OPTIONS = dict(DEFAULT_BACKUP_OPTIONS)
 
 
@@ -425,6 +452,25 @@ class BackupManager:
             restored['secrets'] = dict(local_secrets)
         else:
             restored.pop('secrets', None)   # revert to defaults rather than the source's paths
+
+        # Same rule for this machine's runtime state: never take the source's
+        # (its sessions died with its daemon), never lose the local one — a
+        # full-file restore writes this dict out whole, so the running app's
+        # own session list has to survive it. Backups written before the export
+        # side started dropping these still carry the source's values.
+        restored = _without_machine_local_settings(restored)
+        try:
+            local_config = self.config.config_data
+        except Exception:
+            local_config = None
+        if isinstance(local_config, dict):
+            for section, key in MACHINE_LOCAL_SETTINGS:
+                local_section = local_config.get(section)
+                if not isinstance(local_section, dict) or key not in local_section:
+                    continue
+                merged = dict(restored.get(section) or {})
+                merged[key] = local_section[key]
+                restored[section] = merged
         return restored
 
     @staticmethod
@@ -514,7 +560,8 @@ class BackupManager:
         elif config_file.exists():
             try:
                 with open(config_file, encoding='utf-8') as f:
-                    export_data['app_config'] = json.load(f)
+                    export_data['app_config'] = _without_machine_local_settings(
+                        json.load(f))
                 logger.info(f"Exported app config from {config_file}")
             except Exception as e:
                 logger.warning(f"Could not read app config: {e}")
@@ -1016,22 +1063,28 @@ class BackupManager:
         if not isinstance(data, dict):
             return False, "Import data must be a JSON object"
 
-        try:
-            from sshpilot.core.import_export import migrate_payload, plan_import
-            from sshpilot.core.errors import CoreError
-
-            migrated = migrate_payload(data)
-        except CoreError as exc:
-            return False, str(exc.message or exc)
-        except Exception as exc:
-            return False, str(exc)
-
-        # Check version (legacy path still requires app_config for full restores)
-        version = migrated.get('version')
+        # The version has to be read from the payload itself, before migration.
+        # ``migrate_payload`` defaults a missing version to the current schema
+        # and stamps it into its copy, so asking the migrated copy can never
+        # answer None: this guard passed anything, and any JSON file carrying an
+        # ``app_config`` object became a valid backup that import then merged
+        # into — or replaced — the user's real configuration.
+        # ``schema_version`` is honoured as the same alias migration accepts.
+        version = data.get('version', data.get('schema_version'))
         if version is None:
             return False, "Missing 'version' field in import data"
         if not isinstance(version, int) or version > BACKUP_VERSION:
             return False, f"Unsupported backup version: {version}"
+
+        try:
+            from sshpilot.core.import_export import migrate_payload, plan_import
+            from sshpilot.core.errors import CoreError
+
+            migrate_payload(data)
+        except CoreError as exc:
+            return False, str(exc.message or exc)
+        except Exception as exc:
+            return False, str(exc)
 
         # Check required fields. New .spbk files may intentionally omit settings,
         # but legacy JSON imports still require an app config section.

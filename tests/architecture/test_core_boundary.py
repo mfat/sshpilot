@@ -193,6 +193,11 @@ DAEMON_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # the app-wide SecretsInteractionPresenter, never the session-scoped one.
         ("daemon_interaction_dialogs.py", "is_secret_service_session"),
         ("gtk/secrets_interaction_presenter.py", "is_secret_service_session"),
+        # Same contract, other half: the reserved prompt title that marks a
+        # master-password unlock, so the presenter can tell it apart from every
+        # other daemon secret request (a two-step code, a backup passphrase)
+        # and head each dialog with what it is actually asking for.
+        ("gtk/secrets_interaction_presenter.py", "MASTER_PASSWORD_PROMPT_TITLE"),
     }
 )
 

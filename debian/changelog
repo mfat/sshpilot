@@ -1,3 +1,10 @@
+sshpilot (5.9.8-1) unstable; urgency=medium
+
+  * Release v5.9.8.
+  * Fixed Bitwarden login issue
+
+ -- Mehdi <mah.fat@gmail.com>  Fri, 28 Aug 2026 12:21:45 +0000
+
 sshpilot (5.9.7-1) unstable; urgency=medium
 
   * Release v5.9.7.
