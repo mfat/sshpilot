@@ -85,13 +85,30 @@ def assert_connection_matches_ssh_g(conn, config_path):
     assert eff, f"ssh -G returned nothing for {conn.nickname!r}"
 
     data = conn.data
+    authored = conn.authored_directives
     # --- scalars we explicitly handle -------------------------------------
-    assert int(data.get("port") or 22) == int(eff["port"]), (
-        f"{conn.nickname}: port {data.get('port')} != ssh -G {eff['port']}"
-    )
-    assert data.get("username") == eff["user"], (
-        f"{conn.nickname}: user {data.get('username')!r} != ssh -G {eff['user']!r}"
-    )
+    # The record stores what the Host block *authored*, not what OpenSSH
+    # resolves: an unauthored directive is inherited (from a global block, or
+    # from OpenSSH's own default) and the parser must not invent a value for
+    # it. So an authored directive has to match ssh -G exactly, while an
+    # unauthored one only has to prove nothing was fabricated.
+    if "port" in authored:
+        assert int(data.get("port") or 22) == int(eff["port"]), (
+            f"{conn.nickname}: port {data.get('port')} != ssh -G {eff['port']}"
+        )
+    else:
+        assert int(data.get("port") or 22) == 22, (
+            f"{conn.nickname}: unauthored port materialised as {data.get('port')!r}"
+        )
+    if "user" in authored:
+        assert data.get("username") == eff["user"], (
+            f"{conn.nickname}: user {data.get('username')!r} != ssh -G {eff['user']!r}"
+        )
+    else:
+        assert not data.get("username"), (
+            f"{conn.nickname}: unauthored user materialised as "
+            f"{data.get('username')!r} (ssh -G resolves {eff['user']!r})"
+        )
     # When HostName is omitted the app keeps hostname empty and falls back to the
     # alias; ssh -G reports the alias.
     expected_hostname = data.get("hostname") or conn.nickname

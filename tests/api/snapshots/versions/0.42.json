@@ -13,7 +13,7 @@
     "Subscription",
     "TerminalSubscription"
   ],
-  "api_implementation_version": "0.44",
+  "api_implementation_version": "0.42",
   "capabilities": [
     "broadcast.events",
     "broadcast.read",
@@ -299,10 +299,6 @@
     "get_interaction": {
       "capability": "interactions.read",
       "status": "daemon-only"
-    },
-    "get_launch_command": {
-      "capability": "terminal.external_launch",
-      "status": "implemented"
     },
     "get_operation": {
       "capability": "operations.read",
@@ -754,7 +750,6 @@
     "get_identity_providers",
     "get_identity_state",
     "get_interaction",
-    "get_launch_command",
     "get_operation",
     "get_operation_mode",
     "get_plugin_secret",
@@ -1380,16 +1375,6 @@
         }
       ],
       "return": "InteractionSummary"
-    },
-    "get_launch_command": {
-      "parameters": [
-        {
-          "kind": "positional_or_keyword",
-          "name": "connection_id",
-          "type": "ConnectionId"
-        }
-      ],
-      "return": "ExternalTerminalLaunchSpec"
     },
     "get_operation": {
       "parameters": [
@@ -2521,9 +2506,6 @@
     },
     "connections.get_effective_config": {
       "capability": "connections.config.read"
-    },
-    "connections.get_launch_command": {
-      "capability": "terminal.external_launch"
     },
     "connections.get_plugin_secret": {
       "capability": "connections.secrets.reveal"

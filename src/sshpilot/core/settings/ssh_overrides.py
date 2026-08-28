@@ -195,7 +195,10 @@ def compose_ssh_overrides(
         overrides.extend(["-o", f"StrictHostKeyChecking={strict_host_value}"])
 
     if bool(ssh_cfg.get("compression")):
-        overrides.append("-C")
+        # ``-C`` force-enables compression regardless of where it sits in argv,
+        # so a connection's own ``Compression no`` could never win against it.
+        # The equivalent option obeys OpenSSH's first-value-wins rule.
+        overrides.extend(["-o", "Compression=yes"])
 
     try:
         verbosity_value = int(ssh_cfg.get("verbosity") or 0)

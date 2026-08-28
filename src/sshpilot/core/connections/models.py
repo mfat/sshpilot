@@ -65,6 +65,10 @@ class ConnectionRecord:
     identity_file_evidence_mode: str = "unspecified"
     identity_file_evidence_status: str = "unavailable"
     identity_file_evidence_reason: str = "not_provided"
+    # Lowercased directive names the Host block itself authored. Empty for
+    # records that did not come from an SSH config file. The launch path emits
+    # argv only for these; everything else stays resolved by OpenSSH.
+    authored_directives: frozenset = frozenset()
 
     def normalized_nickname(self) -> str:
         return (self.nickname or "").strip()
@@ -111,6 +115,19 @@ class ConnectionRecord:
         )
         identity_file_evidence_reason = raw.pop(
             "__identity_file_evidence_reason", "not_provided"
+        )
+        # Deliberately read, not popped: the launch path reaches this through
+        # ``record.data`` the same way ``resolve_host_identifier`` reads
+        # ``__host_tokens``.
+        authored_raw = raw.get("__authored_directives", ())
+        authored_directives = frozenset(
+            str(name).strip().lower()
+            for name in (
+                authored_raw
+                if isinstance(authored_raw, (tuple, list, set, frozenset))
+                else ()
+            )
+            if str(name).strip()
         )
         raw.pop("uuid", None)
         nick = str(raw.get("nickname") or raw.get("id") or raw.get("host") or "").strip()
@@ -162,6 +179,7 @@ class ConnectionRecord:
             identity_file_evidence_mode=str(identity_file_evidence_mode),
             identity_file_evidence_status=str(identity_file_evidence_status),
             identity_file_evidence_reason=str(identity_file_evidence_reason),
+            authored_directives=authored_directives,
         )
 
     def with_updates(self, updates: Mapping[str, Any]) -> "ConnectionRecord":

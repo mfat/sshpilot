@@ -2087,6 +2087,7 @@ def connection_editor_details_to_wire(
             "preferred_authentications": details.preferred_authentications,
             "source": details.source,
             "generation": details.generation,
+            "authored_directives": list(details.authored_directives),
         }
     )
     return result
@@ -2099,7 +2100,9 @@ def connection_editor_details_from_wire(
     data = _strict_fields(
         value,
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
-        optional={"display_name"},
+        # Additive: a daemon predating authorship evidence simply omits it, and
+        # an empty tuple already means "no evidence".
+        optional={"display_name", "authored_directives"},
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
@@ -2125,6 +2128,12 @@ def connection_editor_details_from_wire(
     forwarding_rules = data["forwarding_rules"]
     if type(forwarding_rules) is not list:
         raise ValueError("forwarding_rules must be an array")
+    raw_authored = data.get("authored_directives", [])
+    if type(raw_authored) is not list:
+        raise ValueError("authored_directives must be an array")
+    authored_directives = tuple(
+        _text(item, "authored directive", allow_empty=False) for item in raw_authored
+    )
     return ConnectionEditorDetails(
         id=summary.id,
         nickname=summary.nickname,
@@ -2183,6 +2192,7 @@ def connection_editor_details_from_wire(
         ),
         source=_text(data["source"], "source", allow_empty=True),
         generation=_integer(data["generation"], "generation"),
+        authored_directives=authored_directives,
     )
 
 
@@ -2387,7 +2397,10 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if username is not UNSET and username is not None:
         username = _text(username, "connection username", allow_empty=True)
     if port is not UNSET and port is not None:
-        port = _integer(port, "connection port")
+        # An empty string is the explicit "clear the authored Port" signal.
+        port = "" if (type(port) is str and not port.strip()) else _integer(
+            port, "connection port"
+        )
 
     raw_patch = data.get("config_patch")
     config_patch: Dict[str, Any] = {}

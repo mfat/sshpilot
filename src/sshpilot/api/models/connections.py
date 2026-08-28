@@ -431,6 +431,12 @@ class ConnectionEditorDetails(ConnectionDetails):
     # Context
     source: str = ""  # config file owning this block
     generation: int = 0  # revision counter for stale detection
+    # Lowercased directives this Host block authored. Everything else the
+    # editor shows is inherited — OpenSSH resolves it from a global block or
+    # its own defaults — so the editor must not present those values as if the
+    # user had set them. Empty means "no evidence" (a record that did not come
+    # from a parsed Host block), never "authored nothing".
+    authored_directives: Tuple[str, ...] = ()
 
 
 # -- Secret request / response models --------------------------------------
@@ -621,7 +627,7 @@ class UpdateConnectionRequest:
     nickname: Union[str, None, _UNSET_TYPE] = UNSET
     hostname: Union[str, None, _UNSET_TYPE] = UNSET
     username: Union[str, None, _UNSET_TYPE] = UNSET
-    port: Union[int, None, _UNSET_TYPE] = UNSET
+    port: Union[int, str, None, _UNSET_TYPE] = UNSET  # "" clears (inherit)
     display_name: Union[str, None, _UNSET_TYPE] = UNSET
     config_patch: Mapping[str, Any] = field(default_factory=dict)
     plugin_data: Mapping[str, Any] = field(default_factory=dict)
@@ -645,10 +651,14 @@ class UpdateConnectionRequest:
             raise TypeError("connection hostname must be a string")
         if self.username is not None and self.username is not UNSET and type(self.username) is not str:
             raise TypeError("connection username must be a string")
-        if self.port is not None and self.port is not UNSET and (
-            type(self.port) is not int or not 1 <= self.port <= 65535
-        ):
-            raise ValueError("connection port must be between 1 and 65535")
+        # ``""`` clears an authored Port so the host inherits again, matching
+        # how an emptied username clears ``User``. Any other string is invalid.
+        if self.port is not None and self.port is not UNSET:
+            if type(self.port) is str:
+                if self.port.strip():
+                    raise ValueError("connection port must be an integer or empty")
+            elif type(self.port) is not int or not 1 <= self.port <= 65535:
+                raise ValueError("connection port must be between 1 and 65535")
         if self.display_name is not None and self.display_name is not UNSET:
             if type(self.display_name) is not str or not self.display_name.strip():
                 raise ValueError("connection display name must not be empty")

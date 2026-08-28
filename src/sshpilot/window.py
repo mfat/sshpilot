@@ -6784,6 +6784,66 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to open effective config viewer", exc_info=True)
 
+    def on_copy_ssh_command_action(self, action=None, param=None):
+        """Copy the SSH command this connection actually runs to the clipboard.
+
+        The command is composed by the daemon, which owns launch preparation —
+        GTK never rebuilds it, so what lands on the clipboard is the same argv
+        the session is started with. It carries no secrets; the private askpass
+        transport is added later by the interaction broker and is process-local.
+        """
+        connection = getattr(self, '_context_menu_connection', None)
+        if connection is None:
+            row = self.connection_list.get_selected_row()
+            connection = getattr(row, 'connection', None) if row else None
+        if connection is None:
+            return
+        if not self._daemon_ready():
+            self._show_daemon_unavailable_dialog()
+            return
+
+        def _on_success(spec):
+            try:
+                self.get_clipboard().set(shlex.join(tuple(spec.argv)))
+                self._show_copy_ssh_command_toast()
+            except Exception:
+                logger.debug("Failed to copy SSH command", exc_info=True)
+
+        try:
+            self.client_bridge.submit(
+                lambda: self.client.get_launch_command(
+                    connection_id_for(connection)
+                ),
+                on_success=_on_success,
+                on_error=self._on_copy_ssh_command_error,
+            )
+        except Exception as error:
+            self._on_copy_ssh_command_error(error)
+
+    def _show_copy_ssh_command_toast(self) -> None:
+        """Confirm the copy; the clipboard gives no other feedback."""
+        try:
+            if not getattr(self, 'toast_overlay', None):
+                return
+            self.toast_overlay.add_toast(Adw.Toast.new(_("SSH command copied")))
+        except Exception:
+            logger.debug("Could not show copy confirmation", exc_info=True)
+
+    def _on_copy_ssh_command_error(self, error) -> None:
+        from .api import ErrorCode
+
+        if getattr(error, "code", None) is ErrorCode.UNSUPPORTED_CAPABILITY:
+            self._error_dialog(
+                _("SSH command unavailable"),
+                _("This daemon cannot prepare the SSH command for this connection."),
+            )
+            return
+        logger.debug("Daemon launch-command lookup failed: %s", error)
+        self._error_dialog(
+            _("SSH command unavailable"),
+            _("The SSH command for this connection could not be prepared."),
+        )
+
     def on_delete_connection_action(self, action, param=None):
         """Handle delete connection action from context menu"""
         try:
@@ -7560,7 +7620,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     nickname=connection_data.get('nickname', ''),
                     hostname=connection_data.get('hostname', ''),
                     username=connection_data.get('username', ''),
-                    port=connection_data.get('port', 22),
+                    # A new connection needs a concrete port; an empty field
+                    # means "inherit", and 22 is what OpenSSH falls back to, so
+                    # the formatter still omits the Port line for it.
+                    port=connection_data.get('port') or 22,
                     protocol='ssh',
                     display_name=connection_data.get('display_name', ''),
                     config_patch=config_patch,
@@ -7902,38 +7965,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
 
-    def _warn_if_effective_config_differs(self, connection, connection_data):
-        """After a save, warn if global SSH config overrides/adds values for this
-        connection. Informational only — offers a diff view and a shortcut to the
-        SSH config editor. Best-effort: any failure is swallowed silently.
-
-        The daemon performs resolution on its serialized backend path; GTK only
-        presents the generation-tagged comparison result.
-        """
-        del connection_data
-        host = getattr(connection, "nickname", "") or ""
-        if not host or not self._daemon_ready():
-            return
-        try:
-            self.client_bridge.submit(
-                lambda: self.client.get_effective_config(connection_id_for(connection)),
-                on_success=lambda result: GLib.idle_add(
-                    self._present_effective_config_warning,
-                    host,
-                    {
-                        "has_diff": result.has_diff,
-                        "changes": list(result.changes),
-                        "own": list(result.own),
-                        "full": list(result.full),
-                    },
-                ),
-                on_error=lambda error: logger.debug(
-                    "daemon effective-config warning unavailable: %s", error
-                ),
-            )
-        except Exception:
-            logger.debug("Could not request daemon effective-config comparison", exc_info=True)
-
     def show_effective_config_for_connection(self, connection) -> None:
         """Open the effective-config viewer from a daemon comparison result."""
         if not self._daemon_ready():
@@ -7971,44 +8002,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
         except Exception:
             logger.debug("Failed to open effective-config diff", exc_info=True)
-
-    def _present_effective_config_warning(self, host, result):
-        """Show the global-config warning dialog on the GTK main thread."""
-        try:
-            from gettext import gettext as _
-
-            if not result or not result.get('has_diff'):
-                return False
-
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Global SSH config may change this connection"),
-                body=_(
-                    "Some of the values you set may be overridden or added by "
-                    "your global SSH configuration (for example a 'Host *' "
-                    "block or an included file). SSH will use the effective "
-                    "values, not only what you entered here."
-                ),
-            )
-            dialog.add_response('dismiss', _('Dismiss'))
-            dialog.add_response('view', _('View differences…'))
-            dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response('view')
-
-            def _on_response(dlg, response):
-                if response == 'view':
-                    try:
-                        from .effective_config_dialog import EffectiveConfigDialog
-                        EffectiveConfigDialog.for_result(self, host, result)
-                    except Exception:
-                        logger.debug("Failed to open effective-config diff", exc_info=True)
-
-            dialog.connect('response', _on_response)
-            dialog.present()
-        except Exception:
-            logger.debug("Failed to present effective-config warning", exc_info=True)
-        return False
 
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""

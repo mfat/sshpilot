@@ -4451,6 +4451,7 @@ def _attach_connection_list_context_menu(window):
                         menu.add_item('utilities-terminal-symbolic', _('Run Command on Host…'), lambda: window.on_run_command_action()) if Capability.REMOTE_COMMAND in conn_caps else None,
                         menu.add_item('edit-copy-symbolic', _('Duplicate Connection'), lambda: window.on_duplicate_connection_action(None, None)),
                         menu.add_item('edit-copy-symbolic', _('Copy Address'), lambda: window._copy_connection_address()),
+                        menu.add_item('utilities-terminal-symbolic', _('Copy SSH Command'), lambda: window.on_copy_ssh_command_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                         menu.add_item('success-small-symbolic', _('Verify Configuration'), lambda: window.on_verify_configuration_action(None, None)) if (conn and getattr(conn, 'protocol', 'ssh') == 'ssh') else None,
                     )
 

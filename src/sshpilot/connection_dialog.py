@@ -164,6 +164,9 @@ def _editor_details_to_connection(details):
         source=getattr(details, 'source', '') or '',
         generation=getattr(details, 'generation', 0) or 0,
         data=getattr(details, 'data', None) or {},
+        authored_directives=frozenset(
+            getattr(details, 'authored_directives', None) or ()
+        ),
     )
 
 
@@ -2312,6 +2315,215 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
+    # Rows whose value OpenSSH can inherit, mapped to the ``ssh -G`` key that
+    # reports the resolved value. Accumulating directives (IdentityFile, the
+    # forwards) are deliberately absent: the command line cannot override them,
+    # so they are not presented as if this connection controlled them.
+    # (row attribute, ssh_config directive, `ssh -G` key). Every text row that
+    # maps to a directive OpenSSH can inherit belongs here — anything missing
+    # silently shows blank while the session uses the global's value.
+    #
+    # Deliberately absent:
+    #   * IdentityFile / CertificateFile / the forwards accumulate rather than
+    #     replace, so the command line cannot make this host's value win.
+    #   * display name, SSH alias, tags, Wake-on-LAN and the pre-connection
+    #     command are app metadata, not ssh_config directives.
+    #   * switch and combo rows (ForwardAgent, ForwardX11, PubkeyAuthentication,
+    #     IdentitiesOnly, AddKeysToAgent) always render *some* state, so
+    #     "inherited" cannot be shown by dimming their text.
+    _INHERITABLE_ROWS = (
+        ('hostname_row', 'hostname', 'hostname'),
+        ('username_row', 'user', 'user'),
+        ('port_row', 'port', 'port'),
+        ('proxy_jump_row', 'proxyjump', 'proxyjump'),
+        ('identity_agent_row', 'identityagent', 'identityagent'),
+        ('pkcs11_provider_row', 'pkcs11provider', 'pkcs11provider'),
+        ('security_key_provider_row', 'securitykeyprovider', 'securitykeyprovider'),
+        ('local_command_row', 'localcommand', 'localcommand'),
+        ('remote_command_row', 'remotecommand', 'remotecommand'),
+    )
+
+    # connection_data key each inheritable row feeds, so adopting an inherited
+    # value can force that field into the save delta.
+    _INHERITED_ROW_FIELDS = {
+        'hostname_row': 'hostname',
+        'username_row': 'username',
+        'port_row': 'port',
+        'proxy_jump_row': 'proxy_jump',
+        'identity_agent_row': 'identity_agent',
+        'pkcs11_provider_row': 'pkcs11_provider',
+        'security_key_provider_row': 'security_key_provider',
+        'local_command_row': 'local_command',
+        'remote_command_row': 'remote_command',
+    }
+
+    def _clear_inherited_row_state(self) -> None:
+        """Drop dim styling and edit watchers left by a previous load."""
+        handlers = getattr(self, '_inherited_row_handlers', None) or {}
+        for row_name, handler_id in list(handlers.items()):
+            row = getattr(self, row_name, None)
+            if row is None:
+                continue
+            try:
+                row.disconnect(handler_id)
+                row.remove_css_class('dim-label')
+                self._set_row_inherited_note(row, '')
+            except Exception:
+                logger.debug("Could not reset inherited row %s", row_name, exc_info=True)
+        self._inherited_row_handlers = {}
+
+    def _show_inherited_value(self, row_name, row, value) -> None:
+        """Put an inherited value in *row*, dimmed, and watch for adoption."""
+        handlers = getattr(self, '_inherited_row_handlers', None)
+        if handlers is None:
+            handlers = self._inherited_row_handlers = {}
+        if row_name in handlers:
+            row.disconnect(handlers.pop(row_name))
+
+        self._applying_inherited_value = True
+        try:
+            row.set_text(str(value))
+        finally:
+            self._applying_inherited_value = False
+
+        row.add_css_class('dim-label')
+        # Composed with any validation message rather than replacing it: a row
+        # has one tooltip, and setting it directly made whichever ran last win.
+        self._set_row_inherited_note(
+            row,
+            _('Inherited from your SSH configuration. Edit to set it for this host.'),
+        )
+        handlers[row_name] = row.connect(
+            'changed', lambda _row, name=row_name: self._on_inherited_row_edited(name)
+        )
+
+    def _on_inherited_row_edited(self, row_name) -> None:
+        """Adopt an inherited value once the user edits its row.
+
+        The row already holds the resolved value, so a user pinning it as-is
+        produces no text change. Authorship therefore follows the edit itself:
+        the field joins the save delta and the daemon writes it into this Host
+        block, where it stops being overridable by a global.
+        """
+        if getattr(self, '_applying_inherited_value', False):
+            return
+        if getattr(self, '_loading_connection_data', False):
+            return
+        row = getattr(self, row_name, None)
+        if row is not None:
+            row.remove_css_class('dim-label')
+            self._set_row_inherited_note(row, '')
+        handlers = getattr(self, '_inherited_row_handlers', None) or {}
+        handler_id = handlers.pop(row_name, None)
+        if handler_id is not None and row is not None:
+            row.disconnect(handler_id)
+        field = self._INHERITED_ROW_FIELDS.get(row_name)
+        if field:
+            adopted = getattr(self, '_adopted_inherited_fields', None)
+            if adopted is None:
+                adopted = self._adopted_inherited_fields = set()
+            adopted.add(field)
+
+    def _load_inherited_values_async(self):
+        """Fill unauthored rows with what OpenSSH resolves, styled as inherited.
+
+        An unauthored field is not empty-because-unset: OpenSSH fills it from a
+        global block or its own default, and that is the value the session will
+        use. The row shows that real value, dimmed, so the form states the truth
+        while still distinguishing "inherited" from "set here".
+
+        Editing such a row adopts the value for this host — see
+        :meth:`_on_inherited_row_edited`. Authorship follows the edit, not a
+        value comparison, because pinning an inherited value (``Port 22`` under
+        a global ``Port 2222``) changes no text at all.
+
+        Resolution runs on the daemon's dedicated effective-config command key,
+        never on the shared configuration key, so a slow ``ssh -G`` cannot stall
+        unrelated configuration RPCs.
+        """
+        authored = getattr(self.connection, 'authored_directives', None)
+        if authored is None:
+            return
+        # Remember the text each row holds now: `ssh -G` runs off-thread, and a
+        # value the user typed meanwhile must never be overwritten by the
+        # inherited one that arrives late.
+        pending = []
+        for row_name, directive, ssh_key in self._INHERITABLE_ROWS:
+            if directive in authored:
+                continue
+            row = getattr(self, row_name, None)
+            if row is None:
+                continue
+            try:
+                pending.append((row_name, ssh_key, row.get_text()))
+            except Exception:
+                continue
+        if not pending:
+            return
+
+        parent = getattr(self, 'parent_window', None)
+        client = getattr(parent, 'client', None)
+        if not (
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'get_effective_config', None))
+        ):
+            return
+
+        aliases = {
+            str(getattr(self.connection, name, '') or '')
+            for name in ('nickname', 'host')
+        }
+
+        def _apply(resolved):
+            if not resolved:
+                return False
+            for row_name, ssh_key, text_at_schedule in pending:
+                value = resolved.get(ssh_key)
+                row = getattr(self, row_name, None)
+                if not value or row is None:
+                    continue
+                if row_name == 'hostname_row' and value in aliases:
+                    # `ssh -G` echoes the alias when no HostName is set. That is
+                    # the connection's own identity, not an inherited value.
+                    continue
+                try:
+                    if row.get_text() != text_at_schedule:
+                        continue  # edited while the daemon was resolving
+                    self._show_inherited_value(row_name, row, value)
+                except Exception:
+                    logger.debug(
+                        "Could not show inherited value for %s", row_name, exc_info=True
+                    )
+            # The rows were filled programmatically; re-baseline so an untouched
+            # inherited value is never mistaken for an edit and written back.
+            self._capture_editor_delta_baseline()
+            return False
+
+        def _start_worker():
+            def worker():
+                resolved = {}
+                try:
+                    from .api.connection_identity import connection_id_for
+                    result = client.get_effective_config(
+                        connection_id_for(self.connection)
+                    )
+                    if getattr(result, 'available', False):
+                        for line in getattr(result, 'full', ()) or ():
+                            key, _sep, value = str(line).partition(' ')
+                            # ssh -G repeats accumulating keys; first wins, which
+                            # matches the order OpenSSH itself applies them.
+                            resolved.setdefault(key.strip().lower(), value.strip())
+                except Exception:
+                    logger.debug(
+                        "Daemon effective-config lookup unavailable", exc_info=True
+                    )
+                GLib.idle_add(_apply, resolved)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        _start_worker()
+
     def _load_password_async(self):
         """Load the saved password into the masked editor field."""
         if not hasattr(self.connection, 'username'):
@@ -2441,7 +2653,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "nickname": text("nickname_row"),
             "hostname": text("hostname_row"),
             "username": text("username_row"),
-            "port": int(text("port_row", "22") or "22"),
+            "port": (int(t) if (t := text("port_row")) else ""),
             "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
             "auth_method": int(self.auth_toggle.get_active()) if hasattr(self, "auth_toggle") else 0,
             "key_select_mode": self._selected_key_mode(),
@@ -2490,6 +2702,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     tuple(sorted(dict(rule).items())) for rule in (current or [])
                 )
             if candidate != baseline.get(key):
+                changed.append(key)
+        # A field whose inherited value the user adopted has to be saved even
+        # though its text never changed — pinning `Port 22` under a global
+        # `Port 2222` is exactly that case, and comparing values would drop it.
+        for key in getattr(self, '_adopted_inherited_fields', None) or ():
+            if key in values and key not in changed:
                 changed.append(key)
         return tuple(changed)
 
@@ -2557,10 +2775,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
+                # Only an authored Port belongs in the row. When it is
+                # inherited the row starts empty and the resolved value is
+                # filled in dimmed by _load_inherited_values_async; if that
+                # cannot run, empty still correctly means "inherit".
+                authored = getattr(self.connection, 'authored_directives', None)
                 try:
-                    self.port_row.set_text(str(int(self.connection.port) if self.connection.port else 22))
+                    if authored is not None and 'port' not in authored:
+                        self.port_row.set_text("")
+                    else:
+                        self.port_row.set_text(
+                            str(int(self.connection.port) if self.connection.port else 22)
+                        )
                 except Exception:
-                    self.port_row.set_text("22")
+                    self.port_row.set_text("")
 
             # Load proxy settings (without triggering inline completion)
             if hasattr(self.connection, 'proxy_jump'):
@@ -2801,6 +3029,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         to stale form content. Called on the GTK thread only.
         """
         self.connection = _editor_details_to_connection(details)
+        # A fresh editor snapshot supersedes any inherited-value state from a
+        # previous load, including which rows the user had adopted.
+        self._adopted_inherited_fields = set()
+        self._clear_inherited_row_state()
         self.is_editing = True
         self.set_title(_('Edit Connection'))
         self._daemon_editor_loaded = True
@@ -2810,6 +3042,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.load_connection_data()
         finally:
             self._refresh_save_sensitivity()
+        # After the authored values are in place: fill unauthored rows with what
+        # OpenSSH actually resolves, so the form never implies this block owns a
+        # value it merely inherits.
+        try:
+            self._load_inherited_values_async()
+        except Exception:
+            logger.debug("Could not start inherited-value lookup", exc_info=True)
 
 
     def _refresh_save_sensitivity(self):
@@ -3768,7 +4007,14 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'nickname': self.nickname_row.get_text().strip(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
-            'port': int(self.port_row.get_text().strip() or '22'),
+            # "" means inherit: the block authors no Port and OpenSSH resolves
+            # it. Coercing to 22 here is what forced a Port line into every
+            # block and overrode a global Port.
+            'port': (
+                int(self.port_row.get_text().strip())
+                if self.port_row.get_text().strip()
+                else ''
+            ),
             'auth_method': self._selected_auth_method(),
             'keyfile': keyfile_value,
             'identity_files': identity_files,
