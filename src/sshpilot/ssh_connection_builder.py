@@ -788,7 +788,9 @@ def _build_base_ssh_command(
     #
     # ssh-copy-id accepts only -i/-p/-o/-f/-n/-s/-x, so nothing here may use a
     # long flag: `-l` in particular is rejected, hence `-o User=`.
-    authored_kwargs, authored_options = _authored_ssh_options(connection)
+    authored_kwargs, authored_options = _authored_ssh_options(
+        connection, command_type=command_type
+    )
     if 'username' in authored_kwargs:
         cmd.extend(['-o', f"User={authored_kwargs['username']}"])
     if 'proxy_jump' in authored_kwargs:
@@ -895,7 +897,12 @@ MANAGED_OPTION_KEYWORDS = {
 }
 
 
-def _authored_ssh_options(connection) -> Tuple[Dict[str, Any], List[str]]:
+def _authored_ssh_options(
+    connection,
+    *,
+    command_type: str = 'ssh',
+    extra_args: Optional[List[str]] = None,
+) -> Tuple[Dict[str, Any], List[str]]:
     """Argv for directives the Host block itself authored.
 
     OpenSSH resolves ``ssh <alias>`` with first-obtained-value-wins, so a
@@ -914,9 +921,12 @@ def _authored_ssh_options(connection) -> Tuple[Dict[str, Any], List[str]]:
       replace — ``-i`` appends, and no argv spelling clears an inherited
       ``IdentityFile`` (``-o IdentityFile=none`` merely appends ``none``). They
       stay resolved by OpenSSH and are surfaced to the user as inherited.
-    * ``RequestTTY`` — ``-t``/``force_tty`` owns TTY policy on this path.
     * ``PreferredAuthentications``/``PubkeyAuthentication`` — owned by
       :func:`resolve_native_auth`.
+    * ``RemoteCommand``/``LocalCommand``/``RequestTTY`` on scp, sftp,
+      ssh-copy-id, and non-login ssh (``-N``/``-s``/``-T``) — those are not a
+      login session. ``RequestTTY force`` breaks ``ssh -N`` and ``ssh -s sftp``,
+      and a config ``RemoteCommand`` on ssh-copy-id would replace the install.
 
     Returns ``(request_kwargs, extra_option_argv)``. The extra options are
     appended after the auth layer's own options so that a deliberate runtime
@@ -974,10 +984,18 @@ def _authored_ssh_options(connection) -> Tuple[Dict[str, Any], List[str]]:
         kwargs['proxy_command'] = _text('proxy_command')
 
     if 'forwardagent' in authored:
-        _option(
-            'ForwardAgent',
-            'yes' if bool(_raw('forward_agent')) else 'no',
-        )
+        # ssh_config(5): yes / no / a socket path / $ENV. Collapsing a
+        # socket to ``yes`` would forward the default agent and, because
+        # command-line options beat the file, drop the path even with no
+        # ``Host *`` in the way.
+        agent_target = _text('forward_agent_target')
+        if agent_target:
+            _option('ForwardAgent', agent_target)
+        else:
+            _option(
+                'ForwardAgent',
+                'yes' if bool(_raw('forward_agent')) else 'no',
+            )
     if 'forwardx11' in authored:
         _option(
             'ForwardX11',
@@ -999,6 +1017,26 @@ def _authored_ssh_options(connection) -> Tuple[Dict[str, Any], List[str]]:
         if directive in authored and _text(attribute):
             _option(MANAGED_OPTION_KEYWORDS[directive], _text(attribute))
 
+    # Typed session directives. They used to be skipped as "runtime owned"
+    # while the native request never received them — so an earlier ``Host *``
+    # still won. Emit as ``-o``, not as ``SSHLaunchRequest.remote_command``
+    # (that field is the positional one-shot command and overrides this).
+    # Non-login ssh (``-N``/``-s``/``-T``), scp, sftp, and ssh-copy-id are not
+    # a login shell; ``RequestTTY force`` breaks ``ssh -N`` and ``ssh -s sftp``.
+    extra_tokens = {str(a) for a in (extra_args or ())}
+    login_session = (
+        str(command_type or 'ssh') == 'ssh'
+        and not extra_tokens & {"-N", "-s", "-T"}
+    )
+    if login_session:
+        if 'localcommand' in authored and _text('local_command'):
+            _option('PermitLocalCommand', 'yes')
+            _option('LocalCommand', _text('local_command'))
+        if 'remotecommand' in authored and _text('remote_command'):
+            _option('RemoteCommand', _text('remote_command'))
+        if 'requesttty' in authored and _text('request_tty'):
+            _option('RequestTTY', _text('request_tty'))
+
     options.extend(_authored_extra_options(_text('extra_ssh_config')))
     return kwargs, options
 
@@ -1009,7 +1047,9 @@ def _authored_ssh_options(connection) -> Tuple[Dict[str, Any], List[str]]:
 # or harmful on the command line, and all three appear in the tab's keyword
 # list.
 _EXTRA_OPTION_STRUCTURAL = frozenset({'host', 'match', 'include'})
-# Owned by the launch request itself, which composes them from typed fields.
+# Owned by typed connection fields and re-emitted from those in
+# ``_authored_ssh_options``. Skipping them here avoids a second ``-o`` from
+# an Advanced-tab spelling of the same directive.
 _EXTRA_OPTION_RUNTIME_OWNED = frozenset({
     'remotecommand', 'localcommand', 'permitlocalcommand', 'requesttty',
 })
@@ -1178,7 +1218,11 @@ def build_ssh_connection(
         # block would otherwise win. Resolved before keepalive injection: an
         # authored ServerAliveInterval has to suppress the app default, which
         # is placed earlier in argv and would beat it.
-        authored_kwargs, authored_options = _authored_ssh_options(connection)
+        authored_kwargs, authored_options = _authored_ssh_options(
+            connection,
+            command_type=ctx.command_type,
+            extra_args=ctx.extra_args,
+        )
 
         # Default keepalive injection into the overrides list (core builder
         # appends ssh_overrides verbatim).

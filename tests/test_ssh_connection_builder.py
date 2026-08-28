@@ -379,6 +379,100 @@ def test_authored_forward_agent_no_is_emitted_so_a_global_yes_cannot_win():
     assert "ForwardAgent=no" in argv
 
 
+def test_authored_forward_agent_socket_is_emitted_not_collapsed_to_yes():
+    # ``ForwardAgent $SSH_AUTH_SOCK`` is not the same as ``yes``. Emitting
+    # ``yes`` would forward the default agent and drop the socket, because a
+    # command-line option beats the file even with no ``Host *``.
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            forward_agent=True,
+            forward_agent_target="$SSH_AUTH_SOCK",
+            authored=("hostname", "forwardagent"),
+        )
+    )
+    assert "ForwardAgent=$SSH_AUTH_SOCK" in argv
+    assert "ForwardAgent=yes" not in argv
+
+
+def test_authored_session_directives_are_emitted_from_typed_fields():
+    # These were skipped as "runtime owned" while the native request never
+    # received them, so an earlier ``Host *`` still won. ``RemoteCommand`` is
+    # ``-o``, not the positional one-shot command.
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            local_command="echo connected",
+            remote_command="tmux attach",
+            request_tty="force",
+            authored=("hostname", "localcommand", "remotecommand", "requesttty"),
+        )
+    )
+    assert "PermitLocalCommand=yes" in argv
+    assert "LocalCommand=echo connected" in argv
+    assert "RemoteCommand=tmux attach" in argv
+    assert "RequestTTY=force" in argv
+    assert argv[-1] == "web"
+
+
+def test_unauthored_session_directives_are_not_forced_onto_the_command():
+    argv = _argv(
+        _config_connection(
+            hostname="web.example.com",
+            local_command="echo connected",
+            remote_command="tmux attach",
+            request_tty="force",
+            authored=("hostname",),
+        )
+    )
+    joined = " ".join(argv)
+    assert "LocalCommand=" not in joined
+    assert "RemoteCommand=" not in joined
+    assert "RequestTTY=" not in joined
+
+
+def test_one_shot_remote_command_stays_positional_alongside_authored_remotecommand():
+    # OpenSSH ignores ``RemoteCommand`` when a command is given on the command
+    # line, so a "run command on host" launch still wins.
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="web.example.com",
+                remote_command="tmux attach",
+                authored=("hostname", "remotecommand"),
+            ),
+            command_type="ssh",
+            remote_command="uptime",
+        )
+    ).command
+    assert "RemoteCommand=tmux attach" in argv
+    assert argv[-1] == "uptime"
+
+
+def test_non_login_ssh_does_not_emit_session_directives():
+    # Port-forward is command_type=ssh with ``-N``/``-T``. RequestTTY force
+    # breaks ``ssh -N``; RemoteCommand is not a tunnel.
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="web.example.com",
+                local_command="echo connected",
+                remote_command="tmux attach",
+                request_tty="force",
+                authored=("hostname", "localcommand", "remotecommand", "requesttty"),
+            ),
+            command_type="ssh",
+            extra_args=["-N", "-T"],
+        )
+    ).command
+    joined = " ".join(argv)
+    assert "LocalCommand=" not in joined
+    assert "RemoteCommand=" not in joined
+    assert "RequestTTY=" not in joined
+    assert "-N" in argv
+    assert "-T" in argv
+
+
 # --- Advanced tab (extra_ssh_config) ---------------------------------------
 
 
@@ -411,7 +505,8 @@ def test_structural_and_accumulating_advanced_options_are_not_emitted():
     )
     joined = " ".join(argv)
     # `-o Include=` is meaningless, SendEnv appends rather than replaces, and
-    # RemoteCommand is composed from a typed field.
+    # RemoteCommand is composed from the typed field — not from this Advanced
+    # spelling, so a second ``-o`` is not emitted here.
     assert "Include=" not in joined
     assert "sendenv=" not in joined.lower()
     assert "remotecommand=" not in joined.lower()
@@ -593,3 +688,25 @@ def test_ssh_copy_id_leaves_unauthored_values_to_the_config():
 
     assert not any(token.startswith("User=") for token in argv)
     assert "-p" not in argv
+
+
+def test_ssh_copy_id_does_not_emit_session_directives():
+    # A config RemoteCommand must not replace ssh-copy-id's own remote script.
+    import types
+
+    from sshpilot.ssh_connection_builder import _build_base_ssh_command
+
+    conn = _config_connection(
+        hostname="web.example.com",
+        local_command="echo connected",
+        remote_command="tmux attach",
+        request_tty="force",
+        authored=("hostname", "localcommand", "remotecommand", "requesttty"),
+    )
+    argv = _build_base_ssh_command(
+        conn, {}, types.SimpleNamespace(get_ssh_config=dict), "ssh-copy-id"
+    )
+    joined = " ".join(argv)
+    assert "LocalCommand=" not in joined
+    assert "RemoteCommand=" not in joined
+    assert "RequestTTY=" not in joined
