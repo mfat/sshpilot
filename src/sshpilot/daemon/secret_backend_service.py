@@ -14,6 +14,7 @@ travel as bytearrays with a one-use nonce and are cleared after use.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import contextmanager
@@ -2041,6 +2042,10 @@ def _bitwarden_status(
     )
 
 
+def _rbw_config_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
 def _rbw_status(rbw: Any, *, message: str = "") -> RbwStatus:
     installed = bool(rbw is not None and rbw.is_available())
     if not installed:
@@ -2049,27 +2054,26 @@ def _rbw_status(rbw: Any, *, message: str = "") -> RbwStatus:
             email="", base_url="", message=message or "rbw is not installed",
         )
     unlocked = bool(rbw.is_unlocked())
-    try:
-        configured = bool(rbw._run("config", "get", "email").returncode == 0)
-    except Exception:
-        configured = False
     email = ""
     base_url = ""
     try:
-        res = rbw._run("config", "get", "email")
+        res = rbw._run("config", "show")
         if res.returncode == 0:
-            email = res.stdout.decode("utf-8", "replace").strip()
-    except Exception:
-        pass
-    try:
-        res = rbw._run("config", "get", "base_url")
-        if res.returncode == 0:
-            base_url = res.stdout.decode("utf-8", "replace").strip()
+            raw_out = getattr(res, "stdout", b"") or b""
+            text = (
+                raw_out.decode("utf-8", "replace")
+                if isinstance(raw_out, (bytes, bytearray))
+                else str(raw_out)
+            )
+            payload = json.loads(text or "{}")
+            if isinstance(payload, dict):
+                email = _rbw_config_text(payload.get("email"))
+                base_url = _rbw_config_text(payload.get("base_url"))
     except Exception:
         pass
     return RbwStatus(
         installed=True,
-        configured=configured,
+        configured=bool(email),
         unlocked=unlocked,
         email=email,
         base_url=base_url,

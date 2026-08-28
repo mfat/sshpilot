@@ -83,6 +83,7 @@ class FakeBackend:
         self._unlocked = unlocked
         self._needs_login = needs_login
         self._configured = False
+        self._config: Dict[str, str] = {}
         self.calls: List[tuple] = []
         self.login_results: Dict[tuple, Any] = {}
         self.data: Dict[str, str] = {}
@@ -133,8 +134,27 @@ class FakeBackend:
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
         if len(flat) >= 2 and flat[0] == "config":
             if flat[1] == "set":
-                self._configured = True
+                if len(flat) >= 4:
+                    self._config[str(flat[2])] = str(flat[3])
+                    if flat[2] == "email":
+                        self._configured = True
+                else:
+                    self._configured = True
                 return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            if flat[1] == "unset":
+                if len(flat) >= 3:
+                    self._config.pop(str(flat[2]), None)
+                return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            if flat[1] == "show":
+                payload = {
+                    "email": self._config.get("email"),
+                    "base_url": self._config.get("base_url"),
+                }
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps(payload).encode("utf-8"),
+                    stderr=b"",
+                )
             if flat[1] == "get":
                 key = flat[2] if len(flat) > 2 else ""
                 if self._configured and key == "email":
@@ -1358,6 +1378,32 @@ def test_bitwarden_unlock_sync_lock_logout(tmp_path):
 # ---------------------------------------------------------------------------
 # rbw lifecycle
 # ---------------------------------------------------------------------------
+
+def test_rbw_status_reads_config_show_json(tmp_path):
+    """rbw has no ``config get``; status must parse ``rbw config show`` JSON."""
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    backend = backends["rbw"]
+    status = service.rbw_status()
+    assert status.configured is False
+    assert ("_run", ("config", "show")) in backend.calls
+    assert not any(
+        kind == "_run" and args[:2] == ("config", "get")
+        for kind, args in backend.calls
+    )
+
+    backend.calls.clear()
+    status = service.rbw_configure("alice@example.com", "https://vault.example.com")
+    assert status.configured is True
+    assert status.email == "alice@example.com"
+    assert status.base_url == "https://vault.example.com"
+    assert ("_run", ("config", "show")) in backend.calls
+    assert not any(
+        kind == "_run" and args[:2] == ("config", "get")
+        for kind, args in backend.calls
+    )
+
 
 def test_rbw_status_configure_unlock_sync_lock(tmp_path):
     service, manager, backends, broker, _ = _make_service(
