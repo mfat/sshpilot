@@ -45,6 +45,7 @@ from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
 )
+from .ssh_config_formatter import MANAGED_HOST_OPTIONS
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
     ValidationResult,
@@ -477,6 +478,44 @@ def _set_action_row_child(row, widget):
         row.add_prefix(widget)
 
 
+# OpenSSH keywords offered on the Advanced tab. Directives in
+# MANAGED_HOST_OPTIONS already have typed dialog fields (or are Host-block
+# structure) and must not appear here: the loader routes them out of
+# extra_ssh_config, so they would vanish from this tab after save/reload.
+_OPENSSH_ADVANCED_KEYWORDS = (
+    'AddKeysToAgent', 'AddressFamily', 'BatchMode', 'BindAddress', 'BindInterface',
+    'CanonicalDomains', 'CanonicalizeFallbackLocal', 'CanonicalizeHostname',
+    'CanonicalizeMaxDots', 'CanonicalizePermittedCNAMEs', 'CASignatureAlgorithms',
+    'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
+    'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
+    'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
+    'ExitOnForwardFailure', 'FingerprintHash', 'ForwardX11',
+    'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
+    'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
+    'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
+    'GSSAPITrustDns', 'HashKnownHosts', 'Host', 'HostbasedAcceptedAlgorithms',
+    'HostbasedAuthentication', 'HostKeyAlgorithms', 'HostKeyAlias', 'HostName',
+    'IdentitiesOnly', 'IdentityAgent', 'IdentityFile', 'IgnoreUnknown', 'Include',
+    'IPQoS', 'KbdInteractiveAuthentication', 'KbdInteractiveDevices', 'KexAlgorithms',
+    'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
+    'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
+    'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
+    'PreferredAuthentications', 'ProxyCommand', 'ProxyUseFdpass',
+    'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
+    'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
+    'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
+    'StdinNull', 'StreamLocalBindMask', 'StreamLocalBindUnlink', 'StrictHostKeyChecking',
+    'SyslogFacility', 'TCPKeepAlive', 'Tunnel', 'TunnelDevice', 'UpdateHostKeys',
+    'User', 'UserKnownHostsFile', 'UsePrivilegedPort', 'VerifyHostKeyDNS',
+    'VisualHostKey', 'XAuthLocation',
+)
+
+ADVANCED_TAB_SSH_OPTIONS = tuple(
+    name for name in _OPENSSH_ADVANCED_KEYWORDS
+    if name.lower() not in MANAGED_HOST_OPTIONS
+)
+
+
 class SSHConfigEntry(GObject.Object):
     """Data model for SSH config entries"""
     
@@ -497,35 +536,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
         self.connection_manager = connection_manager
         self.parent_dialog = parent_dialog
-        
-        # SSH config options list
-        self.ssh_options = [
-            'AddKeysToAgent', 'AddressFamily', 'BatchMode', 'BindAddress', 'BindInterface',
-            'CanonicalDomains', 'CanonicalizeFallbackLocal', 'CanonicalizeHostname',
-            'CanonicalizeMaxDots', 'CanonicalizePermittedCNAMEs', 'CASignatureAlgorithms',
-            'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
-            'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
-            'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
-            'ExitOnForwardFailure', 'FingerprintHash', 'ForwardX11',
-            'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
-            'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
-            'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
-            'GSSAPITrustDns', 'HashKnownHosts', 'Host', 'HostbasedAcceptedAlgorithms',
-            'HostbasedAuthentication', 'HostKeyAlgorithms', 'HostKeyAlias', 'HostName',
-            'IdentitiesOnly', 'IdentityAgent', 'IdentityFile', 'IgnoreUnknown', 'Include',
-            'IPQoS', 'KbdInteractiveAuthentication', 'KbdInteractiveDevices', 'KexAlgorithms',
-            'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
-            'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
-            'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
-            'PreferredAuthentications', 'ProxyCommand', 'ProxyUseFdpass',
-            'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
-            'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
-            'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
-            'StdinNull', 'StreamLocalBindMask', 'StreamLocalBindUnlink', 'StrictHostKeyChecking',
-            'SyslogFacility', 'TCPKeepAlive', 'Tunnel', 'TunnelDevice', 'UpdateHostKeys',
-            'User', 'UserKnownHostsFile', 'UsePrivilegedPort', 'VerifyHostKeyDNS',
-            'VisualHostKey', 'XAuthLocation'
-        ]
+
+        self.ssh_options = list(ADVANCED_TAB_SSH_OPTIONS)
         
         # Store config entries
         self.config_entries = []
