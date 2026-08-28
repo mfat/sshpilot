@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.9.7}
+Version:        %{?version}%{!?version:5.9.8}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -144,6 +144,9 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Fri Aug 28 2026 mFat <newmfat@gmail.com> - 5.9.8-1
+- Fixed Bitwarden login issue
+
 * Thu Aug 27 2026 mFat <newmfat@gmail.com> - 5.9.7-1
 - Faster startup
 - Vault unlock prompt now displayed on startup

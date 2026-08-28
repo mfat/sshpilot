@@ -61,6 +61,11 @@
 
 
 
+    <release version="5.9.8" date="2026-08-28">
+      <description>
+        <p>Fixed Bitwarden login issue</p>
+      </description>
+    </release>
     <release version="5.9.7" date="2026-08-27">
       <description>
         <p>Faster startup</p>
