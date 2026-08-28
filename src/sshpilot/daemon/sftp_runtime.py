@@ -433,6 +433,51 @@ _ERRNO_TO_ERROR_CODE = {
     errno.EPIPE: ErrorCode.SFTP_PROTOCOL_LOST,
 }
 
+_SFTP_STATUS_TO_CODE_AND_MESSAGE = {
+    sftp_proto.FX_NO_SUCH_FILE: (
+        ErrorCode.REMOTE_PATH_NOT_FOUND,
+        "The path was not found",
+    ),
+    sftp_proto.FX_PERMISSION_DENIED: (
+        ErrorCode.REMOTE_PERMISSION_DENIED,
+        "Permission denied",
+    ),
+    sftp_proto.FX_NO_CONNECTION: (
+        ErrorCode.SFTP_PROTOCOL_LOST,
+        "The SFTP connection was lost",
+    ),
+    sftp_proto.FX_CONNECTION_LOST: (
+        ErrorCode.SFTP_PROTOCOL_LOST,
+        "The SFTP connection was lost",
+    ),
+    sftp_proto.FX_OP_UNSUPPORTED: (
+        ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
+        "The server does not support this operation",
+    ),
+}
+
+_ERROR_CODE_MESSAGES = {
+    ErrorCode.SFTP_PROTOCOL_LOST: "The SFTP connection was lost",
+    ErrorCode.REMOTE_PATH_NOT_FOUND: "The path was not found",
+    ErrorCode.REMOTE_PERMISSION_DENIED: "Permission denied",
+    ErrorCode.REMOTE_UNSUPPORTED_OPERATION: "The server does not support this operation",
+}
+
+_GENERIC_SFTP_STATUS_TEXT = frozenset(
+    {
+        "",
+        "Failure",
+        "OK",
+        "EOF",
+        "No such file",
+        "Permission denied",
+        "Bad message",
+        "No connection",
+        "Connection lost",
+        "Operation unsupported",
+    }
+)
+
 
 def _validate_path(value: Any, field_name: str = "remote path") -> str:
     """Validate a remote path, converting failures into a stable error code.
@@ -1991,18 +2036,31 @@ class SftpServiceRuntime:
         details = {"service_id": record.service_id}
         if isinstance(exc, sftp_proto.SFTPError):
             # Keep the server's status code and message in details: the wire
-            # message is intentionally generic, and without these every SFTP
-            # failure is indistinguishable from the client side.
+            # message is often the generic FX name, and without these every
+            # SFTP failure is indistinguishable from the client side.
             details["sftp_status"] = int(exc.code)
             server_message = str(exc)
             if server_message:
                 details["server_message"] = server_message
-            code = _ERRNO_TO_ERROR_CODE.get(
-                getattr(exc, "errno", None), ErrorCode.SFTP_COMMAND_FAILED
-            )
+            mapped = _SFTP_STATUS_TO_CODE_AND_MESSAGE.get(exc.code)
+            if mapped is not None:
+                code, message = mapped
+            else:
+                code = _ERRNO_TO_ERROR_CODE.get(
+                    getattr(exc, "errno", None), ErrorCode.SFTP_COMMAND_FAILED
+                )
+                if (
+                    server_message
+                    and server_message not in _GENERIC_SFTP_STATUS_TEXT
+                ):
+                    message = server_message
+                else:
+                    message = _ERROR_CODE_MESSAGES.get(
+                        code, "The SFTP command failed"
+                    )
             error = SshPilotError(
                 code,
-                "The SFTP command failed",
+                message,
                 details=details,
                 connection_id=record.connection_id,
             )

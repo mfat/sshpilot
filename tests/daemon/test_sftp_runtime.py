@@ -550,3 +550,80 @@ def test_subprocess_handle_notifies_once_when_process_exits():
     assert seen == [0]
     assert handle.poll_and_notify() is True
     assert seen == [0]
+
+
+def _list_tmp(runtime, summary, owner):
+    return runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path="/tmp",
+        ),
+        client_id=owner,
+    )
+
+
+def test_connection_lost_status_fails_service_with_specific_message():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _lost(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST, "Connection lost")
+
+    client.listdir_attr = _lost
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.SFTP_PROTOCOL_LOST
+    assert raised.value.message == "The SFTP connection was lost"
+    failed = runtime.get_service(summary.id)
+    assert failed.state is SftpServiceState.FAILED
+    assert failed.failure.message == "The SFTP connection was lost"
+
+
+def test_permission_denied_status_keeps_service_ready():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _denied(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_PERMISSION_DENIED, "Permission denied")
+
+    client.listdir_attr = _denied
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.REMOTE_PERMISSION_DENIED
+    assert raised.value.message == "Permission denied"
+    assert runtime.get_service(summary.id).state is SftpServiceState.READY
+
+
+def test_fx_failure_keeps_generic_command_message_and_ready_service():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _fail(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "Failure")
+
+    client.listdir_attr = _fail
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
+    assert raised.value.message == "The SFTP command failed"
+    assert runtime.get_service(summary.id).state is SftpServiceState.READY
+
+
+def test_fx_failure_with_server_text_is_surfaced():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _fail(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "Directory not empty")
+
+    client.listdir_attr = _fail
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
+    assert raised.value.message == "Directory not empty"
+    assert runtime.get_service(summary.id).state is SftpServiceState.READY

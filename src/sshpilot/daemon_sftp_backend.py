@@ -264,6 +264,11 @@ class DaemonSftpManager(GObject.GObject):
         # DaemonInteractionDialogs (the daemon's interaction broker), so
         # unlike the legacy backend this never emits authentication-required.
         message = getattr(error, "message", str(error))
+        # This signal is service-level (auth/startup/session death), never a
+        # per-command failure. A connection-lost SFTP status used to arrive
+        # here with the canned "The SFTP command failed" text.
+        if message == "The SFTP command failed":
+            message = "The SFTP connection was lost"
         logger.warning(
             "Daemon SFTP service error for %s@%s: %s",
             self._username,
