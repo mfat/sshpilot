@@ -146,3 +146,30 @@ def test_user_edit_via_the_signal_adopts_the_field():
     row.set_text("22")
 
     assert dialog._adopted_inherited_fields == {"port"}
+
+
+def test_every_inheritable_row_maps_to_a_real_directive_and_save_field():
+    """Guards the audit: a row missing here shows blank while ssh uses a global.
+
+    This is how `IdentityAgent none` set in a `Host *` block stayed invisible in
+    the editor — the row simply was not in the table.
+    """
+    rows = dict((row, (directive, key)) for row, directive, key in
+                ConnectionDialog._INHERITABLE_ROWS)
+
+    # Every inheritable row must be able to reach the save delta when adopted.
+    assert set(rows) == set(ConnectionDialog._INHERITED_ROW_FIELDS)
+
+    # The directives users most often set globally must all be covered.
+    covered = {directive for directive, _key in rows.values()}
+    assert {
+        "user", "port", "hostname", "proxyjump", "identityagent",
+        "pkcs11provider", "securitykeyprovider", "localcommand", "remotecommand",
+    } <= covered
+
+    # Accumulating directives must stay out: argv cannot make this host's value
+    # win, so presenting them as inherited-and-adoptable would be a lie.
+    assert not covered & {
+        "identityfile", "certificatefile",
+        "localforward", "remoteforward", "dynamicforward",
+    }

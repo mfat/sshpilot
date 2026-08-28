@@ -2319,18 +2319,42 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     # reports the resolved value. Accumulating directives (IdentityFile, the
     # forwards) are deliberately absent: the command line cannot override them,
     # so they are not presented as if this connection controlled them.
+    # (row attribute, ssh_config directive, `ssh -G` key). Every text row that
+    # maps to a directive OpenSSH can inherit belongs here — anything missing
+    # silently shows blank while the session uses the global's value.
+    #
+    # Deliberately absent:
+    #   * IdentityFile / CertificateFile / the forwards accumulate rather than
+    #     replace, so the command line cannot make this host's value win.
+    #   * display name, SSH alias, tags, Wake-on-LAN and the pre-connection
+    #     command are app metadata, not ssh_config directives.
+    #   * switch and combo rows (ForwardAgent, ForwardX11, PubkeyAuthentication,
+    #     IdentitiesOnly, AddKeysToAgent) always render *some* state, so
+    #     "inherited" cannot be shown by dimming their text.
     _INHERITABLE_ROWS = (
+        ('hostname_row', 'hostname', 'hostname'),
         ('username_row', 'user', 'user'),
         ('port_row', 'port', 'port'),
         ('proxy_jump_row', 'proxyjump', 'proxyjump'),
+        ('identity_agent_row', 'identityagent', 'identityagent'),
+        ('pkcs11_provider_row', 'pkcs11provider', 'pkcs11provider'),
+        ('security_key_provider_row', 'securitykeyprovider', 'securitykeyprovider'),
+        ('local_command_row', 'localcommand', 'localcommand'),
+        ('remote_command_row', 'remotecommand', 'remotecommand'),
     )
 
     # connection_data key each inheritable row feeds, so adopting an inherited
     # value can force that field into the save delta.
     _INHERITED_ROW_FIELDS = {
+        'hostname_row': 'hostname',
         'username_row': 'username',
         'port_row': 'port',
         'proxy_jump_row': 'proxy_jump',
+        'identity_agent_row': 'identity_agent',
+        'pkcs11_provider_row': 'pkcs11_provider',
+        'security_key_provider_row': 'security_key_provider',
+        'local_command_row': 'local_command',
+        'remote_command_row': 'remote_command',
     }
 
     def _clear_inherited_row_state(self) -> None:
@@ -2443,6 +2467,11 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         ):
             return
 
+        aliases = {
+            str(getattr(self.connection, name, '') or '')
+            for name in ('nickname', 'host')
+        }
+
         def _apply(resolved):
             if not resolved:
                 return False
@@ -2450,6 +2479,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 value = resolved.get(ssh_key)
                 row = getattr(self, row_name, None)
                 if not value or row is None:
+                    continue
+                if row_name == 'hostname_row' and value in aliases:
+                    # `ssh -G` echoes the alias when no HostName is set. That is
+                    # the connection's own identity, not an inherited value.
                     continue
                 try:
                     if row.get_text() != text_at_schedule:
