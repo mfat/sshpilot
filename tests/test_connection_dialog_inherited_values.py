@@ -177,7 +177,7 @@ def test_every_inheritable_row_maps_to_a_real_directive_and_save_field():
     # The directives users most often set globally must all be covered.
     covered = {directive for directive, _key in rows.values()}
     assert {
-        "user", "port", "hostname", "proxyjump", "identityagent",
+        "user", "port", "hostname", "proxyjump",
         "pkcs11provider", "securitykeyprovider", "localcommand", "remotecommand",
     } <= covered
 

@@ -321,6 +321,44 @@ def forward_agent_mode_from_connection(connection) -> tuple[str, str]:
     return forward_agent_mode_from_fields(**_forward_agent_fields_from_connection(connection))
 
 
+_IDENTITY_AGENT_MODES = ("default", "none", "ssh_auth_sock", "path", "env")
+
+
+def identity_agent_mode_from_value(value: str) -> tuple[str, str]:
+    """Return ``(mode, extra)`` for the IdentityAgent combo + value row."""
+    token = str(value or "").strip()
+    if not token:
+        return "default", ""
+    if token.lower() == "none":
+        return "none", ""
+    if token.upper() == "SSH_AUTH_SOCK":
+        return "ssh_auth_sock", ""
+    if token.startswith("$"):
+        return "env", token
+    return "path", token
+
+
+def identity_agent_value_from_mode(mode: str, extra: str = "") -> str:
+    """Combo selection plus the path/env field → IdentityAgent token.
+
+    Empty means inherit. ``SSH_AUTH_SOCK`` (no ``$``) is the ssh_config(5)
+    special token; a leading ``$`` names an environment variable.
+    """
+    kind = str(mode or "default").strip().lower()
+    extra = str(extra or "").strip()
+    if kind == "none":
+        return "none"
+    if kind == "ssh_auth_sock":
+        return "SSH_AUTH_SOCK"
+    if kind == "path":
+        return extra
+    if kind == "env":
+        if not extra:
+            return ""
+        return extra if extra.startswith("$") else f"${extra}"
+    return ""
+
+
 class _AuthMethodToggleFallback(Gtk.Box):
     """Segmented-control fallback for Adw.ToggleGroup (libadwaita < 1.7).
 
@@ -2183,6 +2221,61 @@ class ConnectionDialog(
         except Exception:
             pass
 
+    def _selected_identity_agent_mode(self) -> str:
+        modes = getattr(self, "_identity_agent_modes", None) or _IDENTITY_AGENT_MODES
+        try:
+            idx = int(self.identity_agent_row.get_selected())
+        except Exception:
+            return "default"
+        if 0 <= idx < len(modes):
+            return modes[idx]
+        return "default"
+
+    def _selected_identity_agent(self) -> str:
+        if not hasattr(self, "identity_agent_row"):
+            return ""
+        mode = self._selected_identity_agent_mode()
+        extra = ""
+        if mode in ("path", "env"):
+            row = getattr(self, "identity_agent_value_row", None)
+            try:
+                extra = row.get_text().strip() if row is not None else ""
+            except Exception:
+                extra = ""
+        return identity_agent_value_from_mode(mode, extra)
+
+    def _on_identity_agent_mode_changed(self, *_args):
+        mode = self._selected_identity_agent_mode()
+        value_row = getattr(self, "identity_agent_value_row", None)
+        browse = getattr(self, "_identity_agent_browse_btn", None)
+        if value_row is None:
+            return
+        show = mode in ("path", "env")
+        try:
+            value_row.set_visible(show)
+        except Exception:
+            pass
+        if browse is not None:
+            try:
+                browse.set_visible(mode == "path")
+            except Exception:
+                pass
+        if not show:
+            return
+        try:
+            if mode == "path":
+                value_row.set_title(_("Agent socket"))
+                value_row.set_subtitle(
+                    _("Unix-domain socket; tilde and tokens are allowed")
+                )
+            else:
+                value_row.set_title(_("Environment variable"))
+                value_row.set_subtitle(
+                    _("Variable holding the socket path, e.g. $SSH_AUTH_SOCK")
+                )
+        except Exception:
+            pass
+
     def on_auth_method_changed(self, *args):
         """Reveal key-based vs password controls based on the auth ToggleGroup."""
         is_key_based = self._auth_is_key_based()
@@ -2534,16 +2627,15 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     #     replace, so the command line cannot make this host's value win.
     #   * display name, SSH alias, tags, Wake-on-LAN and the pre-connection
     #     command are app metadata, not ssh_config directives.
-    #   * switch and combo rows (ForwardAgent, ForwardX11, PubkeyAuthentication,
-    #     IdentitiesOnly, AddKeysToAgent) always render *some* state, so
-    #     "inherited" cannot be shown by dimming their text. ForwardAgent's
-    #     Default menu item is inherit.
+    #   * switch and combo rows (ForwardAgent, IdentityAgent, ForwardX11,
+    #     PubkeyAuthentication, IdentitiesOnly, AddKeysToAgent) always render
+    #     *some* state, so "inherited" cannot be shown by dimming their text.
+    #     ForwardAgent and IdentityAgent use Default as inherit.
     _INHERITABLE_ROWS = (
         ('hostname_row', 'hostname', 'hostname'),
         ('username_row', 'user', 'user'),
         ('port_row', 'port', 'port'),
         ('proxy_jump_row', 'proxyjump', 'proxyjump'),
-        ('identity_agent_row', 'identityagent', 'identityagent'),
         ('pkcs11_provider_row', 'pkcs11provider', 'pkcs11provider'),
         ('security_key_provider_row', 'securitykeyprovider', 'securitykeyprovider'),
         ('local_command_row', 'localcommand', 'localcommand'),
@@ -2557,7 +2649,6 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         'username_row': 'username',
         'port_row': 'port',
         'proxy_jump_row': 'proxy_jump',
-        'identity_agent_row': 'identity_agent',
         'pkcs11_provider_row': 'pkcs11_provider',
         'security_key_provider_row': 'security_key_provider',
         'local_command_row': 'local_command',
@@ -2877,7 +2968,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             **self._selected_forward_agent_fields(),
             "x11_forwarding": active("x11_row"),
             "pubkey_auth_no": active("pubkey_auth_row"),
-            "identity_agent": text("identity_agent_row"),
+            "identity_agent": self._selected_identity_agent(),
             "pkcs11_provider": text("pkcs11_provider_row"),
             "security_key_provider": text("security_key_provider_row"),
             "pre_command": text("pre_command_row"),
@@ -3071,8 +3162,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.cert_editor.set_paths(certificate_files)
 
             # Agent / hardware key sources (text fields)
+            try:
+                mode, extra = identity_agent_mode_from_value(
+                    str(getattr(self.connection, "identity_agent", "") or "")
+                )
+                modes = getattr(self, "_identity_agent_modes", None) or _IDENTITY_AGENT_MODES
+                idx = modes.index(mode) if mode in modes else 0
+                self.identity_agent_row.set_selected(idx)
+                value_row = getattr(self, "identity_agent_value_row", None)
+                if value_row is not None:
+                    value_row.set_text(extra)
+                self._on_identity_agent_mode_changed()
+            except Exception:
+                try:
+                    self.identity_agent_row.set_selected(0)
+                except Exception:
+                    pass
+                self._on_identity_agent_mode_changed()
             for attr, row in (
-                ('identity_agent', getattr(self, 'identity_agent_row', None)),
                 ('pkcs11_provider', getattr(self, 'pkcs11_provider_row', None)),
                 ('security_key_provider', getattr(self, 'security_key_provider_row', None)),
             ):
@@ -3417,12 +3524,51 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Agent and hardware keys"),
             description=_("Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."),
         )
-        self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent"))
+        # ssh_config(5): none, SSH_AUTH_SOCK, a socket path, or $VARIABLE.
+        # Default leaves the Host block unauthored so a broader block wins.
+        self._identity_agent_modes = _IDENTITY_AGENT_MODES
+        ia_model = Gtk.StringList()
+        for label in (
+            _("Default"),
+            _("None"),
+            _("SSH_AUTH_SOCK"),
+            _("Socket path"),
+            _("Environment variable"),
+        ):
+            ia_model.append(label)
+        self.identity_agent_row = Adw.ComboRow(title=_("IdentityAgent"))
+        self.identity_agent_row.set_subtitle(
+            _("Unix-domain socket used to communicate with ssh-agent")
+        )
+        self.identity_agent_row.set_model(ia_model)
+        self.identity_agent_row.set_selected(0)
+        self.identity_agent_row.connect(
+            "notify::selected", self._on_identity_agent_mode_changed
+        )
+        hw_group.add(self.identity_agent_row)
+
+        self.identity_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
         try:
-            self.identity_agent_row.set_subtitle(_("Socket path, $VARIABLE, or none"))
+            self.identity_agent_value_row.set_subtitle(
+                _("Unix-domain socket; tilde and tokens are allowed")
+            )
         except Exception:
             pass
-        hw_group.add(self.identity_agent_row)
+        self._identity_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
+        self._identity_agent_browse_btn.add_css_class('flat')
+        self._identity_agent_browse_btn.set_valign(Gtk.Align.CENTER)
+        self._identity_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
+        self._identity_agent_browse_btn.connect(
+            'clicked',
+            lambda *_a: self._browse_file(
+                _("Select agent socket"),
+                lambda p: self.identity_agent_value_row.set_text(p),
+            ),
+        )
+        self.identity_agent_value_row.add_suffix(self._identity_agent_browse_btn)
+        self.identity_agent_value_row.set_visible(False)
+        self._identity_agent_browse_btn.set_visible(False)
+        hw_group.add(self.identity_agent_value_row)
 
         self.pkcs11_provider_row = Adw.EntryRow(title=_("PKCS#11 provider"))
         try:
@@ -4287,8 +4433,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'certificate': certificate_value,
             'certificate_files': certificate_files,
             'key_select_mode': key_select_mode_val,
-            'identity_agent': (self.identity_agent_row.get_text().strip()
-                               if hasattr(self, 'identity_agent_row') else ''),
+            'identity_agent': self._selected_identity_agent(),
             'add_keys_to_agent': self._selected_add_keys_to_agent(),
             'pkcs11_provider': (self.pkcs11_provider_row.get_text().strip()
                                 if hasattr(self, 'pkcs11_provider_row') else ''),
