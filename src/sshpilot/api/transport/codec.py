@@ -38,6 +38,7 @@ from ..models.interactions import (
     PresencePrompt,
     RememberPolicy,
     SecretDecision,
+    SecretPromptKind,
 )
 from ..models.known_hosts import (
     KnownHostEntryId,
@@ -3565,6 +3566,12 @@ def _interaction_prompt_to_wire(
             "attempt": prompt.attempt,
             "can_remember": prompt.can_remember,
             "saved_value_available": prompt.stored_secret_available,
+            "secret_prompt_kind": (
+                prompt.secret_prompt_kind.value
+                if prompt.secret_prompt_kind is not None
+                else None
+            ),
+            "secret_prompt_parameters": dict(prompt.secret_prompt_parameters),
         }
     if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
         if type(prompt) is not PassphrasePrompt:
@@ -3626,12 +3633,30 @@ def _interaction_prompt_from_wire(
                 "attempt",
                 "can_remember",
                 "saved_value_available",
+                "secret_prompt_kind",
+                "secret_prompt_parameters",
             },
             context="password prompt",
         )
+        raw_kind = data["secret_prompt_kind"]
+        if raw_kind is None:
+            secret_prompt_kind = None
+        else:
+            try:
+                secret_prompt_kind = SecretPromptKind(
+                    _identifier(raw_kind, "secret prompt kind")
+                )
+            except (TypeError, ValueError):
+                raise ValueError("secret prompt kind is invalid") from None
+        raw_parameters = data["secret_prompt_parameters"]
+        if type(raw_parameters) is not dict or not all(
+            type(key) is str and type(item) is str
+            for key, item in raw_parameters.items()
+        ):
+            raise ValueError("secret prompt parameters must be a string object")
         return PasswordPrompt(
-            username=_text(data["username"], "password username"),
-            hostname=_text(data["hostname"], "password hostname"),
+            username=_text(data["username"], "password username", allow_empty=True),
+            hostname=_text(data["hostname"], "password hostname", allow_empty=True),
             port=_integer(data["port"], "password port"),
             attempt=_integer(data["attempt"], "password attempt"),
             can_remember=_boolean(data["can_remember"], "password remember support"),
@@ -3639,6 +3664,8 @@ def _interaction_prompt_from_wire(
                 data["saved_value_available"],
                 "password stored-secret availability",
             ),
+            secret_prompt_kind=secret_prompt_kind,
+            secret_prompt_parameters=raw_parameters,
         )
     if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
         data = _strict_fields(

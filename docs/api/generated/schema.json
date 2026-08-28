@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.44",
+  "api_implementation_version": "0.45",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1461,6 +1461,18 @@
     "SecretDecision": [
       "submit",
       "cancel"
+    ],
+    "SecretPromptKind": [
+      "bitwarden_sign_in",
+      "bitwarden_authentication_challenge",
+      "bitwarden_two_step_login",
+      "bitwarden_api_key",
+      "bitwarden_unlock",
+      "keepass_database_create",
+      "keepass_unlock",
+      "remember_master_password",
+      "backup_encrypt",
+      "backup_decrypt"
     ],
     "SessionState": [
       "created",
@@ -5024,6 +5036,20 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "secret_prompt_kind",
+          "required": false,
+          "sensitive": false,
+          "type": "SecretPromptKind | None"
+        },
+        {
+          "default": {},
+          "name": "secret_prompt_parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
         }
       ],
       "status": "Schema only"

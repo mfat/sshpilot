@@ -8,10 +8,27 @@ notes remain separate.
 - Daemon-only retirement repairs now preserve protected broadcast input
   registration, truthful operation-mode recovery, atomic reconnect publication,
   and cross-process shared-settings transactions. These are implementation
-  correctness fixes within the current 0.40 contract; no downgrade or
+  correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.44 (current)
+## API 0.45 (current)
+
+### API 0.45 structured secret prompt presentation
+
+- Bumped `API_IMPLEMENTATION_VERSION` because password-prompt metadata now
+  includes the required `secret_prompt_kind` and `secret_prompt_parameters`
+  fields. Strict 0.44 decoders reject those fields, while strict 0.45 decoders
+  require them.
+- Daemon-owned Bitwarden, KeePass, remembered-password, and backup-passphrase
+  prompts now carry a stable `SecretPromptKind` plus validated, non-secret
+  display parameters. They no longer use `username` and `hostname` to carry
+  rendered English interface text.
+- GTK maps each structured prompt kind to gettext msgids, translates at display
+  time, and formats the validated parameters afterward. Ordinary SSH password
+  prompts retain their existing username/hostname contract and carry a null
+  prompt kind with an empty parameter object.
+
+## Historical API entries
 
 ### API 0.44 clearable connection port
 
@@ -25,8 +42,6 @@ notes remain separate.
   fields, so the editor had no way to express "no Port line", and every saved
   connection carried one — permanently overriding a global `Port`.
 - Integer values and `UNSET`/`None` are unchanged; only the empty string is new.
-
-## Historical API entries
 
 ### API 0.43 launch-command introspection
 

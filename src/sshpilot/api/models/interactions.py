@@ -3,7 +3,8 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Tuple, Union
+from types import MappingProxyType
+from typing import Mapping, Optional, Tuple, Union
 
 from .common import (
     ClientId,
@@ -64,6 +65,35 @@ class RememberPolicy(str, Enum):
     DELETE_STORED_SECRET = "delete_stored_secret"
 
 
+class SecretPromptKind(str, Enum):
+    """Stable presentation identifiers for daemon-owned secret prompts."""
+
+    BITWARDEN_SIGN_IN = "bitwarden_sign_in"
+    BITWARDEN_AUTHENTICATION_CHALLENGE = "bitwarden_authentication_challenge"
+    BITWARDEN_TWO_STEP_LOGIN = "bitwarden_two_step_login"
+    BITWARDEN_API_KEY = "bitwarden_api_key"
+    BITWARDEN_UNLOCK = "bitwarden_unlock"
+    KEEPASS_DATABASE_CREATE = "keepass_database_create"
+    KEEPASS_UNLOCK = "keepass_unlock"
+    REMEMBER_MASTER_PASSWORD = "remember_master_password"
+    BACKUP_ENCRYPT = "backup_encrypt"
+    BACKUP_DECRYPT = "backup_decrypt"
+
+
+_SECRET_PROMPT_PARAMETER_KEYS = {
+    SecretPromptKind.BITWARDEN_SIGN_IN: frozenset({"email"}),
+    SecretPromptKind.BITWARDEN_AUTHENTICATION_CHALLENGE: frozenset(),
+    SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN: frozenset({"email"}),
+    SecretPromptKind.BITWARDEN_API_KEY: frozenset({"client_id"}),
+    SecretPromptKind.BITWARDEN_UNLOCK: frozenset(),
+    SecretPromptKind.KEEPASS_DATABASE_CREATE: frozenset(),
+    SecretPromptKind.KEEPASS_UNLOCK: frozenset(),
+    SecretPromptKind.REMEMBER_MASTER_PASSWORD: frozenset({"name"}),
+    SecretPromptKind.BACKUP_ENCRYPT: frozenset(),
+    SecretPromptKind.BACKUP_DECRYPT: frozenset(),
+}
+
+
 @dataclass(frozen=True)
 class HostKeyPrompt:
     hostname: str
@@ -99,10 +129,33 @@ class PasswordPrompt:
     attempt: int
     can_remember: bool
     stored_secret_available: bool
+    secret_prompt_kind: Optional[SecretPromptKind] = None
+    secret_prompt_parameters: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        _require_safe_display(self.username, "password username", 255)
-        _require_safe_display(self.hostname, "password hostname", 255)
+        if not isinstance(self.secret_prompt_parameters, Mapping):
+            raise TypeError("secret prompt parameters must be a mapping")
+        parameters = dict(self.secret_prompt_parameters)
+        if self.secret_prompt_kind is None:
+            if parameters:
+                raise ValueError("ordinary password prompts cannot carry parameters")
+            _require_safe_display(self.username, "password username", 255)
+            _require_safe_display(self.hostname, "password hostname", 255)
+        else:
+            if not isinstance(self.secret_prompt_kind, SecretPromptKind):
+                raise TypeError("secret prompt kind is invalid")
+            if self.username or self.hostname:
+                raise ValueError("structured secret prompts cannot carry rendered text")
+            expected = _SECRET_PROMPT_PARAMETER_KEYS[self.secret_prompt_kind]
+            if set(parameters) != expected:
+                raise ValueError("secret prompt parameters do not match the prompt kind")
+            for key, value in parameters.items():
+                _require_safe_display(value, f"secret prompt parameter {key}", 255)
+        object.__setattr__(
+            self,
+            "secret_prompt_parameters",
+            MappingProxyType(parameters),
+        )
         if type(self.port) is not int or not 1 <= self.port <= 65535:
             raise ValueError("password port is invalid")
         if type(self.attempt) is not int or self.attempt < 1:

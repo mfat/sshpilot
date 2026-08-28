@@ -150,6 +150,57 @@ def _containing_function(tree: ast.Module, target: ast.AST) -> str | None:
     return None
 
 
+def test_secret_backend_service_does_not_translate_user_interface_text():
+    """The daemon has no UI locale; secret prompt translation belongs to GTK."""
+    path = SOURCE / "daemon" / "secret_backend_service.py"
+    tree = _parse(path)
+    symbols = _import_symbols(tree, _rel(path))
+    calls = _call_names(tree)
+
+    assert not any(
+        symbol == "gettext" or symbol.startswith("gettext.")
+        for symbol in symbols
+    )
+    assert "_" not in calls
+    assert "N_" not in calls
+
+
+def test_secret_backend_service_does_not_embed_rendered_prompt_copy():
+    path = SOURCE / "daemon" / "secret_backend_service.py"
+    constants = {
+        node.value
+        for node in ast.walk(_parse(path))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    rendered_prompt_text = {
+        "Bitwarden sign-in",
+        "Authentication challenge",
+        "Two-step login code",
+        "Bitwarden API key",
+        "Unlock Bitwarden",
+        "New KeePass database",
+        "Unlock KeePass",
+        "Remember master password",
+        "Encrypt backup",
+        "Decrypt backup",
+        "Enter the Bitwarden master password for {email}",
+        (
+            "Enter the Bitwarden API client secret to complete the "
+            "authentication challenge"
+        ),
+        "Enter the two-step login code for {email}",
+        "Enter the API key client secret for {client_id}",
+        "Enter the Bitwarden master password to unlock the vault",
+        "Enter a master password for the new KeePass database",
+        "Enter the master password to unlock the KeePass database",
+        "Enter the master password to remember for {name}",
+        "Enter a passphrase to encrypt the backup",
+        "Enter the passphrase to decrypt the backup",
+    }
+
+    assert constants.isdisjoint(rendered_prompt_text)
+
+
 # ---------------------------------------------------------------------------
 # 1. No get_secret_manager / SecretManager / concrete backends
 # ---------------------------------------------------------------------------

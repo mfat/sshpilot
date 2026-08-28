@@ -19,7 +19,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock, Timer
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ConnectionId, SessionId
@@ -28,6 +28,7 @@ from sshpilot.api.models.interactions import (
     InteractionType,
     PasswordPrompt,
     RememberPolicy,
+    SecretPromptKind,
 )
 from sshpilot.api.models.secrets import (
     BACKEND_UNAVAILABLE,
@@ -76,13 +77,10 @@ _SECRET_SESSION_LOCK = RLock()
 
 DEFAULT_SECRET_INTERACTION_TIMEOUT = 120.0
 
-# A protected prompt's ``username`` field carries the dialog heading. This
-# reserved value marks the master-password unlock prompt, whose ``hostname`` is
-# the bare backend name and which the GTK secrets presenter renders with its own
-# "Unlock {backend}" dialog and its remember checkbox; every other prompt sends a
-# heading naming what it asks for (a two-step code, a backup passphrase, …).
+# This reserved value marks the master-password unlock prompt, whose
+# ``hostname`` is the bare backend name and which the GTK secrets presenter
+# renders with its own "Unlock {backend}" dialog and its remember checkbox.
 MASTER_PASSWORD_PROMPT_TITLE = "Secret backend"
-SECRET_PROMPT_TITLE = "Secret required"
 
 
 def _next_secret_session_id() -> SessionId:
@@ -474,8 +472,8 @@ class SecretBackendService:
         password_text = self._take_login_password(email, owner_client_id)
         if password_text is None:
             password = self._prompt_for_secret(
-                f"Enter the Bitwarden master password for {email}",
-                title="Bitwarden sign-in",
+                SecretPromptKind.BITWARDEN_SIGN_IN,
+                parameters={"email": email},
                 owner_client_id=owner_client_id,
             )
             if password is None:
@@ -498,9 +496,7 @@ class SecretBackendService:
 
             if not ok and not needs_2fa and _login_needs_challenge(detail):
                 client_secret = self._prompt_for_secret(
-                    "Enter the Bitwarden API client secret to complete the "
-                    "authentication challenge",
-                    title="Authentication challenge",
+                    SecretPromptKind.BITWARDEN_AUTHENTICATION_CHALLENGE,
                     owner_client_id=owner_client_id,
                 )
                 if client_secret is None:
@@ -524,8 +520,8 @@ class SecretBackendService:
 
             if needs_2fa and twofa_method:
                 code = self._prompt_for_secret(
-                    f"Enter the two-step login code for {email}",
-                    title="Two-step login code",
+                    SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN,
+                    parameters={"email": email},
                     owner_client_id=owner_client_id,
                 )
                 if code is None:
@@ -594,8 +590,8 @@ class SecretBackendService:
         # The client-secret prompt runs without the service lock — see
         # :meth:`_locked_operation`.
         secret = self._prompt_for_secret(
-            f"Enter the API key client secret for {client_id}",
-            title="Bitwarden API key",
+            SecretPromptKind.BITWARDEN_API_KEY,
+            parameters={"client_id": client_id},
             owner_client_id=owner_client_id,
         )
         if secret is None:
@@ -658,8 +654,7 @@ class SecretBackendService:
         # The master-password prompt runs without the service lock — see
         # :meth:`_locked_operation`.
         secret = self._prompt_for_secret(
-            "Enter the Bitwarden master password to unlock the vault",
-            title="Unlock Bitwarden",
+            SecretPromptKind.BITWARDEN_UNLOCK,
             owner_client_id=owner_client_id,
         )
         if secret is None:
@@ -818,8 +813,7 @@ class SecretBackendService:
         # The master-password prompt runs without the service lock — see
         # :meth:`_locked_operation`.
         password = self._prompt_for_secret(
-            "Enter a master password for the new KeePass database",
-            title="New KeePass database",
+            SecretPromptKind.KEEPASS_DATABASE_CREATE,
             owner_client_id=owner_client_id,
         )
         if password is None:
@@ -882,8 +876,7 @@ class SecretBackendService:
             # The master-password prompt runs without the service lock — see
             # :meth:`_locked_operation`.
             secret = self._prompt_for_secret(
-                "Enter the master password to unlock the KeePass database",
-                title="Unlock KeePass",
+                SecretPromptKind.KEEPASS_UNLOCK,
                 owner_client_id=owner_client_id,
             )
             if secret is None:
@@ -955,8 +948,8 @@ class SecretBackendService:
         # The master-password prompt runs without the service lock — see
         # :meth:`_locked_operation`.
         secret = self._prompt_for_secret(
-            f"Enter the master password to remember for {name}",
-            title="Remember master password",
+            SecretPromptKind.REMEMBER_MASTER_PASSWORD,
+            parameters={"name": name},
             owner_client_id=owner_client_id,
         )
         if secret is None:
@@ -1124,8 +1117,7 @@ class SecretBackendService:
             )
 
             prompt, state = self._prompt_for_secret_with_status(
-                "Enter a passphrase to encrypt the backup",
-                title="Encrypt backup",
+                SecretPromptKind.BACKUP_ENCRYPT,
                 owner_client_id=owner_client_id,
                 timeout=DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
             )
@@ -1200,8 +1192,7 @@ class SecretBackendService:
         # which has a five-second client timeout) block until that timeout,
         # which closes the peer and cancels this very interaction.
         prompt = self._prompt_for_secret(
-            "Enter the passphrase to decrypt the backup",
-            title="Decrypt backup",
+            SecretPromptKind.BACKUP_DECRYPT,
             owner_client_id=owner_client_id,
         )
         if prompt is None:
@@ -1306,8 +1297,7 @@ class SecretBackendService:
                 # block until that timeout, which closes the peer and cancels
                 # this very interaction.
                 prompt = self._prompt_for_secret(
-                    "Enter the passphrase to decrypt the backup",
-                    title="Decrypt backup",
+                    SecretPromptKind.BACKUP_DECRYPT,
                     owner_client_id=owner_client_id,
                 )
                 if prompt is None:
@@ -1699,28 +1689,31 @@ class SecretBackendService:
         )
 
     def _prompt_for_secret(
-        self, message: str, *, title: str, owner_client_id
+        self,
+        prompt_kind: SecretPromptKind,
+        *,
+        parameters: Optional[Mapping[str, str]] = None,
+        owner_client_id,
     ) -> Optional[bytearray]:
         """Create a protected PASSWORD interaction and wait for the secret.
 
-        ``title`` names what is being asked for (it becomes the dialog's
-        heading) and ``message`` is the sentence shown under it. Returns the
+        The daemon sends only ``prompt_kind`` plus safe dynamic ``parameters``;
+        the GTK presenter owns the localized heading and body. Returns the
         secret as a bytearray (the caller must clear it), or ``None`` when the
         interaction was cancelled, expired, or the broker is unavailable.
-        See :meth:`_prompt_for_secret_with_status` for why this is routed
-        through ``request_client_secret`` rather than a bare create() +
-        wait_for_result().
         """
         secret, _state = self._prompt_for_secret_with_status(
-            message, title=title, owner_client_id=owner_client_id
+            prompt_kind,
+            parameters=parameters,
+            owner_client_id=owner_client_id,
         )
         return secret
 
     def _prompt_for_secret_with_status(
         self,
-        message: str,
+        prompt_kind: SecretPromptKind,
         *,
-        title: str,
+        parameters: Optional[Mapping[str, str]] = None,
         owner_client_id,
         timeout: Optional[float] = None,
     ) -> Tuple[Optional[bytearray], InteractionState]:
@@ -1731,11 +1724,9 @@ class SecretBackendService:
         the backup encryption passphrase) without touching the timeout used
         by every other secret prompt.
 
-        ``title`` travels as the prompt's ``username`` and ``message`` as its
-        ``hostname``; the GTK secrets presenter renders them as the dialog's
-        heading and body. Without a title every one of these prompts rendered
-        as "Enter the master password", so a two-step login code or a backup
-        passphrase asked for the wrong thing by name.
+        The interaction metadata carries a stable prompt kind and safe dynamic
+        parameters. User-facing text is selected and translated only by the GTK
+        presenter, so the daemon process never chooses an interface language.
 
         Routed through ``request_client_secret_with_status`` (not a bare
         ``create()`` + ``wait_for_result()``): the server only forwards
@@ -1761,12 +1752,14 @@ class SecretBackendService:
             connection_id=connection_id,
             interaction_type=InteractionType.PASSWORD,
             prompt=PasswordPrompt(
-                username=title or SECRET_PROMPT_TITLE,
-                hostname=message or "secret backend",
+                username="",
+                hostname="",
                 port=22,
                 attempt=1,
                 can_remember=False,
                 stored_secret_available=False,
+                secret_prompt_kind=prompt_kind,
+                secret_prompt_parameters=dict(parameters or {}),
             ),
             timeout=timeout,
         )

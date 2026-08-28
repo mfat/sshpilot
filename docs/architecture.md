@@ -133,6 +133,11 @@ flows are daemon-owned. rbw retains its native agent and pinentry behavior.
 KDBX create, unlock, and lock are daemon-owned. Remembered master passwords use
 the existing platform-keyring identities, not the vault being unlocked.
 Sensitive input is collected through protected, one-use interactions.
+For daemon-owned secret prompts, the public interaction carries a stable
+`SecretPromptKind` and validated non-secret parameters rather than a rendered
+English heading/body. GTK owns the mapping to gettext msgids, translates only
+when presenting the dialog, and formats dynamic values afterward. The daemon
+therefore remains independent of the frontend's selected locale.
 
 Secret values, `BW_SESSION`, KDBX transformed keys, provider credentials,
 private keys, and backup manifests do not cross the ordinary public API. They
