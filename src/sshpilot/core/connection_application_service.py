@@ -914,7 +914,9 @@ class ConnectionApplicationService:
                 # spawning ``ssh -G`` for every nickname/alias in the store.
                 # This keeps the optional save-prompt check bounded and does
                 # not hold configuration serialization across an O(N) probe.
-                if requested_identity in self._saved_destination_identities(record):
+                if requested_identity in self._saved_destination_identities(
+                    record, requested_identity
+                ):
                     saved = True
                     break
         return UnsavedHostCheckResult(
@@ -962,7 +964,9 @@ class ConnectionApplicationService:
             str(proxy_value or "none").casefold(),
         )
 
-    def _saved_destination_identities(self, record: ConnectionRecord) -> set[tuple]:
+    def _saved_destination_identities(
+        self, record: ConnectionRecord, requested: Optional[tuple] = None
+    ) -> set[tuple]:
         proxy_jump = tuple(record.data.get("proxy_jump") or ()) if record.data else ()
         # ``hostname`` is the saved destination identity.  Nicknames and
         # aliases are presentation/configuration labels; resolving every one
@@ -970,8 +974,26 @@ class ConnectionApplicationService:
         # repository.  The requested side is resolved by OpenSSH, so an alias
         # used by the ad-hoc connection still matches a saved concrete target.
         values = {record.hostname, record.host, *(record.aliases or ())}
-        user = str(record.username or "").strip() or getpass.getuser()
-        port = int(record.port or 22)
+        # A directive the Host block never authored is inherited, and only the
+        # requested side has been resolved through OpenSSH (resolving every
+        # saved record would mean an ``ssh -G`` per alias). Let an unauthored
+        # component match whatever the requested destination resolved to, so an
+        # already-saved host that inherits its account or port is not reported
+        # as unsaved. Guessing the local username here produced exactly that
+        # false "unsaved" prompt.
+        # An empty authorship set means "no evidence" (a record that did not
+        # come from a parsed Host block), never "authored nothing" — in that
+        # case keep the record's own values so matching stays exact.
+        authored = record.authored_directives
+        inherits = (
+            (lambda directive: directive not in authored)
+            if authored and requested
+            else (lambda directive: False)
+        )
+        user = str(record.username or "").strip()
+        if not user:
+            user = str(requested[1]) if inherits("user") else getpass.getuser()
+        port = int(requested[2]) if inherits("port") else int(record.port or 22)
         proxy = ",".join(proxy_jump).casefold() or "none"
         return {
             (self._normalize_host(str(value)), user, port, proxy)
@@ -1603,6 +1625,7 @@ class ConnectionApplicationService:
             preferred_authentications=preferred_text,
             source=record.source or str(data.get("source") or ""),
             generation=record.generation,
+            authored_directives=tuple(sorted(record.authored_directives)),
         )
 
     @staticmethod

@@ -628,6 +628,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `preferred_authentications` | `str` | No | `` | No |
 | `source` | `str` | No | `` | No |
 | `generation` | `int` | No | `0` | No |
+| `authored_directives` | `tuple[str, ...]` | No | `[]` | No |
 
 Synthetic representation:
 
@@ -636,6 +637,7 @@ Synthetic representation:
   "add_keys_to_agent": "",
   "aliases": [],
   "authentication_method": "key",
+  "authored_directives": [],
   "certificate_configured": false,
   "certificate_files": [],
   "display_name": "",

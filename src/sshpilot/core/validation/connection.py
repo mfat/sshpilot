@@ -173,7 +173,16 @@ class SSHConnectionValidator:
                 return ValidationResult(True, _("Dynamic port range"), "info")
         return ValidationResult(True, _("Valid port number"))
 
-    def validate_username(self, username: str) -> 'ValidationResult':
+    def validate_username(
+        self, username: str, allow_empty: bool = False
+    ) -> 'ValidationResult':
         if not username or not username.strip():
+            if allow_empty:
+                # An empty username in the connection editor means "inherit":
+                # the Host block authors no ``User`` and OpenSSH resolves the
+                # account (from a global block, or its local-user default).
+                # Requiring a value here forced a fabricated one into the
+                # config, which then overrode the global the user relied on.
+                return ValidationResult(True, "")
             return ValidationResult(False, _("Username is required"), "error")
         return ValidationResult(True, _("Valid username"))

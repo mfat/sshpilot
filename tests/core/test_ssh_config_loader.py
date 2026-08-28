@@ -382,3 +382,60 @@ def test_revision_is_deterministic_across_configs(tmp_path):
     # Same bytes on disk must hash identically regardless of access time.
     result2 = load_ssh_configuration(path, isolated=False)
     assert result.root_revision == result2.root_revision
+
+
+# --- authorship evidence ----------------------------------------------------
+#
+# OpenSSH resolves with first-obtained-value-wins, so a `Host *` block earlier
+# in the file beats a specific block. The loader therefore records what each
+# block *authored* and must never fabricate a value for a directive the block
+# omitted — a fabricated value gets written back on the next save and really
+# does override the global the user relied on.
+
+
+def test_absent_user_is_not_filled_in_with_the_local_account(tmp_path):
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    User tom\n\nHost bare\n    HostName bare.example.com\n",
+        encoding="utf-8",
+    )
+    record = _only_record(load_ssh_configuration(path, isolated=False), "bare")
+    assert record.username == ""
+    assert "user" not in record.authored_directives
+
+
+def test_authored_directives_report_exactly_the_blocks_own_options(tmp_path):
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n"
+        "    User tom\n"
+        "    Port 2222\n"
+        "\n"
+        "Host web\n"
+        "    HostName web.example.com\n"
+        "    User alice\n",
+        encoding="utf-8",
+    )
+    record = _only_record(load_ssh_configuration(path, isolated=False), "web")
+    assert record.username == "alice"
+    assert record.authored_directives == frozenset({"hostname", "user"})
+    # The global's Port is not this block's, so the default must stay unauthored.
+    assert record.port == 22
+    assert "port" not in record.authored_directives
+
+
+def test_wildcard_block_never_becomes_authorship_evidence(tmp_path):
+    path = tmp_path / "config"
+    path.write_text(
+        "Host prod-*\n    User deploy\n\nHost prod-a\n    HostName a.example.com\n",
+        encoding="utf-8",
+    )
+    record = _only_record(load_ssh_configuration(path, isolated=False), "prod-a")
+    assert "user" not in record.authored_directives
+    assert record.username == ""
+
+
+def _only_record(loaded, nickname):
+    matches = [r for r in loaded.connections if r.nickname == nickname]
+    assert len(matches) == 1, f"expected one {nickname!r} record, got {matches!r}"
+    return matches[0]

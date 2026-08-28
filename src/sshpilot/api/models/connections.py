@@ -431,6 +431,12 @@ class ConnectionEditorDetails(ConnectionDetails):
     # Context
     source: str = ""  # config file owning this block
     generation: int = 0  # revision counter for stale detection
+    # Lowercased directives this Host block authored. Everything else the
+    # editor shows is inherited — OpenSSH resolves it from a global block or
+    # its own defaults — so the editor must not present those values as if the
+    # user had set them. Empty means "no evidence" (a record that did not come
+    # from a parsed Host block), never "authored nothing".
+    authored_directives: Tuple[str, ...] = ()
 
 
 # -- Secret request / response models --------------------------------------

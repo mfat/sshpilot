@@ -164,6 +164,9 @@ def _editor_details_to_connection(details):
         source=getattr(details, 'source', '') or '',
         generation=getattr(details, 'generation', 0) or 0,
         data=getattr(details, 'data', None) or {},
+        authored_directives=frozenset(
+            getattr(details, 'authored_directives', None) or ()
+        ),
     )
 
 
@@ -2312,6 +2315,97 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
+    # Rows whose value OpenSSH can inherit, mapped to the ``ssh -G`` key that
+    # reports the resolved value. Accumulating directives (IdentityFile, the
+    # forwards) are deliberately absent: the command line cannot override them,
+    # so they are not presented as if this connection controlled them.
+    _INHERITABLE_ROWS = (
+        ('username_row', 'user', 'user'),
+        ('port_row', 'port', 'port'),
+        ('proxy_jump_row', 'proxyjump', 'proxyjump'),
+    )
+
+    def _load_inherited_values_async(self):
+        """Show what OpenSSH resolves for directives this block never authored.
+
+        An unauthored field is not empty-because-unset: OpenSSH fills it from a
+        global block or its own default, and that is the value the session will
+        use. Showing a blank row (or worse, a fabricated one) is what made the
+        editor untruthful. The resolved value is shown as placeholder text, so
+        it reads as inherited rather than as something the user typed, and
+        typing still overrides it.
+
+        Resolution runs on the daemon's dedicated effective-config command key,
+        never on the shared configuration key, so a slow ``ssh -G`` cannot stall
+        unrelated configuration RPCs.
+        """
+        authored = getattr(self.connection, 'authored_directives', None)
+        if authored is None:
+            return
+        pending = [
+            (row_name, ssh_key)
+            for row_name, directive, ssh_key in self._INHERITABLE_ROWS
+            if directive not in authored and hasattr(self, row_name)
+        ]
+        if not pending:
+            return
+
+        parent = getattr(self, 'parent_window', None)
+        client = getattr(parent, 'client', None)
+        if not (
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'get_effective_config', None))
+        ):
+            return
+
+        def _apply(resolved):
+            if not resolved:
+                return False
+            for row_name, ssh_key in pending:
+                value = resolved.get(ssh_key)
+                if not value:
+                    continue
+                row = getattr(self, row_name, None)
+                if row is None or not hasattr(row, 'set_placeholder_text'):
+                    continue
+                try:
+                    # Never overwrite text the user already has in the row.
+                    if hasattr(row, 'get_text') and row.get_text().strip():
+                        continue
+                    row.set_placeholder_text(
+                        _('{value} (from SSH config)').format(value=value)
+                    )
+                except Exception:
+                    logger.debug(
+                        "Could not show inherited value for %s", row_name, exc_info=True
+                    )
+            return False
+
+        def _start_worker():
+            def worker():
+                resolved = {}
+                try:
+                    from .api.connection_identity import connection_id_for
+                    result = client.get_effective_config(
+                        connection_id_for(self.connection)
+                    )
+                    if getattr(result, 'available', False):
+                        for line in getattr(result, 'full', ()) or ():
+                            key, _sep, value = str(line).partition(' ')
+                            # ssh -G repeats accumulating keys; first wins, which
+                            # matches the order OpenSSH itself applies them.
+                            resolved.setdefault(key.strip().lower(), value.strip())
+                except Exception:
+                    logger.debug(
+                        "Daemon effective-config lookup unavailable", exc_info=True
+                    )
+                GLib.idle_add(_apply, resolved)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        _start_worker()
+
     def _load_password_async(self):
         """Load the saved password into the masked editor field."""
         if not hasattr(self.connection, 'username'):
@@ -2810,6 +2904,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.load_connection_data()
         finally:
             self._refresh_save_sensitivity()
+        # After the authored values are in place: fill unauthored rows with what
+        # OpenSSH actually resolves, so the form never implies this block owns a
+        # value it merely inherits.
+        try:
+            self._load_inherited_values_async()
+        except Exception:
+            logger.debug("Could not start inherited-value lookup", exc_info=True)
 
 
     def _refresh_save_sensitivity(self):

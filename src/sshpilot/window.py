@@ -7902,38 +7902,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             _complete_save(False)
             self._error_dialog(_("Failed to save connection"), str(e))
 
-    def _warn_if_effective_config_differs(self, connection, connection_data):
-        """After a save, warn if global SSH config overrides/adds values for this
-        connection. Informational only — offers a diff view and a shortcut to the
-        SSH config editor. Best-effort: any failure is swallowed silently.
-
-        The daemon performs resolution on its serialized backend path; GTK only
-        presents the generation-tagged comparison result.
-        """
-        del connection_data
-        host = getattr(connection, "nickname", "") or ""
-        if not host or not self._daemon_ready():
-            return
-        try:
-            self.client_bridge.submit(
-                lambda: self.client.get_effective_config(connection_id_for(connection)),
-                on_success=lambda result: GLib.idle_add(
-                    self._present_effective_config_warning,
-                    host,
-                    {
-                        "has_diff": result.has_diff,
-                        "changes": list(result.changes),
-                        "own": list(result.own),
-                        "full": list(result.full),
-                    },
-                ),
-                on_error=lambda error: logger.debug(
-                    "daemon effective-config warning unavailable: %s", error
-                ),
-            )
-        except Exception:
-            logger.debug("Could not request daemon effective-config comparison", exc_info=True)
-
     def show_effective_config_for_connection(self, connection) -> None:
         """Open the effective-config viewer from a daemon comparison result."""
         if not self._daemon_ready():
@@ -7971,44 +7939,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             )
         except Exception:
             logger.debug("Failed to open effective-config diff", exc_info=True)
-
-    def _present_effective_config_warning(self, host, result):
-        """Show the global-config warning dialog on the GTK main thread."""
-        try:
-            from gettext import gettext as _
-
-            if not result or not result.get('has_diff'):
-                return False
-
-            dialog = Adw.MessageDialog(
-                transient_for=self,
-                modal=True,
-                heading=_("Global SSH config may change this connection"),
-                body=_(
-                    "Some of the values you set may be overridden or added by "
-                    "your global SSH configuration (for example a 'Host *' "
-                    "block or an included file). SSH will use the effective "
-                    "values, not only what you entered here."
-                ),
-            )
-            dialog.add_response('dismiss', _('Dismiss'))
-            dialog.add_response('view', _('View differences…'))
-            dialog.set_response_appearance('view', Adw.ResponseAppearance.SUGGESTED)
-            dialog.set_default_response('view')
-
-            def _on_response(dlg, response):
-                if response == 'view':
-                    try:
-                        from .effective_config_dialog import EffectiveConfigDialog
-                        EffectiveConfigDialog.for_result(self, host, result)
-                    except Exception:
-                        logger.debug("Failed to open effective-config diff", exc_info=True)
-
-            dialog.connect('response', _on_response)
-            dialog.present()
-        except Exception:
-            logger.debug("Failed to present effective-config warning", exc_info=True)
-        return False
 
     def _rebuild_connections_list(self):
         """Rebuild the sidebar connections list from manager state, avoiding duplicates."""

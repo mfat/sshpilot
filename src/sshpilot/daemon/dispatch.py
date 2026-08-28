@@ -158,6 +158,19 @@ from sshpilot.daemon.config_reload import CONFIGURATION_COMMAND_KEY
 # observed as those RPCs timing out and the daemon transport being declared
 # dead while a user was simply still typing their master password.
 SECRET_INTERACTIVE_COMMAND_KEY = "secret-backend-interactive"
+
+# Effective-config resolution shells out to ``ssh -G``, which can block on DNS
+# canonicalization or a ``Match exec`` command. For the same head-of-line
+# reason it must not share ``CONFIGURATION_COMMAND_KEY``: a slow resolve would
+# stall every unrelated configuration RPC queued behind it. That is exactly
+# what forced the removal of the old background effective-config checker and
+# its sidebar warning icon, so any UI that resolves on open or per row depends
+# on this separation.
+#
+# Safe to run concurrently with a configuration mutation: the resolve is
+# read-only, and ``ConnectionApplicationService.get_effective_config`` discards
+# any result whose repository generation changed while it ran.
+EFFECTIVE_CONFIG_COMMAND_KEY = "effective-ssh-config"
 from sshpilot.daemon.forward_runtime import ForwardRuntime
 from sshpilot.daemon.interaction_broker import InteractionBroker
 from sshpilot.daemon.key_service import DaemonKeyService
@@ -1218,7 +1231,7 @@ class RequestDispatcher:
             operation=lambda: effective_config_comparison_to_wire(
                 self._connections.get_effective_config(typed_id)
             ),
-            command_key=CONFIGURATION_COMMAND_KEY,
+            command_key=EFFECTIVE_CONFIG_COMMAND_KEY,
             on_rejected=lambda: None,
             connection_id=typed_id,
         )

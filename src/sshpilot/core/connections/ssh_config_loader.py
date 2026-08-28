@@ -417,6 +417,10 @@ def _parse_host_config(
             return []
         return list(raw) if isinstance(raw, list) else [raw]
 
+    # Directives authored after an ``Include`` line: in force for this host,
+    # but outside the block span the editor and writer own.
+    outside_span_keys = config.get("__outside_span_keys") or frozenset()
+
     identity_files: List[str] = []
     identity_suppressed = False
     raw_identity_files: List[str] = []
@@ -442,7 +446,11 @@ def _parse_host_config(
         "hostname": parsed_host,
         "host": host,
         "port": _safe_int(_unwrap_ssh_value(config.get("port", 22)), 22),
-        "username": _unwrap_ssh_value(config.get("user", getpass.getuser())),
+        # An absent ``User`` must read as absent. Substituting the local user
+        # here made every unauthored block claim a username OpenSSH would not
+        # use (a global ``Host * User ...`` wins instead), and that fabricated
+        # value was then written back into the block on the next save.
+        "username": _unwrap_ssh_value(config.get("user", "")),
         "keyfile": identity_files[0] if identity_files else "",
         "identity_files": identity_files,
         "identity_file_none": identity_suppressed,
@@ -459,6 +467,19 @@ def _parse_host_config(
             _unwrap_ssh_value(config["user"]) if "user" in config else None
         ),
         "__identity_raw_identity_files": raw_identity_files,
+        # Directives this host actually authored. ``config`` holds exactly the
+        # block's own options — wildcard/negated blocks were diverted to
+        # ``rules`` above — so its keys are the authorship evidence. The launch
+        # path emits argv only for these, never for the defaults filled in
+        # below, because OpenSSH resolves everything else from the config file
+        # (where an earlier ``Host *`` may legitimately win).
+        "__authored_directives": tuple(sorted(
+            key
+            for key in config
+            if not key.startswith("__")
+            and key not in {"host", "aliases"}
+            and key not in outside_span_keys
+        )),
     }
     if has_explicit_hostname:
         parsed["aliases"] = []
@@ -553,6 +574,11 @@ def _parse_host_config(
         if key.startswith("__"):
             continue
         if key.lower() in MANAGED_HOST_OPTIONS:
+            continue
+        if key in outside_span_keys:
+            # Authored outside this block's span (after an Include). Still in
+            # force via the file itself; the editor does not own it, so the
+            # writer must not copy it into the block.
             continue
         if isinstance(value, list):
             extra_config_lines.extend(f"{key} {val}" for val in value)
@@ -915,7 +941,29 @@ def load_ssh_configuration(
                 pending_tokens, pending_config = tokens, {}
                 _absorb_option_lines(node.lines[1:], pending_config)
                 continue
+            # A RawSpan after a Host block holds directives that follow an
+            # ``Include`` line. OpenSSH still scopes them to the enclosing Host
+            # (verified: they apply to that host and not to later ones), so they
+            # belong in this record's semantics — but they sit *outside* the
+            # block's editable span, which the surgical writer owns. Re-emitting
+            # them inside the span left the originals in place and appended a
+            # fresh copy on every save, growing the file without bound. Record
+            # the keys this span introduced so they stay out of
+            # ``extra_ssh_config`` and are never written back.
+            before = set(pending_config)
             _absorb_option_lines(node.lines, pending_config)
+            introduced = {
+                key
+                for key in set(pending_config) - before
+                if not key.startswith("__")
+            }
+            # Only mark when this span actually introduced directives: an empty
+            # ``pending_config`` must stay empty, because a block that
+            # contributed nothing is deliberately never materialised.
+            if introduced:
+                pending_config.setdefault("__outside_span_keys", set()).update(
+                    introduced
+                )
 
         if pending_tokens and pending_config:
             flush_block(pending_tokens, pending_config, cfg_file)

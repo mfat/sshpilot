@@ -11,7 +11,26 @@ notes remain separate.
   correctness fixes within the current 0.40 contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.41 (current)
+## API 0.42 (current)
+
+### API 0.42 authored-directive evidence
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `ConnectionEditorDetails` now
+  carries `authored_directives` on every `connections.get_editor` response. A
+  0.41 decoder's strict field-set check rejects unknown fields, so the added
+  key is not wire-compatible with it. The field is decoded as optional, so a
+  newer client still accepts a payload from a daemon that omits it.
+- `authored_directives` lists the lowercased directives the SSH `Host` block
+  itself authored. Everything else an editor displays is inherited — OpenSSH
+  resolves it from a global block (`Host *`, `Match`) or its own defaults — and
+  must not be presented as a value the user set. An empty tuple means "no
+  evidence", never "authored nothing".
+- This backs a behavior change in the launch path: only authored directives are
+  re-emitted as command-line options, so an editor value can no longer be
+  silently overridden by an earlier `Host *` block, while an unauthored one
+  keeps inheriting. Defaults are never emitted.
+
+## Historical API entries
 
 ### API 0.41 operation-mode file visibility
 
@@ -25,8 +44,6 @@ notes remain separate.
   returned on every `daemon.get_operation_mode`/`daemon.set_operation_mode`
   response, so a frontend can show which real files back each mode instead
   of a generic description.
-
-## Historical API entries
 
 ### API 0.40 daemon-only retirement compatibility boundary
 
