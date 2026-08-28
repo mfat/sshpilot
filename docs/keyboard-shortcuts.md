@@ -2,7 +2,12 @@
 
 SSH Pilot is designed for efficient keyboard navigation. Every shortcut — including split view — can be customized in **Preferences → Shortcuts** or by pressing **Ctrl+?** (**Cmd+?** on macOS).
 
-To avoid clashing with command-line tools (readline, vim, …) and keyboard layouts, several shortcuts are **disabled by default** on Linux/Windows. They are still listed in **Preferences → Shortcuts**, where you can assign your own keys.
+To avoid clashing with command-line tools (readline, vim, htop, …) and keyboard layouts, several shortcuts are **disabled by default** on Linux/Windows. They are still listed in **Preferences → Shortcuts**, where you can assign your own keys.
+
+Function keys used by terminal programs are passed through:
+
+- **F10** is not bound by SSH Pilot. GTK's default "open the application menu" accelerator is cleared so F10 can quit htop or close mc.
+- **F9** toggles the sidebar and **F11** toggles fullscreen; unassign them in **Preferences → Shortcuts** (or enable **Terminal Shortcut Pass-through**) if a remote app needs those keys.
 
 ## Platform Notes
 

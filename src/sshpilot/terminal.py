@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
 from .core.connection_evidence import classify_connection_evidence
+from .terminal_input import MouseTrackingState, commit_payload_to_bytes
 
 
 # Installed once per process. Inner padding for the terminal text so the
@@ -62,9 +63,14 @@ def _context_click_is_handled(
     paste_on_right_click: bool,
     shift_held: bool,
     native_vte_menu: bool,
+    mouse_tracking: bool = False,
 ) -> bool:
     """Whether SSH Pilot, rather than the backend, owns this pointer sequence."""
     if button not in (Gdk.BUTTON_SECONDARY, 3):
+        return False
+    # htop/vim/tmux enable mouse tracking: the click must reach the emulator
+    # unless Shift is held (the usual "give me the menu anyway" modifier).
+    if mouse_tracking and not shift_held:
         return False
     return (paste_on_right_click and not shift_held) or not native_vte_menu
 
@@ -220,6 +226,7 @@ class TerminalWidget(Gtk.Box):
         self._daemon_interaction_dialogs = None
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
+        self._mouse_tracking = MouseTrackingState()
         self._daemon_exit_handled = False
         self._view_only_overlay = None
         self._reconnect_handler = None
@@ -1257,6 +1264,9 @@ class TerminalWidget(Gtk.Box):
         if backend is None:
             self._daemon_commit_handler = None
             self._daemon_size_handler = None
+            tracker = getattr(self, "_mouse_tracking", None)
+            if tracker is not None:
+                tracker.reset()
             return
         for attr in ('_daemon_commit_handler', '_daemon_size_handler'):
             handler = getattr(self, attr, None)
@@ -1267,6 +1277,9 @@ class TerminalWidget(Gtk.Box):
             except Exception:
                 logger.debug("Failed to disconnect daemon backend handler", exc_info=True)
             setattr(self, attr, None)
+        tracker = getattr(self, "_mouse_tracking", None)
+        if tracker is not None:
+            tracker.reset()
 
     def _install_daemon_backend_io(self) -> None:
         """Wire commit/resize through the terminal backend abstraction.
@@ -1311,6 +1324,9 @@ class TerminalWidget(Gtk.Box):
         backend = getattr(self, 'backend', None)
         if backend is None:
             raise RuntimeError("No terminal backend to feed display output")
+        tracker = getattr(self, "_mouse_tracking", None)
+        if tracker is not None:
+            tracker.feed(data)
         backend.feed(data)
 
     def _on_daemon_output(self, data):
@@ -1439,7 +1455,7 @@ class TerminalWidget(Gtk.Box):
             return
 
         try:
-            data = text.encode('utf-8') if isinstance(text, str) else text
+            data = commit_payload_to_bytes(text, size)
             self._daemon_controller.send_input(data)
         except Exception as e:
             logger.error(f"Failed to send input to daemon: {e}")
@@ -3296,11 +3312,14 @@ class TerminalWidget(Gtk.Box):
                     native_vte_menu = bool(
                         getattr(self, '_native_vte_context_menu', False)
                     )
+                    tracker = getattr(self, "_mouse_tracking", None)
+                    mouse_tracking = bool(tracker is not None and tracker.active)
                     if not _context_click_is_handled(
                         btn,
                         paste_on_right_click=paste_on_rc,
                         shift_held=shift_held,
                         native_vte_menu=native_vte_menu,
+                        mouse_tracking=mouse_tracking,
                     ):
                         return
                     if paste_on_rc and not shift_held:

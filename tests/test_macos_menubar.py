@@ -221,9 +221,14 @@ def _stub_gi_for_app_init(monkeypatch):
     points (SimpleAction construction, Application.__init__ kwargs, connect).
     Provide minimal fakes so the real ``__init__`` — including its menubar
     install timing — executes unchanged.
+
+    Patch the classes ``SshPilotApplication`` actually inherited, not whatever
+    ``gi.repository.Adw`` currently points at. Other tests replace that module
+    (and xdist can schedule this file onto a polluted worker), which made
+    ``super().__init__(...)`` hit ``object.__init__``.
     """
-    import gi.repository as repository
     import sshpilot.macos_menubar as mm
+    import sshpilot.main as main_module
 
     class _FakeAction:
         def __init__(self, name, param_type=None):
@@ -237,18 +242,23 @@ def _stub_gi_for_app_init(monkeypatch):
         def new(cls, name, param_type=None):
             return _FakeAction(name, param_type)
 
-    monkeypatch.setattr(repository.Gio, "SimpleAction", _FakeSimpleAction)
-    monkeypatch.setattr(repository.Adw.Application, "__init__", lambda self, *a, **k: None)
-    monkeypatch.setattr(repository.Gio.Application, "__init__", lambda self, *a, **k: None)
-    monkeypatch.setattr(
-        repository.Adw.Application, "do_startup", lambda self: None, raising=False
-    )
-    monkeypatch.setattr(
-        repository.Gio.Application, "do_startup", lambda self: None, raising=False
-    )
-    monkeypatch.setattr(mm, "build_macos_menubar", lambda **kw: "MENU")
+    class _FakeSettings:
+        def set_property(self, name, value):
+            return None
 
-    import sshpilot.main as main_module
+    def _noop_init(self, *a, **k):
+        return None
+
+    monkeypatch.setattr(main_module.Gio, "SimpleAction", _FakeSimpleAction)
+    monkeypatch.setattr(
+        main_module.Gtk.Settings, "get_default", staticmethod(lambda: _FakeSettings())
+    )
+    for cls in main_module.SshPilotApplication.__mro__[1:]:
+        if cls is object:
+            continue
+        monkeypatch.setattr(cls, "__init__", _noop_init, raising=False)
+        monkeypatch.setattr(cls, "do_startup", _noop_init, raising=False)
+    monkeypatch.setattr(mm, "build_macos_menubar", lambda **kw: "MENU")
     return main_module
 
 
