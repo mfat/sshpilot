@@ -431,7 +431,22 @@ def test_core_connection_service_rejects_leading_dash_host_alias():
         service.create({"nickname": "-oProxyCommand", "hostname": "host"})
 
 
-def test_unsaved_host_check_uses_daemon_snapshot_identity():
+def test_unsaved_host_check_uses_daemon_snapshot_identity(monkeypatch):
+    # Resolution is stubbed: the real helper shells out to `ssh -G` with no
+    # `-F`, so it reads whoever runs the suite from ~/.ssh/config. A developer
+    # with a global `Host *` block (`Port 2323`, say) would see this fail for
+    # reasons that have nothing to do with the code under test.
+    from sshpilot.core import ssh_config_effective
+
+    def fake_effective(host, *_args, **kwargs):
+        resolved = {"hostname": host.casefold(), "port": "22"}
+        if kwargs.get("user"):
+            resolved["user"] = kwargs["user"]
+        if kwargs.get("port") is not None:
+            resolved["port"] = str(kwargs["port"])
+        return resolved
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
     repo = FakeRepository([_record(record_id="prod", hostname="example.com", username="alice")])
     service = ConnectionApplicationService(repo, client_name="test")
 

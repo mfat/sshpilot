@@ -439,3 +439,72 @@ def _only_record(loaded, nickname):
     matches = [r for r in loaded.connections if r.nickname == nickname]
     assert len(matches) == 1, f"expected one {nickname!r} record, got {matches!r}"
     return matches[0]
+
+
+def test_explicitly_set_port_is_authored_even_when_it_equals_the_default(tmp_path):
+    """Pinning `Port 22` under a global `Port 2222` must be written and emitted.
+
+    Authorship cannot come from comparing values: the editor shows the
+    inherited port, so pinning it changes nothing. The request carries the
+    intent, and the daemon records it.
+    """
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+    from sshpilot.api.models.identity import ConnectionId
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    User tom\n    Port 2222\n\nHost web\n    HostName web.example.com\n",
+        encoding="utf-8",
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(path),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(
+        repo, client_name="test", allow_cross_thread_commands=True
+    )
+
+    before = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "port" not in before.authored_directives
+
+    service.update_connection(ConnectionId("web"), UpdateConnectionRequest(port=22))
+
+    after = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "port" in after.authored_directives
+    assert "    Port 22\n" in path.read_text(encoding="utf-8")
+    # The global block is untouched.
+    assert "Host *\n    User tom\n    Port 2222\n" in path.read_text(encoding="utf-8")
+
+
+def test_explicitly_cleared_username_returns_to_inheriting(tmp_path):
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+    from sshpilot.api.models.identity import ConnectionId
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    User tom\n\nHost web\n    HostName web.example.com\n    User alice\n",
+        encoding="utf-8",
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(path),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(
+        repo, client_name="test", allow_cross_thread_commands=True
+    )
+
+    service.update_connection(ConnectionId("web"), UpdateConnectionRequest(username=""))
+
+    after = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "user" not in after.authored_directives
+    assert "User alice" not in path.read_text(encoding="utf-8")

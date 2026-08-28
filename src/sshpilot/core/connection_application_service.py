@@ -242,6 +242,43 @@ class ConnectionApplicationService:
             secret_autofill_supported=False,
         )
 
+    # SSH directive each editable core field authors when set explicitly.
+    _FIELD_DIRECTIVES = {"hostname": "hostname", "username": "user", "port": "port"}
+
+    @staticmethod
+    def _apply_explicit_authorship(
+        data: Dict[str, Any], request: UpdateConnectionRequest
+    ) -> None:
+        """Mark directives the editor set explicitly as authored by this block.
+
+        Authorship cannot be inferred by comparing values. The editor shows an
+        inherited value in the field, so a user who deliberately pins that same
+        value — ``Port 22`` under a global ``Port 2222``, say — produces no
+        value change at all. Only the request tells us they meant it: a field
+        the editor sent is a field the user set. Conversely an explicitly
+        emptied field returns to inheriting.
+
+        Without this the block would keep resolving from the global, and the
+        launch path would emit no option for it, so the edit would silently do
+        nothing.
+        """
+        authored = {
+            str(name).strip().lower()
+            for name in (data.get("__authored_directives") or ())
+            if str(name).strip()
+        }
+        for field_name, directive in (
+            ConnectionApplicationService._FIELD_DIRECTIVES.items()
+        ):
+            value = getattr(request, field_name)
+            if value is UNSET or value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                authored.discard(directive)
+            else:
+                authored.add(directive)
+        data["__authored_directives"] = tuple(sorted(authored))
+
     def get_launch_command(
         self, connection_id: ConnectionId
     ) -> ExternalTerminalLaunchSpec:
@@ -1298,6 +1335,7 @@ class ConnectionApplicationService:
             value = getattr(request, name)
             if value is not None and value is not UNSET:
                 data[name] = value
+        self._apply_explicit_authorship(data, request)
         if request.config_patch:
             self._apply_config_patch(data, request.config_patch)
         if request.plugin_data:
