@@ -1425,6 +1425,35 @@ def test_rbw_status_configure_unlock_sync_lock(tmp_path):
     assert status.unlocked is False
 
 
+def test_locked_rbw_needs_unlock_and_unlock_uses_pinentry(tmp_path):
+    """rbw is not session-backed, but a locked agent must still gate unlock.
+
+    ``unlock()`` must run ``rbw unlock`` (native pinentry) and must not collect
+    a master password through the interaction broker.
+    """
+    service, _manager, backends, broker, _path = _make_service(
+        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    rbw = backends["rbw"]
+    rbw.session_backed = False
+    rbw._unlocked = False
+    rbw._needs_login = False
+
+    state = service.get_state()
+    assert state.needs_unlock is True
+    assert state.locked is True
+
+    rbw.calls.clear()
+    result = service.unlock(owner_client_id="client-1")
+    assert result.kind == UnlockResultKind.UNLOCKED
+    assert rbw._unlocked is True
+    run_calls = [args for kind, args in rbw.calls if kind == "_run"]
+    assert ("unlock",) in run_calls
+    assert ("sync",) in run_calls
+    assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+    assert broker.created == []
+
+
 # ---------------------------------------------------------------------------
 # KeePassXC lifecycle
 # ---------------------------------------------------------------------------

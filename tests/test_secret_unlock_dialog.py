@@ -230,6 +230,19 @@ def test_unlock_at_startup_unlocks_when_needed(monkeypatch):
     assert prompted == [window]
 
 
+def test_unlock_at_startup_prompts_when_rbw_needs_unlock(monkeypatch):
+    _install_unlock_harness(monkeypatch)
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True, selected_backend="rbw")
+    )
+    window = _FakeParent(controller)
+    prompted = []
+    monkeypatch.setattr(d, "prompt_unlock", lambda win: prompted.append(win))
+
+    assert d.unlock_at_startup(window) is False
+    assert prompted == [window]
+
+
 def test_unlock_at_startup_rides_out_a_busy_controller(monkeypatch):
     """Startup runs this check alongside the startup diagnostics' own controller
     reads. The controller rejects overlapping guarded operations, so giving up on
