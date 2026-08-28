@@ -771,3 +771,17 @@ def test_sftp_connect_timeout_changed_persists_immediately(tmp_path, monkeypatch
     prefs.on_sftp_connect_timeout_changed(prefs.sftp_connect_timeout_row)
 
     assert config.get_setting('file_manager.sftp_connect_timeout', None) == 20
+
+
+def test_ssh_options_help_explains_per_connection_precedence():
+    """Preferences ▸ SSH Options must say these are app-wide defaults that
+    lose to an explicit per-connection setting, not only that they override
+    ~/.ssh/config.
+    """
+    import inspect
+
+    src = inspect.getsource(PreferencesWindow._build_ssh_settings_preferences_page)
+    assert "~/.ssh/config" in src
+    assert "per-connection" in src
+    assert "help_group.set_description(" in src
+    assert "These settings override values from your ~/.ssh/config." not in src
