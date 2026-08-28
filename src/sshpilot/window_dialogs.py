@@ -1101,6 +1101,12 @@ class WindowConfigDialogsMixin:
                         return
                     result = p[1]
                     if result.status.value != 'success':
+                        # A refused export is reported like any other failure:
+                        # only raised exceptions used to reach the log, so a
+                        # failure the daemon returned as a result left none.
+                        logger.error(
+                            "Bitwarden export failed: %s", result.message or "no detail"
+                        )
                         msg = result.message or _("Bitwarden export failed.")
                         if result.warnings:
                             msg += "\n\n" + "\n\n".join(result.warnings)
@@ -1187,6 +1193,9 @@ class WindowConfigDialogsMixin:
                     return
                 result = p[1]
                 if result.status.value != 'success':
+                    logger.error(
+                        "SSH server export failed: %s", result.message or "no detail"
+                    )
                     self._simple_dialog(
                         _("Export Failed"), result.message or _("Export failed."))
                     return
@@ -1275,6 +1284,7 @@ class WindowConfigDialogsMixin:
                 return
             result = p[1]
             if result.status.value != 'success':
+                logger.error("Export failed: %s", result.message or "no detail")
                 self._simple_dialog(
                     _("Export Failed"),
                     result.message or _("Unknown error"))

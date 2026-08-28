@@ -1178,3 +1178,69 @@ def test_daemon_import_backup_fails_when_connection_store_restore_raises_for_pre
     )
 
     assert import_result.status == SecretOperationState.FAILED, import_result.message
+
+
+def test_bitwarden_export_refusal_is_logged_and_explains_itself(
+    monkeypatch, tmp_path, caplog
+):
+    """A backup too large for a Bitwarden note must leave a trace.
+
+    Every other export failure logs; this one was returned to the UI as a
+    result and logged nowhere, so a user who read "Export failed" and went to
+    the log found no record of the export at all.
+    """
+    import logging
+
+    import sshpilot.backup_backends as bb
+    from sshpilot.backup_backends import BackupTooLargeForNote
+
+    class _FakeBwHandle:
+        def is_available(self):
+            return True
+
+    class _FakeManager:
+        def get_backend(self, name):
+            return _FakeBwHandle() if name == "bitwarden" else None
+
+        def persists_secrets(self):
+            return True
+
+    class _RefusingBackend:
+        def __init__(self, bw, *, item_name=""):
+            pass
+
+    monkeypatch.setattr(bb, "BitwardenBackupBackend", _RefusingBackend)
+
+    def _refuse(self, backend, **_kwargs):
+        self.last_export_counts = {"credentials": 3, "private_keys": 2}
+        raise BackupTooLargeForNote(
+            "This backup is 14359 characters — larger than the Bitwarden note "
+            "limit (10000). Export to a .spbk file instead."
+        )
+
+    monkeypatch.setattr(bm.BackupManager, "export_to_backend", _refuse)
+
+    config_dir, _ssh_dir = _isolate_paths(monkeypatch, tmp_path)
+    config_file = config_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"config_version": CONFIG_VERSION, "ssh": {}}), encoding="utf-8"
+    )
+
+    with caplog.at_level(logging.WARNING, logger="sshpilot.daemon.secret_transfer"):
+        result = daemon_export_backup(
+            _FakeManager(),
+            destination="bitwarden",
+            options={"app_settings": True, "ssh_config": False, "known_hosts": False,
+                     "secrets": True, "private_keys": True},
+            connections_source=lambda: [],
+            settings_path=config_file,
+        )
+
+    assert result.status is SecretOperationState.FAILED
+    assert "14359" in result.message
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "14359" in logged
+    assert "3 credential(s), 2 private key(s)" in logged
+    # The counts reach the UI, and private keys are named as what to drop.
+    assert result.counts == {"credentials": 3, "private_keys": 2}
+    assert any("Private keys" in warning for warning in result.warnings)
