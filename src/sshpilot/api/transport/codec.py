@@ -170,6 +170,8 @@ from ..models.operations import (
     RemoteFileEntry,
     RemoteFileType,
     ServiceFailure,
+    SftpFailure,
+    SftpFailureCode,
     SftpChmodRequest,
     SftpCopyRequest,
     SftpCreateFileRequest,
@@ -3872,6 +3874,70 @@ def _service_failure_from_wire(value: Any) -> Optional[ServiceFailure]:
     )
 
 
+def _sftp_failure_to_wire(failure: Optional[SftpFailure]) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not SftpFailure:
+        raise TypeError("SFTP failure must be a SftpFailure or None")
+    return {
+        "kind": "sftp",
+        "code": failure.code.value,
+        "error_code": failure.error_code.value,
+        "parameters": dict(failure.parameters),
+        "diagnostic": failure.diagnostic,
+    }
+
+
+def _sftp_failure_from_wire(value: Any) -> Optional[SftpFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"kind", "code", "error_code", "parameters", "diagnostic"},
+        context="SFTP failure",
+    )
+    if data["kind"] != "sftp":
+        raise ValueError("SFTP failure contains an unknown kind")
+    try:
+        code = SftpFailureCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("SFTP failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(data["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("SFTP failure contains an unknown error code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("SFTP failure parameters must be an object")
+    return SftpFailure(
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "SFTP failure parameter name"): _text(
+                parameter, "SFTP failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            data["diagnostic"], "SFTP failure diagnostic", allow_empty=True
+        ),
+    )
+
+
+def _summary_failure_to_wire(failure: Any) -> Optional[Dict[str, Any]]:
+    if type(failure) is SftpFailure:
+        return _sftp_failure_to_wire(failure)
+    return _service_failure_to_wire(failure)
+
+
+def _summary_failure_from_wire(value: Any) -> Optional[Any]:
+    if value is None:
+        return None
+    if type(value) is dict and "kind" in value:
+        return _sftp_failure_from_wire(value)
+    return _service_failure_from_wire(value)
+
+
 def _optional_datetime_to_wire(value: Optional[datetime], context: str) -> Optional[str]:
     return _datetime_to_wire(value, context) if value is not None else None
 
@@ -3898,7 +3964,7 @@ def sftp_service_summary_to_wire(summary: SftpServiceSummary) -> Dict[str, Any]:
         "closed_at": _optional_datetime_to_wire(summary.closed_at, "SFTP service close time"),
         "attachment_count": summary.attachment_count,
         "owner_client_id": summary.owner_client_id,
-        "failure": _service_failure_to_wire(summary.failure),
+        "failure": _sftp_failure_to_wire(summary.failure),
     }
 
 
@@ -3933,7 +3999,7 @@ def sftp_service_summary_from_wire(value: Any) -> SftpServiceSummary:
         closed_at=_optional_datetime_from_wire(data["closed_at"], "SFTP service close time"),
         attachment_count=_integer(data["attachment_count"], "SFTP attachment count"),
         owner_client_id=_optional_client_id(data["owner_client_id"], "SFTP owner client id"),
-        failure=_service_failure_from_wire(data["failure"]),
+        failure=_sftp_failure_from_wire(data["failure"]),
     )
 
 
@@ -4473,7 +4539,7 @@ def transfer_summary_to_wire(summary: TransferSummary) -> Dict[str, Any]:
             summary.completed_at, "transfer completion time"
         ),
         "owner_client_id": summary.owner_client_id,
-        "failure": _service_failure_to_wire(summary.failure),
+        "failure": _summary_failure_to_wire(summary.failure),
     }
 
 
@@ -4532,7 +4598,7 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         started_at=_optional_datetime_from_wire(data["started_at"], "transfer start time"),
         completed_at=_optional_datetime_from_wire(data["completed_at"], "transfer completion time"),
         owner_client_id=_optional_client_id(data["owner_client_id"], "transfer owner client id"),
-        failure=_service_failure_from_wire(data["failure"]),
+        failure=_summary_failure_from_wire(data["failure"]),
     )
 
 
@@ -6247,7 +6313,7 @@ def operation_summary_to_wire(summary: Any) -> Dict[str, Any]:
         "finished_at": _optional_datetime_to_wire(summary.finished_at, "operation finish time"),
         "progress": summary.progress,
         "owner_client_id": summary.owner_client_id,
-        "failure": _service_failure_to_wire(summary.failure),
+        "failure": _summary_failure_to_wire(summary.failure),
         "result": _json_value(summary.result, "operation result"),
     }
 
@@ -6304,7 +6370,7 @@ def operation_summary_from_wire(value: Any) -> Any:
         finished_at=_optional_datetime_from_wire(data["finished_at"], "operation finish time"),
         progress=progress,
         owner_client_id=_optional_client_id(data["owner_client_id"], "operation owner client id"),
-        failure=_service_failure_from_wire(data["failure"]),
+        failure=_summary_failure_from_wire(data["failure"]),
         result=result,
     )
 

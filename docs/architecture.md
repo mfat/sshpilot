@@ -151,6 +151,14 @@ remain structured across RPC, while backend, filesystem, and SSH diagnostics
 stay in an opaque field. GTK owns gettext translation, plural selection,
 backup-section labels, and formatting; the daemon never selects UI text.
 
+SFTP lifecycle summaries, recursive-operation summaries, and SFTP-backed
+transfer summaries use the narrower `SftpFailure` contract: a stable
+presentation code, the existing machine error code, exact parameters, and an
+optional opaque diagnostic. GTK owns the gettext mapping and formats only
+after translation. The shared generic `ServiceFailure` remains unchanged for
+native SCP, identity operations, forwards, and broadcast results; this SFTP
+boundary does not impose a repository-wide error migration.
+
 Secret values, `BW_SESSION`, KDBX transformed keys, provider credentials,
 private keys, and backup manifests do not cross the ordinary public API. They
 are not ordinary DTO fields, events, logs, or diagnostics. GTK receives typed

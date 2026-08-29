@@ -18,6 +18,8 @@ pytest.importorskip("gi")
 from sshpilot import authorized_keys_window as win_mod
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.operations import (
+    SftpFailure,
+    SftpFailureCode,
     SftpFileTarget,
     SftpReadFileRequest,
     SftpReplaceFileRequest,
@@ -147,7 +149,12 @@ def test_remote_await_ready_polls_until_ready():
 def test_remote_await_ready_raises_on_failed():
     client = MagicMock()
     client.get_sftp_service.return_value = _summary(
-        SftpServiceState.FAILED, failure=SimpleNamespace(message="host unreachable")
+        SftpServiceState.FAILED,
+        failure=SftpFailure(
+            SftpFailureCode.CONNECTION_LOST,
+            ErrorCode.SFTP_PROTOCOL_LOST,
+            diagnostic="host unreachable",
+        ),
     )
     service = win_mod.DaemonAuthorizedKeysService(
         client, service_id="sftp:1", local=False
@@ -157,7 +164,9 @@ def test_remote_await_ready_raises_on_failed():
         service.await_ready().result(timeout=2)
 
     assert excinfo.value.code is ErrorCode.SFTP_SERVICE_NOT_READY
-    assert "host unreachable" in excinfo.value.message
+    assert excinfo.value.message == (
+        "The SFTP connection was lost\n\nhost unreachable"
+    )
 
 
 def test_remote_await_ready_times_out():

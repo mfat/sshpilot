@@ -11,6 +11,8 @@ from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
 from sshpilot.api.models.sessions import SessionExitInfo, SessionState, SessionSummary
 from sshpilot.connection_model import ConnectionState
 
+from .sftp_failure_messages import format_sftp_failure
+
 
 _SESSION_EVENTS = frozenset(
     {
@@ -274,7 +276,12 @@ class ConnectionRuntimeStatusStore:
         if terminal_outcomes:
             latest = max(terminal_outcomes, key=lambda record: record.created_at)
             if latest.failure is not None or cls._is_failed(latest):
-                reason = latest.failure.message if latest.failure is not None else ""
+                if latest.failure is None:
+                    reason = ""
+                elif isinstance(latest, SftpServiceSummary):
+                    reason = format_sftp_failure(latest.failure)
+                else:
+                    reason = latest.failure.message
                 return ConnectionRuntimeStatus(ConnectionState.FAILED, reason)
             exit_info = getattr(latest, "exit_info", None)
             reason = exit_info.reason if exit_info is not None else ""

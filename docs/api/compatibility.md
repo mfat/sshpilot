@@ -56,15 +56,15 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.47`. Version 0.47 replaces
-free-text backup/import result messages, warnings, and preview errors with
-strict `SecretTransferMessage` values and a typed `SecretTransferPreview`.
-A 0.46 client rejects the new fields under the strict field-set policy, while
-a 0.47 client requires them, so mismatched implementations are rejected during
-handshake before ordinary requests. Only the frontend maps codes to gettext
-msgids, chooses plurals, localizes stable backup-section labels, and formats
-parameters; opaque backend diagnostics remain unchanged. The 0.46 structured
-secret-status contract and 0.45 structured secret-prompt contract remain
+`API_IMPLEMENTATION_VERSION` is currently `0.49`. Version 0.49 replaces
+rendered SFTP lifecycle, recursive-operation, and upload/download summary
+failures with strict `SftpFailure` values. A 0.48 peer expects the generic
+`{code, message}` object in those fields, while a 0.49 peer requires the
+discriminated SFTP object, so mismatched implementations are rejected during
+handshake before ordinary requests. The generic `ServiceFailure` contract is
+unchanged for native SCP, identity operations, forwards, and broadcast
+results. Version 0.48 added plugin connection-editor data; the 0.47 structured
+backup/import, 0.46 secret-status, and 0.45 secret-prompt contracts remain
 unchanged.
 
 The earlier 0.40 compatibility boundary remains in force: clients never

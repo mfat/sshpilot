@@ -9,14 +9,31 @@ notes remain separate.
   presentation contract instead of transporting rendered English messages.
   GTK maps those codes to gettext messages and keeps an optional raw SFTP
   server diagnostic separate. The `ErrorData` shape and error-code inventory
-  are unchanged, so `API_IMPLEMENTATION_VERSION` remains `0.47`.
+  are unchanged, so that direct-error change required no API bump.
 - Daemon-only retirement repairs now preserve protected broadcast input
   registration, truthful operation-mode recovery, atomic reconnect publication,
   and cross-process shared-settings transactions. These are implementation
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.48 (current)
+## API 0.49 (current)
+
+### API 0.49 structured SFTP summary failures
+
+- Bumped `API_IMPLEMENTATION_VERSION` because SFTP lifecycle, recursive
+  operation, and upload/download summaries now carry `SftpFailure` instead of
+  a rendered English `ServiceFailure`. The strict SFTP wire object contains a
+  stable presentation code, the existing machine `ErrorCode`, validated
+  parameters, and an optional opaque server diagnostic.
+- GTK maps `SftpFailureCode` values to gettext msgids, translates before
+  formatting parameters, and appends diagnostics unchanged. SFTP producers do
+  not call gettext and no dynamic path or server diagnostic becomes a msgid.
+- The generic `ServiceFailure` model and its `{code, message}` wire shape remain
+  unchanged for native SCP transfers, identity operations, forwards, and
+  broadcast command results. Transfer backend and operation kind select the
+  permitted failure model, preventing accidental cross-domain payloads.
+
+## API 0.48
 
 ### API 0.48 plugin connection editor data
 

@@ -10,6 +10,7 @@ from sshpilot.api.models.operations import (
     ListDirectoryRequest,
     OpenSftpRequest,
     SftpCopyRequest,
+    SftpFailureCode,
     SftpPathRequest,
     SftpServiceState,
 )
@@ -513,7 +514,8 @@ def test_unexpected_process_exit_fails_ready_service_without_an_operation():
     failed = [event for event in events if event.type is EventType.SFTP_FAILED]
     assert len(failed) == 1
     assert failed[0].payload.failure is not None
-    assert failed[0].payload.failure.code == ErrorCode.SFTP_PROTOCOL_LOST.value
+    assert failed[0].payload.failure.code is SftpFailureCode.CONNECTION_LOST
+    assert failed[0].payload.failure.error_code is ErrorCode.SFTP_PROTOCOL_LOST
 
 
 def test_process_exit_during_close_does_not_fail_the_service():
@@ -583,7 +585,10 @@ def test_connection_lost_status_fails_service_with_specific_message():
     }
     failed = runtime.get_service(summary.id)
     assert failed.state is SftpServiceState.FAILED
-    assert failed.failure.message == "The SFTP connection was lost"
+    assert failed.failure.code is SftpFailureCode.CONNECTION_LOST
+    assert failed.failure.error_code is ErrorCode.SFTP_PROTOCOL_LOST
+    # This stock protocol phrase is not a server-specific diagnostic.
+    assert failed.failure.diagnostic == ""
 
 
 def test_permission_denied_status_keeps_service_ready():

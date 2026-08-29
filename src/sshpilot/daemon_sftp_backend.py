@@ -43,6 +43,7 @@ from .api.models.transfers import (
 from .file_manager.common import FileEntry
 from .file_manager.exceptions import TransferCancelledException
 from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.sftp_failure_messages import format_sftp_failure
 from .sftp_service_controller import (
     DaemonSftpServiceController,
     SftpControllerState,
@@ -861,7 +862,11 @@ class DaemonSftpManager(GObject.GObject):
             self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
         else:
             failure = summary.failure
-            message = failure.message if failure is not None else "Transfer failed"
+            message = (
+                format_sftp_failure(failure)
+                if failure is not None
+                else "Transfer failed"
+            )
             self._safe_set(future, exc=OSError(message))
 
     @staticmethod

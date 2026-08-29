@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.48",
+  "api_implementation_version": "0.49",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1513,6 +1513,44 @@
       "exited",
       "failed",
       "closed"
+    ],
+    "SftpFailureCode": [
+      "session_establishment_failed",
+      "connection_lost",
+      "command_queue_full",
+      "process_termination_failed",
+      "service_not_found",
+      "service_not_ready",
+      "service_owner_required",
+      "path_not_found",
+      "permission_denied",
+      "unsupported_operation",
+      "command_failed",
+      "directory_size_requires_real_directory",
+      "directory_cannot_be_copied_into_itself",
+      "recursive_copy_symlink_unsupported",
+      "destination_already_exists",
+      "recursive_copy_required",
+      "recursive_copy_requires_directory_source",
+      "operation_failed_unexpectedly",
+      "transfer_start_failed",
+      "transfer_queue_full",
+      "transfer_failed",
+      "local_source_file_not_found",
+      "local_source_directory_not_found",
+      "recursive_upload_symlink_unsupported",
+      "local_source_not_directory",
+      "remote_source_directory_unreadable",
+      "recursive_download_symlink_unsupported",
+      "remote_source_not_directory",
+      "local_destination_directory_creation_failed",
+      "remote_file_blocks_directory",
+      "remote_directory_creation_failed",
+      "local_destination_exists",
+      "remote_destination_exists",
+      "no_free_local_filename",
+      "no_free_remote_filename",
+      "daemon_shutting_down"
     ],
     "SftpFileAccess": [
       "normal",
@@ -5054,7 +5092,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[ServiceFailure]"
+          "type": "Optional[Union[ServiceFailure, SftpFailure]]"
         },
         {
           "default": null,
@@ -6354,6 +6392,39 @@
       ],
       "status": "Schema only"
     },
+    "SftpFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "SftpFailureCode"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
     "SftpPathRequest": {
       "fields": [
         {
@@ -6657,7 +6728,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[ServiceFailure]"
+          "type": "Optional[SftpFailure]"
         }
       ],
       "status": "Implemented"
@@ -7224,7 +7295,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[ServiceFailure]"
+          "type": "Optional[Union[ServiceFailure, SftpFailure]]"
         },
         {
           "default": null,

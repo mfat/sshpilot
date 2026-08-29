@@ -20,7 +20,7 @@ import signal
 import threading
 import time
 from collections import OrderedDict, deque
-from typing import Callable, Deque, Dict, Optional, Tuple
+from typing import Callable, Deque, Dict, Optional, Tuple, Union
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.logging_support import log_context
@@ -32,6 +32,7 @@ from sshpilot.api.models.operations import (
     OperationState,
     OperationSummary,
     ServiceFailure,
+    SftpFailure,
     is_terminal_operation_state,
     is_valid_operation_transition,
 )
@@ -79,6 +80,8 @@ class OperationHandle:
 
 
 OperationBody = Callable[[OperationHandle], str]
+OperationFailure = Union[ServiceFailure, SftpFailure]
+OperationFailureMapper = Callable[[BaseException], OperationFailure]
 
 
 class OperationRuntime:
@@ -98,6 +101,7 @@ class OperationRuntime:
         self._records: Dict[OperationId, OperationSummary] = {}
         self._terminal_records: "OrderedDict[OperationId, None]" = OrderedDict()
         self._bodies: Dict[OperationId, OperationBody] = {}
+        self._failure_mappers: Dict[OperationId, OperationFailureMapper] = {}
         self._threads: Dict[OperationId, threading.Thread] = {}
         self._thread_started: set[OperationId] = set()
         self._cancel_requested: Dict[OperationId, bool] = {}
@@ -124,12 +128,15 @@ class OperationRuntime:
         connection_id: Optional[ConnectionId] = None,
         owner_client_id: Optional[ClientId] = None,
         message: str = "",
+        failure_mapper: Optional[OperationFailureMapper] = None,
     ) -> OperationSummary:
         """Register and queue one operation; return its initial summary."""
         if not isinstance(kind, OperationKind):
             raise TypeError("operation kind must be an OperationKind")
         if not callable(body):
             raise TypeError("operation body must be callable")
+        if failure_mapper is not None and not callable(failure_mapper):
+            raise TypeError("operation failure mapper must be callable or None")
         operation_id = OperationId(new_operation_id())
         with self._condition:
             if self._closed:
@@ -149,6 +156,8 @@ class OperationRuntime:
             )
             self._records[operation_id] = summary
             self._bodies[operation_id] = body
+            if failure_mapper is not None:
+                self._failure_mappers[operation_id] = failure_mapper
             self._cancel_requested[operation_id] = False
             thread = threading.Thread(
                 target=self._run_operation,
@@ -377,6 +386,7 @@ class OperationRuntime:
     def _run_operation(self, operation_id: OperationId) -> None:
         with self._condition:
             body = self._bodies.get(operation_id)
+            failure_mapper = self._failure_mappers.get(operation_id)
             summary = self._records.get(operation_id)
             if body is None or summary is None or is_terminal_operation_state(summary.state):
                 self._cleanup_worker_locked(operation_id)
@@ -456,16 +466,22 @@ class OperationRuntime:
                     "The operation was cancelled",
                 )
             else:
+                if failure_mapper is not None:
+                    failure = failure_mapper(error)
+                    message = ""
+                else:
+                    failure = ServiceFailure(
+                        code=error.code.value,
+                        message=_sanitize_message(error.message),
+                    )
+                    message = error.message
                 self._finish_from_worker(
                     operation_id,
                     OperationState.FAILED,
-                    error.message,
-                    failure=ServiceFailure(
-                        code=error.code.value,
-                        message=_sanitize_message(error.message),
-                    ),
+                    message,
+                    failure=failure,
                 )
-        except Exception:
+        except Exception as error:
             with log_context(
                 operation=operation_id,
                 client=summary.owner_client_id,
@@ -479,14 +495,20 @@ class OperationRuntime:
                     "The operation was cancelled",
                 )
             else:
+                if failure_mapper is not None:
+                    failure = failure_mapper(error)
+                    message = ""
+                else:
+                    failure = ServiceFailure(
+                        code=ErrorCode.INTERNAL_ERROR.value,
+                        message="The operation failed unexpectedly",
+                    )
+                    message = "The operation failed unexpectedly"
                 self._finish_from_worker(
                     operation_id,
                     OperationState.FAILED,
-                    "The operation failed unexpectedly",
-                    failure=ServiceFailure(
-                        code=ErrorCode.INTERNAL_ERROR.value,
-                        message="The operation failed unexpectedly",
-                    ),
+                    message,
+                    failure=failure,
                 )
         finally:
             with self._condition:
@@ -498,7 +520,7 @@ class OperationRuntime:
         target: OperationState,
         message: str,
         *,
-        failure: Optional[ServiceFailure] = None,
+        failure: Optional[OperationFailure] = None,
     ) -> None:
         with self._condition:
             summary = self._records.get(operation_id)
@@ -527,7 +549,7 @@ class OperationRuntime:
         target: OperationState,
         message: str,
         *,
-        failure: Optional[ServiceFailure] = None,
+        failure: Optional[OperationFailure] = None,
     ) -> OperationSummary:
         if not is_valid_operation_transition(summary.state, target):
             return summary
@@ -572,6 +594,7 @@ class OperationRuntime:
 
     def _cleanup_worker_locked(self, operation_id: OperationId) -> None:
         self._bodies.pop(operation_id, None)
+        self._failure_mappers.pop(operation_id, None)
         self._threads.pop(operation_id, None)
         self._thread_started.discard(operation_id)
         self._cancel_requested.pop(operation_id, None)

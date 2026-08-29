@@ -47,6 +47,7 @@ from .api.models.operations import (
     is_terminal_operation_state,
 )
 from .api.transport.codec import sftp_directory_size_result_from_wire
+from .gtk.sftp_failure_messages import format_sftp_failure
 
 logger = logging.getLogger(__name__)
 
@@ -840,7 +841,11 @@ class DaemonSftpServiceController:
             # client closed a shared/reused service), so it must be
             # surfaced the same way a FAILED event is.
             if summary.state is SftpServiceState.FAILED:
-                message = summary.failure.message if summary.failure else "SFTP failed"
+                message = (
+                    format_sftp_failure(summary.failure)
+                    if summary.failure
+                    else "SFTP failed"
+                )
             else:
                 message = "The SFTP service was closed"
             logger.warning(
@@ -1042,10 +1047,12 @@ class DaemonSftpServiceController:
                 ErrorCode.OPERATION_CANCELLED,
                 summary.message or "The operation was cancelled",
             )
-        message = (
-            summary.failure.message if summary.failure else summary.message
-        ) or "The operation failed"
-        code = summary.failure.code if summary.failure else ErrorCode.SFTP_COMMAND_FAILED.value
+        if summary.failure is not None:
+            message = format_sftp_failure(summary.failure)
+            code = summary.failure.error_code
+        else:
+            message = summary.message or "The operation failed"
+            code = ErrorCode.SFTP_COMMAND_FAILED
         try:
             return SshPilotError(ErrorCode(code), message)
         except (TypeError, ValueError):
