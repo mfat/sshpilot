@@ -14,6 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Any, Optional, Tuple, List
 
+from .api.models.secrets import (
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+)
 from .platform.paths import get_config_dir, get_ssh_dir
 from .core.settings import CONFIG_VERSION
 from .platform.locking import settings_transaction_lock
@@ -43,6 +47,19 @@ DEFAULT_BACKUP_OPTIONS = {
     'secrets': True,
     'private_keys': False,
 }
+
+
+def _transfer_message(
+    code: SecretTransferMessageCode,
+    *,
+    parameters: Optional[Dict[str, object]] = None,
+    diagnostic: str = "",
+) -> SecretTransferMessage:
+    return SecretTransferMessage(
+        code=code,
+        parameters=dict(parameters or {}),
+        diagnostic=diagnostic,
+    )
 
 # Settings that record what this machine is *doing*, not what the user has
 # chosen. They are dropped on the way into a backup and kept local on the way
@@ -375,7 +392,11 @@ class BackupManager:
         self.last_import_skipped_keys = 0   # existing keys left untouched on the last import
         self.last_import_skipped_credentials = 0  # secrets already present, left untouched
         # Non-fatal diagnostics from the last connection-store restore, if any.
-        self.last_connection_store_warnings: List[str] = []
+        self.last_connection_store_warnings: List[SecretTransferMessage] = []
+        # Structured presentation for the most recent failed transfer. Legacy
+        # callers still receive their historical string tuple; daemon RPC uses
+        # this value and never transports that rendered string.
+        self.last_transfer_message: Optional[SecretTransferMessage] = None
         # False when the last restore targeted a backend that does not persist secrets
         # (the "agent"/don't-store backend), so the UI can say so instead of claiming success.
         self.last_import_secrets_persisted = True
@@ -708,6 +729,7 @@ class BackupManager:
                       passphrase: Optional[str] = None,
                       options: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[str]]:
         """Export a ``.spbk`` backup with user-selected config and secret categories."""
+        self.last_transfer_message = None
         try:
             from .backup_archive import write_spbk
             manifest = self._build_manifest(connections, options)
@@ -718,6 +740,10 @@ class BackupManager:
             return True, None
         except Exception as e:
             error_msg = f"Failed to export backup: {e}"
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.BACKUP_EXPORT_FAILED,
+                diagnostic=str(e),
+            )
             logger.error(error_msg)
             return False, error_msg
 
@@ -798,10 +824,15 @@ class BackupManager:
         Returns:
             Tuple of (success, error_message)
         """
+        self.last_transfer_message = None
         try:
             # Validate import file
             import_path = os.path.expanduser(import_path)
             if not os.path.exists(import_path):
+                self.last_transfer_message = _transfer_message(
+                    SecretTransferMessageCode.BACKUP_FILE_NOT_FOUND,
+                    parameters={"source": import_path},
+                )
                 return False, f"Import file not found: {import_path}"
 
             # Load import data
@@ -809,6 +840,10 @@ class BackupManager:
                 with open(import_path, encoding='utf-8') as f:
                     import_data = json.load(f)
             except json.JSONDecodeError as e:
+                self.last_transfer_message = _transfer_message(
+                    SecretTransferMessageCode.INVALID_JSON_FILE,
+                    diagnostic=str(e),
+                )
                 return False, f"Invalid JSON file: {e}"
 
             # The legacy JSON path restores config only. Record any embedded secrets/keys it will
@@ -828,6 +863,10 @@ class BackupManager:
 
         except Exception as e:
             error_msg = f"Failed to import configuration: {e}"
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.CONFIGURATION_IMPORT_FAILED,
+                diagnostic=str(e),
+            )
             logger.error(error_msg)
             return False, error_msg
 
@@ -900,7 +939,11 @@ class BackupManager:
                     logger.error(f"Failed to restore connection store: {e}")
                     success = False
                     error = f"Could not restore non-SSH connections/groups/metadata: {e}"
-                    self.last_connection_store_warnings = [error]
+                    self.last_transfer_message = _transfer_message(
+                        SecretTransferMessageCode.CONNECTION_STORE_RESTORE_FAILED,
+                        diagnostic=str(e),
+                    )
+                    self.last_connection_store_warnings = []
 
         if success and self.connection_manager:
             try:
@@ -1042,6 +1085,7 @@ class BackupManager:
                                 ) -> Tuple[bool, Optional[str], int, int]:
         """Apply a decrypted ``.spbk`` manifest: config (replace/merge) **and** restore its
         credentials/private keys. The caller owns passphrase and option prompts."""
+        self.last_transfer_message = None
         effective_options = self._restore_options_for_manifest(manifest, restore_options)
         success, error = self._apply_parsed(
             manifest, mode, create_backup, restore_options=effective_options)
@@ -1061,6 +1105,9 @@ class BackupManager:
     def _validate_import_data(self, data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
         """Validate import data structure via core import/export policy."""
         if not isinstance(data, dict):
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.IMPORT_DATA_NOT_OBJECT
+            )
             return False, "Import data must be a JSON object"
 
         # The version has to be read from the payload itself, before migration.
@@ -1072,8 +1119,15 @@ class BackupManager:
         # ``schema_version`` is honoured as the same alias migration accepts.
         version = data.get('version', data.get('schema_version'))
         if version is None:
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.IMPORT_VERSION_MISSING
+            )
             return False, "Missing 'version' field in import data"
         if not isinstance(version, int) or version > BACKUP_VERSION:
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.BACKUP_VERSION_UNSUPPORTED,
+                parameters={"version": str(version)},
+            )
             return False, f"Unsupported backup version: {version}"
 
         try:
@@ -1082,22 +1136,73 @@ class BackupManager:
 
             migrate_payload(data)
         except CoreError as exc:
+            reason_codes = {
+                "payload_not_mapping": SecretTransferMessageCode.IMPORT_DATA_NOT_OBJECT,
+                "schema_version_unsupported": (
+                    SecretTransferMessageCode.SCHEMA_VERSION_UNSUPPORTED
+                ),
+            }
+            reason = str(exc.details.get("reason") or "")
+            code = reason_codes.get(reason)
+            if code is not None:
+                parameters = (
+                    {"version": str(exc.details.get("version"))}
+                    if "version" in exc.details
+                    else {}
+                )
+                self.last_transfer_message = _transfer_message(
+                    code, parameters=parameters
+                )
+            else:
+                self.last_transfer_message = _transfer_message(
+                    SecretTransferMessageCode.CONFIGURATION_IMPORT_FAILED,
+                    diagnostic=str(exc.message or exc),
+                )
             return False, str(exc.message or exc)
         except Exception as exc:
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.CONFIGURATION_IMPORT_FAILED,
+                diagnostic=str(exc),
+            )
             return False, str(exc)
 
         # Check required fields. New .spbk files may intentionally omit settings,
         # but legacy JSON imports still require an app config section.
         if 'app_config' not in data:
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.APP_CONFIG_MISSING
+            )
             return False, "Missing 'app_config' field in import data"
 
         if not isinstance(data['app_config'], dict):
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.APP_CONFIG_NOT_OBJECT
+            )
             return False, "'app_config' must be a JSON object"
 
         # Structural connection checks (when present) via core planner.
         if data.get('connections') is not None or data.get('hosts') is not None:
             plan = plan_import(data)
             if not plan.ok and plan.errors:
+                reason_codes = {
+                    "connections_not_list": (
+                        SecretTransferMessageCode.CONNECTIONS_NOT_LIST
+                    ),
+                    "connection_entry_not_mapping": (
+                        SecretTransferMessageCode.CONNECTION_ENTRY_NOT_OBJECT
+                    ),
+                    "connection_nickname_required": (
+                        SecretTransferMessageCode.CONNECTION_NICKNAME_REQUIRED
+                    ),
+                    "connection_nickname_whitespace": (
+                        SecretTransferMessageCode.CONNECTION_NICKNAME_WHITESPACE
+                    ),
+                }
+                code = reason_codes.get(plan.errors[0].reason)
+                self.last_transfer_message = _transfer_message(
+                    code or SecretTransferMessageCode.CONFIGURATION_IMPORT_FAILED,
+                    diagnostic=("" if code is not None else plan.errors[0].message),
+                )
                 return False, plan.errors[0].message
 
         # Warn about platform/mode differences (but don't fail)
@@ -1235,6 +1340,10 @@ class BackupManager:
 
         except Exception as e:
             error_msg = f"Failed to replace configuration: {e}"
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.CONFIGURATION_REPLACE_FAILED,
+                diagnostic=str(e),
+            )
             logger.error(error_msg)
             return False, error_msg
 
@@ -1280,6 +1389,10 @@ class BackupManager:
 
         except Exception as e:
             error_msg = f"Failed to merge configuration: {e}"
+            self.last_transfer_message = _transfer_message(
+                SecretTransferMessageCode.CONFIGURATION_MERGE_FAILED,
+                diagnostic=str(e),
+            )
             logger.error(error_msg)
             return False, error_msg
 

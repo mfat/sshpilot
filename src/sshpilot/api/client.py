@@ -81,6 +81,7 @@ from .models.secrets import (
     SecretBackendState,
     SecretConfiguration,
     SecretOperationResult,
+    SecretTransferPreview,
     SecretTransferResult,
     SecretUnlockResult,
     UpdateSecretConfigurationRequest,
@@ -737,10 +738,10 @@ class SshPilotClient(Protocol):
     ) -> SecretTransferResult:
         ...
 
-    def preview_backup(self, *, source: str) -> Dict[str, Any]:
+    def preview_backup(self, *, source: str) -> SecretTransferPreview:
         ...
 
-    def preview_bitwarden_backup(self, *, entry_id: str) -> Dict[str, Any]:
+    def preview_bitwarden_backup(self, *, entry_id: str) -> SecretTransferPreview:
         ...
 
     def preview_ssh_backup(
@@ -749,7 +750,7 @@ class SshPilotClient(Protocol):
         connection_id: str,
         remote_dir: str,
         entry_id: str,
-    ) -> Dict[str, Any]:
+    ) -> SecretTransferPreview:
         ...
 
     def list_bitwarden_backups(self) -> List[Dict[str, str]]:

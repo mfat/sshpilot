@@ -2183,17 +2183,23 @@ class DaemonClient:
             {"source": source},
             request_timeout=SECRET_INTERACTION_REQUEST_TIMEOUT,
         )
-        if not isinstance(result, dict):
+        try:
+            from sshpilot.api.transport.codec import secret_transfer_preview_from_wire
+
+            return secret_transfer_preview_from_wire(result)
+        except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid backup preview")
-        return result
 
     def preview_bitwarden_backup(self, *, entry_id: str):
         """Inspect one Bitwarden backup note: included categories (metadata only)."""
         self._require_capability(Capability.SECRETS_TRANSFER)
         result = self._request("secrets.transfer.preview_bitwarden", {"entry_id": entry_id})
-        if not isinstance(result, dict):
+        try:
+            from sshpilot.api.transport.codec import secret_transfer_preview_from_wire
+
+            return secret_transfer_preview_from_wire(result)
+        except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid Bitwarden preview")
-        return result
 
     def preview_ssh_backup(self, *, connection_id: str, remote_dir: str, entry_id: str):
         """Inspect one SSH-stored backup: included categories (metadata only)."""
@@ -2206,9 +2212,12 @@ class DaemonClient:
                 "entry_id": entry_id,
             },
         )
-        if not isinstance(result, dict):
+        try:
+            from sshpilot.api.transport.codec import secret_transfer_preview_from_wire
+
+            return secret_transfer_preview_from_wire(result)
+        except (TypeError, ValueError):
             self._fail_protocol("The daemon returned an invalid SSH preview")
-        return result
 
     def list_bitwarden_backups(self):
         """List Bitwarden backup-note metadata (id/name/date only)."""

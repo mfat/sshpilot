@@ -44,6 +44,9 @@ from sshpilot.api.models.secrets import (
     SecretMessageCode,
     SecretOperationResult,
     SecretOperationState,
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+    SecretTransferPreview,
     SecretTransferResult,
     SecretUnlockResult,
     UnlockResultKind,
@@ -1176,10 +1179,10 @@ class SecretBackendService:
                 timeout=DEFAULT_BACKUP_ENCRYPTION_INTERACTION_TIMEOUT,
             )
             if prompt is None:
-                message = (
-                    "Encryption password request timed out"
+                message_code = (
+                    SecretTransferMessageCode.ENCRYPTION_REQUEST_TIMED_OUT
                     if state is InteractionState.EXPIRED
-                    else "Encryption cancelled"
+                    else SecretTransferMessageCode.ENCRYPTION_CANCELLED
                 )
                 return SecretTransferResult(
                     operation="export",
@@ -1187,7 +1190,7 @@ class SecretBackendService:
                     counts={},
                     warnings=(),
                     status=SecretOperationState.INTERACTION_REQUIRED,
-                    message=message,
+                    message=SecretTransferMessage(message_code),
                 )
             passphrase = prompt.decode("utf-8", "replace")
             _clear_secret(prompt)
@@ -1220,7 +1223,7 @@ class SecretBackendService:
         source: str,
         options: Optional[Dict[str, Any]] = None,
         owner_client_id,
-    ) -> Dict[str, Any]:
+    ) -> SecretTransferPreview:
         """Inspect a backup file: kind, encryption flag, and included categories.
 
         Metadata only — the frontend uses it to build the import-mode dialog.
@@ -1238,7 +1241,7 @@ class SecretBackendService:
             if manifest is not None:
                 self._cache_manifest(self._manifest_key("file", source), manifest)
                 return public
-            if not public.get("encrypted") or public.get("error"):
+            if not public.encrypted or public.error is not None:
                 return public
 
         # The passphrase interaction runs without the service lock: holding it
@@ -1250,7 +1253,14 @@ class SecretBackendService:
             owner_client_id=owner_client_id,
         )
         if prompt is None:
-            return {**public, "error": "Decryption cancelled"}
+            return SecretTransferPreview(
+                kind=public.kind,
+                encrypted=public.encrypted,
+                included=public.included,
+                error=SecretTransferMessage(
+                    SecretTransferMessageCode.DECRYPTION_CANCELLED
+                ),
+            )
         passphrase = prompt.decode("utf-8", "replace")
         _clear_secret(prompt)
 
@@ -1271,7 +1281,7 @@ class SecretBackendService:
         *,
         entry_id: str,
         options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> SecretTransferPreview:
         """Preview one Bitwarden backup note: included categories (metadata only)."""
         with self._lock:
             config = self._load_strict()
@@ -1292,7 +1302,7 @@ class SecretBackendService:
         remote_dir: str,
         entry_id: str,
         options: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> SecretTransferPreview:
         """Preview one SSH-stored backup: included categories (metadata only)."""
         with self._lock:
             config = self._load_strict()
@@ -1361,7 +1371,9 @@ class SecretBackendService:
                         counts={},
                         warnings=(),
                         status=SecretOperationState.INTERACTION_REQUIRED,
-                        message="Decryption cancelled",
+                        message=SecretTransferMessage(
+                            SecretTransferMessageCode.DECRYPTION_CANCELLED
+                        ),
                     )
                 passphrase = prompt.decode("utf-8", "replace")
                 _clear_secret(prompt)
@@ -1383,7 +1395,9 @@ class SecretBackendService:
             if (
                 result.status is SecretOperationState.FAILED
                 and passphrase is not None
-                and "passphrase" in (result.message or "").lower()
+                and result.message is not None
+                and result.message.code
+                is SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
                 and not last_attempt
             ):
                 passphrase = None

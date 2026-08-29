@@ -145,6 +145,12 @@ an optional opaque backend diagnostic. GTK translates the local template at
 display time and appends diagnostics unchanged. No rendered UI sentence is a
 daemon/API identifier.
 
+Backup/import results and previews use `SecretTransferMessageCode` and
+`SecretTransferMessage` for the same reason. Parameters and ordered warnings
+remain structured across RPC, while backend, filesystem, and SSH diagnostics
+stay in an opaque field. GTK owns gettext translation, plural selection,
+backup-section labels, and formatting; the daemon never selects UI text.
+
 Secret values, `BW_SESSION`, KDBX transformed keys, provider credentials,
 private keys, and backup manifests do not cross the ordinary public API. They
 are not ordinary DTO fields, events, logs, or diagnostics. GTK receives typed

@@ -12,6 +12,10 @@ import threading
 import time
 from types import SimpleNamespace
 
+from sshpilot.api.models.secrets import (
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+)
 from sshpilot.window_dialogs import WindowConfigDialogsMixin
 
 
@@ -202,7 +206,9 @@ def test_local_export_reports_encryption_timeout_message(monkeypatch):
         def export_backup(self, **kwargs):
             return SimpleNamespace(
                 status=SimpleNamespace(value="interaction_required"),
-                message="Encryption password request timed out",
+                message=SecretTransferMessage(
+                    code=SecretTransferMessageCode.ENCRYPTION_REQUEST_TIMED_OUT,
+                ),
                 counts={}, warnings=())
 
     monkeypatch.setattr("sshpilot.window_dialogs.threading.Thread", Thread)

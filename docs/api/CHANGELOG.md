@@ -11,7 +11,24 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.46 (current)
+## API 0.47 (current)
+
+### API 0.47 structured backup/import presentation
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `SecretTransferResult` now
+  carries structured `SecretTransferMessage` values for its primary message
+  and ordered warnings instead of rendered strings, and backup preview methods
+  now return a strict `SecretTransferPreview` rather than an untyped mapping.
+- Backup/import producers return stable `SecretTransferMessageCode` values,
+  validated JSON-safe parameters, and optional opaque diagnostics. Dynamic
+  backup-section identifiers remain stable data and are mapped to localized
+  labels only by GTK.
+- GTK selects gettext templates, applies plural rules where counts affect the
+  sentence, formats parameters after translation, and appends diagnostics
+  unchanged. Backup, import, Bitwarden-note, SSH-server-backup, validation, and
+  connection-store restore messages share this presentation boundary.
+
+## Historical API entries
 
 ### API 0.46 structured secret status presentation
 
@@ -29,8 +46,6 @@ notes remain separate.
   diagnostic without translating it. Backend-unavailable `SshPilotError`
   envelopes use `secret_backend_unavailable` plus a structured backend value
   instead of a rendered English sentence.
-
-## Historical API entries
 
 ### API 0.45 structured secret prompt presentation
 

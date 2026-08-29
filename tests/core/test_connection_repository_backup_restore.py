@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import conftest  # noqa: F401  (installs the GI stub)
 
+from sshpilot.api.models.secrets import SecretTransferMessageCode  # noqa: E402
 from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
@@ -310,7 +311,9 @@ def test_restore_connection_store_ignores_future_version_section(tmp_path):
     result = repo.restore_connection_store(section, mode="merge")
 
     assert repo.snapshot() == before
-    assert result.warnings
+    assert [warning.code for warning in result.warnings] == [
+        SecretTransferMessageCode.CONNECTION_STORE_VERSION_UNSUPPORTED
+    ]
 
 
 def test_restore_connection_store_rejects_invalid_structure_and_does_not_mutate(tmp_path):
@@ -585,7 +588,12 @@ def test_restore_connection_store_warns_on_missing_group_member_reference(tmp_pa
 
     result = repo.restore_connection_store(section, mode="merge")
 
-    assert any("ghost-ssh" in w for w in result.warnings)
+    assert any(
+        warning.code
+        is SecretTransferMessageCode.RESTORED_GROUP_CONNECTION_MISSING
+        and warning.parameters["connection"] == "ghost-ssh"
+        for warning in result.warnings
+    )
     snap = repo.snapshot()
     group = next(g for g in snap.groups if g.name == "G")
     assert group.connection_ids == ()
@@ -613,7 +621,11 @@ def test_restore_connection_store_warns_on_missing_root_reference(tmp_path):
 
     result = repo.restore_connection_store(section, mode="merge")
 
-    assert any("ghost-ssh" in w for w in result.warnings)
+    assert any(
+        warning.code is SecretTransferMessageCode.BACKUP_ROOT_CONNECTION_MISSING
+        and warning.parameters["connection"] == "ghost-ssh"
+        for warning in result.warnings
+    )
     assert repo.snapshot().root_connection_ids == ()
 
 
