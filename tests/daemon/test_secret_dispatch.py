@@ -101,7 +101,7 @@ def _dispatcher(*, with_service=True):
         )
         service.bitwarden_status.return_value = BitwardenStatus(
             logged_in=False, unlocked=False, needs_login=True, email="",
-            server_url="", profile="", twofa_required=False, message="",
+            server_url="", profile="", twofa_required=False,
         )
     return RequestDispatcher(connections, secrets_service=service), service
 
@@ -727,7 +727,7 @@ def test_secret_unlock_result_wire_roundtrip():
     from sshpilot.api.models.secrets import SecretUnlockResult, UnlockResultKind
 
     result = SecretUnlockResult(
-        kind=UnlockResultKind.UNLOCKED, backend="bitwarden", message=""
+        kind=UnlockResultKind.UNLOCKED, backend="bitwarden"
     )
     wire = secret_unlock_result_to_wire(result)
     assert secret_unlock_result_from_wire(wire) == result
@@ -739,7 +739,6 @@ def test_secret_operation_result_wire_roundtrip():
     result = SecretOperationResult(
         state=SecretOperationState.SUCCESS,
         backend="keepassxc",
-        message="",
     )
     wire = secret_operation_result_to_wire(result)
     assert secret_operation_result_from_wire(wire) == result
@@ -874,7 +873,6 @@ def test_real_daemon_login_params_are_identifiers_only(tmp_path):
             # safe and the wire request carried only the email identifier.
             assert status.email == "alice@example.com"
             assert status.needs_login is True
-            assert SENTINEL not in status.message
             assert SENTINEL not in json.dumps(status.to_dict())
         finally:
             client.close()

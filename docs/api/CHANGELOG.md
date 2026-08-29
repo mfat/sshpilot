@@ -11,7 +11,26 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.45 (current)
+## API 0.46 (current)
+
+### API 0.46 structured secret status presentation
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `SecretUnlockResult`,
+  `SecretOperationResult`, `BitwardenStatus`, and `RbwStatus` replace their
+  free-text `message` field with required `message_code`,
+  `message_parameters`, and `diagnostic` fields. Strict 0.45 decoders reject
+  the new shape, while strict 0.46 decoders require it.
+- Secret lifecycle producers now return stable `SecretMessageCode` values and
+  validated non-secret parameters. Diagnostics returned by external tools such
+  as `bw` remain unmodified in the separate `diagnostic` field and are never
+  parsed as machine contracts.
+- GTK maps only user-visible secret result codes to gettext msgids, translates
+  at display time, formats parameters afterward, and appends any external
+  diagnostic without translating it. Backend-unavailable `SshPilotError`
+  envelopes use `secret_backend_unavailable` plus a structured backend value
+  instead of a rendered English sentence.
+
+## Historical API entries
 
 ### API 0.45 structured secret prompt presentation
 
@@ -27,8 +46,6 @@ notes remain separate.
   time, and formats the validated parameters afterward. Ordinary SSH password
   prompts retain their existing username/hostname contract and carry a null
   prompt kind with an empty parameter object.
-
-## Historical API entries
 
 ### API 0.44 clearable connection port
 

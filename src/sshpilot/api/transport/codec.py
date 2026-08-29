@@ -5653,22 +5653,50 @@ def secret_unlock_result_to_wire(result: Any) -> Dict[str, Any]:
     return result.to_dict()
 
 
+def _secret_message_from_wire(data: Mapping[str, Any]) -> tuple[Any, Dict[str, str], str]:
+    from ..models.secrets import SecretMessageCode
+
+    raw_code = data["message_code"]
+    if raw_code is None:
+        message_code = None
+    else:
+        if type(raw_code) is not str or raw_code not in SecretMessageCode._value2member_map_:
+            raise ValueError("message_code is not a valid secret message code")
+        message_code = SecretMessageCode(raw_code)
+    raw_parameters = data["message_parameters"]
+    if type(raw_parameters) is not dict or not all(
+        type(key) is str and type(item) is str
+        for key, item in raw_parameters.items()
+    ):
+        raise ValueError("secret message parameters must be a string object")
+    diagnostic = _text(data["diagnostic"], "diagnostic", allow_empty=True)
+    return message_code, raw_parameters, diagnostic
+
+
 def secret_unlock_result_from_wire(value: Any) -> Any:
     from ..models.secrets import SecretUnlockResult, UnlockResultKind
 
     data = _strict_fields(
         value,
-        required={"kind", "backend"},
-        optional={"message"},
+        required={
+            "kind",
+            "backend",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="secret unlock result",
     )
     kind = data["kind"]
     if type(kind) is not str or kind not in UnlockResultKind._value2member_map_:
         raise ValueError("kind is not a valid unlock result kind")
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return SecretUnlockResult(
         kind=UnlockResultKind(kind),
         backend=_text(data["backend"], "backend"),
-        message=data.get("message", ""),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5685,17 +5713,25 @@ def secret_operation_result_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"state", "backend"},
-        optional={"message"},
+        required={
+            "state",
+            "backend",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="secret operation result",
     )
     state = data["state"]
     if type(state) is not str or state not in SecretOperationState._value2member_map_:
         raise ValueError("state is not a valid secret operation state")
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return SecretOperationResult(
         state=SecretOperationState(state),
         backend=_text(data["backend"], "backend"),
-        message=data.get("message", ""),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5712,10 +5748,21 @@ def bitwarden_status_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"logged_in", "unlocked", "needs_login", "email", "server_url", "profile"},
-        optional={"twofa_required", "message"},
+        required={
+            "logged_in",
+            "unlocked",
+            "needs_login",
+            "email",
+            "server_url",
+            "profile",
+            "twofa_required",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="bitwarden status",
     )
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return BitwardenStatus(
         logged_in=_boolean(data["logged_in"], "logged_in"),
         unlocked=_boolean(data["unlocked"], "unlocked"),
@@ -5723,8 +5770,10 @@ def bitwarden_status_from_wire(value: Any) -> Any:
         email=_text(data["email"], "email", allow_empty=True),
         server_url=_text(data["server_url"], "server_url", allow_empty=True),
         profile=_text(data["profile"], "profile", allow_empty=True),
-        twofa_required=_boolean(data.get("twofa_required", False), "twofa_required"),
-        message=data.get("message", ""),
+        twofa_required=_boolean(data["twofa_required"], "twofa_required"),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5741,17 +5790,28 @@ def rbw_status_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"installed", "configured", "unlocked", "email", "base_url"},
-        optional={"message"},
+        required={
+            "installed",
+            "configured",
+            "unlocked",
+            "email",
+            "base_url",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="rbw status",
     )
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return RbwStatus(
         installed=_boolean(data["installed"], "installed"),
         configured=_boolean(data["configured"], "configured"),
         unlocked=_boolean(data["unlocked"], "unlocked"),
         email=_text(data["email"], "email", allow_empty=True),
         base_url=_text(data["base_url"], "base_url", allow_empty=True),
-        message=data.get("message", ""),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 

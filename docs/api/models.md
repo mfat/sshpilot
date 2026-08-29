@@ -203,6 +203,7 @@ handling is not defined until a transport codec exists.
 | `HostKeyDecision` | `accept`, `reject` | Daemon implemented |
 | `SecretDecision` | `submit`, `cancel` | Daemon implemented |
 | `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret` | Daemon implemented |
+| `SecretMessageCode` | Stable secret lifecycle/status presentation reasons | Daemon implemented; strict codec |
 | `SftpServiceState` | `created`, `starting`, `ready`, `closing`, `closed`, `failed` | Daemon implemented |
 | `RemoteFileType` | `regular`, `directory`, `symlink`, `socket`, `fifo`, `block`, `character`, `unknown` | Daemon implemented |
 | `TransferDirection` | `upload`, `download` | Daemon implemented |
@@ -220,3 +221,10 @@ Every model has a synthetic, deterministic example in the
 from type metadata and safe placeholders; they do not instantiate live
 connections, consult persistence, or read secret providers. Sensitive values
 are shown only as `<sensitive value omitted>`.
+
+`SecretUnlockResult`, `SecretOperationResult`, `BitwardenStatus`, and
+`RbwStatus` carry a nullable `SecretMessageCode`, the exact validated string
+parameters required by that code, and a separate diagnostic. Message codes are
+machine contracts; diagnostics from `bw` or another backend are opaque and are
+never translated. The frontend selects and translates a local template before
+formatting the parameters.

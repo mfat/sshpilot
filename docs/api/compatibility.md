@@ -56,12 +56,14 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.45`. Version 0.45 adds required
-structured secret-prompt metadata to password interactions. A 0.44 client
-rejects the new fields under the strict field-set policy, while a 0.45 client
-requires them, so mismatched implementations are rejected during handshake
-before ordinary requests. The daemon sends a stable prompt kind and validated
-parameters; only the frontend selects and translates the displayed text.
+`API_IMPLEMENTATION_VERSION` is currently `0.46`. Version 0.46 replaces the
+free-text message on secret status and operation results with a required stable
+message code, validated string parameters, and a separate external diagnostic.
+A 0.45 client rejects the new fields under the strict field-set policy, while
+a 0.46 client requires them, so mismatched implementations are rejected during
+handshake before ordinary requests. Only the frontend maps codes to gettext
+msgids, translates the template, and formats parameters. The 0.45 structured
+secret-prompt contract remains unchanged.
 
 The earlier 0.40 compatibility boundary remains in force: clients never
 downgrade to plaintext secret transport or select a frontend secret backend.

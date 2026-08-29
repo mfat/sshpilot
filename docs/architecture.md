@@ -139,6 +139,12 @@ English heading/body. GTK owns the mapping to gettext msgids, translates only
 when presenting the dialog, and formats dynamic values afterward. The daemon
 therefore remains independent of the frontend's selected locale.
 
+Secret lifecycle statuses and operation results follow the same boundary:
+their public DTOs carry a stable `SecretMessageCode`, validated parameters, and
+an optional opaque backend diagnostic. GTK translates the local template at
+display time and appends diagnostics unchanged. No rendered UI sentence is a
+daemon/API identifier.
+
 Secret values, `BW_SESSION`, KDBX transformed keys, provider credentials,
 private keys, and backup manifests do not cross the ordinary public API. They
 are not ordinary DTO fields, events, logs, or diagnostics. GTK receives typed

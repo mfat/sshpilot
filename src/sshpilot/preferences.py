@@ -16,6 +16,7 @@ from gettext import gettext as _
 
 from .platform_utils import is_macos
 from .i18n import N_, available_languages
+from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .file_manager_integration import (
     has_internal_file_manager,
 )
@@ -3778,12 +3779,12 @@ class PreferencesWindow(Adw.NavigationPage):
                 result = controller.keepassxc_create_database(
                     path, keyfile=keyfile or None)
                 state = getattr(getattr(result, 'state', None), 'value', None)
-                message = getattr(result, 'message', '') or ''
                 ok = state == 'success'
                 cancelled = state == 'interaction_required'
+                message = "" if cancelled else format_secret_message(result)
             except Exception as exc:
                 logger.debug("KDBX create failed: %s", exc)
-                ok, message, cancelled = False, str(exc), False
+                ok, message, cancelled = False, format_secret_error(exc), False
             GLib.idle_add(lambda: (
                 self._after_create_kdbx(path, ok, message, cancelled, close), False)[1])
 

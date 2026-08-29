@@ -32,7 +32,6 @@ from sshpilot.api.models.interactions import (
     SecretPromptKind,
 )
 from sshpilot.api.models.secrets import (
-    BACKEND_UNAVAILABLE,
     REVISION_CONFLICT,
     SETTINGS_MALFORMED,
     SETTINGS_PERSISTENCE_FAILED,
@@ -42,6 +41,7 @@ from sshpilot.api.models.secrets import (
     SecretBackendRegistry,
     SecretBackendState,
     SecretConfiguration,
+    SecretMessageCode,
     SecretOperationResult,
     SecretOperationState,
     SecretTransferResult,
@@ -325,7 +325,8 @@ class SecretBackendService:
                 return SecretUnlockResult(
                     kind=UnlockResultKind.BACKEND_UNAVAILABLE,
                     backend=name,
-                    message=decision.message,
+                    message_code=SecretMessageCode.SECRET_BACKEND_UNAVAILABLE,
+                    message_parameters={"backend": name},
                 )
             if decision.kind == SecretDecisionKind.READY:
                 return SecretUnlockResult(
@@ -336,7 +337,7 @@ class SecretBackendService:
                 return SecretUnlockResult(
                     kind=UnlockResultKind.LOGIN_REQUIRED,
                     backend=name,
-                    message="The selected vault requires sign-in before unlock",
+                    message_code=SecretMessageCode.VAULT_SIGN_IN_REQUIRED,
                 )
             if decision.kind != SecretDecisionKind.UNLOCK_REQUIRED:
                 return SecretUnlockResult(
@@ -356,7 +357,7 @@ class SecretBackendService:
                 return SecretUnlockResult(
                     kind=UnlockResultKind.INTERACTION_REQUIRED,
                     backend=name,
-                    message="Unlock cancelled",
+                    message_code=SecretMessageCode.UNLOCK_CANCELLED,
                 )
             try:
                 master = secret.decode("utf-8", "replace")
@@ -375,7 +376,7 @@ class SecretBackendService:
             return SecretUnlockResult(
                 kind=UnlockResultKind.BACKEND_UNAVAILABLE,
                 backend=name,
-                message="The vault could not be unlocked",
+                message_code=SecretMessageCode.VAULT_UNLOCK_FAILED,
             )
         return SecretUnlockResult(
             kind=UnlockResultKind.UNLOCKED,
@@ -429,7 +430,9 @@ class SecretBackendService:
                     server_url=status.server_url,
                     profile=status.profile,
                     twofa_required=status.twofa_required,
-                    message="Bitwarden server configuration failed",
+                    message_code=(
+                        SecretMessageCode.BITWARDEN_SERVER_CONFIGURATION_FAILED
+                    ),
                 )
             # Reacquire the transaction lock and reload the latest file
             # immediately before applying the configuration change, so the write
@@ -462,7 +465,7 @@ class SecretBackendService:
             self._apply_environment(config)
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
-                raise self._unavailable("Bitwarden is unavailable")
+                raise self._unavailable("bitwarden")
             email = (email or "").strip()
             if not email:
                 raise ValueError("email is required")
@@ -482,7 +485,8 @@ class SecretBackendService:
                 return BitwardenStatus(
                     logged_in=False, unlocked=False, needs_login=True,
                     email=email, server_url="", profile="",
-                    twofa_required=False, message="Login cancelled",
+                    twofa_required=False,
+                    message_code=SecretMessageCode.BITWARDEN_LOGIN_CANCELLED,
                 )
             password_text = password.decode("utf-8", "replace")
             _clear_secret(password)
@@ -507,7 +511,10 @@ class SecretBackendService:
                         logged_in=False, unlocked=False, needs_login=True,
                         email=email, server_url=_server_url(config),
                         profile=_profile(config),
-                        message="Authentication challenge cancelled",
+                        message_code=(
+                            SecretMessageCode
+                            .BITWARDEN_AUTHENTICATION_CHALLENGE_CANCELLED
+                        ),
                     )
                 challenge_text = client_secret.decode("utf-8", "replace")
                 _clear_secret(client_secret)
@@ -534,7 +541,10 @@ class SecretBackendService:
                         logged_in=False, unlocked=False, needs_login=True,
                         email=email, server_url=_server_url(config),
                         profile=_profile(config),
-                        twofa_required=True, message="Two-step login cancelled",
+                        twofa_required=True,
+                        message_code=(
+                            SecretMessageCode.BITWARDEN_TWO_STEP_LOGIN_CANCELLED
+                        ),
                     )
                 code_text = code.decode("utf-8", "replace")
                 _clear_secret(code)
@@ -553,7 +563,12 @@ class SecretBackendService:
                 if ok and password_text and not self._safe_is_unlocked(bw):
                     if not self._safe(lambda: bw.unlock(password_text)):
                         ok = False
-                        detail = "Bitwarden vault unlock failed"
+                        detail = ""
+                        failure_code = SecretMessageCode.BITWARDEN_UNLOCK_FAILED
+                    else:
+                        failure_code = SecretMessageCode.BITWARDEN_SIGN_IN_FAILED
+                else:
+                    failure_code = SecretMessageCode.BITWARDEN_SIGN_IN_FAILED
 
                 # Sign-in stalled on the two-step step — either it asked for a
                 # code, or it already carried a method and the code was wrong.
@@ -573,7 +588,8 @@ class SecretBackendService:
                     server_url=_server_url(config),
                     profile=_profile(config),
                     twofa_required=needs_2fa,
-                    message=detail if not ok else "",
+                    message_code=failure_code if not ok else None,
+                    diagnostic=str(detail or "") if not ok else "",
                 )
         finally:
             password_text = ""
@@ -584,7 +600,7 @@ class SecretBackendService:
             self._apply_environment(config)
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
-                raise self._unavailable("Bitwarden is unavailable")
+                raise self._unavailable("bitwarden")
             client_id = (client_id or "").strip()
             if not client_id:
                 raise ValueError("client_id is required")
@@ -600,7 +616,7 @@ class SecretBackendService:
             return BitwardenStatus(
                 logged_in=False, unlocked=False, needs_login=True,
                 email="", server_url=_server_url(config), profile=_profile(config),
-                message="Login cancelled",
+                message_code=SecretMessageCode.BITWARDEN_LOGIN_CANCELLED,
             )
         secret_text = secret.decode("utf-8", "replace")
         _clear_secret(secret)
@@ -610,7 +626,7 @@ class SecretBackendService:
                     ok, detail = bw.login_with_api_key(client_id, secret_text)
                 except Exception:
                     logger.debug("Bitwarden API-key login failed", exc_info=True)
-                    ok, detail = False, "Bitwarden API-key login failed"
+                    ok, detail = False, ""
                 return BitwardenStatus(
                     logged_in=ok,
                     unlocked=self._safe_is_unlocked(bw),
@@ -618,7 +634,10 @@ class SecretBackendService:
                     email=client_id,
                     server_url=_server_url(config),
                     profile=_profile(config),
-                    message=detail if not ok else "",
+                    message_code=(
+                        SecretMessageCode.BITWARDEN_SIGN_IN_FAILED if not ok else None
+                    ),
+                    diagnostic=str(detail or "") if not ok else "",
                 )
         finally:
             secret_text = ""
@@ -629,12 +648,12 @@ class SecretBackendService:
             self._apply_environment(config)
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
-                raise self._unavailable("Bitwarden is unavailable")
+                raise self._unavailable("bitwarden")
             try:
                 ok, detail = bw.login_with_sso(identifier or None)
             except Exception:
                 logger.debug("Bitwarden SSO login failed", exc_info=True)
-                ok, detail = False, "Bitwarden SSO login failed"
+                ok, detail = False, ""
             return BitwardenStatus(
                 logged_in=ok,
                 unlocked=self._safe_is_unlocked(bw),
@@ -642,14 +661,17 @@ class SecretBackendService:
                 email="",
                 server_url=_server_url(config),
                 profile=_profile(config),
-                message=detail if not ok else "",
+                message_code=(
+                    SecretMessageCode.BITWARDEN_SIGN_IN_FAILED if not ok else None
+                ),
+                diagnostic=str(detail or "") if not ok else "",
             )
 
     def bitwarden_unlock(self, *, owner_client_id) -> BitwardenStatus:
         with self._locked_operation():
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
-                raise self._unavailable("Bitwarden is unavailable")
+                raise self._unavailable("bitwarden")
             if self._safe_is_unlocked(bw):
                 return _bitwarden_status(bw)
 
@@ -660,7 +682,10 @@ class SecretBackendService:
             owner_client_id=owner_client_id,
         )
         if secret is None:
-            return _bitwarden_status(bw, message="Unlock cancelled")
+            return _bitwarden_status(
+                bw,
+                message_code=SecretMessageCode.BITWARDEN_UNLOCK_CANCELLED,
+            )
         secret_text = secret.decode("utf-8", "replace")
         _clear_secret(secret)
         try:
@@ -668,11 +693,13 @@ class SecretBackendService:
                 try:
                     ok = bool(bw.unlock(secret_text))
                 except Exception:
-                    logger.debug("Bitwarden unlock failed", exc_info=True)
+                    logger.debug("Bitwarden unlock raised", exc_info=True)
                     ok = False
                 return _bitwarden_status(
                     bw,
-                    message="" if ok else "Bitwarden unlock failed",
+                    message_code=(
+                        None if ok else SecretMessageCode.BITWARDEN_UNLOCK_FAILED
+                    ),
                 )
         finally:
             secret_text = ""
@@ -683,11 +710,13 @@ class SecretBackendService:
             self._apply_environment(config)
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
-                raise self._unavailable("Bitwarden is unavailable")
+                raise self._unavailable("bitwarden")
             ok = self._run_safely(lambda: bw._run(["sync"]))
             return _bitwarden_status(
                 bw,
-                message="" if ok else "Bitwarden sync failed",
+                message_code=(
+                    None if ok else SecretMessageCode.BITWARDEN_SYNC_FAILED
+                ),
             )
 
     def bitwarden_lock(self) -> BitwardenStatus:
@@ -710,7 +739,7 @@ class SecretBackendService:
             self._apply_environment(config)
             bw = self._manager.get_backend("bitwarden")
             if bw is None:
-                raise self._unavailable("Bitwarden is unavailable")
+                raise self._unavailable("bitwarden")
             try:
                 bw.logout()
             except Exception:
@@ -740,7 +769,7 @@ class SecretBackendService:
                     unlocked=status.unlocked,
                     email=status.email,
                     base_url=status.base_url,
-                    message="rbw configuration failed",
+                    message_code=SecretMessageCode.RBW_CONFIGURATION_FAILED,
                 )
             return status
 
@@ -750,10 +779,13 @@ class SecretBackendService:
             self._apply_environment(config)
             rbw = self._manager.get_backend("rbw")
             if rbw is None:
-                raise self._unavailable("rbw is unavailable")
+                raise self._unavailable("rbw")
             # Native pinentry/agent owns secret entry — never drive it here.
             ok = self._run_safely(lambda: rbw._run("unlock"))
-            return _rbw_status(rbw, message="" if ok else "rbw unlock failed")
+            return _rbw_status(
+                rbw,
+                message_code=None if ok else SecretMessageCode.RBW_UNLOCK_FAILED,
+            )
 
     def rbw_sync(self) -> RbwStatus:
         with self._lock:
@@ -761,9 +793,12 @@ class SecretBackendService:
             self._apply_environment(config)
             rbw = self._manager.get_backend("rbw")
             if rbw is None:
-                raise self._unavailable("rbw is unavailable")
+                raise self._unavailable("rbw")
             ok = self._run_safely(lambda: rbw._run("sync"))
-            return _rbw_status(rbw, message="" if ok else "rbw sync failed")
+            return _rbw_status(
+                rbw,
+                message_code=None if ok else SecretMessageCode.RBW_SYNC_FAILED,
+            )
 
     def rbw_lock(self) -> RbwStatus:
         with self._lock:
@@ -778,7 +813,10 @@ class SecretBackendService:
                 cache_ok = True
             self._clear_cached_manifests()
             ok = command_ok and cache_ok
-            return _rbw_status(rbw, message="" if ok else "rbw lock failed")
+            return _rbw_status(
+                rbw,
+                message_code=None if ok else SecretMessageCode.RBW_LOCK_FAILED,
+            )
 
     # ------------------------------------------------------------------
     # KeePassXC lifecycle
@@ -802,14 +840,16 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend="keepassxc",
-                    message="KeePassXC is unavailable (pykeepass is not installed)",
+                    message_code=SecretMessageCode.BACKEND_UNAVAILABLE,
+                    message_parameters={"backend": "keepassxc"},
+                    diagnostic="pykeepass is not installed",
                 )
             path = (path or "").strip()
             if not path:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend="keepassxc",
-                    message="A database path is required",
+                    message_code=SecretMessageCode.DATABASE_PATH_REQUIRED,
                 )
 
         # The master-password prompt runs without the service lock — see
@@ -822,7 +862,7 @@ class SecretBackendService:
             return SecretOperationResult(
                 state=SecretOperationState.INTERACTION_REQUIRED,
                 backend="keepassxc",
-                message="Database creation cancelled",
+                message_code=SecretMessageCode.DATABASE_CREATION_CANCELLED,
             )
         try:
             password_text = password.decode("utf-8", "replace")
@@ -855,7 +895,11 @@ class SecretBackendService:
                 if ok else SecretOperationState.FAILED
             ),
             backend="keepassxc",
-            message="" if ok else "The KeePass database could not be created or unlocked",
+            message_code=(
+                None
+                if ok
+                else SecretMessageCode.KEEPASS_DATABASE_CREATE_OR_UNLOCK_FAILED
+            ),
         )
 
     def keepassxc_unlock(self, *, owner_client_id) -> SecretOperationResult:
@@ -865,7 +909,8 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend="keepassxc",
-                    message="KeePassXC is unavailable",
+                    message_code=SecretMessageCode.BACKEND_UNAVAILABLE,
+                    message_parameters={"backend": "keepassxc"},
                 )
             if self._safe_is_unlocked(backend):
                 return SecretOperationResult(
@@ -885,7 +930,7 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.INTERACTION_REQUIRED,
                     backend="keepassxc",
-                    message="Unlock cancelled",
+                    message_code=SecretMessageCode.KEEPASS_UNLOCK_CANCELLED,
                 )
             try:
                 master = secret.decode("utf-8", "replace")
@@ -900,7 +945,7 @@ class SecretBackendService:
             return SecretOperationResult(
                 state=SecretOperationState.FAILED,
                 backend="keepassxc",
-                message="The KeePass database could not be unlocked",
+                message_code=SecretMessageCode.KEEPASS_DATABASE_UNLOCK_FAILED,
             )
         return SecretOperationResult(
             state=SecretOperationState.SUCCESS,
@@ -944,7 +989,7 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend=name,
-                    message="Only session-backed vaults can remember their master password",
+                    message_code=SecretMessageCode.REMEMBER_SESSION_BACKEND_REQUIRED,
                 )
 
         # The master-password prompt runs without the service lock — see
@@ -958,7 +1003,7 @@ class SecretBackendService:
             return SecretOperationResult(
                 state=SecretOperationState.INTERACTION_REQUIRED,
                 backend=name,
-                message="Remember cancelled",
+                message_code=SecretMessageCode.REMEMBER_CANCELLED,
             )
         try:
             password = secret.decode("utf-8", "replace")
@@ -989,7 +1034,7 @@ class SecretBackendService:
             return SecretOperationResult(
                 state=SecretOperationState.FAILED,
                 backend=name,
-                message="The master password could not be saved",
+                message_code=SecretMessageCode.MASTER_PASSWORD_SAVE_FAILED,
             )
         if not semantic["remember_in_keyring"]:
             try:
@@ -1013,12 +1058,11 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend=name,
-                    message="The master password could not be remembered",
+                    message_code=SecretMessageCode.MASTER_PASSWORD_REMEMBER_FAILED,
                 )
         return SecretOperationResult(
             state=SecretOperationState.SUCCESS,
             backend=name,
-            message="",
         )
 
     def forget_master_password(self) -> SecretOperationResult:
@@ -1046,7 +1090,9 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend=name,
-                    message="The remembered master password could not be removed",
+                    message_code=(
+                        SecretMessageCode.REMEMBERED_MASTER_PASSWORD_REMOVE_FAILED
+                    ),
                 )
             semantic = self._normalize(config)
             policy_was_on = bool(semantic["remember_in_keyring"])
@@ -1067,12 +1113,18 @@ class SecretBackendService:
                 return SecretOperationResult(
                     state=SecretOperationState.FAILED,
                     backend=name,
-                    message="The remembered master password could not be forgotten",
+                    message_code=(
+                        SecretMessageCode.REMEMBERED_MASTER_PASSWORD_FORGET_FAILED
+                    ),
                 )
             return SecretOperationResult(
                 state=SecretOperationState.SUCCESS,
                 backend=name,
-                message="" if removed else "No remembered master password was found",
+                message_code=(
+                    None
+                    if removed
+                    else SecretMessageCode.REMEMBERED_MASTER_PASSWORD_NOT_FOUND
+                ),
             )
 
     def _remembered_master_password(self) -> Optional[str]:
@@ -1583,7 +1635,7 @@ class SecretBackendService:
     def _configure_bitwarden_server(self, url: str) -> bool:
         bw = self._manager.get_backend("bitwarden")
         if bw is None:
-            raise self._unavailable("Bitwarden is unavailable")
+            raise self._unavailable("bitwarden")
         return self._run_safely(lambda: bw._run(["config", "server", url]))
 
     def _selected_decision(self):
@@ -1880,8 +1932,8 @@ class SecretBackendService:
                 auth_client_secret=auth_client_secret,
             )
         except Exception:
-            logger.debug("Bitwarden password login failed", exc_info=True)
-            return False, "Bitwarden password login failed", False
+            logger.debug("Bitwarden password login raised", exc_info=True)
+            return False, "", False
 
     def _safe_is_unlocked(self, backend: Any) -> bool:
         return bool(self._safe(lambda: backend.is_unlocked()))
@@ -1901,17 +1953,17 @@ class SecretBackendService:
         except Exception:
             return False
 
-    def _unavailable(self, message: str) -> SshPilotError:
+    def _unavailable(self, backend: str) -> SshPilotError:
         return SshPilotError(
-            ErrorCode.UNSUPPORTED_CAPABILITY,
-            message,
-            details={"code": BACKEND_UNAVAILABLE},
+            ErrorCode.SECRET_BACKEND_UNAVAILABLE,
+            ErrorCode.SECRET_BACKEND_UNAVAILABLE.value,
+            details={"backend": backend},
         )
 
     def _apply_rbw_config(self, email: str, base_url: str) -> bool:
         rbw = self._manager.get_backend("rbw")
         if rbw is None:
-            raise self._unavailable("rbw is unavailable")
+            raise self._unavailable("rbw")
         email = (email or "").strip()
         base_url = (base_url or "").strip()
         ok = True
@@ -2015,12 +2067,17 @@ def _bitwarden_status(
     bw: Any,
     *,
     force_refresh: bool = False,
-    message: str = "",
+    message_code: Optional[SecretMessageCode] = None,
+    message_parameters: Optional[Mapping[str, str]] = None,
+    diagnostic: str = "",
 ) -> BitwardenStatus:
     if bw is None or not bool(bw.is_available()):
         return BitwardenStatus(
             logged_in=False, unlocked=False, needs_login=True,
-            email="", server_url="", profile="", message=message,
+            email="", server_url="", profile="",
+            message_code=message_code,
+            message_parameters=message_parameters or {},
+            diagnostic=diagnostic,
         )
     unlocked = bool(bw.is_unlocked())
     if unlocked:
@@ -2039,7 +2096,9 @@ def _bitwarden_status(
         email="",
         server_url="",
         profile="",
-        message=message,
+        message_code=message_code,
+        message_parameters=message_parameters or {},
+        diagnostic=diagnostic,
     )
 
 
@@ -2047,12 +2106,21 @@ def _rbw_config_text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _rbw_status(rbw: Any, *, message: str = "") -> RbwStatus:
+def _rbw_status(
+    rbw: Any,
+    *,
+    message_code: Optional[SecretMessageCode] = None,
+    message_parameters: Optional[Mapping[str, str]] = None,
+    diagnostic: str = "",
+) -> RbwStatus:
     installed = bool(rbw is not None and rbw.is_available())
     if not installed:
         return RbwStatus(
             installed=False, configured=False, unlocked=False,
-            email="", base_url="", message=message or "rbw is not installed",
+            email="", base_url="",
+            message_code=message_code,
+            message_parameters=message_parameters or {},
+            diagnostic=diagnostic,
         )
     unlocked = bool(rbw.is_unlocked())
     email = ""
@@ -2078,5 +2146,7 @@ def _rbw_status(rbw: Any, *, message: str = "") -> RbwStatus:
         unlocked=unlocked,
         email=email,
         base_url=base_url,
-        message=message,
+        message_code=message_code,
+        message_parameters=message_parameters or {},
+        diagnostic=diagnostic,
     )
