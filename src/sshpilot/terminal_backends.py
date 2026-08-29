@@ -22,6 +22,28 @@ from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_col
 logger = logging.getLogger(__name__)
 
 
+def _log_clipboard_copy(
+    *,
+    backend: str,
+    copied: bool,
+    reason: str,
+    text_len: int = 0,
+    **extra: Any,
+) -> None:
+    """Log a clipboard copy outcome without including selected text."""
+    extras = " ".join(
+        f"{key}={value}" for key, value in extra.items() if value is not None
+    )
+    logger.debug(
+        "Clipboard copy backend=%s copied=%s reason=%s text_len=%s%s",
+        backend,
+        copied,
+        reason,
+        text_len,
+        f" {extras}" if extras else "",
+    )
+
+
 def _pyxterm_input_to_commit(payload: Mapping[str, Any]) -> tuple[Any, int, str]:
     """Return ``(commit_text, byte_size, autocomplete_text)`` for an input message.
 
@@ -1140,17 +1162,34 @@ class VTETerminalBackend:
         on_complete: Optional[Callable[[bool], None]] = None,
     ) -> None:
         copied = False
+        reason = "empty-selection"
+        selected_len = 0
+        has_selection = False
         try:
+            has_selection = bool(self.vte.get_has_selection())
             vte_format = Vte.Format.HTML if format == "html" else Vte.Format.TEXT
             # Validate the payload itself, rather than merely trusting the
             # selection flag.  This also gives the success notification the
             # same semantics as Ptyxis: null/empty selections are not copies.
             selected = self.vte.get_text_selected(vte_format)
+            selected_len = len(selected) if selected else 0
             if selected:
                 self.vte.copy_clipboard_format(vte_format)
                 copied = True
+                reason = "written"
+            elif has_selection:
+                reason = "empty-selection-flag"
         except Exception:
+            reason = "exception"
             logger.debug("Failed to copy VTE selection", exc_info=True)
+        _log_clipboard_copy(
+            backend="vte",
+            copied=copied,
+            reason=reason,
+            text_len=selected_len,
+            format=format,
+            has_selection=has_selection,
+        )
         if on_complete is not None:
             on_complete(copied)
 
@@ -1506,8 +1545,14 @@ class PyXtermTerminalBackend:
         # Embedded backend: nothing server-side to tear down. Subclasses
         # (PyXtermBridgeBackend) close their PTY bridge before calling super().
         callbacks = list(self._clipboard_copy_callbacks.values())
+        pending = len(callbacks)
         self._clipboard_copy_callbacks.clear()
         self._selection_changed_cb = None
+        if pending:
+            logger.debug(
+                "PyXterm destroy failing %s pending clipboard copy callback(s)",
+                pending,
+            )
         for callback in callbacks:
             try:
                 callback(False)
@@ -1809,16 +1854,44 @@ class PyXtermTerminalBackend:
         if display is None:
             display = Gdk.Display.get_default()
         if display is None:
+            logger.debug("PyXterm clipboard unavailable: no Gdk display")
             return None
         return display.get_clipboard()
 
     def _set_system_clipboard_text(self, text: str) -> bool:
         if not text:
+            _log_clipboard_copy(
+                backend="pyxterm",
+                copied=False,
+                reason="empty-selection",
+            )
             return False
         clipboard = self._get_system_clipboard()
         if clipboard is None:
+            _log_clipboard_copy(
+                backend="pyxterm",
+                copied=False,
+                reason="no-clipboard",
+                text_len=len(text),
+            )
             return False
-        clipboard.set(text)
+        try:
+            clipboard.set(text)
+        except Exception:
+            _log_clipboard_copy(
+                backend="pyxterm",
+                copied=False,
+                reason="exception",
+                text_len=len(text),
+            )
+            logger.debug("Failed to set system clipboard from PyXterm", exc_info=True)
+            return False
+        _log_clipboard_copy(
+            backend="pyxterm",
+            copied=True,
+            reason="written",
+            text_len=len(text),
+        )
         return True
 
     def _paste_text(self, text: str) -> None:
@@ -1847,6 +1920,16 @@ class PyXtermTerminalBackend:
         """
         # xterm.js exposes plain selection text only.
         if not self.available or format != "text":
+            reason = "backend-unavailable" if not self.available else "format-unsupported"
+            _log_clipboard_copy(
+                backend="pyxterm",
+                copied=False,
+                reason=reason,
+                format=format,
+                available=self.available,
+                has_selection=self._has_selection,
+                passthrough=self._shortcut_passthrough,
+            )
             if on_complete is not None:
                 on_complete(False)
             return
@@ -1854,17 +1937,36 @@ class PyXtermTerminalBackend:
         request_id = self._clipboard_copy_serial
         if on_complete is not None:
             self._clipboard_copy_callbacks[request_id] = on_complete
+        logger.debug(
+            "PyXterm copy_clipboard dispatch request_id=%s pending=%s "
+            "has_selection=%s passthrough=%s js_ready=%s",
+            request_id,
+            len(self._clipboard_copy_callbacks),
+            self._has_selection,
+            self._shortcut_passthrough,
+            getattr(self, "_js_ready", False),
+        )
         try:
             # IIFE returns a boolean so evaluate_javascript_finish does not see
             # a Promise/"undefined" completion value as an unsupported type.
             script = """
             (function() {
                 var selection = "";
-                if (typeof window.term !== 'undefined' && window.term.hasSelection()) {
-                    selection = window.term.getSelection() || "";
+                var hasSelection = false;
+                if (typeof window.term !== 'undefined') {
+                    hasSelection = !!window.term.hasSelection();
+                    if (hasSelection) {
+                        selection = window.term.getSelection() || "";
+                    }
                 }
                 if (typeof window.ptySend === 'function') {
-                    window.ptySend({type: "copy", requestId: %d, text: selection});
+                    window.ptySend({
+                        type: "copy",
+                        requestId: %d,
+                        text: selection,
+                        hasSelection: hasSelection,
+                        selectionLength: selection.length
+                    });
                 }
                 return true;
             })();
@@ -1873,6 +1975,14 @@ class PyXtermTerminalBackend:
         except Exception as e:
             logger.debug(f"Failed to copy from PyXterm backend: {e}", exc_info=True)
             callback = self._clipboard_copy_callbacks.pop(request_id, None)
+            _log_clipboard_copy(
+                backend="pyxterm",
+                copied=False,
+                reason="javascript-error",
+                request_id=request_id,
+                has_selection=self._has_selection,
+                passthrough=self._shortcut_passthrough,
+            )
             if callback is not None:
                 callback(False)
 
@@ -2424,7 +2534,15 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                 except Exception:  # noqa: BLE001
                     logger.debug("size-changed callback raised", exc_info=True)
         elif kind == "selection-changed":
-            self._has_selection = bool(payload.get("hasSelection"))
+            has_selection = bool(payload.get("hasSelection"))
+            previous = self._has_selection
+            self._has_selection = has_selection
+            if previous != has_selection:
+                logger.debug(
+                    "PyXterm selection-changed has_selection=%s passthrough=%s",
+                    has_selection,
+                    self._shortcut_passthrough,
+                )
             callback = self._selection_changed_cb
             if callback is not None:
                 try:
@@ -2461,15 +2579,51 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self._set_owner_hovered_link(None)
         elif kind == "paste":
             # Ctrl+Shift+V inside the WebView — use GTK clipboard (other apps).
+            logger.debug(
+                "PyXterm paste shortcut received has_selection=%s passthrough=%s",
+                self._has_selection,
+                self._shortcut_passthrough,
+            )
             self.paste_clipboard()
+        elif kind == "clipboard-passthrough":
+            logger.debug(
+                "PyXterm clipboard shortcut passed through key=%s "
+                "has_selection=%s passthrough=%s",
+                payload.get("key"),
+                payload.get("hasSelection", self._has_selection),
+                self._shortcut_passthrough,
+            )
         elif kind == "copy":
             # Selection posted from JS (shortcut or copy_clipboard).
+            text = payload.get("text") or ""
+            request_id = payload.get("requestId")
+            js_has_selection = payload.get("hasSelection")
+            js_selection_length = payload.get("selectionLength")
+            logger.debug(
+                "PyXterm copy message request_id=%s text_len=%s "
+                "has_selection=%s js_has_selection=%s js_selection_length=%s "
+                "passthrough=%s pending=%s correlated=%s",
+                request_id,
+                len(text),
+                self._has_selection,
+                js_has_selection,
+                js_selection_length,
+                self._shortcut_passthrough,
+                len(self._clipboard_copy_callbacks),
+                request_id in self._clipboard_copy_callbacks,
+            )
             copied = False
             try:
-                copied = self._set_system_clipboard_text(payload.get("text") or "")
+                copied = self._set_system_clipboard_text(text)
             except Exception:  # noqa: BLE001
+                _log_clipboard_copy(
+                    backend="pyxterm",
+                    copied=False,
+                    reason="exception",
+                    text_len=len(text),
+                    request_id=request_id,
+                )
                 logger.debug("Failed to set system clipboard from PyXterm", exc_info=True)
-            request_id = payload.get("requestId")
             callback = self._clipboard_copy_callbacks.pop(request_id, None)
             if callback is not None:
                 callback(copied)

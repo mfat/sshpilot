@@ -91,6 +91,35 @@ def _link_click_is_handled(
     return n_press == 1 and active and modifier_held and bool(uri)
 
 
+def clipboard_debug_state(widget) -> str:
+    """Return a privacy-safe snapshot of terminal clipboard/selection state.
+
+    Used to diagnose silent copy failures (issue #1178). Never includes
+    selected or clipboard text — only flags, backend identity, and mouse
+    tracking modes that explain why a selection may not stick.
+    """
+    backend = getattr(widget, "backend", None)
+    backend_name = getattr(widget, "_backend_name", None)
+    if not backend_name:
+        backend_name = type(backend).__name__ if backend is not None else "none"
+    has_selection = False
+    getter = getattr(backend, "get_has_selection", None)
+    if callable(getter):
+        try:
+            has_selection = bool(getter())
+        except Exception:
+            has_selection = False
+    tracker = getattr(widget, "_mouse_tracking", None)
+    mouse_tracking = bool(getattr(tracker, "active", False))
+    modes = getattr(tracker, "modes", ()) or ()
+    pass_through = bool(getattr(widget, "_pass_through_mode", False))
+    return (
+        f"backend={backend_name} has_selection={has_selection} "
+        f"pass_through={pass_through} mouse_tracking={mouse_tracking} "
+        f"mouse_modes={list(modes)}"
+    )
+
+
 def sanitize_local_shell_env(env):
     """Return a copy of *env* stripped of the launching terminal's identity.
 
@@ -1266,6 +1295,11 @@ class TerminalWidget(Gtk.Box):
             self._daemon_size_handler = None
             tracker = getattr(self, "_mouse_tracking", None)
             if tracker is not None:
+                if tracker.active:
+                    logger.debug(
+                        "Terminal mouse tracking reset previously_active=True modes=%s",
+                        list(tracker.modes),
+                    )
                 tracker.reset()
             return
         for attr in ('_daemon_commit_handler', '_daemon_size_handler'):
@@ -1279,6 +1313,11 @@ class TerminalWidget(Gtk.Box):
             setattr(self, attr, None)
         tracker = getattr(self, "_mouse_tracking", None)
         if tracker is not None:
+            if tracker.active:
+                logger.debug(
+                    "Terminal mouse tracking reset previously_active=True modes=%s",
+                    list(tracker.modes),
+                )
             tracker.reset()
 
     def _install_daemon_backend_io(self) -> None:
@@ -1326,7 +1365,15 @@ class TerminalWidget(Gtk.Box):
             raise RuntimeError("No terminal backend to feed display output")
         tracker = getattr(self, "_mouse_tracking", None)
         if tracker is not None:
+            before = tracker.modes
             tracker.feed(data)
+            after = tracker.modes
+            if before != after:
+                logger.debug(
+                    "Terminal mouse tracking changed active=%s modes=%s",
+                    bool(after),
+                    list(after),
+                )
         backend.feed(data)
 
     def _on_daemon_output(self, data):
@@ -3572,8 +3619,16 @@ class TerminalWidget(Gtk.Box):
                     return True
 
                 def _cb_copy(widget, *args):
+                    logger.debug(
+                        "Terminal copy shortcut fired %s",
+                        clipboard_debug_state(self),
+                    )
                     if self.backend:
                         return _schedule_vte_action(self.copy_text)
+                    logger.debug(
+                        "Terminal copy shortcut ignored: no backend %s",
+                        clipboard_debug_state(self),
+                    )
                     return False
 
                 def _cb_paste(widget, *args):
@@ -3793,6 +3848,11 @@ class TerminalWidget(Gtk.Box):
             return False
 
         self._pass_through_mode = enabled
+        logger.debug(
+            "Terminal pass-through mode %s %s",
+            "enabled" if enabled else "disabled",
+            clipboard_debug_state(self),
+        )
         if enabled:
             self._remove_custom_shortcut_controllers()
         else:
@@ -4456,25 +4516,66 @@ class TerminalWidget(Gtk.Box):
         the preference is enabled. Silent (no toast — the signal fires on every
         change during a drag-select), and only when a selection actually exists
         (the signal also fires on deselect)."""
+        has_selection = False
         try:
-            if not self.config.get_setting('terminal.copy_on_select', False):
+            has_selection = bool(self.backend and self.backend.get_has_selection())
+        except Exception:
+            has_selection = False
+        previous = getattr(self, "_logged_has_selection", None)
+        if previous is not has_selection:
+            self._logged_has_selection = has_selection
+            logger.debug(
+                "Terminal selection changed %s",
+                clipboard_debug_state(self),
+            )
+        try:
+            copy_on_select = bool(
+                self.config.get_setting('terminal.copy_on_select', False)
+            )
+            if not copy_on_select:
                 return
-            if self.backend and self.backend.get_has_selection():
+            if has_selection:
+                logger.debug(
+                    "Terminal copy-on-select invoking copy %s",
+                    clipboard_debug_state(self),
+                )
                 self.backend.copy_clipboard()
         except Exception:
             logger.debug("copy-on-select failed", exc_info=True)
 
     def copy_text(self, *, format="text"):
         """Copy selected text to clipboard"""
+        logger.debug(
+            "Terminal copy requested format=%s %s",
+            format,
+            clipboard_debug_state(self),
+        )
         if self.backend:
             def _completed(copied):
+                logger.debug(
+                    "Terminal copy completed copied=%s format=%s %s",
+                    copied,
+                    format,
+                    clipboard_debug_state(self),
+                )
                 if copied:
                     self._show_toast(_("Copied to clipboard"))
 
             self.backend.copy_clipboard(format=format, on_complete=_completed)
+        else:
+            logger.debug(
+                "Terminal copy skipped: no backend format=%s %s",
+                format,
+                clipboard_debug_state(self),
+            )
 
     def handle_backend_copy_result(self, copied):
         """Report a backend-owned shortcut copy through the standard UI path."""
+        logger.debug(
+            "Terminal backend-owned copy result copied=%s %s",
+            copied,
+            clipboard_debug_state(self),
+        )
         if copied:
             self._show_toast(_("Copied to clipboard"))
 

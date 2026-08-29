@@ -57,6 +57,11 @@ class MouseTrackingState:
     def active(self) -> bool:
         return bool(self._active)
 
+    @property
+    def modes(self) -> tuple[int, ...]:
+        """Enabled DECSET mouse modes, sorted for stable log output."""
+        return tuple(sorted(self._active))
+
     def reset(self) -> None:
         self._active.clear()
         self._tail = b""

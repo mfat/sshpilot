@@ -412,16 +412,29 @@ def _build_shell_html_impl(
       e.preventDefault();
       return false;
     }}
-    if (window.sshpilotShortcutPassthrough) return true;
     if (e.type !== "keydown") return true;
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
     const clipboardModifier = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
-    if (!clipboardModifier) return true;
     const k = e.key.toLowerCase();
+    // Report copy/paste keys even when pass-through is on so Python logs why
+    // the shortcut never became a clipboard write (issue #1178).
+    if (window.sshpilotShortcutPassthrough) {{
+      if (clipboardModifier && (k === "c" || k === "v")) {{
+        send({{ type: "clipboard-passthrough", key: k, hasSelection: term.hasSelection() }});
+      }}
+      return true;
+    }}
+    if (!clipboardModifier) return true;
     if (k === "v") {{ e.preventDefault(); send({{ type: "paste" }}); return false; }}
     if (k === "c") {{
       e.preventDefault();
-      send({{ type: "copy", text: term.getSelection() }});
+      var selection = term.getSelection() || "";
+      send({{
+        type: "copy",
+        text: selection,
+        hasSelection: term.hasSelection(),
+        selectionLength: selection.length
+      }});
       term.focus();
       return false;
     }}

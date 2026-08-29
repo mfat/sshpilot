@@ -63,6 +63,9 @@ def test_clipboard_shortcuts_are_owned_once_and_respect_passthrough():
     assert 'type: "paste"' in html
     assert 'type: "copy"' in html
     assert 'type: "selection-changed"' in html
+    assert 'type: "clipboard-passthrough"' in html
+    assert "hasSelection: term.hasSelection()" in html
+    assert "selectionLength: selection.length" in html
 
 
 def test_link_handler_matches_xterm_docs_pattern():
