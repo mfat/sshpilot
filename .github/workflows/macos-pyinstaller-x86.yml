@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*'
+  pull_request:
+    paths:
+      - '.github/workflows/macos-pyinstaller-x86.yml'
   workflow_dispatch:
 
 permissions:
@@ -37,13 +40,21 @@ jobs:
                      /usr/local/bin/python3.13 \
                      /usr/local/bin/python3.13-config
 
-          # Install with overwrite flag to prevent linking errors
+          # Install with overwrite flag to prevent linking errors.
+          # pygobject3 is installed separately: Homebrew 3.58+ currently ships
+          # no Intel macOS bottles (arm64 + Linux only), and macos-15-intel is
+          # Homebrew Tier 3 so brew will not auto-fallback to source.
           brew install --overwrite python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
-            adwaita-icon-theme gobject-introspection pygobject3 py3cairo \
+            adwaita-icon-theme gobject-introspection py3cairo \
             create-dmg sshpass
-            
+
+          brew install --overwrite --build-from-source pygobject3
+          brew unlink python@3.14 2>/dev/null || true
           brew link --overwrite --force python@3.13
           brew link --overwrite libadwaita
+
+          PYTHON_PATH="$(brew --prefix python@3.13)/bin/python3.13"
+          "$PYTHON_PATH" -c "import gi; print('PyGObject', gi.__version__)"
 
       - name: Prepare Homebrew virtual environment
         run: |
