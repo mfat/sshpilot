@@ -433,34 +433,12 @@ _ERRNO_TO_ERROR_CODE = {
     errno.EPIPE: ErrorCode.SFTP_PROTOCOL_LOST,
 }
 
-_SFTP_STATUS_TO_CODE_AND_MESSAGE = {
-    sftp_proto.FX_NO_SUCH_FILE: (
-        ErrorCode.REMOTE_PATH_NOT_FOUND,
-        "The path was not found",
-    ),
-    sftp_proto.FX_PERMISSION_DENIED: (
-        ErrorCode.REMOTE_PERMISSION_DENIED,
-        "Permission denied",
-    ),
-    sftp_proto.FX_NO_CONNECTION: (
-        ErrorCode.SFTP_PROTOCOL_LOST,
-        "The SFTP connection was lost",
-    ),
-    sftp_proto.FX_CONNECTION_LOST: (
-        ErrorCode.SFTP_PROTOCOL_LOST,
-        "The SFTP connection was lost",
-    ),
-    sftp_proto.FX_OP_UNSUPPORTED: (
-        ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
-        "The server does not support this operation",
-    ),
-}
-
-_ERROR_CODE_MESSAGES = {
-    ErrorCode.SFTP_PROTOCOL_LOST: "The SFTP connection was lost",
-    ErrorCode.REMOTE_PATH_NOT_FOUND: "The path was not found",
-    ErrorCode.REMOTE_PERMISSION_DENIED: "Permission denied",
-    ErrorCode.REMOTE_UNSUPPORTED_OPERATION: "The server does not support this operation",
+_SFTP_STATUS_TO_ERROR_CODE = {
+    sftp_proto.FX_NO_SUCH_FILE: ErrorCode.REMOTE_PATH_NOT_FOUND,
+    sftp_proto.FX_PERMISSION_DENIED: ErrorCode.REMOTE_PERMISSION_DENIED,
+    sftp_proto.FX_NO_CONNECTION: ErrorCode.SFTP_PROTOCOL_LOST,
+    sftp_proto.FX_CONNECTION_LOST: ErrorCode.SFTP_PROTOCOL_LOST,
+    sftp_proto.FX_OP_UNSUPPORTED: ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
 }
 
 _GENERIC_SFTP_STATUS_TEXT = frozenset(
@@ -2042,10 +2020,8 @@ class SftpServiceRuntime:
             server_message = str(exc)
             if server_message:
                 details["server_message"] = server_message
-            mapped = _SFTP_STATUS_TO_CODE_AND_MESSAGE.get(exc.code)
-            if mapped is not None:
-                code, message = mapped
-            else:
+            code = _SFTP_STATUS_TO_ERROR_CODE.get(exc.code)
+            if code is None:
                 code = _ERRNO_TO_ERROR_CODE.get(
                     getattr(exc, "errno", None), ErrorCode.SFTP_COMMAND_FAILED
                 )
@@ -2053,28 +2029,24 @@ class SftpServiceRuntime:
                     server_message
                     and server_message not in _GENERIC_SFTP_STATUS_TEXT
                 ):
-                    message = server_message
-                else:
-                    message = _ERROR_CODE_MESSAGES.get(
-                        code, "The SFTP command failed"
-                    )
+                    details["server_message_is_specific"] = True
             error = SshPilotError(
                 code,
-                message,
+                code.value,
                 details=details,
                 connection_id=record.connection_id,
             )
         elif isinstance(exc, (EOFError, OSError)):
             error = SshPilotError(
                 ErrorCode.SFTP_PROTOCOL_LOST,
-                "The SFTP connection was lost",
+                ErrorCode.SFTP_PROTOCOL_LOST.value,
                 details=details,
                 connection_id=record.connection_id,
             )
         else:
             error = SshPilotError(
                 ErrorCode.SFTP_PROTOCOL_ERROR,
-                "The SFTP command failed",
+                ErrorCode.SFTP_PROTOCOL_ERROR.value,
                 details=details,
                 connection_id=record.connection_id,
             )
@@ -2084,7 +2056,18 @@ class SftpServiceRuntime:
             # covers protocol EOF while the ssh child is still listed as
             # alive. Flip to FAILED so the file-manager Retry UI appears
             # without waiting for another click.
-            self._fail_dead_connection(record, error)
+            # Preserve the separate ServiceFailure presentation contract until
+            # its dedicated migration. Only the direct ErrorData response uses
+            # the stable code as its non-presentational message placeholder.
+            self._fail_dead_connection(
+                record,
+                SshPilotError(
+                    error.code,
+                    "The SFTP connection was lost",
+                    details=error.details,
+                    connection_id=record.connection_id,
+                ),
+            )
         return error
 
     def _fail_dead_connection(self, record: _SftpRecord, error: SshPilotError) -> None:

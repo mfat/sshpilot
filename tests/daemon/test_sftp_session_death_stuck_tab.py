@@ -207,7 +207,8 @@ def test_dead_connection_fails_service_and_signals_the_tab():
         "/tmp", on_success=lambda _r: None, on_error=op_errors.append
     )
     assert len(op_errors) == 1
-    assert "The SFTP connection was lost" in str(op_errors[0])
+    assert op_errors[0].code is ErrorCode.SFTP_PROTOCOL_LOST
+    assert op_errors[0].message == ErrorCode.SFTP_PROTOCOL_LOST.value
 
     # Fixed: the failed op flips the service record to FAILED instead of
     # leaving it READY forever.
@@ -219,6 +220,7 @@ def test_dead_connection_fails_service_and_signals_the_tab():
     assert controller.state is SftpControllerState.FAILED
     assert len(errors) == 1
     assert errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY
+    assert errors[0].message == "The SFTP connection was lost"
 
     # Further ops are now rejected locally -- no more requests hit the dead
     # connection, unlike the old behavior of failing the same way forever.

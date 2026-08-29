@@ -575,7 +575,12 @@ def test_connection_lost_status_fails_service_with_specific_message():
         _list_tmp(runtime, summary, owner)
 
     assert raised.value.code is ErrorCode.SFTP_PROTOCOL_LOST
-    assert raised.value.message == "The SFTP connection was lost"
+    assert raised.value.message == ErrorCode.SFTP_PROTOCOL_LOST.value
+    assert raised.value.details == {
+        "service_id": summary.id,
+        "sftp_status": sftp_proto.FX_CONNECTION_LOST,
+        "server_message": "Connection lost",
+    }
     failed = runtime.get_service(summary.id)
     assert failed.state is SftpServiceState.FAILED
     assert failed.failure.message == "The SFTP connection was lost"
@@ -593,7 +598,7 @@ def test_permission_denied_status_keeps_service_ready():
         _list_tmp(runtime, summary, owner)
 
     assert raised.value.code is ErrorCode.REMOTE_PERMISSION_DENIED
-    assert raised.value.message == "Permission denied"
+    assert raised.value.message == ErrorCode.REMOTE_PERMISSION_DENIED.value
     assert runtime.get_service(summary.id).state is SftpServiceState.READY
 
 
@@ -609,7 +614,8 @@ def test_fx_failure_keeps_generic_command_message_and_ready_service():
         _list_tmp(runtime, summary, owner)
 
     assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
-    assert raised.value.message == "The SFTP command failed"
+    assert raised.value.message == ErrorCode.SFTP_COMMAND_FAILED.value
+    assert "server_message_is_specific" not in raised.value.details
     assert runtime.get_service(summary.id).state is SftpServiceState.READY
 
 
@@ -625,5 +631,66 @@ def test_fx_failure_with_server_text_is_surfaced():
         _list_tmp(runtime, summary, owner)
 
     assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
-    assert raised.value.message == "Directory not empty"
+    assert raised.value.message == ErrorCode.SFTP_COMMAND_FAILED.value
+    assert raised.value.details["server_message"] == "Directory not empty"
+    assert raised.value.details["server_message_is_specific"] is True
     assert runtime.get_service(summary.id).state is SftpServiceState.READY
+
+
+@pytest.mark.parametrize(
+    ("status", "server_message", "expected_code"),
+    (
+        (
+            sftp_proto.FX_NO_SUCH_FILE,
+            "No such file",
+            ErrorCode.REMOTE_PATH_NOT_FOUND,
+        ),
+        (
+            sftp_proto.FX_OP_UNSUPPORTED,
+            "Operation unsupported",
+            ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
+        ),
+    ),
+)
+def test_direct_status_errors_use_stable_codes_not_rendered_messages(
+    status, server_message, expected_code
+):
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _fail(_path):
+        raise sftp_proto.SFTPError(status, server_message)
+
+    client.listdir_attr = _fail
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is expected_code
+    assert raised.value.message == expected_code.value
+    assert raised.value.details["server_message"] == server_message
+    assert "server_message_is_specific" not in raised.value.details
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_code"),
+    (
+        (OSError("system connection detail"), ErrorCode.SFTP_PROTOCOL_LOST),
+        (RuntimeError("library protocol detail"), ErrorCode.SFTP_PROTOCOL_ERROR),
+    ),
+)
+def test_external_exception_text_is_not_transported_as_direct_message(
+    failure, expected_code
+):
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _fail(_path):
+        raise failure
+
+    client.listdir_attr = _fail
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is expected_code
+    assert raised.value.message == expected_code.value
+    assert str(failure) not in str(raised.value.to_dict())
