@@ -76,7 +76,7 @@
     <release version="5.9.6" date="2026-08-27">
       <description>
         <p>Fixed subgroups not inheriting parent group color</p>
-        <p>Added option to remeber passwords to password prompts</p>
+        <p>Added option to remember passwords to password prompts</p>
         <p>Minor fixes to DnD in sidebar</p>
       </description>
     </release>

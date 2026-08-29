@@ -154,7 +154,7 @@ an alternative to Putty, Termius and Mobaxterm.
 
 * Thu Aug 27 2026 mFat <newmfat@gmail.com> - 5.9.6-1
 - Fixed subgroups not inheriting parent group color
-- Added option to remeber passwords to password prompts
+- Added option to remember passwords to password prompts
 - Minor fixes to DnD in sidebar
 
 * Tue Aug 25 2026 mFat <newmfat@gmail.com> - 5.9.5-1
