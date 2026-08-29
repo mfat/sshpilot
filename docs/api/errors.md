@@ -337,6 +337,13 @@ The requested daemon operation ID is unknown or no longer retained.
 
 Schema-only code. No current client method defines an API timeout.
 
+Direct SFTP RPC responses use the stable SFTP/remote error codes below for
+frontend message selection; their `message` field is not a presentation
+contract. `details.server_message`, when present, is an opaque server
+diagnostic. The optional boolean `details.server_message_is_specific` marks a
+diagnostic that the frontend may append unchanged after its localized generic
+message. Neither diagnostic field is a gettext message identifier.
+
 <!-- api-error: sftp_service_not_found -->
 ## `sftp_service_not_found`
 
@@ -351,7 +358,7 @@ operation.
 <!-- api-error: sftp_command_failed -->
 ## `sftp_command_failed`
 
-A remote SFTP command failed with a safe translated reason.
+A remote SFTP command failed.
 
 <!-- api-error: sftp_protocol_lost -->
 ## `sftp_protocol_lost`

@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sshpilot.api.errors import ErrorCode, SshPilotError
-from sshpilot.daemon_sftp_backend import DaemonSftpManager
+from sshpilot.daemon_sftp_backend import DaemonSftpManager, _localized_direct_error
+from sshpilot.gtk import sftp_error_messages
 from sshpilot.sftp_service_controller import SftpControllerState
 
 SERVICE_ID = "sftp-1"
@@ -98,3 +101,61 @@ def test_remove_delegates_recursive_delete_to_daemon():
 
     assert future.result() is None
     assert controller.remove_calls == [("/home/user/tree", True)]
+
+
+def test_direct_future_error_is_localized_without_losing_error_code(monkeypatch):
+    monkeypatch.setattr(sftp_error_messages, "_", lambda _msgid: "Accès refusé")
+    error = SshPilotError(
+        ErrorCode.REMOTE_PERMISSION_DENIED,
+        ErrorCode.REMOTE_PERMISSION_DENIED.value,
+        details={"sftp_status": 3, "server_message": "Permission denied"},
+    )
+
+    localized = _localized_direct_error(error)
+
+    assert isinstance(localized, SshPilotError)
+    assert localized.code is ErrorCode.REMOTE_PERMISSION_DENIED
+    assert localized.message == "Accès refusé"
+    assert localized.details == error.details
+
+
+def test_service_failure_error_is_unchanged_by_direct_adapter(monkeypatch):
+    monkeypatch.setattr(
+        sftp_error_messages,
+        "_",
+        lambda _msgid: pytest.fail("ServiceFailure must not be translated here"),
+    )
+    error = SshPilotError(
+        ErrorCode.SFTP_SERVICE_NOT_READY,
+        "The SFTP session could not be established",
+    )
+
+    assert _localized_direct_error(error) is error
+
+
+def test_list_error_signal_contains_frontend_translation(monkeypatch):
+    controller = _Controller()
+    manager = _manager(controller)
+    emitted = []
+    monkeypatch.setattr(sftp_error_messages, "_", lambda _msgid: "Chemin introuvable")
+    monkeypatch.setattr(
+        DaemonSftpManager,
+        "emit",
+        lambda _self, *args: emitted.append(args),
+    )
+
+    def _list_directory(_path, *, on_success, on_error):
+        del on_success
+        on_error(
+            SshPilotError(
+                ErrorCode.REMOTE_PATH_NOT_FOUND,
+                ErrorCode.REMOTE_PATH_NOT_FOUND.value,
+                details={"sftp_status": 2, "server_message": "No such file"},
+            )
+        )
+
+    controller.list_directory = _list_directory
+
+    manager.listdir("/missing")
+
+    assert emitted == [("operation-error", "Chemin introuvable")]

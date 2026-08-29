@@ -5,6 +5,11 @@ notes remain separate.
 
 ## Unreleased
 
+- Direct SFTP RPC failures now use their existing `ErrorCode` values as the
+  presentation contract instead of transporting rendered English messages.
+  GTK maps those codes to gettext messages and keeps an optional raw SFTP
+  server diagnostic separate. The `ErrorData` shape and error-code inventory
+  are unchanged, so `API_IMPLEMENTATION_VERSION` remains `0.47`.
 - Daemon-only retirement repairs now preserve protected broadcast input
   registration, truthful operation-mode recovery, atomic reconnect publication,
   and cross-process shared-settings transactions. These are implementation

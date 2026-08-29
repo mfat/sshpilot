@@ -152,3 +152,16 @@ def test_connection_error_idle_ignores_replaced_manager(monkeypatch):
     queued[0]()
 
     win._right_pane.show_load_error.assert_not_called()
+
+
+def test_direct_operation_error_reaches_retry_pane_localized():
+    win = _window()
+    manager = MagicMock()
+    win._manager = manager
+    win._pending_paths[win._right_pane] = "/root-only"
+
+    win._on_operation_error(manager, "Accès refusé")
+
+    win._right_pane.show_load_error.assert_called_once_with(
+        "/root-only", "Accès refusé"
+    )
