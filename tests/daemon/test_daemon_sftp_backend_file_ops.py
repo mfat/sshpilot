@@ -3,13 +3,22 @@ temporary files or frontend-orchestrated recursion."""
 
 from __future__ import annotations
 
+from concurrent.futures import Future
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from sshpilot.api.models.operations import SftpFailure, SftpFailureCode
+from sshpilot.api.models.transfers import (
+    TransferBackend,
+    TransferDirection,
+    TransferState,
+    TransferSummary,
+)
 from sshpilot.daemon_sftp_backend import DaemonSftpManager, _localized_direct_error
-from sshpilot.gtk import sftp_error_messages
+from sshpilot.gtk import sftp_error_messages, sftp_failure_messages
 from sshpilot.sftp_service_controller import SftpControllerState
 
 SERVICE_ID = "sftp-1"
@@ -159,3 +168,37 @@ def test_list_error_signal_contains_frontend_translation(monkeypatch):
     manager.listdir("/missing")
 
     assert emitted == [("operation-error", "Chemin introuvable")]
+
+
+def test_transfer_summary_failure_is_translated_by_file_manager(monkeypatch):
+    manager = _manager()
+    future = Future()
+    calls = []
+
+    def _translate(msgid):
+        calls.append(msgid)
+        return "La destination locale existe déjà : {path}"
+
+    monkeypatch.setattr(sftp_failure_messages, "_", _translate)
+    summary = TransferSummary(
+        id="transfer-1",
+        connection_id="conn-1",
+        sftp_service_id=SERVICE_ID,
+        backend=TransferBackend.SFTP,
+        direction=TransferDirection.DOWNLOAD,
+        state=TransferState.FAILED,
+        source_display="source",
+        destination_display="destination",
+        created_at=datetime.now(timezone.utc),
+        failure=SftpFailure(
+            SftpFailureCode.LOCAL_DESTINATION_EXISTS,
+            ErrorCode.TRANSFER_CONFLICT,
+            parameters={"path": "/tmp/{literal}/cible"},
+        ),
+    )
+
+    manager._finish_transfer(future, summary)
+
+    with pytest.raises(OSError, match="/tmp/\\{literal\\}/cible"):
+        future.result()
+    assert calls == ["The local destination already exists: {path}"]

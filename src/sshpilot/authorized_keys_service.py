@@ -24,6 +24,7 @@ from sshpilot.api.models.operations import (
 )
 
 from .authorized_keys_parser import Item, parse_file, serialize
+from .gtk.sftp_failure_messages import format_sftp_failure
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +104,9 @@ class DaemonAuthorizedKeysService:
                     ):
                         failure = getattr(summary, "failure", None)
                         detail = (
-                            getattr(failure, "message", None)
-                            or "The SFTP session could not be established"
+                            format_sftp_failure(failure)
+                            if failure is not None
+                            else "The SFTP session could not be established"
                         )
                         raise SshPilotError(
                             ErrorCode.SFTP_SERVICE_NOT_READY,

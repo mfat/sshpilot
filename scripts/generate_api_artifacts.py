@@ -97,7 +97,13 @@ EXTRA_MODELS = (
     BitwardenStatus,
     RbwStatus,
 )
-EXTRA_ENUMS = (Capability, EventType, ErrorCode, SecretMessageCode)
+EXTRA_ENUMS = (
+    Capability,
+    EventType,
+    ErrorCode,
+    SecretMessageCode,
+    operations.SftpFailureCode,
+)
 UNION_ORIGINS = (Union,)
 if hasattr(types, "UnionType"):
     UNION_ORIGINS += (types.UnionType,)
@@ -142,6 +148,7 @@ IMPLEMENTED_MODELS = {
     "SessionSummary",
     "ExternalTerminalLaunchSpec",
     "ServiceFailure",
+    "SftpFailure",
     "SftpServiceSummary",
     "OpenSftpRequest",
     "AttachSftpRequest",

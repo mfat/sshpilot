@@ -2650,7 +2650,7 @@ Synthetic representation:
 | `finished_at` | `Optional[datetime]` | No | `null` | No |
 | `progress` | `Optional[float]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[Union[ServiceFailure, SftpFailure]]` | No | `null` | No |
 | `result` | `Optional[Dict]` | No | `null` | Yes |
 
 Synthetic representation:
@@ -3855,6 +3855,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpFailure -->
+## `SftpFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable SFTP failure plus an optional opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `SftpFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
+}
+```
+
 <!-- api-model: SftpPathRequest -->
 ## `SftpPathRequest`
 
@@ -4055,7 +4083,7 @@ Synthetic representation:
 | `closed_at` | `Optional[datetime]` | No | `null` | No |
 | `attachment_count` | `int` | No | `0` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[SftpFailure]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -4483,7 +4511,7 @@ Synthetic representation:
 | `started_at` | `Optional[datetime]` | No | `null` | No |
 | `completed_at` | `Optional[datetime]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[Union[ServiceFailure, SftpFailure]]` | No | `null` | No |
 | `bytes_transferred` | `Optional[int]` | No | `null` | No |
 | `total_bytes` | `Optional[int]` | No | `null` | No |
 

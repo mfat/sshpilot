@@ -10,7 +10,7 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, ConnectionId, TransferId
-from sshpilot.api.models.operations import OpenSftpRequest
+from sshpilot.api.models.operations import OpenSftpRequest, SftpFailureCode
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
@@ -729,7 +729,8 @@ def test_recursive_upload_missing_source_fails():
     summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
 
     assert summary.state is TransferState.FAILED
-    assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+    assert summary.failure.code is SftpFailureCode.LOCAL_SOURCE_DIRECTORY_NOT_FOUND
+    assert summary.failure.error_code is ErrorCode.TRANSFER_IO_FAILED
 
 
 def test_recursive_download_copies_directory_tree(tmp_path):
@@ -835,7 +836,8 @@ def test_non_recursive_dir_upload_rejected():
     summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
 
     assert summary.state is TransferState.FAILED
-    assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+    assert summary.failure.code is SftpFailureCode.LOCAL_SOURCE_FILE_NOT_FOUND
+    assert summary.failure.error_code is ErrorCode.TRANSFER_IO_FAILED
 
 
 def test_recursive_upload_skip_policy_reaches_full_progress():
@@ -936,7 +938,8 @@ def test_recursive_upload_rejects_symlink_root(tmp_path):
     summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
 
     assert summary.state is TransferState.FAILED
-    assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+    assert summary.failure.code is SftpFailureCode.RECURSIVE_UPLOAD_SYMLINK_UNSUPPORTED
+    assert summary.failure.error_code is ErrorCode.TRANSFER_IO_FAILED
     assert client.files == {}
 
 
@@ -961,7 +964,8 @@ def test_recursive_download_rejects_symlink_root(tmp_path):
     summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
 
     assert summary.state is TransferState.FAILED
-    assert summary.failure.code == ErrorCode.TRANSFER_IO_FAILED.value
+    assert summary.failure.code is SftpFailureCode.RECURSIVE_DOWNLOAD_SYMLINK_UNSUPPORTED
+    assert summary.failure.error_code is ErrorCode.TRANSFER_IO_FAILED
     assert not local_dst.exists()
 
 

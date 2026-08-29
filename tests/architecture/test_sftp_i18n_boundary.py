@@ -9,7 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src" / "sshpilot"
 RUNTIME = SOURCE / "daemon" / "sftp_runtime.py"
+TRANSFER_RUNTIME = SOURCE / "daemon" / "transfer_runtime.py"
 PRESENTER = SOURCE / "gtk" / "sftp_error_messages.py"
+FAILURE_PRESENTER = SOURCE / "gtk" / "sftp_failure_messages.py"
 
 
 def _tree(path: Path) -> ast.Module:
@@ -17,19 +19,20 @@ def _tree(path: Path) -> ast.Module:
 
 
 def test_sftp_daemon_never_calls_gettext():
-    tree = _tree(RUNTIME)
-    imported_modules = {
-        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    }
-    calls = {
-        node.func.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-    }
+    for runtime in (RUNTIME, TRANSFER_RUNTIME):
+        tree = _tree(runtime)
+        imported_modules = {
+            node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        }
+        calls = {
+            node.func.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        }
 
-    assert "gettext" not in imported_modules
-    assert "_" not in calls
-    assert "N_" not in calls
+        assert "gettext" not in imported_modules
+        assert "_" not in calls
+        assert "N_" not in calls
 
 
 def test_direct_sftp_status_map_contains_only_stable_codes():
@@ -52,7 +55,9 @@ def test_sftp_presenter_is_the_gettext_extraction_owner():
     potfiles = (ROOT / "po" / "POTFILES").read_text(encoding="utf-8").splitlines()
 
     assert "src/sshpilot/gtk/sftp_error_messages.py" in potfiles
+    assert "src/sshpilot/gtk/sftp_failure_messages.py" in potfiles
     assert "src/sshpilot/daemon/sftp_runtime.py" not in potfiles
+    assert "src/sshpilot/daemon/transfer_runtime.py" not in potfiles
 
 
 def test_sftp_presenter_does_not_depend_on_service_failure_models():
@@ -62,6 +67,17 @@ def test_sftp_presenter_does_not_depend_on_service_failure_models():
 
     assert "..api.models.operations" not in imports
     assert "..api.models.transfers" not in imports
+
+
+def test_structured_sftp_failure_presenter_owns_only_frontend_msgids():
+    presenter = FAILURE_PRESENTER.read_text(encoding="utf-8")
+    daemon_sources = "\n".join(
+        path.read_text(encoding="utf-8") for path in (RUNTIME, TRANSFER_RUNTIME)
+    )
+
+    assert "N_(" in presenter
+    assert "N_(" not in daemon_sources
+    assert "gettext" not in daemon_sources
 
 
 def test_file_manager_item_count_text_remains_out_of_scope():

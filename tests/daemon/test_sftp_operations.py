@@ -22,6 +22,7 @@ from sshpilot.api.models.operations import (
     OpenSftpRequest,
     SftpCopyRequest,
     SftpDirectorySizeRequest,
+    SftpFailureCode,
     SftpPathRequest,
     is_terminal_operation_state,
 )
@@ -240,7 +241,30 @@ def test_directory_size_operation_missing_root_fails_structured():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.FAILED
-    assert done.failure.code == ErrorCode.REMOTE_PATH_NOT_FOUND.value
+    assert done.failure.code is SftpFailureCode.PATH_NOT_FOUND
+    assert done.failure.error_code is ErrorCode.REMOTE_PATH_NOT_FOUND
+
+
+def test_recursive_operation_keeps_specific_server_diagnostic_separate():
+    fs = _FsClient()
+    runtime, ops, summary = _make_runtime(fs)
+    diagnostic = "storage appliance policy rejected inode 42"
+
+    def _specific_failure(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, diagnostic)
+
+    fs.lstat = _specific_failure
+    started = runtime.start_directory_size(
+        SftpDirectorySizeRequest(summary.id, "/tree"), client_id=OWNER
+    )
+    done = _await_terminal(ops, started.operation_id)
+
+    assert done.state is OperationState.FAILED
+    assert done.message == ""
+    assert done.failure.code is SftpFailureCode.COMMAND_FAILED
+    assert done.failure.error_code is ErrorCode.SFTP_COMMAND_FAILED
+    assert done.failure.parameters == {}
+    assert done.failure.diagnostic == diagnostic
 
 
 def test_start_directory_size_without_lifecycle_is_unsupported():
@@ -373,7 +397,8 @@ def test_copy_tree_operation_rejects_recursive_root_symlink():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.FAILED
-    assert done.failure.code == ErrorCode.VALIDATION_FAILED.value
+    assert done.failure.code is SftpFailureCode.RECURSIVE_COPY_SYMLINK_UNSUPPORTED
+    assert done.failure.error_code is ErrorCode.VALIDATION_FAILED
     assert "/destination" not in fs.dirs
     assert fs.files["/important-data/secret.txt"] == b"do-not-delete"
 
@@ -387,7 +412,8 @@ def test_move_tree_operation_rejects_root_symlink_and_never_touches_target():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.FAILED
-    assert done.failure.code == ErrorCode.VALIDATION_FAILED.value
+    assert done.failure.code is SftpFailureCode.RECURSIVE_COPY_SYMLINK_UNSUPPORTED
+    assert done.failure.error_code is ErrorCode.VALIDATION_FAILED
     # The real target directory must survive untouched: the no-follow policy
     # means the root symlink is rejected before any walk, so move cleanup
     # never gets a chance to delete through the link into /important-data.
@@ -403,4 +429,5 @@ def test_directory_size_operation_rejects_root_symlink():
     )
     done = _await_terminal(ops, started.operation_id)
     assert done.state is OperationState.FAILED
-    assert done.failure.code == ErrorCode.VALIDATION_FAILED.value
+    assert done.failure.code is SftpFailureCode.DIRECTORY_SIZE_REQUIRES_REAL_DIRECTORY
+    assert done.failure.error_code is ErrorCode.VALIDATION_FAILED
