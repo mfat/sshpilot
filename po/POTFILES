@@ -27,6 +27,7 @@ src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
 src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/secret_status_messages.py
+src/sshpilot/gtk/secret_transfer_messages.py
 src/sshpilot/host_picker.py
 src/sshpilot/known_hosts_editor.py
 src/sshpilot/log_viewer.py

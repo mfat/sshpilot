@@ -5823,13 +5823,34 @@ def secret_transfer_result_to_wire(result: Any) -> Dict[str, Any]:
     return result.to_dict()
 
 
+def _secret_transfer_message_from_wire(value: Any, context: str) -> Any:
+    from ..models.secrets import SecretTransferMessage, SecretTransferMessageCode
+
+    data = _strict_fields(
+        value,
+        required={"code", "parameters", "diagnostic"},
+        context=context,
+    )
+    code = data["code"]
+    if type(code) is not str or code not in SecretTransferMessageCode._value2member_map_:
+        raise ValueError(f"{context} code is invalid")
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError(f"{context} parameters must be an object")
+    diagnostic = _text(data["diagnostic"], "diagnostic", allow_empty=True)
+    return SecretTransferMessage(
+        code=SecretTransferMessageCode(code),
+        parameters=parameters,
+        diagnostic=diagnostic,
+    )
+
+
 def secret_transfer_result_from_wire(value: Any) -> Any:
     from ..models.secrets import SecretOperationState, SecretTransferResult
 
     data = _strict_fields(
         value,
-        required={"operation", "path", "counts", "warnings", "status"},
-        optional={"message"},
+        required={"operation", "path", "counts", "warnings", "status", "message"},
         context="secret transfer result",
     )
     counts = data["counts"]
@@ -5838,8 +5859,8 @@ def secret_transfer_result_from_wire(value: Any) -> Any:
     ):
         raise ValueError("counts must be an object of integer counts")
     warnings = data["warnings"]
-    if type(warnings) is not list or not all(type(w) is str for w in warnings):
-        raise ValueError("warnings must be a list of strings")
+    if type(warnings) is not list:
+        raise ValueError("warnings must be a list")
     status = data["status"]
     if type(status) is not str or status not in SecretOperationState._value2member_map_:
         raise ValueError("status is not a valid secret transfer state")
@@ -5847,9 +5868,57 @@ def secret_transfer_result_from_wire(value: Any) -> Any:
         operation=data["operation"],
         path=_text(data["path"], "path", allow_empty=True),
         counts=counts,
-        warnings=tuple(warnings),
+        warnings=tuple(
+            _secret_transfer_message_from_wire(warning, "secret transfer warning")
+            for warning in warnings
+        ),
         status=SecretOperationState(status),
-        message=data.get("message", ""),
+        message=(
+            None
+            if data["message"] is None
+            else _secret_transfer_message_from_wire(
+                data["message"], "secret transfer message"
+            )
+        ),
+    )
+
+
+def secret_transfer_preview_to_wire(preview: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretTransferPreview
+
+    if type(preview) is not SecretTransferPreview:
+        raise TypeError("SecretTransferPreview is required")
+    return preview.to_dict()
+
+
+def secret_transfer_preview_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretTransferPreview
+
+    data = _strict_fields(
+        value,
+        required={"kind", "encrypted", "included", "error"},
+        context="secret transfer preview",
+    )
+    kind = _text(data["kind"], "kind")
+    if type(data["encrypted"]) is not bool:
+        raise ValueError("encrypted must be a boolean")
+    included = data["included"]
+    if type(included) is not dict or not all(
+        type(key) is str and type(item) is bool
+        for key, item in included.items()
+    ):
+        raise ValueError("included must be an object of boolean values")
+    return SecretTransferPreview(
+        kind=kind,
+        encrypted=data["encrypted"],
+        included=included,
+        error=(
+            None
+            if data["error"] is None
+            else _secret_transfer_message_from_wire(
+                data["error"], "secret transfer preview error"
+            )
+        ),
     )
 
 

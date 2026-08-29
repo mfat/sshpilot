@@ -16,7 +16,10 @@ from types import SimpleNamespace
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
 import sshpilot.secret_storage as ss
-from sshpilot.api.models.secrets import SecretOperationState
+from sshpilot.api.models.secrets import (
+    SecretOperationState,
+    SecretTransferMessageCode,
+)
 from sshpilot.backup_archive import read_spbk, write_spbk
 from sshpilot.core.connections.models import ConnectionRecord
 from sshpilot.core.settings import CONFIG_VERSION
@@ -414,7 +417,10 @@ def test_daemon_import_wrong_passphrase_is_a_clean_failure(monkeypatch, tmp_path
     )
     assert result.status.value == "failed"
     assert result.message  # never a traceback with a secret inside
-    assert "wrong passphrase or corrupt backup" in result.message.lower()
+    assert (
+        result.message.code
+        is SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+    )
 
 
 def test_daemon_export_nothing_selected_fails_cleanly(monkeypatch, tmp_path):
@@ -438,7 +444,7 @@ def test_daemon_export_nothing_selected_fails_cleanly(monkeypatch, tmp_path):
         settings_path=config_file,
     )
     assert result.status.value == "failed"
-    assert "nothing selected" in result.message.lower()
+    assert result.message.code is SecretTransferMessageCode.NOTHING_SELECTED_TO_EXPORT
     assert not (tmp_path / "x.spbk").exists()
 # ---------------------------------------------------------------------------
 # Import preview (metadata only) + one-passphrase manifest cache
@@ -476,13 +482,13 @@ def test_daemon_preview_backup_reports_kind_encryption_and_included(monkeypatch,
     config_file, source, manifest = _preview_spbk(monkeypatch, tmp_path)
     public, cached = daemon_preview_backup(
         FakeMgr(), source=str(source), settings_path=config_file)
-    assert public["kind"] == "spbk"
-    assert public["encrypted"] is False
-    assert public["included"] == {
+    assert public.kind == "spbk"
+    assert public.encrypted is False
+    assert public.included == {
         "app_settings": True, "ssh_config": True, "known_hosts": False,
         "secrets": True, "private_keys": False,
     }
-    assert "error" not in public
+    assert public.error is None
     # The decrypted manifest is handed back for the daemon's cache — never to a caller.
     assert cached == manifest
 
@@ -492,19 +498,19 @@ def test_daemon_preview_encrypted_spbk_requires_passphrase(monkeypatch, tmp_path
     # Without a passphrase the daemon reports that a prompt is needed (no categories).
     public, cached = daemon_preview_backup(
         FakeMgr(), source=str(source), settings_path=config_file)
-    assert public["encrypted"] is True
-    assert public["included"] == {}
+    assert public.encrypted is True
+    assert public.included == {}
     assert cached is None
     # A wrong passphrase is a clean, secret-free error.
     public, cached = daemon_preview_backup(
         FakeMgr(), source=str(source), passphrase="wrong", settings_path=config_file)
-    assert public["error"]
+    assert public.error.code is SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
     assert cached is None
     # The correct passphrase materialises the included categories.
     public, cached = daemon_preview_backup(
         FakeMgr(), source=str(source), passphrase="right", settings_path=config_file)
-    assert public["encrypted"] is True
-    assert public["included"]["secrets"] is True
+    assert public.encrypted is True
+    assert public.included["secrets"] is True
     assert cached is not None
 
 
@@ -518,8 +524,8 @@ def test_daemon_preview_legacy_json_config(monkeypatch, tmp_path):
     source.write_text(json.dumps({"ssh": {}}), encoding="utf-8")
     public, cached = daemon_preview_backup(
         FakeMgr(), source=str(source), settings_path=config_file)
-    assert public["kind"] == "json"
-    assert public["encrypted"] is False
+    assert public.kind == "json"
+    assert public.encrypted is False
     assert cached is None
 
 
@@ -527,11 +533,11 @@ def test_daemon_preview_public_never_carries_secret_values(monkeypatch, tmp_path
     config_file, source, _manifest = _preview_spbk(monkeypatch, tmp_path, passphrase="right")
     public, _cached = daemon_preview_backup(
         FakeMgr(), source=str(source), passphrase="right", settings_path=config_file)
-    dumped = json.dumps(public)
+    dumped = json.dumps(public.to_dict())
     assert "SENTINEL-PW" not in dumped
-    assert "credentials" not in public
-    assert "private_keys" not in public
-    assert set(public) <= {"kind", "encrypted", "included", "error"}
+    assert "credentials" not in public.to_dict()
+    assert "private_keys" not in public.to_dict()
+    assert set(public.to_dict()) == {"kind", "encrypted", "included", "error"}
 
 
 class _OneShotBroker:
@@ -599,9 +605,9 @@ def test_service_preview_caches_manifest_so_import_never_reprompts(monkeypatch, 
     )
 
     preview = service.preview_backup(source=str(source), owner_client_id="client-1")
-    assert preview["kind"] == "spbk"
-    assert preview["encrypted"] is True
-    assert preview["included"]["ssh_config"] is True
+    assert preview.kind == "spbk"
+    assert preview.encrypted is True
+    assert preview.included["ssh_config"] is True
 
     result = service.import_backup(
         source=str(source), options={"mode": "merge"}, owner_client_id="client-1"
@@ -1213,10 +1219,13 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
 
     def _refuse(self, backend, **_kwargs):
         self.last_export_counts = {"credentials": 3, "private_keys": 2}
-        raise BackupTooLargeForNote(
-            "This backup is 14359 characters — larger than the Bitwarden note "
-            "limit (10000). Export to a .spbk file instead."
+        error = BackupTooLargeForNote(
+            length=14359,
+            limit=10000,
+            largest_section="private_keys",
+            largest_section_cost=12000,
         )
+        raise error
 
     monkeypatch.setattr(bm.BackupManager, "export_to_backend", _refuse)
 
@@ -1232,15 +1241,20 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
             destination="bitwarden",
             options={"app_settings": True, "ssh_config": False, "known_hosts": False,
                      "secrets": True, "private_keys": True},
-            connections_source=lambda: [],
+            connections_source=list,
             settings_path=config_file,
         )
 
     assert result.status is SecretOperationState.FAILED
-    assert "14359" in result.message
+    assert result.message.parameters == {"length": 14359, "limit": 10000}
     logged = "\n".join(record.getMessage() for record in caplog.records)
-    assert "14359" in logged
+    assert SecretTransferMessageCode.BITWARDEN_NOTE_TOO_LARGE.value in logged
     assert "3 credential(s), 2 private key(s)" in logged
     # The counts reach the UI, alongside a hint about trimming the backup.
     assert result.counts == {"credentials": 3, "private_keys": 2}
-    assert any("largest part" in warning for warning in result.warnings)
+    assert [warning.code for warning in result.warnings] == [
+        SecretTransferMessageCode.BITWARDEN_NOTE_LARGEST_SECTION,
+        SecretTransferMessageCode.EXPORT_SPBK_INSTEAD,
+        SecretTransferMessageCode.BITWARDEN_BACKUP_TOO_LARGE,
+        SecretTransferMessageCode.BITWARDEN_NOTE_REDUCE,
+    ]

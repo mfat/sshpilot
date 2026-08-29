@@ -25,6 +25,7 @@ from sshpilot.api.models.secrets import (
     REVISION_CONFLICT,
     SecretMessageCode,
     SecretOperationState,
+    SecretTransferMessageCode,
     UnlockResultKind,
 )
 from sshpilot.daemon.secret_backend_service import (
@@ -439,7 +440,7 @@ def test_export_backup_reports_timeout_distinctly_from_cancellation(tmp_path):
         owner_client_id="client-1",
     )
     assert result.status == SecretOperationState.INTERACTION_REQUIRED
-    assert result.message == "Encryption password request timed out"
+    assert result.message.code is SecretTransferMessageCode.ENCRYPTION_REQUEST_TIMED_OUT
 
 
 def test_export_backup_reports_explicit_cancellation(tmp_path):
@@ -461,7 +462,7 @@ def test_export_backup_reports_explicit_cancellation(tmp_path):
         owner_client_id="client-1",
     )
     assert result.status == SecretOperationState.INTERACTION_REQUIRED
-    assert result.message == "Encryption cancelled"
+    assert result.message.code is SecretTransferMessageCode.ENCRYPTION_CANCELLED
 
 
 def test_export_backup_unencrypted_never_prompts(tmp_path):
@@ -590,7 +591,7 @@ def test_import_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkey
         monkeypatch,
     )
     assert result.status == SecretOperationState.INTERACTION_REQUIRED
-    assert result.message == "Decryption cancelled"
+    assert result.message.code is SecretTransferMessageCode.DECRYPTION_CANCELLED
 
 
 def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
@@ -604,8 +605,8 @@ def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monke
         lambda: service.preview_backup(source=str(source), owner_client_id="client-1"),
         monkeypatch,
     )
-    assert public.get("encrypted") is True
-    assert public.get("error") == "Decryption cancelled"
+    assert public.encrypted is True
+    assert public.error.code is SecretTransferMessageCode.DECRYPTION_CANCELLED
 
 
 # Every interactive lifecycle route, the way the frontend calls it.  These used
@@ -1856,7 +1857,7 @@ def test_unlock_result_never_carries_secret(tmp_path):
 
 def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
     """A wrong .spbk passphrase re-prompts through a fresh protected interaction."""
-    from sshpilot.api.models.secrets import SecretTransferResult
+    from sshpilot.api.models.secrets import SecretTransferMessage, SecretTransferResult
 
     class _ScriptedBroker:
         def __init__(self, secrets):
@@ -1895,12 +1896,14 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
             return SecretTransferResult(
                 operation="import", path=source, counts={}, warnings=(),
                 status=SecretOperationState.FAILED,
-                message="Wrong passphrase or corrupt backup",
+                message=SecretTransferMessage(
+                    SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+                ),
             )
         return SecretTransferResult(
             operation="import", path=source,
             counts={"restored": 1}, warnings=(),
-            status=SecretOperationState.SUCCESS, message="",
+            status=SecretOperationState.SUCCESS, message=None,
         )
 
     monkeypatch.setattr(
@@ -1922,7 +1925,7 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
 
 def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkeypatch):
     """Wrong-passphrase re-prompts are bounded; the daemon stops and reports."""
-    from sshpilot.api.models.secrets import SecretTransferResult
+    from sshpilot.api.models.secrets import SecretTransferMessage, SecretTransferResult
 
     class _AlwaysWrongBroker:
         def __init__(self):
@@ -1955,7 +1958,9 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
         return SecretTransferResult(
             operation="import", path=source, counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message="Wrong passphrase or corrupt backup",
+            message=SecretTransferMessage(
+                SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+            ),
         )
 
     monkeypatch.setattr(

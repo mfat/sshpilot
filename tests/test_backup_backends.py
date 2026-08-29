@@ -7,6 +7,7 @@ import shlex
 import pytest
 
 from sshpilot.backup_backends import (
+    BW_NOTE_MAX_CHARS,
     BackupEntry,
     BackupError,
     BackupTooLargeForNote,
@@ -236,9 +237,10 @@ def test_bitwarden_too_large_names_the_dominant_part():
     }
     with pytest.raises(BackupTooLargeForNote) as excinfo:
         backend.export(manifest)
-    message = str(excinfo.value)
-    assert "app settings" in message
-    assert "private keys" not in message
+    error = excinfo.value
+    assert error.largest_section == "app_settings"
+    assert error.largest_section != "private_keys"
+    assert error.transfer_message.parameters["length"] > BW_NOTE_MAX_CHARS
     assert bw.items == {}
 
 
@@ -252,7 +254,7 @@ def test_largest_note_section_measures_encoded_cost_not_raw_size():
         "private_keys": [{"content": base64.b64encode(os.urandom(3000)).decode("ascii")}],
     }
     label, cost = largest_note_section(manifest)
-    assert label == "private keys"
+    assert label == "private_keys"
     assert cost > 0
 
 

@@ -27,6 +27,8 @@ from sshpilot.api.transport.codec import (
     secret_configuration_to_wire,
     secret_operation_result_from_wire,
     secret_operation_result_to_wire,
+    secret_transfer_preview_from_wire,
+    secret_transfer_preview_to_wire,
     secret_transfer_result_from_wire,
     secret_transfer_result_to_wire,
     secret_unlock_result_from_wire,
@@ -610,12 +612,14 @@ def test_preview_handlers_are_registered():
 
 
 def test_preview_backup_delegates_to_service():
+    from sshpilot.api.models.secrets import SecretTransferPreview
+
     dispatcher, service = _dispatcher()
-    service.preview_backup.return_value = {
-        "kind": "spbk", "encrypted": False,
-        "included": {"app_settings": True, "ssh_config": True, "known_hosts": False,
-                     "secrets": True, "private_keys": False},
-    }
+    service.preview_backup.return_value = SecretTransferPreview(
+        kind="spbk",
+        included={"app_settings": True, "ssh_config": True, "known_hosts": False,
+                  "secrets": True, "private_keys": False},
+    )
     result = dispatcher.dispatch(
         _envelope("secrets.transfer.preview", {"source": "/tmp/x.spbk"}), _state())
     assert isinstance(result, DeferredResult)
@@ -628,9 +632,13 @@ def test_preview_backup_delegates_to_service():
 
 
 def test_preview_bitwarden_and_ssh_delegate_to_service():
+    from sshpilot.api.models.secrets import SecretTransferPreview
+
     dispatcher, service = _dispatcher()
-    service.preview_bitwarden_backup.return_value = {"kind": "bitwarden", "included": {}}
-    service.preview_ssh_backup.return_value = {"kind": "ssh", "included": {}}
+    service.preview_bitwarden_backup.return_value = SecretTransferPreview(
+        kind="bitwarden"
+    )
+    service.preview_ssh_backup.return_value = SecretTransferPreview(kind="ssh")
 
     r1 = dispatcher.dispatch(
         _envelope("secrets.transfer.preview_bitwarden", {"entry_id": "e1"}), _state())
@@ -695,9 +703,9 @@ def test_real_daemon_preview_backup_returns_metadata_only(tmp_path):
         client = DaemonClient(socket_path=socket_path)
         try:
             preview = client.preview_backup(source=str(source))
-            assert preview["kind"] == "json"
-            assert preview["encrypted"] is False
-            assert set(preview) <= {"kind", "encrypted", "included", "error"}
+            assert preview.kind == "json"
+            assert preview.encrypted is False
+            assert set(preview.to_dict()) == {"kind", "encrypted", "included", "error"}
         finally:
             client.close()
     finally:
@@ -745,19 +753,68 @@ def test_secret_operation_result_wire_roundtrip():
 
 
 def test_secret_transfer_result_wire_roundtrip_and_no_secrets():
-    from sshpilot.api.models.secrets import SecretOperationState, SecretTransferResult
+    from sshpilot.api.models.secrets import (
+        SecretOperationState,
+        SecretTransferMessage,
+        SecretTransferMessageCode,
+        SecretTransferResult,
+    )
 
     result = SecretTransferResult(
         operation="export",
         path="/home/u/backup.spbk",
         counts={"credentials": 2, "private_keys": 1},
-        warnings=("one SSH config file skipped",),
+        warnings=(
+            SecretTransferMessage(
+                SecretTransferMessageCode.SSH_CONFIG_FILES_SKIPPED,
+                parameters={"count": 1, "paths": "/tmp/config"},
+            ),
+        ),
         status=SecretOperationState.SUCCESS,
-        message="",
+        message=SecretTransferMessage(
+            SecretTransferMessageCode.BACKUP_EXPORT_FAILED,
+            diagnostic="OSError: quota exceeded",
+        ),
     )
     wire = secret_transfer_result_to_wire(result)
     assert secret_transfer_result_from_wire(wire) == result
     assert SENTINEL not in " ".join(_strings(wire, []))
+
+
+def test_secret_transfer_preview_wire_roundtrip_and_strict_unknown_code():
+    from sshpilot.api.models.secrets import (
+        SecretTransferMessage,
+        SecretTransferMessageCode,
+        SecretTransferPreview,
+    )
+
+    preview = SecretTransferPreview(
+        kind="spbk",
+        encrypted=True,
+        error=SecretTransferMessage(
+            SecretTransferMessageCode.BACKUP_IMPORT_FAILED,
+            diagnostic="cryptography.InvalidTag",
+        ),
+    )
+    wire = secret_transfer_preview_to_wire(preview)
+    assert secret_transfer_preview_from_wire(wire) == preview
+    wire["error"]["code"] = "future_unrecognized_code"
+    with pytest.raises(ValueError, match="code is invalid"):
+        secret_transfer_preview_from_wire(wire)
+
+
+def test_secret_transfer_result_rejects_legacy_rendered_message_shape():
+    wire = {
+        "operation": "import",
+        "path": "/tmp/backup.spbk",
+        "counts": {},
+        "warnings": ["rendered warning"],
+        "status": "failed",
+        "message": "rendered message",
+    }
+
+    with pytest.raises((TypeError, ValueError)):
+        secret_transfer_result_from_wire(wire)
 
 
 # ---------------------------------------------------------------------------

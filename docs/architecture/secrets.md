@@ -22,3 +22,9 @@ Public unlock, operation, Bitwarden, and rbw results use stable
 diagnostics are carried separately and remain opaque. The daemon never invokes
 gettext; GTK translates the code-owned template immediately before display and
 formats parameters only after translation.
+
+Backup and import transfer results follow the same boundary with
+`SecretTransferMessageCode`, structured parameters, ordered structured
+warnings, and typed `SecretTransferPreview` metadata. GTK localizes these at
+display time, including plural selection and stable backup-section labels;
+backend, filesystem, and SSH diagnostics remain opaque.

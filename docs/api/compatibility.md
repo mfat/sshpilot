@@ -56,14 +56,16 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.46`. Version 0.46 replaces the
-free-text message on secret status and operation results with a required stable
-message code, validated string parameters, and a separate external diagnostic.
-A 0.45 client rejects the new fields under the strict field-set policy, while
-a 0.46 client requires them, so mismatched implementations are rejected during
+`API_IMPLEMENTATION_VERSION` is currently `0.47`. Version 0.47 replaces
+free-text backup/import result messages, warnings, and preview errors with
+strict `SecretTransferMessage` values and a typed `SecretTransferPreview`.
+A 0.46 client rejects the new fields under the strict field-set policy, while
+a 0.47 client requires them, so mismatched implementations are rejected during
 handshake before ordinary requests. Only the frontend maps codes to gettext
-msgids, translates the template, and formats parameters. The 0.45 structured
-secret-prompt contract remains unchanged.
+msgids, chooses plurals, localizes stable backup-section labels, and formats
+parameters; opaque backend diagnostics remain unchanged. The 0.46 structured
+secret-status contract and 0.45 structured secret-prompt contract remain
+unchanged.
 
 The earlier 0.40 compatibility boundary remains in force: clients never
 downgrade to plaintext secret transport or select a frontend secret backend.

@@ -21,6 +21,10 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 from gettext import gettext as _
 
 from .accessibility import set_accessible_name, set_accessible_selected
+from .gtk.secret_transfer_messages import (
+    format_secret_transfer_message,
+    format_secret_transfer_messages,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1107,9 +1111,15 @@ class WindowConfigDialogsMixin:
                         logger.error(
                             "Bitwarden export failed: %s", result.message or "no detail"
                         )
-                        msg = result.message or _("Bitwarden export failed.")
+                        msg = (
+                            format_secret_transfer_message(result.message)
+                            if result.message is not None
+                            else _("Bitwarden export failed.")
+                        )
                         if result.warnings:
-                            msg += "\n\n" + "\n\n".join(result.warnings)
+                            msg += "\n\n" + "\n\n".join(
+                                format_secret_transfer_messages(result.warnings)
+                            )
                         self._simple_dialog(_("Export Failed"), msg)
                         return
                     counts = result.counts or {}
@@ -1196,8 +1206,12 @@ class WindowConfigDialogsMixin:
                     logger.error(
                         "SSH server export failed: %s", result.message or "no detail"
                     )
-                    self._simple_dialog(
-                        _("Export Failed"), result.message or _("Export failed."))
+                    msg = (
+                        format_secret_transfer_message(result.message)
+                        if result.message is not None
+                        else _("Export failed.")
+                    )
+                    self._simple_dialog(_("Export Failed"), msg)
                     return
                 counts = result.counts or {}
                 self._simple_dialog(
@@ -1285,9 +1299,12 @@ class WindowConfigDialogsMixin:
             result = p[1]
             if result.status.value != 'success':
                 logger.error("Export failed: %s", result.message or "no detail")
-                self._simple_dialog(
-                    _("Export Failed"),
-                    result.message or _("Unknown error"))
+                msg = (
+                    format_secret_transfer_message(result.message)
+                    if result.message is not None
+                    else _("Unknown error")
+                )
+                self._simple_dialog(_("Export Failed"), msg)
                 return
             counts = result.counts or {}
             msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
@@ -1296,7 +1313,9 @@ class WindowConfigDialogsMixin:
                 counts.get('private_keys', 0),
                 _("on") if encrypt else _("off"))
             if result.warnings:
-                msg += "\n\n" + "\n\n".join(result.warnings)
+                msg += "\n\n" + "\n\n".join(
+                    format_secret_transfer_messages(result.warnings)
+                )
             self._simple_dialog(_("Export Successful"), msg)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1544,12 +1563,15 @@ class WindowConfigDialogsMixin:
                     self._simple_dialog(_("Import Failed"), p[1])
                     return
                 preview = p[1]
-                if preview.get('error'):
-                    self._simple_dialog(_("Import Failed"), preview.get('error'))
+                if preview.error is not None:
+                    self._simple_dialog(
+                        _("Import Failed"),
+                        format_secret_transfer_message(preview.error),
+                    )
                     return
                 self._show_import_mode_dialog(
-                    preview.get('included'),
-                    self._make_bitwarden_import_apply(entry_id, preview.get('included')),
+                    preview.included,
+                    self._make_bitwarden_import_apply(entry_id, preview.included),
                     source_kind='bitwarden')
 
             threading.Thread(target=worker, daemon=True).start()
@@ -1725,13 +1747,16 @@ class WindowConfigDialogsMixin:
                 self._simple_dialog(_("Import Failed"), p[1])
                 return
             preview = p[1]
-            if preview.get('error'):
-                self._simple_dialog(_("Import Failed"), preview.get('error'))
+            if preview.error is not None:
+                self._simple_dialog(
+                    _("Import Failed"),
+                    format_secret_transfer_message(preview.error),
+                )
                 return
             self._show_import_mode_dialog(
-                preview.get('included'),
+                preview.included,
                 self._make_ssh_import_apply(
-                    nick, remote_dir, entry_id, preview.get('included')),
+                    nick, remote_dir, entry_id, preview.included),
                 source_kind='ssh')
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1789,12 +1814,15 @@ class WindowConfigDialogsMixin:
                 self._simple_dialog(_("Import Failed"), p[1])
                 return
             preview = p[1]
-            if preview.get('error'):
-                self._simple_dialog(_("Import Failed"), preview.get('error'))
+            if preview.error is not None:
+                self._simple_dialog(
+                    _("Import Failed"),
+                    format_secret_transfer_message(preview.error),
+                )
                 return
             self._show_import_mode_dialog(
-                preview.get('included'),
-                self._make_spbk_import_apply(import_path, preview.get('included')),
+                preview.included,
+                self._make_spbk_import_apply(import_path, preview.included),
                 source_kind='spbk')
 
         threading.Thread(target=worker, daemon=True).start()
@@ -2113,9 +2141,15 @@ class WindowConfigDialogsMixin:
     def _show_daemon_import_result(self, result):
         """Display a daemon ``SecretTransferResult`` import outcome — counts and warnings only."""
         if result.status.value != 'success':
-            msg = result.message or _("The backup could not be imported")
+            msg = (
+                format_secret_transfer_message(result.message)
+                if result.message is not None
+                else _("The backup could not be imported")
+            )
             if result.warnings:
-                msg += "\n\n" + "\n\n".join(result.warnings)
+                msg += "\n\n" + "\n\n".join(
+                    format_secret_transfer_messages(result.warnings)
+                )
             self._simple_dialog(_("Import Failed"), msg)
             return
         counts = result.counts or {}
@@ -2146,7 +2180,9 @@ class WindowConfigDialogsMixin:
                                "imported — legacy JSON backups can't restore secrets. Use an "
                                "encrypted .spbk backup to include them.").format(ignored))
         if result.warnings:
-            lines.append("\n\n".join(result.warnings))
+            lines.append("\n\n".join(
+                format_secret_transfer_messages(result.warnings)
+            ))
         lines.append(_("Reload now to apply the imported configuration. Some settings may still "
                        "need a full restart of sshPilot to take effect."))
         body = "\n\n".join(lines)

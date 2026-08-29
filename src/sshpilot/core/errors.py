@@ -59,3 +59,4 @@ class FieldError:
     code: ErrorCode = ErrorCode.VALIDATION_ERROR
     message: str = ""
     severity: str = "error"  # error | warning | info
+    reason: str = ""

@@ -204,6 +204,7 @@ handling is not defined until a transport codec exists.
 | `SecretDecision` | `submit`, `cancel` | Daemon implemented |
 | `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret` | Daemon implemented |
 | `SecretMessageCode` | Stable secret lifecycle/status presentation reasons | Daemon implemented; strict codec |
+| `SecretTransferMessageCode` | Stable backup/import presentation reasons | Daemon implemented; strict codec |
 | `SftpServiceState` | `created`, `starting`, `ready`, `closing`, `closed`, `failed` | Daemon implemented |
 | `RemoteFileType` | `regular`, `directory`, `symlink`, `socket`, `fifo`, `block`, `character`, `unknown` | Daemon implemented |
 | `TransferDirection` | `upload`, `download` | Daemon implemented |
@@ -228,3 +229,11 @@ parameters required by that code, and a separate diagnostic. Message codes are
 machine contracts; diagnostics from `bw` or another backend are opaque and are
 never translated. The frontend selects and translates a local template before
 formatting the parameters.
+
+`SecretTransferResult` carries an optional `SecretTransferMessage` and an
+ordered tuple of structured warnings. Each message contains a stable
+`SecretTransferMessageCode`, the exact validated JSON-safe parameters for that
+code, and a separate opaque diagnostic. Backup preview methods return
+`SecretTransferPreview`, which applies the same message contract to preview
+errors instead of exposing a free-form `error` string. GTK owns translation,
+plural selection, parameter formatting, and backup-section display labels.
