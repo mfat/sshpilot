@@ -17,19 +17,22 @@ pytest.importorskip("gi")
 from sshpilot import sshcopyid_window as win_mod
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.operations import (
+    IdentityFailure,
+    IdentityFailureCode,
     OperationKind,
     OperationState,
     OperationSummary,
 )
 
 
-def _summary(state="running", operation_id="op:1", message=""):
+def _summary(state="running", operation_id="op:1", message="", failure=None):
     return OperationSummary(
         operation_id=operation_id,
         kind=OperationKind.KEY_DEPLOYMENT,
         state=OperationState(state),
         message=message,
         created_at=datetime.fromtimestamp(0, tz=timezone.utc),
+        failure=failure,
     )
 
 
@@ -121,7 +124,14 @@ def test_runner_reports_deployment_failure(monkeypatch):
     window = _window()
     window.client.deploy_key.return_value = _summary(operation_id="op:5")
     window.client.get_operation.return_value = _summary(
-        state="failed", operation_id="op:5", message="Authentication failed"
+        state="failed",
+        operation_id="op:5",
+        message="finalized daemon text must be ignored",
+        failure=IdentityFailure(
+            IdentityFailureCode.AUTHENTICATION_FAILED,
+            ErrorCode.REMOTE_COMMAND_FAILED,
+            diagnostic="Permission denied (publickey)",
+        ),
     )
     callbacks = _capture_timeout(monkeypatch)
     runner = _runner(window)
@@ -129,6 +139,10 @@ def test_runner_reports_deployment_failure(monkeypatch):
     runner.run(_connection(), _key())
 
     window._error_dialog.assert_called_once()
+    assert window._error_dialog.call_args[0][2] == (
+        "Authentication failed while installing the public key\n\n"
+        "Permission denied (publickey)"
+    )
     window._info_dialog.assert_not_called()
     assert callbacks == []
 
@@ -159,7 +173,23 @@ def test_runner_start_failure_shows_error():
     runner.run(_connection(), _key())
 
     window._error_dialog.assert_called_once()
+    assert window._error_dialog.call_args[0][2] == (
+        "Public-key deployment is unavailable."
+    )
     window.client.get_operation.assert_not_called()
+
+
+def test_unknown_deployment_start_error_remains_opaque(monkeypatch):
+    diagnostic = "daemon: opaque deployment failure"
+    monkeypatch.setattr(
+        win_mod,
+        "_",
+        lambda _msgid: pytest.fail("unknown diagnostics must not use gettext"),
+    )
+
+    assert win_mod._format_deployment_start_error(
+        RuntimeError(diagnostic)
+    ) == diagnostic
 
 
 def test_runner_continues_polling_while_running(monkeypatch):

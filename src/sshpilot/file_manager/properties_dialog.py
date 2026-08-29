@@ -11,10 +11,48 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from gi.repository import Adw, Gio, GLib, Gtk
 
-from .format_utils import _human_size, _human_time, _mode_to_octal, _mode_to_str
+from .format_utils import (
+    _human_size,
+    _human_time,
+    _item_count_text,
+    _mode_to_octal,
+    _mode_to_str,
+)
 from ..shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
+
+
+def _folder_label(item_count: Optional[int]) -> str:
+    if item_count is None:
+        return _("Folder")
+    return _item_count_text(item_count)
+
+
+def _folder_calculating_text(item_count: Optional[int]) -> str:
+    return _("{folder} (calculating size...)").format(
+        folder=_folder_label(item_count)
+    )
+
+
+def _folder_size_text(item_count: Optional[int], total_size: int) -> str:
+    if total_size >= 0:
+        size = _human_size(total_size)
+        if item_count is None:
+            return size
+        return _("{items} ({size})").format(
+            items=_item_count_text(item_count),
+            size=size,
+        )
+    if item_count is None:
+        return _("Size unavailable")
+    return _("{items} (size unavailable)").format(
+        items=_item_count_text(item_count)
+    )
+
+
+def _free_space_text(size: int) -> str:
+    return _("{size} Free").format(size=_human_size(size))
 
 if TYPE_CHECKING:
     # Forward refs only — keeps the file_manager_window mega-module from
@@ -94,10 +132,7 @@ class PropertiesDialog(Adw.Window):
         # Summary
         summary_parts = []
         if self._entry.is_dir:
-            if self._entry.item_count is not None:
-                summary_parts.append(f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''}")
-            else:
-                summary_parts.append("Folder")
+            summary_parts.append(_folder_label(self._entry.item_count))
         else:
             if self._entry.size:
                 summary_parts.append(_human_size(self._entry.size))
@@ -109,7 +144,7 @@ class PropertiesDialog(Adw.Window):
                 if os.path.exists(path):
                     stat = os.statvfs(path)
                     free = stat.f_bavail * stat.f_frsize
-                    summary_parts.append(f"{_human_size(free)} Free")
+                    summary_parts.append(_free_space_text(free))
             except Exception:
                 pass
         
@@ -123,21 +158,17 @@ class PropertiesDialog(Adw.Window):
     def _create_size_row(self) -> Gtk.Widget:
         """Create the size row."""
         if self._entry.is_dir:
-            base = (
-                f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''}"
-                if self._entry.item_count is not None
-                else "Folder"
-            )
+            base = _folder_label(self._entry.item_count)
             size_text = base
             if not self._is_remote_file():
                 # Local folders: recurse with os.walk in the background.
-                size_text = f"{base} (calculating size...)"
+                size_text = _folder_calculating_text(self._entry.item_count)
                 self._start_folder_size_calculation()
             elif self._sftp_manager is not None and hasattr(
                 self._sftp_manager, "directory_size"
             ):
                 # Remote folders: recurse over SFTP in the background.
-                size_text = f"{base} (calculating size...)"
+                size_text = _folder_calculating_text(self._entry.item_count)
                 self._start_remote_folder_size_calculation()
         else:
             size_text = _human_size(self._entry.size) if self._entry.size else "—"
@@ -415,21 +446,9 @@ class PropertiesDialog(Adw.Window):
         THIS RUNS ON THE MAIN GTK THREAD.
         """
         if hasattr(self, '_size_row') and self._size_row:
-            if total_size >= 0:
-                human_readable_size = _human_size(total_size)
-                if self._entry.item_count is not None:
-                    size_text = f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''} ({human_readable_size})"
-                else:
-                    size_text = human_readable_size
-            else:
-                if self._entry.item_count is not None:
-                    size_text = f"{self._entry.item_count} item{'s' if self._entry.item_count != 1 else ''} (size unavailable)"
-                else:
-                    size_text = "Size unavailable"
+            size_text = _folder_size_text(self._entry.item_count, total_size)
             
             self._size_row.set_subtitle(size_text)
             
         # Returning GLib.SOURCE_REMOVE ensures this function only runs once
         return GLib.SOURCE_REMOVE
-
-

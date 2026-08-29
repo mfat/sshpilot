@@ -102,6 +102,8 @@ EXTRA_ENUMS = (
     EventType,
     ErrorCode,
     SecretMessageCode,
+    operations.IdentityFailureCode,
+    operations.ScpFailureCode,
     operations.SftpFailureCode,
 )
 UNION_ORIGINS = (Union,)
@@ -147,6 +149,8 @@ IMPLEMENTED_MODELS = {
     "SessionFailure",
     "SessionSummary",
     "ExternalTerminalLaunchSpec",
+    "IdentityFailure",
+    "ScpFailure",
     "ServiceFailure",
     "SftpFailure",
     "SftpServiceSummary",

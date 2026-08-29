@@ -1,6 +1,7 @@
 import re
 from types import SimpleNamespace
 
+from sshpilot.file_manager import format_utils
 from sshpilot.file_manager.common import FileEntry
 from sshpilot.file_manager.pane import FilePane, _column_view_supported
 
@@ -13,6 +14,25 @@ def test_size_column_text_uses_item_count_for_folders():
     assert FilePane._size_column_text(folder) == "3 items"
     assert FilePane._size_column_text(empty) == "—"
     assert FilePane._size_column_text(file_entry) == "2.0 KB"
+
+
+def test_item_count_uses_gettext_plural_before_formatting(monkeypatch):
+    calls = []
+
+    def translate(singular, plural, count):
+        calls.append((singular, plural, count))
+        return "{count} élément" if count == 1 else "{count} éléments"
+
+    monkeypatch.setattr(format_utils, "ngettext", translate)
+
+    assert format_utils._item_count_text(0) == "0 éléments"
+    assert format_utils._item_count_text(1) == "1 élément"
+    assert format_utils._item_count_text(4) == "4 éléments"
+    assert calls == [
+        ("{count} item", "{count} items", 0),
+        ("{count} item", "{count} items", 1),
+        ("{count} item", "{count} items", 4),
+    ]
 
 
 def test_modified_column_text_formats_timestamp():

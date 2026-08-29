@@ -67,7 +67,7 @@ def test_success_failure_and_safe_progress_events():
     subscription = runtime.subscribe_events(events.append)
     try:
         success = runtime.start_operation(
-            OperationKind.KEY_DEPLOYMENT,
+            OperationKind.AUTHORIZED_KEY_REMOVAL,
             lambda handle: (handle.report("password=secret phase\n", 0.5), "done")[1],
             connection_id=ConnectionId("connection-safe"),
         )
@@ -79,7 +79,7 @@ def test_success_failure_and_safe_progress_events():
         assert finished.finished_at is not None
 
         failed = runtime.start_operation(
-            OperationKind.KEY_DEPLOYMENT,
+            OperationKind.AUTHORIZED_KEY_REMOVAL,
             lambda _handle: (_ for _ in ()).throw(
                 SshPilotError(ErrorCode.REMOTE_COMMAND_FAILED, "safe failure")
             ),

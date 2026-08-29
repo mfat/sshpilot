@@ -34,7 +34,8 @@ from sshpilot.api.events import (
 )
 from sshpilot.api.models.common import ClientId, ConnectionId, SftpServiceId, TransferId, utc_now
 from sshpilot.api.models.operations import (
-    ServiceFailure,
+    ScpFailure,
+    ScpFailureCode,
     SftpFailure,
     SftpFailureCode,
 )
@@ -89,6 +90,14 @@ class _SftpTransferError(Exception):
         self.failure = failure
 
 
+class _ScpTransferError(Exception):
+    """Carry a structured native SCP failure to the lifecycle worker."""
+
+    def __init__(self, failure: ScpFailure) -> None:
+        super().__init__(failure.code.value)
+        self.failure = failure
+
+
 def _sftp_transfer_error(
     code: SftpFailureCode,
     error_code: ErrorCode,
@@ -115,6 +124,56 @@ def _sftp_service_failure(error: SshPilotError) -> SftpFailure:
         ErrorCode.SERVICE_OWNER_REQUIRED: SftpFailureCode.SERVICE_OWNER_REQUIRED,
     }.get(error.code, SftpFailureCode.TRANSFER_START_FAILED)
     return SftpFailure(code=code, error_code=error.code)
+
+
+def _scp_start_failure(error: BaseException) -> ScpFailure:
+    if isinstance(error, SshPilotError):
+        code = {
+            ErrorCode.SERVER_BUSY: ScpFailureCode.COMMAND_QUEUE_FULL,
+            ErrorCode.UNSUPPORTED_CAPABILITY: ScpFailureCode.UNAVAILABLE,
+            ErrorCode.DAEMON_SHUTTING_DOWN: ScpFailureCode.DAEMON_SHUTTING_DOWN,
+        }.get(error.code, ScpFailureCode.TRANSFER_START_FAILED)
+        error_code = error.code
+    else:
+        code = ScpFailureCode.TRANSFER_START_FAILED
+        error_code = ErrorCode.TRANSFER_IO_FAILED
+    return ScpFailure(code=code, error_code=error_code)
+
+
+def _scp_runtime_failure(error: SshPilotError, *, phase: str) -> ScpFailure:
+    details = error.details
+    detail_code = details.get("scp_failure_code")
+    try:
+        code = ScpFailureCode(detail_code)
+    except (TypeError, ValueError):
+        if phase == "target":
+            code = {
+                ErrorCode.CONNECTION_NOT_FOUND: ScpFailureCode.CONNECTION_NOT_FOUND,
+                ErrorCode.VALIDATION_FAILED: ScpFailureCode.HOST_IDENTIFIER_MISSING,
+            }.get(error.code, ScpFailureCode.TARGET_PREPARATION_FAILED)
+        else:
+            code = {
+                ErrorCode.CONNECTION_NOT_FOUND: ScpFailureCode.CONNECTION_NOT_FOUND,
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL: (
+                    ScpFailureCode.SSH_CONNECTION_REQUIRED
+                ),
+                ErrorCode.VALIDATION_FAILED: ScpFailureCode.HOST_IDENTIFIER_MISSING,
+                ErrorCode.UNSUPPORTED_CAPABILITY: ScpFailureCode.UNAVAILABLE,
+                ErrorCode.SESSION_STARTUP_FAILED: (
+                    ScpFailureCode.TRANSFER_PREPARATION_FAILED
+                ),
+                ErrorCode.INVALID_REQUEST: (
+                    ScpFailureCode.TRANSFER_PREPARATION_FAILED
+                ),
+            }.get(error.code, ScpFailureCode.TRANSFER_FAILED)
+    diagnostic = details.get("diagnostic", "")
+    if type(diagnostic) is not str:
+        diagnostic = ""
+    return ScpFailure(
+        code=code,
+        error_code=error.code,
+        diagnostic=diagnostic.replace("\x00", ""),
+    )
 
 
 _ALLOWED_TRANSITIONS = {
@@ -174,7 +233,7 @@ class _TransferRecord:
     completed_at: Optional[datetime] = None
     bytes_total: Optional[int] = None
     bytes_completed: int = 0
-    failure: Optional[Union[ServiceFailure, SftpFailure]] = None
+    failure: Optional[Union[ScpFailure, SftpFailure]] = None
     cancel_requested: bool = False
     local_temp_path: Optional[str] = None
     remote_temp_path: Optional[str] = None
@@ -479,11 +538,10 @@ class TransferRuntime:
             )
             self._fail_sftp(record, failure)
             return
-        if isinstance(error, SshPilotError):
-            code, message = error.code, error.message
-        else:
-            code, message = ErrorCode.TRANSFER_IO_FAILED, "The transfer could not be started"
-        self._fail(record, code, message)
+        self._fail_scp(
+            record,
+            _scp_start_failure(error),
+        )
 
     def _admit_record_locked(self, record: _TransferRecord) -> None:
         from sshpilot.core.transfers import TransferQueuePolicy
@@ -548,13 +606,21 @@ class TransferRuntime:
             self._finish_cancelled(record)
         except _SftpTransferError as error:
             self._fail_sftp(record, error.failure)
+        except _ScpTransferError as error:
+            self._fail_scp(record, error.failure)
         except SshPilotError as error:
             if error.code is ErrorCode.OPERATION_CANCELLED:
                 self._finish_cancelled(record)
             elif record.backend is TransferBackend.SFTP:
                 self._fail_sftp(record, _sftp_service_failure(error))
             else:
-                self._fail(record, error.code, error.message)
+                self._fail_scp(
+                    record,
+                    ScpFailure(
+                        code=ScpFailureCode.TRANSFER_FAILED,
+                        error_code=error.code,
+                    ),
+                )
         except Exception:
             with log_context(
                 transfer=transfer_id,
@@ -571,7 +637,13 @@ class TransferRuntime:
                     ),
                 )
             else:
-                self._fail(record, ErrorCode.TRANSFER_IO_FAILED, "The transfer failed")
+                self._fail_scp(
+                    record,
+                    ScpFailure(
+                        code=ScpFailureCode.UNEXPECTED_FAILURE,
+                        error_code=ErrorCode.INTERNAL_ERROR,
+                    ),
+                )
         else:
             self._finish_completed(record)
         finally:
@@ -595,18 +667,32 @@ class TransferRuntime:
 
     def _run_scp(self, record: _TransferRecord) -> None:
         if self._scp_backend is None or record.scp_request is None:
-            raise SshPilotError(
-                ErrorCode.UNSUPPORTED_CAPABILITY,
-                "Native SCP transfers are unavailable",
+            raise _ScpTransferError(
+                ScpFailure(
+                    code=ScpFailureCode.UNAVAILABLE,
+                    error_code=ErrorCode.UNSUPPORTED_CAPABILITY,
+                )
             )
-        target = self._scp_backend.target_for_connection(record.connection_id)
-        self._scp_backend.run(
-            record.scp_request,
-            connection_target=target,
-            connection_id=record.connection_id,
-            transfer_id=record.transfer_id,
-            cancel_event=record.scp_cancel_event,
-        )
+        try:
+            target = self._scp_backend.target_for_connection(record.connection_id)
+        except SshPilotError as error:
+            raise _ScpTransferError(
+                _scp_runtime_failure(error, phase="target")
+            ) from error
+        try:
+            self._scp_backend.run(
+                record.scp_request,
+                connection_target=target,
+                connection_id=record.connection_id,
+                transfer_id=record.transfer_id,
+                cancel_event=record.scp_cancel_event,
+            )
+        except SshPilotError as error:
+            if error.code is ErrorCode.OPERATION_CANCELLED:
+                raise
+            raise _ScpTransferError(
+                _scp_runtime_failure(error, phase="transfer")
+            ) from error
         with self._lock:
             record.bytes_completed = record.bytes_total or 0
 
@@ -1062,16 +1148,13 @@ class TransferRuntime:
             events.append(self._transition_locked(record, TransferState.CANCELLED))
         self._publish(events)
 
-    def _fail(self, record: _TransferRecord, code, message: str) -> None:
+    def _fail_scp(self, record: _TransferRecord, failure: ScpFailure) -> None:
         self._cleanup_local_temp(record)
         self._cleanup_remote_temp(record)
         with self._lock:
             if record.state in _TERMINAL_STATES:
                 return
-            record.failure = ServiceFailure(
-                code=code.value if isinstance(code, ErrorCode) else str(code),
-                message=message,
-            )
+            record.failure = failure
             record.completed_at = self._clock()
             event = self._transition_locked(record, TransferState.FAILED)
         self._publish((event,))
@@ -1151,10 +1234,12 @@ class TransferRuntime:
                     ),
                 )
             else:
-                self._fail(
+                self._fail_scp(
                     record,
-                    ErrorCode.DAEMON_SHUTTING_DOWN,
-                    "The daemon is shutting down",
+                    ScpFailure(
+                        code=ScpFailureCode.DAEMON_SHUTTING_DOWN,
+                        error_code=ErrorCode.DAEMON_SHUTTING_DOWN,
+                    ),
                 )
         with self._lock:
             self._closed = True

@@ -40,6 +40,7 @@ BACKEND_UNAVAILABLE = "backend_unavailable"
 INTERACTION_REQUIRED = "interaction_required"
 INTERACTION_CANCELLED = "interaction_cancelled"
 LOGIN_REQUIRED = "login_required"
+PROTECTED_SECRET_INTERACTIONS = "protected_secret_interactions"
 
 
 # ---------------------------------------------------------------------------

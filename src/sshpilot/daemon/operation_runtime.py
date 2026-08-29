@@ -27,6 +27,7 @@ from sshpilot.logging_support import log_context
 from sshpilot.api.events import CoreEventCallback, EventPublisher, EventType, Subscription
 from sshpilot.api.models.common import ClientId, ConnectionId, utc_now
 from sshpilot.api.models.operations import (
+    IdentityFailure,
     OperationId,
     OperationKind,
     OperationState,
@@ -80,7 +81,7 @@ class OperationHandle:
 
 
 OperationBody = Callable[[OperationHandle], str]
-OperationFailure = Union[ServiceFailure, SftpFailure]
+OperationFailure = Union[ServiceFailure, SftpFailure, IdentityFailure]
 OperationFailureMapper = Callable[[BaseException], OperationFailure]
 
 

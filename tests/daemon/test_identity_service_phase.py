@@ -6,13 +6,18 @@ import time
 
 import pytest
 
-from sshpilot.api.errors import SshPilotError
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.identity import (
     DeployKeyRequest,
     ListAuthorizedKeysRequest,
 )
 from sshpilot.api.models.keys import KeyStoreScope, KeySummary, KeyList
 from sshpilot.daemon.identity_service import DaemonIdentityService
+from sshpilot.daemon.identity_service import (
+    _deploy_failure_code,
+    _identity_launch_failure_code,
+)
+from sshpilot.api.models.operations import IdentityFailureCode
 from sshpilot.daemon.operation_runtime import OperationRuntime
 from sshpilot.core.identity_service import IdentityStateService
 
@@ -34,6 +39,46 @@ class _Completed:
 
     def kill(self):
         return None
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "code"),
+    (
+        ("Permission denied (publickey)", IdentityFailureCode.AUTHENTICATION_FAILED),
+        ("connect: Connection refused", IdentityFailureCode.CONNECTION_REFUSED),
+        ("ssh: No route to host", IdentityFailureCode.SERVER_UNREACHABLE),
+        ("ssh: Name or service not known", IdentityFailureCode.SERVER_UNREACHABLE),
+        ("Connection timed out", IdentityFailureCode.CONNECTION_TIMED_OUT),
+        ("vendor exit status 23", IdentityFailureCode.INSTALLATION_FAILED),
+    ),
+)
+def test_ssh_copy_id_diagnostic_classification_is_structured(diagnostic, code):
+    assert _deploy_failure_code(diagnostic) is code
+
+
+@pytest.mark.parametrize(
+    ("error_code", "failure_code"),
+    (
+        (ErrorCode.CONNECTION_NOT_FOUND, IdentityFailureCode.CONNECTION_NOT_FOUND),
+        (
+            ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+            IdentityFailureCode.SSH_CONNECTION_REQUIRED,
+        ),
+        (ErrorCode.VALIDATION_FAILED, IdentityFailureCode.HOST_IDENTIFIER_MISSING),
+        (
+            ErrorCode.UNSUPPORTED_CAPABILITY,
+            IdentityFailureCode.SSH_COPY_ID_UNAVAILABLE,
+        ),
+        (
+            ErrorCode.INTERNAL_ERROR,
+            IdentityFailureCode.LAUNCH_PREPARATION_UNAVAILABLE,
+        ),
+    ),
+)
+def test_ssh_copy_id_launch_errors_use_stable_error_codes(
+    error_code, failure_code
+):
+    assert _identity_launch_failure_code(error_code) is failure_code
 
 
 class _KeyService:

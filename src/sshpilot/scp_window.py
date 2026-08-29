@@ -12,20 +12,44 @@ from pathlib import Path
 
 from gi.repository import Gtk, Adw, GLib, Gio
 
+from .api.errors import ErrorCode, SshPilotError
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
 )
 from .platform_utils import is_flatpak
 from .shortcut_utils import install_esc_to_close
+from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.scp_failure_messages import format_scp_failure
 from .file_manager.portal_docs import (
     _is_valid_destination,
     _pretty_path_for_display,
     resolve_granted_folder,
     restore_granted_folder,
 )
+from .i18n import N_
 
 logger = logging.getLogger(__name__)
+
+
+_SCP_START_ERROR_TEMPLATES = {
+    ErrorCode.UNSUPPORTED_CAPABILITY: N_(
+        "Native SCP transfers are unavailable on the daemon."
+    ),
+    ErrorCode.SERVER_BUSY: N_("The daemon transfer command queue is full."),
+    ErrorCode.DAEMON_SHUTTING_DOWN: N_("The background service is shutting down."),
+    ErrorCode.DAEMON_UNAVAILABLE: N_("The daemon transfer service is unavailable."),
+    ErrorCode.TRANSPORT_CLOSED: N_("The daemon connection was closed."),
+    ErrorCode.TRANSPORT_TIMEOUT: N_("The daemon transfer request timed out."),
+}
+
+
+def _format_scp_start_error(error: BaseException) -> str:
+    if isinstance(error, SshPilotError):
+        template = _SCP_START_ERROR_TEMPLATES.get(error.code)
+        if template is not None:
+            return _(template)
+    return str(error)
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/scp_download_window.ui")
@@ -313,11 +337,15 @@ class ScpWindowController:
             client = getattr(self.window, "client", None)
             bridge = getattr(self.window, "client_bridge", None)
             if client is None or bridge is None:
-                self._show_transfer_error("The daemon transfer service is unavailable.")
+                self._show_transfer_error(
+                    _("The daemon transfer service is unavailable.")
+                )
                 return
             capabilities = client.get_capabilities()
             if not capabilities.supports(Capability.SFTP_READ):
-                self._show_transfer_error("Remote browsing requires the daemon SFTP service.")
+                self._show_transfer_error(
+                    _("Remote browsing requires the daemon SFTP service.")
+                )
                 return
             display_name = (
                 getattr(connection, "display_name", None)
@@ -883,7 +911,10 @@ class ScpWindowController:
                 ):
                     return
                 _populate_list(
-                    [], remote_row.get_text().strip() or ".", str(error), generation
+                    [],
+                    remote_row.get_text().strip() or ".",
+                    format_direct_sftp_error(error),
+                    generation,
                 )
                 refresh_button.set_sensitive(True)
                 download_button.set_sensitive(False)
@@ -1015,7 +1046,7 @@ class ScpWindowController:
         client = getattr(self.window, "client", None)
         bridge = getattr(self.window, "client_bridge", None)
         if client is None or bridge is None:
-            self._show_transfer_error("The daemon transfer service is unavailable.")
+            self._show_transfer_error(_("The daemon transfer service is unavailable."))
             return
         # Attach the interaction presenter before starting the transfer so a
         # password/passphrase/host-key/FIDO prompt during the handshake is never
@@ -1046,7 +1077,7 @@ class ScpWindowController:
         try:
             if not client.get_capabilities().supports(Capability.TRANSFERS_SCP):
                 self._show_transfer_error(
-                    "Native SCP transfers are unavailable on the daemon."
+                    _("Native SCP transfers are unavailable on the daemon.")
                 )
                 dispose_dialogs()
                 return
@@ -1060,13 +1091,15 @@ class ScpWindowController:
                     os.path.isdir(str(source)) for source in sources
                 ),
             )
-        except (TypeError, ValueError) as error:
+        except (TypeError, ValueError):
             dispose_dialogs()
-            self._show_transfer_error(str(error))
+            self._show_transfer_error(_("The SCP transfer request is invalid."))
             return
 
         dlg = ScpTransferDialog(
-            "Upload files (SCP)" if direction == "upload" else "Download files (SCP)"
+            _("Upload files (SCP)")
+            if direction == "upload"
+            else _("Download files (SCP)")
         )
         content_box = dlg.content_box
         status = Gtk.Label()
@@ -1097,18 +1130,26 @@ class ScpWindowController:
                 # presenter so it never claims unrelated interactions again.
                 dispose_dialogs()
                 if state is TransferState.COMPLETED:
-                    status.set_text("Completed")
+                    status.set_text(_("Completed"))
                 elif state is TransferState.CANCELLED:
-                    status.set_text("Cancelled")
+                    status.set_text(_("Cancelled"))
                 else:
-                    failure = getattr(summary.failure, "message", "The transfer failed")
-                    status.set_text(f"Failed: {failure}")
+                    try:
+                        failure = format_scp_failure(summary.failure)
+                    except ValueError:
+                        logger.error("Invalid native SCP failure payload", exc_info=True)
+                        failure = _("The SCP transfer failed.")
+                    status.set_text(_("Failed: {failure}").format(failure=failure))
             elif state is TransferState.STARTING:
-                status.set_text("Starting…")
+                status.set_text(_("Starting…"))
             elif state is TransferState.CANCELLING:
-                status.set_text("Cancelling…")
+                status.set_text(_("Cancelling…"))
             else:
-                status.set_text("Uploading…" if direction == "upload" else "Downloading…")
+                status.set_text(
+                    _("Uploading…")
+                    if direction == "upload"
+                    else _("Downloading…")
+                )
 
         def ensure_observing():
             if event_subscription["value"] is not None:
@@ -1153,7 +1194,7 @@ class ScpWindowController:
 
         dlg.connect("closed", finish_close)
         dlg.present(self.window)
-        status.set_text("Starting SCP transfer…")
+        status.set_text(_("Starting SCP transfer…"))
 
         def on_started(summary):
             transfer_id["value"] = summary.id
@@ -1178,8 +1219,11 @@ class ScpWindowController:
         def on_failed(error):
             dispose_dialogs()
             if not closed["value"]:
-                self._show_transfer_error(str(error))
-                status.set_text(f"Transfer failed: {error}")
+                message = _format_scp_start_error(error)
+                self._show_transfer_error(message)
+                status.set_text(
+                    _("Transfer failed: {error}").format(error=message)
+                )
 
         try:
             bridge.submit(

@@ -22,6 +22,7 @@ import pytest
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models import SecretPromptKind
 from sshpilot.api.models.secrets import (
+    PROTECTED_SECRET_INTERACTIONS,
     REVISION_CONFLICT,
     SecretMessageCode,
     SecretOperationState,
@@ -343,6 +344,36 @@ def _make_service(tmp_path, *, secrets=None, backends=None, broker=None,
         path, secret_manager=manager, interaction_broker=broker
     )
     return service, manager, backends, broker, path
+
+
+@pytest.mark.parametrize(
+    ("method", "args", "kwargs"),
+    (
+        (
+            "_prompt_for_secret_with_status",
+            (SecretPromptKind.BITWARDEN_UNLOCK,),
+            {"owner_client_id": "client-1"},
+        ),
+        (
+            "_prompt_for_master_password",
+            ("bitwarden",),
+            {"owner_client_id": "client-1"},
+        ),
+    ),
+)
+def test_missing_interaction_broker_exposes_stable_capability_detail(
+    method, args, kwargs
+):
+    service = SecretBackendService.__new__(SecretBackendService)
+    service._broker = None
+
+    with pytest.raises(SshPilotError) as raised:
+        getattr(service, method)(*args, **kwargs)
+
+    assert raised.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    assert raised.value.details == {
+        "capability": PROTECTED_SECRET_INTERACTIONS
+    }
 
 
 def _all_strings(value: Any, out: Optional[List[str]] = None) -> List[str]:

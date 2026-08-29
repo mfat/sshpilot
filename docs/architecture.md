@@ -152,12 +152,14 @@ stay in an opaque field. GTK owns gettext translation, plural selection,
 backup-section labels, and formatting; the daemon never selects UI text.
 
 SFTP lifecycle summaries, recursive-operation summaries, and SFTP-backed
-transfer summaries use the narrower `SftpFailure` contract: a stable
-presentation code, the existing machine error code, exact parameters, and an
-optional opaque diagnostic. GTK owns the gettext mapping and formats only
-after translation. The shared generic `ServiceFailure` remains unchanged for
-native SCP, identity operations, forwards, and broadcast results; this SFTP
-boundary does not impose a repository-wide error migration.
+transfer summaries use the narrower `SftpFailure` contract. Native SCP
+transfers use `ScpFailure`, and public-key deployment operations use
+`IdentityFailure`. Each carries a stable presentation code, the existing
+machine error code, strict parameters, and an optional opaque diagnostic. GTK
+owns the gettext mappings and formats only after translation. The shared
+generic `ServiceFailure` remains unchanged for authorized-key removal,
+forwards, broadcast results, and other unselected consumers; these boundaries
+do not impose a repository-wide error migration.
 
 Secret values, `BW_SESSION`, KDBX transformed keys, provider credentials,
 private keys, and backup manifests do not cross the ordinary public API. They

@@ -32,6 +32,7 @@ from sshpilot.api.models.interactions import (
     SecretPromptKind,
 )
 from sshpilot.api.models.secrets import (
+    PROTECTED_SECRET_INTERACTIONS,
     REVISION_CONFLICT,
     SETTINGS_MALFORMED,
     SETTINGS_PERSISTENCE_FAILED,
@@ -1811,6 +1812,7 @@ class SecretBackendService:
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_CAPABILITY,
                 "Protected secret interactions are unavailable",
+                details={"capability": PROTECTED_SECRET_INTERACTIONS},
             )
         session_id = _next_secret_session_id()
         connection_id = ConnectionId(f"secret-{session_id}")
@@ -1852,6 +1854,7 @@ class SecretBackendService:
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_CAPABILITY,
                 "Protected secret interactions are unavailable",
+                details={"capability": PROTECTED_SECRET_INTERACTIONS},
             )
         session_id = _next_secret_session_id()
         connection_id = ConnectionId(f"secret-{session_id}")

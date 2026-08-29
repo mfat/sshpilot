@@ -1246,7 +1246,8 @@ Daemon-only lookup by opaque `transfer-<n>` identifier.
 
 - **Status / introduced:** Daemon only / Protocol v1 additive extension
 - **Capability / purpose:** `transfers.scp`; start one daemon-owned native OpenSSH SCP upload or download.
-- **Parameters / return:** `StartScpTransferRequest`; returns the shared `TransferSummary` lifecycle DTO.
+- **Parameters / return:** `StartScpTransferRequest`; returns the shared
+  `TransferSummary` lifecycle DTO, with `ScpFailure` on terminal failure.
 - **Errors:** `unsupported_capability`, `invalid_request`, `server_busy`, typed transfer failure, or transport errors.
 - **Behavior:** native SCP is overwrite-only; `fail`, `skip`, and `rename` conflict policies are rejected. GTK observes daemon transfer state through terminal completion.
 - **Security:** sources and destination are bounded typed paths; argv, environment, passwords, passphrases, askpass data, and process handles never cross the API.
@@ -1762,7 +1763,8 @@ finally:
   separate identity phase review.
 - **Capability / purpose:** `identity.operate`; supervise native `ssh-copy-id`
   deployment and return an operation summary.
-- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`.
+- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`, with
+  `IdentityFailure` on terminal failure.
 
 <!-- api-method: list_authorized_keys -->
 ## `list_authorized_keys`

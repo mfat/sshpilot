@@ -28,9 +28,9 @@ mapping and formats parameters only after translation; the daemon never
 translates messages. Raw SSH/SFTP server text, numeric status details, stderr,
 and library/OS diagnostics are never presentation codes or msgids.
 
-The generic `ServiceFailure` contract is not changed by this SFTP migration.
-It remains the failure type for native SCP transfers and non-SFTP service
-summaries.
+The generic `ServiceFailure` contract was not changed by the SFTP migration.
+Native SCP has its own strict `ScpFailure` contract; unrelated service
+summaries retain `ServiceFailure`.
 Close is idempotent. Retained closed records are bounded.
 
 ## Ownership

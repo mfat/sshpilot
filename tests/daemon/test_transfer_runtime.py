@@ -10,7 +10,11 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import ClientId, ConnectionId, TransferId
-from sshpilot.api.models.operations import OpenSftpRequest, SftpFailureCode
+from sshpilot.api.models.operations import (
+    OpenSftpRequest,
+    ScpFailureCode,
+    SftpFailureCode,
+)
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
@@ -21,7 +25,11 @@ from sshpilot.api.models.transfers import (
     TransferState,
 )
 from sshpilot.daemon.sftp_runtime import SftpServiceRuntime
-from sshpilot.daemon.transfer_runtime import TransferRuntime
+from sshpilot.daemon.transfer_runtime import (
+    TransferRuntime,
+    _scp_runtime_failure,
+    _scp_start_failure,
+)
 
 _TERMINAL_STATES = frozenset(
     {TransferState.COMPLETED, TransferState.CANCELLED, TransferState.FAILED}
@@ -308,6 +316,18 @@ class _BlockingScpBackend(_FakeScpBackend):
         raise SshPilotError(ErrorCode.OPERATION_CANCELLED, "cancelled")
 
 
+class _FailingScpBackend(_FakeScpBackend):
+    def run(self, request, *, connection_target, connection_id, transfer_id, cancel_event):
+        raise SshPilotError(
+            ErrorCode.TRANSFER_IO_FAILED,
+            ScpFailureCode.TRANSFER_FAILED.value,
+            details={
+                "scp_failure_code": ScpFailureCode.TRANSFER_FAILED.value,
+                "diagnostic": "scp: vendor exit status 23",
+            },
+        )
+
+
 def _scp_request():
     return StartScpTransferRequest(
         connection_id=ConnectionId("demo"),
@@ -315,6 +335,55 @@ def _scp_request():
         sources=("/tmp/source file",),
         destination="/var/tmp/drop",
     )
+
+
+@pytest.mark.parametrize(
+    ("phase", "error_code", "expected"),
+    (
+        ("target", ErrorCode.CONNECTION_NOT_FOUND, ScpFailureCode.CONNECTION_NOT_FOUND),
+        ("target", ErrorCode.VALIDATION_FAILED, ScpFailureCode.HOST_IDENTIFIER_MISSING),
+        ("target", ErrorCode.SESSION_STARTUP_FAILED, ScpFailureCode.TARGET_PREPARATION_FAILED),
+        ("transfer", ErrorCode.UNSUPPORTED_SESSION_PROTOCOL, ScpFailureCode.SSH_CONNECTION_REQUIRED),
+        ("transfer", ErrorCode.SESSION_STARTUP_FAILED, ScpFailureCode.TRANSFER_PREPARATION_FAILED),
+        ("transfer", ErrorCode.TRANSFER_IO_FAILED, ScpFailureCode.TRANSFER_FAILED),
+    ),
+)
+def test_native_scp_error_codes_map_without_message_discrimination(
+    phase, error_code, expected
+):
+    failure = _scp_runtime_failure(
+        SshPilotError(error_code, "arbitrary diagnostic wording"),
+        phase=phase,
+    )
+
+    assert failure.code is expected
+    assert failure.error_code is error_code
+
+
+def test_native_scp_internal_discriminant_and_diagnostic_are_separate():
+    failure = _scp_runtime_failure(
+        SshPilotError(
+            ErrorCode.TRANSFER_IO_FAILED,
+            "not a presentation contract",
+            details={
+                "scp_failure_code": ScpFailureCode.REMOTE_SFTP_UNAVAILABLE.value,
+                "diagnostic": "subsystem request failed: vendor status 127",
+            },
+        ),
+        phase="transfer",
+    )
+
+    assert failure.code is ScpFailureCode.REMOTE_SFTP_UNAVAILABLE
+    assert failure.diagnostic == "subsystem request failed: vendor status 127"
+
+
+def test_native_scp_start_failure_uses_error_code_not_message():
+    failure = _scp_start_failure(
+        SshPilotError(ErrorCode.SERVER_BUSY, "arbitrary queue wording")
+    )
+
+    assert failure.code is ScpFailureCode.COMMAND_QUEUE_FULL
+    assert failure.error_code is ErrorCode.SERVER_BUSY
 
 
 def test_shutdown_signals_running_scp_and_reaps_worker():
@@ -374,6 +443,43 @@ def test_prepare_and_run_scp_transfer_uses_shared_lifecycle_without_sftp():
     assert summary.state is TransferState.COMPLETED
     assert len(backend.runs) == 1
     assert backend.runs[0][1] == "alice@example.test"
+
+
+def test_native_scp_failure_is_structured_with_separate_diagnostic():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    transfer_runtime = TransferRuntime(
+        sftp_runtime,
+        scp_backend=_FailingScpBackend(),
+    )
+    prepared = transfer_runtime.prepare_start_scp_transfer(
+        _scp_request(), client_id=owner
+    )
+
+    transfer_runtime.run_transfer(prepared.id)
+    summary = _wait_for_terminal_state(transfer_runtime, prepared.id)
+
+    assert summary.state is TransferState.FAILED
+    assert summary.failure.code is ScpFailureCode.TRANSFER_FAILED
+    assert summary.failure.error_code is ErrorCode.TRANSFER_IO_FAILED
+    assert summary.failure.diagnostic == "scp: vendor exit status 23"
+    assert not hasattr(summary.failure, "message")
+
+
+def test_native_scp_pending_queue_failure_is_structured():
+    owner = ClientId("client:owner")
+    sftp_runtime, _service_id, _client = _make_ready_sftp_service(owner)
+    transfer_runtime = TransferRuntime(sftp_runtime, scp_backend=_FakeScpBackend())
+    prepared = transfer_runtime.prepare_start_scp_transfer(
+        _scp_request(), client_id=owner
+    )
+
+    transfer_runtime.reject_pending_start(prepared.id)
+    summary = transfer_runtime.get_transfer(prepared.id)
+
+    assert summary.state is TransferState.FAILED
+    assert summary.failure.code is ScpFailureCode.COMMAND_QUEUE_FULL
+    assert summary.failure.error_code is ErrorCode.SERVER_BUSY
 
 
 def test_cancel_scp_transfer_signals_backend_before_terminal_state():

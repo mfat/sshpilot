@@ -151,7 +151,9 @@ exact nonce. The retained legacy `InteractionResponse.value` is excluded from
 
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
-| `ServiceFailure` | Generic stable code and rendered message retained for non-SFTP services | Daemon implemented |
+| `ServiceFailure` | Generic stable code and rendered message retained for unrelated legacy consumers | Daemon implemented |
+| `ScpFailure` | Stable native SCP presentation code, machine error code, strict parameters, and opaque diagnostic | Daemon implemented |
+| `IdentityFailure` | Stable public-key deployment presentation code, machine error code, strict parameters, and opaque diagnostic | Daemon implemented |
 | `SftpFailure` | Stable SFTP presentation code, machine error code, parameters, and opaque diagnostic | Daemon implemented |
 | `SftpServiceSummary` | Immutable SFTP service lifecycle snapshot | Daemon implemented |
 | `OpenSftpRequest` | Open an SFTP service for a connection | Daemon implemented |

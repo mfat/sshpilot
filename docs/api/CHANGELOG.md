@@ -16,7 +16,25 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.49 (current)
+## API 0.50 (current)
+
+### API 0.50 structured native SCP and identity failures
+
+- Bumped `API_IMPLEMENTATION_VERSION` because native SCP `TransferSummary`
+  failures and public-key deployment `OperationSummary` failures now use the
+  strict `ScpFailure` and `IdentityFailure` wire objects instead of generic
+  rendered `ServiceFailure` text.
+- Both objects carry a stable presentation code, the existing machine
+  `ErrorCode`, strict parameters, and an optional opaque diagnostic. GTK maps
+  the presentation code to gettext and appends diagnostics unchanged.
+- `ServiceFailure` and its `{code, message}` wire shape remain unchanged for
+  authorized-key removal, broadcast, forwards, and every other consumer not
+  selected by the native SCP backend or key-deployment operation kind.
+- Protected secret interaction errors now identify the stable
+  `protected_secret_interactions` capability in the existing `ErrorData.details`
+  object. This additive detail uses the existing error wire shape.
+
+## API 0.49
 
 ### API 0.49 structured SFTP summary failures
 

@@ -15,7 +15,7 @@ from .common import (
     require_identifier,
     utc_now,
 )
-from .operations import ServiceFailure, SftpFailure
+from .operations import ScpFailure, ServiceFailure, SftpFailure
 
 
 class TransferBackend(str, Enum):
@@ -69,7 +69,7 @@ class TransferSummary:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     owner_client_id: Optional[ClientId] = None
-    failure: Optional[Union[ServiceFailure, SftpFailure]] = None
+    failure: Optional[Union[ServiceFailure, SftpFailure, ScpFailure]] = None
     # Legacy field retained for older schema readers.
     bytes_transferred: Optional[int] = None
     total_bytes: Optional[int] = None
@@ -114,15 +114,17 @@ class TransferSummary:
         if self.failure is not None and type(self.failure) not in {
             ServiceFailure,
             SftpFailure,
+            ScpFailure,
         }:
             raise TypeError(
-                "transfer failure must be ServiceFailure, SftpFailure, or None"
+                "transfer failure must be ServiceFailure, SftpFailure, ScpFailure, "
+                "or None"
             )
         if self.failure is not None:
             expected_failure_type = (
                 SftpFailure
                 if self.backend is TransferBackend.SFTP
-                else ServiceFailure
+                else ScpFailure
             )
             if type(self.failure) is not expected_failure_type:
                 raise TypeError(

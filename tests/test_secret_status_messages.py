@@ -2,6 +2,9 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.secrets import (
+    PROTECTED_SECRET_INTERACTIONS,
+    SETTINGS_MALFORMED,
+    SETTINGS_PERSISTENCE_FAILED,
     BitwardenStatus,
     RbwStatus,
     SecretMessageCode,
@@ -79,6 +82,73 @@ def test_frontend_preserves_unclassified_external_error():
     error = RuntimeError("bw exited with status 1")
 
     assert messages.format_secret_error(error) == "bw exited with status 1"
+
+
+@pytest.mark.parametrize(
+    ("detail_code", "translation"),
+    (
+        (SETTINGS_MALFORMED, "Les paramètres secrets sont illisibles"),
+        (SETTINGS_PERSISTENCE_FAILED, "Les paramètres secrets sont non enregistrés"),
+    ),
+)
+def test_frontend_translates_structured_secret_settings_errors(
+    monkeypatch, detail_code, translation
+):
+    calls = []
+    monkeypatch.setattr(
+        messages,
+        "_",
+        lambda msgid: calls.append(msgid) or translation,
+    )
+    error = SshPilotError(
+        ErrorCode.PERSISTENCE_FAILED,
+        "finalized daemon text",
+        details={"code": detail_code},
+    )
+
+    assert messages.format_secret_error(error) == translation
+    assert len(calls) == 1
+    assert calls[0] in {
+        "The secret settings could not be loaded",
+        "The secret settings could not be saved",
+    }
+
+
+def test_generic_unsupported_secret_error_remains_opaque(monkeypatch):
+    monkeypatch.setattr(
+        messages,
+        "_",
+        lambda _msgid: pytest.fail("generic unsupported errors are not discriminated"),
+    )
+    error = SshPilotError(
+        ErrorCode.UNSUPPORTED_CAPABILITY,
+        "Protected secret interactions are unavailable",
+    )
+
+    assert messages.format_secret_error(error) == (
+        "Protected secret interactions are unavailable"
+    )
+
+
+def test_protected_interaction_capability_is_translated_from_stable_detail(
+    monkeypatch,
+):
+    calls = []
+    monkeypatch.setattr(
+        messages,
+        "_",
+        lambda msgid: calls.append(msgid) or "Interactions protégées indisponibles",
+    )
+    error = SshPilotError(
+        ErrorCode.UNSUPPORTED_CAPABILITY,
+        "finalized daemon text must be ignored",
+        details={"capability": PROTECTED_SECRET_INTERACTIONS},
+    )
+
+    assert messages.format_secret_error(error) == (
+        "Interactions protégées indisponibles"
+    )
+    assert calls == ["Protected secret interactions are unavailable"]
 
 
 def test_success_has_no_message_and_does_not_translate(monkeypatch):

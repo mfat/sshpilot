@@ -7,6 +7,7 @@ import pytest
 
 from sshpilot.api import ErrorCode
 from sshpilot.api.models import ConnectionId, SessionId, StartScpTransferRequest, TransferDirection, TransferId
+from sshpilot.api.models.operations import ScpFailureCode
 from sshpilot.daemon.native_scp_backend import NativeScpBackend
 
 # These tests drive fake processes, so nothing here should ever wait on a real
@@ -281,7 +282,46 @@ def test_native_backend_does_not_retry_authentication_failure():
         )
 
     assert getattr(exc_info.value, "code", None) is ErrorCode.TRANSFER_IO_FAILED
+    assert exc_info.value.details == {
+        "scp_failure_code": ScpFailureCode.TRANSFER_FAILED.value,
+        "diagnostic": "Permission denied (publickey)",
+    }
     assert len(popen.calls) == 1
+
+
+def test_native_backend_classifies_remote_sftp_failure_with_raw_diagnostic():
+    error = NativeScpBackend._failure("subsystem request failed: vendor status 127")
+
+    assert error.code is ErrorCode.TRANSFER_IO_FAILED
+    assert error.details == {
+        "scp_failure_code": ScpFailureCode.REMOTE_SFTP_UNAVAILABLE.value,
+        "diagnostic": "subsystem request failed: vendor status 127",
+    }
+
+
+def test_native_backend_process_start_failure_has_separate_os_diagnostic():
+    backend = NativeScpBackend(
+        _Provider(),
+        _Broker(),
+        popen=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            OSError("exec format error")
+        ),
+        wait_timeout=_UNIT_WAIT_TIMEOUT,
+    )
+
+    with pytest.raises(Exception) as raised:
+        backend.run(
+            _request(sources=("/tmp/source",)),
+            connection_target="alice@example.test",
+            connection_id=ConnectionId("demo"),
+            transfer_id=TransferId("transfer-1"),
+            cancel_event=threading.Event(),
+        )
+
+    assert raised.value.details == {
+        "scp_failure_code": ScpFailureCode.PROCESS_START_FAILED.value,
+        "diagnostic": "exec format error",
+    }
 
 
 def test_typed_client_dispatches_to_native_scp_backend(tmp_path):

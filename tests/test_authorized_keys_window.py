@@ -6,6 +6,8 @@ start one read, callbacks are ignored after close, and unavailable public keys
 produce a clear path-free message.
 """
 
+from concurrent.futures import Future
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -151,3 +153,65 @@ def test_close_during_read_suppresses_append(monkeypatch, idle):
 
     window._append_pubkey_text.assert_not_called()
     window._toast.assert_not_called()
+
+
+def test_authorized_key_counts_use_real_plurals(monkeypatch):
+    calls = []
+
+    def translate(singular, plural, count):
+        calls.append((singular, plural, count))
+        return "{count} singular" if count == 1 else "{count} plural"
+
+    monkeypatch.setattr(win_mod, "ngettext", translate)
+
+    assert win_mod._loaded_entries_text(1) == "1 singular"
+    assert win_mod._loaded_entries_text(2) == "2 plural"
+    assert win_mod._added_keys_text(1) == "1 singular"
+    assert win_mod._added_keys_text(3) == "3 plural"
+    assert calls == [
+        ("Loaded {count} entry", "Loaded {count} entries", 1),
+        ("Loaded {count} entry", "Loaded {count} entries", 2),
+        ("Added {count} key", "Added {count} keys", 1),
+        ("Added {count} key", "Added {count} keys", 3),
+    ]
+
+
+def test_remote_load_uses_direct_sftp_error_formatter(monkeypatch):
+    error = SshPilotError(ErrorCode.REMOTE_PATH_NOT_FOUND, "raw daemon message")
+    future = Future()
+    future.set_exception(error)
+    window = win_mod.AuthorizedKeysWindow.__new__(win_mod.AuthorizedKeysWindow)
+    window._local = True
+    window._ready = True
+    window._service = SimpleNamespace(load=lambda: future)
+    window._set_status = MagicMock()
+    window._toast = MagicMock()
+    monkeypatch.setattr(win_mod.GLib, "idle_add", lambda fn, *args: fn(*args))
+    formatter = MagicMock(return_value="localized SFTP error")
+    monkeypatch.setattr(win_mod, "format_direct_sftp_error", formatter)
+
+    window._reload()
+
+    formatter.assert_called_once_with(error)
+    window._toast.assert_called_once_with("Failed to load: localized SFTP error")
+
+
+def test_remote_save_uses_direct_sftp_error_formatter(monkeypatch):
+    error = SshPilotError(ErrorCode.REMOTE_PERMISSION_DENIED, "raw daemon message")
+    future = Future()
+    future.set_exception(error)
+    window = win_mod.AuthorizedKeysWindow.__new__(win_mod.AuthorizedKeysWindow)
+    window._dirty = True
+    window._items = []
+    window._service = SimpleNamespace(save=lambda *_args, **_kwargs: future)
+    window._set_status = MagicMock()
+    window._toast = MagicMock()
+    window._save_button = MagicMock()
+    monkeypatch.setattr(win_mod.GLib, "idle_add", lambda fn, *args: fn(*args))
+    formatter = MagicMock(return_value="localized SFTP error")
+    monkeypatch.setattr(win_mod, "format_direct_sftp_error", formatter)
+
+    window._on_save_clicked(None)
+
+    formatter.assert_called_once_with(error)
+    window._toast.assert_called_once_with("Save failed: localized SFTP error")

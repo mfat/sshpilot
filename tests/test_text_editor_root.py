@@ -277,6 +277,82 @@ def test_permission_denied_code_is_detected_without_message_markers():
     assert Ed._is_permission_denied_error(ConnectionError("boom")) is False
 
 
+def test_remote_load_uses_direct_sftp_formatter(monkeypatch):
+    error = text_editor.SshPilotError(
+        text_editor.ErrorCode.SFTP_COMMAND_FAILED,
+        "raw daemon message",
+    )
+    formatted = []
+    monkeypatch.setattr(
+        text_editor,
+        "format_direct_sftp_error",
+        lambda value: formatted.append(value) or "localized SFTP error",
+    )
+    ed = Ed.__new__(Ed)
+    ed._offer_root_banner = lambda _action: False
+    ed._show_error = lambda message: setattr(ed, "error", message)
+
+    ed._on_remote_load_error(error)
+
+    assert formatted == [error]
+    assert ed.error == "Failed to download file: localized SFTP error"
+
+
+def test_direct_sftp_diagnostic_is_never_sent_to_gettext(monkeypatch):
+    calls = []
+    diagnostic = "sftp-server: opaque diagnostic"
+    monkeypatch.setattr(
+        text_editor,
+        "_",
+        lambda msgid: calls.append(msgid) or "Échec du téléchargement",
+    )
+    monkeypatch.setattr(
+        text_editor,
+        "format_direct_sftp_error",
+        lambda _error: f"Erreur SFTP\n\n{diagnostic}",
+    )
+
+    result = text_editor._format_remote_file_error(
+        RuntimeError("ignored"), action="read"
+    )
+
+    assert result == f"Échec du téléchargement: Erreur SFTP\n\n{diagnostic}"
+    assert calls == ["Failed to download file"]
+
+
+def test_privileged_error_uses_stable_code(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        text_editor,
+        "_",
+        lambda msgid: calls.append(msgid) or "Mot de passe sudo refusé",
+    )
+    error = text_editor.SshPilotError(
+        text_editor.ErrorCode.AUTHENTICATION_ATTEMPTS_EXHAUSTED,
+        "finalized daemon text",
+    )
+
+    assert text_editor._format_privileged_file_error(
+        error, action="save"
+    ) == "Mot de passe sudo refusé"
+    assert calls == ["The sudo password was not accepted."]
+
+
+def test_unknown_privileged_diagnostic_stays_opaque(monkeypatch):
+    calls = []
+    diagnostic = "ssh: opaque failure"
+    monkeypatch.setattr(
+        text_editor,
+        "_",
+        lambda msgid: calls.append(msgid) or "Lecture privilégiée impossible",
+    )
+
+    assert text_editor._format_privileged_file_error(
+        RuntimeError(diagnostic), action="read"
+    ) == f"Lecture privilégiée impossible\n\n{diagnostic}"
+    assert calls == ["Failed to read file as root"]
+
+
 def _bare_for_root_decision(*, is_local=False, manager_username=None):
     ed = Ed.__new__(Ed)
     ed._is_local = is_local
@@ -432,7 +508,7 @@ def test_root_save_failure_keeps_dirty_state(monkeypatch, tmp_path):
     ed._upload_file_root()
 
     assert service.text == "root edit"
-    assert ed.error == "Failed to save file: daemon disconnected"
+    assert ed.error == "Failed to save file as root\n\ndaemon disconnected"
     assert ed._has_unsaved_changes is True
     assert save_button.values[-1] is True
     assert "upload" not in ed.toast.lower()

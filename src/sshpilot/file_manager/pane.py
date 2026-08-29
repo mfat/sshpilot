@@ -32,7 +32,7 @@ from .portal_docs import (
 )
 from .properties_dialog import PropertiesDialog
 from .common import FileEntry
-from .format_utils import _human_time
+from .format_utils import _human_time, _item_count_text
 
 
 logger = logging.getLogger(__name__)
@@ -729,7 +729,7 @@ class FilePane(Gtk.Box):
     def _size_column_text(entry: FileEntry) -> str:
         if entry.is_dir:
             if entry.item_count is not None:
-                return f"{entry.item_count} items"
+                return _item_count_text(entry.item_count)
             return "—"
         return FilePane._format_size(entry.size)
 
@@ -929,7 +929,7 @@ class FilePane(Gtk.Box):
             entry = getattr(label, "_pane_entry", None)
             if entry is None or not entry.is_dir or entry.name not in counts:
                 continue
-            count_text = f"{entry.item_count} items"
+            count_text = _item_count_text(entry.item_count)
             label.set_text(count_text)
             label.set_tooltip_text(count_text)
         for box in list(self._bound_list_boxes):
@@ -938,7 +938,7 @@ class FilePane(Gtk.Box):
                 continue
             label = getattr(box, "metadata_label", None)
             if label is not None:
-                count_text = f"{entry.item_count} items"
+                count_text = _item_count_text(entry.item_count)
                 label.set_text(count_text)
                 label.set_tooltip_text(count_text)
 
@@ -2037,7 +2037,7 @@ class FilePane(Gtk.Box):
         else:
             location = os.path.join(base_path, entry.name)
 
-        entry_type = "Folder" if entry.is_dir else "File"
+        entry_type = _("Folder") if entry.is_dir else _("File")
         if entry.is_dir:
             size_text = "—"
         else:

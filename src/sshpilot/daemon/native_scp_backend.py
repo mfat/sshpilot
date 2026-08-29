@@ -11,6 +11,7 @@ from typing import Callable, Mapping, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import SessionId, TransferId
+from sshpilot.api.models.operations import ScpFailureCode
 from sshpilot.api.models.transfers import StartScpTransferRequest
 from sshpilot.transfer_scp import (
     assemble_scp_transfer_args,
@@ -122,7 +123,12 @@ class NativeScpBackend:
         if request.conflict_policy.value != "overwrite":
             raise SshPilotError(
                 ErrorCode.INVALID_REQUEST,
-                "native SCP supports overwrite only",
+                ScpFailureCode.TRANSFER_PREPARATION_FAILED.value,
+                details={
+                    "scp_failure_code": (
+                        ScpFailureCode.TRANSFER_PREPARATION_FAILED.value
+                    )
+                },
             )
         sources, destination = self.build_operands(request, connection_target)
         extra_args = list(sources)
@@ -243,7 +249,11 @@ class NativeScpBackend:
         except OSError as exc:
             raise SshPilotError(
                 ErrorCode.TRANSFER_IO_FAILED,
-                "The SCP process could not be started",
+                ScpFailureCode.PROCESS_START_FAILED.value,
+                details={
+                    "scp_failure_code": ScpFailureCode.PROCESS_START_FAILED.value,
+                    "diagnostic": str(exc),
+                },
             ) from exc
         finally:
             if stderr_reader is not None:
@@ -264,8 +274,19 @@ class NativeScpBackend:
 
     @staticmethod
     def _failure(stderr: str) -> SshPilotError:
-        message = classify_sftp_error(stderr) or "The SCP transfer failed"
-        return SshPilotError(ErrorCode.TRANSFER_IO_FAILED, message)
+        code = (
+            ScpFailureCode.REMOTE_SFTP_UNAVAILABLE
+            if classify_sftp_error(stderr)
+            else ScpFailureCode.TRANSFER_FAILED
+        )
+        return SshPilotError(
+            ErrorCode.TRANSFER_IO_FAILED,
+            code.value,
+            details={
+                "scp_failure_code": code.value,
+                "diagnostic": (stderr or "").strip(),
+            },
+        )
 
     def _terminate(self, process) -> None:
         forget_owned_process(process.pid)

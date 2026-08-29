@@ -20,11 +20,14 @@ src/sshpilot/daemon_quit_policy.py
 src/sshpilot/daemon_sessions_dialog.py
 src/sshpilot/daemon_terminal_policy.py
 src/sshpilot/effective_config_dialog.py
+src/sshpilot/file_manager/format_utils.py
 src/sshpilot/file_manager/pane.py
 src/sshpilot/file_manager/pane_controls.py
 src/sshpilot/file_manager/progress_dialog.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
+src/sshpilot/gtk/identity_failure_messages.py
+src/sshpilot/gtk/scp_failure_messages.py
 src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/sftp_error_messages.py
 src/sshpilot/gtk/sftp_failure_messages.py

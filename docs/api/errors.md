@@ -86,7 +86,8 @@ the validated internal envelope.
 
 The requested feature group is unavailable. Safe details contain only the
 stable `capability` string. The daemon client uses this for all declared but
-unsupported commands.
+unsupported commands. Secret workflows use `protected_secret_interactions`
+when the daemon cannot provide their protected interaction channel.
 
 <!-- api-error: invalid_request -->
 ## `invalid_request`

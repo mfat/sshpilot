@@ -46,6 +46,8 @@ from sshpilot.api.models.identity import (
 )
 from sshpilot.api.models.keys import KeyStoreScope, ListKeysRequest, ReadPublicKeyRequest
 from sshpilot.api.models.operations import (
+    IdentityFailure,
+    IdentityFailureCode,
     OperationKind,
     OperationSummary,
 )
@@ -273,10 +275,22 @@ class DaemonIdentityService:
         connection_id = request.connection_id
 
         def _body(handle: OperationHandle) -> str:
-            provider = self._require_launch_provider()
-            argv, env = provider.prepare_copy_id_launch(
-                request.connection_id, public_path, force=request.force
-            )
+            try:
+                provider = self._require_launch_provider()
+            except SshPilotError as error:
+                raise _identity_error(
+                    IdentityFailureCode.LAUNCH_PREPARATION_UNAVAILABLE,
+                    error.code,
+                ) from error
+            try:
+                argv, env = provider.prepare_copy_id_launch(
+                    request.connection_id, public_path, force=request.force
+                )
+            except SshPilotError as error:
+                raise _identity_error(
+                    _identity_launch_failure_code(error.code),
+                    error.code,
+                ) from error
             return self._run_deploy(handle, argv, env, connection_id)
 
         return self._operations.start_operation(
@@ -285,6 +299,7 @@ class DaemonIdentityService:
             connection_id=connection_id,
             owner_client_id=owner_client_id,
             message="Deploying the public key",
+            failure_mapper=_identity_failure,
         )
 
     def _run_deploy(
@@ -326,9 +341,10 @@ class DaemonIdentityService:
                 except Exception:
                     pass
             except OSError as exc:
-                raise SshPilotError(
+                raise _identity_error(
+                    IdentityFailureCode.PROCESS_START_FAILED,
                     ErrorCode.SESSION_STARTUP_FAILED,
-                    "ssh-copy-id could not be started",
+                    diagnostic=str(exc),
                 ) from exc
             handle.set_process(process)
             last_line = ""
@@ -344,9 +360,10 @@ class DaemonIdentityService:
                 handle.clear_process()
             handle.raise_if_cancelled()
             if returncode != 0:
-                raise SshPilotError(
+                raise _identity_error(
+                    _deploy_failure_code(last_line),
                     ErrorCode.REMOTE_COMMAND_FAILED,
-                    _deploy_failure_message(last_line),
+                    diagnostic=last_line,
                 )
             if scope_id is not None and self._broker is not None:
                 # Commit secrets the user chose to remember after a successful
@@ -733,19 +750,67 @@ def _parse_ssh_keygen_line(line: str) -> Optional[Tuple[str, str]]:
     return key_type, fingerprint
 
 
-def _deploy_failure_message(last_line: str) -> str:
-    """A safe, user-facing ssh-copy-id failure summary."""
+def _deploy_failure_code(last_line: str) -> IdentityFailureCode:
+    """Classify opaque ssh-copy-id output into a stable presentation code."""
     text = (last_line or "").strip()
     lowered = text.lower()
     if "permission denied" in lowered:
-        return "Authentication failed while installing the public key"
+        return IdentityFailureCode.AUTHENTICATION_FAILED
     if "connection refused" in lowered:
-        return "The server refused the connection"
+        return IdentityFailureCode.CONNECTION_REFUSED
     if "no route to host" in lowered or "name or service not known" in lowered:
-        return "The server could not be reached"
+        return IdentityFailureCode.SERVER_UNREACHABLE
     if "timed out" in lowered or "timeout" in lowered:
-        return "The connection timed out"
-    return "ssh-copy-id could not install the public key"
+        return IdentityFailureCode.CONNECTION_TIMED_OUT
+    return IdentityFailureCode.INSTALLATION_FAILED
+
+
+def _identity_launch_failure_code(error_code: ErrorCode) -> IdentityFailureCode:
+    return {
+        ErrorCode.CONNECTION_NOT_FOUND: IdentityFailureCode.CONNECTION_NOT_FOUND,
+        ErrorCode.UNSUPPORTED_SESSION_PROTOCOL: (
+            IdentityFailureCode.SSH_CONNECTION_REQUIRED
+        ),
+        ErrorCode.VALIDATION_FAILED: IdentityFailureCode.HOST_IDENTIFIER_MISSING,
+        ErrorCode.UNSUPPORTED_CAPABILITY: IdentityFailureCode.SSH_COPY_ID_UNAVAILABLE,
+    }.get(error_code, IdentityFailureCode.LAUNCH_PREPARATION_UNAVAILABLE)
+
+
+def _identity_error(
+    code: IdentityFailureCode,
+    error_code: ErrorCode,
+    *,
+    diagnostic: str = "",
+) -> SshPilotError:
+    return SshPilotError(
+        error_code,
+        code.value,
+        details={
+            "identity_failure_code": code.value,
+            "diagnostic": diagnostic.replace("\x00", ""),
+        },
+    )
+
+
+def _identity_failure(error: BaseException) -> IdentityFailure:
+    if isinstance(error, SshPilotError):
+        detail_code = error.details.get("identity_failure_code")
+        try:
+            code = IdentityFailureCode(detail_code)
+        except (TypeError, ValueError):
+            code = _identity_launch_failure_code(error.code)
+        diagnostic = error.details.get("diagnostic", "")
+        if type(diagnostic) is not str:
+            diagnostic = ""
+        return IdentityFailure(
+            code=code,
+            error_code=error.code,
+            diagnostic=diagnostic.replace("\x00", ""),
+        )
+    return IdentityFailure(
+        code=IdentityFailureCode.OPERATION_FAILED_UNEXPECTEDLY,
+        error_code=ErrorCode.INTERNAL_ERROR,
+    )
 
 
 def _remote_failure_message(stderr: str) -> str:
