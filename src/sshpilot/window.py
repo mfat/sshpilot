@@ -4061,25 +4061,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ]
 
         if ungrouped_nicks:
-            # Keep root connection order in sync
-            updated = False
-            for nick in ungrouped_nicks:
-                if nick not in self.group_manager.root_connections:
-                    self.group_manager.root_connections.append(nick)
-                    updated = True
-
-            existing = set(ungrouped_nicks)
-            if any(nick not in existing for nick in self.group_manager.root_connections):
-                self.group_manager.root_connections = [
-                    nick for nick in self.group_manager.root_connections
-                    if nick in existing
-                ]
-                updated = True
-
-            if updated:
-                self.group_manager._save_groups()
-
+            # Root order is daemon-owned; render from the snapshot and append
+            # any not-yet-projected ungrouped connections without local writes.
+            ungrouped_set = set(ungrouped_nicks)
+            seen = set()
             for nick in self.group_manager.root_connections:
+                if nick not in ungrouped_set:
+                    continue
+                conn = connections_dict.get(nick)
+                if conn:
+                    self.add_connection_row(conn)
+                    seen.add(nick)
+            for nick in ungrouped_nicks:
+                if nick in seen:
+                    continue
                 conn = connections_dict.get(nick)
                 if conn:
                     self.add_connection_row(conn)
@@ -6045,11 +6040,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
+        # Membership and root order come from the daemon snapshot; refresh
+        # the presentation adapter then rebuild — never persist groups here.
         self.group_manager.bind_connections(self.connection_manager.connections)
-        self.group_manager.connections.setdefault(connection.id, None)
-        if connection.id not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.id)
-            self.group_manager._save_groups()
         self.rebuild_connection_list()
 
     def on_projection_reset(self, manager, _connection=None):
@@ -6099,17 +6092,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.connection_list.remove(row)
             del self.connection_rows[connection]
 
-        # Remove from group manager, including any group it was copied into
-        self.group_manager.connections.pop(connection.id, None)
-        if connection.id in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.id)
-        for group in self.group_manager.groups.values():
-            if connection.id in group.get('connections', []):
-                group['connections'] = [
-                    n for n in group['connections'] if n != connection.id
-                ]
-        if not getattr(self, '_deleting_connections_batch', False):
-            self.group_manager._save_groups()
+        # Group membership is daemon-owned; re-project from the snapshot
+        # instead of mutating/persisting local group state.
+        self.group_manager.bind_connections(self.connection_manager.connections)
         self._refresh_group_rows_after_connection_removed(connection)
 
         # Close all terminals for this connection and clean up maps
@@ -7935,7 +7920,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except TypeError:
                     # Compatibility only for legacy third-party signal handlers;
                     # ConnectionDialog.SaveRequest has one fixed signature.
-                    save_completion(bool(ok), result)
+                    try:
+                        save_completion(bool(ok), result)
+                    except TypeError:
+                        save_completion(bool(ok))
             has_secret_work = bool(
                 secret_plan and (
                     secret_plan.get('password_changed')

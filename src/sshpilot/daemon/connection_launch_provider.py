@@ -852,8 +852,12 @@ class DaemonConnectionLaunchProvider:
         interaction_policy: str,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..plugins.api import PluginContext, ProtocolError
+        from ..plugins.loader import ensure_builtin_protocols
         from ..plugins.registry import protocol_registry
 
+        # Built-ins are loaded by the GTK process at startup; the daemon is a
+        # separate process and must register them before non-SSH launches.
+        ensure_builtin_protocols(app_config=self._get_app_config())
         registry = protocol_registry()
         backend = registry.get_or_none(protocol)
         if backend is None:

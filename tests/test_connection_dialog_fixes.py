@@ -24,10 +24,57 @@ def test_editor_details_to_connection_preserves_display_name():
 def test_editor_details_to_connection_plugin_data():
     details = types.SimpleNamespace(
         nickname='plugin-host',
-        data={'plugin_field': 'value'}
+        hostname='10.0.0.5',
+        host='',
+        port=2323,
+        protocol='telnet',
+        data={'plugin_field': 'value'},
     )
     conn = _editor_details_to_connection(details)
-    assert conn.data == {'plugin_field': 'value'}
+    assert conn.data['plugin_field'] == 'value'
+    # Core columns are seeded so plugin FieldSpecs (host/port) round-trip.
+    assert conn.data['host'] == '10.0.0.5'
+    assert conn.data['hostname'] == '10.0.0.5'
+    assert conn.data['port'] == 2323
+    assert conn.data['protocol'] == 'telnet'
+
+
+def test_load_plugin_field_values_uses_hostname_when_data_host_missing():
+    """Telnet saves ``host`` as core ``hostname``; the dialog must still fill
+    the Host row when reopening an editor DTO / summary projection."""
+    from sshpilot.connection_dialog import ConnectionDialog
+
+    set_values = {}
+
+    def _setter(value):
+        set_values['host'] = value
+
+    self = types.SimpleNamespace(
+        connection=types.SimpleNamespace(
+            hostname='10.0.0.5',
+            host='lab-switch',
+            port=2323,
+            data={},
+        ),
+        _plugin_field_widgets={
+            'host': (
+                types.SimpleNamespace(default=''),
+                None,
+                None,
+                _setter,
+            ),
+            'port': (
+                types.SimpleNamespace(default=23),
+                None,
+                None,
+                lambda value: set_values.__setitem__('port', value),
+            ),
+        },
+    )
+    types.MethodType(
+        ConnectionDialog.__dict__['_load_plugin_field_values'], self
+    )()
+    assert set_values == {'host': '10.0.0.5', 'port': 2323}
 
 def test_editor_details_falsy_values():
     details = types.SimpleNamespace(

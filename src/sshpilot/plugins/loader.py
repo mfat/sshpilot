@@ -223,6 +223,8 @@ def load_plugins(*, app_config, connection_manager,
 
     loaded = _load_builtin(make_ctx, disabled=_id_set("plugins.disabled"))
     loaded += _load_user(make_ctx, enabled=_id_set("plugins.enabled"))
+    global _builtins_ensured_for
+    _builtins_ensured_for = id(registry)
 
     if protocol_registry().get_or_none("ssh") is None:
         # Plugin zero failed — the app is useless without it, so this is
@@ -230,6 +232,40 @@ def load_plugins(*, app_config, connection_manager,
         raise RuntimeError("SSH protocol plugin failed to load; "
                            "see log for details")
     return loaded
+
+
+_builtins_ensured_for: Optional[int] = None
+
+
+def ensure_builtin_protocols(*, app_config=None) -> None:
+    """Register built-in protocol backends in this process if needed.
+
+    The daemon launch path owns non-SSH terminal spawns but does not run the
+    GTK PluginHost. Calling this is idempotent and safe from a headless
+    process: it only activates built-ins (honouring ``plugins.disabled``).
+    """
+    global _builtins_ensured_for
+    registry = protocol_registry()
+    if _builtins_ensured_for is id(registry) and registry.get_or_none("ssh") is not None:
+        return
+    disabled: frozenset = frozenset()
+    if app_config is not None:
+        try:
+            disabled = frozenset(app_config.get_setting("plugins.disabled", []) or [])
+        except Exception:
+            disabled = frozenset()
+
+    def make_ctx(plugin_id: str) -> PluginContext:
+        return PluginContext(
+            plugin_id=plugin_id,
+            app_config=app_config,
+            connection_manager=None,
+            protocol_registry=registry,
+            host=None,
+        )
+
+    _load_builtin(make_ctx, disabled=disabled)
+    _builtins_ensured_for = id(registry)
 
 
 def _builtin_plugin_dir() -> Optional[Path]:
