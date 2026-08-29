@@ -32,6 +32,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Gtk, Adw, GLib  # noqa: E402
 
+from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .window_dialogs import parent_window
 
 logger = logging.getLogger(__name__)
@@ -216,10 +217,10 @@ def _apply_config_async(window, controller, email: str, server: str,
         try:
             requested_email = (email or "").strip()
             result = controller.rbw_configure(requested_email, server)
-            message = str(getattr(result, "message", "") or "").strip()
+            failed = getattr(result, "message_code", None) is not None
             configured = bool(getattr(result, "configured", False))
             returned_email = str(getattr(result, "email", "") or "").strip()
-            ok = not message and configured and returned_email == requested_email
+            ok = not failed and configured and returned_email == requested_email
         except Exception:
             logger.debug("rbw config set failed", exc_info=True)
         GLib.idle_add(lambda: (close(), on_done(ok), False)[-1])
@@ -242,15 +243,15 @@ def _login_async(window, controller, on_done: Callable[[bool], None]) -> None:
             result = controller.unlock()
             kind = getattr(result, "kind", None)
             if kind != UnlockResultKind.UNLOCKED:
-                detail = str(getattr(result, "message", "") or "") or str(kind)
+                detail = format_secret_message(result) or str(kind)
         except Exception as exc:
-            detail = str(exc)
+            detail = format_secret_error(exc)
         if not detail:
             try:
                 sync_status = controller.rbw_sync()
-                detail = str(getattr(sync_status, "message", "") or "")
+                detail = format_secret_message(sync_status)
             except Exception as exc:
-                detail = str(exc)
+                detail = format_secret_error(exc)
         status = probe_rbw_status(controller)
         GLib.idle_add(lambda: (_after_login(status, detail), False)[1])
 

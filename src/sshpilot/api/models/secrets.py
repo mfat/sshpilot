@@ -13,7 +13,7 @@ defaults, strict normalization, revision) is owned by
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -274,26 +274,119 @@ class UnlockResultKind(str, Enum):
     BACKEND_UNAVAILABLE = "backend_unavailable"
 
 
+class SecretMessageCode(str, Enum):
+    """Stable presentation reasons for secret status and operation results."""
+
+    SECRET_BACKEND_UNAVAILABLE = "secret_backend_unavailable"
+    VAULT_SIGN_IN_REQUIRED = "vault_sign_in_required"
+    UNLOCK_CANCELLED = "unlock_cancelled"
+    VAULT_UNLOCK_FAILED = "vault_unlock_failed"
+    BACKEND_UNAVAILABLE = "backend_unavailable"
+    BITWARDEN_SERVER_CONFIGURATION_FAILED = "bitwarden_server_configuration_failed"
+    BITWARDEN_LOGIN_CANCELLED = "bitwarden_login_cancelled"
+    BITWARDEN_AUTHENTICATION_CHALLENGE_CANCELLED = (
+        "bitwarden_authentication_challenge_cancelled"
+    )
+    BITWARDEN_TWO_STEP_LOGIN_CANCELLED = "bitwarden_two_step_login_cancelled"
+    BITWARDEN_SIGN_IN_FAILED = "bitwarden_sign_in_failed"
+    BITWARDEN_UNLOCK_CANCELLED = "bitwarden_unlock_cancelled"
+    BITWARDEN_UNLOCK_FAILED = "bitwarden_unlock_failed"
+    BITWARDEN_SYNC_FAILED = "bitwarden_sync_failed"
+    RBW_CONFIGURATION_FAILED = "rbw_configuration_failed"
+    RBW_UNLOCK_FAILED = "rbw_unlock_failed"
+    RBW_SYNC_FAILED = "rbw_sync_failed"
+    RBW_LOCK_FAILED = "rbw_lock_failed"
+    DATABASE_PATH_REQUIRED = "database_path_required"
+    DATABASE_CREATION_CANCELLED = "database_creation_cancelled"
+    KEEPASS_DATABASE_CREATE_OR_UNLOCK_FAILED = (
+        "keepass_database_create_or_unlock_failed"
+    )
+    KEEPASS_UNLOCK_CANCELLED = "keepass_unlock_cancelled"
+    KEEPASS_DATABASE_UNLOCK_FAILED = "keepass_database_unlock_failed"
+    REMEMBER_SESSION_BACKEND_REQUIRED = "remember_session_backend_required"
+    REMEMBER_CANCELLED = "remember_cancelled"
+    MASTER_PASSWORD_SAVE_FAILED = "master_password_save_failed"
+    MASTER_PASSWORD_REMEMBER_FAILED = "master_password_remember_failed"
+    REMEMBERED_MASTER_PASSWORD_REMOVE_FAILED = (
+        "remembered_master_password_remove_failed"
+    )
+    REMEMBERED_MASTER_PASSWORD_FORGET_FAILED = (
+        "remembered_master_password_forget_failed"
+    )
+    REMEMBERED_MASTER_PASSWORD_NOT_FOUND = "remembered_master_password_not_found"
+
+
+_SECRET_MESSAGE_PARAMETER_KEYS = {
+    code: frozenset()
+    for code in SecretMessageCode
+}
+_SECRET_MESSAGE_PARAMETER_KEYS.update(
+    {
+        SecretMessageCode.SECRET_BACKEND_UNAVAILABLE: frozenset({"backend"}),
+        SecretMessageCode.BACKEND_UNAVAILABLE: frozenset({"backend"}),
+    }
+)
+
+
+def _validate_secret_message(
+    message_code: Optional[SecretMessageCode],
+    message_parameters: Mapping[str, str],
+    diagnostic: str,
+) -> Mapping[str, str]:
+    if not isinstance(message_parameters, Mapping):
+        raise TypeError("secret message parameters must be a mapping")
+    parameters = dict(message_parameters)
+    if message_code is None:
+        if parameters:
+            raise ValueError("a secret message code is required for parameters")
+        if diagnostic:
+            raise ValueError("a secret message code is required for a diagnostic")
+    else:
+        if not isinstance(message_code, SecretMessageCode):
+            raise TypeError("secret message code is invalid")
+        expected = _SECRET_MESSAGE_PARAMETER_KEYS[message_code]
+        if set(parameters) != expected:
+            raise ValueError("secret message parameters do not match the message code")
+        for key, value in parameters.items():
+            _validate_text(value, f"secret message parameter {key}")
+            if not value:
+                raise ValueError(f"secret message parameter {key} cannot be empty")
+    _validate_text(diagnostic, "diagnostic")
+    return MappingProxyType(parameters)
+
+
 @dataclass(frozen=True)
 class SecretUnlockResult:
     """Outcome of a secret-backend unlock request.  Never carries a secret."""
 
     kind: UnlockResultKind
     backend: str
-    message: str = ""
+    message_code: Optional[SecretMessageCode] = None
+    message_parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "kind": self.kind.value,
             "backend": self.backend,
-            "message": self.message,
+            "message_code": (
+                self.message_code.value if self.message_code is not None else None
+            ),
+            "message_parameters": dict(self.message_parameters),
+            "diagnostic": self.diagnostic,
         }
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, UnlockResultKind):
             raise TypeError("kind must be an UnlockResultKind")
         _validate_text(self.backend, "backend")
-        _validate_text(self.message, "message")
+        object.__setattr__(
+            self,
+            "message_parameters",
+            _validate_secret_message(
+                self.message_code, self.message_parameters, self.diagnostic
+            ),
+        )
 
 
 class SecretOperationState(str, Enum):
@@ -309,20 +402,32 @@ class SecretOperationResult:
 
     state: SecretOperationState
     backend: str
-    message: str = ""
+    message_code: Optional[SecretMessageCode] = None
+    message_parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "state": self.state.value,
             "backend": self.backend,
-            "message": self.message,
+            "message_code": (
+                self.message_code.value if self.message_code is not None else None
+            ),
+            "message_parameters": dict(self.message_parameters),
+            "diagnostic": self.diagnostic,
         }
 
     def __post_init__(self) -> None:
         if not isinstance(self.state, SecretOperationState):
             raise TypeError("state must be a SecretOperationState")
         _validate_text(self.backend, "backend")
-        _validate_text(self.message, "message")
+        object.__setattr__(
+            self,
+            "message_parameters",
+            _validate_secret_message(
+                self.message_code, self.message_parameters, self.diagnostic
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -336,7 +441,9 @@ class BitwardenStatus:
     server_url: str
     profile: str
     twofa_required: bool = False
-    message: str = ""
+    message_code: Optional[SecretMessageCode] = None
+    message_parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -347,7 +454,11 @@ class BitwardenStatus:
             "server_url": self.server_url,
             "profile": self.profile,
             "twofa_required": self.twofa_required,
-            "message": self.message,
+            "message_code": (
+                self.message_code.value if self.message_code is not None else None
+            ),
+            "message_parameters": dict(self.message_parameters),
+            "diagnostic": self.diagnostic,
         }
 
     def __post_init__(self) -> None:
@@ -356,7 +467,13 @@ class BitwardenStatus:
         _validate_text(self.email, "email")
         _validate_text(self.server_url, "server_url")
         _validate_text(self.profile, "profile")
-        _validate_text(self.message, "message")
+        object.__setattr__(
+            self,
+            "message_parameters",
+            _validate_secret_message(
+                self.message_code, self.message_parameters, self.diagnostic
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -368,7 +485,9 @@ class RbwStatus:
     unlocked: bool
     email: str
     base_url: str
-    message: str = ""
+    message_code: Optional[SecretMessageCode] = None
+    message_parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -377,7 +496,11 @@ class RbwStatus:
             "unlocked": self.unlocked,
             "email": self.email,
             "base_url": self.base_url,
-            "message": self.message,
+            "message_code": (
+                self.message_code.value if self.message_code is not None else None
+            ),
+            "message_parameters": dict(self.message_parameters),
+            "diagnostic": self.diagnostic,
         }
 
     def __post_init__(self) -> None:
@@ -385,7 +508,13 @@ class RbwStatus:
             _validate_boolean(getattr(self, field), field)
         _validate_text(self.email, "email")
         _validate_text(self.base_url, "base_url")
-        _validate_text(self.message, "message")
+        object.__setattr__(
+            self,
+            "message_parameters",
+            _validate_secret_message(
+                self.message_code, self.message_parameters, self.diagnostic
+            ),
+        )
 
 
 @dataclass(frozen=True)

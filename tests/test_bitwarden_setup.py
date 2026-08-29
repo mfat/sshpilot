@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from sshpilot import bitwarden_setup as bs
-from sshpilot.api.models.secrets import BitwardenStatus
+from sshpilot.api.models.secrets import BitwardenStatus, SecretMessageCode
 
 
 @pytest.fixture(autouse=True)
@@ -214,7 +214,9 @@ def test_prompt_gui_login_typed_server_failure_does_not_enter_wizard(monkeypatch
                 email="",
                 server_url="",
                 profile="",
-                message="server configuration failed",
+                message_code=(
+                    SecretMessageCode.BITWARDEN_SERVER_CONFIGURATION_FAILED
+                ),
             )
 
     monkeypatch.setattr(
@@ -241,7 +243,9 @@ def test_prompt_gui_login_typed_server_failure_does_not_enter_wizard(monkeypatch
     bs._prompt_gui_login(object(), Controller(), result.append)
 
     assert result == [False]
-    assert errors == [("Server configuration failed", "server configuration failed")]
+    assert errors == [
+        ("Server configuration failed", "Bitwarden server configuration failed")
+    ]
     assert closed == [True]
 
 

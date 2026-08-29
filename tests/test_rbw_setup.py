@@ -2,7 +2,12 @@
 
 from sshpilot import bitwarden_setup as bs
 from sshpilot import rbw_setup as rs
-from sshpilot.api.models.secrets import RbwStatus, UnlockResultKind
+from sshpilot.api.models.secrets import (
+    RbwStatus,
+    SecretMessageCode,
+    SecretUnlockResult,
+    UnlockResultKind,
+)
 
 
 class FakeController:
@@ -22,14 +27,14 @@ class FakeController:
         return type("RbwStatus", (), dict(self._status))()
 
 
-def _status(*, configured=True, unlocked=False, email="alice@example.com", message=""):
+def _status(*, configured=True, unlocked=False, email="alice@example.com", code=None):
     return RbwStatus(
         installed=True,
         configured=configured,
         unlocked=unlocked,
         email=email,
         base_url="",
-        message=message,
+        message_code=code,
     )
 
 
@@ -45,7 +50,11 @@ def test_apply_config_typed_failure_does_not_continue_to_unlock_or_sync(monkeypa
     class Controller:
         def rbw_configure(self, email, server):
             calls.append(("configure", email, server))
-            return _status(configured=False, email="", message="rbw configuration failed")
+            return _status(
+                configured=False,
+                email="",
+                code=SecretMessageCode.RBW_CONFIGURATION_FAILED,
+            )
 
         def rbw_unlock(self):
             calls.append(("unlock",))
@@ -93,8 +102,11 @@ def test_login_typed_unlock_failure_skips_sync(monkeypatch):
     class Controller:
         def unlock(self):
             calls.append("unlock")
-            return type("R", (), {"kind": UnlockResultKind.INTERACTION_REQUIRED,
-                                  "message": "rbw unlock failed"})()
+            return SecretUnlockResult(
+                kind=UnlockResultKind.INTERACTION_REQUIRED,
+                backend="rbw",
+                message_code=SecretMessageCode.UNLOCK_CANCELLED,
+            )
 
         def rbw_sync(self):
             calls.append("sync")
@@ -120,11 +132,17 @@ def test_login_typed_sync_failure_does_not_show_ready(monkeypatch):
     class Controller:
         def unlock(self):
             calls.append("unlock")
-            return type("R", (), {"kind": UnlockResultKind.UNLOCKED, "message": ""})()
+            return SecretUnlockResult(
+                kind=UnlockResultKind.UNLOCKED,
+                backend="rbw",
+            )
 
         def rbw_sync(self):
             calls.append("sync")
-            return _status(unlocked=True, message="rbw sync failed")
+            return _status(
+                unlocked=True,
+                code=SecretMessageCode.RBW_SYNC_FAILED,
+            )
 
         def rbw_status(self):
             return _status(unlocked=True)
@@ -146,7 +164,10 @@ def test_login_successful_typed_results_show_ready(monkeypatch):
     class Controller:
         def unlock(self):
             calls.append("unlock")
-            return type("R", (), {"kind": UnlockResultKind.UNLOCKED, "message": ""})()
+            return SecretUnlockResult(
+                kind=UnlockResultKind.UNLOCKED,
+                backend="rbw",
+            )
 
         def rbw_sync(self):
             calls.append("sync")

@@ -201,6 +201,57 @@ def test_secret_backend_service_does_not_embed_rendered_prompt_copy():
     assert constants.isdisjoint(rendered_prompt_text)
 
 
+def test_secret_backend_service_does_not_embed_rendered_status_copy():
+    path = SOURCE / "daemon" / "secret_backend_service.py"
+    constants = {
+        node.value
+        for node in ast.walk(_parse(path))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    rendered_status_text = {
+        "Bitwarden server configuration failed",
+        "Login cancelled",
+        "Authentication challenge cancelled",
+        "Two-step login cancelled",
+        "Bitwarden vault unlock failed",
+        "Bitwarden password login failed",
+        "Bitwarden unlock failed",
+        "Bitwarden sync failed",
+        "rbw configuration failed",
+        "rbw unlock failed",
+        "rbw sync failed",
+        "rbw lock failed",
+        "KeePassXC is unavailable (pykeepass is not installed)",
+        "A database path is required",
+        "Database creation cancelled",
+        "The KeePass database could not be created or unlocked",
+        "KeePassXC is unavailable",
+        "Unlock cancelled",
+        "The KeePass database could not be unlocked",
+        "Only session-backed vaults can remember their master password",
+        "Remember cancelled",
+        "The master password could not be saved",
+        "The master password could not be remembered",
+        "The remembered master password could not be removed",
+        "The remembered master password could not be forgotten",
+        "No remembered master password was found",
+        "The selected vault requires sign-in before unlock",
+        "The vault could not be unlocked",
+        "Bitwarden is unavailable",
+        "rbw is unavailable",
+    }
+
+    assert constants.isdisjoint(rendered_status_text)
+
+    policy_path = SOURCE / "core" / "secrets" / "policy.py"
+    policy_constants = {
+        node.value
+        for node in ast.walk(_parse(policy_path))
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    assert policy_constants.isdisjoint(rendered_status_text)
+
+
 # ---------------------------------------------------------------------------
 # 1. No get_secret_manager / SecretManager / concrete backends
 # ---------------------------------------------------------------------------

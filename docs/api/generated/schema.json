@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.45",
+  "api_implementation_version": "0.46",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1462,6 +1462,37 @@
       "submit",
       "cancel"
     ],
+    "SecretMessageCode": [
+      "secret_backend_unavailable",
+      "vault_sign_in_required",
+      "unlock_cancelled",
+      "vault_unlock_failed",
+      "backend_unavailable",
+      "bitwarden_server_configuration_failed",
+      "bitwarden_login_cancelled",
+      "bitwarden_authentication_challenge_cancelled",
+      "bitwarden_two_step_login_cancelled",
+      "bitwarden_sign_in_failed",
+      "bitwarden_unlock_cancelled",
+      "bitwarden_unlock_failed",
+      "bitwarden_sync_failed",
+      "rbw_configuration_failed",
+      "rbw_unlock_failed",
+      "rbw_sync_failed",
+      "rbw_lock_failed",
+      "database_path_required",
+      "database_creation_cancelled",
+      "keepass_database_create_or_unlock_failed",
+      "keepass_unlock_cancelled",
+      "keepass_database_unlock_failed",
+      "remember_session_backend_required",
+      "remember_cancelled",
+      "master_password_save_failed",
+      "master_password_remember_failed",
+      "remembered_master_password_remove_failed",
+      "remembered_master_password_forget_failed",
+      "remembered_master_password_not_found"
+    ],
     "SecretPromptKind": [
       "bitwarden_sign_in",
       "bitwarden_authentication_challenge",
@@ -1707,6 +1738,81 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "BitwardenStatus": {
+      "fields": [
+        {
+          "default": null,
+          "name": "logged_in",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "unlocked",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "needs_login",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "email",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "server_url",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "profile",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": false,
+          "name": "twofa_required",
+          "required": false,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "message_code",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SecretMessageCode]"
+        },
+        {
+          "default": {},
+          "name": "message_parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"
@@ -5264,6 +5370,67 @@
       ],
       "status": "Implemented"
     },
+    "RbwStatus": {
+      "fields": [
+        {
+          "default": null,
+          "name": "installed",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "configured",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "unlocked",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "email",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "base_url",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message_code",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SecretMessageCode]"
+        },
+        {
+          "default": {},
+          "name": "message_parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
     "ReadPublicKeyRequest": {
       "fields": [
         {
@@ -5690,6 +5857,86 @@
           "default": null,
           "name": "expected_revision",
           "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SecretOperationResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "state",
+          "required": true,
+          "sensitive": false,
+          "type": "SecretOperationState"
+        },
+        {
+          "default": null,
+          "name": "backend",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message_code",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SecretMessageCode]"
+        },
+        {
+          "default": {},
+          "name": "message_parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "SecretUnlockResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "kind",
+          "required": true,
+          "sensitive": false,
+          "type": "UnlockResultKind"
+        },
+        {
+          "default": null,
+          "name": "backend",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "message_code",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[SecretMessageCode]"
+        },
+        {
+          "default": {},
+          "name": "message_parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
           "sensitive": false,
           "type": "str"
         }

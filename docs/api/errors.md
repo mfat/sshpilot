@@ -290,8 +290,11 @@ channel could not be established. No command path or OS exception is exposed.
 <!-- api-error: secret_backend_unavailable -->
 ## `secret_backend_unavailable`
 
-The selected existing backend could not satisfy an automatic lookup. Locked
-KDBX/Bitwarden master-password handling remains separate from SSH interactions.
+The selected existing backend could not satisfy an automatic lookup or a
+secret lifecycle operation. The safe `backend` detail is a stable presentation
+parameter; frontends map this error code to local text instead of displaying or
+parsing the error message. Locked KDBX/Bitwarden master-password handling
+remains separate from SSH interactions.
 
 <!-- api-error: secret_storage_failed -->
 ## `secret_storage_failed`

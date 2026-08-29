@@ -54,6 +54,13 @@ from sshpilot.api.method_capabilities import (  # noqa: E402
 )
 from sshpilot.api.models import __all__ as MODEL_EXPORTS  # noqa: E402
 from sshpilot.api.models import common, connections, interactions, operations  # noqa: E402
+from sshpilot.api.models.secrets import (  # noqa: E402
+    BitwardenStatus,
+    RbwStatus,
+    SecretMessageCode,
+    SecretOperationResult,
+    SecretUnlockResult,
+)
 from sshpilot.api.models import (  # noqa: E402
     daemon,
     sessions,
@@ -82,8 +89,15 @@ MODEL_MODULES = (
     connection_store,
     envelopes,
 )
-EXTRA_MODELS = (Capabilities, CoreEvent)
-EXTRA_ENUMS = (Capability, EventType, ErrorCode)
+EXTRA_MODELS = (
+    Capabilities,
+    CoreEvent,
+    SecretUnlockResult,
+    SecretOperationResult,
+    BitwardenStatus,
+    RbwStatus,
+)
+EXTRA_ENUMS = (Capability, EventType, ErrorCode, SecretMessageCode)
 UNION_ORIGINS = (Union,)
 if hasattr(types, "UnionType"):
     UNION_ORIGINS += (types.UnionType,)
@@ -164,6 +178,10 @@ IMPLEMENTED_MODELS = {
     "KnownHostsSnapshot",
     "RemoveKnownHostEntriesRequest",
     "KnownHostsMutationResult",
+    "SecretUnlockResult",
+    "SecretOperationResult",
+    "BitwardenStatus",
+    "RbwStatus",
 }
 PARTIAL_MODELS = {"CoreEvent"}
 
@@ -268,6 +286,32 @@ RELATED_METHODS = {
     "KnownHostsSnapshot": ("list_known_hosts",),
     "RemoveKnownHostEntriesRequest": ("remove_known_host_entries",),
     "KnownHostsMutationResult": ("remove_known_host_entries",),
+    "SecretUnlockResult": ("unlock_secrets",),
+    "SecretOperationResult": (
+        "keepassxc_create_database",
+        "keepassxc_unlock",
+        "keepassxc_lock",
+        "remember_master_password",
+        "forget_master_password",
+    ),
+    "BitwardenStatus": (
+        "bitwarden_status",
+        "bitwarden_configure_server",
+        "bitwarden_login",
+        "bitwarden_api_key_login",
+        "bitwarden_sso_login",
+        "bitwarden_unlock",
+        "bitwarden_sync",
+        "bitwarden_lock",
+        "bitwarden_logout",
+    ),
+    "RbwStatus": (
+        "rbw_status",
+        "rbw_configure",
+        "rbw_unlock",
+        "rbw_sync",
+        "rbw_lock",
+    ),
     "StoreKeyPassphraseRequest": ("store_key_passphrase",),
     "VerifyKeyPassphraseRequest": ("verify_key_passphrase",),
     "VerifyKeyPassphraseResult": ("verify_key_passphrase",),
