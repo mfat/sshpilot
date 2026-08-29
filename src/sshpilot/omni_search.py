@@ -44,7 +44,7 @@ _ATTENTION_MS = 1500
 # How many full clockwise laps the tracer makes before retiring. 1 = a single
 # pass (the original behaviour); 0 = loop until the guard stops it (leaving
 # Start or opening Omnisearch). Positive N = exactly N laps.
-_ATTENTION_LAPS = 3
+_ATTENTION_LAPS = 1
 # Visible tracer length as a fraction of the border perimeter (15-25% reads as
 # a short moving segment rather than a partial outline).
 _ATTENTION_SEGMENT_FRACTION = 0.95
