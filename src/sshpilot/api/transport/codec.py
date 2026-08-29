@@ -162,6 +162,8 @@ from ..models.operations import (
     ForwardSummary,
     ForwardType,
     ForwardState,
+    IdentityFailure,
+    IdentityFailureCode,
     CloseForwardRequest,
     ListDirectoryRequest,
     ListDirectoryResult,
@@ -169,6 +171,8 @@ from ..models.operations import (
     OpenSftpRequest,
     RemoteFileEntry,
     RemoteFileType,
+    ScpFailure,
+    ScpFailureCode,
     ServiceFailure,
     SftpFailure,
     SftpFailureCode,
@@ -3924,9 +3928,115 @@ def _sftp_failure_from_wire(value: Any) -> Optional[SftpFailure]:
     )
 
 
+def _scp_failure_to_wire(failure: Optional[ScpFailure]) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not ScpFailure:
+        raise TypeError("SCP failure must be a ScpFailure or None")
+    return {
+        "kind": "scp",
+        "code": failure.code.value,
+        "error_code": failure.error_code.value,
+        "parameters": dict(failure.parameters),
+        "diagnostic": failure.diagnostic,
+    }
+
+
+def _scp_failure_from_wire(value: Any) -> Optional[ScpFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"kind", "code", "error_code", "parameters", "diagnostic"},
+        context="SCP failure",
+    )
+    if data["kind"] != "scp":
+        raise ValueError("SCP failure contains an unknown kind")
+    try:
+        code = ScpFailureCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("SCP failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(data["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("SCP failure contains an unknown error code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("SCP failure parameters must be an object")
+    return ScpFailure(
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "SCP failure parameter name"): _text(
+                parameter, "SCP failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            data["diagnostic"], "SCP failure diagnostic", allow_empty=True
+        ),
+    )
+
+
+def _identity_failure_to_wire(
+    failure: Optional[IdentityFailure],
+) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not IdentityFailure:
+        raise TypeError("identity failure must be an IdentityFailure or None")
+    return {
+        "kind": "identity",
+        "code": failure.code.value,
+        "error_code": failure.error_code.value,
+        "parameters": dict(failure.parameters),
+        "diagnostic": failure.diagnostic,
+    }
+
+
+def _identity_failure_from_wire(value: Any) -> Optional[IdentityFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"kind", "code", "error_code", "parameters", "diagnostic"},
+        context="identity failure",
+    )
+    if data["kind"] != "identity":
+        raise ValueError("identity failure contains an unknown kind")
+    try:
+        code = IdentityFailureCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("identity failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(data["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("identity failure contains an unknown error code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("identity failure parameters must be an object")
+    return IdentityFailure(
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "identity failure parameter name"): _text(
+                parameter, "identity failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            data["diagnostic"], "identity failure diagnostic", allow_empty=True
+        ),
+    )
+
+
 def _summary_failure_to_wire(failure: Any) -> Optional[Dict[str, Any]]:
     if type(failure) is SftpFailure:
         return _sftp_failure_to_wire(failure)
+    if type(failure) is ScpFailure:
+        return _scp_failure_to_wire(failure)
+    if type(failure) is IdentityFailure:
+        return _identity_failure_to_wire(failure)
     return _service_failure_to_wire(failure)
 
 
@@ -3934,7 +4044,13 @@ def _summary_failure_from_wire(value: Any) -> Optional[Any]:
     if value is None:
         return None
     if type(value) is dict and "kind" in value:
-        return _sftp_failure_from_wire(value)
+        if value["kind"] == "sftp":
+            return _sftp_failure_from_wire(value)
+        if value["kind"] == "scp":
+            return _scp_failure_from_wire(value)
+        if value["kind"] == "identity":
+            return _identity_failure_from_wire(value)
+        raise ValueError("summary failure contains an unknown kind")
     return _service_failure_from_wire(value)
 
 

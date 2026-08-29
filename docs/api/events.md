@@ -306,7 +306,7 @@ local `error.occurred` continuity notification where delivery remains possible.
 - **Status / introduced:** Daemon implemented / v1, API 0.10.
 - **Capability / trigger:** `transfers.events`; failed terminal state.
 - **Payload / IDs:** `TransferSummary` including optional `SftpFailure` for the
-  SFTP backend or the unchanged `ServiceFailure` for native SCP.
+  SFTP backend or `ScpFailure` for native SCP.
 
 <!-- api-event: forward.created -->
 ## `forward.created`

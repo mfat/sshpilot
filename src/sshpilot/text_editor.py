@@ -18,6 +18,8 @@ from typing import Any, Callable, TYPE_CHECKING, Optional
 from gi.repository import Adw, Gio, GLib, GObject, Gdk, Gtk, Pango
 
 from .api.errors import ErrorCode, SshPilotError
+from .gtk.sftp_error_messages import format_direct_sftp_error
+from .i18n import N_
 from .platform_utils import is_macos
 
 # Try to import GtkSourceView for syntax highlighting.
@@ -40,6 +42,67 @@ if TYPE_CHECKING:
     from .file_manager_window import FileManagerWindow
 
 logger = logging.getLogger(__name__)
+
+
+_PRIVILEGED_FILE_ERROR_TEMPLATES = {
+    ErrorCode.UNSUPPORTED_CAPABILITY: N_(
+        "Edit as root is unavailable on this host."
+    ),
+    ErrorCode.AUTHENTICATION_ATTEMPTS_EXHAUSTED: N_(
+        "The sudo password was not accepted."
+    ),
+    ErrorCode.REMOTE_PERMISSION_DENIED: N_(
+        "Your user isn't allowed to run sudo on this host."
+    ),
+    ErrorCode.FILE_CONTENT_TOO_LARGE: N_(
+        "The remote file is too large to edit."
+    ),
+    ErrorCode.FILE_REVISION_CONFLICT: N_(
+        "The remote file changed or no longer exists."
+    ),
+    ErrorCode.FILE_REPLACEMENT_FAILED: N_(
+        "The remote file could not be replaced."
+    ),
+    ErrorCode.REMOTE_COMMAND_FAILED: N_(
+        "The privileged remote operation failed."
+    ),
+    ErrorCode.SESSION_STARTUP_FAILED: N_(
+        "The SSH command could not be started."
+    ),
+    ErrorCode.OPERATION_TIMED_OUT: N_("The privileged operation timed out."),
+    ErrorCode.OPERATION_CANCELLED: N_("The privileged operation was cancelled."),
+}
+
+_PRIVILEGED_FILE_FALLBACK_TEMPLATES = {
+    "read": N_("Failed to read file as root"),
+    "save": N_("Failed to save file as root"),
+}
+
+
+def _format_privileged_file_error(error: object, *, action: str) -> str:
+    """Translate typed privileged errors and keep unknown diagnostics opaque."""
+
+    if isinstance(error, SshPilotError):
+        template = _PRIVILEGED_FILE_ERROR_TEMPLATES.get(error.code)
+        if template is not None:
+            return _(template)
+    try:
+        fallback = _PRIVILEGED_FILE_FALLBACK_TEMPLATES[action]
+    except KeyError:
+        raise ValueError("privileged file action is invalid") from None
+    return f"{_(fallback)}\n\n{error}"
+
+
+def _format_remote_file_error(error: object, *, action: str) -> str:
+    """Add a localized action to a direct SFTP error presentation."""
+
+    if action == "read":
+        prefix = _("Failed to download file")
+    elif action == "save":
+        prefix = _("Failed to save file")
+    else:
+        raise ValueError("remote file action is invalid")
+    return f"{prefix}: {format_direct_sftp_error(error)}"
 
 
 def _clear_undo_history(buffer) -> None:
@@ -464,7 +527,7 @@ class RemoteFileEditorWindow(Adw.Window):
         # Permission-denied prompt offering to retry as root (remote files only).
         if self._root_button is not None:
             self._root_banner = Adw.Banner(title=_("Permission denied"))
-            self._root_banner.set_button_label("Edit as root")
+            self._root_banner.set_button_label(_("Edit as root"))
             self._root_banner.connect("button-clicked", self._on_banner_root_clicked)
             self._root_banner.set_revealed(False)
             content_box.append(self._root_banner)
@@ -539,8 +602,8 @@ class RemoteFileEditorWindow(Adw.Window):
     @staticmethod
     def _initial_loading_message(*, is_local: bool, daemon_file_service: object) -> str:
         if is_local or daemon_file_service is not None:
-            return "Loading…"
-        return "Downloading…"
+            return _("Loading…")
+        return _("Downloading…")
 
     def _add_scheme_chooser(self, header_bar: Adw.HeaderBar) -> None:
         """Add the GtkSource style-scheme chooser to the header bar.
@@ -1002,7 +1065,7 @@ class RemoteFileEditorWindow(Adw.Window):
                 GLib.idle_add(self._load_file_content)
             except Exception as e:
                 logger.error(f"Failed to download file for editing: {e}", exc_info=True)
-                GLib.idle_add(self._on_remote_load_error, str(e))
+                GLib.idle_add(self._on_remote_load_error, e)
 
         future = self._sftp_manager.download(self._file_path, self._temp_file)
         future.add_done_callback(download_complete)
@@ -1282,7 +1345,7 @@ class RemoteFileEditorWindow(Adw.Window):
                 self._has_unsaved_changes = False
                 self._externally_modified = False
                 self._update_title(False)
-                self._show_toast("Saved", timeout=2)
+                self._show_toast(_("Saved"), timeout=2)
                 self._save_button.set_sensitive(False)
                 if self._on_saved is not None:
                     try:
@@ -1295,14 +1358,16 @@ class RemoteFileEditorWindow(Adw.Window):
                         GLib.idle_add(lambda: pane.emit("path-changed", pane._current_path))
                 return
         except Exception as e:
-            self._show_error(f"Failed to save file: {e}")
+            self._show_error(
+                _("Failed to save file: {error}").format(error=e)
+            )
             return
 
         if not self._is_local:
             self._upload_file()
     
     def _save_daemon_file(self, text: str, *, privileged: bool = False) -> None:
-        self._show_toast("Saving…", timeout=-1)
+        self._show_toast(_("Saving…"), timeout=-1)
         self._save_button.set_sensitive(False)
 
         def complete(future: Future) -> None:
@@ -1337,7 +1402,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._externally_modified = False
         self._save_button.set_sensitive(False)
         self._update_title(False)
-        self._show_toast("Saved successfully", timeout=2)
+        self._show_toast(_("Saved successfully"), timeout=2)
         self._buffer.set_modified(False)
         on_saved = getattr(self, '_on_saved', None)
         if on_saved is not None:
@@ -1362,28 +1427,23 @@ class RemoteFileEditorWindow(Adw.Window):
             message = self._root_save_error_message(exc)
         else:
             if self._is_permission_denied_error(exc) and self._offer_root_banner("save"):
-                self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
+                self._show_toast(
+                    _("Permission denied — try “Edit as root”."), timeout=4
+                )
                 return
-            message = f"Failed to save file: {exc}"
-        self._show_toast(f"Save failed: {message}", timeout=4)
+            message = _format_remote_file_error(exc, action="save")
+        self._show_toast(_("Save failed: {error}").format(error=message), timeout=4)
         self._show_error(message)
 
     def _root_save_error_message(self, exc: object) -> str:
-        if isinstance(exc, SshPilotError) and exc.code in {
-            ErrorCode.UNSUPPORTED_CAPABILITY,
-            ErrorCode.AUTHENTICATION_ATTEMPTS_EXHAUSTED,
-        }:
-            return "Edit as root is unavailable on this host."
-        if self._is_permission_denied_error(exc):
-            return "Your user isn't allowed to run sudo on this host."
-        return f"Failed to save file: {exc}"
+        return _format_privileged_file_error(exc, action="save")
 
     def _upload_file(self) -> None:
         """Upload the modified file back to the remote server."""
         if self._root_mode:
             self._upload_file_root()
             return
-        self._show_toast("Uploading…", timeout=-1)  # Show until upload completes
+        self._show_toast(_("Uploading…"), timeout=-1)  # Show until upload completes
         self._save_button.set_sensitive(False)
 
         def upload_complete(future: Future) -> None:
@@ -1397,7 +1457,7 @@ class RemoteFileEditorWindow(Adw.Window):
                     logger.info("Upload denied (offering Edit as root): %s", e)
                 else:
                     logger.error(f"Failed to upload file: {e}", exc_info=True)
-                GLib.idle_add(self._on_upload_error, str(e))
+                GLib.idle_add(self._on_upload_error, e)
 
         future = self._sftp_manager.upload(self._temp_file, self._file_path)
         future.add_done_callback(upload_complete)
@@ -1407,7 +1467,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._has_unsaved_changes = False
         self._save_button.set_sensitive(False)
         self._update_title(False)
-        self._show_toast("Uploaded successfully", timeout=2)
+        self._show_toast(_("Uploaded successfully"), timeout=2)
         
         # Reset buffer modified flag since changes have been saved
         self._buffer.set_modified(False)
@@ -1427,16 +1487,19 @@ class RemoteFileEditorWindow(Adw.Window):
             if pane:
                 pane.emit("path-changed", pane._current_path)
     
-    def _on_upload_error(self, error: str) -> None:
+    def _on_upload_error(self, error: object) -> None:
         """Handle upload error."""
         self._save_button.set_sensitive(True)
         # A login-user upload that hits permission-denied: offer root instead of
         # a dead-end error (no-op when already in root mode / for local files).
-        if self._looks_permission_denied(error) and self._offer_root_banner("save"):
-            self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
+        if self._is_permission_denied_error(error) and self._offer_root_banner("save"):
+            self._show_toast(
+                _("Permission denied — try “Edit as root”."), timeout=4
+            )
             return
-        self._show_toast(f"Upload failed: {error}", timeout=4)
-        self._show_error(f"Failed to upload file: {error}")
+        message = _format_remote_file_error(error, action="save")
+        self._show_toast(_("Upload failed: {error}").format(error=message), timeout=4)
+        self._show_error(message)
 
     # ================================================================
     # Edit as root (remote files only): the daemon's privileged SFTP file
@@ -1504,9 +1567,11 @@ class RemoteFileEditorWindow(Adw.Window):
 
     def _on_remote_load_error(self, exc: object) -> None:
         if self._is_permission_denied_error(exc) and self._offer_root_banner("read"):
-            self._show_toast("Permission denied — try “Edit as root”.", timeout=4)
+            self._show_toast(
+                _("Permission denied — try “Edit as root”."), timeout=4
+            )
             return
-        self._show_error(f"Failed to download file: {exc}")
+        self._show_error(_format_remote_file_error(exc, action="read"))
 
     def _set_root_active(self, active: bool) -> None:
         """Set the toggle without re-triggering the ``toggled`` handler."""
@@ -1534,9 +1599,11 @@ class RemoteFileEditorWindow(Adw.Window):
         if button.get_active():
             if self._buffer.get_modified():
                 dlg = Adw.AlertDialog.new(
-                    "Discard changes?",
-                    "Editing as root re-reads the file from the host and discards "
-                    "your unsaved changes.")
+                    _("Discard changes?"),
+                    _(
+                        "Editing as root re-reads the file from the host and "
+                        "discards your unsaved changes."
+                    ))
                 dlg.add_response("cancel", _("Cancel"))
                 dlg.add_response("discard", _("Discard and continue"))
                 dlg.set_response_appearance(
@@ -1559,14 +1626,21 @@ class RemoteFileEditorWindow(Adw.Window):
             self._download_and_load()
 
     def _begin_root_load(self) -> None:
-        self._show_toast("Reading as root…", timeout=-1)
+        self._show_toast(_("Reading as root…"), timeout=-1)
         self._run_root_read()
 
     def _run_root_read(self) -> None:
         service = self._daemon_file_service
         loader = getattr(service, "load_privileged", None) if service is not None else None
         if loader is None or not getattr(service, "privileged_supported", False):
-            GLib.idle_add(self._root_read_failed, "Edit as root is unavailable on this host.")
+            error = SshPilotError(
+                ErrorCode.UNSUPPORTED_CAPABILITY,
+                "Privileged file operations are unavailable",
+            )
+            GLib.idle_add(
+                self._root_read_failed,
+                _format_privileged_file_error(error, action="read"),
+            )
             return
         future = loader()
         future.add_done_callback(self._root_read_done)
@@ -1576,15 +1650,7 @@ class RemoteFileEditorWindow(Adw.Window):
             result = future.result()
         except Exception as e:  # noqa: BLE001
             logger.debug("Privileged file read failed", exc_info=True)
-            if isinstance(e, SshPilotError) and e.code in {
-                ErrorCode.UNSUPPORTED_CAPABILITY,
-                ErrorCode.AUTHENTICATION_ATTEMPTS_EXHAUSTED,
-            }:
-                message = "Edit as root is unavailable on this host."
-            elif self._is_permission_denied_error(e):
-                message = "Your user isn't allowed to run sudo on this host."
-            else:
-                message = f"Failed to read file as root: {e}"
+            message = _format_privileged_file_error(e, action="read")
             GLib.idle_add(self._root_read_failed, message)
             return
         GLib.idle_add(self._root_read_loaded, result)
@@ -1593,7 +1659,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self._daemon_file_revision = getattr(result, "revision", "")
         if getattr(result, "exists", True) is False:
             self._cancel_root_mode()
-            self._show_error("The remote file no longer exists.")
+            self._show_error(_("The remote file no longer exists."))
             return
         try:
             content = getattr(result, "content", "") or ""
@@ -1601,12 +1667,12 @@ class RemoteFileEditorWindow(Adw.Window):
                 f.write(content.encode("utf-8"))
         except Exception as e:  # noqa: BLE001
             self._cancel_root_mode()
-            self._show_error(f"Failed to read file as root: {e}")
+            self._show_error(_format_privileged_file_error(e, action="read"))
             return
         self._root_mode = True
         self._update_root_ui()
         self._load_file_content()
-        self._show_toast("Editing as root", timeout=2)
+        self._show_toast(_("Editing as root"), timeout=2)
 
     def _root_read_failed(self, message: str) -> None:
         self._cancel_root_mode()
@@ -1723,7 +1789,7 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _show_error(self, message: str) -> None:
         """Show an error dialog."""
-        dialog = Adw.AlertDialog.new("Error", message)
+        dialog = Adw.AlertDialog.new(_("Error"), message)
         dialog.add_response("ok", _("OK"))
         dialog.set_default_response("ok")
         dialog.set_close_response("ok")

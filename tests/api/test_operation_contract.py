@@ -7,11 +7,12 @@ import pytest
 from sshpilot.api.errors import ErrorCode
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.operations import (
+    IdentityFailure,
+    IdentityFailureCode,
     OperationId,
     OperationKind,
     OperationState,
     OperationSummary,
-    ServiceFailure,
     is_valid_operation_transition,
 )
 from sshpilot.api.models.daemon import OperationMode, OperationModeFiles, OperationModeResult
@@ -44,7 +45,10 @@ def _summary(state=OperationState.RUNNING):
         ),
         progress=0.5,
         failure=(
-            ServiceFailure(ErrorCode.REMOTE_COMMAND_FAILED.value, "safe failure")
+            IdentityFailure(
+                IdentityFailureCode.INSTALLATION_FAILED,
+                ErrorCode.REMOTE_COMMAND_FAILED,
+            )
             if state is OperationState.FAILED
             else None
         ),

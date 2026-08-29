@@ -33,7 +33,12 @@ from sshpilot.api.models import (
 )
 from sshpilot.api.models.identity import DeployKeyRequest
 from sshpilot.api.models.keys import KeyStoreScope, KeyList, KeySummary
-from sshpilot.api.models.operations import OperationId, OperationKind, OperationState
+from sshpilot.api.models.operations import (
+    IdentityFailureCode,
+    OperationId,
+    OperationKind,
+    OperationState,
+)
 from sshpilot.api.transport.secret_frames import SecretFrame, SecretFrameKind
 from sshpilot.core.identity_service import IdentityStateService
 from sshpilot.daemon.identity_service import DaemonIdentityService
@@ -232,6 +237,10 @@ def test_deploy_failure_does_not_commit_remembered_secret(tmp_path):
                 is OperationState.FAILED
             )
         )
+        failed = service._operations.get_operation(summary.operation_id)
+        assert failed.message == ""
+        assert failed.failure.code is IdentityFailureCode.AUTHENTICATION_FAILED
+        assert failed.failure.diagnostic == "Permission denied (publickey)."
         kinds = [call[0] for call in broker.calls]
         assert "mark_authenticated" not in kinds
         assert kinds[-1] == "cancel_session"
@@ -254,6 +263,10 @@ def test_deploy_startup_failure_cleans_up_without_commit(tmp_path):
                 is OperationState.FAILED
             )
         )
+        failed = service._operations.get_operation(summary.operation_id)
+        assert failed.message == ""
+        assert failed.failure.code is IdentityFailureCode.PROCESS_START_FAILED
+        assert failed.failure.diagnostic == "ssh-copy-id could not be started"
         kinds = [call[0] for call in broker.calls]
         assert "mark_authenticated" not in kinds
         assert kinds[0] == "prepare"

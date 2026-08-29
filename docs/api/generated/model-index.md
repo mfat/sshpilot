@@ -1930,6 +1930,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: IdentityFailure -->
+## `IdentityFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable identity-operation failure plus an opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `IdentityFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
+}
+```
+
 <!-- api-model: InputOwner -->
 ## `InputOwner`
 
@@ -2650,7 +2678,7 @@ Synthetic representation:
 | `finished_at` | `Optional[datetime]` | No | `null` | No |
 | `progress` | `Optional[float]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[Union[ServiceFailure, SftpFailure]]` | No | `null` | No |
+| `failure` | `Optional[Union[ServiceFailure, SftpFailure, IdentityFailure]]` | No | `null` | No |
 | `result` | `Optional[Dict]` | No | `null` | Yes |
 
 Synthetic representation:
@@ -3376,6 +3404,34 @@ Synthetic representation:
 {
   "expected_revision": "example",
   "text": "<sensitive value omitted>"
+}
+```
+
+<!-- api-model: ScpFailure -->
+## `ScpFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable native SCP failure plus an opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `ScpFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
 }
 ```
 
@@ -4511,7 +4567,7 @@ Synthetic representation:
 | `started_at` | `Optional[datetime]` | No | `null` | No |
 | `completed_at` | `Optional[datetime]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[Union[ServiceFailure, SftpFailure]]` | No | `null` | No |
+| `failure` | `Optional[Union[ServiceFailure, SftpFailure, ScpFailure]]` | No | `null` | No |
 | `bytes_transferred` | `Optional[int]` | No | `null` | No |
 | `total_bytes` | `Optional[int]` | No | `null` | No |
 

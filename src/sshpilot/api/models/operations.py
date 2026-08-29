@@ -132,6 +132,91 @@ class SftpFailure:
         object.__setattr__(self, "parameters", MappingProxyType(parameters))
 
 
+class ScpFailureCode(str, Enum):
+    """Stable presentation reasons for native SCP transfer failures."""
+
+    UNAVAILABLE = "unavailable"
+    COMMAND_QUEUE_FULL = "command_queue_full"
+    CONNECTION_NOT_FOUND = "connection_not_found"
+    SSH_CONNECTION_REQUIRED = "ssh_connection_required"
+    HOST_IDENTIFIER_MISSING = "host_identifier_missing"
+    TARGET_PREPARATION_FAILED = "target_preparation_failed"
+    TRANSFER_PREPARATION_FAILED = "transfer_preparation_failed"
+    PROCESS_START_FAILED = "process_start_failed"
+    REMOTE_SFTP_UNAVAILABLE = "remote_sftp_unavailable"
+    TRANSFER_START_FAILED = "transfer_start_failed"
+    TRANSFER_FAILED = "transfer_failed"
+    DAEMON_SHUTTING_DOWN = "daemon_shutting_down"
+    UNEXPECTED_FAILURE = "unexpected_failure"
+
+
+@dataclass(frozen=True)
+class ScpFailure:
+    """One localizable native SCP failure plus an opaque diagnostic."""
+
+    code: ScpFailureCode
+    error_code: ErrorCode
+    parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, ScpFailureCode):
+            raise TypeError("SCP failure code is invalid")
+        if not isinstance(self.error_code, ErrorCode):
+            raise TypeError("SCP failure error code is invalid")
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("SCP failure parameters must be a mapping")
+        parameters = dict(self.parameters)
+        if parameters:
+            raise ValueError("SCP failure parameters do not match the failure code")
+        if type(self.diagnostic) is not str or "\x00" in self.diagnostic:
+            raise ValueError("SCP failure diagnostic must be a string without NUL")
+        object.__setattr__(self, "parameters", MappingProxyType(parameters))
+
+
+class IdentityFailureCode(str, Enum):
+    """Stable presentation reasons for public-key deployment failures."""
+
+    LAUNCH_PREPARATION_UNAVAILABLE = "launch_preparation_unavailable"
+    CONNECTION_NOT_FOUND = "connection_not_found"
+    SSH_CONNECTION_REQUIRED = "ssh_connection_required"
+    HOST_IDENTIFIER_MISSING = "host_identifier_missing"
+    SSH_COPY_ID_UNAVAILABLE = "ssh_copy_id_unavailable"
+    PROCESS_START_FAILED = "process_start_failed"
+    AUTHENTICATION_FAILED = "authentication_failed"
+    CONNECTION_REFUSED = "connection_refused"
+    SERVER_UNREACHABLE = "server_unreachable"
+    CONNECTION_TIMED_OUT = "connection_timed_out"
+    INSTALLATION_FAILED = "installation_failed"
+    OPERATION_FAILED_UNEXPECTEDLY = "operation_failed_unexpectedly"
+
+
+@dataclass(frozen=True)
+class IdentityFailure:
+    """One localizable identity-operation failure plus an opaque diagnostic."""
+
+    code: IdentityFailureCode
+    error_code: ErrorCode
+    parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, IdentityFailureCode):
+            raise TypeError("identity failure code is invalid")
+        if not isinstance(self.error_code, ErrorCode):
+            raise TypeError("identity failure error code is invalid")
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("identity failure parameters must be a mapping")
+        parameters = dict(self.parameters)
+        if parameters:
+            raise ValueError("identity failure parameters do not match the failure code")
+        if type(self.diagnostic) is not str or "\x00" in self.diagnostic:
+            raise ValueError(
+                "identity failure diagnostic must be a string without NUL"
+            )
+        object.__setattr__(self, "parameters", MappingProxyType(parameters))
+
+
 class SftpServiceState(str, Enum):
     CREATED = "created"
     STARTING = "starting"
@@ -839,7 +924,7 @@ class OperationSummary:
     finished_at: Optional[datetime] = None
     progress: Optional[float] = None
     owner_client_id: Optional[ClientId] = None
-    failure: Optional[Union[ServiceFailure, SftpFailure]] = None
+    failure: Optional[Union[ServiceFailure, SftpFailure, IdentityFailure]] = None
     result: Optional[Dict] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -875,16 +960,19 @@ class OperationSummary:
         if self.failure is not None and type(self.failure) not in {
             ServiceFailure,
             SftpFailure,
+            IdentityFailure,
         }:
             raise TypeError(
-                "operation failure must be ServiceFailure, SftpFailure, or None"
+                "operation failure must be ServiceFailure, SftpFailure, "
+                "IdentityFailure, or None"
             )
         if self.failure is not None:
-            expected_failure_type = (
-                SftpFailure
-                if self.kind in _SFTP_OPERATION_KINDS
-                else ServiceFailure
-            )
+            if self.kind in _SFTP_OPERATION_KINDS:
+                expected_failure_type = SftpFailure
+            elif self.kind is OperationKind.KEY_DEPLOYMENT:
+                expected_failure_type = IdentityFailure
+            else:
+                expected_failure_type = ServiceFailure
             if type(self.failure) is not expected_failure_type:
                 raise TypeError(
                     "operation failure type does not match the operation kind"

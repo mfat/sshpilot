@@ -6,7 +6,12 @@ from gettext import gettext as _
 from typing import Any, Mapping
 
 from ..api.errors import ErrorCode, SshPilotError
-from ..api.models.secrets import SecretMessageCode
+from ..api.models.secrets import (
+    PROTECTED_SECRET_INTERACTIONS,
+    SETTINGS_MALFORMED,
+    SETTINGS_PERSISTENCE_FAILED,
+    SecretMessageCode,
+)
 from ..i18n import N_
 
 
@@ -40,6 +45,17 @@ _SECRET_MESSAGE_TEMPLATES = {
 
 _SECRET_ERROR_TEMPLATES = {
     ErrorCode.SECRET_BACKEND_UNAVAILABLE: N_("{backend} is unavailable"),
+}
+
+_SECRET_SETTINGS_ERROR_TEMPLATES = {
+    SETTINGS_MALFORMED: N_("The secret settings could not be loaded"),
+    SETTINGS_PERSISTENCE_FAILED: N_("The secret settings could not be saved"),
+}
+
+_SECRET_CAPABILITY_ERROR_TEMPLATES = {
+    PROTECTED_SECRET_INTERACTIONS: N_(
+        "Protected secret interactions are unavailable"
+    ),
 }
 
 _BACKEND_DISPLAY_NAMES = {
@@ -84,9 +100,23 @@ def format_secret_message(result: Any) -> str:
 def format_secret_error(error: BaseException) -> str:
     """Translate supported structured secret errors; preserve other diagnostics."""
 
-    if not isinstance(error, SshPilotError) or error.code not in _SECRET_ERROR_TEMPLATES:
+    if not isinstance(error, SshPilotError):
         return str(error)
-    backend = error.details.get("backend")
-    if not isinstance(backend, str) or not backend:
-        raise ValueError("secret backend error is missing its backend parameter")
-    return _render(_SECRET_ERROR_TEMPLATES[error.code], {"backend": backend}, "")
+    if error.code in _SECRET_ERROR_TEMPLATES:
+        backend = error.details.get("backend")
+        if not isinstance(backend, str) or not backend:
+            raise ValueError("secret backend error is missing its backend parameter")
+        return _render(
+            _SECRET_ERROR_TEMPLATES[error.code], {"backend": backend}, ""
+        )
+    if error.code is ErrorCode.PERSISTENCE_FAILED:
+        detail_code = error.details.get("code")
+        template = _SECRET_SETTINGS_ERROR_TEMPLATES.get(detail_code)
+        if template is not None:
+            return _(template)
+    if error.code is ErrorCode.UNSUPPORTED_CAPABILITY:
+        capability = error.details.get("capability")
+        template = _SECRET_CAPABILITY_ERROR_TEMPLATES.get(capability)
+        if template is not None:
+            return _(template)
+    return str(error)

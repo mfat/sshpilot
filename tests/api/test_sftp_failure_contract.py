@@ -6,9 +6,13 @@ import pytest
 
 from sshpilot.api.errors import ErrorCode
 from sshpilot.api.models.operations import (
+    IdentityFailure,
+    IdentityFailureCode,
     OperationKind,
     OperationState,
     OperationSummary,
+    ScpFailure,
+    ScpFailureCode,
     ServiceFailure,
     SftpFailure,
     SftpFailureCode,
@@ -149,8 +153,12 @@ def test_sftp_failure_rejects_wrong_parameter_shape():
         )
 
 
-def test_native_scp_service_failure_wire_contract_is_unchanged():
-    failure = ServiceFailure("scp_transfer_failed", "scp exited with status 1")
+def test_native_scp_failure_wire_is_structured():
+    failure = ScpFailure(
+        ScpFailureCode.TRANSFER_FAILED,
+        ErrorCode.TRANSFER_IO_FAILED,
+        diagnostic="scp exited with status 1",
+    )
     summary = TransferSummary(
         id="transfer-scp",
         connection_id="connection-contract",
@@ -167,9 +175,13 @@ def test_native_scp_service_failure_wire_contract_is_unchanged():
     wire = transfer_summary_to_wire(summary)
 
     assert wire["failure"] == {
-        "code": "scp_transfer_failed",
-        "message": "scp exited with status 1",
+        "kind": "scp",
+        "code": "transfer_failed",
+        "error_code": "transfer_io_failed",
+        "parameters": {},
+        "diagnostic": "scp exited with status 1",
     }
+    assert "The SCP transfer failed" not in repr(wire)
     assert transfer_summary_from_wire(wire) == summary
 
 
@@ -186,6 +198,15 @@ def test_failure_model_is_selected_by_operation_kind_and_transfer_backend():
                 ErrorCode.SFTP_COMMAND_FAILED,
             ),
         )
+    with pytest.raises(TypeError, match="operation kind"):
+        OperationSummary(
+            operation_id="operation-contract",
+            kind=OperationKind.KEY_DEPLOYMENT,
+            state=OperationState.FAILED,
+            message="",
+            created_at=NOW,
+            failure=ServiceFailure("legacy", "legacy text"),
+        )
     with pytest.raises(TypeError, match="transfer backend"):
         TransferSummary(
             id="transfer-contract",
@@ -199,3 +220,123 @@ def test_failure_model_is_selected_by_operation_kind_and_transfer_backend():
             created_at=NOW,
             failure=ServiceFailure("legacy", "legacy text"),
         )
+
+
+def test_identity_failure_round_trip_has_no_final_ui_text():
+    summary = OperationSummary(
+        operation_id="identity-contract",
+        kind=OperationKind.KEY_DEPLOYMENT,
+        state=OperationState.FAILED,
+        message="",
+        created_at=NOW,
+        failure=IdentityFailure(
+            IdentityFailureCode.AUTHENTICATION_FAILED,
+            ErrorCode.REMOTE_COMMAND_FAILED,
+            diagnostic="Permission denied (publickey,password)",
+        ),
+    )
+
+    wire = operation_summary_to_wire(summary)
+
+    assert wire["failure"] == {
+        "kind": "identity",
+        "code": "authentication_failed",
+        "error_code": "remote_command_failed",
+        "parameters": {},
+        "diagnostic": "Permission denied (publickey,password)",
+    }
+    assert "Authentication failed while installing" not in repr(wire)
+    assert operation_summary_from_wire(wire) == summary
+
+
+@pytest.mark.parametrize(
+    ("summary", "to_wire", "from_wire"),
+    (
+        (
+            TransferSummary(
+                id="transfer-scp-invalid",
+                connection_id="connection-contract",
+                sftp_service_id=None,
+                backend=TransferBackend.NATIVE_SCP,
+                direction=TransferDirection.UPLOAD,
+                state=TransferState.FAILED,
+                source_display="source",
+                destination_display="destination",
+                created_at=NOW,
+                failure=ScpFailure(
+                    ScpFailureCode.TRANSFER_FAILED,
+                    ErrorCode.TRANSFER_IO_FAILED,
+                ),
+            ),
+            transfer_summary_to_wire,
+            transfer_summary_from_wire,
+        ),
+        (
+            OperationSummary(
+                operation_id="identity-invalid",
+                kind=OperationKind.KEY_DEPLOYMENT,
+                state=OperationState.FAILED,
+                message="",
+                created_at=NOW,
+                failure=IdentityFailure(
+                    IdentityFailureCode.INSTALLATION_FAILED,
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                ),
+            ),
+            operation_summary_to_wire,
+            operation_summary_from_wire,
+        ),
+    ),
+)
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("kind", "unknown"),
+        ("code", "unknown_failure"),
+        ("error_code", "unknown_error"),
+        ("parameters", []),
+    ),
+)
+def test_terminal_failure_codecs_reject_unknown_or_invalid_payload(
+    summary, to_wire, from_wire, field, value
+):
+    wire = to_wire(summary)
+    wire["failure"][field] = value
+
+    with pytest.raises((TypeError, ValueError)):
+        from_wire(wire)
+
+
+@pytest.mark.parametrize(
+    "failure_type,code",
+    (
+        (ScpFailure, ScpFailureCode.TRANSFER_FAILED),
+        (IdentityFailure, IdentityFailureCode.INSTALLATION_FAILED),
+    ),
+)
+def test_terminal_failures_reject_unexpected_parameters(failure_type, code):
+    with pytest.raises(ValueError, match="parameters do not match"):
+        failure_type(
+            code,
+            ErrorCode.INTERNAL_ERROR,
+            parameters={"path": "/must/not/cross"},
+        )
+
+
+def test_other_operation_service_failure_wire_contract_is_unchanged():
+    summary = OperationSummary(
+        operation_id="authorized-key-contract",
+        kind=OperationKind.AUTHORIZED_KEY_REMOVAL,
+        state=OperationState.FAILED,
+        message="legacy text",
+        created_at=NOW,
+        failure=ServiceFailure("remote_command_failed", "legacy text"),
+    )
+
+    wire = operation_summary_to_wire(summary)
+
+    assert wire["failure"] == {
+        "code": "remote_command_failed",
+        "message": "legacy text",
+    }
+    assert operation_summary_from_wire(wire) == summary

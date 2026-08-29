@@ -56,16 +56,16 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.49`. Version 0.49 replaces
-rendered SFTP lifecycle, recursive-operation, and upload/download summary
-failures with strict `SftpFailure` values. A 0.48 peer expects the generic
-`{code, message}` object in those fields, while a 0.49 peer requires the
-discriminated SFTP object, so mismatched implementations are rejected during
-handshake before ordinary requests. The generic `ServiceFailure` contract is
-unchanged for native SCP, identity operations, forwards, and broadcast
-results. Version 0.48 added plugin connection-editor data; the 0.47 structured
-backup/import, 0.46 secret-status, and 0.45 secret-prompt contracts remain
-unchanged.
+`API_IMPLEMENTATION_VERSION` is currently `0.50`. Version 0.50 replaces native
+SCP transfer failures and public-key deployment operation failures with strict
+`ScpFailure` and `IdentityFailure` values. A 0.49 peer expects the generic
+`{code, message}` object in those fields, while a 0.50 peer requires the
+matching discriminated object, so mismatched implementations are rejected
+during handshake before ordinary requests. The generic `ServiceFailure`
+contract remains unchanged for authorized-key removal, forwards, broadcast,
+and every other non-selected consumer. Version 0.49 introduced strict
+`SftpFailure`; the 0.48 plugin editor, 0.47 backup/import, 0.46 secret-status,
+and 0.45 secret-prompt contracts remain unchanged.
 
 The earlier 0.40 compatibility boundary remains in force: clients never
 downgrade to plaintext secret transport or select a frontend secret backend.

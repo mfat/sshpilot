@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.49",
+  "api_implementation_version": "0.50",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1388,6 +1388,20 @@
       "changed",
       "revoked"
     ],
+    "IdentityFailureCode": [
+      "launch_preparation_unavailable",
+      "connection_not_found",
+      "ssh_connection_required",
+      "host_identifier_missing",
+      "ssh_copy_id_unavailable",
+      "process_start_failed",
+      "authentication_failed",
+      "connection_refused",
+      "server_unreachable",
+      "connection_timed_out",
+      "installation_failed",
+      "operation_failed_unexpectedly"
+    ],
     "InteractionKind": [
       "password",
       "key_passphrase",
@@ -1457,6 +1471,21 @@
       "block",
       "character",
       "unknown"
+    ],
+    "ScpFailureCode": [
+      "unavailable",
+      "command_queue_full",
+      "connection_not_found",
+      "ssh_connection_required",
+      "host_identifier_missing",
+      "target_preparation_failed",
+      "transfer_preparation_failed",
+      "process_start_failed",
+      "remote_sftp_unavailable",
+      "transfer_start_failed",
+      "transfer_failed",
+      "daemon_shutting_down",
+      "unexpected_failure"
     ],
     "SecretDecision": [
       "submit",
@@ -4153,6 +4182,39 @@
       ],
       "status": "Schema only"
     },
+    "IdentityFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "IdentityFailureCode"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
     "InputOwner": {
       "fields": [
         {
@@ -5092,7 +5154,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[Union[ServiceFailure, SftpFailure]]"
+          "type": "Optional[Union[ServiceFailure, SftpFailure, IdentityFailure]]"
         },
         {
           "default": null,
@@ -5909,6 +5971,39 @@
           "default": null,
           "name": "expected_revision",
           "required": true,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "ScpFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "ScpFailureCode"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
           "sensitive": false,
           "type": "str"
         }
@@ -7295,7 +7390,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[Union[ServiceFailure, SftpFailure]]"
+          "type": "Optional[Union[ServiceFailure, SftpFailure, ScpFailure]]"
         },
         {
           "default": null,
