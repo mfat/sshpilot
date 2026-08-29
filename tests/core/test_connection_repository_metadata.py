@@ -290,3 +290,28 @@ def test_non_ssh_tags_survive_reload_and_appear_in_snapshot(tmp_path):
         for item in fresh.snapshot().metadata
     }
     assert reloaded["lab-switch"]["tags"] == ("telnet", "lab")
+
+
+def test_delete_non_ssh_connection_with_tags(tmp_path):
+    """Deleting a tagged telnet connection must drop its non_ssh_metadata."""
+    repo, root, state = _repo(tmp_path)
+    repo.create_connection(
+        {
+            "nickname": "lab-switch",
+            "hostname": "10.0.0.5",
+            "protocol": "telnet",
+            "port": 2323,
+        }
+    )
+    repo.update_connection_metadata(
+        "lab-switch",
+        {"tags": ["telnet"], "wol_mac": "", "wol_port": 9},
+    )
+    repo.delete_connection("lab-switch")
+
+    identity = read_identity_state_v2(state)
+    assert identity.non_ssh_connections == ()
+    assert "lab-switch" not in identity.non_ssh_metadata
+    assert "lab-switch" not in {
+        item.connection_id for item in repo.snapshot().metadata
+    }

@@ -1413,10 +1413,13 @@ class ConnectionRepository:
             elif cid in non_ssh_ids:
                 # Non-SSH metadata is stored in its own namespace below.
                 continue
-        non_ssh_metadata = dict(state.non_ssh_metadata)
-        for record in records:
-            if record.protocol != "ssh" and record.id in self._metadata:
-                non_ssh_metadata[record.id] = self._metadata[record.id]
+        # Rebuild from live working metadata only — do not carry forward
+        # entries for deleted connections or explicitly cleared metadata.
+        non_ssh_metadata = {
+            record.id: self._metadata[record.id]
+            for record in records
+            if record.protocol != "ssh" and record.id in self._metadata
+        }
         candidate = replace(
             state,
             groups=tuple(groups),
