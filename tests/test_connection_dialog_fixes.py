@@ -39,6 +39,27 @@ def test_editor_details_to_connection_plugin_data():
     assert conn.data['protocol'] == 'telnet'
 
 
+def test_editor_details_merges_connection_details_plugin_data():
+    """Daemon ConnectionDetails.plugin_data must populate dialog FieldSpecs."""
+    details = types.SimpleNamespace(
+        nickname='board',
+        hostname='',
+        host='board',
+        port=22,
+        protocol='serial',
+        plugin_data={
+            'device': '/dev/ttyUSB0',
+            'baud': '9600',
+            'flow': 'hard',
+        },
+    )
+    conn = _editor_details_to_connection(details)
+    assert conn.data['device'] == '/dev/ttyUSB0'
+    assert conn.data['baud'] == '9600'
+    assert conn.data['flow'] == 'hard'
+    assert conn.protocol == 'serial'
+
+
 def test_load_plugin_field_values_uses_hostname_when_data_host_missing():
     """Telnet saves ``host`` as core ``hostname``; the dialog must still fill
     the Host row when reopening an editor DTO / summary projection."""

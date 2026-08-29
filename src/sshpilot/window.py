@@ -4852,9 +4852,54 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     pass
         else:
+            # Plugin protocols: list rows are ConnectionSummary (no FieldSpec
+            # values). Hydrate from daemon ConnectionDetails.plugin_data so
+            # serial/docker/k8s/mosh fields aren't blank on reopen.
             dialog.set_editor_source('local')
+            if self._daemon_ready():
+                self._hydrate_plugin_connection_editor(dialog, connection)
 
         dialog.present()
+
+    def _hydrate_plugin_connection_editor(self, dialog, connection) -> None:
+        """Load non-SSH FieldSpec values from daemon details into the dialog.
+
+        Sidebar rows are ``ConnectionSummary`` projections without ``plugin_data``.
+        Fetching ``get_connection`` fills serial/docker/k8s/mosh fields that
+        would otherwise reopen as blanks (and silently reset on save).
+        """
+        from .api.connection_identity import connection_id_for
+        from .connection_dialog import _editor_details_to_connection
+
+        connection_id = connection_id_for(connection)
+
+        def _apply(details):
+            try:
+                dialog.connection = _editor_details_to_connection(details)
+                dialog.is_editing = True
+                dialog.load_connection_data()
+            except Exception:
+                logger.warning(
+                    "Failed to hydrate plugin editor for %s",
+                    connection_id,
+                    exc_info=True,
+                )
+
+        def _failed(error):
+            logger.warning(
+                "Could not load plugin connection fields for %s type=%s",
+                connection_id,
+                type(error).__name__,
+            )
+
+        try:
+            self.client_bridge.submit(
+                lambda: self.client.get_connection(connection_id),
+                on_success=_apply,
+                on_error=_failed,
+            )
+        except RuntimeError as error:
+            _failed(error)
 
     def _fetch_daemon_editor_generation(self, dialog, connection):
         """Load the authoritative daemon editor snapshot (non-blocking).

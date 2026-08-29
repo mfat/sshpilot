@@ -11,7 +11,16 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.47 (current)
+## API 0.48 (current)
+
+### API 0.48 plugin connection editor data
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `ConnectionDetails` and
+  `ConnectionEditorDetails` now carry optional `plugin_data` so non-SSH
+  FieldSpec values (serial device, docker container, k8s pod, mosh options,
+  …) round-trip through `get_connection` / the connection editor.
+
+## API 0.47
 
 ### API 0.47 structured backup/import presentation
 

@@ -8,7 +8,7 @@ import logging
 import re
 import threading
 import types
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Mapping
 
 try:
     from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
@@ -140,6 +140,9 @@ def _editor_details_to_connection(details):
     # names (e.g. telnet ``host``/``port``) can round-trip from editor DTOs
     # that have no separate plugin_data blob.
     data = dict(getattr(details, 'data', None) or {})
+    plugin_data = getattr(details, 'plugin_data', None) or {}
+    if isinstance(plugin_data, Mapping):
+        data.update(dict(plugin_data))
     data.setdefault('hostname', hostname)
     data.setdefault('host', hostname or host)
     data.setdefault('port', port)

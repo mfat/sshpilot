@@ -553,6 +553,7 @@ Synthetic representation:
 | `x11_forwarding` | `bool` | No | `false` | No |
 | `forwarding_rule_count` | `int` | No | `0` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 
 Synthetic representation:
 
@@ -570,6 +571,7 @@ Synthetic representation:
   "id": "production",
   "identity_configured": false,
   "nickname": "example",
+  "plugin_data": {},
   "port": 22,
   "protocol": "ssh",
   "proxy_jump": [],
@@ -644,6 +646,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `x11_forwarding` | `bool` | No | `false` | No |
 | `forwarding_rule_count` | `int` | No | `0` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 | `key_select_mode` | `int` | No | `0` | No |
 | `identity_files` | `tuple[str, ...]` | No | `[]` | No |
 | `certificate_files` | `tuple[str, ...]` | No | `[]` | No |
@@ -702,6 +705,7 @@ Synthetic representation:
   "local_command": "",
   "nickname": "example",
   "pkcs11_provider": "",
+  "plugin_data": {},
   "port": 22,
   "pre_command": "",
   "preferred_authentications": "",

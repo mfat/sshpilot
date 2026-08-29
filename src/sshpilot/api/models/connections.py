@@ -253,6 +253,53 @@ class ConnectionSummary:
         return f"{self.username}@{host}" if self.username else host
 
 
+# Core identity columns persisted alongside plugin FieldSpec values. Excluded
+# from ``plugin_data`` projections so editors don't duplicate them.
+CONNECTION_CORE_DATA_FIELDS = frozenset(
+    {
+        "nickname",
+        "hostname",
+        "host",
+        "username",
+        "port",
+        "protocol",
+        "id",
+        "uuid",
+        "display_name",
+        "generation",
+        "order",
+        "aliases",
+        "source",
+        "authored_directives",
+    }
+)
+_PLUGIN_DATA_SENSITIVE_PARTS = (
+    "password",
+    "passphrase",
+    "secret",
+    "token",
+    "credential",
+    "private_key",
+)
+
+
+def extract_plugin_data(
+    protocol: str, data: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return secret-free protocol FieldSpec values from a connection record."""
+    if (protocol or "ssh") == "ssh":
+        return {}
+    result: Dict[str, Any] = {}
+    for key, value in dict(data or {}).items():
+        if key in CONNECTION_CORE_DATA_FIELDS or key.startswith("__"):
+            continue
+        lowered = key.lower()
+        if any(part in lowered for part in _PLUGIN_DATA_SENSITIVE_PARTS):
+            continue
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class ConnectionDetails(ConnectionSummary):
     """Full v1 connection response without secret values or sensitive paths."""
@@ -264,11 +311,15 @@ class ConnectionDetails(ConnectionSummary):
     x11_forwarding: bool = False
     forwarding_rule_count: int = 0
     proxy_jump: Tuple[str, ...] = ()
+    # Non-SSH protocol FieldSpec values (device, container, pod, …). Empty for SSH.
+    plugin_data: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.forwarding_rule_count < 0:
             raise ValueError("forwarding rule count must not be negative")
+        if type(self.plugin_data) is not dict:
+            object.__setattr__(self, "plugin_data", dict(self.plugin_data))
 
 
 # -- Editor capabilities and details ----------------------------------------

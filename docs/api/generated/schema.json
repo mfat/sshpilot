@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.47",
+  "api_implementation_version": "0.48",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -2165,6 +2165,13 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
+        },
+        {
+          "default": {},
+          "name": "plugin_data",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
         }
       ],
       "status": "Implemented"
@@ -2329,6 +2336,13 @@
           "required": false,
           "sensitive": false,
           "type": "tuple[str, ...]"
+        },
+        {
+          "default": {},
+          "name": "plugin_data",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, Any]"
         },
         {
           "default": 0,

@@ -1739,6 +1739,7 @@ def connection_details_to_wire(details: ConnectionDetails) -> Dict[str, Any]:
             "x11_forwarding": details.x11_forwarding,
             "forwarding_rule_count": details.forwarding_rule_count,
             "proxy_jump": list(details.proxy_jump),
+            "plugin_data": dict(details.plugin_data),
         }
     )
     return result
@@ -1791,7 +1792,7 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS | detail_fields,
-        optional={"display_name"},
+        optional={"display_name", "plugin_data"},
         context="connection details",
     )
     summary_payload = {key: data[key] for key in _SUMMARY_FIELDS}
@@ -1806,6 +1807,9 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
         authentication_method = AuthenticationMethod(data["authentication_method"])
     except (TypeError, ValueError):
         raise ValueError("connection details contain unknown authentication method") from None
+    raw_plugin_data = data.get("plugin_data", {})
+    if type(raw_plugin_data) is not dict:
+        raise ValueError("plugin_data must be an object")
     return ConnectionDetails(
         id=summary.id,
         nickname=summary.nickname,
@@ -1832,6 +1836,7 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
             "forwarding rule count",
         ),
         proxy_jump=proxy_jump,
+        plugin_data=dict(raw_plugin_data),
     )
 
 
@@ -2103,7 +2108,7 @@ def connection_editor_details_from_wire(
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
         # Additive: a daemon predating authorship evidence simply omits it, and
         # an empty tuple already means "no evidence".
-        optional={"display_name", "authored_directives"},
+        optional={"display_name", "authored_directives", "plugin_data"},
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
@@ -2135,6 +2140,9 @@ def connection_editor_details_from_wire(
     authored_directives = tuple(
         _text(item, "authored directive", allow_empty=False) for item in raw_authored
     )
+    raw_plugin_data = data.get("plugin_data", {})
+    if type(raw_plugin_data) is not dict:
+        raise ValueError("plugin_data must be an object")
     return ConnectionEditorDetails(
         id=summary.id,
         nickname=summary.nickname,
@@ -2153,6 +2161,7 @@ def connection_editor_details_from_wire(
         x11_forwarding=_boolean(data["x11_forwarding"], "X11 forwarding"),
         forwarding_rule_count=_integer(data["forwarding_rule_count"], "forwarding rule count"),
         proxy_jump=proxy_jump,
+        plugin_data=dict(raw_plugin_data),
         key_select_mode=_integer(data["key_select_mode"], "key_select_mode"),
         identity_files=tuple(_identifier(f, "identity file") for f in identity_files),
         certificate_files=tuple(_identifier(f, "certificate file") for f in certificate_files),

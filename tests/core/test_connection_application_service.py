@@ -735,9 +735,41 @@ def test_record_converts_to_details_and_editor():
     details = service.get_connection(ConnectionId("web"))
     assert details.authentication_method.value == "password"
     assert details.identity_configured is True
+    assert details.plugin_data == {}
     editor = service.get_connection_editor(ConnectionId("web"))
     assert editor.identity_files == ("~/.ssh/id_ed25519",)
     assert editor.generation == 0
+    assert editor.plugin_data == {}
+
+
+def test_non_ssh_details_include_plugin_data():
+    repo = FakeRepository(
+        [
+            _record(
+                record_id="board",
+                hostname="",
+                username="",
+                port=22,
+                protocol="serial",
+                data={
+                    "device": "/dev/ttyUSB0",
+                    "baud": "9600",
+                    "flow": "hard",
+                    "password": "should-not-leak",
+                },
+            )
+        ]
+    )
+    service = ConnectionApplicationService(repo, client_name="test")
+    details = service.get_connection(ConnectionId("board"))
+    assert details.protocol == "serial"
+    assert details.plugin_data == {
+        "device": "/dev/ttyUSB0",
+        "baud": "9600",
+        "flow": "hard",
+    }
+    editor = service.get_connection_editor(ConnectionId("board"))
+    assert editor.plugin_data == details.plugin_data
 
 
 def test_missing_record_raises_not_found():

@@ -1611,6 +1611,8 @@ class ConnectionApplicationService:
         certificate = str(data.get("certificate") or "").strip()
         forwarding_rules = data.get("forwarding_rules") or ()
         proxy_jump = data.get("proxy_jump") or ()
+        from ..api.models.connections import extract_plugin_data
+
         return ConnectionDetails(
             id=summary.id,
             nickname=summary.nickname,
@@ -1632,6 +1634,7 @@ class ConnectionApplicationService:
             if isinstance(forwarding_rules, (list, tuple))
             else 0,
             proxy_jump=self._string_tuple(proxy_jump),
+            plugin_data=extract_plugin_data(summary.protocol, data),
         )
 
     def _record_to_editor_details(
@@ -1676,6 +1679,7 @@ class ConnectionApplicationService:
             x11_forwarding=details.x11_forwarding,
             forwarding_rule_count=details.forwarding_rule_count,
             proxy_jump=details.proxy_jump,
+            plugin_data=dict(details.plugin_data),
             key_select_mode=int(data.get("key_select_mode", 0) or 0),
             identity_files=self._string_tuple(data.get("identity_files")),
             certificate_files=self._string_tuple(data.get("certificate_files")),
