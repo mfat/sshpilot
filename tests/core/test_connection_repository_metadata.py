@@ -254,3 +254,39 @@ def test_metadata_values_never_appear_in_repr(tmp_path):
     repo.update_connection_metadata("web", {"wol": {"mac": "aa:bb:cc:dd:ee:ff"}})
     snap = repo.snapshot()
     assert "aa:bb:cc:dd:ee:ff" not in repr(snap.metadata[0])
+
+
+def test_non_ssh_tags_survive_reload_and_appear_in_snapshot(tmp_path):
+    """Plugin-protocol tags live in non_ssh_metadata; the UI snapshot must
+    still project them after a fresh repository load (config reload path)."""
+    repo, root, state = _repo(tmp_path)
+    repo.create_connection(
+        {
+            "nickname": "lab-switch",
+            "hostname": "10.0.0.5",
+            "protocol": "telnet",
+            "port": 2323,
+        }
+    )
+    repo.update_connection_metadata(
+        "lab-switch",
+        {"tags": ["telnet", "lab"], "wol_mac": "", "wol_port": 9},
+    )
+
+    live = {
+        item.connection_id: dict(item.values)
+        for item in repo.snapshot().metadata
+    }
+    assert live["lab-switch"]["tags"] == ("telnet", "lab")
+
+    fresh = ConnectionRepository(
+        ssh_store=SshConfigStore(root),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=False,
+    )
+    reloaded = {
+        item.connection_id: dict(item.values)
+        for item in fresh.snapshot().metadata
+    }
+    assert reloaded["lab-switch"]["tags"] == ("telnet", "lab")

@@ -448,6 +448,10 @@ def state_to_service_file_state(
         alias = alias_by_uuid.get(uuid)
         if alias in current_aliases:
             metadata[alias] = values
+    # Non-SSH tags/WoL live in a separate sidecar namespace; fold them into
+    # the service metadata view so snapshots and get_metadata() see them.
+    for connection_id, values in state.non_ssh_metadata.items():
+        metadata[str(connection_id)] = values
     return ConnectionFileState(
         version=1,
         non_ssh_connections=tuple(item for item in state.non_ssh_connections),
