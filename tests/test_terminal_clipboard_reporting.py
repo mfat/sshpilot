@@ -33,7 +33,12 @@ def test_copy_toast_waits_for_successful_backend_completion():
     assert toasts == ["Copied to clipboard"]
 
 
-def test_failed_or_empty_copy_never_reports_success():
+def test_failed_or_empty_copy_reports_the_failure_without_claiming_success():
+    """A copy that wrote nothing must say so -- silence read as a dead clipboard.
+
+    See issue #1178: every failing attempt ended at
+    ``copied=False reason=empty-selection`` with no UI trace at all.
+    """
     backend = _DeferredCopyBackend()
     toasts = []
     widget = _widget(backend)
@@ -42,7 +47,7 @@ def test_failed_or_empty_copy_never_reports_success():
     TerminalWidget.copy_text(widget)
     backend.completion(False)
 
-    assert toasts == []
+    assert toasts == ["Nothing selected to copy"]
 
 
 def test_html_copy_is_forwarded_to_backend():
@@ -54,14 +59,14 @@ def test_html_copy_is_forwarded_to_backend():
     assert backend.format == "html"
 
 
-def test_backend_owned_shortcut_uses_standard_success_notification():
+def test_backend_owned_shortcut_uses_standard_notifications():
     toasts = []
     widget = SimpleNamespace(_show_toast=toasts.append)
 
     TerminalWidget.handle_backend_copy_result(widget, True)
     TerminalWidget.handle_backend_copy_result(widget, False)
 
-    assert toasts == ["Copied to clipboard"]
+    assert toasts == ["Copied to clipboard", "Nothing selected to copy"]
 
 
 def test_copy_on_select_stays_silent_and_uses_backend_contract():

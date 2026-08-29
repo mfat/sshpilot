@@ -4641,6 +4641,32 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.add_controller(controller)
         self._omnisearch_key_controller = controller
 
+        # The detector is otherwise keyboard-only, so it cannot tell a
+        # Shift+drag selection from the first tap of the gesture. Observe
+        # every button press (CAPTURE, never claiming the sequence) so the
+        # pointer can cancel a pending double-tap.
+        pointer = Gtk.GestureClick()
+        pointer.set_button(0)
+        pointer.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        pointer.connect('pressed', self._on_omnisearch_pointer_pressed)
+        self.add_controller(pointer)
+        self._omnisearch_pointer_controller = pointer
+
+    def _on_omnisearch_pointer_pressed(self, gesture, _n_press, _x, _y) -> None:
+        self._on_omnisearch_pointer_activity()
+        # Purely an observer: deny the sequence so this gesture never competes
+        # with the terminal's own selection handling.
+        try:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+        except Exception:
+            logger.debug("Omnisearch pointer observer could not deny sequence",
+                         exc_info=True)
+
+    def _on_omnisearch_pointer_activity(self) -> None:
+        detector = getattr(self, '_omnisearch_double_shift', None)
+        if detector is not None:
+            detector.pointer_activity()
+
     def _omnisearch_uses_double_shift(self) -> bool:
         app = self.get_application()
         if app is None or not getattr(app, 'accelerators_enabled', True):
