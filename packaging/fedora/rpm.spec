@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:5.9.8}
+Version:        %{?version}%{!?version:5.9.9}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -144,6 +144,11 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Sat Aug 29 2026 mFat <newmfat@gmail.com> - 5.9.9-1
+- New "Copy SSH Command" context-menu action
+- Fixes rbw secret backend
+- Other bug fixes and improvements
+
 * Fri Aug 28 2026 mFat <newmfat@gmail.com> - 5.9.8-1
 - Fixed Bitwarden login issue
 
