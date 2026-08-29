@@ -315,7 +315,6 @@ class SecretBackendService:
     # ------------------------------------------------------------------
 
     def unlock(self, *, owner_client_id) -> SecretUnlockResult:
-        pinentry_backend = None
         master = None
         with self._locked_operation():
             decision = self._selected_decision()
@@ -333,38 +332,18 @@ class SecretBackendService:
                     kind=UnlockResultKind.UNLOCKED,
                     backend=name,
                 )
-            if name == "rbw" and decision.kind == SecretDecisionKind.UNLOCK_REQUIRED:
-                # Native pinentry/agent owns the secret — never collect a master
-                # password. Run the CLI outside the service lock so a waiting
-                # pinentry does not stall other secrets RPCs.
-                pinentry_backend = backend
-            elif self._selected_needs_login():
+            if self._selected_needs_login():
                 return SecretUnlockResult(
                     kind=UnlockResultKind.LOGIN_REQUIRED,
                     backend=name,
                     message="The selected vault requires sign-in before unlock",
                 )
-            elif decision.kind != SecretDecisionKind.UNLOCK_REQUIRED:
+            if decision.kind != SecretDecisionKind.UNLOCK_REQUIRED:
                 return SecretUnlockResult(
                     kind=UnlockResultKind.UNLOCKED,
                     backend=name,
                 )
-            else:
-                master = self._remembered_master_password()
-
-        if pinentry_backend is not None:
-            ok = self._run_safely(lambda: pinentry_backend._run("unlock"))
-            if ok:
-                self._run_safely(lambda: pinentry_backend._run("sync"))
-            return SecretUnlockResult(
-                kind=(
-                    UnlockResultKind.UNLOCKED
-                    if ok
-                    else UnlockResultKind.INTERACTION_REQUIRED
-                ),
-                backend="rbw",
-                message="" if ok else "rbw unlock failed",
-            )
+            master = self._remembered_master_password()
 
         remember = False
         if master is None:
@@ -740,7 +719,7 @@ class SecretBackendService:
             return _bitwarden_status(bw, force_refresh=True)
 
     # ------------------------------------------------------------------
-    # rbw lifecycle (native agent / pinentry ownership preserved)
+    # rbw lifecycle (config / status / explicit CLI unlock+sync+lock)
     # ------------------------------------------------------------------
 
     def rbw_status(self) -> RbwStatus:

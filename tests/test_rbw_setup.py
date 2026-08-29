@@ -2,7 +2,7 @@
 
 from sshpilot import bitwarden_setup as bs
 from sshpilot import rbw_setup as rs
-from sshpilot.api.models.secrets import RbwStatus
+from sshpilot.api.models.secrets import RbwStatus, UnlockResultKind
 
 
 class FakeController:
@@ -91,9 +91,10 @@ def test_login_typed_unlock_failure_skips_sync(monkeypatch):
     completed = []
 
     class Controller:
-        def rbw_unlock(self):
+        def unlock(self):
             calls.append("unlock")
-            return _status(unlocked=False, message="rbw unlock failed")
+            return type("R", (), {"kind": UnlockResultKind.INTERACTION_REQUIRED,
+                                  "message": "rbw unlock failed"})()
 
         def rbw_sync(self):
             calls.append("sync")
@@ -102,14 +103,13 @@ def test_login_typed_unlock_failure_skips_sync(monkeypatch):
         def rbw_status(self):
             return _status(unlocked=False)
 
-    monkeypatch.setattr(bs, "progress_dialog", lambda *args: (None, lambda: calls.append("close")))
     monkeypatch.setattr(rs, "_error_dialog", lambda _window, _detail, on_done: on_done(False))
     monkeypatch.setattr(rs, "_ready_dialog", lambda _window, _status, on_done: on_done(True))
     _run_immediately(monkeypatch)
 
     rs._login_async(object(), Controller(), completed.append)
 
-    assert calls == ["unlock", "close"]
+    assert calls == ["unlock"]
     assert completed == [False]
 
 
@@ -118,9 +118,9 @@ def test_login_typed_sync_failure_does_not_show_ready(monkeypatch):
     completed = []
 
     class Controller:
-        def rbw_unlock(self):
+        def unlock(self):
             calls.append("unlock")
-            return _status(unlocked=True)
+            return type("R", (), {"kind": UnlockResultKind.UNLOCKED, "message": ""})()
 
         def rbw_sync(self):
             calls.append("sync")
@@ -129,14 +129,13 @@ def test_login_typed_sync_failure_does_not_show_ready(monkeypatch):
         def rbw_status(self):
             return _status(unlocked=True)
 
-    monkeypatch.setattr(bs, "progress_dialog", lambda *args: (None, lambda: calls.append("close")))
     monkeypatch.setattr(rs, "_error_dialog", lambda _window, _detail, on_done: on_done(False))
     monkeypatch.setattr(rs, "_ready_dialog", lambda _window, _status, on_done: on_done(True))
     _run_immediately(monkeypatch)
 
     rs._login_async(object(), Controller(), completed.append)
 
-    assert calls == ["unlock", "sync", "close"]
+    assert calls == ["unlock", "sync"]
     assert completed == [False]
 
 
@@ -145,9 +144,9 @@ def test_login_successful_typed_results_show_ready(monkeypatch):
     completed = []
 
     class Controller:
-        def rbw_unlock(self):
+        def unlock(self):
             calls.append("unlock")
-            return _status(unlocked=True)
+            return type("R", (), {"kind": UnlockResultKind.UNLOCKED, "message": ""})()
 
         def rbw_sync(self):
             calls.append("sync")
@@ -156,14 +155,13 @@ def test_login_successful_typed_results_show_ready(monkeypatch):
         def rbw_status(self):
             return _status(unlocked=True)
 
-    monkeypatch.setattr(bs, "progress_dialog", lambda *args: (None, lambda: calls.append("close")))
     monkeypatch.setattr(rs, "_error_dialog", lambda _window, _detail, on_done: on_done(False))
     monkeypatch.setattr(rs, "_ready_dialog", lambda _window, _status, on_done: on_done(True))
     _run_immediately(monkeypatch)
 
     rs._login_async(object(), Controller(), completed.append)
 
-    assert calls == ["unlock", "sync", "close"]
+    assert calls == ["unlock", "sync"]
     assert completed == [True]
 
 

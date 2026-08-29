@@ -1425,17 +1425,18 @@ def test_rbw_status_configure_unlock_sync_lock(tmp_path):
     assert status.unlocked is False
 
 
-def test_locked_rbw_needs_unlock_and_unlock_uses_pinentry(tmp_path):
-    """rbw is not session-backed, but a locked agent must still gate unlock.
+def test_locked_rbw_needs_unlock_and_unlock_uses_master_password(tmp_path):
+    """rbw is session-backed: a locked agent uses the GTK master-password dialog.
 
-    ``unlock()`` must run ``rbw unlock`` (native pinentry) and must not collect
-    a master password through the interaction broker.
+    ``unlock()`` must collect the password through the interaction broker (with
+    Remember) and call ``backend.unlock(secret)`` — not native pinentry.
     """
     service, _manager, backends, broker, _path = _make_service(
-        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+        tmp_path,
+        secrets={"backend": "rbw", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
     )
     rbw = backends["rbw"]
-    rbw.session_backed = False
     rbw._unlocked = False
     rbw._needs_login = False
 
@@ -1447,11 +1448,13 @@ def test_locked_rbw_needs_unlock_and_unlock_uses_pinentry(tmp_path):
     result = service.unlock(owner_client_id="client-1")
     assert result.kind == UnlockResultKind.UNLOCKED
     assert rbw._unlocked is True
-    run_calls = [args for kind, args in rbw.calls if kind == "_run"]
-    assert ("unlock",) in run_calls
-    assert ("sync",) in run_calls
+    assert ("unlock", SENTINEL_MASTER) in rbw.calls
+    assert broker.created
+    prompt = broker.created[0][1].get("prompt")
+    assert prompt is not None
+    assert prompt.can_remember is True
+    assert prompt.hostname == "rbw"
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
-    assert broker.created == []
 
 
 # ---------------------------------------------------------------------------

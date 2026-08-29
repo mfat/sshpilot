@@ -3220,7 +3220,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 if hasattr(self, attr):
                     getattr(self, attr).set_visible(name == 'keepassxc')
             if hasattr(self, 'secret_session_timeout_row'):
-                self.secret_session_timeout_row.set_visible(session)
+                # rbw-agent has its own ``lock_timeout`` config; sshPilot's idle
+                # timeout applies to in-process session vaults (bw / kdbx).
+                self.secret_session_timeout_row.set_visible(session and name != 'rbw')
             if hasattr(self, 'forget_master_row'):
                 self.forget_master_row.set_visible(session)
                 self._refresh_forget_master_row()
@@ -3235,7 +3237,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 elif name == 'bitwarden':
                     hint = _("Uses the bw CLI. See bitwarden.com/help/cli.")
                 elif name == 'rbw':
-                    hint = _("Uses the rbw CLI + agent. Unlock with rbw (github.com/doy/rbw).")
+                    hint = _("Uses the rbw CLI + agent. github.com/doy/rbw")
                 else:
                     hint = ""
                 try:
@@ -3370,8 +3372,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 self._setup_bitwarden_backend_async(_done)
                 return
             if name == 'rbw':
-                # rbw owns its own unlock (agent + pinentry); make it ready — installed,
-                # configured, unlocked — prompting only when something is missing.
+                # Install/config wizard; locked vaults then use the same GTK
+                # master-password dialog (with Remember) as Bitwarden/KeePass.
                 from .rbw_setup import ensure_rbw_ready
                 ensure_rbw_ready(self, _done)
                 return

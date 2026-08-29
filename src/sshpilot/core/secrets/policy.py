@@ -111,9 +111,9 @@ def decide_unlock(
             backend=name,
             message=f"Secret backend {name!r} is unavailable",
         )
-    # Session vaults collect a master password in-app. rbw is not session-backed
-    # (pinentry owns the secret) but still has a lock lifecycle, so a locked
-    # agent must gate startup/connect the same way Bitwarden/KeePass do.
+    # Session vaults collect a master password in-app. rbw is session-backed
+    # (same GTK dialog as Bitwarden/KeePass) but keep the name gate so a locked
+    # agent still blocks startup/connect if session_backed is ever unset.
     lockable = session_backed or name == "rbw"
     if lockable and not is_unlocked:
         return SecretPolicyDecision(

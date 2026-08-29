@@ -369,7 +369,8 @@ def _rbw_fake(*, unlocked=True, get_out=b'', folder_names=()):
             self.stdout = out
             self.stderr = b''
 
-    def fake_run(argv, input=None, capture_output=None, env=None, check=None, timeout=None):
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None,
+                 timeout=None, **kwargs):
         calls.append((list(argv), input))
         sub = argv[1]
         if sub == 'unlocked':
@@ -499,18 +500,83 @@ def test_rbw_backend_delete(monkeypatch):
     assert calls[-1][0] == ['/usr/bin/rbw', 'remove', '--folder', 'sshPilot', 'u@h']
 
 
-def test_rbw_registered_passive_and_availability(monkeypatch):
+def test_rbw_registered_session_backed_and_availability(monkeypatch):
     monkeypatch.setattr(ss, 'is_macos', lambda: False)
     mgr = ss.SecretManager()
     assert 'rbw' in mgr.registered_backends()
     b = mgr.get_backend('rbw')
     assert isinstance(b, ss.RbwBackend)
-    assert b.session_backed is False           # rbw-agent owns the unlock lifecycle
-    assert mgr.is_session_backed('rbw') is False
+    assert b.session_backed is True
+    assert mgr.is_session_backed('rbw') is True
     monkeypatch.setattr(ss, 'resolve_host_binary', lambda name: None)
     assert b.is_available() is False
     monkeypatch.setattr(ss, 'resolve_host_binary', lambda name: ['/usr/bin/rbw'])
     assert b.is_available() is True
+
+
+def test_rbw_backend_unlock_installs_stable_pinentry_helper(monkeypatch, tmp_path):
+    """rbw ``config set`` stops the agent — install the helper once, never restore."""
+    cfg = {"email": "a@example.com", "pinentry": "pinentry-gnome3"}
+    calls = []
+    seen_unlock_env = []
+
+    class _R:
+        def __init__(self, rc=0, out=b''):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = b''
+
+    def fake_run(argv, input=None, capture_output=None, env=None, check=None,
+                 timeout=None, **kwargs):
+        calls.append(list(argv))
+        sub = argv[1]
+        if sub == "unlocked":
+            return _R(1)
+        if sub == "config":
+            if argv[2] == "show":
+                return _R(0, json.dumps(cfg).encode())
+            if argv[2] == "set" and argv[3] == "pinentry":
+                cfg["pinentry"] = argv[4]
+                return _R(0)
+            if argv[2] == "unset":
+                cfg.pop(argv[3], None)
+                return _R(0)
+        if sub == "unlock":
+            seen_unlock_env.append(dict(env or {}))
+            helper = cfg.get("pinentry")
+            pinfile = (env or {}).get("PINENTRY_USER_DATA")
+            assert helper and os.path.isfile(helper)
+            assert pinfile and os.path.isfile(pinfile)
+            with open(pinfile, "rb") as fh:
+                assert fh.read() == b"sentinel-master"
+            return _R(0)
+        return _R(0)
+
+    monkeypatch.setattr(ss.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        "sshpilot.platform_utils.get_managed_bw_cli_dir",
+        lambda: str(tmp_path / "bin"),
+    )
+    backend = ss.RbwBackend()
+    backend._bin = "/usr/bin/rbw"
+    assert backend.unlock("sentinel-master") is True
+    helper = cfg["pinentry"]
+    assert helper.endswith("rbw-pinentry")
+    assert os.path.isfile(helper)
+    with open(helper, encoding="utf-8") as fh:
+        assert "pinentry-gnome3" in fh.read()
+    assert seen_unlock_env and seen_unlock_env[0].get("PINENTRY_USER_DATA")
+    pin_leftovers = list((tmp_path / "bin").glob("rbw-pin-*"))
+    assert pin_leftovers == []
+    assert ["/usr/bin/rbw", "unlock"] in calls
+    assert ["/usr/bin/rbw", "sync"] in calls
+    set_calls = [c for c in calls if c[:4] == ["/usr/bin/rbw", "config", "set", "pinentry"]]
+    assert len(set_calls) == 1
+    calls.clear()
+    seen_unlock_env.clear()
+    assert backend.unlock("sentinel-master") is True
+    assert [c for c in calls if c[:4] == ["/usr/bin/rbw", "config", "set", "pinentry"]] == []
+    assert ["/usr/bin/rbw", "unlock"] in calls
 
 
 # --- ssh-agent "don't store" null backend ------------------------------------

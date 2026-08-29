@@ -61,7 +61,7 @@ def _friendly_backend_name(backend):
     Vaultwarden includes the server URL, e.g. ``vaultwarden:https://…``)."""
     name = (_backend_name(backend) or "").strip().lower()
     friendly = {"bitwarden": "Bitwarden", "vaultwarden": "Vaultwarden",
-                "keepassxc": "KeePassXC"}.get(name)
+                "keepassxc": "KeePassXC", "rbw": "rbw"}.get(name)
     if friendly:
         return friendly
     return name.replace("-", " ").title() if name else _("vault")

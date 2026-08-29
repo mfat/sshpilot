@@ -5,10 +5,9 @@ of the work itself:
 
 - We do **not** auto-download ``rbw`` — it ships from distro packages / cargo /
   the AUR, so a missing CLI gets install guidance, not a binary fetch.
-- We do **not** run a sign-in/2FA/unlock wizard — ``rbw`` owns that through its
-  ``rbw-agent`` + pinentry. sshPilot only supplies the account **config** (email
-  + optional self-hosted server) and then kicks off ``rbw unlock`` / ``rbw sync``;
-  pinentry prompts for the master password and any 2FA.
+- Unlock uses the same GTK master-password dialog as Bitwarden/KeePass
+  (including Remember). sshPilot supplies the account **config** (email +
+  optional self-hosted server) then ``controller.unlock()`` / ``rbw sync``.
 
 All lifecycle work is daemon-owned and driven exclusively through the
 daemon-backed :class:`SecretBackendsController`. This module never executes
@@ -234,20 +233,16 @@ def _apply_config_async(window, controller, email: str, server: str,
 
 
 def _login_async(window, controller, on_done: Callable[[bool], None]) -> None:
-    """Run daemon-owned ``rbw unlock`` + ``rbw sync`` off the main thread. The
-    daemon's pinentry prompts for the master password (and 2FA / login as needed)."""
-    from .bitwarden_setup import progress_dialog
-
-    _set, close = progress_dialog(
-        window, _("rbw"),
-        _("Unlocking rbw… follow the pinentry prompt for your master password."),
-    )
+    """Unlock via the same GTK master-password dialog as Bitwarden/KeePass."""
+    from .api.models.secrets import UnlockResultKind
 
     def worker():
         detail = ""
         try:
-            unlock_status = controller.rbw_unlock()
-            detail = str(getattr(unlock_status, "message", "") or "")
+            result = controller.unlock()
+            kind = getattr(result, "kind", None)
+            if kind != UnlockResultKind.UNLOCKED:
+                detail = str(getattr(result, "message", "") or "") or str(kind)
         except Exception as exc:
             detail = str(exc)
         if not detail:
@@ -260,7 +255,6 @@ def _login_async(window, controller, on_done: Callable[[bool], None]) -> None:
         GLib.idle_add(lambda: (_after_login(status, detail), False)[1])
 
     def _after_login(status: RbwStatus, detail: str):
-        close()
         if status.unlocked and not detail:
             _ready_dialog(window, status, on_done)
         else:
