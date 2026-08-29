@@ -4853,11 +4853,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     pass
         else:
             # Plugin protocols: list rows are ConnectionSummary (no FieldSpec
-            # values). Hydrate from daemon ConnectionDetails.plugin_data so
-            # serial/docker/k8s/mosh fields aren't blank on reopen.
-            dialog.set_editor_source('local')
+            # values). Reuse the daemon loading gate so Save stays off until
+            # ConnectionDetails.plugin_data arrives — otherwise a quick Save
+            # persists blank FieldSpecs and undoes the round-trip fix.
+            dialog.set_editor_source('daemon')
+            dialog.set_daemon_editor_loading()
             if self._daemon_ready():
                 self._hydrate_plugin_connection_editor(dialog, connection)
+            else:
+                dialog.set_daemon_editor_load_failed()
+                try:
+                    dialog.show_daemon_editor_load_error(
+                        on_retry=lambda: self._retry_plugin_editor_hydrate(
+                            dialog, connection
+                        )
+                    )
+                except Exception:
+                    pass
 
         dialog.present()
 
@@ -4872,11 +4884,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .connection_dialog import _editor_details_to_connection
 
         connection_id = connection_id_for(connection)
+        state: Dict[str, Any] = {
+            'finished': False,
+            'request': None,
+        }
+
+        def _finished() -> bool:
+            return bool(state['finished'])
 
         def _apply(details):
+            if _finished():
+                return
+            state['finished'] = True
+            state['request'] = None
             try:
                 dialog.connection = _editor_details_to_connection(details)
                 dialog.is_editing = True
+                # Must mark loaded before load_connection_data — daemon mode
+                # skips population while the gate is still closed.
+                dialog.set_daemon_editor_loaded(
+                    int(getattr(details, 'generation', 0) or 0)
+                )
                 dialog.load_connection_data()
             except Exception:
                 logger.warning(
@@ -4884,22 +4912,71 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     connection_id,
                     exc_info=True,
                 )
+                dialog.set_daemon_editor_load_failed()
+                try:
+                    dialog.show_daemon_editor_load_error(
+                        on_retry=lambda: self._retry_plugin_editor_hydrate(
+                            dialog, connection
+                        )
+                    )
+                except Exception:
+                    pass
 
         def _failed(error):
+            if _finished():
+                return
+            state['finished'] = True
+            state['request'] = None
             logger.warning(
                 "Could not load plugin connection fields for %s type=%s",
                 connection_id,
                 type(error).__name__,
             )
+            dialog.set_daemon_editor_load_failed()
+            try:
+                dialog.show_daemon_editor_load_error(
+                    on_retry=lambda: self._retry_plugin_editor_hydrate(
+                        dialog, connection
+                    )
+                )
+            except Exception:
+                pass
+
+        def _cancel(_dialog=None):
+            if state['finished']:
+                return
+            state['finished'] = True
+            request = state['request']
+            state['request'] = None
+            if request is not None:
+                try:
+                    cancel = getattr(request, 'cancel', None)
+                    if callable(cancel):
+                        cancel()
+                except Exception:
+                    pass
+
+        connect = getattr(dialog, 'connect', None)
+        if callable(connect):
+            for signal_name in ('closed', 'destroy'):
+                try:
+                    connect(signal_name, _cancel)
+                except Exception:
+                    pass
 
         try:
-            self.client_bridge.submit(
+            state['request'] = self.client_bridge.submit(
                 lambda: self.client.get_connection(connection_id),
                 on_success=_apply,
                 on_error=_failed,
             )
         except RuntimeError as error:
             _failed(error)
+
+    def _retry_plugin_editor_hydrate(self, dialog, connection) -> None:
+        """Re-attempt a failed plugin FieldSpec hydrate (Retry action)."""
+        dialog.set_daemon_editor_loading()
+        self._hydrate_plugin_connection_editor(dialog, connection)
 
     def _fetch_daemon_editor_generation(self, dialog, connection):
         """Load the authoritative daemon editor snapshot (non-blocking).
