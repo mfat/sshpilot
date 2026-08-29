@@ -153,9 +153,6 @@ class _MutationWindow:
     def _rows_for_connection(self, connection):
         return []
 
-    def _warn_if_effective_config_differs(self, connection, connection_data):
-        return None
-
     def _apply_saved_connection_meta(self, nickname, meta):
         return None
 

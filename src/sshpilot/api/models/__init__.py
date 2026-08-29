@@ -115,6 +115,7 @@ from .interactions import (
     PresencePrompt,
     RememberPolicy,
     SecretDecision,
+    SecretPromptKind,
 )
 from .keys import (
     DeleteKeyRequest,
@@ -438,6 +439,7 @@ __all__ = [
     "SecretDecision",
     "SecretOperationResult",
     "SecretOperationState",
+    "SecretPromptKind",
     "SecretTransferResult",
     "SecretUnlockResult",
     "ServiceFailure",

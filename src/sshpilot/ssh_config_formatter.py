@@ -34,6 +34,21 @@ MANAGED_HOST_OPTIONS = frozenset({
 })
 
 
+def _authored_directives(data: Dict[str, Any]) -> frozenset:
+    """Lowercased directives the Host block itself authored.
+
+    Populated by the config loader as ``__authored_directives``. An empty set
+    means "unknown" (a record that did not come from a parsed Host block), so
+    callers must treat absence as "no evidence", never as "authored nothing".
+    """
+    raw = data.get('__authored_directives') or ()
+    if not isinstance(raw, (tuple, list, set, frozenset)):
+        return frozenset()
+    return frozenset(
+        str(name).strip().lower() for name in raw if str(name).strip()
+    )
+
+
 def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     """Format connection data as SSH config entry"""
     def _quote_token(token: str) -> str:
@@ -62,15 +77,18 @@ def format_ssh_config_entry(data: Dict[str, Any]) -> str:
     if host != '' and host != nickname:
         lines.append(f"    HostName {host}")
     # Omit User when empty: a bare "User" line is a fatal ssh_config parse
-    # error that makes ssh reject the ENTIRE file, and ssh defaults to the
-    # local user anyway (as does parse_host_config on read-back).
+    # error that makes ssh reject the ENTIRE file. An empty value here means
+    # the block never authored a User, so OpenSSH resolves it (possibly from a
+    # global block) — writing one would silently change which account is used.
     username = str(data.get('username', '') or '').strip()
     if username:
         lines.append(f"    User {username}")
 
-    # Add port if specified and not default
+    # Port 22 is written only when the block actually authored it; otherwise it
+    # is this module's default and emitting it would override an inherited Port.
+    authored = _authored_directives(data)
     port = data.get('port')
-    if port and port != 22:  # Only add port if it's not the default 22
+    if port and (port != 22 or 'port' in authored):
         lines.append(f"    Port {port}")
 
     # Proxy settings

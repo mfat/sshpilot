@@ -13,17 +13,16 @@ terminal connections to the same host worked again, but the already-open
 file manager tab kept failing operations and never recovered until the
 whole app was restarted.
 
-Root cause (fixed): ``SftpServiceRuntime`` has no background health check on
-a live process, so a mid-session death is only discoverable reactively, per
-operation. ``_map_error`` now recognizes an unambiguous connection-loss
+Root cause (fixed in two layers): a live SFTP process had no reaper, so a
+mid-session death was only discoverable on the next filesystem operation.
+The runner now polls the ``ssh … -s sftp`` child the same way terminal
+sessions do, and ``_map_error`` still treats an unambiguous connection-loss
 error (``ErrorCode.SFTP_PROTOCOL_LOST`` -- a raw ``EOFError``/``OSError``,
-e.g. a broken pipe from a severed SSH connection, or an SFTP-protocol
-``FX_NO_CONNECTION``/``FX_CONNECTION_LOST`` reply) and flips the service
-record to FAILED via ``SftpServiceRuntime._fail_dead_connection``,
-publishing it through the same event path startup failures already use.
-Deliberately NOT included: a generic SFTP-protocol ``FX_FAILURE`` reply
-(e.g. "directory not empty") -- that is a legitimate per-request error, not
-proof the whole service/connection is dead, so it must not fail the tab.
+e.g. a broken pipe, or an SFTP-protocol ``FX_NO_CONNECTION`` /
+``FX_CONNECTION_LOST`` reply) as service death if the reaper has not
+already flipped the record. Deliberately NOT included: a generic
+SFTP-protocol ``FX_FAILURE`` reply (e.g. "directory not empty") -- that is
+a legitimate per-request error, not proof the whole service is dead.
 That FAILED event reaches ``DaemonSftpServiceController._on_open_accepted``,
 which fires ``on_error`` -> ``DaemonSftpManager``'s ``connection-error`` ->
 ``FileManagerWindow``'s Retry UI, and every subsequent op on that tab is now
@@ -126,9 +125,11 @@ class _FakeSftpHandle:
 class _FakeSftpRunner:
     def __init__(self, client):
         self._client = client
+        self.on_exit = None
 
-    def start(self, spec):
+    def start(self, spec, on_exit=None):
         del spec
+        self.on_exit = on_exit
         return _FakeSftpHandle(self._client)
 
     def close(self):
@@ -277,3 +278,42 @@ def test_reconnect_after_dead_connection_recovers_the_tab():
         "/tmp", on_success=results.append, on_error=lambda e: pytest.fail(str(e))
     )
     assert len(results) == 1
+
+
+def test_process_exit_fails_the_tab_without_an_operation():
+    """The ssh child exiting must surface Retry immediately, like a terminal."""
+    owner = ClientId("client:owner")
+    sftp_client = _FlakySftpClient()
+    runner = _FakeSftpRunner(sftp_client)
+    runtime = SftpServiceRuntime(_CoreClient(), runner=runner)
+    _open_ready(runtime, owner)
+
+    mock_client = Mock()
+    capabilities = Mock()
+    capabilities.supported = required_daemon_sftp_capabilities()
+    mock_client.get_capabilities.return_value = capabilities
+    mock_client.open_sftp.side_effect = lambda req: runtime.prepare_open_service(
+        req, client_id=owner
+    )
+    mock_client.sftp_list_directory.side_effect = lambda req: runtime.list_directory(
+        req, client_id=owner
+    )
+    mock_client.subscribe_events.side_effect = runtime.subscribe_events
+
+    errors = []
+    controller = DaemonSftpServiceController(
+        client=mock_client,
+        bridge=_SyncBridge(),
+        connection_id=ConnectionId("demo"),
+        on_error=errors.append,
+    )
+    controller.open()
+    runtime.start_service(controller.service_id)
+    assert controller.state is SftpControllerState.READY
+    assert runner.on_exit is not None
+
+    runner.on_exit(255)
+
+    assert controller.state is SftpControllerState.FAILED
+    assert len(errors) == 1
+    assert errors[0].code is ErrorCode.SFTP_SERVICE_NOT_READY

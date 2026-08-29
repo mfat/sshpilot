@@ -12,6 +12,19 @@ Stability: **stable**.
 * `HOST_KEY_CONFIRMATION` — accept / reject
 * `PASSWORD` / `PRIVATE_KEY_PASSPHRASE` — submit secret or cancel
 
+## Password prompt presentation
+
+Ordinary SSH `PasswordPrompt` values carry a safe `username` and `hostname`, a
+null `secret_prompt_kind`, and an empty `secret_prompt_parameters` object.
+
+Protected prompts owned by `SecretBackendService` instead carry empty
+`username`/`hostname` fields, a stable `SecretPromptKind`, and exactly the
+validated non-secret parameters allowed for that kind. The daemon does not
+send a rendered English heading or body and does not select an interface
+language. GTK maps the kind to gettext msgids, translates when presenting the
+dialog, then applies the parameters. Email addresses, client IDs, backend
+names, and other dynamic values remain data and are never msgids.
+
 ## Eligibility
 
 Only the session/SFTP/forward **originating client** (or attachments) may list/claim/respond.

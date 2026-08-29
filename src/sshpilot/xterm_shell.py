@@ -221,6 +221,10 @@ def _build_shell_html_impl(
 
   term.open(document.getElementById("terminal"));
   term.onData(d => send({{ type: "input", data: d }}));
+  // X10 mouse (Ubuntu 18.04/20.04 ncurses) is 8-bit and goes through onBinary,
+  // not onData. SGR mouse is ASCII and stays on onData. Base64 keeps high
+  // bytes intact across the JSON script-message bridge.
+  term.onBinary(d => send({{ type: "input", encoding: "binary", data: btoa(d) }}));
   // OSC 0/2 title changes (remote shell prompt) — used as connect evidence.
   term.onTitleChange(t => send({{ type: "title", title: t }}));
 

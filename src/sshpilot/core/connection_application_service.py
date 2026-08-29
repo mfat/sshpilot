@@ -77,6 +77,7 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "check_unsaved_host": Capability.CONNECTIONS_READ,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
@@ -225,6 +226,81 @@ class ConnectionApplicationService:
         argv, environment = self.prepare_daemon_terminal_launch(
             connection_id,
             interaction_policy="none",
+        )
+        approved_environment = tuple(
+            sorted(
+                (name, value)
+                for name, value in environment.items()
+                if name == "SSH_AUTH_SOCK"
+            )
+        )
+        details = self.get_connection(connection_id)
+        return ExternalTerminalLaunchSpec(
+            argv=tuple(argv),
+            environment=approved_environment,
+            display_name=details.nickname,
+            secret_autofill_supported=False,
+        )
+
+    # SSH directive each editable core field authors when set explicitly.
+    _FIELD_DIRECTIVES = {"hostname": "hostname", "username": "user", "port": "port"}
+
+    @staticmethod
+    def _apply_explicit_authorship(
+        data: Dict[str, Any], request: UpdateConnectionRequest
+    ) -> None:
+        """Mark directives the editor set explicitly as authored by this block.
+
+        Authorship cannot be inferred by comparing values. The editor shows an
+        inherited value in the field, so a user who deliberately pins that same
+        value — ``Port 22`` under a global ``Port 2222``, say — produces no
+        value change at all. Only the request tells us they meant it: a field
+        the editor sent is a field the user set. Conversely an explicitly
+        emptied field returns to inheriting.
+
+        Without this the block would keep resolving from the global, and the
+        launch path would emit no option for it, so the edit would silently do
+        nothing.
+        """
+        authored = {
+            str(name).strip().lower()
+            for name in (data.get("__authored_directives") or ())
+            if str(name).strip()
+        }
+        for field_name, directive in (
+            ConnectionApplicationService._FIELD_DIRECTIVES.items()
+        ):
+            value = getattr(request, field_name)
+            if value is UNSET or value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                authored.discard(directive)
+            else:
+                authored.add(directive)
+        data["__authored_directives"] = tuple(sorted(authored))
+
+    def get_launch_command(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        """Return the SSH command this connection actually runs.
+
+        Uses the ``normal`` interaction policy — the one a real in-app session
+        launches with — so the argv matches what OpenSSH is executed with.
+        :meth:`prepare_external_terminal_launch` deliberately uses ``none``,
+        which adds ``BatchMode=yes``/``StrictHostKeyChecking=yes``; that is
+        correct for handing a session to a terminal emulator but wrong as an
+        answer to "what does this connection run", and a copied BatchMode
+        command cannot prompt for a password or an unknown host key.
+
+        The daemon's private askpass transport is injected later, by the
+        interaction broker, and is process-local — it is deliberately not part
+        of this argv, which is meant to be readable and re-runnable by hand.
+        Only ``SSH_AUTH_SOCK`` crosses in the environment, and no secret does.
+        """
+        self._assert_command_thread()
+        argv, environment = self.prepare_daemon_terminal_launch(
+            connection_id,
+            interaction_policy="normal",
         )
         approved_environment = tuple(
             sorted(
@@ -914,7 +990,9 @@ class ConnectionApplicationService:
                 # spawning ``ssh -G`` for every nickname/alias in the store.
                 # This keeps the optional save-prompt check bounded and does
                 # not hold configuration serialization across an O(N) probe.
-                if requested_identity in self._saved_destination_identities(record):
+                if requested_identity in self._saved_destination_identities(
+                    record, requested_identity
+                ):
                     saved = True
                     break
         return UnsavedHostCheckResult(
@@ -962,7 +1040,9 @@ class ConnectionApplicationService:
             str(proxy_value or "none").casefold(),
         )
 
-    def _saved_destination_identities(self, record: ConnectionRecord) -> set[tuple]:
+    def _saved_destination_identities(
+        self, record: ConnectionRecord, requested: Optional[tuple] = None
+    ) -> set[tuple]:
         proxy_jump = tuple(record.data.get("proxy_jump") or ()) if record.data else ()
         # ``hostname`` is the saved destination identity.  Nicknames and
         # aliases are presentation/configuration labels; resolving every one
@@ -970,8 +1050,26 @@ class ConnectionApplicationService:
         # repository.  The requested side is resolved by OpenSSH, so an alias
         # used by the ad-hoc connection still matches a saved concrete target.
         values = {record.hostname, record.host, *(record.aliases or ())}
-        user = str(record.username or "").strip() or getpass.getuser()
-        port = int(record.port or 22)
+        # A directive the Host block never authored is inherited, and only the
+        # requested side has been resolved through OpenSSH (resolving every
+        # saved record would mean an ``ssh -G`` per alias). Let an unauthored
+        # component match whatever the requested destination resolved to, so an
+        # already-saved host that inherits its account or port is not reported
+        # as unsaved. Guessing the local username here produced exactly that
+        # false "unsaved" prompt.
+        # An empty authorship set means "no evidence" (a record that did not
+        # come from a parsed Host block), never "authored nothing" — in that
+        # case keep the record's own values so matching stays exact.
+        authored = record.authored_directives
+        inherits = (
+            (lambda directive: directive not in authored)
+            if authored and requested
+            else (lambda directive: False)
+        )
+        user = str(record.username or "").strip()
+        if not user:
+            user = str(requested[1]) if inherits("user") else getpass.getuser()
+        port = int(requested[2]) if inherits("port") else int(record.port or 22)
         proxy = ",".join(proxy_jump).casefold() or "none"
         return {
             (self._normalize_host(str(value)), user, port, proxy)
@@ -1237,6 +1335,7 @@ class ConnectionApplicationService:
             value = getattr(request, name)
             if value is not None and value is not UNSET:
                 data[name] = value
+        self._apply_explicit_authorship(data, request)
         if request.config_patch:
             self._apply_config_patch(data, request.config_patch)
         if request.plugin_data:
@@ -1603,6 +1702,7 @@ class ConnectionApplicationService:
             preferred_authentications=preferred_text,
             source=record.source or str(data.get("source") or ""),
             generation=record.generation,
+            authored_directives=tuple(sorted(record.authored_directives)),
         )
 
     @staticmethod

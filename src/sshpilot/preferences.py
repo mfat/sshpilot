@@ -677,7 +677,9 @@ class PreferencesWindow(Adw.NavigationPage):
         self.paste_on_right_click_switch = Adw.SwitchRow()
         self.paste_on_right_click_switch.set_title(_("Paste on right-click"))
         self.paste_on_right_click_switch.set_subtitle(
-            _("Right-click pastes; Shift+right-click opens the menu")
+            _("Right-click pastes; Shift+right-click opens the menu. "
+              "Disabled automatically while a remote app (htop, vim, tmux) "
+              "is using the mouse.")
         )
         paste_on_right_click_active = bool(self.config.get_setting('terminal.paste_on_right_click', False))
         self.paste_on_right_click_switch.set_active(paste_on_right_click_active)
@@ -2411,17 +2413,14 @@ class PreferencesWindow(Adw.NavigationPage):
         ssh_settings_page.set_title("SSH")
         ssh_settings_page.set_icon_name("network-workgroup-symbolic")
 
+        # Group description wraps fully; ActionRow subtitles ellipsize at one
+        # line by default, which is too tight for this precedence note.
         help_group = Adw.PreferencesGroup()
-        help_row = Adw.ActionRow()
-        help_row.set_title(_("Custom SSH Options"))
-        help_row.set_subtitle(
-            _("These settings override values from your ~/.ssh/config.")
+        help_group.set_title(_("Custom SSH Options"))
+        help_group.set_description(
+            _("These settings apply to all connections and override values from "
+              "~/.ssh/config. Explicit per-connection settings always win.")
         )
-        if hasattr(help_row, "set_activatable"):
-            help_row.set_activatable(False)
-        if hasattr(help_row, "set_selectable"):
-            help_row.set_selectable(False)
-        help_group.add(help_row)
 
         advanced_group = Adw.PreferencesGroup(title=_("SSH Settings"))
 
@@ -3221,7 +3220,9 @@ class PreferencesWindow(Adw.NavigationPage):
                 if hasattr(self, attr):
                     getattr(self, attr).set_visible(name == 'keepassxc')
             if hasattr(self, 'secret_session_timeout_row'):
-                self.secret_session_timeout_row.set_visible(session)
+                # rbw-agent has its own ``lock_timeout`` config; sshPilot's idle
+                # timeout applies to in-process session vaults (bw / kdbx).
+                self.secret_session_timeout_row.set_visible(session and name != 'rbw')
             if hasattr(self, 'forget_master_row'):
                 self.forget_master_row.set_visible(session)
                 self._refresh_forget_master_row()
@@ -3236,7 +3237,7 @@ class PreferencesWindow(Adw.NavigationPage):
                 elif name == 'bitwarden':
                     hint = _("Uses the bw CLI. See bitwarden.com/help/cli.")
                 elif name == 'rbw':
-                    hint = _("Uses the rbw CLI + agent. Unlock with rbw (github.com/doy/rbw).")
+                    hint = _("Uses the rbw CLI + agent. github.com/doy/rbw")
                 else:
                     hint = ""
                 try:
@@ -3371,8 +3372,8 @@ class PreferencesWindow(Adw.NavigationPage):
                 self._setup_bitwarden_backend_async(_done)
                 return
             if name == 'rbw':
-                # rbw owns its own unlock (agent + pinentry); make it ready — installed,
-                # configured, unlocked — prompting only when something is missing.
+                # Install/config wizard; locked vaults then use the same GTK
+                # master-password dialog (with Remember) as Bitwarden/KeePass.
                 from .rbw_setup import ensure_rbw_ready
                 ensure_rbw_ready(self, _done)
                 return

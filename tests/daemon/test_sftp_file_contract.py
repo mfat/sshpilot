@@ -376,7 +376,9 @@ class _RemoteFakeRunner:
         self.handles = []
         self.closed = False
 
-    def start(self, spec):
+    def start(self, spec, on_exit=None):
+        del spec
+        self.on_exit = on_exit
         handle = _RemoteFakeHandle(self.client)
         self.handles.append(handle)
         return handle

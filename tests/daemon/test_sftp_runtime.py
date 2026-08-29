@@ -158,8 +158,11 @@ class _FakeSftpRunner:
     def __init__(self):
         self.handles = []
         self.closed = False
+        self.on_exit = None
 
-    def start(self, spec):
+    def start(self, spec, on_exit=None):
+        del spec
+        self.on_exit = on_exit
         handle = _FakeSftpHandle(_FakeSftpClient())
         self.handles.append(handle)
         return handle
@@ -492,3 +495,135 @@ def test_list_directory_resolves_home_once_per_service():
     runtime.list_directory(request, client_id=owner)
 
     assert realpath_calls == ["."]
+
+
+def test_unexpected_process_exit_fails_ready_service_without_an_operation():
+    """A dead ssh child must fail the service immediately, like a terminal."""
+    from sshpilot.api.events import EventType
+
+    runtime, runner = _make_runtime()
+    events = []
+    runtime.subscribe_events(events.append)
+    owner, summary, _client = _ready_service(runtime, runner)
+    assert runner.on_exit is not None
+
+    runner.on_exit(255)
+
+    assert runtime.get_service(summary.id).state is SftpServiceState.FAILED
+    failed = [event for event in events if event.type is EventType.SFTP_FAILED]
+    assert len(failed) == 1
+    assert failed[0].payload.failure is not None
+    assert failed[0].payload.failure.code == ErrorCode.SFTP_PROTOCOL_LOST.value
+
+
+def test_process_exit_during_close_does_not_fail_the_service():
+    runtime, runner = _make_runtime()
+    owner, summary, _client = _ready_service(runtime, runner)
+    close_request = CloseSftpRequest(service_id=summary.id)
+    assert runtime.prepare_close_service(close_request, client_id=owner)
+    runner.on_exit(0)
+    runtime.finish_close_service(summary.id)
+    assert runtime.get_service(summary.id).state is SftpServiceState.CLOSED
+
+
+def test_subprocess_handle_notifies_once_when_process_exits():
+    import subprocess
+    import sys
+    from types import SimpleNamespace
+
+    from sshpilot.daemon.sftp_runtime import _SubprocessSftpHandle
+
+    process = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
+    seen = []
+    handle = _SubprocessSftpHandle(
+        process,
+        SimpleNamespace(close=lambda: None),
+        seen.append,
+        lambda _handle: None,
+    )
+    assert process.wait(timeout=5) == 0
+    assert handle.poll_and_notify() is True
+    assert seen == [0]
+    assert handle.poll_and_notify() is True
+    assert seen == [0]
+
+
+def _list_tmp(runtime, summary, owner):
+    return runtime.list_directory(
+        ListDirectoryRequest(
+            connection_id=ConnectionId("demo"),
+            service_id=summary.id,
+            path="/tmp",
+        ),
+        client_id=owner,
+    )
+
+
+def test_connection_lost_status_fails_service_with_specific_message():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _lost(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_CONNECTION_LOST, "Connection lost")
+
+    client.listdir_attr = _lost
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.SFTP_PROTOCOL_LOST
+    assert raised.value.message == "The SFTP connection was lost"
+    failed = runtime.get_service(summary.id)
+    assert failed.state is SftpServiceState.FAILED
+    assert failed.failure.message == "The SFTP connection was lost"
+
+
+def test_permission_denied_status_keeps_service_ready():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _denied(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_PERMISSION_DENIED, "Permission denied")
+
+    client.listdir_attr = _denied
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.REMOTE_PERMISSION_DENIED
+    assert raised.value.message == "Permission denied"
+    assert runtime.get_service(summary.id).state is SftpServiceState.READY
+
+
+def test_fx_failure_keeps_generic_command_message_and_ready_service():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _fail(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "Failure")
+
+    client.listdir_attr = _fail
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
+    assert raised.value.message == "The SFTP command failed"
+    assert runtime.get_service(summary.id).state is SftpServiceState.READY
+
+
+def test_fx_failure_with_server_text_is_surfaced():
+    runtime, _runner = _make_runtime()
+    owner, summary, client = _ready_service(runtime, _runner)
+
+    def _fail(_path):
+        raise sftp_proto.SFTPError(sftp_proto.FX_FAILURE, "Directory not empty")
+
+    client.listdir_attr = _fail
+    with pytest.raises(SshPilotError) as raised:
+        _list_tmp(runtime, summary, owner)
+
+    assert raised.value.code is ErrorCode.SFTP_COMMAND_FAILED
+    assert raised.value.message == "Directory not empty"
+    assert runtime.get_service(summary.id).state is SftpServiceState.READY

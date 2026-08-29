@@ -354,6 +354,7 @@ DAEMON_IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "get_operation_mode": Capability.OPERATION_MODE,
     "get_ssh_config_text": Capability.CONNECTIONS_CONFIG_READ,
     "prepare_external_terminal_launch": Capability.EXTERNAL_TERMINAL_LAUNCH,
+    "get_launch_command": Capability.EXTERNAL_TERMINAL_LAUNCH,
     "clear_session_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "set_group_color": Capability.CONNECTIONS_GROUPS,
@@ -818,6 +819,19 @@ class DaemonClient:
             self._fail_protocol(
                 "The daemon returned an invalid external terminal launch spec"
             )
+
+    def get_launch_command(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        self._require_capability(Capability.EXTERNAL_TERMINAL_LAUNCH)
+        result = self._request(
+            "connections.get_launch_command",
+            {"connection_id": connection_id},
+        )
+        try:
+            return external_terminal_launch_spec_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid launch command")
 
     def save_ssh_config_text(self, request: SaveSshConfigTextRequest) -> SshConfigText:
         """Save raw SSH config text through the daemon's hardened write path."""

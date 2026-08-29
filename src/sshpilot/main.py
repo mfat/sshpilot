@@ -167,6 +167,27 @@ from .platform_utils import is_macos, get_data_dir, get_state_dir
 from .file_manager_integration import should_hide_file_manager_options
 from .startup_info import print_startup_info
 
+
+def apply_terminal_menu_bar_accel_setting(window=None) -> None:
+    """Stop GTK from stealing F10 so function keys reach the terminal.
+
+    GTK 3 defaulted ``gtk-menu-bar-accel`` to F10, which opened the
+    application menu instead of sending F10 to htop/mc/vim. That GtkSettings
+    property does not exist in GTK 4; the equivalent is
+    :meth:`Gtk.Window.set_handle_menubar_accel` (since 4.2). Pass-through
+    mode cannot fix this because F10 is not an sshPilot shortcut.
+    """
+    if window is None:
+        return
+    setter = getattr(window, "set_handle_menubar_accel", None)
+    if setter is None:
+        return
+    try:
+        setter(False)
+    except Exception:
+        logger.debug("Could not disable handle-menubar-accel")
+
+
 class SshPilotApplication(Adw.Application):
     """Main application class for sshPilot"""
 
@@ -448,6 +469,7 @@ class SshPilotApplication(Adw.Application):
         builds never call ``install_menubar``.
         """
         Adw.Application.do_startup(self)
+        self.connect("window-added", self._disable_menubar_accel_on_window)
 
         if getattr(self, "_macos_menubar_installed", False):
             return
@@ -460,6 +482,9 @@ class SshPilotApplication(Adw.Application):
             self._macos_menubar_installed = True
         except Exception as exc:
             logger.error("Failed to install macOS menubar: %s", exc)
+
+    def _disable_menubar_accel_on_window(self, _app, window) -> None:
+        apply_terminal_menu_bar_accel_setting(window)
 
     def _schedule_startup_diagnostics(self, retries_left: int = 25) -> None:
         """Print startup diagnostics once the daemon client selection settles.

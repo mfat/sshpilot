@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.41",
+  "api_implementation_version": "0.45",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -208,6 +208,10 @@
     "get_interaction": {
       "capability": "interactions.read",
       "status": "daemon-only"
+    },
+    "get_launch_command": {
+      "capability": "terminal.external_launch",
+      "status": "implemented"
     },
     "get_operation": {
       "capability": "operations.read",
@@ -659,6 +663,9 @@
     },
     "connections.get_effective_config": {
       "capability": "connections.config.read"
+    },
+    "connections.get_launch_command": {
+      "capability": "terminal.external_launch"
     },
     "connections.get_plugin_secret": {
       "capability": "connections.secrets.reveal"
@@ -1454,6 +1461,18 @@
     "SecretDecision": [
       "submit",
       "cancel"
+    ],
+    "SecretPromptKind": [
+      "bitwarden_sign_in",
+      "bitwarden_authentication_challenge",
+      "bitwarden_two_step_login",
+      "bitwarden_api_key",
+      "bitwarden_unlock",
+      "keepass_database_create",
+      "keepass_unlock",
+      "remember_master_password",
+      "backup_encrypt",
+      "backup_decrypt"
     ],
     "SessionState": [
       "created",
@@ -2372,6 +2391,13 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": [],
+          "name": "authored_directives",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
         }
       ],
       "status": "Implemented"
@@ -5010,6 +5036,20 @@
           "required": true,
           "sensitive": false,
           "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "secret_prompt_kind",
+          "required": false,
+          "sensitive": false,
+          "type": "SecretPromptKind | None"
+        },
+        {
+          "default": {},
+          "name": "secret_prompt_parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
         }
       ],
       "status": "Schema only"
@@ -7069,7 +7109,7 @@
           "name": "port",
           "required": false,
           "sensitive": false,
-          "type": "int | None | UNSET"
+          "type": "int | str | None | UNSET"
         },
         {
           "default": "`UNSET`",

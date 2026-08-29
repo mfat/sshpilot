@@ -371,3 +371,79 @@ def test_unknown_directive_casing_survives_edit(tmp_path):
         expected_generation=0,
     )
     assert "ServerAliveInterval 60" in _text(tmp_path)
+
+
+# --- unauthored values are never materialised --------------------------------
+#
+# OpenSSH resolves `ssh <alias>` with first-obtained-value-wins, so writing a
+# value the block never authored does not just mislead — it really does start
+# overriding an earlier `Host *`. Editing one field must not author others.
+
+
+GLOBAL_FIRST = (
+    "Host *\n"
+    "    User tom\n"
+    "    Port 2222\n"
+    "\n"
+    "Host bare\n"
+    "    HostName bare.example.com\n"
+)
+
+
+def test_editing_a_block_without_user_does_not_write_one(tmp_path):
+    store = _store(tmp_path, GLOBAL_FIRST)
+    record = next(r for r in store.load().connections if r.nickname == "bare")
+    prepared = store.prepare_update(
+        record.id, {**record.to_dict(), "port": 2200}, expected_generation=None
+    )
+    prepared.commit(store)
+
+    text = _text(tmp_path)
+    assert "User" not in text.split("Host bare")[1]
+    # The global block is untouched and still owns the account.
+    assert "Host *\n    User tom\n    Port 2222\n" in text
+
+
+def test_unauthored_default_port_is_not_written_back(tmp_path):
+    store = _store(tmp_path, GLOBAL_FIRST)
+    record = next(r for r in store.load().connections if r.nickname == "bare")
+    prepared = store.prepare_update(
+        record.id,
+        {**record.to_dict(), "hostname": "renamed.example.com"},
+        expected_generation=None,
+    )
+    prepared.commit(store)
+
+    own_block = _text(tmp_path).split("Host bare")[1]
+    assert "Port" not in own_block
+    assert "renamed.example.com" in own_block
+
+
+def test_directive_after_include_is_not_copied_into_the_block_on_save(tmp_path):
+    """A directive following an ``Include`` must not be duplicated by saves.
+
+    OpenSSH still scopes such a directive to the enclosing Host (it applies to
+    that host and not to later ones), but it sits outside the block span the
+    writer owns. Re-emitting it inside the span left the original in place and
+    appended a fresh copy on every save, growing the file without bound.
+    """
+    text = (
+        "Host a\n"
+        "    HostName a.example.com\n"
+        "Include /nonexistent/conf.d/*\n"
+        "StrictHostKeyChecking no\n"
+    )
+    store = _store(tmp_path, text)
+    for index in range(3):
+        record = next(r for r in store.load().connections if r.nickname == "a")
+        store.prepare_update(
+            record.id,
+            {**record.to_dict(), "port": 2200 + index},
+            expected_generation=None,
+        ).commit(store)
+        assert _text(tmp_path).lower().count("stricthostkeychecking") == 1
+
+    final = _text(tmp_path)
+    # The authored line survives untouched, outside the block.
+    assert final.endswith("Include /nonexistent/conf.d/*\nStrictHostKeyChecking no\n")
+    assert "Port 2202" in final

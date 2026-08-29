@@ -382,3 +382,166 @@ def test_revision_is_deterministic_across_configs(tmp_path):
     # Same bytes on disk must hash identically regardless of access time.
     result2 = load_ssh_configuration(path, isolated=False)
     assert result.root_revision == result2.root_revision
+
+
+# --- authorship evidence ----------------------------------------------------
+#
+# OpenSSH resolves with first-obtained-value-wins, so a `Host *` block earlier
+# in the file beats a specific block. The loader therefore records what each
+# block *authored* and must never fabricate a value for a directive the block
+# omitted — a fabricated value gets written back on the next save and really
+# does override the global the user relied on.
+
+
+def test_absent_user_is_not_filled_in_with_the_local_account(tmp_path):
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    User tom\n\nHost bare\n    HostName bare.example.com\n",
+        encoding="utf-8",
+    )
+    record = _only_record(load_ssh_configuration(path, isolated=False), "bare")
+    assert record.username == ""
+    assert "user" not in record.authored_directives
+
+
+def test_authored_directives_report_exactly_the_blocks_own_options(tmp_path):
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n"
+        "    User tom\n"
+        "    Port 2222\n"
+        "\n"
+        "Host web\n"
+        "    HostName web.example.com\n"
+        "    User alice\n",
+        encoding="utf-8",
+    )
+    record = _only_record(load_ssh_configuration(path, isolated=False), "web")
+    assert record.username == "alice"
+    assert record.authored_directives == frozenset({"hostname", "user"})
+    # The global's Port is not this block's, so the default must stay unauthored.
+    assert record.port == 22
+    assert "port" not in record.authored_directives
+
+
+def test_wildcard_block_never_becomes_authorship_evidence(tmp_path):
+    path = tmp_path / "config"
+    path.write_text(
+        "Host prod-*\n    User deploy\n\nHost prod-a\n    HostName a.example.com\n",
+        encoding="utf-8",
+    )
+    record = _only_record(load_ssh_configuration(path, isolated=False), "prod-a")
+    assert "user" not in record.authored_directives
+    assert record.username == ""
+
+
+def _only_record(loaded, nickname):
+    matches = [r for r in loaded.connections if r.nickname == nickname]
+    assert len(matches) == 1, f"expected one {nickname!r} record, got {matches!r}"
+    return matches[0]
+
+
+def test_explicitly_set_port_is_authored_even_when_it_equals_the_default(tmp_path):
+    """Pinning `Port 22` under a global `Port 2222` must be written and emitted.
+
+    Authorship cannot come from comparing values: the editor shows the
+    inherited port, so pinning it changes nothing. The request carries the
+    intent, and the daemon records it.
+    """
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+    from sshpilot.api.models.identity import ConnectionId
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    User tom\n    Port 2222\n\nHost web\n    HostName web.example.com\n",
+        encoding="utf-8",
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(path),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(
+        repo, client_name="test", allow_cross_thread_commands=True
+    )
+
+    before = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "port" not in before.authored_directives
+
+    service.update_connection(ConnectionId("web"), UpdateConnectionRequest(port=22))
+
+    after = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "port" in after.authored_directives
+    assert "    Port 22\n" in path.read_text(encoding="utf-8")
+    # The global block is untouched.
+    assert "Host *\n    User tom\n    Port 2222\n" in path.read_text(encoding="utf-8")
+
+
+def test_explicitly_cleared_username_returns_to_inheriting(tmp_path):
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+    from sshpilot.api.models.identity import ConnectionId
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    User tom\n\nHost web\n    HostName web.example.com\n    User alice\n",
+        encoding="utf-8",
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(path),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(
+        repo, client_name="test", allow_cross_thread_commands=True
+    )
+
+    service.update_connection(ConnectionId("web"), UpdateConnectionRequest(username=""))
+
+    after = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "user" not in after.authored_directives
+    assert "User alice" not in path.read_text(encoding="utf-8")
+
+
+def test_clearing_the_port_returns_the_host_to_the_inherited_one(tmp_path):
+    """An emptied Port field must remove the line, like an emptied username.
+
+    Forcing a port on every save is what stopped a global ``Port`` from ever
+    applying: the block always carried one, and the launch path always emitted
+    ``-p`` for it.
+    """
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+    from sshpilot.api.models.identity import ConnectionId
+    from sshpilot.core.connection_application_service import ConnectionApplicationService
+    from sshpilot.core.connections.repository import ConnectionRepository
+    from sshpilot.core.connections.ssh_config_store import SshConfigStore
+
+    path = tmp_path / "config"
+    path.write_text(
+        "Host *\n    Port 2323\n\nHost web\n    HostName web.example.com\n    Port 2200\n",
+        encoding="utf-8",
+    )
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(path),
+        state_path=tmp_path / "connections.json",
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+    service = ConnectionApplicationService(
+        repo, client_name="test", allow_cross_thread_commands=True
+    )
+
+    service.update_connection(ConnectionId("web"), UpdateConnectionRequest(port=""))
+
+    text = path.read_text(encoding="utf-8")
+    assert "Port 2200" not in text
+    assert "Host *\n    Port 2323\n" in text  # the global is untouched
+    after = _only_record(load_ssh_configuration(path, isolated=True), "web")
+    assert "port" not in after.authored_directives

@@ -18,12 +18,61 @@ from ..api.models import (
     InteractionSummary,
     PasswordPrompt,
     RememberPolicy,
+    SecretPromptKind,
 )
 from ..daemon.secret_backend_service import (
     MASTER_PASSWORD_PROMPT_TITLE,
     is_secret_service_session,
 )
 from ..daemon_interaction_dialogs import DaemonInteractionDialogs
+from ..i18n import N_
+
+
+_SECRET_PROMPT_MESSAGES = {
+    SecretPromptKind.BITWARDEN_SIGN_IN: (
+        N_("Bitwarden sign-in"),
+        N_("Enter the Bitwarden master password for {email}"),
+    ),
+    SecretPromptKind.BITWARDEN_AUTHENTICATION_CHALLENGE: (
+        N_("Authentication challenge"),
+        N_(
+            "Enter the Bitwarden API client secret to complete the "
+            "authentication challenge"
+        ),
+    ),
+    SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN: (
+        N_("Two-step login code"),
+        N_("Enter the two-step login code for {email}"),
+    ),
+    SecretPromptKind.BITWARDEN_API_KEY: (
+        N_("Bitwarden API key"),
+        N_("Enter the API key client secret for {client_id}"),
+    ),
+    SecretPromptKind.BITWARDEN_UNLOCK: (
+        N_("Unlock Bitwarden"),
+        N_("Enter the Bitwarden master password to unlock the vault"),
+    ),
+    SecretPromptKind.KEEPASS_DATABASE_CREATE: (
+        N_("New KeePass database"),
+        N_("Enter a master password for the new KeePass database"),
+    ),
+    SecretPromptKind.KEEPASS_UNLOCK: (
+        N_("Unlock KeePass"),
+        N_("Enter the master password to unlock the KeePass database"),
+    ),
+    SecretPromptKind.REMEMBER_MASTER_PASSWORD: (
+        N_("Remember master password"),
+        N_("Enter the master password to remember for {name}"),
+    ),
+    SecretPromptKind.BACKUP_ENCRYPT: (
+        N_("Encrypt backup"),
+        N_("Enter a passphrase to encrypt the backup"),
+    ),
+    SecretPromptKind.BACKUP_DECRYPT: (
+        N_("Decrypt backup"),
+        N_("Enter the passphrase to decrypt the backup"),
+    ),
+}
 
 
 class SecretsInteractionPresenter(DaemonInteractionDialogs):
@@ -70,10 +119,12 @@ class SecretsInteractionPresenter(DaemonInteractionDialogs):
     def _present_secret(self, summary, parent) -> None:
         prompt = summary.prompt
         if isinstance(prompt, PasswordPrompt):
-            if prompt.username == MASTER_PASSWORD_PROMPT_TITLE:
+            if prompt.secret_prompt_kind is not None:
+                self._present_titled_secret(summary, prompt, parent)
+            elif prompt.username == MASTER_PASSWORD_PROMPT_TITLE:
                 self._present_master_password(summary, prompt, parent)
             else:
-                self._present_titled_secret(summary, prompt, parent)
+                super()._present_secret(summary, parent)
             return
         super()._present_secret(summary, parent)
 
@@ -81,20 +132,22 @@ class SecretsInteractionPresenter(DaemonInteractionDialogs):
         """Any other protected secret the daemon asks for: a two-step login
         code, an API client secret, a backup passphrase.
 
-        These used to render through :meth:`_present_master_password`, so a
-        dialog collecting a two-step code was headed "Unlock …" and asked for
-        "the master password" — naming the wrong secret entirely. The daemon
-        sends the heading in ``username`` (what is being asked for) and the
-        sentence in ``hostname`` (see
-        ``SecretBackendService._prompt_for_secret_with_status``); no remember
-        checkbox, since none of these are stored.
+        The daemon sends only a stable prompt kind and safe dynamic parameters.
+        This frontend maps that code to gettext msgids, translates at display
+        time, and only then formats the parameters. No remember checkbox is
+        shown, since none of these values are stored.
         """
         from ..window_dialogs import present_for_modal_dialog, show_ssh_password_dialog
 
+        kind = prompt.secret_prompt_kind
+        if kind is None:
+            raise ValueError("structured secret prompt kind is required")
         present_for_modal_dialog(parent)
         self._dialogs[summary.id] = None
-        heading = prompt.username
-        body = prompt.hostname
+        title_msgid, body_msgid = _SECRET_PROMPT_MESSAGES[kind]
+        parameters = dict(prompt.secret_prompt_parameters)
+        heading = _(title_msgid).format(**parameters)
+        body = _(body_msgid).format(**parameters)
         if body and not body.endswith((".", "?", "!")):
             body = f"{body}."
         try:

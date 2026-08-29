@@ -9,7 +9,8 @@ from sshpilot.core.connection_application_service import (
 def test_connection_service_only_declares_connection_operations():
     assert set(IMPLEMENTED_CLIENT_METHOD_CAPABILITIES) == {
         "close", "get_capabilities", "get_connection", "get_connection_editor",
-        "get_ssh_config_text", "get_effective_config", "check_unsaved_host", "prepare_external_terminal_launch", "save_ssh_config_text",
+        "get_ssh_config_text", "get_effective_config", "check_unsaved_host", "prepare_external_terminal_launch", "get_launch_command",
+        "save_ssh_config_text",
         "list_connections", "create_connection", "duplicate_connection",
         "delete_connection", "store_connection_password",
         "set_session_connection_password",
@@ -44,3 +45,15 @@ def test_launcher_validates_capabilities_before_returning_client():
     source = DaemonLauncher._connect.__code__.co_names
     assert "get_capabilities" in source
     assert "MISSING_CAPABILITY" in source
+
+
+def test_update_request_accepts_empty_port_as_the_clear_signal():
+    """`""` clears an authored Port; anything else non-numeric stays invalid."""
+    import pytest
+    from sshpilot.api.models.connections import UpdateConnectionRequest
+
+    assert UpdateConnectionRequest(port="").port == ""
+    assert UpdateConnectionRequest(port=2200).port == 2200
+    for bad in ("22a", "abc", 0, 70000):
+        with pytest.raises(ValueError):
+            UpdateConnectionRequest(port=bad)

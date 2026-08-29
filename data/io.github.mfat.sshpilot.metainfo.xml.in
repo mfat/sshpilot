@@ -61,6 +61,13 @@
 
 
 
+    <release version="5.9.9" date="2026-08-29">
+      <description>
+        <p>New &quot;Copy SSH Command&quot; context-menu action</p>
+        <p>Fixes rbw secret backend</p>
+        <p>Other bug fixes and improvements</p>
+      </description>
+    </release>
     <release version="5.9.8" date="2026-08-28">
       <description>
         <p>Fixed Bitwarden login issue</p>

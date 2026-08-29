@@ -126,7 +126,7 @@ non-negative. `ReplayRequest.max_bytes` defaults to 1 MiB and is limited to
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
 | `HostKeyPrompt` | Safe host/port/key-type/SHA256 fingerprint and trust status | Daemon implemented |
-| `PasswordPrompt` | Safe login identity, attempt, and remember availability | Daemon implemented |
+| `PasswordPrompt` | Safe SSH login identity or structured secret-prompt kind/parameters, plus attempt and remember availability | Daemon implemented |
 | `PassphrasePrompt` | Safe key display identity, attempt, and remember availability | Daemon implemented |
 | `InteractionSummary` | Immutable typed lifecycle snapshot | Daemon implemented |
 | `InteractionClaim` | Responder ownership plus one-use nonce | Daemon implemented; nonce excluded from `repr` and events |
@@ -138,7 +138,10 @@ non-negative. `ReplayRequest.max_bytes` defaults to 1 MiB and is limited to
 | `InteractionRejection` | Rejection record | Schema only |
 
 Runtime interactions use strict `InteractionType`, `InteractionState`,
-`HostKeyDecision`, `SecretDecision`, and `RememberPolicy` enums. The decision
+`HostKeyDecision`, `SecretDecision`, `RememberPolicy`, and `SecretPromptKind`
+enums. A structured secret prompt has empty `username`/`hostname`, a known
+`SecretPromptKind`, and the exact validated string parameters for that kind;
+an ordinary SSH password prompt has no kind or parameters. The decision
 DTO contains no secret value. Password/passphrase bytes use the separately
 negotiated one-use secret frame after a claim and metadata response reserve an
 exact nonce. The retained legacy `InteractionResponse.value` is excluded from

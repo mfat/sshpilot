@@ -431,7 +431,22 @@ def test_core_connection_service_rejects_leading_dash_host_alias():
         service.create({"nickname": "-oProxyCommand", "hostname": "host"})
 
 
-def test_unsaved_host_check_uses_daemon_snapshot_identity():
+def test_unsaved_host_check_uses_daemon_snapshot_identity(monkeypatch):
+    # Resolution is stubbed: the real helper shells out to `ssh -G` with no
+    # `-F`, so it reads whoever runs the suite from ~/.ssh/config. A developer
+    # with a global `Host *` block (`Port 2323`, say) would see this fail for
+    # reasons that have nothing to do with the code under test.
+    from sshpilot.core import ssh_config_effective
+
+    def fake_effective(host, *_args, **kwargs):
+        resolved = {"hostname": host.casefold(), "port": "22"}
+        if kwargs.get("user"):
+            resolved["user"] = kwargs["user"]
+        if kwargs.get("port") is not None:
+            resolved["port"] = str(kwargs["port"])
+        return resolved
+
+    monkeypatch.setattr(ssh_config_effective, "get_effective_ssh_config", fake_effective)
     repo = FakeRepository([_record(record_id="prod", hostname="example.com", username="alice")])
     service = ConnectionApplicationService(repo, client_name="test")
 
@@ -795,6 +810,37 @@ def test_external_terminal_launch_is_daemon_prepared_and_non_secret():
     assert spec.argv == ("/usr/bin/ssh", "-F", "/daemon/isolated/ssh_config", "web")
     assert spec.environment == (("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock"),)
     assert spec.secret_autofill_supported is False
+    assert "password" not in repr(spec).lower()
+
+
+def test_launch_command_uses_the_policy_a_real_session_launches_with():
+    """`get_launch_command` must answer "what does this connection run".
+
+    `prepare_external_terminal_launch` deliberately uses the ``none`` policy,
+    which adds BatchMode/StrictHostKeyChecking. Copying that would hand the
+    user a command that cannot prompt for a password or an unknown host key.
+    """
+    seen = []
+
+    class LaunchProvider:
+        def prepare_terminal_launch(
+            self, connection_id, *, interaction_policy="none", remote_command=None, force_tty=False
+        ):
+            seen.append(interaction_policy)
+            return ("/usr/bin/ssh", "-p", "2200", "-l", "alice", "web"), {
+                "SSH_AUTH_SOCK": "/run/user/1000/ssh-agent.sock",
+                "SSH_ASKPASS": "/should-not-cross",
+            }
+
+    service = ConnectionApplicationService(
+        FakeRepository([_record()]), launch_provider=LaunchProvider(), client_name="test"
+    )
+    spec = service.get_launch_command(ConnectionId("web"))
+    assert seen == ["normal"]
+    assert spec.argv == ("/usr/bin/ssh", "-p", "2200", "-l", "alice", "web")
+    # The daemon's private askpass transport never reaches a copyable command.
+    assert spec.environment == (("SSH_AUTH_SOCK", "/run/user/1000/ssh-agent.sock"),)
+    assert "askpass" not in repr(spec).lower()
     assert "password" not in repr(spec).lower()
 
 

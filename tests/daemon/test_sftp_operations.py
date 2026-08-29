@@ -177,7 +177,7 @@ class _Runner:
         self.client = client
         self.closed = False
 
-    def start(self, _spec):
+    def start(self, _spec, _on_exit=None):
         return SimpleNamespace(client=self.client)
 
     def close(self):

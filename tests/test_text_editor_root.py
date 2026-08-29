@@ -436,3 +436,26 @@ def test_root_save_failure_keeps_dirty_state(monkeypatch, tmp_path):
     assert ed._has_unsaved_changes is True
     assert save_button.values[-1] is True
     assert "upload" not in ed.toast.lower()
+
+
+def test_outline_refresh_not_scheduled_while_loading(monkeypatch):
+    """set_text() during load must not rebuild the Host/Match list 300ms later.
+
+    That rebuild used to steal focus from the text view so mouse drag-selection
+    only worked once (GH #1215).
+    """
+    scheduled = []
+    monkeypatch.setattr(
+        text_editor.GLib, "timeout_add",
+        lambda *_args, **_kwargs: scheduled.append(True) or 1,
+    )
+    ed = Ed.__new__(Ed)
+    ed._is_loading = True
+    ed._outline_refresh_id = 0
+
+    ed._on_outline_buffer_changed(None)
+    assert scheduled == []
+
+    ed._is_loading = False
+    ed._on_outline_buffer_changed(None)
+    assert scheduled == [True]

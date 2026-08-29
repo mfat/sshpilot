@@ -110,6 +110,49 @@ def parse_ssh_config_outline(text: str):
     return out
 
 
+def _buffer_selection_bounds(buffer):
+    """Return ``(start, end)`` iters when *buffer* has a selection, else None.
+
+    PyGObject's ``get_selection_bounds`` is ``(has, start, end)`` on some
+    builds and ``(start, end)`` (or ``ValueError``) on others.
+    """
+    try:
+        bounds = buffer.get_selection_bounds()
+    except (ValueError, TypeError):
+        return None
+    if not bounds:
+        return None
+    if len(bounds) == 3:
+        has_sel, start, end = bounds
+        if not has_sel or start is None or end is None:
+            return None
+        return start, end
+    if len(bounds) == 2:
+        start, end = bounds
+        if start is None or end is None or start.equal(end):
+            return None
+        return start, end
+    return None
+
+
+def collapse_selection_if_click_inside(buffer, click_iter) -> bool:
+    """Collapse the selection when *click_iter* is inside it.
+
+    GtkTextView treats a drag that starts inside a selection as drag-and-drop
+    of the selected text, not a new selection. After that DND starts, further
+    mouse selection often never works again (GH #1215). Collapsing first makes
+    the built-in drag gesture start a new selection instead.
+    """
+    bounds = _buffer_selection_bounds(buffer)
+    if bounds is None:
+        return False
+    start, end = bounds
+    if click_iter.in_range(start, end) or click_iter.equal(end):
+        buffer.place_cursor(click_iter)
+        return True
+    return False
+
+
 def prettify_path(path: str, home: Optional[str]) -> str:
     """Collapse a leading home directory to ``~`` for display.
 
@@ -429,6 +472,7 @@ class RemoteFileEditorWindow(Adw.Window):
         content_box.append(scrolled)
         
         scrolled.set_child(self._source_view)
+        self._install_selection_drag_fix()
         
         # Wrap editor in toast overlay for status messages (same style as file manager)
         toast_overlay = Adw.ToastOverlay()
@@ -440,6 +484,9 @@ class RemoteFileEditorWindow(Adw.Window):
             # Host/Match navigation sidebar (SSH config editor only).
             outline_scroller = Gtk.ScrolledWindow()
             outline_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            # Click-to-jump only: if the list or its rows take keyboard focus,
+            # GtkTextView drag-selection stops after the first use (GH #1215).
+            outline_scroller.set_can_focus(False)
             self._outline_scroller = outline_scroller
             # Honour the persisted show/hide preference.
             outline_scroller.set_visible(
@@ -447,6 +494,8 @@ class RemoteFileEditorWindow(Adw.Window):
             self._outline_listbox = Gtk.ListBox()
             self._outline_listbox.add_css_class("navigation-sidebar")
             self._outline_listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+            self._outline_listbox.set_can_focus(False)
+            self._outline_listbox.set_focus_on_click(False)
             self._outline_listbox.connect("row-activated", self._on_outline_row_activated)
             outline_scroller.set_child(self._outline_listbox)
 
@@ -587,6 +636,174 @@ class RemoteFileEditorWindow(Adw.Window):
         self._search_settings = None
         self._search_context = None
         self._gtksource_enabled = False
+
+    def _install_selection_drag_fix(self) -> None:
+        """Make hold-and-drag always start a new selection (GH #1215)."""
+        self._selection_debug_updates = 0
+        click = Gtk.GestureClick()
+        click.set_button(1)
+        click.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        click.connect("pressed", self._on_editor_pointer_pressed)
+        click.connect("released", self._on_editor_pointer_released)
+        self._source_view.add_controller(click)
+
+        try:
+            controllers = self._source_view.observe_controllers()
+            n = controllers.get_n_items()
+        except Exception:
+            n = 0
+            controllers = None
+        hooked_drag = False
+        for i in range(n):
+            ctrl = controllers.get_item(i)
+            if isinstance(ctrl, Gtk.GestureDrag):
+                ctrl.connect("drag-begin", self._on_editor_drag_begin)
+                ctrl.connect("drag-update", self._on_editor_drag_update)
+                ctrl.connect("drag-end", self._on_editor_drag_end)
+                hooked_drag = True
+            elif isinstance(ctrl, Gtk.DragSource):
+                ctrl.connect("drag-begin", self._on_editor_dnd_begin)
+                ctrl.connect("drag-end", self._on_editor_dnd_end)
+        self._source_view.connect("notify::has-focus", self._on_editor_focus_notify)
+        try:
+            self._buffer.connect(
+                "notify::has-selection", self._on_editor_has_selection_notify
+            )
+        except Exception:
+            pass
+        self._source_view.connect_after("realize", self._detach_primary_clipboard)
+        if self._source_view.get_realized():
+            self._detach_primary_clipboard()
+        display = Gdk.Display.get_default()
+        logger.debug(
+            "editor-selection install view=%s hooked_drag=%s display=%s backend=%s",
+            type(self._source_view).__name__,
+            hooked_drag,
+            display.get_name() if display else None,
+            type(display).__name__ if display else None,
+        )
+
+    def _detach_primary_clipboard(self, *_args) -> None:
+        """Stop publishing the selection on PRIMARY (GH #1215).
+
+        GtkTextView registers the buffer with the primary clipboard on realize.
+        On KDE/Wayland a clipboard manager (Klipper) often takes PRIMARY as
+        soon as it is set, which clears the buffer selection — the highlight
+        flashes ``sel=(a,b)`` then ``sel=None`` on every motion, and drag-end
+        has no selection. Ctrl+C still uses the regular clipboard.
+        """
+        try:
+            clipboard = self._source_view.get_primary_clipboard()
+            self._buffer.remove_selection_clipboard(clipboard)
+        except Exception as e:
+            logger.debug("editor-selection detach-primary failed: %s", e)
+            return
+        logger.debug("editor-selection detached primary clipboard")
+
+    def _selection_offsets(self):
+        bounds = _buffer_selection_bounds(self._buffer)
+        if bounds is None:
+            return None
+        return bounds[0].get_offset(), bounds[1].get_offset()
+
+    def _selection_focus_name(self) -> str:
+        try:
+            w = self.get_focus()
+        except Exception:
+            return "?"
+        if w is None:
+            return "none"
+        return type(w).__name__
+
+    def _log_selection(self, event: str, **fields) -> None:
+        if not logger.isEnabledFor(logging.DEBUG):
+            return
+        fields.setdefault("focus", self._selection_focus_name())
+        try:
+            fields.setdefault("view_focus", self._source_view.has_focus())
+        except Exception:
+            pass
+        fields.setdefault("sel", self._selection_offsets())
+        parts = " ".join(f"{k}={v!r}" for k, v in fields.items())
+        logger.debug("editor-selection %s %s", event, parts)
+
+    def _iter_at_view_coords(self, x: float, y: float):
+        loc = self._source_view.window_to_buffer_coords(
+            Gtk.TextWindowType.WIDGET, int(x), int(y)
+        )
+        if isinstance(loc, tuple) and len(loc) == 3:
+            _ok, buf_x, buf_y = loc
+        else:
+            buf_x, buf_y = loc
+        result = self._source_view.get_iter_at_location(int(buf_x), int(buf_y))
+        return result[1] if isinstance(result, tuple) else result
+
+    def _on_editor_pointer_pressed(self, gesture, n_press: int, x: float, y: float) -> None:
+        try:
+            state = gesture.get_current_event_state()
+        except Exception:
+            state = Gdk.ModifierType(0)
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        click_iter = None
+        offset = None
+        if n_press == 1 and not shift:
+            click_iter = self._iter_at_view_coords(x, y)
+            if click_iter is not None:
+                try:
+                    offset = click_iter.get_offset()
+                except Exception:
+                    offset = None
+        collapsed = False
+        if click_iter is not None:
+            collapsed = collapse_selection_if_click_inside(self._buffer, click_iter)
+        self._log_selection(
+            "press",
+            n_press=n_press,
+            x=int(x),
+            y=int(y),
+            offset=offset,
+            shift=shift,
+            collapsed=collapsed,
+            can_target=self._source_view.get_can_target(),
+        )
+
+    def _on_editor_pointer_released(self, _gesture, n_press: int, x: float, y: float) -> None:
+        self._log_selection("release", n_press=n_press, x=int(x), y=int(y))
+
+    def _on_editor_drag_begin(self, _gesture, _x: float, _y: float) -> None:
+        self._selection_debug_updates = 0
+        self._log_selection("drag-begin")
+
+    def _on_editor_drag_update(self, _gesture, offset_x: float, offset_y: float) -> None:
+        self._selection_debug_updates += 1
+        if self._selection_debug_updates > 2:
+            return
+        self._log_selection(
+            "drag-update",
+            n=self._selection_debug_updates,
+            dx=int(offset_x),
+            dy=int(offset_y),
+        )
+
+    def _on_editor_drag_end(self, _gesture, offset_x: float, offset_y: float) -> None:
+        self._log_selection(
+            "drag-end",
+            updates=self._selection_debug_updates,
+            dx=int(offset_x),
+            dy=int(offset_y),
+        )
+
+    def _on_editor_dnd_begin(self, *_args) -> None:
+        self._log_selection("dnd-begin")
+
+    def _on_editor_dnd_end(self, *_args) -> None:
+        self._log_selection("dnd-end")
+
+    def _on_editor_focus_notify(self, *_args) -> None:
+        self._log_selection("focus")
+
+    def _on_editor_has_selection_notify(self, *_args) -> None:
+        self._log_selection("has-selection")
 
     # ---------- color scheme + sidebar preferences ----------
 
@@ -832,6 +1049,8 @@ class RemoteFileEditorWindow(Adw.Window):
             
             # Mark loading as complete - now modification events will be handled
             self._is_loading = False
+            if self._outline_listbox is not None:
+                self._refresh_outline()
             
         except Exception as e:
             logger.error(f"Failed to load file content: {e}", exc_info=True)
@@ -902,6 +1121,10 @@ class RemoteFileEditorWindow(Adw.Window):
     # ---------- Host/Match outline sidebar ----------
 
     def _on_outline_buffer_changed(self, _buffer) -> None:
+        # Skip while the file is still being loaded: set_text() would schedule a
+        # rebuild that races the first mouse selection and can steal focus.
+        if self._is_loading:
+            return
         # Debounce: rebuild shortly after edits settle, not on every keystroke.
         if self._outline_refresh_id:
             GLib.source_remove(self._outline_refresh_id)
@@ -924,6 +1147,7 @@ class RemoteFileEditorWindow(Adw.Window):
         for line_index, kind, label in self._outline_rows:
             row = Gtk.ListBoxRow()
             row._line_index = line_index  # consumed by row-activated
+            row.set_focusable(False)
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
             for fn in (box.set_margin_top, box.set_margin_bottom,
                        box.set_margin_start, box.set_margin_end):

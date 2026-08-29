@@ -60,6 +60,7 @@ class HeadlessConnectionView:
             self.identity_agent_disabled = False
             self.identity_agent_directive = identity_agent
         self._password: Optional[str] = None
+        self._effective_username: Optional[str] = None
 
     # -- plain attribute passthrough ----------------------------------------
 
@@ -82,6 +83,41 @@ class HeadlessConnectionView:
     @property
     def username(self) -> str:
         return _string(self._record.username)
+
+    @property
+    def effective_username(self) -> str:
+        """The account OpenSSH resolves for this host.
+
+        Equals :attr:`username` whenever the Host block authored ``User``. When
+        it did not, the account is inherited — from a global block or from
+        OpenSSH's own local-user default — and only ``ssh -G`` knows it. Secret
+        lookup and user-facing labels must use this, never the authored value,
+        which is empty in exactly that case.
+
+        Resolved once per view; failures fall back to the authored value rather
+        than guessing a local username.
+        """
+        if self._effective_username is not None:
+            return self._effective_username
+        resolved = self.username
+        if not resolved:
+            host_label = self.resolve_host_identifier() or self.get_effective_host()
+            if host_label:
+                try:
+                    from ..core.ssh_config_effective import get_effective_ssh_config
+
+                    config_override = self._resolve_config_override_path()
+                    effective = get_effective_ssh_config(
+                        host_label, config_file=config_override
+                    )
+                    resolved = _string(effective.get("user"))
+                except Exception:
+                    logger.debug(
+                        "Could not resolve effective username", exc_info=True
+                    )
+                    resolved = ""
+        self._effective_username = resolved
+        return resolved
 
     @property
     def port(self) -> int:

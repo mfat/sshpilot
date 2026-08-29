@@ -45,6 +45,7 @@ from .shortcut_utils import install_esc_to_close
 from .ssh_key_fingerprint import (
     _fingerprint_for_path,
 )
+from .ssh_config_formatter import MANAGED_HOST_OPTIONS
 from .ssh_connection_validator import (  # SSHConnectionValidator also re-exported for tests/back-compat
     SSHConnectionValidator,
     ValidationResult,
@@ -141,6 +142,10 @@ def _editor_details_to_connection(details):
         protocol=getattr(details, 'protocol', None) or 'ssh',
         proxy_jump=getattr(details, 'proxy_jump', None) or (),
         forward_agent=bool(getattr(details, 'forward_agent', False)),
+        forward_agent_explicit_no=bool(
+            getattr(details, 'forward_agent_explicit_no', False)
+        ),
+        forward_agent_target=getattr(details, 'forward_agent_target', '') or '',
         auth_method=(
             1 if authentication_method == AuthenticationMethod.PASSWORD else 0
         ),
@@ -164,7 +169,195 @@ def _editor_details_to_connection(details):
         source=getattr(details, 'source', '') or '',
         generation=getattr(details, 'generation', 0) or 0,
         data=getattr(details, 'data', None) or {},
+        authored_directives=frozenset(
+            getattr(details, 'authored_directives', None) or ()
+        ),
     )
+
+
+_FORWARD_AGENT_NO = frozenset({"no", "false", "0", "off"})
+_FORWARD_AGENT_YES = frozenset({"yes", "true", "1", "on"})
+_FORWARD_AGENT_FIELDS = (
+    "forward_agent",
+    "forward_agent_explicit_no",
+    "forward_agent_target",
+)
+_FORWARD_AGENT_MODES = ("default", "yes", "no", "path", "env")
+_FORWARD_AGENT_INHERIT = {
+    "forward_agent": False,
+    "forward_agent_explicit_no": False,
+    "forward_agent_target": "",
+}
+
+
+def _forward_agent_fields_from_connection(connection) -> Dict[str, Any]:
+    data = getattr(connection, "data", None)
+    data = data if isinstance(data, dict) else {}
+
+    def _get(name, default=None):
+        value = getattr(connection, name, None)
+        if value is None or value == "":
+            value = data.get(name, default)
+        return value
+
+    return {
+        "forward_agent": bool(_get("forward_agent", False)),
+        "forward_agent_explicit_no": bool(_get("forward_agent_explicit_no", False)),
+        "forward_agent_target": str(_get("forward_agent_target", "") or ""),
+    }
+
+
+def forward_agent_text_from_fields(
+    *,
+    forward_agent: bool = False,
+    forward_agent_explicit_no: bool = False,
+    forward_agent_target: str = "",
+) -> str:
+    """ssh_config(5) ForwardAgent token: yes, no, a socket, or $ENV."""
+    target = str(forward_agent_target or "").strip()
+    if target:
+        return target
+    if forward_agent_explicit_no:
+        return "no"
+    if forward_agent:
+        return "yes"
+    return ""
+
+
+def forward_agent_fields_from_text(text: str) -> Dict[str, Any]:
+    """Split an ssh_config ForwardAgent token into the persistence fields.
+
+    Empty means inherit: the Host block authors no ForwardAgent line.
+    """
+    value = str(text or "").strip()
+    if not value:
+        return dict(_FORWARD_AGENT_INHERIT)
+    lowered = value.lower()
+    if lowered in _FORWARD_AGENT_NO:
+        return {
+            "forward_agent": False,
+            "forward_agent_explicit_no": True,
+            "forward_agent_target": "",
+        }
+    if lowered in _FORWARD_AGENT_YES:
+        return {
+            "forward_agent": True,
+            "forward_agent_explicit_no": False,
+            "forward_agent_target": "",
+        }
+    return {
+        "forward_agent": True,
+        "forward_agent_explicit_no": False,
+        "forward_agent_target": value,
+    }
+
+
+def _normalize_forward_agent_env(extra: str) -> str:
+    extra = str(extra or "").strip()
+    if not extra:
+        return ""
+    return extra if extra.startswith("$") else f"${extra}"
+
+
+def forward_agent_mode_from_fields(
+    *,
+    forward_agent: bool = False,
+    forward_agent_explicit_no: bool = False,
+    forward_agent_target: str = "",
+) -> tuple[str, str]:
+    """Return ``(mode, extra)`` for the ForwardAgent combo + value row."""
+    target = str(forward_agent_target or "").strip()
+    if target:
+        if target.startswith("$"):
+            return "env", target
+        return "path", target
+    if forward_agent_explicit_no:
+        return "no", ""
+    if forward_agent:
+        return "yes", ""
+    return "default", ""
+
+
+def forward_agent_fields_from_mode(mode: str, extra: str = "") -> Dict[str, Any]:
+    """Combo selection plus the path/env field → persistence fields."""
+    kind = str(mode or "default").strip().lower()
+    extra = str(extra or "").strip()
+    if kind == "yes":
+        return {
+            "forward_agent": True,
+            "forward_agent_explicit_no": False,
+            "forward_agent_target": "",
+        }
+    if kind == "no":
+        return {
+            "forward_agent": False,
+            "forward_agent_explicit_no": True,
+            "forward_agent_target": "",
+        }
+    if kind == "path":
+        if not extra:
+            return dict(_FORWARD_AGENT_INHERIT)
+        return {
+            "forward_agent": True,
+            "forward_agent_explicit_no": False,
+            "forward_agent_target": extra,
+        }
+    if kind == "env":
+        extra = _normalize_forward_agent_env(extra)
+        if not extra:
+            return dict(_FORWARD_AGENT_INHERIT)
+        return {
+            "forward_agent": True,
+            "forward_agent_explicit_no": False,
+            "forward_agent_target": extra,
+        }
+    return dict(_FORWARD_AGENT_INHERIT)
+
+
+def forward_agent_text_from_connection(connection) -> str:
+    return forward_agent_text_from_fields(**_forward_agent_fields_from_connection(connection))
+
+
+def forward_agent_mode_from_connection(connection) -> tuple[str, str]:
+    return forward_agent_mode_from_fields(**_forward_agent_fields_from_connection(connection))
+
+
+_IDENTITY_AGENT_MODES = ("default", "none", "ssh_auth_sock", "path", "env")
+
+
+def identity_agent_mode_from_value(value: str) -> tuple[str, str]:
+    """Return ``(mode, extra)`` for the IdentityAgent combo + value row."""
+    token = str(value or "").strip()
+    if not token:
+        return "default", ""
+    if token.lower() == "none":
+        return "none", ""
+    if token.upper() == "SSH_AUTH_SOCK":
+        return "ssh_auth_sock", ""
+    if token.startswith("$"):
+        return "env", token
+    return "path", token
+
+
+def identity_agent_value_from_mode(mode: str, extra: str = "") -> str:
+    """Combo selection plus the path/env field → IdentityAgent token.
+
+    Empty means inherit. ``SSH_AUTH_SOCK`` (no ``$``) is the ssh_config(5)
+    special token; a leading ``$`` names an environment variable.
+    """
+    kind = str(mode or "default").strip().lower()
+    extra = str(extra or "").strip()
+    if kind == "none":
+        return "none"
+    if kind == "ssh_auth_sock":
+        return "SSH_AUTH_SOCK"
+    if kind == "path":
+        return extra
+    if kind == "env":
+        if not extra:
+            return ""
+        return extra if extra.startswith("$") else f"${extra}"
+    return ""
 
 
 class _AuthMethodToggleFallback(Gtk.Box):
@@ -285,6 +478,44 @@ def _set_action_row_child(row, widget):
         row.add_prefix(widget)
 
 
+# OpenSSH keywords offered on the Advanced tab. Directives in
+# MANAGED_HOST_OPTIONS already have typed dialog fields (or are Host-block
+# structure) and must not appear here: the loader routes them out of
+# extra_ssh_config, so they would vanish from this tab after save/reload.
+_OPENSSH_ADVANCED_KEYWORDS = (
+    'AddKeysToAgent', 'AddressFamily', 'BatchMode', 'BindAddress', 'BindInterface',
+    'CanonicalDomains', 'CanonicalizeFallbackLocal', 'CanonicalizeHostname',
+    'CanonicalizeMaxDots', 'CanonicalizePermittedCNAMEs', 'CASignatureAlgorithms',
+    'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
+    'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
+    'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
+    'ExitOnForwardFailure', 'FingerprintHash', 'ForwardX11',
+    'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
+    'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
+    'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
+    'GSSAPITrustDns', 'HashKnownHosts', 'Host', 'HostbasedAcceptedAlgorithms',
+    'HostbasedAuthentication', 'HostKeyAlgorithms', 'HostKeyAlias', 'HostName',
+    'IdentitiesOnly', 'IdentityAgent', 'IdentityFile', 'IgnoreUnknown', 'Include',
+    'IPQoS', 'KbdInteractiveAuthentication', 'KbdInteractiveDevices', 'KexAlgorithms',
+    'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
+    'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
+    'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
+    'PreferredAuthentications', 'ProxyCommand', 'ProxyUseFdpass',
+    'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
+    'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
+    'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
+    'StdinNull', 'StreamLocalBindMask', 'StreamLocalBindUnlink', 'StrictHostKeyChecking',
+    'SyslogFacility', 'TCPKeepAlive', 'Tunnel', 'TunnelDevice', 'UpdateHostKeys',
+    'User', 'UserKnownHostsFile', 'UsePrivilegedPort', 'VerifyHostKeyDNS',
+    'VisualHostKey', 'XAuthLocation',
+)
+
+ADVANCED_TAB_SSH_OPTIONS = tuple(
+    name for name in _OPENSSH_ADVANCED_KEYWORDS
+    if name.lower() not in MANAGED_HOST_OPTIONS
+)
+
+
 class SSHConfigEntry(GObject.Object):
     """Data model for SSH config entries"""
     
@@ -305,35 +536,8 @@ class SSHConfigAdvancedTab(Gtk.Box):
 
         self.connection_manager = connection_manager
         self.parent_dialog = parent_dialog
-        
-        # SSH config options list
-        self.ssh_options = [
-            'AddKeysToAgent', 'AddressFamily', 'BatchMode', 'BindAddress', 'BindInterface',
-            'CanonicalDomains', 'CanonicalizeFallbackLocal', 'CanonicalizeHostname',
-            'CanonicalizeMaxDots', 'CanonicalizePermittedCNAMEs', 'CASignatureAlgorithms',
-            'CertificateFile', 'CheckHostIP', 'Ciphers', 'ClearAllForwardings', 'Compression',
-            'ConnectionAttempts', 'ConnectTimeout', 'ControlMaster', 'ControlPath',
-            'ControlPersist', 'DynamicForward', 'EnableSSHKeysign', 'EscapeChar',
-            'ExitOnForwardFailure', 'FingerprintHash', 'ForwardX11',
-            'ForwardX11Timeout', 'ForwardX11Trusted', 'GatewayPorts', 'GlobalKnownHostsFile',
-            'GSSAPIAuthentication', 'GSSAPIClientIdentity', 'GSSAPIDelegateCredentials',
-            'GSSAPIKeyExchange', 'GSSAPIRenewalForcesRekey', 'GSSAPIServerIdentity',
-            'GSSAPITrustDns', 'HashKnownHosts', 'Host', 'HostbasedAcceptedAlgorithms',
-            'HostbasedAuthentication', 'HostKeyAlgorithms', 'HostKeyAlias', 'HostName',
-            'IdentitiesOnly', 'IdentityAgent', 'IdentityFile', 'IgnoreUnknown', 'Include',
-            'IPQoS', 'KbdInteractiveAuthentication', 'KbdInteractiveDevices', 'KexAlgorithms',
-            'KnownHostsCommand', 'LocalCommand', 'LocalForward', 'LogLevel', 'MACs', 'Match',
-            'NoHostAuthenticationForLocalhost', 'NumberOfPasswordPrompts', 'PasswordAuthentication',
-            'PermitLocalCommand', 'PermitRemoteOpen', 'PKCS11Provider', 'Port',
-            'PreferredAuthentications', 'ProxyCommand', 'ProxyUseFdpass',
-            'PubkeyAcceptedAlgorithms', 'PubkeyAuthentication', 'RekeyLimit', 'RemoteCommand',
-            'RemoteForward', 'RequestTTY', 'RequiredRSASize', 'RevokedHostKeys', 'SecurityKeyProvider',
-            'SendEnv', 'ServerAliveCountMax', 'ServerAliveInterval', 'SessionType', 'SetEnv',
-            'StdinNull', 'StreamLocalBindMask', 'StreamLocalBindUnlink', 'StrictHostKeyChecking',
-            'SyslogFacility', 'TCPKeepAlive', 'Tunnel', 'TunnelDevice', 'UpdateHostKeys',
-            'User', 'UserKnownHostsFile', 'UsePrivilegedPort', 'VerifyHostKeyDNS',
-            'VisualHostKey', 'XAuthLocation'
-        ]
+
+        self.ssh_options = list(ADVANCED_TAB_SSH_OPTIONS)
         
         # Store config entries
         self.config_entries = []
@@ -1978,6 +2182,112 @@ class ConnectionDialog(
         except Exception:
             return ''
 
+    def _selected_forward_agent_mode(self) -> str:
+        modes = getattr(self, "_forward_agent_modes", None) or _FORWARD_AGENT_MODES
+        try:
+            idx = int(self.forward_agent_row.get_selected())
+        except Exception:
+            return "default"
+        if 0 <= idx < len(modes):
+            return modes[idx]
+        return "default"
+
+    def _selected_forward_agent_fields(self) -> Dict[str, Any]:
+        mode = self._selected_forward_agent_mode()
+        extra = ""
+        if mode in ("path", "env"):
+            row = getattr(self, "forward_agent_value_row", None)
+            try:
+                extra = row.get_text().strip() if row is not None else ""
+            except Exception:
+                extra = ""
+        return forward_agent_fields_from_mode(mode, extra)
+
+    def _on_forward_agent_mode_changed(self, *_args):
+        mode = self._selected_forward_agent_mode()
+        value_row = getattr(self, "forward_agent_value_row", None)
+        browse = getattr(self, "_forward_agent_browse_btn", None)
+        if value_row is None:
+            return
+        show = mode in ("path", "env")
+        try:
+            value_row.set_visible(show)
+        except Exception:
+            pass
+        if browse is not None:
+            try:
+                browse.set_visible(mode == "path")
+            except Exception:
+                pass
+        if not show:
+            return
+        try:
+            if mode == "path":
+                value_row.set_title(_("Agent socket"))
+                value_row.set_subtitle(_("Path to an ssh-agent socket"))
+            else:
+                value_row.set_title(_("Environment variable"))
+                value_row.set_subtitle(
+                    _("Name of a variable holding the socket path, e.g. $SSH_AUTH_SOCK")
+                )
+        except Exception:
+            pass
+
+    def _selected_identity_agent_mode(self) -> str:
+        modes = getattr(self, "_identity_agent_modes", None) or _IDENTITY_AGENT_MODES
+        try:
+            idx = int(self.identity_agent_row.get_selected())
+        except Exception:
+            return "default"
+        if 0 <= idx < len(modes):
+            return modes[idx]
+        return "default"
+
+    def _selected_identity_agent(self) -> str:
+        if not hasattr(self, "identity_agent_row"):
+            return ""
+        mode = self._selected_identity_agent_mode()
+        extra = ""
+        if mode in ("path", "env"):
+            row = getattr(self, "identity_agent_value_row", None)
+            try:
+                extra = row.get_text().strip() if row is not None else ""
+            except Exception:
+                extra = ""
+        return identity_agent_value_from_mode(mode, extra)
+
+    def _on_identity_agent_mode_changed(self, *_args):
+        mode = self._selected_identity_agent_mode()
+        value_row = getattr(self, "identity_agent_value_row", None)
+        browse = getattr(self, "_identity_agent_browse_btn", None)
+        if value_row is None:
+            return
+        show = mode in ("path", "env")
+        try:
+            value_row.set_visible(show)
+        except Exception:
+            pass
+        if browse is not None:
+            try:
+                browse.set_visible(mode == "path")
+            except Exception:
+                pass
+        if not show:
+            return
+        try:
+            if mode == "path":
+                value_row.set_title(_("Agent socket"))
+                value_row.set_subtitle(
+                    _("Unix-domain socket; tilde and tokens are allowed")
+                )
+            else:
+                value_row.set_title(_("Environment variable"))
+                value_row.set_subtitle(
+                    _("Variable holding the socket path, e.g. $SSH_AUTH_SOCK")
+                )
+        except Exception:
+            pass
+
     def on_auth_method_changed(self, *args):
         """Reveal key-based vs password controls based on the auth ToggleGroup."""
         is_key_based = self._auth_is_key_based()
@@ -2257,8 +2567,12 @@ class ConnectionDialog(
                 proxy_hosts = [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()]
             if proxy_hosts:
                 config_lines.append(f"    ProxyJump {','.join(proxy_hosts)}")
-            if hasattr(self, 'forward_agent_row') and self.forward_agent_row.get_active():
-                config_lines.append("    ForwardAgent yes")
+            if hasattr(self, 'forward_agent_row'):
+                fa_text = forward_agent_text_from_fields(
+                    **self._selected_forward_agent_fields()
+                )
+                if fa_text:
+                    config_lines.append(f"    ForwardAgent {fa_text}")
 
             # Add authentication settings
             password_val = self.password_row.get_text().strip() if hasattr(self, 'password_row') else ''
@@ -2312,6 +2626,216 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
     User {getattr(self, 'username_row', None).get_text().strip() if hasattr(self, 'username_row') else 'user'}
     Port {getattr(self, 'port_row', None).get_text().strip() if hasattr(self, 'port_row') else '22'}"""
     
+    # Rows whose value OpenSSH can inherit, mapped to the ``ssh -G`` key that
+    # reports the resolved value. Accumulating directives (IdentityFile, the
+    # forwards) are deliberately absent: the command line cannot override them,
+    # so they are not presented as if this connection controlled them.
+    # (row attribute, ssh_config directive, `ssh -G` key). Every text row that
+    # maps to a directive OpenSSH can inherit belongs here — anything missing
+    # silently shows blank while the session uses the global's value.
+    #
+    # Deliberately absent:
+    #   * IdentityFile / CertificateFile / the forwards accumulate rather than
+    #     replace, so the command line cannot make this host's value win.
+    #   * display name, SSH alias, tags, Wake-on-LAN and the pre-connection
+    #     command are app metadata, not ssh_config directives.
+    #   * switch and combo rows (ForwardAgent, IdentityAgent, ForwardX11,
+    #     PubkeyAuthentication, IdentitiesOnly, AddKeysToAgent) always render
+    #     *some* state, so "inherited" cannot be shown by dimming their text.
+    #     ForwardAgent and IdentityAgent use Default as inherit.
+    _INHERITABLE_ROWS = (
+        ('hostname_row', 'hostname', 'hostname'),
+        ('username_row', 'user', 'user'),
+        ('port_row', 'port', 'port'),
+        ('proxy_jump_row', 'proxyjump', 'proxyjump'),
+        ('pkcs11_provider_row', 'pkcs11provider', 'pkcs11provider'),
+        ('security_key_provider_row', 'securitykeyprovider', 'securitykeyprovider'),
+        ('local_command_row', 'localcommand', 'localcommand'),
+        ('remote_command_row', 'remotecommand', 'remotecommand'),
+    )
+
+    # connection_data key each inheritable row feeds, so adopting an inherited
+    # value can force that field into the save delta.
+    _INHERITED_ROW_FIELDS = {
+        'hostname_row': 'hostname',
+        'username_row': 'username',
+        'port_row': 'port',
+        'proxy_jump_row': 'proxy_jump',
+        'pkcs11_provider_row': 'pkcs11_provider',
+        'security_key_provider_row': 'security_key_provider',
+        'local_command_row': 'local_command',
+        'remote_command_row': 'remote_command',
+    }
+
+    def _clear_inherited_row_state(self) -> None:
+        """Drop dim styling and edit watchers left by a previous load."""
+        handlers = getattr(self, '_inherited_row_handlers', None) or {}
+        for row_name, handler_id in list(handlers.items()):
+            row = getattr(self, row_name, None)
+            if row is None:
+                continue
+            try:
+                row.disconnect(handler_id)
+                row.remove_css_class('dim-label')
+                self._set_row_inherited_note(row, '')
+            except Exception:
+                logger.debug("Could not reset inherited row %s", row_name, exc_info=True)
+        self._inherited_row_handlers = {}
+
+    def _show_inherited_value(self, row_name, row, value) -> None:
+        """Put an inherited value in *row*, dimmed, and watch for adoption."""
+        handlers = getattr(self, '_inherited_row_handlers', None)
+        if handlers is None:
+            handlers = self._inherited_row_handlers = {}
+        if row_name in handlers:
+            row.disconnect(handlers.pop(row_name))
+
+        self._applying_inherited_value = True
+        try:
+            row.set_text(str(value))
+        finally:
+            self._applying_inherited_value = False
+
+        row.add_css_class('dim-label')
+        # Composed with any validation message rather than replacing it: a row
+        # has one tooltip, and setting it directly made whichever ran last win.
+        self._set_row_inherited_note(
+            row,
+            _('Inherited from your SSH configuration. Edit to set it for this host.'),
+        )
+        handlers[row_name] = row.connect(
+            'changed', lambda _row, name=row_name: self._on_inherited_row_edited(name)
+        )
+
+    def _on_inherited_row_edited(self, row_name) -> None:
+        """Adopt an inherited value once the user edits its row.
+
+        The row already holds the resolved value, so a user pinning it as-is
+        produces no text change. Authorship therefore follows the edit itself:
+        the field joins the save delta and the daemon writes it into this Host
+        block, where it stops being overridable by a global.
+        """
+        if getattr(self, '_applying_inherited_value', False):
+            return
+        if getattr(self, '_loading_connection_data', False):
+            return
+        row = getattr(self, row_name, None)
+        if row is not None:
+            row.remove_css_class('dim-label')
+            self._set_row_inherited_note(row, '')
+        handlers = getattr(self, '_inherited_row_handlers', None) or {}
+        handler_id = handlers.pop(row_name, None)
+        if handler_id is not None and row is not None:
+            row.disconnect(handler_id)
+        field = self._INHERITED_ROW_FIELDS.get(row_name)
+        if field:
+            adopted = getattr(self, '_adopted_inherited_fields', None)
+            if adopted is None:
+                adopted = self._adopted_inherited_fields = set()
+            adopted.add(field)
+            if field in _FORWARD_AGENT_FIELDS:
+                adopted.update(_FORWARD_AGENT_FIELDS)
+
+    def _load_inherited_values_async(self):
+        """Fill unauthored rows with what OpenSSH resolves, styled as inherited.
+
+        An unauthored field is not empty-because-unset: OpenSSH fills it from a
+        global block or its own default, and that is the value the session will
+        use. The row shows that real value, dimmed, so the form states the truth
+        while still distinguishing "inherited" from "set here".
+
+        Editing such a row adopts the value for this host — see
+        :meth:`_on_inherited_row_edited`. Authorship follows the edit, not a
+        value comparison, because pinning an inherited value (``Port 22`` under
+        a global ``Port 2222``) changes no text at all.
+
+        Resolution runs on the daemon's dedicated effective-config command key,
+        never on the shared configuration key, so a slow ``ssh -G`` cannot stall
+        unrelated configuration RPCs.
+        """
+        authored = getattr(self.connection, 'authored_directives', None)
+        if authored is None:
+            return
+        # Remember the text each row holds now: `ssh -G` runs off-thread, and a
+        # value the user typed meanwhile must never be overwritten by the
+        # inherited one that arrives late.
+        pending = []
+        for row_name, directive, ssh_key in self._INHERITABLE_ROWS:
+            if directive in authored:
+                continue
+            row = getattr(self, row_name, None)
+            if row is None:
+                continue
+            try:
+                pending.append((row_name, ssh_key, row.get_text()))
+            except Exception:
+                continue
+        if not pending:
+            return
+
+        parent = getattr(self, 'parent_window', None)
+        client = getattr(parent, 'client', None)
+        if not (
+            callable(getattr(parent, '_daemon_ready', None))
+            and parent._daemon_ready()
+            and callable(getattr(client, 'get_effective_config', None))
+        ):
+            return
+
+        aliases = {
+            str(getattr(self.connection, name, '') or '')
+            for name in ('nickname', 'host')
+        }
+
+        def _apply(resolved):
+            if not resolved:
+                return False
+            for row_name, ssh_key, text_at_schedule in pending:
+                value = resolved.get(ssh_key)
+                row = getattr(self, row_name, None)
+                if not value or row is None:
+                    continue
+                if row_name == 'hostname_row' and value in aliases:
+                    # `ssh -G` echoes the alias when no HostName is set. That is
+                    # the connection's own identity, not an inherited value.
+                    continue
+                try:
+                    if row.get_text() != text_at_schedule:
+                        continue  # edited while the daemon was resolving
+                    self._show_inherited_value(row_name, row, value)
+                except Exception:
+                    logger.debug(
+                        "Could not show inherited value for %s", row_name, exc_info=True
+                    )
+            # The rows were filled programmatically; re-baseline so an untouched
+            # inherited value is never mistaken for an edit and written back.
+            self._capture_editor_delta_baseline()
+            return False
+
+        def _start_worker():
+            def worker():
+                resolved = {}
+                try:
+                    from .api.connection_identity import connection_id_for
+                    result = client.get_effective_config(
+                        connection_id_for(self.connection)
+                    )
+                    if getattr(result, 'available', False):
+                        for line in getattr(result, 'full', ()) or ():
+                            key, _sep, value = str(line).partition(' ')
+                            # ssh -G repeats accumulating keys; first wins, which
+                            # matches the order OpenSSH itself applies them.
+                            resolved.setdefault(key.strip().lower(), value.strip())
+                except Exception:
+                    logger.debug(
+                        "Daemon effective-config lookup unavailable", exc_info=True
+                    )
+                GLib.idle_add(_apply, resolved)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        _start_worker()
+
     def _load_password_async(self):
         """Load the saved password into the masked editor field."""
         if not hasattr(self.connection, 'username'):
@@ -2441,7 +2965,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             "nickname": text("nickname_row"),
             "hostname": text("hostname_row"),
             "username": text("username_row"),
-            "port": int(text("port_row", "22") or "22"),
+            "port": (int(t) if (t := text("port_row")) else ""),
             "protocol": getattr(self.connection, "protocol", "ssh") or "ssh",
             "auth_method": int(self.auth_toggle.get_active()) if hasattr(self, "auth_toggle") else 0,
             "key_select_mode": self._selected_key_mode(),
@@ -2453,10 +2977,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 item.strip() for item in text("proxy_jump_row").replace(",", " ").split()
                 if item.strip()
             ),
-            "forward_agent": active("forward_agent_row"),
+            **self._selected_forward_agent_fields(),
             "x11_forwarding": active("x11_row"),
             "pubkey_auth_no": active("pubkey_auth_row"),
-            "identity_agent": text("identity_agent_row"),
+            "identity_agent": self._selected_identity_agent(),
             "pkcs11_provider": text("pkcs11_provider_row"),
             "security_key_provider": text("security_key_provider_row"),
             "pre_command": text("pre_command_row"),
@@ -2491,6 +3015,19 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 )
             if candidate != baseline.get(key):
                 changed.append(key)
+        # A field whose inherited value the user adopted has to be saved even
+        # though its text never changed — pinning `Port 22` under a global
+        # `Port 2222` is exactly that case, and comparing values would drop it.
+        for key in getattr(self, '_adopted_inherited_fields', None) or ():
+            if key in values and key not in changed:
+                changed.append(key)
+        # The three ForwardAgent persistence fields are one OpenSSH value.
+        # Changing yes→socket (or clearing a socket) has to ship all three or
+        # the store will preserve the omitted half of the old directive.
+        if any(key in changed for key in _FORWARD_AGENT_FIELDS):
+            for key in _FORWARD_AGENT_FIELDS:
+                if key in values and key not in changed:
+                    changed.append(key)
         return tuple(changed)
 
     def load_connection_data(self):
@@ -2557,10 +3094,20 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             if hasattr(self.connection, 'username'):
                 self.username_row.set_text(self.connection.username or "")
             if hasattr(self.connection, 'port'):
+                # Only an authored Port belongs in the row. When it is
+                # inherited the row starts empty and the resolved value is
+                # filled in dimmed by _load_inherited_values_async; if that
+                # cannot run, empty still correctly means "inherit".
+                authored = getattr(self.connection, 'authored_directives', None)
                 try:
-                    self.port_row.set_text(str(int(self.connection.port) if self.connection.port else 22))
+                    if authored is not None and 'port' not in authored:
+                        self.port_row.set_text("")
+                    else:
+                        self.port_row.set_text(
+                            str(int(self.connection.port) if self.connection.port else 22)
+                        )
                 except Exception:
-                    self.port_row.set_text("22")
+                    self.port_row.set_text("")
 
             # Load proxy settings (without triggering inline completion)
             if hasattr(self.connection, 'proxy_jump'):
@@ -2571,11 +3118,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                     )
                 except Exception:
                     self._set_text_without_completion(self.proxy_jump_row, "")
-            if hasattr(self.connection, 'forward_agent'):
+            try:
+                mode, extra = forward_agent_mode_from_connection(self.connection)
+                modes = getattr(self, "_forward_agent_modes", None) or _FORWARD_AGENT_MODES
+                idx = modes.index(mode) if mode in modes else 0
+                self.forward_agent_row.set_selected(idx)
+                value_row = getattr(self, "forward_agent_value_row", None)
+                if value_row is not None:
+                    value_row.set_text(extra)
+                self._on_forward_agent_mode_changed()
+            except Exception:
                 try:
-                    self.forward_agent_row.set_active(bool(self.connection.forward_agent))
+                    self.forward_agent_row.set_selected(0)
                 except Exception:
-                    self.forward_agent_row.set_active(False)
+                    pass
+                self._on_forward_agent_mode_changed()
 
             # Load Wake-on-LAN and tags metadata from connections_meta
             self._load_shared_meta_rows()
@@ -2617,8 +3174,24 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.cert_editor.set_paths(certificate_files)
 
             # Agent / hardware key sources (text fields)
+            try:
+                mode, extra = identity_agent_mode_from_value(
+                    str(getattr(self.connection, "identity_agent", "") or "")
+                )
+                modes = getattr(self, "_identity_agent_modes", None) or _IDENTITY_AGENT_MODES
+                idx = modes.index(mode) if mode in modes else 0
+                self.identity_agent_row.set_selected(idx)
+                value_row = getattr(self, "identity_agent_value_row", None)
+                if value_row is not None:
+                    value_row.set_text(extra)
+                self._on_identity_agent_mode_changed()
+            except Exception:
+                try:
+                    self.identity_agent_row.set_selected(0)
+                except Exception:
+                    pass
+                self._on_identity_agent_mode_changed()
             for attr, row in (
-                ('identity_agent', getattr(self, 'identity_agent_row', None)),
                 ('pkcs11_provider', getattr(self, 'pkcs11_provider_row', None)),
                 ('security_key_provider', getattr(self, 'security_key_provider_row', None)),
             ):
@@ -2801,6 +3374,10 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         to stale form content. Called on the GTK thread only.
         """
         self.connection = _editor_details_to_connection(details)
+        # A fresh editor snapshot supersedes any inherited-value state from a
+        # previous load, including which rows the user had adopted.
+        self._adopted_inherited_fields = set()
+        self._clear_inherited_row_state()
         self.is_editing = True
         self.set_title(_('Edit Connection'))
         self._daemon_editor_loaded = True
@@ -2810,6 +3387,13 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             self.load_connection_data()
         finally:
             self._refresh_save_sensitivity()
+        # After the authored values are in place: fill unauthored rows with what
+        # OpenSSH actually resolves, so the form never implies this block owns a
+        # value it merely inherits.
+        try:
+            self._load_inherited_values_async()
+        except Exception:
+            logger.debug("Could not start inherited-value lookup", exc_info=True)
 
 
     def _refresh_save_sensitivity(self):
@@ -2952,12 +3536,51 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             title=_("Agent and hardware keys"),
             description=_("Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."),
         )
-        self.identity_agent_row = Adw.EntryRow(title=_("IdentityAgent"))
+        # ssh_config(5): none, SSH_AUTH_SOCK, a socket path, or $VARIABLE.
+        # Default leaves the Host block unauthored so a broader block wins.
+        self._identity_agent_modes = _IDENTITY_AGENT_MODES
+        ia_model = Gtk.StringList()
+        for label in (
+            _("Default"),
+            _("None"),
+            _("SSH_AUTH_SOCK"),
+            _("Socket path"),
+            _("Environment variable"),
+        ):
+            ia_model.append(label)
+        self.identity_agent_row = Adw.ComboRow(title=_("IdentityAgent"))
+        self.identity_agent_row.set_subtitle(
+            _("Unix-domain socket used to communicate with ssh-agent")
+        )
+        self.identity_agent_row.set_model(ia_model)
+        self.identity_agent_row.set_selected(0)
+        self.identity_agent_row.connect(
+            "notify::selected", self._on_identity_agent_mode_changed
+        )
+        hw_group.add(self.identity_agent_row)
+
+        self.identity_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
         try:
-            self.identity_agent_row.set_subtitle(_("Socket path, $VARIABLE, or none"))
+            self.identity_agent_value_row.set_subtitle(
+                _("Unix-domain socket; tilde and tokens are allowed")
+            )
         except Exception:
             pass
-        hw_group.add(self.identity_agent_row)
+        self._identity_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
+        self._identity_agent_browse_btn.add_css_class('flat')
+        self._identity_agent_browse_btn.set_valign(Gtk.Align.CENTER)
+        self._identity_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
+        self._identity_agent_browse_btn.connect(
+            'clicked',
+            lambda *_a: self._browse_file(
+                _("Select agent socket"),
+                lambda p: self.identity_agent_value_row.set_text(p),
+            ),
+        )
+        self.identity_agent_value_row.add_suffix(self._identity_agent_browse_btn)
+        self.identity_agent_value_row.set_visible(False)
+        self._identity_agent_browse_btn.set_visible(False)
+        hw_group.add(self.identity_agent_value_row)
 
         self.pkcs11_provider_row = Adw.EntryRow(title=_("PKCS#11 provider"))
         try:
@@ -3162,11 +3785,51 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         proxy_group.add(self.proxy_jump_row)
 
-        self.forward_agent_row = Adw.SwitchRow()
-        self.forward_agent_row.set_title(_("Forward agent"))
-        self.forward_agent_row.set_subtitle(_("Allow the remote host to use your local ssh-agent"))
-        self.forward_agent_row.set_active(False)
+        # ssh_config(5): yes, no, an agent socket path, or $VARIABLE.
+        # Default leaves the Host block unauthored so a broader block wins.
+        self._forward_agent_modes = _FORWARD_AGENT_MODES
+        fa_model = Gtk.StringList()
+        for label in (
+            _("Default"),
+            _("Yes"),
+            _("No"),
+            _("Socket path"),
+            _("Environment variable"),
+        ):
+            fa_model.append(label)
+        self.forward_agent_row = Adw.ComboRow(title=_("Forward agent"))
+        self.forward_agent_row.set_subtitle(
+            _("Allow the remote host to use your local ssh-agent")
+        )
+        self.forward_agent_row.set_model(fa_model)
+        self.forward_agent_row.set_selected(0)
+        self.forward_agent_row.connect(
+            "notify::selected", self._on_forward_agent_mode_changed
+        )
         proxy_group.add(self.forward_agent_row)
+
+        self.forward_agent_value_row = Adw.EntryRow(title=_("Agent socket"))
+        try:
+            self.forward_agent_value_row.set_subtitle(
+                _("Path to an ssh-agent socket")
+            )
+        except Exception:
+            pass
+        self._forward_agent_browse_btn = Gtk.Button(icon_name='document-open-symbolic')
+        self._forward_agent_browse_btn.add_css_class('flat')
+        self._forward_agent_browse_btn.set_valign(Gtk.Align.CENTER)
+        self._forward_agent_browse_btn.set_tooltip_text(_("Browse for agent socket"))
+        self._forward_agent_browse_btn.connect(
+            'clicked',
+            lambda *_a: self._browse_file(
+                _("Select agent socket"),
+                lambda p: self.forward_agent_value_row.set_text(p),
+            ),
+        )
+        self.forward_agent_value_row.add_suffix(self._forward_agent_browse_btn)
+        self.forward_agent_value_row.set_visible(False)
+        self._forward_agent_browse_btn.set_visible(False)
+        proxy_group.add(self.forward_agent_value_row)
 
         # Kept as attributes so _on_protocol_changed can hide the SSH-specific
         # parts when a plugin protocol is selected.
@@ -3768,15 +4431,21 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'nickname': self.nickname_row.get_text().strip(),
             'hostname': self.hostname_row.get_text().strip(),
             'username': self.username_row.get_text().strip(),
-            'port': int(self.port_row.get_text().strip() or '22'),
+            # "" means inherit: the block authors no Port and OpenSSH resolves
+            # it. Coercing to 22 here is what forced a Port line into every
+            # block and overrode a global Port.
+            'port': (
+                int(self.port_row.get_text().strip())
+                if self.port_row.get_text().strip()
+                else ''
+            ),
             'auth_method': self._selected_auth_method(),
             'keyfile': keyfile_value,
             'identity_files': identity_files,
             'certificate': certificate_value,
             'certificate_files': certificate_files,
             'key_select_mode': key_select_mode_val,
-            'identity_agent': (self.identity_agent_row.get_text().strip()
-                               if hasattr(self, 'identity_agent_row') else ''),
+            'identity_agent': self._selected_identity_agent(),
             'add_keys_to_agent': self._selected_add_keys_to_agent(),
             'pkcs11_provider': (self.pkcs11_provider_row.get_text().strip()
                                 if hasattr(self, 'pkcs11_provider_row') else ''),
@@ -3785,7 +4454,7 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
             'x11_forwarding': self.x11_row.get_active(),
             'pubkey_auth_no': self.pubkey_auth_row.get_active(),
             'proxy_jump': [h.strip() for h in re.split(r'[\s,]+', self.proxy_jump_row.get_text()) if h.strip()],
-            'forward_agent': self.forward_agent_row.get_active(),
+            **self._selected_forward_agent_fields(),
 
             'forwarding_rules': forwarding_rules,
             'pre_command': (self.pre_command_row.get_text() if hasattr(self, 'pre_command_row') else ''),

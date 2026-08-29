@@ -65,6 +65,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _sftp_session_ready(manager) -> bool:
+    """True when *manager* has a usable remote SFTP session.
+
+    ``DaemonSftpManager._client`` is the daemon IPC connection and stays set
+    after the SFTP service fails. Probe ``is_connected()`` / ``_sftp`` instead.
+    """
+    if manager is None:
+        return False
+    is_connected = getattr(manager, "is_connected", None)
+    if callable(is_connected):
+        try:
+            return bool(is_connected())
+        except Exception:
+            return False
+    return getattr(manager, "_sftp", None) is not None
+
 
 # Global registry to track live file manager windows. Used to ensure
 # managers are cleaned up even if the application does not hold references.
@@ -827,12 +843,20 @@ class FileManagerWindow(Adw.Window):
         if sender is not None and sender is not manager:
             return
         logger.warning("File manager connection error: %s", message)
+        if getattr(self, "_connection_error_reported", False):
+            return
+        self._connection_error_reported = True
+
         def show_error():
             try:
+                current = getattr(self, "_manager", None)
+                if (
+                    getattr(self, "_is_disposed", False)
+                    or current is None
+                    or current is not sender
+                ):
+                    return False
                 self._clear_progress_toast()
-
-                if getattr(self, '_connection_error_reported', False):
-                    return
 
                 # Show the in-pane error state (with Retry) on the remote pane
                 # so the failure can't be mistaken for an empty directory, and
@@ -846,8 +870,13 @@ class FileManagerWindow(Adw.Window):
                         self._right_pane.dismiss_toasts()
                     except (AttributeError, RuntimeError, GLib.Error):
                         pass
+                    failed_path = (
+                        self._pending_paths.get(self._right_pane)
+                        or getattr(self._right_pane, "_current_path", None)
+                        or "~"
+                    )
                     self._right_pane.show_load_error(
-                        self._pending_paths.get(self._right_pane),
+                        failed_path,
                         message or "Connection failed",
                     )
                 elif hasattr(self, '_toast_overlay') and self._toast_overlay:
@@ -1074,10 +1103,10 @@ class FileManagerWindow(Adw.Window):
                 self._refreshing_panes.discard(pane)
         else:
             # Remote pane: use SFTP manager. Absent (picker mode) or
-            # disconnected (failed connect) → remember the path and, when a
-            # host is known, reconnect; the path is listed on 'connected'.
+            # disconnected (failed connect / dead session) → remember the
+            # path and, when a host is known, reconnect; listed on 'connected'.
             manager = self._manager
-            if manager is None or getattr(manager, '_client', None) is None:
+            if manager is None or not _sftp_session_ready(manager):
                 self._pending_paths[pane] = path
                 if manager is not None and self._host:
                     self._reconnect()

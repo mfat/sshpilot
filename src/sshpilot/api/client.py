@@ -226,6 +226,11 @@ class SshPilotClient(Protocol):
     ) -> ExternalTerminalLaunchSpec:
         ...
 
+    def get_launch_command(
+        self, connection_id: ConnectionId
+    ) -> ExternalTerminalLaunchSpec:
+        ...
+
     def save_ssh_config_text(
         self, request: SaveSshConfigTextRequest
     ) -> SshConfigText:

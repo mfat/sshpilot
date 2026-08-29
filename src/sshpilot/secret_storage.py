@@ -60,6 +60,7 @@ import json
 import functools
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import threading
@@ -1566,17 +1567,61 @@ class BitwardenBackend(SecretBackend):
                 self._items.pop(account, None)
 
 
+# Assuan pinentry helper used only for the duration of ``rbw unlock``. rbw 1.13
+# has no ``--passwordenv``; the agent always asks whichever executable
+# ``rbw config`` ``pinentry`` names. We point that at this helper, pass the
+# password file path via ``PINENTRY_USER_DATA`` (forwarded CLI → agent →
+# pinentry), then restore the previous pinentry. If restore never runs, the
+# helper execs the original pinentry so a leftover config is not a hard lockout.
+_RBW_PINENTRY_HELPER = '''#!/usr/bin/env python3
+import os, sys
+FALLBACK = {fallback}
+path = os.environ.get("PINENTRY_USER_DATA") or ""
+def _enc(data):
+    out = bytearray()
+    for b in data:
+        if b in (10, 13, 37):
+            out.extend(("%{{:02X}}".format(b)).encode("ascii"))
+        else:
+            out.append(b)
+    return bytes(out)
+if not path or not os.path.isfile(path):
+    os.execvp(FALLBACK, [FALLBACK, *sys.argv[1:]])
+sys.stdout.write("OK Pleased to meet you\\n")
+sys.stdout.flush()
+for raw in sys.stdin:
+    cmd = raw.split(None, 1)[0] if raw.strip() else ""
+    if cmd == "GETPIN":
+        try:
+            with open(path, "rb") as fh:
+                secret = fh.read()
+        except Exception:
+            sys.stdout.write("ERR 83886179 canceled\\n")
+            sys.stdout.flush()
+            continue
+        sys.stdout.buffer.write(b"D " + _enc(secret) + b"\\nOK\\n")
+        sys.stdout.buffer.flush()
+    elif cmd == "BYE":
+        sys.stdout.write("OK\\n")
+        sys.stdout.flush()
+        break
+    else:
+        sys.stdout.write("OK\\n")
+        sys.stdout.flush()
+'''
+
+
 class RbwBackend(SecretBackend):
     """Bitwarden backend driving the ``rbw`` CLI (https://github.com/doy/rbw).
 
     A lighter, agent-based alternative to the ``bw`` :class:`BitwardenBackend`,
     kept entirely separate from it. ``rbw`` talks to the same Bitwarden/Vaultwarden
-    vault but delegates the whole unlock lifecycle to its own ``rbw-agent`` +
-    pinentry, so this backend is **passive** (``session_backed = False``): sshPilot
-    never drives unlock — the agent stays unlocked on its own schedule
-    (``rbw config set lock_timeout``). Every operation is gated on ``rbw unlocked``
-    so a locked vault quietly resolves to nothing/``False`` and never triggers a
-    surprise pinentry prompt on the ``auto`` read-through path.
+    vault. Unlock is **session-backed**: sshPilot collects the master password in
+    the same GTK dialog as Bitwarden/KeePass (including Remember) and feeds it to
+    ``rbw unlock`` through a one-shot pinentry helper, because rbw has no password
+    flag — only the ``pinentry`` config option. ``rbw-agent`` still owns in-memory
+    keys and ``lock_timeout``. Every lookup is gated on ``rbw unlocked`` so a
+    locked vault quietly resolves to nothing/``False``.
 
     Secrets are login items named after ``spec.keyring_account`` (matching the ``bw``
     backend) with the secret on the first line — ``rbw``'s editor convention, the rest
@@ -1590,6 +1635,7 @@ class RbwBackend(SecretBackend):
     """
 
     name = "rbw"
+    session_backed = True
     _TIMEOUT = 120  # seconds — generous enough for a network sync / pinentry
     _FOLDER = SERVICE_NAME  # same vault folder as the ``bw`` backend, so both see the
     #                         same items when pointed at one vault (and it stays isolated
@@ -1645,30 +1691,254 @@ class RbwBackend(SecretBackend):
         # path. Unlock state is separate and checked per operation via `rbw unlocked`.
         return self._argv_prefix is not None
 
-    def _run(self, *args: str, input_text: Optional[str] = None):
+    def _run(self, *args: str, input_text: Optional[str] = None,
+             extra_env: Optional[dict] = None):
         prefix = self._argv_prefix
         if not prefix:
             raise RuntimeError("rbw is not available")
-        return subprocess.run(
-            prefix + list(args),
-            input=(input_text.encode() if input_text is not None else None),
-            capture_output=True,
-            env=os.environ.copy(),
-            check=False,
-            timeout=self._TIMEOUT,
-        )
+        env = os.environ.copy()
+        if extra_env:
+            env.update(extra_env)
+        argv = prefix + list(args)
+        pass_fds: Tuple[int, ...] = ()
+        try:
+            from .platform_utils import inject_flatpak_host_env
+        except Exception:  # pragma: no cover - loose-module fallback
+            try:
+                from platform_utils import inject_flatpak_host_env  # type: ignore
+            except Exception:
+                inject_flatpak_host_env = None  # type: ignore
+        if inject_flatpak_host_env is not None:
+            argv, pass_fds = inject_flatpak_host_env(
+                argv, env, keys=("PINENTRY_USER_DATA",),
+            )
+        spawn_kwargs = {"pass_fds": pass_fds} if pass_fds else {}
+        try:
+            return subprocess.run(
+                argv,
+                input=(input_text.encode() if input_text is not None else None),
+                capture_output=True,
+                env=env,
+                check=False,
+                timeout=self._TIMEOUT,
+                **spawn_kwargs,
+            )
+        finally:
+            for fd in pass_fds:
+                os.close(fd)
 
     def is_unlocked(self) -> bool:
-        """Whether ``rbw-agent`` currently holds the vault unlocked. Never prompts.
-
-        Overrides the passive-store default (always ``True``) with the real agent state
-        so callers can detect a locked vault — but ``session_backed`` stays ``False``, so
-        this never routes rbw through the password-collecting unlock dialog (rbw's own
-        pinentry owns unlock). The GTK connect path uses it to nudge via pinentry."""
+        """Whether ``rbw-agent`` currently holds the vault unlocked. Never prompts."""
         try:
             return self._run("unlocked").returncode == 0
         except Exception:
             return False
+
+    def _pinentry_from_config(self) -> str:
+        """Current ``rbw config`` pinentry executable, or the rbw default."""
+        try:
+            res = self._run("config", "show")
+            if res.returncode != 0:
+                return "pinentry"
+            payload = json.loads(res.stdout.decode("utf-8", "replace") or "{}")
+        except Exception:
+            return "pinentry"
+        value = payload.get("pinentry") if isinstance(payload, dict) else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return "pinentry"
+
+    def _pinentry_helper_dir(self) -> str:
+        """Same host-visible directory as the managed ``bw`` binary.
+
+        Flatpak's sandbox cache is not on the host; ``rbw-agent`` runs on the
+        host (via ``flatpak-spawn --host``) and can only exec a helper that
+        lives next to ``~/.local/share/sshpilot/bin/bw``.
+        """
+        try:
+            from .platform_utils import get_managed_bw_cli_dir
+            return get_managed_bw_cli_dir()
+        except Exception:
+            try:
+                from platform_utils import get_managed_bw_cli_dir  # type: ignore
+                return get_managed_bw_cli_dir()
+            except Exception:
+                return os.path.join(
+                    os.environ.get("XDG_DATA_HOME")
+                    or os.path.expanduser("~/.local/share"),
+                    "sshpilot",
+                    "bin",
+                )
+
+    def _pinentry_helper_path(self) -> str:
+        return os.path.join(self._pinentry_helper_dir(), "rbw-pinentry")
+
+    @staticmethod
+    def _host_spawn_prefix() -> Optional[List[str]]:
+        try:
+            from .platform_utils import is_flatpak
+        except Exception:
+            try:
+                from platform_utils import is_flatpak  # type: ignore
+            except Exception:
+                return None
+        if not is_flatpak():
+            return None
+        spawn = shutil.which("flatpak-spawn")
+        if not spawn:
+            return None
+        return [spawn, "--host"]
+
+    def _write_host_file(self, path: str, data: bytes, mode: int) -> None:
+        """Write ``path`` where host ``rbw-agent`` can read it.
+
+        Under Flatpak the sandbox cannot see ``~/.local/share``; the bytes go
+        through ``flatpak-spawn --host`` stdin (never on argv).
+        """
+        prefix = self._host_spawn_prefix()
+        dirname = os.path.dirname(path)
+        if prefix:
+            script = (
+                "set -euo pipefail\n"
+                f"mkdir -p {shlex.quote(dirname)}\n"
+                f"cat > {shlex.quote(path)}\n"
+                f"chmod {mode:o} {shlex.quote(path)}\n"
+            )
+            result = subprocess.run(
+                prefix + ["bash", "-c", script],
+                input=data, capture_output=True, check=False, timeout=30,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    result.stderr.decode("utf-8", "replace").strip()
+                    or "failed to write host pinentry file"
+                )
+            return
+        os.makedirs(dirname, mode=0o700, exist_ok=True)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+        os.chmod(path, mode)
+
+    def _host_file_executable(self, path: str) -> bool:
+        prefix = self._host_spawn_prefix()
+        if prefix:
+            result = subprocess.run(
+                prefix + ["test", "-x", path],
+                capture_output=True, check=False, timeout=10,
+            )
+            return result.returncode == 0
+        return os.path.isfile(path) and os.access(path, os.X_OK)
+
+    def _using_our_pinentry_helper(self, current: str) -> bool:
+        helper = self._pinentry_helper_path()
+        try:
+            return os.path.abspath(current) == os.path.abspath(helper)
+        except Exception:
+            return current == helper
+
+    def _ensure_pinentry_helper(self) -> Tuple[str, bool]:
+        """Install the stable helper and point ``rbw config pinentry`` at it.
+
+        ``rbw config set`` always ``stop_agent()`` (drops in-memory keys), so this
+        must run at most once. Terminal ``rbw unlock`` still gets the original
+        pinentry because the helper execs FALLBACK when ``PINENTRY_USER_DATA`` is
+        unset. Returns ``(helper_path, did_set_config)``.
+        """
+        helper = self._pinentry_helper_path()
+        current = self._pinentry_from_config()
+        if self._using_our_pinentry_helper(current) and self._host_file_executable(helper):
+            return helper, False
+        fallback = (
+            "pinentry" if self._using_our_pinentry_helper(current) else (current or "pinentry")
+        )
+        self._write_host_file(
+            helper,
+            _RBW_PINENTRY_HELPER.format(fallback=json.dumps(fallback)).encode("utf-8"),
+            0o700,
+        )
+        set_res = self._run("config", "set", "pinentry", helper)
+        if set_res.returncode != 0:
+            logger.error(
+                "rbw config set pinentry failed: %s",
+                set_res.stderr.decode("utf-8", "replace").strip(),
+            )
+            raise RuntimeError("rbw config set pinentry failed")
+        return helper, True
+
+    def _wipe_file(self, path: str) -> None:
+        prefix = self._host_spawn_prefix()
+        if prefix:
+            quoted = shlex.quote(path)
+            script = (
+                f"if [ -f {quoted} ]; then "
+                f": > {quoted}; rm -f {quoted}; fi"
+            )
+            subprocess.run(
+                prefix + ["bash", "-c", script],
+                capture_output=True, check=False, timeout=10,
+            )
+            return
+        try:
+            size = os.path.getsize(path)
+            with open(path, "r+b") as fh:
+                fh.write(b"\0" * size)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.unlink(path)
+        except FileNotFoundError:
+            return
+        except Exception:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+
+    def unlock(self, secret: str, progress: Optional[Callable[[str], None]] = None) -> bool:
+        """Unlock ``rbw-agent`` with the GTK-collected master password.
+
+        rbw has no password flag — only ``rbw config set pinentry``. A stable
+        helper next to the managed ``bw`` binary
+        (``$XDG_DATA_HOME/sshpilot/bin/rbw-pinentry``) receives the password via
+        ``PINENTRY_USER_DATA``. The config is pointed at that helper once:
+        every ``rbw config set`` calls ``stop_agent()`` and would re-lock the
+        vault if we restored pinentry after unlock.
+        """
+        if not self._argv_prefix:
+            return False
+        if self.is_unlocked():
+            return True
+        if not secret:
+            return False
+        pinfile = None
+        try:
+            self._ensure_pinentry_helper()
+            pinfile = os.path.join(
+                self._pinentry_helper_dir(), "rbw-pin-" + os.urandom(8).hex(),
+            )
+            self._write_host_file(pinfile, secret.encode("utf-8"), 0o600)
+            result = self._run(
+                "unlock", extra_env={"PINENTRY_USER_DATA": pinfile},
+            )
+            if result.returncode != 0:
+                logger.error(
+                    "rbw unlock failed: %s",
+                    result.stderr.decode("utf-8", "replace").strip(),
+                )
+                return False
+            try:
+                self._run("sync")
+            except Exception:
+                logger.debug("rbw sync after unlock failed", exc_info=True)
+            return True
+        except Exception as exc:
+            logger.error("rbw unlock error: %s", exc)
+            return False
+        finally:
+            if pinfile is not None:
+                self._wipe_file(pinfile)
 
     def _folder_names(self) -> Optional[set]:
         """Names of items in our folder, cached for ``_NAMES_TTL``. One ``rbw list``

@@ -8,10 +8,75 @@ notes remain separate.
 - Daemon-only retirement repairs now preserve protected broadcast input
   registration, truthful operation-mode recovery, atomic reconnect publication,
   and cross-process shared-settings transactions. These are implementation
-  correctness fixes within the current 0.40 contract; no downgrade or
+  correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.41 (current)
+## API 0.45 (current)
+
+### API 0.45 structured secret prompt presentation
+
+- Bumped `API_IMPLEMENTATION_VERSION` because password-prompt metadata now
+  includes the required `secret_prompt_kind` and `secret_prompt_parameters`
+  fields. Strict 0.44 decoders reject those fields, while strict 0.45 decoders
+  require them.
+- Daemon-owned Bitwarden, KeePass, remembered-password, and backup-passphrase
+  prompts now carry a stable `SecretPromptKind` plus validated, non-secret
+  display parameters. They no longer use `username` and `hostname` to carry
+  rendered English interface text.
+- GTK maps each structured prompt kind to gettext msgids, translates at display
+  time, and formats the validated parameters afterward. Ordinary SSH password
+  prompts retain their existing username/hostname contract and carry a null
+  prompt kind with an empty parameter object.
+
+## Historical API entries
+
+### API 0.44 clearable connection port
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `UpdateConnectionRequest.port`
+  now accepts `""` to mean "clear the authored Port so the host inherits
+  again". A 0.43 daemon validates the field as an integer in 1-65535 and
+  rejects the empty string, so a newer client's clear request is not
+  wire-compatible with it.
+- This mirrors how an emptied `username` already clears `User`. Without it a
+  port could never be un-authored: `None` means preserve for the core identity
+  fields, so the editor had no way to express "no Port line", and every saved
+  connection carried one — permanently overriding a global `Port`.
+- Integer values and `UNSET`/`None` are unchanged; only the empty string is new.
+
+### API 0.43 launch-command introspection
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `connections.get_launch_command`
+  is a new method: a 0.42 daemon advertising `terminal.external_launch` does
+  not implement it, so capability advertisement alone no longer implies the
+  method is present.
+- Returns the SSH argv a connection actually runs, as an
+  `ExternalTerminalLaunchSpec` (no new model). It resolves with the `normal`
+  interaction policy — the one a real in-app session launches with — unlike
+  `prepare_external_terminal_launch`, which deliberately uses `none` and so
+  adds `BatchMode=yes`/`StrictHostKeyChecking=yes`. That is right for handing a
+  session to a terminal emulator but wrong as an answer to "what does this
+  connection run", and such a command cannot prompt for a password or an
+  unknown host key.
+- Carries no secrets: only `SSH_AUTH_SOCK` crosses in the environment, and the
+  daemon's private askpass transport is injected later by the interaction
+  broker and is deliberately absent from this argv.
+
+### API 0.42 authored-directive evidence
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `ConnectionEditorDetails` now
+  carries `authored_directives` on every `connections.get_editor` response. A
+  0.41 decoder's strict field-set check rejects unknown fields, so the added
+  key is not wire-compatible with it. The field is decoded as optional, so a
+  newer client still accepts a payload from a daemon that omits it.
+- `authored_directives` lists the lowercased directives the SSH `Host` block
+  itself authored. Everything else an editor displays is inherited — OpenSSH
+  resolves it from a global block (`Host *`, `Match`) or its own defaults — and
+  must not be presented as a value the user set. An empty tuple means "no
+  evidence", never "authored nothing".
+- This backs a behavior change in the launch path: only authored directives are
+  re-emitted as command-line options, so an editor value can no longer be
+  silently overridden by an earlier `Host *` block, while an unauthored one
+  keeps inheriting. Defaults are never emitted.
 
 ### API 0.41 operation-mode file visibility
 
@@ -25,8 +90,6 @@ notes remain separate.
   returned on every `daemon.get_operation_mode`/`daemon.set_operation_mode`
   response, so a frontend can show which real files back each mode instead
   of a generic description.
-
-## Historical API entries
 
 ### API 0.40 daemon-only retirement compatibility boundary
 

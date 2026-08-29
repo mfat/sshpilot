@@ -225,7 +225,7 @@ class _FakeSftpRunner:
     def __init__(self, client):
         self._client = client
 
-    def start(self, _spec):
+    def start(self, _spec, _on_exit=None):
         return _FakeSftpHandle(self._client)
 
     def close(self):

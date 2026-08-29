@@ -37,6 +37,7 @@ from sshpilot.api.models import (
     PresencePrompt,
     RememberPolicy,
     SecretDecision,
+    SecretPromptKind,
     SessionId,
 )
 from sshpilot.api.models.common import ConnectionId
@@ -976,10 +977,12 @@ def test_master_password_remember_checkbox_sets_store_after_success(monkeypatch)
     dialogs.close()
 
 
-def _titled_secret_summary(title: str, message: str):
+def _titled_secret_summary(
+    kind: SecretPromptKind, parameters: dict[str, str] | None = None
+):
     """A secret-session PASSWORD interaction as produced by
-    ``SecretBackendService._prompt_for_secret`` — ``username`` is the heading
-    naming what is asked for and ``hostname`` the sentence under it."""
+    ``SecretBackendService._prompt_for_secret``. The daemon sends a stable
+    prompt kind and safe parameters; no rendered interface text crosses RPC."""
     now = datetime.now(timezone.utc)
     return InteractionSummary(
         id=new_interaction_id(),
@@ -991,12 +994,14 @@ def _titled_secret_summary(title: str, message: str):
         expires_at=now + timedelta(minutes=5),
         attempt=1,
         prompt=PasswordPrompt(
-            username=title,
-            hostname=message,
+            username="",
+            hostname="",
             port=22,
             attempt=1,
             can_remember=False,
             stored_secret_available=False,
+            secret_prompt_kind=kind,
+            secret_prompt_parameters=parameters or {},
         ),
     )
 
@@ -1022,7 +1027,8 @@ def test_two_step_code_prompt_does_not_ask_for_a_master_password(monkeypatch):
 
     dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
     summary = _titled_secret_summary(
-        "Two-step login code", "Enter the two-step login code for alice@example.com"
+        SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN,
+        {"email": "alice@example.com"},
     )
 
     dialogs._present_secret(summary, parent=SimpleNamespace())
@@ -1056,7 +1062,7 @@ def test_backup_passphrase_prompt_names_the_passphrase(monkeypatch):
     dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
     dialogs._present_secret(
         _titled_secret_summary(
-            "Decrypt backup", "Enter the passphrase to decrypt the backup"
+            SecretPromptKind.BACKUP_DECRYPT
         ),
         parent=SimpleNamespace(),
     )
@@ -1065,6 +1071,58 @@ def test_backup_passphrase_prompt_names_the_passphrase(monkeypatch):
     assert calls["body"] == "Enter the passphrase to decrypt the backup."
     assert "master password" not in str(calls).lower()
     dialogs.close()
+
+
+def test_structured_secret_prompt_translates_before_formatting(monkeypatch):
+    """Only the GTK presenter turns msgids into localized rendered text."""
+    from sshpilot.gtk import secrets_interaction_presenter as presenter_mod
+    from sshpilot.gtk.secrets_interaction_presenter import SecretsInteractionPresenter
+
+    client = _FakeClient()
+    calls = {}
+    translated = []
+
+    def fake_gettext(msgid):
+        translated.append(msgid)
+        return f"translated<{msgid}>"
+
+    monkeypatch.setattr(presenter_mod, "_", fake_gettext)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.show_ssh_password_dialog",
+        lambda **kwargs: (calls.update(kwargs), "hunter2")[1],
+    )
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.present_for_modal_dialog", lambda _w: None
+    )
+
+    dialogs = SecretsInteractionPresenter(client, _SyncBridge(), parent=None)
+    summary = _titled_secret_summary(
+        SecretPromptKind.BITWARDEN_SIGN_IN,
+        {"email": "alice+secret@example.com"},
+    )
+    dialogs._present_secret(summary, parent=SimpleNamespace())
+
+    assert translated == [
+        "Bitwarden sign-in",
+        "Enter the Bitwarden master password for {email}",
+    ]
+    assert calls["heading"] == "translated<Bitwarden sign-in>"
+    assert calls["body"] == (
+        "translated<Enter the Bitwarden master password for "
+        "alice+secret@example.com>."
+    )
+    assert "alice+secret@example.com" not in translated
+    dialogs.close()
+
+
+def test_every_structured_secret_prompt_kind_has_frontend_messages():
+    from sshpilot.gtk.secrets_interaction_presenter import _SECRET_PROMPT_MESSAGES
+
+    assert set(_SECRET_PROMPT_MESSAGES) == set(SecretPromptKind)
+    assert all(
+        type(title) is str and title and type(body) is str and body
+        for title, body in _SECRET_PROMPT_MESSAGES.values()
+    )
 
 
 def test_master_password_prompt_still_uses_its_own_dialog(monkeypatch):

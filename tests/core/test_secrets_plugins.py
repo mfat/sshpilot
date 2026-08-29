@@ -38,6 +38,23 @@ def test_decide_unlock():
         backend="bitwarden", session_backed=True, is_unlocked=False, available=True
     )
     assert locked.kind == SecretDecisionKind.UNLOCK_REQUIRED
+    rbw_locked_passive = decide_unlock(
+        backend="rbw", session_backed=False, is_unlocked=False, available=True
+    )
+    assert rbw_locked_passive.kind == SecretDecisionKind.UNLOCK_REQUIRED
+    rbw_locked = decide_unlock(
+        backend="rbw", session_backed=True, is_unlocked=False, available=True
+    )
+    assert rbw_locked.kind == SecretDecisionKind.UNLOCK_REQUIRED
+    rbw_ready = decide_unlock(
+        backend="rbw", session_backed=True, is_unlocked=True, available=True
+    )
+    assert rbw_ready.kind == SecretDecisionKind.READY
+    # Platform stores stay ready even when their default is_unlocked is unused.
+    libsecret = decide_unlock(
+        backend="libsecret", session_backed=False, is_unlocked=False, available=True
+    )
+    assert libsecret.kind == SecretDecisionKind.READY
 
 
 def test_plugin_contracts_headless():

@@ -38,6 +38,7 @@ from ..models.interactions import (
     PresencePrompt,
     RememberPolicy,
     SecretDecision,
+    SecretPromptKind,
 )
 from ..models.known_hosts import (
     KnownHostEntryId,
@@ -2087,6 +2088,7 @@ def connection_editor_details_to_wire(
             "preferred_authentications": details.preferred_authentications,
             "source": details.source,
             "generation": details.generation,
+            "authored_directives": list(details.authored_directives),
         }
     )
     return result
@@ -2099,7 +2101,9 @@ def connection_editor_details_from_wire(
     data = _strict_fields(
         value,
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
-        optional={"display_name"},
+        # Additive: a daemon predating authorship evidence simply omits it, and
+        # an empty tuple already means "no evidence".
+        optional={"display_name", "authored_directives"},
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
@@ -2125,6 +2129,12 @@ def connection_editor_details_from_wire(
     forwarding_rules = data["forwarding_rules"]
     if type(forwarding_rules) is not list:
         raise ValueError("forwarding_rules must be an array")
+    raw_authored = data.get("authored_directives", [])
+    if type(raw_authored) is not list:
+        raise ValueError("authored_directives must be an array")
+    authored_directives = tuple(
+        _text(item, "authored directive", allow_empty=False) for item in raw_authored
+    )
     return ConnectionEditorDetails(
         id=summary.id,
         nickname=summary.nickname,
@@ -2183,6 +2193,7 @@ def connection_editor_details_from_wire(
         ),
         source=_text(data["source"], "source", allow_empty=True),
         generation=_integer(data["generation"], "generation"),
+        authored_directives=authored_directives,
     )
 
 
@@ -2387,7 +2398,10 @@ def update_connection_request_from_wire(value: Any) -> UpdateConnectionRequest:
     if username is not UNSET and username is not None:
         username = _text(username, "connection username", allow_empty=True)
     if port is not UNSET and port is not None:
-        port = _integer(port, "connection port")
+        # An empty string is the explicit "clear the authored Port" signal.
+        port = "" if (type(port) is str and not port.strip()) else _integer(
+            port, "connection port"
+        )
 
     raw_patch = data.get("config_patch")
     config_patch: Dict[str, Any] = {}
@@ -3552,6 +3566,12 @@ def _interaction_prompt_to_wire(
             "attempt": prompt.attempt,
             "can_remember": prompt.can_remember,
             "saved_value_available": prompt.stored_secret_available,
+            "secret_prompt_kind": (
+                prompt.secret_prompt_kind.value
+                if prompt.secret_prompt_kind is not None
+                else None
+            ),
+            "secret_prompt_parameters": dict(prompt.secret_prompt_parameters),
         }
     if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
         if type(prompt) is not PassphrasePrompt:
@@ -3613,12 +3633,30 @@ def _interaction_prompt_from_wire(
                 "attempt",
                 "can_remember",
                 "saved_value_available",
+                "secret_prompt_kind",
+                "secret_prompt_parameters",
             },
             context="password prompt",
         )
+        raw_kind = data["secret_prompt_kind"]
+        if raw_kind is None:
+            secret_prompt_kind = None
+        else:
+            try:
+                secret_prompt_kind = SecretPromptKind(
+                    _identifier(raw_kind, "secret prompt kind")
+                )
+            except (TypeError, ValueError):
+                raise ValueError("secret prompt kind is invalid") from None
+        raw_parameters = data["secret_prompt_parameters"]
+        if type(raw_parameters) is not dict or not all(
+            type(key) is str and type(item) is str
+            for key, item in raw_parameters.items()
+        ):
+            raise ValueError("secret prompt parameters must be a string object")
         return PasswordPrompt(
-            username=_text(data["username"], "password username"),
-            hostname=_text(data["hostname"], "password hostname"),
+            username=_text(data["username"], "password username", allow_empty=True),
+            hostname=_text(data["hostname"], "password hostname", allow_empty=True),
             port=_integer(data["port"], "password port"),
             attempt=_integer(data["attempt"], "password attempt"),
             can_remember=_boolean(data["can_remember"], "password remember support"),
@@ -3626,6 +3664,8 @@ def _interaction_prompt_from_wire(
                 data["saved_value_available"],
                 "password stored-secret availability",
             ),
+            secret_prompt_kind=secret_prompt_kind,
+            secret_prompt_parameters=raw_parameters,
         )
     if interaction_type is InteractionType.PRIVATE_KEY_PASSPHRASE:
         data = _strict_fields(

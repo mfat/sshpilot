@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from sshpilot.api.errors import SshPilotError
+from sshpilot.api.models import SecretPromptKind
 from sshpilot.api.models.secrets import (
     REVISION_CONFLICT,
     SecretOperationState,
@@ -82,6 +83,7 @@ class FakeBackend:
         self._unlocked = unlocked
         self._needs_login = needs_login
         self._configured = False
+        self._config: Dict[str, str] = {}
         self.calls: List[tuple] = []
         self.login_results: Dict[tuple, Any] = {}
         self.data: Dict[str, str] = {}
@@ -132,8 +134,27 @@ class FakeBackend:
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
         if len(flat) >= 2 and flat[0] == "config":
             if flat[1] == "set":
-                self._configured = True
+                if len(flat) >= 4:
+                    self._config[str(flat[2])] = str(flat[3])
+                    if flat[2] == "email":
+                        self._configured = True
+                else:
+                    self._configured = True
                 return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            if flat[1] == "unset":
+                if len(flat) >= 3:
+                    self._config.pop(str(flat[2]), None)
+                return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+            if flat[1] == "show":
+                payload = {
+                    "email": self._config.get("email"),
+                    "base_url": self._config.get("base_url"),
+                }
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps(payload).encode("utf-8"),
+                    stderr=b"",
+                )
             if flat[1] == "get":
                 key = flat[2] if len(flat) > 2 else ""
                 if self._configured and key == "email":
@@ -1182,9 +1203,18 @@ def test_two_step_retry_reuses_the_master_password(tmp_path):
     # One further prompt, and it is the code — not the password again. Each
     # prompt names what it asks for, so the dialog heading is right.
     assert len(broker.created) == 2
-    assert broker.created[0][1]["prompt"].username == "Bitwarden sign-in"
-    assert broker.created[1][1]["prompt"].username == "Two-step login code"
-    assert "two-step login code" in broker.created[1][1]["prompt"].hostname
+    password_prompt = broker.created[0][1]["prompt"]
+    code_prompt = broker.created[1][1]["prompt"]
+    assert password_prompt.secret_prompt_kind is SecretPromptKind.BITWARDEN_SIGN_IN
+    assert dict(password_prompt.secret_prompt_parameters) == {
+        "email": "alice@example.com"
+    }
+    assert code_prompt.secret_prompt_kind is SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN
+    assert dict(code_prompt.secret_prompt_parameters) == {
+        "email": "alice@example.com"
+    }
+    assert password_prompt.username == password_prompt.hostname == ""
+    assert code_prompt.username == code_prompt.hostname == ""
     assert bw.login_results[
         ("login_with_password", "alice@example.com", "0", SENTINEL_2FA, None)
     ] == (True, "", False)
@@ -1220,7 +1250,10 @@ def test_two_step_password_is_dropped_once_the_flow_ends(tmp_path):
     service.bitwarden_login(
         "alice@example.com", twofa_method="0", owner_client_id="client-1"
     )
-    assert "master password" in broker.created[2][1]["prompt"].hostname
+    assert (
+        broker.created[2][1]["prompt"].secret_prompt_kind
+        is SecretPromptKind.BITWARDEN_SIGN_IN
+    )
 
 
 def test_wrong_two_step_code_keeps_the_password_for_the_retry(tmp_path):
@@ -1245,9 +1278,13 @@ def test_wrong_two_step_code_keeps_the_password_for_the_retry(tmp_path):
     assert accepted.logged_in is True
     # password, code, code — the password was never asked for twice.
     assert len(broker.created) == 3
-    assert "master password" in broker.created[0][1]["prompt"].hostname
+    assert (
+        broker.created[0][1]["prompt"].secret_prompt_kind
+        is SecretPromptKind.BITWARDEN_SIGN_IN
+    )
     assert all(
-        "two-step login code" in entry[1]["prompt"].hostname
+        entry[1]["prompt"].secret_prompt_kind
+        is SecretPromptKind.BITWARDEN_TWO_STEP_LOGIN
         for entry in broker.created[1:]
     )
 
@@ -1342,6 +1379,32 @@ def test_bitwarden_unlock_sync_lock_logout(tmp_path):
 # rbw lifecycle
 # ---------------------------------------------------------------------------
 
+def test_rbw_status_reads_config_show_json(tmp_path):
+    """rbw has no ``config get``; status must parse ``rbw config show`` JSON."""
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
+    )
+    backend = backends["rbw"]
+    status = service.rbw_status()
+    assert status.configured is False
+    assert ("_run", ("config", "show")) in backend.calls
+    assert not any(
+        kind == "_run" and args[:2] == ("config", "get")
+        for kind, args in backend.calls
+    )
+
+    backend.calls.clear()
+    status = service.rbw_configure("alice@example.com", "https://vault.example.com")
+    assert status.configured is True
+    assert status.email == "alice@example.com"
+    assert status.base_url == "https://vault.example.com"
+    assert ("_run", ("config", "show")) in backend.calls
+    assert not any(
+        kind == "_run" and args[:2] == ("config", "get")
+        for kind, args in backend.calls
+    )
+
+
 def test_rbw_status_configure_unlock_sync_lock(tmp_path):
     service, manager, backends, broker, _ = _make_service(
         tmp_path, secrets={"backend": "rbw", "session_timeout": 0}
@@ -1360,6 +1423,38 @@ def test_rbw_status_configure_unlock_sync_lock(tmp_path):
     service.rbw_sync()
     status = service.rbw_lock()
     assert status.unlocked is False
+
+
+def test_locked_rbw_needs_unlock_and_unlock_uses_master_password(tmp_path):
+    """rbw is session-backed: a locked agent uses the GTK master-password dialog.
+
+    ``unlock()`` must collect the password through the interaction broker (with
+    Remember) and call ``backend.unlock(secret)`` — not native pinentry.
+    """
+    service, _manager, backends, broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "rbw", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    rbw = backends["rbw"]
+    rbw._unlocked = False
+    rbw._needs_login = False
+
+    state = service.get_state()
+    assert state.needs_unlock is True
+    assert state.locked is True
+
+    rbw.calls.clear()
+    result = service.unlock(owner_client_id="client-1")
+    assert result.kind == UnlockResultKind.UNLOCKED
+    assert rbw._unlocked is True
+    assert ("unlock", SENTINEL_MASTER) in rbw.calls
+    assert broker.created
+    prompt = broker.created[0][1].get("prompt")
+    assert prompt is not None
+    assert prompt.can_remember is True
+    assert prompt.hostname == "rbw"
+    assert SENTINEL_MASTER not in _all_strings(result.to_dict())
 
 
 # ---------------------------------------------------------------------------

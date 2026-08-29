@@ -98,6 +98,21 @@ class TestParserPopulatesDialogData:
             assert modelled not in extra, f"{modelled!r} leaked into Advanced section"
 
 
+def test_advanced_tab_dropdown_omits_typed_dialog_fields():
+    from sshpilot.connection_dialog import ADVANCED_TAB_SSH_OPTIONS
+    from sshpilot.ssh_config_formatter import MANAGED_HOST_OPTIONS
+
+    overlap = {name.lower() for name in ADVANCED_TAB_SSH_OPTIONS} & MANAGED_HOST_OPTIONS
+    assert not overlap, sorted(overlap)
+    assert "Compression" in ADVANCED_TAB_SSH_OPTIONS
+    assert "SessionType" in ADVANCED_TAB_SSH_OPTIONS
+    assert "Ciphers" in ADVANCED_TAB_SSH_OPTIONS
+    assert "IdentityFile" not in ADVANCED_TAB_SSH_OPTIONS
+    assert "HostName" not in ADVANCED_TAB_SSH_OPTIONS
+    assert "User" not in ADVANCED_TAB_SSH_OPTIONS
+    assert "Port" not in ADVANCED_TAB_SSH_OPTIONS
+
+
 class TestWriteNothingSkipped:
     def test_full_roundtrip_writes_everything(self, tmp_path):
         data = {

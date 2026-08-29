@@ -162,7 +162,7 @@ def _build_dialog_with_passphrase():
     dialog.username_row = DummyEntry(connection.username)
     dialog.port_row = DummyEntry(str(connection.port))
     dialog.proxy_jump_row = DummyEntry("")
-    dialog.forward_agent_row = DummyToggle(False)
+    dialog.forward_agent_row = DummyCombo(0)
     dialog.auth_method_row = DummyCombo(0)
     dialog.keyfile_row = DummySubtitleRow()
     dialog.keyfile_row.set_subtitle(connection.keyfile)

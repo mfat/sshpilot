@@ -104,3 +104,28 @@ def test_native_vte_right_click_remains_vte_owned_unless_pasting():
             shift_held=False,
             native_vte_menu=True,
         )
+
+
+def test_mouse_tracking_releases_right_click_even_when_paste_is_on():
+    with patch.object(terminal_mod.Gdk, "BUTTON_SECONDARY", 3), patch.object(
+        terminal_mod.Gtk.EventSequenceState, "DENIED", "denied"
+    ), patch.object(
+        terminal_mod.Gtk.EventSequenceState, "CLAIMED", "claimed"
+    ):
+        handled = terminal_mod._context_click_is_handled(
+            3,
+            paste_on_right_click=True,
+            shift_held=False,
+            native_vte_menu=True,
+            mouse_tracking=True,
+        )
+        assert _resolved_state(handled) == ["denied"]
+        # Shift+right-click still belongs to SSH Pilot (menu / paste override).
+        handled = terminal_mod._context_click_is_handled(
+            3,
+            paste_on_right_click=True,
+            shift_held=True,
+            native_vte_menu=False,
+            mouse_tracking=True,
+        )
+        assert _resolved_state(handled) == ["claimed"]

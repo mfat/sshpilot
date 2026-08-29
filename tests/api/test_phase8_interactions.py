@@ -14,6 +14,7 @@ from sshpilot.api.models import (
     InteractionType,
     PassphrasePrompt,
     PasswordPrompt,
+    SecretPromptKind,
     SessionId,
 )
 from sshpilot.api.transport.codec import (
@@ -65,7 +66,10 @@ def test_typed_interaction_codec_round_trip_and_payload_match() -> None:
         ),
         responder_client_id=ClientId("client-a"),
     )
-    assert interaction_summary_from_wire(interaction_summary_to_wire(summary)) == summary
+    password_wire = interaction_summary_to_wire(summary)
+    assert password_wire["metadata"]["secret_prompt_kind"] is None
+    assert password_wire["metadata"]["secret_prompt_parameters"] == {}
+    assert interaction_summary_from_wire(password_wire) == summary
 
     wire = interaction_summary_to_wire(summary)
     wire["metadata"] = {
@@ -108,6 +112,81 @@ def test_passphrase_prompt_confirmation_requirement_round_trips() -> None:
     wire["metadata"].pop("confirmation_required")
     decoded = interaction_summary_from_wire(wire)
     assert decoded.prompt.confirmation_required is False
+
+
+def test_structured_secret_prompt_round_trips_without_rendered_text() -> None:
+    now = datetime.now(timezone.utc)
+    summary = InteractionSummary(
+        id=_interaction_id(),
+        session_id=SessionId("secret-session-1"),
+        connection_id=ConnectionId("secret-secret-session-1"),
+        type=InteractionType.PASSWORD,
+        state=InteractionState.PENDING,
+        created_at=now,
+        expires_at=now + timedelta(seconds=120),
+        attempt=1,
+        prompt=PasswordPrompt(
+            username="",
+            hostname="",
+            port=22,
+            attempt=1,
+            can_remember=False,
+            stored_secret_available=False,
+            secret_prompt_kind=SecretPromptKind.BITWARDEN_SIGN_IN,
+            secret_prompt_parameters={"email": "alice@example.com"},
+        ),
+    )
+
+    wire = interaction_summary_to_wire(summary)
+
+    assert wire["metadata"]["username"] == ""
+    assert wire["metadata"]["hostname"] == ""
+    assert wire["metadata"]["secret_prompt_kind"] == "bitwarden_sign_in"
+    assert wire["metadata"]["secret_prompt_parameters"] == {
+        "email": "alice@example.com"
+    }
+    assert interaction_summary_from_wire(wire) == summary
+
+
+def test_secret_prompt_parameter_keys_cover_every_kind() -> None:
+    from sshpilot.api.models.interactions import _SECRET_PROMPT_PARAMETER_KEYS
+
+    assert set(_SECRET_PROMPT_PARAMETER_KEYS) == set(SecretPromptKind)
+
+
+def test_structured_secret_prompt_rejects_unknown_kind_and_invalid_parameters() -> None:
+    now = datetime.now(timezone.utc)
+    summary = InteractionSummary(
+        id=_interaction_id(),
+        session_id=SessionId("secret-session-1"),
+        connection_id=ConnectionId("secret-secret-session-1"),
+        type=InteractionType.PASSWORD,
+        state=InteractionState.PENDING,
+        created_at=now,
+        expires_at=now + timedelta(seconds=120),
+        attempt=1,
+        prompt=PasswordPrompt(
+            username="",
+            hostname="",
+            port=22,
+            attempt=1,
+            can_remember=False,
+            stored_secret_available=False,
+            secret_prompt_kind=SecretPromptKind.BITWARDEN_SIGN_IN,
+            secret_prompt_parameters={"email": "alice@example.com"},
+        ),
+    )
+    wire = interaction_summary_to_wire(summary)
+    wire["metadata"]["secret_prompt_kind"] = "unknown_prompt"
+    with pytest.raises(ValueError, match="secret prompt kind is invalid"):
+        interaction_summary_from_wire(wire)
+
+    wire = interaction_summary_to_wire(summary)
+    wire["metadata"]["secret_prompt_parameters"] = {"name": "vault"}
+    with pytest.raises(
+        ValueError, match="secret prompt parameters do not match the prompt kind"
+    ):
+        interaction_summary_from_wire(wire)
 
 
 def test_passphrase_prompt_confirmation_requirement_is_strictly_boolean() -> None:

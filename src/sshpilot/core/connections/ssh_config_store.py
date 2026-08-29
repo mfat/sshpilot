@@ -217,8 +217,10 @@ def _preserve_multivalue_on_update(
     Mirrors the legacy behavior: when the save payload omits the full
     ``identity_files``/``certificate_files`` lists, the unedited extras are
     kept (with the edited primary replacing the first entry); and directives
-    the dialog does not surface (proxy command, request tty, forward-agent
-    target) are carried forward unless the payload re-authors or clears them.
+    the dialog does not surface (proxy command, request tty) are carried
+    forward unless the payload re-authors or clears them. An omitted
+    ``forward_agent_target`` is preserved the same way so a hostname-only
+    edit cannot drop an authored socket.
     """
     data = record.data or {}
 

@@ -4534,8 +4534,13 @@ msgid "Custom SSH Options"
 msgstr "Options SSH personnalisées"
 
 #: src/sshpilot/preferences.py:2447
-msgid "These settings override values from your ~/.ssh/config."
-msgstr "Ces paramètres remplacent les valeurs de ~/.ssh/config."
+msgid ""
+"These settings apply to all connections and override values from ~/.ssh/"
+"config. Explicit per-connection settings always win."
+msgstr ""
+"Ces paramètres s’appliquent à toutes les connexions et remplacent les "
+"valeurs de ~/.ssh/config. Les réglages explicites d’une connexion ont "
+"toujours priorité."
 
 #: src/sshpilot/preferences.py:2455
 msgid "SSH Settings"
