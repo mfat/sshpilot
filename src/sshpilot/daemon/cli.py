@@ -24,6 +24,8 @@ from sshpilot.platform.paths import get_config_dir, get_ssh_dir
 
 from .lifecycle import resolve_socket_path
 
+logger = logging.getLogger(__name__)
+
 
 def _resolve_ssh_root(isolated: bool) -> Path:
     """Return the daemon-selected active SSH config root file.
@@ -271,6 +273,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return _run_management(args)
 
 
+def _split_shared_workspace_once(isolated: bool) -> None:
+    """Partition a pre-split shared sidecar into one file per SSH root.
+
+    Existing installs have a single ``connections.json`` holding both roots'
+    identities, groups, metadata and ordering. Split it before anything reads
+    it, so no reader ever observes a half-split pair. Runs at most once per
+    install and never stops the daemon from starting.
+    """
+    from sshpilot.core.connections.workspace_split import ensure_workspaces_split
+
+    ensure_workspaces_split(
+        config_dir=get_config_dir(),
+        shared_path=_resolve_state_path(False),
+        isolated_path=_resolve_state_path(True),
+        default_root=get_ssh_dir() / "config",
+        isolated_root=get_config_dir() / "ssh_config",
+        non_ssh_to_isolated=isolated,
+    )
+
+
 def _production_core_services():
     """Compose the daemon's headless application services.
 
@@ -307,6 +329,10 @@ def _production_core_services():
 
     settings = DaemonBootstrapSettings()
     isolated = settings.use_isolated_config
+    # Existing installs have one sidecar holding both roots' identities.
+    # Partition it before anything reads it, so no reader ever observes a
+    # half-split pair.
+    _split_shared_workspace_once(isolated)
     ssh_root = _resolve_ssh_root(isolated)
     ssh_store = SshConfigStore(ssh_root, isolated=isolated)
     repository = ConnectionRepository(
