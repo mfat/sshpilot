@@ -97,6 +97,30 @@ _ACTION_ALIASES = {
 # --- attention tracer geometry (pure maths, unit-testable) ------------------
 
 
+def focus_search_entry(entry, focus_widget, select_all: bool) -> None:
+    """Focus the omni-search entry without stealing the terminal's selection.
+
+    A focused ``GtkText`` publishes its selection on PRIMARY, and VTE drops its
+    own selection the moment it loses PRIMARY ownership (``vte.cc``,
+    ``Terminal::widget_clipboard_data_clear``).  Opening omni-search over a
+    live terminal selection therefore wiped it, and every copy path afterwards
+    reported an empty selection -- GH #1178, where copy stops working while a
+    mouse-tracking remote app forces the user to Shift+drag.
+
+    ``grab_focus()`` is enough on its own to cause it: ``GtkText`` selects all
+    of its content on focus-in, regardless of *select_all*.  So focus without
+    selecting, and honour *select_all* by clearing the stale query rather than
+    selecting it -- typing replaces it either way, and an empty entry owns
+    nothing.
+    """
+    if select_all and entry.get_text():
+        entry.set_text("")
+    grab = getattr(focus_widget, "grab_focus_without_selecting", None)
+    if grab is None:
+        grab = focus_widget.grab_focus
+    grab()
+
+
 def _rounded_rect_perimeter(width: float, height: float, radius: float) -> float:
     """Perimeter of the inset rounded rectangle the tracer travels around.
 
@@ -952,9 +976,8 @@ class OmniSearchController:
         self.entry.set_placeholder_text(self._examples_placeholder())
         if self.popup.visible:
             self._apply_presentation()
-            if select_all and self.entry.get_text():
-                self.entry.select_region(0, -1)
-            self._entry_focus_widget().grab_focus()
+            focus_search_entry(
+                self.entry, self._entry_focus_widget(), select_all)
             return
         try:
             self._previous_focus = self.window.get_focus()
@@ -963,9 +986,7 @@ class OmniSearchController:
         self._apply_presentation()
         self._rebuild()
         self.popup.show()
-        self._entry_focus_widget().grab_focus()
-        if select_all and self.entry.get_text():
-            self.entry.select_region(0, -1)
+        focus_search_entry(self.entry, self._entry_focus_widget(), select_all)
 
     def dismiss(self, clear: bool = False) -> None:
         if clear:
@@ -986,7 +1007,10 @@ class OmniSearchController:
         # Back to the rest-state hint (also picks up shortcut reassignments).
         self._update_placeholder()
         if self._anchored:
-            self._entry_focus_widget().grab_focus()
+            # Same PRIMARY hazard as show(): re-anchoring the docked entry must
+            # not select its contents and take PRIMARY off a terminal.
+            focus_search_entry(
+                self.entry, self._entry_focus_widget(), select_all=False)
         elif self._previous_focus is not None:
             try:
                 self._previous_focus.grab_focus()
