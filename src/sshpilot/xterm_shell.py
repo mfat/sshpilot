@@ -166,6 +166,8 @@ def _build_shell_html_impl(
 <script>
 {SELECTION_MOUSE_REPORT_GUARD_JS}
   const term = new Terminal({opts_json});
+  // True only while SearchAddon is selecting a match (see window.sshpilotSearch).
+  var selectionFromSearch = false;
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   const searchAddon = new SearchAddon.SearchAddon({{ highlightLimit: 1000 }});
@@ -189,9 +191,18 @@ def _build_shell_html_impl(
       return false;
     }}
     const opts = payload.opts || {{}};
-    const found = payload.forward
-      ? window.term.searchAddon.findNext(payload.term, opts)
-      : window.term.searchAddon.findPrevious(payload.term, opts);
+    // SearchAddon selects the hit synchronously, so onSelectionChange fires
+    // inside this call — tag it so copy-on-select does not overwrite the
+    // clipboard with every match the user steps through.
+    let found;
+    selectionFromSearch = true;
+    try {{
+      found = payload.forward
+        ? window.term.searchAddon.findNext(payload.term, opts)
+        : window.term.searchAddon.findPrevious(payload.term, opts);
+    }} finally {{
+      selectionFromSearch = false;
+    }}
     send({{
       type: "search-result",
       found: !!found,
@@ -482,7 +493,34 @@ def _build_shell_html_impl(
     }}
     return true;
   }});
+  // xterm.js fires onSelectionChange for every intermediate state of a drag
+  // (SelectionService refreshes on each mouse move), unlike VTE which only
+  // emits at drag end.  Report whether the drag is still in flight so
+  // copy-on-select writes the clipboard once, when the selection settles.
+  var selectionDragging = false;
+  var selectionChangedWhileDragging = false;
+  function sendSelectionChanged(dragging) {{
+    send({{
+      type: "selection-changed",
+      hasSelection: term.hasSelection(),
+      dragging: !!dragging,
+      fromSearch: !!selectionFromSearch
+    }});
+  }}
+  document.addEventListener("mousedown", function () {{
+    selectionDragging = true;
+    selectionChangedWhileDragging = false;
+  }}, true);
+  document.addEventListener("mouseup", function () {{
+    if (!selectionDragging) return;
+    selectionDragging = false;
+    if (selectionChangedWhileDragging) {{
+      selectionChangedWhileDragging = false;
+      sendSelectionChanged(false);
+    }}
+  }}, true);
   term.onSelectionChange(function () {{
-    send({{ type: "selection-changed", hasSelection: term.hasSelection() }});
+    if (selectionDragging) selectionChangedWhileDragging = true;
+    sendSelectionChanged(selectionDragging);
   }});
 </script></body></html>"""

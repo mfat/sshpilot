@@ -16,10 +16,35 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Vte", "3.91")
 
 from gi.repository import GObject, Gtk
-from .terminal_color_utils import mix_rgba, relative_luminance, get_contrast_color
+from .terminal_color_utils import get_contrast_color
 
 
 logger = logging.getLogger(__name__)
+
+
+def _translucent_css(color: str, alpha: float) -> str:
+    """``#rrggbb`` (or ``#rgb``) -> a CSS ``rgba()`` string at *alpha*.
+
+    Anything else -- a named color, or ``#rrggbbaa`` which already carries its
+    own alpha -- is returned untouched, so a theme value this cannot safely
+    reinterpret degrades to an opaque tint instead of breaking the theme.
+    """
+    text = (color or "").strip()
+    if text.startswith("#"):
+        digits = text[1:]
+        if len(digits) == 3:
+            digits = "".join(ch * 2 for ch in digits)
+        if len(digits) == 6:
+            try:
+                red, green, blue = (
+                    int(digits[0:2], 16),
+                    int(digits[2:4], 16),
+                    int(digits[4:6], 16),
+                )
+            except ValueError:
+                return text
+            return f"rgba({red}, {green}, {blue}, {alpha})"
+    return text
 
 
 def _log_clipboard_copy(
@@ -260,6 +285,15 @@ class BaseTerminalBackend(Protocol):
     def set_encoding(self, encoding: str) -> None:
         """Set the terminal encoding."""
 
+    def selection_change_is_copyable(self) -> bool:
+        """Whether the current selection-changed notification is a settled,
+        user-driven selection that copy-on-select should act on.
+
+        False for selections the emulator makes on the user's behalf (search
+        navigation) and for the intermediate states of a drag.
+        """
+        return True
+
     def set_search_highlight(self, active: bool) -> None:
         """Enable search highlighting or restore selection colors."""
 
@@ -423,6 +457,7 @@ class VTETerminalBackend:
         self._css_class = f"terminal-bg-{id(self)}"
         self._selection_background = None
         self._selection_foreground = None
+        self._selection_from_search = False
         self._destroyed = False
         self._link_match_tag: Optional[int] = None
         self._selection_handler: Optional[int] = None
@@ -463,28 +498,13 @@ class VTETerminalBackend:
             logger.debug("Failed to set scroll behavior", exc_info=True)
 
         try:
-            if hasattr(self.vte, "set_word_char_exceptions"):
-                self.vte.set_word_char_exceptions("@-./_~")
-            elif hasattr(self.vte, "set_word_char_options"):
-                self.vte.set_word_char_options("@-./_~")
-        except Exception:
-            logger.debug("Failed to set word char options", exc_info=True)
-
-        try:
             cursor_color = Gdk.RGBA()
             cursor_color.parse("black")
             if hasattr(self.vte, "set_color_cursor"):
                 self.vte.set_color_cursor(cursor_color)
 
-            if hasattr(self.vte, "set_color_highlight"):
-                highlight_bg = Gdk.RGBA()
-                highlight_bg.parse("#4A90E2")
-                self.vte.set_color_highlight(highlight_bg)
-
-                highlight_fg = Gdk.RGBA()
-                highlight_fg.parse("white")
-                if hasattr(self.vte, "set_color_highlight_foreground"):
-                    self.vte.set_color_highlight_foreground(highlight_fg)
+            # Selection colors stay unset on purpose -- see _reset_highlight().
+            self._reset_highlight()
         except Exception:
             logger.debug("Failed to set cursor and highlight colors", exc_info=True)
 
@@ -521,13 +541,13 @@ class VTETerminalBackend:
                 operation()
             except Exception:
                 logger.debug("Could not configure optional VTE %s", name, exc_info=True)
-        try:
-            if hasattr(self.vte, "set_word_char_exceptions"):
-                self.vte.set_word_char_exceptions("@-./_~")
-            elif hasattr(self.vte, "set_word_char_options"):
-                self.vte.set_word_char_options("@-./_~")
-        except Exception:
-            logger.debug("Could not configure VTE word selection", exc_info=True)
+        # Word-wise selection deliberately keeps VTE's default exception set
+        # ("-#%&+,./=?@\\_~\u00b7").  A narrower list used to be forced here, and
+        # VTE silently drops a "-" that is not the first character of the
+        # string (Terminal::process_word_char_exceptions), so double-clicking
+        # "my-branch-name" selected a fragment.  GNOME Terminal and Ptyxis both
+        # default their word-char-exceptions setting to "nothing", i.e. the
+        # same VTE default; match them rather than re-deriving a subset.
 
     def prepare_pty_less_emulation(self) -> None:
         """Make this terminal safe to drive as a pure emulator, with no PTY.
@@ -807,11 +827,8 @@ class VTETerminalBackend:
             cursor_color = Gdk.RGBA()
             cursor_color.parse(profile.get("cursor_color", profile["foreground"]))
 
-            highlight_bg = Gdk.RGBA()
-            highlight_bg.parse(profile.get("highlight_background", "#4A90E2"))
-
-            highlight_fg = Gdk.RGBA()
-            highlight_fg.parse(profile.get("highlight_foreground", profile["foreground"]))
+            # ``highlight_background``/``highlight_foreground`` in the profile are
+            # deliberately ignored -- see _reset_highlight().
 
             # Handle group color override if enabled
             override_rgba = None
@@ -830,11 +847,6 @@ class VTETerminalBackend:
             if use_group_color and override_rgba is not None:
                 bg_color = self._clone_rgba(override_rgba)  # Use exact group color
                 fg_color = get_contrast_color(bg_color)
-                contrast = get_contrast_color(bg_color)
-                ratio = 0.35 if relative_luminance(bg_color) < 0.5 else 0.25
-                highlight_bg = mix_rgba(bg_color, contrast, ratio)
-                highlight_bg.alpha = 1.0
-                highlight_fg = get_contrast_color(highlight_bg)
                 cursor_color = self._clone_rgba(fg_color)
 
             palette_colors = None
@@ -857,10 +869,7 @@ class VTETerminalBackend:
 
             self.vte.set_colors(fg_color, bg_color, palette_colors)
             self.vte.set_color_cursor(cursor_color)
-            self.vte.set_color_highlight(highlight_bg)
-            self.vte.set_color_highlight_foreground(highlight_fg)
-            self._selection_background = self._clone_rgba(highlight_bg)
-            self._selection_foreground = self._clone_rgba(highlight_fg)
+            self._reset_highlight()
 
             # Preserve Adwaita's original card paint at the rounded edge.  The
             # terminal background belongs only to the content widgets; putting
@@ -1312,26 +1321,59 @@ class VTETerminalBackend:
             self.vte.search_set_wrap_around(True)
 
     def search_find_next(self) -> bool:
-        return self.vte.search_find_next()
+        return self._search_navigate(self.vte.search_find_next)
 
     def search_find_previous(self) -> bool:
-        return self.vte.search_find_previous()
+        return self._search_navigate(self.vte.search_find_previous)
+
+    def _search_navigate(self, find: Callable[[], bool]) -> bool:
+        """Run a VTE search step with selection-changed marked programmatic.
+
+        VTE's search selects the hit (``Terminal::select_text``) and emits
+        ``selection-changed`` synchronously from this call, so the flag is set
+        for exactly the notification the search caused.
+        """
+        self._selection_from_search = True
+        try:
+            return find()
+        finally:
+            self._selection_from_search = False
+
+    def selection_change_is_copyable(self) -> bool:
+        return not self._selection_from_search
 
     def clear_search_decorations(self) -> None:
         self.set_search_highlight(False)
 
+    def _reset_highlight(self) -> None:
+        """Leave VTE's selection colors unset so it draws selections reversed.
+
+        VTE only falls back to reverse video when *neither* highlight color is
+        set (``Terminal::determine_colors``); with both forced, every selected
+        cell is repainted in one foreground color, so colored output -- red
+        errors, ``ls`` colors, diffs -- is flattened while selected, and a
+        badly chosen theme pair has no contrast fallback.  GNOME Terminal ships
+        ``highlight-colors-set = false`` and Ptyxis never sets these at all.
+        """
+        self._selection_background = None
+        self._selection_foreground = None
+        if hasattr(self.vte, "set_color_highlight"):
+            self.vte.set_color_highlight(None)
+        if hasattr(self.vte, "set_color_highlight_foreground"):
+            self.vte.set_color_highlight_foreground(None)
+
     def set_search_highlight(self, active: bool) -> None:
         try:
-            if active:
-                background, foreground = Gdk.RGBA(), Gdk.RGBA()
-                background.parse("#F5A623")
-                foreground.parse("#000000")
-            else:
-                background = self._selection_background
-                foreground = self._selection_foreground
-            if background is not None and hasattr(self.vte, "set_color_highlight"):
+            if not active:
+                # Back to reverse video, not to a stored selection pair.
+                self._reset_highlight()
+                return
+            background, foreground = Gdk.RGBA(), Gdk.RGBA()
+            background.parse("#F5A623")
+            foreground.parse("#000000")
+            if hasattr(self.vte, "set_color_highlight"):
                 self.vte.set_color_highlight(background)
-            if foreground is not None and hasattr(self.vte, "set_color_highlight_foreground"):
+            if hasattr(self.vte, "set_color_highlight_foreground"):
                 self.vte.set_color_highlight_foreground(foreground)
         except Exception:
             logger.debug("Could not update VTE search highlight", exc_info=True)
@@ -1416,6 +1458,8 @@ class PyXtermTerminalBackend:
         self._clipboard_copy_serial = 0
         self._clipboard_copy_callbacks: dict[int, Callable[[bool], None]] = {}
         self._has_selection = False
+        self._selection_dragging = False
+        self._selection_from_search = False
         self._selection_changed_cb: Optional[Callable[..., None]] = None
         self._shortcut_passthrough = False
 
@@ -1630,8 +1674,12 @@ class PyXtermTerminalBackend:
             bg = profile.get("background", "#000000")
             fg = profile.get("foreground", "#FFFFFF")
             cursor = profile.get("cursor_color", fg)
-            sel_bg = profile.get("highlight_background", "#4A90E2")
-            sel_fg = profile.get("highlight_foreground", fg)
+            # xterm.js cannot draw selections reversed the way VTE does, so the
+            # VTE backend's unset highlight is approximated: a translucent tint
+            # derived from the theme foreground (visible on light and dark
+            # themes alike) with *no* selectionForeground, which leaves every
+            # selected cell painted in its own color.  See _reset_highlight().
+            sel_bg = _translucent_css(fg, 0.35)
             theme_js = f"""
             (function() {{
                 if (typeof window.term !== 'undefined') {{
@@ -1639,8 +1687,7 @@ class PyXtermTerminalBackend:
                         background: {json.dumps(bg)},
                         foreground: {json.dumps(fg)},
                         cursor: {json.dumps(cursor)},
-                        selectionBackground: {json.dumps(sel_bg)},
-                        selectionForeground: {json.dumps(sel_fg)}
+                        selectionBackground: {json.dumps(sel_bg)}
                     }};
                     // Apply palette colors if available
                     var palette = {palette_js};
@@ -2245,6 +2292,9 @@ class PyXtermTerminalBackend:
             "}})();"
         )
 
+    def selection_change_is_copyable(self) -> bool:
+        return not (self._selection_dragging or self._selection_from_search)
+
     def set_search_highlight(self, active: bool) -> None:
         """xterm.js search decoration colors are configured by the addon theme."""
         if not active:
@@ -2537,6 +2587,11 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             has_selection = bool(payload.get("hasSelection"))
             previous = self._has_selection
             self._has_selection = has_selection
+            # xterm.js reports every intermediate drag state and tags the
+            # selections SearchAddon makes; both are unsuitable for
+            # copy-on-select.  See selection_change_is_copyable().
+            self._selection_dragging = bool(payload.get("dragging"))
+            self._selection_from_search = bool(payload.get("fromSearch"))
             if previous != has_selection:
                 logger.debug(
                     "PyXterm selection-changed has_selection=%s passthrough=%s",

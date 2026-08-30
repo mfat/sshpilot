@@ -4666,9 +4666,13 @@ class TerminalWidget(Gtk.Box):
 
     def _on_selection_changed(self, *_args):
         """Copy-on-select: mirror the terminal selection into the clipboard when
-        the preference is enabled. Silent (no toast — the signal fires on every
-        change during a drag-select), and only when a selection actually exists
-        (the signal also fires on deselect)."""
+        the preference is enabled. Silent (no toast), and only when a selection
+        actually exists (the signal also fires on deselect).
+
+        Only settled, user-driven selections are copied: the backend reports
+        search-driven selections and the intermediate states of a drag through
+        ``selection_change_is_copyable`` so stepping through search hits does
+        not overwrite the clipboard with every match."""
         has_selection = False
         try:
             has_selection = bool(self.backend and self.backend.get_has_selection())
@@ -4687,7 +4691,12 @@ class TerminalWidget(Gtk.Box):
             )
             if not copy_on_select:
                 return
-            if has_selection:
+            copyable = True
+            try:
+                copyable = bool(self.backend.selection_change_is_copyable())
+            except Exception:
+                copyable = True
+            if has_selection and copyable:
                 logger.debug(
                     "Terminal copy-on-select invoking copy %s",
                     clipboard_debug_state(self),
