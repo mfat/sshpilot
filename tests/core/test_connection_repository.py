@@ -575,6 +575,70 @@ def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
     assert after_identity.display_name == "Production Database"
 
 
+def test_mode_switch_does_not_hand_one_root_identity_to_the_other(tmp_path):
+    """A root switch must not let destination evidence move an identity.
+
+    Within one root, renaming the sole Host at a unique destination is a
+    rename, and the identity is expected to follow it -- that is the
+    DESTINATION_USER contract. Across an Isolated Mode switch the same
+    evidence means something else entirely: the two roots are independent
+    documents, and an entry in the other one that merely points at the same
+    (hostname, port, user) is a different connection, not a renamed one.
+
+    ``test_second_mode_round_trip_still_preserves_display_name_and_uuid``
+    above fixes the intended semantics -- leave a root and the alias
+    tombstones, come back and it resurrects with its UUID and display name --
+    but it uses non-overlapping destinations, so it never exercises the
+    destination path. When the roots do overlap (an Isolated config seeded
+    from, or simply covering, the same servers as ~/.ssh/config, which is the
+    normal case) destination matching fires first and the other root's alias
+    captures the identity: its display name, group placement and tags follow
+    it across, and the alias it left behind is created fresh.
+    """
+    repo, default_root, state, _legacy = _repo(
+        tmp_path,
+        "Host web\n    HostName shared.example.com\n",
+    )
+    repo.set_display_name("web", "Default Web")
+    default_uuid = next(
+        identity
+        for identity in read_identity_state_v2(state).identities
+        if not identity.tombstone and identity.projection.alias == "web"
+    ).uuid
+
+    # Same destination, different alias, different root.
+    isolated_root = tmp_path / "isolated_ssh_config"
+    isolated_root.write_text("Host prod\n    HostName shared.example.com\n")
+
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(isolated_root, isolated=True), True
+    )
+
+    assert [item.id for item in snapshot.connections] == ["prod"]
+    # The isolated root's own entry is its own connection: it must not
+    # inherit the default root's identity just for sharing a destination.
+    assert snapshot.connections[0].display_name != "Default Web"
+    isolated_identity = next(
+        identity
+        for identity in read_identity_state_v2(state).identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    )
+    assert isolated_identity.uuid != default_uuid
+
+    # And the default root's identity is still intact on the way back.
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(default_root, isolated=False), False
+    )
+    assert [item.id for item in snapshot.connections] == ["web"]
+    assert snapshot.connections[0].display_name == "Default Web"
+    restored = next(
+        identity
+        for identity in read_identity_state_v2(state).identities
+        if not identity.tombstone and identity.projection.alias == "web"
+    )
+    assert restored.uuid == default_uuid
+
+
 def test_resurrection_picks_highest_generation_among_seeded_duplicate_tombstones(
     tmp_path,
 ):

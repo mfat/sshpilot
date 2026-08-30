@@ -421,12 +421,14 @@ class ConnectionRepository:
                 self._isolated = target_isolated
                 self._load_state_locked(
                     allow_tombstone_resurrection=mode_changed,
+                    allow_destination_inference=not mode_changed,
                 )
             except Exception:
                 self._ssh_store = old_store
                 self._isolated = old_isolated
                 self._load_state_locked(
                     allow_tombstone_resurrection=mode_changed,
+                    allow_destination_inference=not mode_changed,
                 )
                 raise
             after = self._build_snapshot_locked()
@@ -524,6 +526,7 @@ class ConnectionRepository:
         self,
         *,
         allow_tombstone_resurrection: bool = False,
+        allow_destination_inference: bool = True,
     ) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
@@ -561,6 +564,7 @@ class ConnectionRepository:
                         projections,
                         ssh_config_revision=ssh_config.root_revision,
                         allow_tombstone_resurrection=allow_tombstone_resurrection,
+                        allow_destination_inference=allow_destination_inference,
                     )
                     write_identity_state_v2(self._state_path, state)
                 self._identity_state = state

@@ -133,13 +133,16 @@ def reconcile_identity_state(
     uuid_factory: Callable[[], str] = new_uuid4,
     explicit_continuity: Mapping[str, str] = (),
     allow_tombstone_resurrection: bool = False,
+    allow_destination_inference: bool = True,
 ) -> IdentityStateV2:
     """Apply one frozen reconciliation pass to a persisted v2 snapshot.
 
     ``explicit_continuity`` maps an old alias to a new alias for an operation
     SSH Pilot itself performed.  Those pairs bypass heuristic evidence while
     all remaining candidates use the accepted matcher unchanged.
-    Tombstone resurrection is reserved for explicit SSH authority transitions.
+    Tombstone resurrection is reserved for explicit SSH authority transitions,
+    which are also the transitions that switch destination inference off --
+    see ``reconcile_identities``.
     """
 
     if type(ssh_config_revision) is not str or not ssh_config_revision.strip():
@@ -266,12 +269,14 @@ def reconcile_identity_state(
         ambiguous_new,
         uuid_factory=uuid_factory,
         allow_tombstone_resurrection=allow_tombstone_resurrection,
+        allow_destination_inference=allow_destination_inference,
     )
     ordinary_result = reconcile_identities(
         ordinary_old,
         ordinary_new,
         uuid_factory=uuid_factory,
         allow_tombstone_resurrection=allow_tombstone_resurrection,
+        allow_destination_inference=allow_destination_inference,
     )
     combined_matched = ambiguity_result.matched + ordinary_result.matched
     combined_created = ambiguity_result.created + ordinary_result.created
