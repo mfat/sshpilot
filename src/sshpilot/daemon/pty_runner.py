@@ -34,6 +34,16 @@ from .process_registry import KIND_SESSION, forget_owned_process, record_owned_p
 DEFAULT_TERMINAL_INPUT_BYTES = 256 * 1024
 DEFAULT_PTY_READ_CHUNK = 32 * 1024
 
+# How long to wait for the PTY child to reach exec. Neither success nor an
+# explicit failure spends this budget: a successful exec closes the status pipe
+# via CLOEXEC (immediate EOF) and a failed one writes b"launch_failed" (an
+# immediate read), so the timeout only fires when the child is genuinely stuck.
+# That makes a generous value nearly free, while a tight one turns "the box is
+# busy" into a spurious PTY_ALLOCATION_FAILED -- the child is a whole Python
+# interpreter start, and under load (CI runners, a busy laptop) 2s was not
+# enough, which is how this surfaced as an intermittent CI failure.
+PTY_CHILD_EXEC_TIMEOUT = 10.0
+
 TerminalOutputCallback = Callable[[bytes], None]
 TerminalEofCallback = Callable[[], None]
 LaunchBuilder = Callable[
@@ -495,7 +505,9 @@ class PtySessionProcessRunner:
             record_owned_process_or_abandon(
                 process, kind=KIND_SESSION, process_group=True
             )
-            readable, _, _ = select.select((status_read,), (), (), 2.0)
+            readable, _, _ = select.select(
+                (status_read,), (), (), PTY_CHILD_EXEC_TIMEOUT
+            )
             # A successful exec closes status_write via CLOEXEC without
             # writing anything, so os.read(...) returns b"" (EOF) here too —
             # that is the *success* case, not failure. Only a timeout

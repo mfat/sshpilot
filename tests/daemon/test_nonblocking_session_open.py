@@ -271,7 +271,11 @@ def test_startup_failure_after_acknowledgement_is_async(
 def test_close_while_startup_blocked(daemon_factory, _repeat):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(session_runner=runner)
-    client = DaemonClient(socket_path=server.socket_path, timeout=0.4)
+    # Seconds for the same reason as test_gtk_close_during_blocked_startup:
+    # the close cannot return until start() is released, so a sub-second
+    # request budget races the test's own setup rather than any daemon
+    # behaviour.
+    client = DaemonClient(socket_path=server.socket_path, timeout=5.0)
     try:
         opened = client.open_session(
             OpenSessionRequest(connection_id=client.list_connections()[0].id)
@@ -556,7 +560,15 @@ def test_gtk_controller_updates_tab_on_async_startup_failure():
 def test_gtk_close_during_blocked_startup(daemon_factory, _repeat):
     runner = _BlockingStartRunner()
     server, _manager = daemon_factory(session_runner=runner)
-    client = DaemonClient(socket_path=server.socket_path, timeout=0.4)
+    # Seconds, not the sub-second timeout the fast-ack tests above use: the
+    # close here is *deliberately* slow, since it cannot complete until the
+    # test releases the blocked start(). A 0.4s budget raced the test's own
+    # `outstanding >= 2` poll and timed out on loaded CI runners, surfacing as
+    # a spurious "The session change may have completed". The non-blocking ack
+    # is asserted by state (STARTING) below and timed explicitly in
+    # test_open_session_returns_starting_while_runner_blocked, so nothing is
+    # lost by giving the client room here.
+    client = DaemonClient(socket_path=server.socket_path, timeout=5.0)
     try:
         opened = client.open_session(
             OpenSessionRequest(connection_id=client.list_connections()[0].id)
