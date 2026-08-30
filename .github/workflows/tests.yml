@@ -69,15 +69,17 @@ jobs:
       # basetemp, and at ~5k items that's thousands of resolve() syscalls -- slow
       # enough on the runner's regular disk to blow the job timeout. RAM-backed
       # basetemp keeps that cleanup fast regardless of suite size.
-      # The marker expression must repeat `stress` and `e2e`: a command-line
+      # The marker expression must repeat every opt-in marker: a command-line
       # -m REPLACES pytest.ini's addopts -m rather than intersecting with it,
-      # so naming only integration/gui silently opts CI into the two suites
-      # pytest.ini documents as opt-in. That went unnoticed while the stress
-      # suite could not even be collected (hypothesis was missing); installing
-      # it makes the override visible. Run them deliberately, not by accident.
+      # so naming only integration/gui silently opts CI into the suites
+      # pytest.ini documents as opt-in. Keep this list in sync with pytest.ini.
+      # `property` covers the Hypothesis searches, which cost minutes per run
+      # and re-roll their examples every time; the deterministic fixtures they
+      # feed (tests/fixtures/sidecar_regressions) do run here, so every
+      # regression they have caught stays covered.
       - name: Run pytest
         run: >
           pytest -ra
-          -m "not integration and not gui and not e2e and not stress"
+          -m "not integration and not gui and not e2e and not stress and not property"
           --basetemp=/dev/shm/pytest-tmp
           --cov=sshpilot --cov-report=term-missing --cov-report=xml

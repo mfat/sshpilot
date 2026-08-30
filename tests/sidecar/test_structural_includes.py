@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 from typing import List
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -123,6 +124,7 @@ def _ssh_g_hostname(config: Path, alias: str) -> str | None:
     deadline=None,
     suppress_health_check=[HealthCheck.data_too_large, HealthCheck.function_scoped_fixture],
 )
+@pytest.mark.property
 @given(connections=_connections_strategy(), mutations=_mutations_strategy())
 def test_structural_moves_preserve_alias_identity_and_ssh_semantics(connections, mutations):
     with tempfile.TemporaryDirectory(prefix="sshpilot-sidecar-tree-") as tmp:

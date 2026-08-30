@@ -46,8 +46,15 @@ settings.register_profile(
 )
 
 
+@pytest.mark.property
 def test_sidecar_identity_reconciliation_normal():
-    """Fast property suite: runs in the ordinary headless CI pass."""
+    """Modest property search. Opt-in: ``pytest -m property``.
+
+    A search, not a fixed case -- it draws new examples every run, so it costs
+    tens of seconds each time and can only ever say "found nothing today".
+    Anything it does find is promoted to a fixture in test_regressions.py,
+    which is what the ordinary suite relies on.
+    """
 
     run_state_machine_as_test(
         SidecarIdentityMachine, settings=settings.get_profile("sidecar_normal")
