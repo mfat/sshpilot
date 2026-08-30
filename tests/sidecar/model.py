@@ -18,7 +18,7 @@ wrong identity.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 DISPLAY_MARKER_PREFIX = "DISPLAY::"

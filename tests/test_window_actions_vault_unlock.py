@@ -132,7 +132,6 @@ def test_tabmenu_show_files_panel_gates_on_vault_unlock(monkeypatch):
 
 
 def test_tabmenu_fm_new_window_gates_on_vault_unlock(monkeypatch):
-    import sshpilot.window_tabs as wt
 
     window = WindowTabsMixin.__new__(WindowTabsMixin)
     connection = _connection()

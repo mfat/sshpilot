@@ -18,9 +18,8 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
-import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
@@ -35,7 +34,6 @@ from .assertions import (
     check_state_invariants,
 )
 from .model import LogicalConnection, marker_for, render_tree
-from .strategies import hostnames, ports, usernames
 
 _SSH_AVAILABLE = shutil.which("ssh") is not None
 
@@ -154,7 +152,6 @@ def test_structural_moves_preserve_alias_identity_and_ssh_semantics(connections,
             connection.alias: _ssh_g_hostname(root, connection.alias) for connection in connections
         }
 
-        by_id = {connection.logical_id: connection for connection in connections}
         for kind, pick, arg in mutations:
             if not connections:
                 break

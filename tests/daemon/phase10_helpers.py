@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
-import pytest
 
 from sshpilot.core.connection_application_service import ConnectionApplicationService
 from sshpilot.api import DaemonClient

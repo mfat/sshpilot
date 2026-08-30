@@ -8,7 +8,6 @@ reconciliation decision themselves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, Optional, Set, Tuple
 
 from sshpilot.core.connections.identity_state_v2 import IdentityStateV2
