@@ -575,6 +575,39 @@ def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
     assert after_identity.display_name == "Production Database"
 
 
+def test_group_membership_survives_a_mode_round_trip(tmp_path):
+    """Leaving a root and coming back must not empty the connection's group.
+
+    An identity whose alias is absent from the newly active root is
+    tombstoned, and ``_placement_values`` drops group references to anything
+    not currently active -- so toggling Isolated Mode pruned the membership,
+    and the resurrection on the way back restored the identity without it.
+    The display name survives that round trip (see
+    ``test_second_mode_round_trip_still_preserves_display_name_and_uuid``);
+    placement must survive it on the same terms.
+    """
+    repo, default_root, state, _legacy = _repo(
+        tmp_path,
+        "Host web\n    HostName web.example.com\n",
+    )
+    group = repo.create_group("Servers")
+    repo.assign_connection_to_group("web", group.id)
+    assert [
+        tuple(ref.id for ref in item.groups) for item in repo.snapshot().connections
+    ] == [(group.id,)]
+
+    isolated_root = tmp_path / "isolated_ssh_config"
+    isolated_root.write_text("Host other\n    HostName other.example.com\n")
+
+    repo.transition_ssh_config(SshConfigStore(isolated_root, isolated=True), True)
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(default_root, isolated=False), False
+    )
+
+    assert [item.id for item in snapshot.connections] == ["web"]
+    assert tuple(ref.id for ref in snapshot.connections[0].groups) == (group.id,)
+
+
 def test_mode_switch_does_not_hand_one_root_identity_to_the_other(tmp_path):
     """A root switch must not let destination evidence move an identity.
 
