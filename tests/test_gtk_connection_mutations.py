@@ -123,6 +123,7 @@ class _MutationWindow:
     _fetch_daemon_editor_generation = MainWindow._fetch_daemon_editor_generation
     _retry_daemon_editor_load = MainWindow._retry_daemon_editor_load
     _hydrate_plugin_connection_editor = MainWindow._hydrate_plugin_connection_editor
+    _plugin_editor_load_failed = MainWindow._plugin_editor_load_failed
     _retry_plugin_editor_hydrate = MainWindow._retry_plugin_editor_hydrate
     show_connection_dialog = MainWindow.show_connection_dialog
 
@@ -2155,3 +2156,188 @@ def test_plugin_hydrate_failure_keeps_save_disabled():
     assert dialog._editor_load_failed is True
     assert dialog._daemon_editor_loaded is False
     assert dialog.load_error_shown is True
+
+
+def test_plugin_hydrate_without_transport_reports_instead_of_raising():
+    """The daemon-unavailable case must land in the failed state, not escape.
+
+    Retry is offered precisely because the daemon was unavailable, so it can
+    fire while it still is.  Letting the missing bridge raise would leave the
+    dialog stuck in ``loading`` with Save disabled and no error or Retry.
+    """
+    window = _MutationWindow()
+    window.client_bridge = None
+    window.client = None
+    assert not window._daemon_ready()
+
+    dialog = _EditorDialog(source="daemon")
+    dialog.load_error_shown = False
+
+    def _show_error(on_retry=None):
+        dialog.load_error_shown = True
+        dialog.load_error_on_retry = on_retry
+
+    dialog.show_daemon_editor_load_error = _show_error
+    dialog.set_daemon_editor_loading()
+
+    window._hydrate_plugin_connection_editor(
+        dialog,
+        SimpleNamespace(nickname="board", connection_id="board", protocol="serial"),
+    )
+
+    assert dialog._editor_load_failed is True
+    assert dialog._daemon_editor_loaded is False
+    assert dialog.load_error_shown is True
+    assert callable(dialog.load_error_on_retry)
+
+
+def test_plugin_editor_retry_while_daemon_still_down_stays_recoverable():
+    """Pressing Retry against a still-unavailable daemon must not wedge Save."""
+    window = _MutationWindow()
+    window.client_bridge = None
+    window.client = None
+
+    dialog = _EditorDialog(source="daemon")
+
+    def _show_error(on_retry=None):
+        dialog.load_error_on_retry = on_retry
+
+    dialog.show_daemon_editor_load_error = _show_error
+    dialog.set_daemon_editor_loading()
+    window._hydrate_plugin_connection_editor(
+        dialog,
+        SimpleNamespace(nickname="board", connection_id="board", protocol="serial"),
+    )
+
+    # The daemon is still down when the user presses Retry.
+    dialog.load_error_on_retry()
+
+    assert dialog._editor_load_failed is True
+    assert dialog._daemon_editor_loaded is False
+    assert callable(dialog.load_error_on_retry)
+
+
+def test_plugin_editor_dialog_opens_failed_when_daemon_unavailable(monkeypatch):
+    """Opening a plugin editor with no daemon shows the error, not a blank form."""
+    window = _MutationWindow()
+    window.client_bridge = None
+    window.client = None
+    created, _original = _patch_dialog(monkeypatch)
+
+    window.show_connection_dialog(
+        connection=SimpleNamespace(
+            nickname="board", connection_id="board", protocol="serial"
+        ),
+    )
+
+    dialog = created[0]
+    assert dialog.source == "daemon"
+    assert dialog._daemon_editor_loaded is False
+    assert dialog._editor_load_failed is True
+    assert dialog.load_error_shown is True
+
+
+def test_plugin_hydrate_keeps_live_connection_for_row_refresh(monkeypatch):
+    """The sidebar keys rows by the live record, not the daemon DTO adapter."""
+    window = _MutationWindow()
+    window.client.editor = SimpleNamespace(
+        nickname="board",
+        hostname="",
+        host="board",
+        port=22,
+        protocol="serial",
+        plugin_data={"device": "/dev/ttyUSB0"},
+        generation=0,
+    )
+    created, _original = _patch_dialog(monkeypatch)
+    live = SimpleNamespace(nickname="board", connection_id="board", protocol="serial")
+
+    window.show_connection_dialog(connection=live)
+
+    dialog = created[0]
+    operation, success, _failure = window.client_bridge.calls[0]
+    success(operation())
+
+    assert dialog.connection is not live
+    assert dialog.connection.data.get("device") == "/dev/ttyUSB0"
+    assert dialog._plugin_source_connection is live
+
+
+def test_ssh_editor_retry_while_daemon_still_down_stays_recoverable(monkeypatch):
+    """Retry against a still-unavailable daemon must report, not wedge.
+
+    ``_retry_daemon_editor_load`` puts the dialog back into ``loading`` before
+    re-fetching, so a loader that bailed out early on an unavailable daemon
+    left Save disabled with no error and no Retry — unrecoverable without
+    reopening the editor.
+    """
+    from sshpilot.window import GLib
+
+    def _run_now(_ms, cb):
+        cb()
+
+    monkeypatch.setattr(GLib, "timeout_add", _run_now)
+
+    window = _MutationWindow()
+    window.client_bridge = None
+    window.client = None
+    assert not window._daemon_ready()
+
+    dialog = _EditorDialog()
+    dialog.load_error_shown = False
+
+    def _show_error(on_retry=None):
+        dialog.load_error_shown = True
+        dialog.load_error_on_retry = on_retry
+
+    dialog.show_daemon_editor_load_error = _show_error
+
+    dialog.set_daemon_editor_loading()
+    window._fetch_daemon_editor_generation(dialog, SimpleNamespace(nickname="demo"))
+
+    # An absent transport exhausts the retry loop and then reports.
+    assert dialog._editor_load_failed is True
+    assert dialog.load_error_shown is True
+    assert callable(dialog.load_error_on_retry)
+
+    # Pressing Retry while the daemon is still down must end the same way,
+    # never leaving the dialog stuck in the loading state.
+    dialog.load_error_shown = False
+    dialog.load_error_on_retry()
+
+    assert dialog._editor_load_failed is True
+    assert dialog._daemon_editor_loaded is False
+    assert dialog.load_error_shown is True
+
+    # And once the daemon returns, Retry recovers.
+    window.client_bridge = _ControlledBridge()
+    window.client = _Client()
+    window.client.editor = SimpleNamespace(generation=5)
+    dialog.load_error_on_retry()
+
+    operation, success, _failure = window.client_bridge.calls[-1]
+    success(operation())
+    assert dialog._daemon_editor_loaded is True
+    assert dialog._daemon_generation == 5
+    assert dialog._editor_load_failed is False
+
+
+def test_ssh_editor_dialog_opens_recoverable_when_daemon_unavailable(monkeypatch):
+    """Opening an SSH editor with no daemon must still offer a working Retry."""
+    from sshpilot.window import GLib
+
+    monkeypatch.setattr(GLib, "timeout_add", lambda _ms, cb: cb())
+
+    window = _MutationWindow()
+    window.client_bridge = None
+    window.client = None
+    created, _original = _patch_dialog(monkeypatch)
+
+    window.show_connection_dialog(connection=SimpleNamespace(nickname="demo"))
+
+    dialog = created[0]
+    assert dialog.source == "daemon"
+    assert dialog._daemon_editor_loaded is False
+    assert dialog._editor_load_failed is True
+    assert dialog.load_error_shown is True
+    assert callable(dialog.load_error_on_retry)

@@ -4865,39 +4865,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             dialog._daemon_generation = 0
             dialog.set_editor_source('local')
         elif getattr(connection, 'protocol', 'ssh') == 'ssh':
+            # The loader owns the daemon-unavailable case: an absent transport
+            # enters its retry loop like any other transport churn, and only a
+            # terminal failure disables Save (with an error and a Retry).
             dialog.set_editor_source('daemon')
             dialog.set_daemon_editor_loading()
-            if self._daemon_ready():
-                self._fetch_daemon_editor_generation(dialog, connection)
-            else:
-                dialog.set_daemon_editor_load_failed()
-                try:
-                    dialog.show_daemon_editor_load_error(
-                        on_retry=lambda: self._retry_daemon_editor_load(dialog, connection)
-                    )
-                except Exception:
-                    pass
+            self._fetch_daemon_editor_generation(dialog, connection)
         else:
             # Plugin protocols: list rows are ConnectionSummary (no FieldSpec
             # values). Reuse the daemon loading gate so Save stays off until
             # ConnectionDetails.plugin_data arrives — otherwise a quick Save
-            # persists blank FieldSpecs and undoes the round-trip fix.
+            # persists blank FieldSpecs and undoes the round-trip fix.  The
+            # hydrate owns the daemon-unavailable case itself, so an
+            # unavailable daemon lands in the same failed state as a fetch
+            # error (Save disabled, error shown, Retry offered).
             dialog.set_editor_source('daemon')
             dialog.set_daemon_editor_loading()
-            if self._daemon_ready():
-                self._hydrate_plugin_connection_editor(dialog, connection)
-            else:
-                dialog.set_daemon_editor_load_failed()
-                try:
-                    dialog.show_daemon_editor_load_error(
-                        on_retry=lambda: self._retry_plugin_editor_hydrate(
-                            dialog, connection
-                        )
-                    )
-                except Exception:
-                    pass
+            self._hydrate_plugin_connection_editor(dialog, connection)
 
         dialog.present()
+
+    def _plugin_editor_load_failed(self, dialog, connection) -> None:
+        """Terminal plugin-hydrate failure: block Save and offer Retry."""
+        dialog.set_daemon_editor_load_failed()
+        try:
+            dialog.show_daemon_editor_load_error(
+                on_retry=lambda: self._retry_plugin_editor_hydrate(
+                    dialog, connection
+                )
+            )
+        except Exception:
+            pass
 
     def _hydrate_plugin_connection_editor(self, dialog, connection) -> None:
         """Load non-SSH FieldSpec values from daemon details into the dialog.
@@ -4905,11 +4903,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         Sidebar rows are ``ConnectionSummary`` projections without ``plugin_data``.
         Fetching ``get_connection`` fills serial/docker/k8s/mosh fields that
         would otherwise reopen as blanks (and silently reset on save).
+
+        Exactly one of success, terminal failure, or dialog cancellation ends
+        the chain; any late callback is ignored.  Every terminal failure —
+        including an unavailable daemon, which Retry can hit again — leaves
+        Save disabled with an error and a working Retry, never a dialog
+        wedged in the loading state.
         """
         from .api.connection_identity import connection_id_for
         from .connection_dialog import _editor_details_to_connection
 
-        connection_id = connection_id_for(connection)
+        try:
+            connection_id = connection_id_for(connection)
+        except Exception:
+            # Reachable only for a record with no durable identity.  Report it
+            # in the dialog rather than raising out of the open-editor action,
+            # which would leave the click doing nothing at all.
+            logger.warning(
+                "Cannot hydrate a plugin editor without a durable identity",
+                exc_info=True,
+            )
+            self._plugin_editor_load_failed(dialog, connection)
+            return
         state: Dict[str, Any] = {
             'finished': False,
             'request': None,
@@ -4924,6 +4939,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             state['finished'] = True
             state['request'] = None
             try:
+                # The adapter object below replaces ``dialog.connection`` for
+                # form population, but it is not the sidebar's live record:
+                # keep that one so the save handler can still refresh its rows
+                # and tags instead of rebuilding the whole list.
+                dialog._plugin_source_connection = connection
                 dialog.connection = _editor_details_to_connection(details)
                 dialog.is_editing = True
                 # Must mark loaded before load_connection_data — daemon mode
@@ -4938,15 +4958,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     connection_id,
                     exc_info=True,
                 )
-                dialog.set_daemon_editor_load_failed()
-                try:
-                    dialog.show_daemon_editor_load_error(
-                        on_retry=lambda: self._retry_plugin_editor_hydrate(
-                            dialog, connection
-                        )
-                    )
-                except Exception:
-                    pass
+                self._plugin_editor_load_failed(dialog, connection)
 
         def _failed(error):
             if _finished():
@@ -4958,15 +4970,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 connection_id,
                 type(error).__name__,
             )
-            dialog.set_daemon_editor_load_failed()
-            try:
-                dialog.show_daemon_editor_load_error(
-                    on_retry=lambda: self._retry_plugin_editor_hydrate(
-                        dialog, connection
-                    )
-                )
-            except Exception:
-                pass
+            self._plugin_editor_load_failed(dialog, connection)
 
         def _cancel(_dialog=None):
             if state['finished']:
@@ -4990,13 +4994,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     pass
 
+        # Re-resolve the live client and bridge here rather than trusting an
+        # earlier readiness check: Retry is offered precisely when the daemon
+        # was unavailable, so it can fire while it still is.  A missing
+        # transport must reach ``_failed`` (error + Retry), never escape as an
+        # AttributeError that leaves the dialog stuck in the loading state
+        # with Save disabled and no way out.
+        bridge = self.client_bridge
+        client = self.client
+        if bridge is None or client is None:
+            _failed(RuntimeError("The daemon connection is unavailable"))
+            return
         try:
-            state['request'] = self.client_bridge.submit(
-                lambda: self.client.get_connection(connection_id),
+            state['request'] = bridge.submit(
+                lambda: client.get_connection(connection_id),
                 on_success=_apply,
                 on_error=_failed,
             )
-        except RuntimeError as error:
+        except Exception as error:
             _failed(error)
 
     def _retry_plugin_editor_hydrate(self, dialog, connection) -> None:
@@ -5025,12 +5040,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .api.models.common import ConnectionId
 
         # Defensive entry guard: this loader only exists for active daemon
-        # edits.  A missing connection is a hard failure (Save stays off);
-        # leaving daemon mode mid-flight is left to the caller's gating.
+        # edits.  A missing connection is a hard failure with nothing to retry
+        # (Save stays off); leaving daemon mode mid-flight is left to the
+        # caller's gating.  An unavailable daemon is NOT handled here — it is
+        # ``_submit_fetch``'s ``_TransportUnavailable``, so Retry against a
+        # daemon that is still down re-enters the retry loop and ends in a
+        # reported failure instead of wedging the dialog in ``loading``.
         if connection is None:
             dialog.set_daemon_editor_load_failed()
-            return
-        if not self._daemon_ready():
+            try:
+                dialog.show_daemon_editor_load_error(on_retry=None)
+            except Exception:
+                pass
             return
 
         class _TransportUnavailable(Exception):
@@ -7486,7 +7507,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 complete(bool(ok))
 
         if dialog.is_editing and dialog.connection is not None:
-            old_connection = dialog.connection
+            # A hydrated plugin editor points ``dialog.connection`` at a daemon
+            # DTO adapter; the sidebar keys its rows by the live record, so
+            # prefer that when the editor stashed it.
+            old_connection = (
+                getattr(dialog, '_plugin_source_connection', None)
+                or dialog.connection
+            )
             original_nickname = old_connection.nickname
             if not self.plugin_connection_services.update_connection(
                 old_connection, connection_data
