@@ -164,7 +164,26 @@ def test_delete_is_idempotent(provider):
     assert prov.delete_connection_password("missing") is True
 
 
-def test_key_passphrase_roundtrip(provider):
+@pytest.fixture
+def keyring_backend(monkeypatch):
+    """Serve the key-passphrase path from an in-memory secret manager.
+
+    ``store/lookup/delete_key_passphrase`` deliberately bypass
+    ``secret_manager_factory`` and call into ``askpass_utils``, which resolves
+    the *real* backend via ``secret_storage.get_secret_manager``. Left alone
+    that writes a live secret into the developer's keyring, and on CI -- where
+    no keyring backend is installed -- ``store`` returns False and the test
+    fails. Faking at the manager boundary rather than stubbing out
+    ``askpass_utils`` keeps its own key-path normalization under test.
+    """
+    import sshpilot.secret_storage as secret_storage
+
+    manager = FakeSecretManager()
+    monkeypatch.setattr(secret_storage, "get_secret_manager", lambda: manager)
+    return manager
+
+
+def test_key_passphrase_roundtrip(provider, keyring_backend):
     prov, _manager, _records = provider
     assert prov.store_key_passphrase("/home/u/.ssh/id_ed25519", "pp") is True
     assert prov.lookup_key_passphrase("/home/u/.ssh/id_ed25519") == "pp"
