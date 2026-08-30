@@ -38,7 +38,11 @@ logger = logging.getLogger(__name__)
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
 from .core.connection_evidence import classify_connection_evidence
-from .terminal_input import MouseTrackingState, commit_payload_to_bytes
+from .terminal_input import (
+    MouseTrackingState,
+    commit_payload_to_bytes,
+    sgr_reports_to_legacy,
+)
 
 
 # Installed once per process. Inner padding for the terminal text so the
@@ -1398,6 +1402,32 @@ class TerminalWidget(Gtk.Box):
                     list(after),
                 )
         backend.feed(data)
+        if tracker is not None and self._needs_legacy_mouse_translation():
+            # Settles on top of whatever the remote just set, so the emulator
+            # ends up in SGR whenever the remote asked for a legacy mode.
+            local_modes = tracker.take_local_mode_feed()
+            if local_modes:
+                logger.debug(
+                    "Driving emulator mouse protocol locally: %r", local_modes
+                )
+                backend.feed(local_modes)
+
+    def _needs_legacy_mouse_translation(self) -> bool:
+        """Whether this backend silently drops the emulator's legacy reports.
+
+        VTE's legacy ESC[M encoder bails before emitting ``commit`` when the
+        widget has no PTY, which is exactly the daemon-backed case (GH #1212).
+        A locally spawned VTE owns a PTY and needs none of this, and PyXterm
+        hands us its reports either way.
+        """
+        vte = getattr(getattr(self, 'backend', None), 'vte', None)
+        if vte is None:
+            return False
+        try:
+            return vte.get_pty() is None
+        except Exception:
+            logger.debug("Failed to read backend PTY state", exc_info=True)
+            return False
 
     def _on_daemon_output(self, data):
         """Handle daemon terminal output."""
@@ -1526,6 +1556,13 @@ class TerminalWidget(Gtk.Box):
 
         try:
             data = commit_payload_to_bytes(text, size)
+            tracker = getattr(self, "_mouse_tracking", None)
+            if tracker is not None and tracker.translating_legacy:
+                # The emulator is in SGR only because we put it there; the
+                # remote asked for the legacy encoding and must get it.
+                data = sgr_reports_to_legacy(data)
+                if not data:
+                    return
             self._daemon_controller.send_input(data)
         except Exception as e:
             logger.error(f"Failed to send input to daemon: {e}")

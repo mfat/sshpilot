@@ -13,7 +13,11 @@ from gi.repository import Gtk
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
 from .terminal_backends import GridTrackingVteTerminal
-from .terminal_input import commit_payload_to_bytes
+from .terminal_input import (
+    MouseTrackingState,
+    commit_payload_to_bytes,
+    sgr_reports_to_legacy,
+)
 from .terminal_session_controller import (
     DaemonTerminalSessionController,
     daemon_terminal_capabilities_missing,
@@ -37,6 +41,7 @@ class DaemonTerminalWidget(Gtk.Box):
         self._closed = False
         self._received_bytes = 0
         self._terminal = GridTrackingVteTerminal()
+        self._mouse_tracking = MouseTrackingState()
         self.append(self._terminal)
         self._interaction_dialogs = DaemonInteractionDialogs(
             client,
@@ -82,7 +87,13 @@ class DaemonTerminalWidget(Gtk.Box):
         tab = self._controller.tab_state
         if tab.session_id is not None:
             self._interaction_dialogs.set_session(tab.session_id)
+        self._mouse_tracking.feed(data)
         self._terminal.feed(data)
+        # VTE drops its legacy ESC[M reports when it owns no PTY, so drive it
+        # in SGR instead and translate back on commit (GH #1212).
+        local_modes = self._mouse_tracking.take_local_mode_feed()
+        if local_modes:
+            self._terminal.feed(local_modes)
 
     @property
     def received_bytes(self) -> int:
@@ -95,7 +106,12 @@ class DaemonTerminalWidget(Gtk.Box):
     def _on_commit(self, _terminal, text, size) -> None:
         if self._closed:
             return
-        self._controller.send_input(commit_payload_to_bytes(text, size))
+        data = commit_payload_to_bytes(text, size)
+        if self._mouse_tracking.translating_legacy:
+            data = sgr_reports_to_legacy(data)
+            if not data:
+                return
+        self._controller.send_input(data)
 
     def _on_size_changed(self, _terminal, *_details) -> None:
         if self._closed:
