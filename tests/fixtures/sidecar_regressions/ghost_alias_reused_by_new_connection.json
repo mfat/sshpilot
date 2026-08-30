@@ -1,0 +1,15 @@
+{
+  "name": "ghost_alias_reused_by_new_connection",
+  "description": "An unresolved identity's frozen alias is legitimately reused. external_collide_and_rename leaves 'host1-Copy-2' out of the config entirely and its identity unresolved, carried forward at its stale pre-ambiguity projection. Duplicating another connection then picks that now-free name and creates a genuinely new connection there. Production must retire the ghost rather than let the newcomer inherit its UUID or display name (the deliberate retiring_ghost_uuids path in identity_repository_adapter). Minimized from a stress-profile failure whose exact-alias report counted the ghost's frozen alias as a live binding.",
+  "initial_connections": [
+    {"ref": "base", "hostname": "0.0.example", "port": 1}
+  ],
+  "operations": [
+    {"op": "managed_duplicate", "ref": "base", "as": "copy1"},
+    {"op": "managed_duplicate", "ref": "copy1", "as": "copy2"},
+    {"op": "managed_change_destination", "ref": "copy2", "hostname": "0.00.example"},
+    {"op": "external_collide_and_rename", "a": "copy2", "b": "base"},
+    {"op": "external_change_identity_files", "ref": "base", "identity_files": []},
+    {"op": "managed_duplicate", "ref": "copy1", "as": "copy3"}
+  ]
+}
