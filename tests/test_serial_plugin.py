@@ -88,14 +88,102 @@ def test_build_spawn_omits_default_line_params(monkeypatch):
     assert '--stopbits' not in spec.argv
 
 
-def test_build_spawn_falls_back_to_screen(monkeypatch):
+def _screen_only(monkeypatch):
     import sshpilot.plugins.builtin.serial_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which',
                         lambda name: '/usr/bin/screen' if name == 'screen' else None)
+
+
+def test_build_spawn_falls_back_to_screen(monkeypatch):
+    """The fallback carries the line parameters, not just device+baud.
+
+    ``screen`` takes them as a comma-separated stty-style list appended to the
+    baud argument.  Verified against the real binary: this exact string starts
+    a session, while a bogus flag in the list is rejected — so the flags are
+    parsed and applied, not ignored.
+    """
+    _screen_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'baud': '9600',
+                       'databits': '7', 'parity': 'even', 'stopbits': '2',
+                       'flow': 'soft'})
+    spec = SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv == ['/usr/bin/screen', '/dev/ttyS0',
+                         '9600,cs7,parenb,-parodd,cstopb,ixon,ixoff']
+
+
+def test_screen_fallback_states_defaults_explicitly(monkeypatch):
+    """Defaults are emitted too, rather than left to the terminal driver.
+
+    ``man screen``: an unspecified parameter takes "values saved from a
+    previous connection", so omitting the defaults makes the same saved
+    connection behave differently between launches.
+    """
+    _screen_only(monkeypatch)
     conn = Connection({'nickname': 's', 'protocol': 'serial',
                        'device': '/dev/ttyS0', 'baud': '9600'})
     spec = SerialProtocolBackend().build_spawn(conn, _ctx())
-    assert spec.argv == ['/usr/bin/screen', '/dev/ttyS0', '9600']
+    assert spec.argv == ['/usr/bin/screen', '/dev/ttyS0',
+                         '9600,cs8,-parenb,-cstopb,-ixon,-ixoff']
+
+
+def test_screen_fallback_maps_odd_parity(monkeypatch):
+    _screen_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'baud': '19200', 'parity': 'odd'})
+    spec = SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv[-1] == '19200,cs8,parenb,parodd,-cstopb,-ixon,-ixoff'
+
+
+def test_screen_fallback_refuses_hardware_flow_control(monkeypatch):
+    """Refuse rather than drop: a serial line is not negotiated.
+
+    A parameter that silently fails to apply misframes every byte, with a form
+    that still shows it set — the failure looks like broken hardware.
+    """
+    _screen_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'baud': '9600', 'flow': 'hard'})
+    with pytest.raises(ProtocolError) as excinfo:
+        SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert 'RTS/CTS' in str(excinfo.value)
+    assert 'picocom' in str(excinfo.value)
+
+
+@pytest.mark.parametrize('databits', ['6', '5'])
+def test_screen_fallback_refuses_unsupported_databits(monkeypatch, databits):
+    """screen offers only cs8/cs7; the editor also offers 6 and 5."""
+    _screen_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'baud': '9600',
+                       'databits': databits})
+    with pytest.raises(ProtocolError) as excinfo:
+        SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert f'{databits} data bits' in str(excinfo.value)
+
+
+def test_screen_fallback_reports_every_unsupported_parameter(monkeypatch):
+    _screen_only(monkeypatch)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'baud': '9600',
+                       'databits': '5', 'flow': 'hard'})
+    with pytest.raises(ProtocolError) as excinfo:
+        SerialProtocolBackend().build_spawn(conn, _ctx())
+    message = str(excinfo.value)
+    assert 'RTS/CTS' in message and '5 data bits' in message
+
+
+def test_picocom_still_serves_what_screen_cannot(monkeypatch):
+    """The refusal is about screen only — picocom handles both fine."""
+    import sshpilot.plugins.builtin.serial_protocol as mod
+    monkeypatch.setattr(mod.shutil, 'which',
+                        lambda name: '/usr/bin/picocom' if name == 'picocom' else None)
+    conn = Connection({'nickname': 's', 'protocol': 'serial',
+                       'device': '/dev/ttyS0', 'baud': '9600',
+                       'databits': '5', 'flow': 'hard'})
+    spec = SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert spec.argv == ['/usr/bin/picocom', '-b', '9600', '-f', 'h',
+                         '--databits', '5', '/dev/ttyS0']
 
 
 def test_build_spawn_missing_binaries(monkeypatch):
