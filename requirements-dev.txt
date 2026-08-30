@@ -16,6 +16,12 @@ jsonschema
 # Stateful property-based stress tests for the connection identity sidecar
 # (tests/sidecar/): see docs/architecture/connection-identity-persistence.md.
 hypothesis>=6.100
+# Test-only: tests/mcp/test_runtime_*.py import anyio at module scope to drive
+# the MCP server's async streams. Those modules pytest.importorskip the
+# optional `mcp` extra, but the anyio import runs first -- without it they fail
+# to collect instead of skipping. anyio is a dependency of `mcp` itself, so
+# this only matters for the lean install CI uses.
+anyio>=4.0
 # Test-only: test_combined_auth.py uses paramiko as a mock SSH server to
 # validate the native auth path; not a runtime dependency.
 paramiko>=3.4

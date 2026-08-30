@@ -47,21 +47,18 @@ jobs:
           cache: pip
 
       # Tests stub gi.repository in tests/conftest.py and never load real GTK,
-      # so we skip PyGObject / pycairo entirely (--no-deps) and install only
-      # the runtime libs the test suite actually exercises through sshpilot.
+      # so we skip PyGObject / pycairo entirely (--no-deps); requirements.txt,
+      # which requirements-dev.txt pulls in, deliberately omits them too.
+      #
+      # Install requirements-dev.txt rather than restating the list here: the
+      # inline copy this replaced had drifted, missing `hypothesis`
+      # (tests/sidecar) and `anyio` (tests/mcp) and turning eight modules into
+      # collection errors. One source of truth cannot drift.
       - name: Install project (no GTK) and test deps
         run: |
           python -m pip install --upgrade pip
           pip install --no-deps -e .
-          pip install \
-            paramiko \
-            cryptography \
-            keyring \
-            psutil \
-            pytest \
-            pytest-cov \
-            pytest-xdist \
-            jsonschema
+          pip install -r requirements-dev.txt
 
       # Unit suite only — the `integration` tests run the real tool binaries and
       # live in the containerized "Test environment" workflow.
@@ -72,8 +69,15 @@ jobs:
       # basetemp, and at ~5k items that's thousands of resolve() syscalls -- slow
       # enough on the runner's regular disk to blow the job timeout. RAM-backed
       # basetemp keeps that cleanup fast regardless of suite size.
+      # The marker expression must repeat `stress` and `e2e`: a command-line
+      # -m REPLACES pytest.ini's addopts -m rather than intersecting with it,
+      # so naming only integration/gui silently opts CI into the two suites
+      # pytest.ini documents as opt-in. That went unnoticed while the stress
+      # suite could not even be collected (hypothesis was missing); installing
+      # it makes the override visible. Run them deliberately, not by accident.
       - name: Run pytest
         run: >
-          pytest -ra -m "not integration and not gui"
+          pytest -ra
+          -m "not integration and not gui and not e2e and not stress"
           --basetemp=/dev/shm/pytest-tmp
           --cov=sshpilot --cov-report=term-missing --cov-report=xml
