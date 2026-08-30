@@ -8,11 +8,11 @@ terminal seam, no in-app auth: kubectl uses the user's kubeconfig.
 from __future__ import annotations
 
 import os
-import shlex
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._shell import command_split_error, split_command
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -48,9 +48,13 @@ class KubernetesProtocolBackend(ProtocolBackend):
         ]
 
     def validate(self, data: Dict[str, Any]) -> List[str]:
+        errors: List[str] = []
         if not (data.get("pod") or "").strip():
-            return ["A pod name is required."]
-        return []
+            errors.append("A pod name is required.")
+        problem = command_split_error(data.get("command"), "Command")
+        if problem:
+            errors.append(problem)
+        return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
         data = getattr(connection, "data", None) or {}
@@ -79,7 +83,7 @@ class KubernetesProtocolBackend(ProtocolBackend):
         container = (data.get("container") or "").strip()
         if container:
             argv += ["-c", container]
-        argv += ["--", *shlex.split(command)]
+        argv += ["--", *split_command(command, "Command")]
         return SpawnSpec(argv=argv, env=dict(os.environ))
 
 

@@ -9,11 +9,11 @@ the chosen runtime handles its own context/credentials.
 from __future__ import annotations
 
 import os
-import shlex
 import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._shell import command_split_error, split_command
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -55,6 +55,9 @@ class DockerProtocolBackend(ProtocolBackend):
         runtime = (data.get("runtime") or "docker")
         if runtime not in ("docker", "podman"):
             errors.append("Runtime must be docker or podman.")
+        problem = command_split_error(data.get("command"), "Command")
+        if problem:
+            errors.append(problem)
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
@@ -85,7 +88,7 @@ class DockerProtocolBackend(ProtocolBackend):
         if workdir:
             argv += ["-w", workdir]
         argv.append(container)
-        argv += shlex.split(command)
+        argv += split_command(command, "Command")
         return SpawnSpec(argv=argv, env=dict(os.environ))
 
 
