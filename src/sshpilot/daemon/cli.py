@@ -37,6 +37,33 @@ def _resolve_ssh_root(isolated: bool) -> Path:
     return get_ssh_dir() / "config"
 
 
+def _resolve_state_path(isolated: bool) -> Path:
+    """Return the identity sidecar that belongs to the selected SSH root.
+
+    Each root owns its own sidecar so the two configuration documents stay
+    independent: identities, groups, tags, per-connection metadata, root
+    ordering and non-SSH connections never cross a mode switch.  The default
+    root keeps the historical ``connections.json`` name, so an older build
+    still finds a valid v2 sidecar in default mode.
+    """
+    if isolated:
+        return get_config_dir() / "connections-isolated.json"
+    return get_config_dir() / "connections.json"
+
+
+def _resolve_legacy_config_path(isolated: bool) -> Optional[Path]:
+    """Return the historical ``config.json`` state owner for this root.
+
+    Only the default root inherits the pre-sidecar connection state.  Letting
+    the isolated root adopt it would import the default root's groups and
+    metadata the first time the user switches, re-creating the leak that
+    per-root sidecars close.
+    """
+    if isolated:
+        return None
+    return get_config_dir() / "config.json"
+
+
 def _configure_logging(verbose: bool, quiet: bool = False) -> None:
     """Configure daemon logging.
 
@@ -284,8 +311,8 @@ def _production_core_services():
     ssh_store = SshConfigStore(ssh_root, isolated=isolated)
     repository = ConnectionRepository(
         ssh_store=ssh_store,
-        state_path=get_config_dir() / "connections.json",
-        legacy_config_path=get_config_dir() / "config.json",
+        state_path=_resolve_state_path(isolated),
+        legacy_config_path=_resolve_legacy_config_path(isolated),
         isolated=isolated,
     )
     operation_mode = OperationModeService(
@@ -293,6 +320,8 @@ def _production_core_services():
         config_path=get_config_dir() / "config.json",
         default_root=get_ssh_dir() / "config",
         isolated_root=get_config_dir() / "ssh_config",
+        default_state_path=_resolve_state_path(False),
+        isolated_state_path=_resolve_state_path(True),
     )
     def _build_ssh_overrides_service():
         from sshpilot.core.ssh_overrides_service import SshOverridesService

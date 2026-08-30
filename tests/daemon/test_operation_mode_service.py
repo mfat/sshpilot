@@ -30,7 +30,9 @@ class _Repository:
     def snapshot(self):
         return SimpleNamespace(generation=self.generation)
 
-    def transition_ssh_config(self, store, isolated):
+    def transition_ssh_config(self, store, isolated, *, state_path, legacy_config_path=None):
+        self.state_path = state_path
+        self.legacy_config_path = legacy_config_path
         store.load()
         if self.fail:
             raise OSError("injected transition failure")
@@ -44,12 +46,14 @@ class _FailOnRollbackRepository(_Repository):
         super().__init__()
         self.transitions = 0
 
-    def transition_ssh_config(self, store, isolated):
+    def transition_ssh_config(self, store, isolated, *, state_path, legacy_config_path=None):
         self.transitions += 1
         if self.transitions == 2:
             self.ssh_config_isolated = True
             raise OSError("injected repository rollback failure")
-        return super().transition_ssh_config(store, isolated)
+        return super().transition_ssh_config(
+            store, isolated, state_path=state_path, legacy_config_path=legacy_config_path
+        )
 
 
 def _service(tmp_path, repo):
@@ -66,6 +70,8 @@ def _service(tmp_path, repo):
         config_path=config,
         default_root=default,
         isolated_root=app / "ssh_config",
+        default_state_path=app / "connections.json",
+        isolated_state_path=app / "connections-isolated.json",
     ), config, default, app / "ssh_config"
 
 
@@ -101,6 +107,8 @@ def test_missing_config_is_created_as_canonical_tree_and_survives_later_write(tm
         config_path=config,
         default_root=default,
         isolated_root=app / "ssh_config",
+        default_state_path=app / "connections.json",
+        isolated_state_path=app / "connections-isolated.json",
     )
 
     result = service.apply(SetOperationModeRequest(mode=OperationMode.ISOLATED))
@@ -120,6 +128,8 @@ def test_missing_config_is_created_as_canonical_tree_and_survives_later_write(tm
         config_path=config,
         default_root=default,
         isolated_root=app / "ssh_config",
+        default_state_path=app / "connections.json",
+        isolated_state_path=app / "connections-isolated.json",
     )
     assert restarted.status().active_mode is OperationMode.ISOLATED
 
@@ -138,6 +148,8 @@ def test_same_mode_request_reconciles_missing_config_to_canonical_tree(tmp_path)
         config_path=config,
         default_root=default,
         isolated_root=app / "ssh_config",
+        default_state_path=app / "connections.json",
+        isolated_state_path=app / "connections-isolated.json",
     )
 
     result = service.apply(SetOperationModeRequest(mode=OperationMode.DEFAULT))

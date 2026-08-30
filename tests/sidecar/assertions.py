@@ -145,6 +145,45 @@ def check_exact_alias_continuity(before: AliasState, after: AliasState) -> None:
             )
 
 
+def check_no_cross_root_capture(
+    default_state: IdentityStateV2, isolated_state: IdentityStateV2
+) -> None:
+    """The two SSH configuration roots must not share a single identity.
+
+    Default and Isolated mode are independent documents with independent
+    workspaces. An identity is a fact about one root, so the two sidecars'
+    UUID sets must be disjoint -- if a UUID appears in both, one root captured
+    the other's identity, and with it the display name, folder and tags that
+    UUID owns. This invariant was inexpressible while one file backed both
+    roots, which is exactly why cross-root capture went unnoticed.
+    """
+
+    default_uuids = {identity.uuid for identity in default_state.identities}
+    isolated_uuids = {identity.uuid for identity in isolated_state.identities}
+    shared = default_uuids & isolated_uuids
+    if shared:
+        raise InvariantViolation(
+            "the default and isolated workspaces share "
+            f"{len(shared)} identity uuid(s): {sorted(shared)[:5]}"
+        )
+
+
+def check_foreign_root_untouched(before: bytes, after: bytes, isolated: bool) -> None:
+    """Leaving a root must not rewrite that root's sidecar.
+
+    A mode switch loads the other root's file; the file it left is not read,
+    reconciled, or written, so it stays byte-identical until the user comes
+    back to it.
+    """
+
+    if before != after:
+        name = "isolated" if isolated else "default"
+        raise InvariantViolation(
+            f"the {name} workspace sidecar was rewritten while it was not the "
+            "active root"
+        )
+
+
 def check_state_invariants(state: IdentityStateV2, ownership: AliasOwnership) -> None:
     """Run the cheap, always-applicable checks against one sidecar snapshot.
 
