@@ -77,12 +77,18 @@ class DaemonBootstrapSettings:
         return merged
 
     def get_setting(self, key: str, default: Any = None) -> Any:
-        """Top-level and ``ssh.``-namespaced setting lookup (read-only)."""
+        """Top-level, ``ssh.``-namespaced, and nested dotted lookup (read-only)."""
         if key.startswith("ssh."):
             nested = key[len("ssh."):]
             return self.get_ssh_config().get(nested, default)
         raw = self._raw()
-        return raw.get(key, default)
+        if key in raw:
+            return raw[key]
+        # Dotted keys such as "plugins.enabled" are nested in the file, and a
+        # flat lookup silently answers `default` for every one of them.
+        from sshpilot.core.settings.store import get_nested
+
+        return get_nested(raw, key, default)
 
     @property
     def use_isolated_config(self) -> bool:

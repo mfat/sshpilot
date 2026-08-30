@@ -164,3 +164,106 @@ def test_discover_plugins_lists_without_importing(tmp_path):
     assert not by_id["lazy"].builtin
     # Discovery must not execute plugin code.
     assert not (plugin_dir / "__init__.py.executed").exists()
+
+
+# --- headless (daemon-process) protocol resolution ------------------------
+
+def _write_manifest(plugin_dir, **extra):
+    manifest = json.loads((plugin_dir / "plugin.json").read_text())
+    manifest.update(extra)
+    (plugin_dir / "plugin.json").write_text(json.dumps(manifest))
+
+
+def test_ensure_user_protocols_registers_a_user_backend(tmp_path):
+    """The daemon launches sessions in its own process, where a user plugin's
+    activate() never ran — so its protocol has to be registered there too."""
+    _write_user_plugin(tmp_path, "ssm")
+    cfg = FakeConfig({"plugins.enabled": ["ssm"]})
+
+    assert registry_mod.protocol_registry().get_or_none("ssm") is None
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="ssm")
+    assert registry_mod.protocol_registry().get_or_none("ssm") is not None
+
+
+def test_ensure_user_protocols_ignores_plugins_not_enabled(tmp_path):
+    _write_user_plugin(tmp_path, "ssm")
+    loader_mod.ensure_user_protocols(app_config=FakeConfig(), protocol="ssm")
+    assert registry_mod.protocol_registry().get_or_none("ssm") is None
+
+
+def test_ensure_user_protocols_activates_without_a_window(tmp_path):
+    """A protocol plugin may register a page too. With no UI to register it
+    into, that call must not abort activate() before register_protocol runs."""
+    _write_user_plugin(tmp_path, "ssm", body=textwrap.dedent("""
+        from sshpilot.plugins.api import (
+            ProtocolBackend, SpawnSpec, SshPilotPlugin, Events,
+        )
+
+        class _Backend(ProtocolBackend):
+            protocol_id = "ssm"
+            display_name = "ssm"
+
+            def capabilities(self):
+                return frozenset()
+
+            def build_spawn(self, connection, ctx):
+                return SpawnSpec(argv=["true"])
+
+        class Plugin(SshPilotPlugin):
+            def activate(self, ctx):
+                ctx.ui.register_page("p", "P", "icon", lambda: None)
+                ctx.ui.notify("hello")
+                ctx.events.subscribe(Events.APP_STARTED, lambda _p: None)
+                ctx.register_protocol(_Backend())
+    """))
+    cfg = FakeConfig({"plugins.enabled": ["ssm"]})
+
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="ssm")
+    assert registry_mod.protocol_registry().get_or_none("ssm") is not None
+
+
+def test_ensure_user_protocols_skips_plugins_that_disclaim_the_protocol(tmp_path):
+    """A manifest that declares its protocols is believed, so the daemon does
+    not import an unrelated plugin (and whatever that import drags in)."""
+    other = _write_user_plugin(tmp_path, "aaa-other")
+    _write_manifest(other, protocols=["something-else"])
+    # Sorts first, so without the manifest filter it would be imported before
+    # the plugin we actually want. The loader swallows import failures, so
+    # prove the skip with a marker rather than by raising.
+    (other / "__init__.py").write_text(
+        "open(__file__ + '.executed', 'w').close()\n")
+    ssm = _write_user_plugin(tmp_path, "zzz-ssm")
+    _write_manifest(ssm, protocols=["zzz-ssm"])
+    cfg = FakeConfig({"plugins.enabled": ["aaa-other", "zzz-ssm"]})
+
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="zzz-ssm")
+    assert registry_mod.protocol_registry().get_or_none("zzz-ssm") is not None
+    assert not (other / "__init__.py.executed").exists()
+
+
+def test_ensure_user_protocols_stops_once_the_protocol_resolves(tmp_path):
+    """Undeclared plugins are swept in id order, but only until the wanted
+    protocol appears — a later plugin is left alone."""
+    _write_user_plugin(tmp_path, "aaa-ssm")
+    later = _write_user_plugin(tmp_path, "zzz-later")
+    (later / "__init__.py").write_text(
+        "open(__file__ + '.executed', 'w').close()\n")
+    cfg = FakeConfig({"plugins.enabled": ["aaa-ssm", "zzz-later"]})
+
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="aaa-ssm")
+    assert registry_mod.protocol_registry().get_or_none("aaa-ssm") is not None
+    assert not (later / "__init__.py.executed").exists()
+
+
+def test_ensure_user_protocols_activates_each_plugin_once(tmp_path):
+    """A second launch of an unknown protocol must not re-activate what is
+    already loaded (double registration is rejected and logged as a warning)."""
+    plugin_dir = _write_user_plugin(tmp_path, "ssm")
+    (plugin_dir / "__init__.py").write_text(
+        (plugin_dir / "__init__.py").read_text()
+        + "\nwith open(__file__ + '.count', 'a') as fh:\n    fh.write('x')\n")
+    cfg = FakeConfig({"plugins.enabled": ["ssm"]})
+
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="ssm")
+    loader_mod.ensure_user_protocols(app_config=cfg, protocol="nope")
+    assert (plugin_dir / "__init__.py.count").read_text() == "x"

@@ -40,7 +40,9 @@ import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Callable, List, Optional, Set, Tuple
+
+from sshpilot.core.plugins import EventBus
 
 from .api import API_VERSION, PluginContext, SshPilotPlugin
 from .registry import protocol_registry
@@ -48,6 +50,41 @@ from .registry import protocol_registry
 logger = logging.getLogger(__name__)
 
 BUILTIN_PACKAGE = __package__ + ".builtin"
+
+
+class _NullUiHost:
+    """Accept and discard UI registrations in a process that has no UI."""
+
+    def register_page(self, *_args, **_kwargs) -> None:
+        pass
+
+    def open_page(self, *_args, **_kwargs) -> None:
+        pass
+
+    def notify(self, *_args, **_kwargs) -> None:
+        pass
+
+
+class _HeadlessHost:
+    """A PluginHost stand-in for processes with no window (the daemon).
+
+    Protocol plugins commonly register a page alongside their backend. Handing
+    such a plugin a context whose ``ui``/``events`` are ``None`` would abort
+    ``activate()`` on the first UI call — before ``register_protocol`` ran —
+    so the protocol the daemon came here for would never appear. Accept those
+    registrations and drop them instead; nothing in this process can show them.
+
+    ``daemon_client()`` stays ``None``: this *is* the daemon, and a plugin
+    reaching back into the client API from here would be a loop, so
+    daemon-backed context calls raise exactly as they do in the frontend
+    before the client attaches."""
+
+    def __init__(self) -> None:
+        self.events = EventBus()
+        self.ui = _NullUiHost()
+
+    def daemon_client(self) -> None:
+        return None
 
 
 @dataclass
@@ -115,6 +152,16 @@ def _instantiate(module, meta: dict) -> Optional[SshPilotPlugin]:
     return cls()
 
 
+def _id_set(app_config, key: str) -> frozenset:
+    """The plugin-id list stored at ``key``; empty when it can't be read."""
+    if app_config is None:
+        return frozenset()
+    try:
+        return frozenset(app_config.get_setting(key, []) or [])
+    except Exception:
+        return frozenset()
+
+
 def _load_builtin(make_ctx,
                   disabled: frozenset) -> List[LoadedPlugin]:
     loaded: List[LoadedPlugin] = []
@@ -146,23 +193,64 @@ def _load_builtin(make_ctx,
     return loaded
 
 
-def _load_user(make_ctx,
-               enabled: frozenset) -> List[LoadedPlugin]:
-    """User plugins are opt-in: only ids the user enabled in preferences
-    are imported at all (arbitrary code execution should be a deliberate
-    choice, not a consequence of a file existing on disk)."""
-    loaded: List[LoadedPlugin] = []
+def _declared_protocols(meta: dict) -> List[str]:
+    """Protocol ids the manifest claims, if it bothers to say (optional)."""
+    declared = meta.get("protocols")
+    if not isinstance(declared, list):
+        return []
+    return [p for p in declared if isinstance(p, str) and p]
+
+
+def _user_plugin_candidates(enabled: frozenset,
+                            wanted_protocol: Optional[str]) -> List[Tuple[Path, dict]]:
+    """Enabled user plugin directories, best candidate first.
+
+    When a specific protocol is wanted, a manifest that declares ``protocols``
+    is taken at its word: it goes first if it claims the protocol and is
+    dropped entirely if it claims others instead. That keeps a headless
+    process from importing UI plugins it has no use for. Manifests that
+    declare nothing stay in the list — the field is optional, so silence
+    cannot mean "owns no protocols"."""
+    declared_match: List[Tuple[Path, dict]] = []
+    undeclared: List[Tuple[Path, dict]] = []
     root = _user_plugin_dir()
     if not root.is_dir():
-        return loaded
+        return []
     for child in sorted(root.iterdir()):
         meta = _read_manifest(child) if child.is_dir() else None
         if not meta or not _api_compatible(meta):
             continue
-        pid = meta["id"]
+        pid = meta.get("id")
         if pid not in enabled:
             logger.debug("User plugin %r present but not enabled", pid)
             continue
+        declared = _declared_protocols(meta)
+        if wanted_protocol is None or not declared:
+            undeclared.append((child, meta))
+        elif wanted_protocol in declared:
+            declared_match.append((child, meta))
+        else:
+            logger.debug("User plugin %r declares %r, not %r; not importing it",
+                         pid, declared, wanted_protocol)
+    return declared_match + undeclared
+
+
+def _load_user(make_ctx,
+               enabled: frozenset,
+               *,
+               wanted_protocol: Optional[str] = None,
+               stop_when: Optional[Callable[[], bool]] = None) -> List[LoadedPlugin]:
+    """User plugins are opt-in: only ids the user enabled in preferences
+    are imported at all (arbitrary code execution should be a deliberate
+    choice, not a consequence of a file existing on disk).
+
+    ``wanted_protocol``/``stop_when`` narrow the sweep for the daemon, which
+    wants one protocol backend rather than every plugin: candidates that
+    disclaim the protocol are skipped, and the sweep ends the moment
+    ``stop_when()`` reports the protocol resolved."""
+    loaded: List[LoadedPlugin] = []
+    for child, meta in _user_plugin_candidates(enabled, wanted_protocol):
+        pid = meta["id"]
         init_py = child / "__init__.py"
         if not init_py.is_file():
             logger.error("User plugin %r has no __init__.py", pid)
@@ -191,6 +279,8 @@ def _load_user(make_ctx,
                                        instance, False, str(child)))
         except Exception:
             logger.exception("Failed to load user plugin %r", pid)
+        if stop_when is not None and stop_when():
+            break
     return loaded
 
 
@@ -215,14 +305,8 @@ def load_plugins(*, app_config, connection_manager,
                              protocol_registry=registry,
                              host=plugin_host)
 
-    def _id_set(key: str) -> frozenset:
-        try:
-            return frozenset(app_config.get_setting(key, []) or [])
-        except Exception:
-            return frozenset()
-
-    loaded = _load_builtin(make_ctx, disabled=_id_set("plugins.disabled"))
-    loaded += _load_user(make_ctx, enabled=_id_set("plugins.enabled"))
+    loaded = _load_builtin(make_ctx, disabled=_id_set(app_config, "plugins.disabled"))
+    loaded += _load_user(make_ctx, enabled=_id_set(app_config, "plugins.enabled"))
     global _builtins_ensured_for
     _builtins_ensured_for = id(registry)
 
@@ -235,6 +319,20 @@ def load_plugins(*, app_config, connection_manager,
 
 
 _builtins_ensured_for: Optional[int] = None
+# User plugin ids already activated headlessly in this process, scoped to the
+# registry they were registered into so a replaced registry starts clean. The
+# registry itself is held rather than its id: a dead object's id can be reused,
+# which would silently pass this identity check for an unrelated registry.
+_headless_user_plugins_for: Any = None
+_headless_user_plugin_ids: Set[str] = set()
+
+
+def _headless_user_plugins(registry) -> Set[str]:
+    global _headless_user_plugins_for, _headless_user_plugin_ids
+    if _headless_user_plugins_for is not registry:
+        _headless_user_plugins_for = registry
+        _headless_user_plugin_ids = set()
+    return _headless_user_plugin_ids
 
 
 def ensure_builtin_protocols(*, app_config=None) -> None:
@@ -248,12 +346,14 @@ def ensure_builtin_protocols(*, app_config=None) -> None:
     registry = protocol_registry()
     if _builtins_ensured_for is id(registry) and registry.get_or_none("ssh") is not None:
         return
-    disabled: frozenset = frozenset()
-    if app_config is not None:
-        try:
-            disabled = frozenset(app_config.get_setting("plugins.disabled", []) or [])
-        except Exception:
-            disabled = frozenset()
+    _load_builtin(make_ctx=_headless_ctx_factory(app_config, registry),
+                  disabled=_id_set(app_config, "plugins.disabled"))
+    _builtins_ensured_for = id(registry)
+
+
+def _headless_ctx_factory(app_config, registry):
+    """Per-plugin context builder for a process with no window."""
+    host = _HeadlessHost()
 
     def make_ctx(plugin_id: str) -> PluginContext:
         return PluginContext(
@@ -261,11 +361,40 @@ def ensure_builtin_protocols(*, app_config=None) -> None:
             app_config=app_config,
             connection_manager=None,
             protocol_registry=registry,
-            host=None,
+            host=host,
         )
 
-    _load_builtin(make_ctx, disabled=disabled)
-    _builtins_ensured_for = id(registry)
+    return make_ctx
+
+
+def ensure_user_protocols(*, app_config=None, protocol: Optional[str] = None) -> None:
+    """Activate enabled user plugins in this process until ``protocol`` resolves.
+
+    A protocol registered by a user plugin lives in whichever process ran
+    ``activate()``. The GTK process does that at startup, but the daemon owns
+    session launch and runs separately, so it cannot see those backends and
+    refuses the launch as an unsupported protocol.
+
+    Deliberately *not* called up front: the daemon reaches for it only after
+    the built-ins fail to resolve a protocol, so an ordinary SSH or telnet
+    session never imports third-party code. Plugins stay opt-in by id exactly
+    as in the frontend — a file on disk still runs nothing — and each is
+    activated at most once per process.
+    """
+    registry = protocol_registry()
+    already = _headless_user_plugins(registry)
+    enabled = _id_set(app_config, "plugins.enabled") - already
+    if not enabled:
+        return
+
+    def resolved() -> bool:
+        return protocol is not None and registry.get_or_none(protocol) is not None
+
+    loaded = _load_user(_headless_ctx_factory(app_config, registry),
+                        enabled=enabled,
+                        wanted_protocol=protocol,
+                        stop_when=resolved)
+    already.update(plugin.plugin_id for plugin in loaded)
 
 
 def _builtin_plugin_dir() -> Optional[Path]:

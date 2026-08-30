@@ -257,6 +257,21 @@ See `builtin/telnet_protocol/__init__.py` (minimal) and
 runs as a **command inside the terminal** — GUI protocols (RDP/VNC) are not
 expressible today.
 
+**Declare your ids in the manifest.** Session launch is owned by the daemon,
+which runs in its own process and so has to activate your plugin itself to
+reach `build_spawn`. Listing them lets it load yours and skip everything else:
+
+```json
+{ "id": "acme-ssm", "api_version": 1, "protocols": ["ssm"] }
+```
+
+Optional — without it the daemon sweeps enabled plugins in id order until the
+protocol resolves, which still works but may import unrelated plugins first.
+`activate()` runs a second time in that process, with no window: `ctx.ui`
+registrations are accepted and discarded, and daemon-backed calls raise
+`BackendUnavailable`. Keep `activate()` to `register_protocol` and your
+`build_spawn` free of anything that needs the UI.
+
 ### UI-page plugins
 Register a page that builds a GTK widget on demand:
 ```python

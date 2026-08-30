@@ -43,6 +43,15 @@
       "deprecated": true,
       "description": "Reserved/ignored. The loader always instantiates a class named 'Plugin' in the package's __init__.py."
     },
+    "protocols": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "Optional: protocol ids this plugin registers via ctx.register_protocol(). The daemon owns session launch in its own process, so it activates user plugins to find a protocol backend; declaring your ids lets it load yours directly and skip every other plugin. Omit it and the daemon falls back to sweeping enabled plugins in id order.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      }
+    },
     "permissions": {
       "type": "array",
       "uniqueItems": true,
