@@ -13,9 +13,11 @@ change without notice.
 
 - **The only import you need:** `sshpilot.plugins.api`.
 - **Current API version:** `1.9` (see [Versioning](#versioning)).
-- **Worked examples** — two provider archetypes:
-  - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
-  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
+- **Worked examples** — both are **IP/SSH** providers (provision → get an address
+  → `add_connection` a normal SSH connection); they differ in how much they do:
+  - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — the minimal shape, against a fake provider.
+  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/) — the same shape against a real REST API ([easyenv.io](https://easyenv.io/cli)): sign-in with a stored token, poll until a workspace is up, then materialize its nodes as SSH connections in a group, driven from a management page.
+  - For a **protocol backend** — a connection that *is* a command rather than an SSH host — read the built-ins instead: `builtin/telnet_protocol/` (minimal) and `builtin/{docker,kubernetes,serial,mosh}_protocol/`.
 
 ---
 
@@ -514,5 +516,7 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.
 - **Let the CLI own its credentials.** If the tool keychains its own token (e.g. `easyenv auth login`), detect state (`auth whoami`) and optionally drive login; don't duplicate the token in `ctx.secrets`.
 
-See [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/) for the
-complete pattern (it bundles a local stub so it runs with no account).
+No shipped example implements pattern A — [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/)
+provisions over REST and hands back ordinary SSH connections (pattern B). For a
+working protocol backend read `builtin/telnet_protocol/` and
+`builtin/docker_protocol/`; the sketch above is the shape to copy.
