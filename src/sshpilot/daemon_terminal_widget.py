@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import logging
 from .runtime_identity import new_terminal_id
-from gi.repository import Gdk, Gtk
+from gi.repository import Gtk
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
 from .terminal_backends import GridTrackingVteTerminal
 from .terminal_display_pause import (
     DeferredDisplayFeed,
-    selection_press_owns_pointer,
+    SelectionFeedPauseController,
 )
 from .terminal_input import (
     MouseTrackingState,
@@ -70,40 +70,17 @@ class DaemonTerminalWidget(Gtk.Box):
         self._install_selection_feed_pause()
 
     def _install_selection_feed_pause(self) -> None:
-        gesture = Gtk.GestureClick()
-        gesture.set_button(Gdk.BUTTON_PRIMARY)
-        gesture.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
-        try:
-            gesture.set_exclusive(False)
-        except Exception:
-            pass
-        gesture.connect("pressed", self._on_selection_feed_pressed)
-        gesture.connect("released", self._on_selection_feed_released)
-        self._terminal.add_controller(gesture)
-        self._selection_feed_gesture = gesture
+        """Buffer daemon output while the pointer is drag-selecting.
 
-    def _on_selection_feed_pressed(self, gesture, _n_press, _x, _y) -> None:
-        try:
-            state = gesture.get_current_event_state()
-            shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
-        except Exception:
-            shift_held = False
-        if selection_press_owns_pointer(
-            mouse_tracking_active=self._mouse_tracking.active,
-            shift_held=shift_held,
-        ):
-            self._display_feed_pause.begin()
-        try:
-            gesture.set_state(Gtk.EventSequenceState.DENIED)
-        except Exception:
-            pass
-
-    def _on_selection_feed_released(self, gesture, _n_press, _x, _y) -> None:
-        self._resume_selection_display_feed()
-        try:
-            gesture.set_state(Gtk.EventSequenceState.DENIED)
-        except Exception:
-            pass
+        See SelectionFeedPauseController: an observer, never a gesture, so
+        VTE keeps both its drag-select and its mouse reports.
+        """
+        self._selection_feed_observer = SelectionFeedPauseController(
+            self._display_feed_pause,
+            mouse_tracking_active=lambda: self._mouse_tracking.active,
+            flush=self._resume_selection_display_feed,
+        )
+        self._selection_feed_observer.install(self._terminal)
 
     def _resume_selection_display_feed(self) -> None:
         deferred = self._display_feed_pause.end()
@@ -197,13 +174,10 @@ class DaemonTerminalWidget(Gtk.Box):
         if self._size_handler is not None:
             self._terminal.disconnect(self._size_handler)
             self._size_handler = None
-        gesture = getattr(self, "_selection_feed_gesture", None)
-        if gesture is not None:
-            try:
-                self._terminal.remove_controller(gesture)
-            except Exception:
-                pass
-            self._selection_feed_gesture = None
+        observer = getattr(self, "_selection_feed_observer", None)
+        if observer is not None:
+            observer.uninstall()
+            self._selection_feed_observer = None
         self._display_feed_pause.reset()
         self._terminal.disable_grid_tracking()
         self._interaction_dialogs.close()

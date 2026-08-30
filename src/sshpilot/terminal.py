@@ -45,7 +45,7 @@ from .terminal_input import (
 )
 from .terminal_display_pause import (
     DeferredDisplayFeed,
-    selection_press_owns_pointer,
+    SelectionFeedPauseController,
 )
 
 
@@ -290,7 +290,7 @@ class TerminalWidget(Gtk.Box):
         # PTY-less VTE cannot disconnect_pty_read() during drag-select the way
         # Ptyxis does; buffer daemon output instead (see DeferredDisplayFeed).
         self._display_feed_pause = DeferredDisplayFeed()
-        self._selection_feed_gesture = None
+        self._selection_feed_observer = None
         self._daemon_exit_handled = False
         self._view_only_overlay = None
         self._reconnect_handler = None
@@ -1399,89 +1399,59 @@ class TerminalWidget(Gtk.Box):
         """Observe primary presses that VTE would turn into a local selection.
 
         Only for PTY-less VTE: with a real PTY, VTE already disconnects its
-        reader during drag-select. This gesture never claims the sequence.
+        reader during drag-select. The observer never claims the sequence,
+        so VTE's own drag-select and its mouse reports are untouched.
         """
         self._uninstall_selection_feed_pause()
         if not self._needs_legacy_mouse_translation():
             return
         backend = getattr(self, "backend", None)
         widget = getattr(backend, "widget", None) if backend is not None else None
-        if widget is None or not hasattr(widget, "add_controller"):
+        if widget is None:
             return
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is None:
+            return
+        observer = SelectionFeedPauseController(
+            pause,
+            mouse_tracking_active=self._selection_pause_mouse_tracking,
+            flush=self._resume_selection_display_feed,
+        )
         try:
-            gesture = Gtk.GestureClick()
-            gesture.set_button(Gdk.BUTTON_PRIMARY)
-            # BUBBLE + non-exclusive: never compete with VTE's own drag-select
-            # gesture (a CAPTURE primary click on the same widget can abort the
-            # selection mid-drag).
-            gesture.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
-            try:
-                gesture.set_exclusive(False)
-            except Exception:
-                pass
-            gesture.connect("pressed", self._on_selection_feed_pressed)
-            gesture.connect("released", self._on_selection_feed_released)
-            widget.add_controller(gesture)
-            self._selection_feed_gesture = gesture
+            if observer.install(widget):
+                self._selection_feed_observer = observer
         except Exception:
-            self._selection_feed_gesture = None
+            self._selection_feed_observer = None
             logger.debug(
-                "Failed to install selection feed-pause gesture",
+                "Failed to install selection feed-pause observer",
                 exc_info=True,
             )
 
+    def _selection_pause_mouse_tracking(self) -> bool:
+        tracker = getattr(self, "_mouse_tracking", None)
+        return bool(tracker is not None and tracker.active)
+
     def _uninstall_selection_feed_pause(self) -> None:
-        gesture = getattr(self, "_selection_feed_gesture", None)
+        observer = getattr(self, "_selection_feed_observer", None)
         pause = getattr(self, "_display_feed_pause", None)
+        if observer is not None:
+            try:
+                observer.uninstall()
+            except Exception:
+                logger.debug(
+                    "Failed to remove selection feed-pause observer",
+                    exc_info=True,
+                )
+            self._selection_feed_observer = None
         if pause is not None and pause.paused:
-            # Flush deferred bytes before dropping the gesture so a detach
+            # Flush deferred bytes before dropping the observer so a detach
             # mid-drag does not permanently drop remote output.
             if getattr(self, "backend", None) is not None:
                 self._resume_selection_display_feed()
             else:
                 pause.reset()
-        if gesture is None:
-            return
-        backend = getattr(self, "backend", None)
-        widget = getattr(backend, "widget", None) if backend is not None else None
-        if widget is not None:
-            try:
-                widget.remove_controller(gesture)
-            except Exception:
-                logger.debug(
-                    "Failed to remove selection feed-pause gesture",
-                    exc_info=True,
-                )
-        self._selection_feed_gesture = None
         if pause is not None:
             pause.reset()
-
-    def _on_selection_feed_pressed(self, gesture, _n_press, _x, _y) -> None:
-        try:
-            state = gesture.get_current_event_state()
-            shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
-        except Exception:
-            shift_held = False
-        tracker = getattr(self, "_mouse_tracking", None)
-        mouse_tracking = bool(tracker is not None and tracker.active)
-        if selection_press_owns_pointer(
-            mouse_tracking_active=mouse_tracking,
-            shift_held=shift_held,
-        ):
-            pause = getattr(self, "_display_feed_pause", None)
-            if pause is not None:
-                pause.begin()
-                logger.debug(
-                    "Terminal display feed paused for selection "
-                    "mouse_tracking=%s shift=%s",
-                    mouse_tracking,
-                    shift_held,
-                )
-        _finish_capture_gesture(gesture, False)
-
-    def _on_selection_feed_released(self, gesture, _n_press, _x, _y) -> None:
-        self._resume_selection_display_feed()
-        _finish_capture_gesture(gesture, False)
 
     def _resume_selection_display_feed(self) -> None:
         pause = getattr(self, "_display_feed_pause", None)

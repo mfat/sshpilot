@@ -233,12 +233,13 @@ def test_window_installs_a_pointer_observer_for_the_double_shift_gesture(monkeyp
     kinds = [controller.kind for controller in window.controllers]
     assert "key" in kinds
     assert "click" in kinds
-    assert "motion" in kinds
 
     pointer = window._pointer_controller()
     assert pointer.button == 0, "must observe every button, not just primary"
-    assert pointer.phase == _FakeGtk.PropagationPhase.BUBBLE
-    assert pointer.exclusive is False
+    # CAPTURE, not BUBBLE: VTE claims the pointer sequence for its own
+    # drag-select, so a bubbling observer never sees a press that landed in
+    # a terminal -- the one place the double-tap has to be cancelled.
+    assert pointer.phase == _FakeGtk.PropagationPhase.CAPTURE
     assert "pressed" in pointer.handlers
 
     # Observing only: the sequence is denied so terminal selection is untouched.
