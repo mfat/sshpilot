@@ -1421,6 +1421,7 @@ class TerminalWidget(Gtk.Box):
                 pass
             gesture.connect("pressed", self._on_selection_feed_pressed)
             gesture.connect("released", self._on_selection_feed_released)
+            gesture.connect("cancel", self._on_selection_feed_released)
             widget.add_controller(gesture)
             self._selection_feed_gesture = gesture
         except Exception:
@@ -1477,11 +1478,9 @@ class TerminalWidget(Gtk.Box):
                     mouse_tracking,
                     shift_held,
                 )
-        _finish_capture_gesture(gesture, False)
 
-    def _on_selection_feed_released(self, gesture, _n_press, _x, _y) -> None:
+    def _on_selection_feed_released(self, gesture, *args) -> None:
         self._resume_selection_display_feed()
-        _finish_capture_gesture(gesture, False)
 
     def _resume_selection_display_feed(self) -> None:
         pause = getattr(self, "_display_feed_pause", None)
