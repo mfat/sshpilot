@@ -168,18 +168,27 @@ class TerminalSearch:
                 self._search_key_controller = None
 
     def _on_vte_search_key_pressed(self, controller, keyval, keycode, state):
-        """Handle global terminal search shortcuts on the VTE widget."""
+        """Search navigation for when the overlay is open but the terminal has focus.
+
+        Opening search belongs to the shortcut registry (``terminal-search``,
+        Ctrl+Shift+F), so it stays listed and rebindable in Preferences. Nothing
+        here may fire while the overlay is closed, or these keys would be taken
+        from the shell: Ctrl+G is readline's abort and Ctrl+F its forward-char.
+        This handler used to claim both unconditionally, so unassigning "Search"
+        in Preferences still did not give Ctrl+F back to the terminal.
+
+        The usual case -- overlay open, entry focused -- is handled by
+        _on_search_entry_key_pressed; this covers clicking back into the
+        terminal while the search bar stays up.
+        """
+        revealer = getattr(self, 'search_revealer', None)
+        if revealer is None or not revealer.get_reveal_child():
+            return False
+
         try:
             shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
             primary = bool(state & Gdk.ModifierType.CONTROL_MASK)
             meta = bool(state & Gdk.ModifierType.META_MASK)
-
-            if keyval in (Gdk.KEY_f, Gdk.KEY_F) and (primary or meta):
-                if hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
-                    self._hide_search_overlay()
-                else:
-                    self._show_search_overlay(select_all=True)
-                return True
 
             if keyval in (Gdk.KEY_g, Gdk.KEY_G) and (primary or meta):
                 if shift:
@@ -188,7 +197,7 @@ class TerminalSearch:
                     self._on_search_next()
                 return True
 
-            if keyval == Gdk.KEY_Escape and hasattr(self, 'search_revealer') and self.search_revealer.get_reveal_child():
+            if keyval == Gdk.KEY_Escape:
                 self._hide_search_overlay()
                 return True
         except Exception as exc:

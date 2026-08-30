@@ -267,3 +267,93 @@ def test_search_layout_is_shared_and_keeps_backend_viewport_truthful():
     assert positions == sorted(positions)
     assert "Vte." not in stack_source
     assert "PyXterm" not in stack_source
+
+
+# --- _on_vte_search_key_pressed ------------------------------------------------
+#
+# This VTE-level controller once claimed Ctrl+F and Ctrl+G unconditionally, so
+# unassigning "Search" in Preferences still did not hand Ctrl+F back to the shell
+# and Ctrl+G never reached readline's abort at all. It must stay inert while the
+# search bar is closed. Real GDK values are pinned here so the test means the same
+# thing under the stubbed gi in conftest and under a real GTK.
+
+_CONTROL = 1 << 2
+_SHIFT = 1 << 0
+_GDK = SimpleNamespace(
+    KEY_f=0x066, KEY_F=0x046, KEY_g=0x067, KEY_G=0x047, KEY_Escape=0xFF1B,
+    ModifierType=SimpleNamespace(CONTROL_MASK=_CONTROL, SHIFT_MASK=_SHIFT,
+                                 META_MASK=1 << 28),
+)
+
+
+class _KeyRevealer:
+    def __init__(self, revealed):
+        self.revealed = revealed
+        self.visible = revealed
+
+    def get_reveal_child(self):
+        return self.revealed
+
+    def set_reveal_child(self, v):
+        self.revealed = v
+
+    def set_visible(self, v):
+        self.visible = v
+
+
+@pytest.fixture
+def key_search(monkeypatch):
+    from sshpilot import terminal_search as mod
+
+    monkeypatch.setattr(mod, "Gdk", _GDK)
+
+    def build(revealed):
+        calls = {"next": 0, "prev": 0, "show": 0}
+        s = _search(search_revealer=_KeyRevealer(revealed))
+        s._on_search_next = lambda *a: calls.__setitem__("next", calls["next"] + 1)
+        s._on_search_previous = lambda *a: calls.__setitem__("prev", calls["prev"] + 1)
+        s._show_search_overlay = lambda **k: calls.__setitem__("show", calls["show"] + 1)
+        s.t.grab_terminal_focus = lambda: None
+        s.t.backend = None
+        return s, calls
+
+    return build
+
+
+def _press(s, keyval, ctrl=False, shift=False):
+    state = (_CONTROL if ctrl else 0) | (_SHIFT if shift else 0)
+    return s._on_vte_search_key_pressed(None, keyval, 0, state)
+
+
+@pytest.mark.parametrize("keyval, ctrl, shift", [
+    (_GDK.KEY_f, True, False),       # readline forward-char
+    (_GDK.KEY_F, True, True),        # opening search belongs to the registry action
+    (_GDK.KEY_g, True, False),       # readline abort
+    (_GDK.KEY_G, True, True),
+    (_GDK.KEY_Escape, False, False),
+])
+def test_closed_search_bar_lets_every_key_reach_the_terminal(key_search, keyval, ctrl, shift):
+    s, calls = key_search(revealed=False)
+    assert _press(s, keyval, ctrl=ctrl, shift=shift) is False
+    assert calls == {"next": 0, "prev": 0, "show": 0}
+
+
+def test_open_search_bar_still_navigates_from_the_terminal(key_search):
+    s, calls = key_search(revealed=True)
+    assert _press(s, _GDK.KEY_g, ctrl=True) is True
+    assert _press(s, _GDK.KEY_G, ctrl=True, shift=True) is True
+    assert calls["next"] == 1 and calls["prev"] == 1
+
+
+def test_open_search_bar_dismisses_on_escape(key_search):
+    s, _calls = key_search(revealed=True)
+    assert _press(s, _GDK.KEY_Escape) is True
+    assert s.search_revealer.revealed is False
+
+
+def test_ctrl_f_never_opens_search_from_the_terminal(key_search):
+    """Ctrl+F is not a terminal-search binding; ``terminal-search`` owns opening."""
+    for revealed in (False, True):
+        s, calls = key_search(revealed=revealed)
+        assert _press(s, _GDK.KEY_f, ctrl=True) is False
+        assert calls["show"] == 0

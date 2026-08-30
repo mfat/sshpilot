@@ -63,6 +63,11 @@ Function keys used by terminal programs are passed through:
 | Local Terminal | Ctrl+Shift+T | Cmd+Shift+T |
 | Broadcast Command | Ctrl+Shift+B | Cmd+Shift+B |
 
+Find Next/Previous and Dismiss Search apply **only while the terminal search bar is
+open**. With it closed, Ctrl+G, Enter and Escape go straight to the remote program,
+so readline's abort and a full-screen app's Escape keep working. The search bar
+itself is opened with the customizable **Search in Terminal** shortcut.
+
 ---
 
 ## Tab Management
