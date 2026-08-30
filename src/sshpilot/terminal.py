@@ -43,6 +43,10 @@ from .terminal_input import (
     commit_payload_to_bytes,
     sgr_reports_to_legacy,
 )
+from .terminal_display_pause import (
+    DeferredDisplayFeed,
+    selection_press_owns_pointer,
+)
 
 
 # Installed once per process. Inner padding for the terminal text so the
@@ -283,6 +287,10 @@ class TerminalWidget(Gtk.Box):
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
         self._mouse_tracking = MouseTrackingState()
+        # PTY-less VTE cannot disconnect_pty_read() during drag-select the way
+        # Ptyxis does; buffer daemon output instead (see DeferredDisplayFeed).
+        self._display_feed_pause = DeferredDisplayFeed()
+        self._selection_feed_gesture = None
         self._daemon_exit_handled = False
         self._view_only_overlay = None
         self._reconnect_handler = None
@@ -1316,6 +1324,7 @@ class TerminalWidget(Gtk.Box):
 
     def _uninstall_daemon_backend_io(self) -> None:
         """Drop previously installed daemon commit/size handlers (idempotent)."""
+        self._uninstall_selection_feed_pause()
         backend = getattr(self, 'backend', None)
         if backend is None:
             self._daemon_commit_handler = None
@@ -1384,9 +1393,123 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             self._daemon_size_handler = None
             logger.debug("Failed to connect daemon size handler", exc_info=True)
+        self._install_selection_feed_pause()
+
+    def _install_selection_feed_pause(self) -> None:
+        """Observe primary presses that VTE would turn into a local selection.
+
+        Only for PTY-less VTE: with a real PTY, VTE already disconnects its
+        reader during drag-select. This gesture never claims the sequence.
+        """
+        self._uninstall_selection_feed_pause()
+        if not self._needs_legacy_mouse_translation():
+            return
+        backend = getattr(self, "backend", None)
+        widget = getattr(backend, "widget", None) if backend is not None else None
+        if widget is None or not hasattr(widget, "add_controller"):
+            return
+        try:
+            gesture = Gtk.GestureClick()
+            gesture.set_button(Gdk.BUTTON_PRIMARY)
+            # BUBBLE + non-exclusive: never compete with VTE's own drag-select
+            # gesture (a CAPTURE primary click on the same widget can abort the
+            # selection mid-drag).
+            gesture.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+            try:
+                gesture.set_exclusive(False)
+            except Exception:
+                pass
+            gesture.connect("pressed", self._on_selection_feed_pressed)
+            gesture.connect("released", self._on_selection_feed_released)
+            widget.add_controller(gesture)
+            self._selection_feed_gesture = gesture
+        except Exception:
+            self._selection_feed_gesture = None
+            logger.debug(
+                "Failed to install selection feed-pause gesture",
+                exc_info=True,
+            )
+
+    def _uninstall_selection_feed_pause(self) -> None:
+        gesture = getattr(self, "_selection_feed_gesture", None)
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is not None and pause.paused:
+            # Flush deferred bytes before dropping the gesture so a detach
+            # mid-drag does not permanently drop remote output.
+            if getattr(self, "backend", None) is not None:
+                self._resume_selection_display_feed()
+            else:
+                pause.reset()
+        if gesture is None:
+            return
+        backend = getattr(self, "backend", None)
+        widget = getattr(backend, "widget", None) if backend is not None else None
+        if widget is not None:
+            try:
+                widget.remove_controller(gesture)
+            except Exception:
+                logger.debug(
+                    "Failed to remove selection feed-pause gesture",
+                    exc_info=True,
+                )
+        self._selection_feed_gesture = None
+        if pause is not None:
+            pause.reset()
+
+    def _on_selection_feed_pressed(self, gesture, _n_press, _x, _y) -> None:
+        try:
+            state = gesture.get_current_event_state()
+            shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        except Exception:
+            shift_held = False
+        tracker = getattr(self, "_mouse_tracking", None)
+        mouse_tracking = bool(tracker is not None and tracker.active)
+        if selection_press_owns_pointer(
+            mouse_tracking_active=mouse_tracking,
+            shift_held=shift_held,
+        ):
+            pause = getattr(self, "_display_feed_pause", None)
+            if pause is not None:
+                pause.begin()
+                logger.debug(
+                    "Terminal display feed paused for selection "
+                    "mouse_tracking=%s shift=%s",
+                    mouse_tracking,
+                    shift_held,
+                )
+        _finish_capture_gesture(gesture, False)
+
+    def _on_selection_feed_released(self, gesture, _n_press, _x, _y) -> None:
+        self._resume_selection_display_feed()
+        _finish_capture_gesture(gesture, False)
+
+    def _resume_selection_display_feed(self) -> None:
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is None:
+            return
+        was_paused = pause.paused
+        buffered = pause.buffered_length
+        deferred = pause.end()
+        if was_paused and buffered:
+            logger.debug(
+                "Terminal display feed resumed flushing_bytes=%s",
+                buffered,
+            )
+        if deferred:
+            self._paint_display(deferred)
 
     def _feed_display(self, data: bytes) -> None:
         """Paint bytes on the active terminal display via the backend abstraction."""
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is not None:
+            accepted = pause.accept(data)
+            if accepted is None:
+                return
+            data = accepted
+        self._paint_display(data)
+
+    def _paint_display(self, data: bytes) -> None:
+        """Apply display bytes to the tracker + backend (never buffers)."""
         backend = getattr(self, 'backend', None)
         if backend is None:
             raise RuntimeError("No terminal backend to feed display output")

@@ -4643,14 +4643,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # The detector is otherwise keyboard-only, so it cannot tell a
         # Shift+drag selection from the first tap of the gesture. Observe
-        # every button press (CAPTURE, never claiming the sequence) so the
-        # pointer can cancel a pending double-tap.
+        # every button press so the pointer can cancel a pending double-tap.
+        # Use BUBBLE (not CAPTURE) and non-exclusive so the terminal's own
+        # drag gesture for Shift+selection receives the sequence first (VTE
+        # checks Shift in its mouse handler; a CAPTURE click with button 0
+        # can otherwise compete with the drag mid-selection).
         pointer = Gtk.GestureClick()
         pointer.set_button(0)
-        pointer.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        pointer.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+        try:
+            pointer.set_exclusive(False)
+        except Exception:
+            pass
         pointer.connect('pressed', self._on_omnisearch_pointer_pressed)
         self.add_controller(pointer)
         self._omnisearch_pointer_controller = pointer
+
+        # Pointer motion during a Shift+drag also taints the double-tap.
+        # EventControllerMotion is not a gesture, so it never claims the
+        # sequence and cannot interfere with selection.
+        try:
+            motion = Gtk.EventControllerMotion()
+            motion.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+            motion.connect(
+                'motion',
+                lambda _c, _x, _y: self._on_omnisearch_pointer_activity(),
+            )
+            self.add_controller(motion)
+            self._omnisearch_motion_controller = motion
+        except Exception:
+            logger.debug("Omnisearch motion observer unavailable", exc_info=True)
 
     def _on_omnisearch_pointer_pressed(self, gesture, _n_press, _x, _y) -> None:
         self._on_omnisearch_pointer_activity()

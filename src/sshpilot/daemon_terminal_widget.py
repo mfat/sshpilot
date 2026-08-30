@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import logging
 from .runtime_identity import new_terminal_id
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 from .daemon_interaction_dialogs import DaemonInteractionDialogs
 from .terminal_backends import GridTrackingVteTerminal
+from .terminal_display_pause import (
+    DeferredDisplayFeed,
+    selection_press_owns_pointer,
+)
 from .terminal_input import (
     MouseTrackingState,
     commit_payload_to_bytes,
@@ -42,6 +46,7 @@ class DaemonTerminalWidget(Gtk.Box):
         self._received_bytes = 0
         self._terminal = GridTrackingVteTerminal()
         self._mouse_tracking = MouseTrackingState()
+        self._display_feed_pause = DeferredDisplayFeed()
         self.append(self._terminal)
         self._interaction_dialogs = DaemonInteractionDialogs(
             client,
@@ -62,6 +67,48 @@ class DaemonTerminalWidget(Gtk.Box):
             "grid-size-changed",
             self._on_size_changed,
         )
+        self._install_selection_feed_pause()
+
+    def _install_selection_feed_pause(self) -> None:
+        gesture = Gtk.GestureClick()
+        gesture.set_button(Gdk.BUTTON_PRIMARY)
+        gesture.set_propagation_phase(Gtk.PropagationPhase.BUBBLE)
+        try:
+            gesture.set_exclusive(False)
+        except Exception:
+            pass
+        gesture.connect("pressed", self._on_selection_feed_pressed)
+        gesture.connect("released", self._on_selection_feed_released)
+        self._terminal.add_controller(gesture)
+        self._selection_feed_gesture = gesture
+
+    def _on_selection_feed_pressed(self, gesture, _n_press, _x, _y) -> None:
+        try:
+            state = gesture.get_current_event_state()
+            shift_held = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        except Exception:
+            shift_held = False
+        if selection_press_owns_pointer(
+            mouse_tracking_active=self._mouse_tracking.active,
+            shift_held=shift_held,
+        ):
+            self._display_feed_pause.begin()
+        try:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+        except Exception:
+            pass
+
+    def _on_selection_feed_released(self, gesture, _n_press, _x, _y) -> None:
+        self._resume_selection_display_feed()
+        try:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+        except Exception:
+            pass
+
+    def _resume_selection_display_feed(self) -> None:
+        deferred = self._display_feed_pause.end()
+        if deferred:
+            self._paint_display(deferred)
 
     @property
     def terminal(self):
@@ -87,6 +134,12 @@ class DaemonTerminalWidget(Gtk.Box):
         tab = self._controller.tab_state
         if tab.session_id is not None:
             self._interaction_dialogs.set_session(tab.session_id)
+        accepted = self._display_feed_pause.accept(data)
+        if accepted is None:
+            return
+        self._paint_display(accepted)
+
+    def _paint_display(self, data: bytes) -> None:
         self._mouse_tracking.feed(data)
         self._terminal.feed(data)
         # VTE drops its legacy ESC[M reports when it owns no PTY, so drive it
@@ -144,6 +197,14 @@ class DaemonTerminalWidget(Gtk.Box):
         if self._size_handler is not None:
             self._terminal.disconnect(self._size_handler)
             self._size_handler = None
+        gesture = getattr(self, "_selection_feed_gesture", None)
+        if gesture is not None:
+            try:
+                self._terminal.remove_controller(gesture)
+            except Exception:
+                pass
+            self._selection_feed_gesture = None
+        self._display_feed_pause.reset()
         self._terminal.disable_grid_tracking()
         self._interaction_dialogs.close()
         # Detach by default so experimental teardown matches production policy.

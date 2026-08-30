@@ -125,6 +125,7 @@ class _RecordingController:
         self.kind = kind
         self.button = None
         self.phase = None
+        self.exclusive = None
         self.handlers = {}
 
     def set_propagation_phase(self, phase):
@@ -133,6 +134,9 @@ class _RecordingController:
     def set_button(self, button):
         self.button = button
 
+    def set_exclusive(self, exclusive):
+        self.exclusive = exclusive
+
     def connect(self, signal, handler):
         self.handlers[signal] = handler
 
@@ -140,7 +144,7 @@ class _RecordingController:
 class _FakeGtk:
     """Only the surface ``_setup_omnisearch_shortcut`` touches."""
 
-    PropagationPhase = SimpleNamespace(CAPTURE="capture")
+    PropagationPhase = SimpleNamespace(CAPTURE="capture", BUBBLE="bubble")
     EventSequenceState = SimpleNamespace(DENIED="denied")
 
     @staticmethod
@@ -150,6 +154,10 @@ class _FakeGtk:
     @staticmethod
     def GestureClick():
         return _RecordingController("click")
+
+    @staticmethod
+    def EventControllerMotion():
+        return _RecordingController("motion")
 
 
 class _DummyGesture:
@@ -194,6 +202,12 @@ class _OmnisearchWindow:
     def _shortcut_event_time(self):
         return self.now
 
+    def _pointer_controller(self):
+        for controller in self.controllers:
+            if controller.kind == "click":
+                return controller
+        raise AssertionError("pointer GestureClick was not installed")
+
     # -- event helpers -----------------------------------------------------
     def press_shift(self, at):
         self.now = at
@@ -206,7 +220,7 @@ class _OmnisearchWindow:
     def click(self):
         """Deliver a button press through the installed pointer observer."""
         gesture = _DummyGesture()
-        pointer = self.controllers[-1]
+        pointer = self._pointer_controller()
         pointer.handlers["pressed"](gesture, 1, 0.0, 0.0)
         return gesture
 
@@ -217,11 +231,14 @@ def test_window_installs_a_pointer_observer_for_the_double_shift_gesture(monkeyp
     window = _OmnisearchWindow(monkeypatch)
 
     kinds = [controller.kind for controller in window.controllers]
-    assert kinds == ["key", "click"]
+    assert "key" in kinds
+    assert "click" in kinds
+    assert "motion" in kinds
 
-    pointer = window.controllers[-1]
+    pointer = window._pointer_controller()
     assert pointer.button == 0, "must observe every button, not just primary"
-    assert pointer.phase == _FakeGtk.PropagationPhase.CAPTURE
+    assert pointer.phase == _FakeGtk.PropagationPhase.BUBBLE
+    assert pointer.exclusive is False
     assert "pressed" in pointer.handlers
 
     # Observing only: the sequence is denied so terminal selection is untouched.
