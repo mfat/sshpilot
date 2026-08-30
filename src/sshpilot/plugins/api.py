@@ -129,6 +129,16 @@ class ProtocolBackend(abc.ABC):
         return []
 
 
+class BackendUnavailable(RuntimeError):
+    """A daemon-backed context call was made before the backend was ready.
+
+    The daemon client is selected asynchronously, so it does not exist while
+    plugins are being activated. Do daemon-backed work (settings, secrets,
+    connections, keys) from the ``app_started`` event instead of
+    ``activate()`` — ``app_started`` is held until the backend settles.
+    """
+
+
 class ProtocolError(RuntimeError):
     """Raised by build_spawn(); message is shown to the user."""
 
@@ -337,16 +347,27 @@ class _SettingStore:
     def _full(self, key: str) -> str:
         return f"plugins.{self._plugin_id}.{key}"
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def _client(self, method: str):
+        """The daemon client, or raise — never quietly answer without it.
+
+        Returning ``default`` when the daemon is unreachable is indistinguishable
+        from "this key is unset", so a plugin that reads a store at startup and
+        writes the whole store back would erase it. Fail loudly instead."""
         client = self._client_getter() if self._client_getter else None
-        if client is not None and hasattr(client, "get_plugin_setting"):
-            return client.get_plugin_setting(self._plugin_id, key, default)
-        return default
+        if client is None or not hasattr(client, method):
+            raise BackendUnavailable(
+                f"plugin settings need the daemon backend, which is not "
+                f"connected. It never is during activate(): read settings "
+                f"from your {Events.APP_STARTED!r} handler instead."
+            )
+        return client
+
+    def get(self, key: str, default: Any = None) -> Any:
+        client = self._client("get_plugin_setting")
+        return client.get_plugin_setting(self._plugin_id, key, default)
 
     def set(self, key: str, value: Any) -> None:
-        client = self._client_getter() if self._client_getter else None
-        if client is None or not hasattr(client, "set_plugin_setting"):
-            raise RuntimeError("daemon settings are unavailable")
+        client = self._client("set_plugin_setting")
         client.set_plugin_setting(self._plugin_id, key, value)
 
 
@@ -577,10 +598,21 @@ class PluginContext:
     ``secrets``/``settings`` accessors are auto-scoped.
 
     Lifecycle: ``activate(ctx)`` is for registration only — register
-    protocols/pages, subscribe to events, read settings. Live UI, terminal,
-    and key-generation calls (``ui.open_page``/``ui.notify``,
-    ``open_connection``, ``generate_key``) are valid only after the
-    ``app_started`` event; calls made earlier are safely queued where possible.
+    protocols/pages, subscribe to events. Live UI, terminal, and
+    key-generation calls (``ui.open_page``/``ui.notify``, ``open_connection``,
+    ``generate_key``) are valid only after the ``app_started`` event; calls
+    made earlier are safely queued where possible.
+
+    Everything the daemon owns — ``settings``, ``secrets``, ``identities``,
+    ``add_connection``/``update_connection``, key operations — is likewise
+    valid only from ``app_started`` onwards, and raises
+    :class:`BackendUnavailable` (or an equivalent ``RuntimeError``) before
+    then. The daemon client is selected on a background thread while the
+    window is being built, so it does not exist during ``activate()``;
+    ``app_started`` is deliberately held until that selection resolves.
+    Key operations need one thing more — the daemon-confirmed operation mode,
+    which can land shortly after ``app_started`` — so ``list_keys()`` may still
+    report an empty list on the event itself.
     """
 
     def __init__(self, *, plugin_id: str, app_config: Any,

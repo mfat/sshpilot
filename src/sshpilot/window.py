@@ -566,6 +566,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._refresh_operation_mode_scope()
         self.secrets_controller = self._build_secrets_controller()
         self._attach_secrets_interaction_presenter()
+        self._settle_plugin_backend()
+
+    def _settle_plugin_backend(self) -> None:
+        """Release the held ``app_started`` event now that selection resolved.
+
+        Plugins are activated during ``__init__``, long before the daemon
+        client exists, so ``app_started`` is the first point at which their
+        context can reach the backend."""
+        host = getattr(self, 'plugin_host', None)
+        if host is None:
+            return
+        try:
+            host.notify_backend_settled()
+        except Exception:
+            logger.exception("Plugin backend-settled dispatch failed")
 
     def _replace_daemon_client(self, client) -> None:
         """Atomically rebind every long-lived frontend service to *client*.
@@ -824,6 +839,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._group_mutation_controller = None
         self.plugin_connection_services.detach_client()
         self.connection_runtime_status.close()
+        self._settle_plugin_backend()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
         logger.error(
             "Daemon client selection failed reason=%s type=%s",

@@ -215,6 +215,7 @@ def env(tmp_path, monkeypatch):
     fake_window = FakeWindow(cm)
     fake_window.client = fake
     host.bind_window(fake_window)
+    host.notify_backend_settled()
     host.dispatch_app_started()
 
     spec = importlib.util.spec_from_file_location("easyenv_e2e", EXAMPLE)

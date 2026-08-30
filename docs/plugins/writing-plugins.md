@@ -291,13 +291,20 @@ start-session`) alongside the built-in `telnet_protocol` and the protocol
 
 ### Lifecycle: register in `activate`, act in callbacks
 
-`activate(ctx)` runs **before the main window exists** — do registration only
-(subscribe to events, `register_page`, read settings). Anything that touches live
-UI, connections, or keys (`ui.open_page`/`notify`, `open_connection`,
-`generate_key`, groups) is valid only **after the `APP_STARTED` event**; early
-`ctx.ui.*` calls are queued for you, but don't, say, open a connection from
-`activate`. Event callbacks and page factories always run after the window is up,
-so they're the right place for real work.
+`activate(ctx)` runs **before the main window exists and before the daemon
+backend is reachable** — do registration only (subscribe to events,
+`register_page`). Anything that touches live UI, connections, or keys
+(`ui.open_page`/`notify`, `open_connection`, `generate_key`, groups) is valid
+only **after the `APP_STARTED` event**; early `ctx.ui.*` calls are queued for
+you, but don't, say, open a connection from `activate`. Event callbacks and page
+factories always run after the window is up, so they're the right place for real
+work.
+
+Daemon-owned state has the same rule: `ctx.settings`, `ctx.secrets`,
+`ctx.identities`, `add_connection`/`update_connection` and key operations raise
+`BackendUnavailable` (a `RuntimeError`) during `activate`. `APP_STARTED` is held
+until the daemon client resolves, so it is the earliest safe point — read your
+persisted settings there, not in `activate`.
 
 ### Events and their payloads
 
@@ -333,6 +340,11 @@ rebuilds only its rules list when you add/remove a rule.
 (`notes` keeps a `{nickname: text}` dict) and treat what you read back
 defensively (it round-tripped through JSON). `ctx.secrets` is the OS keyring for
 sensitive strings (tokens, passwords); never put secrets in `settings`.
+
+Both are daemon-owned, so both raise `BackendUnavailable` before `APP_STARTED`.
+`get()` **raises rather than returning your `default`** when the backend isn't
+up: a silent default reads as "unset", and a plugin that loads a whole store at
+startup and writes it back on the next edit would erase it.
 
 ### SSH password prompts (in-app)
 

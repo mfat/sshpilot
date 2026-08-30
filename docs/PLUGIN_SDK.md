@@ -119,23 +119,40 @@ class Plugin(SshPilotPlugin):
 ## 3. The lifecycle contract (read this)
 
 ```
-load  →  activate(ctx)        registration only — UI does NOT exist yet
+load  →  activate(ctx)        registration only — no UI, no backend yet
                   │
-present │  app_started event  UI is live: open pages, toast, open connections
+present │
+                  │           (daemon client is selected in the background)
+        │  app_started event  UI is live AND the backend is reachable
                   │
    …running…      connection_* / session_* events
                   │
 quit    │  app_shutdown event  then deactivate()
 ```
 
-- **`activate(ctx)` is registration only.** The main window UI is not built yet.
-  Do: `register_protocol`, `ui.register_page`, `events.subscribe`, read
-  `settings`. **Don't** call `ui.open_page`, `ui.notify`, `open_connection`, or
-  `generate_key` here — they need the live window. (Calls made early are
-  queued where possible, but don't rely on it; do live work from `app_started`
-  or later events / user actions.)
-- **`app_started`** fires once the window is presented and bound — your cue
-  that live UI/terminal/key calls are safe.
+- **`activate(ctx)` is registration only.** Neither the main window UI nor the
+  daemon backend exists yet. Do: `register_protocol`, `ui.register_page`,
+  `events.subscribe`. **Don't** call `ui.open_page`, `ui.notify`,
+  `open_connection`, or `generate_key` here — they need the live window. (Calls
+  made early are queued where possible, but don't rely on it; do live work from
+  `app_started` or later events / user actions.)
+- **Don't touch daemon-owned state in `activate()` either** — `settings`,
+  `secrets`, `identities`, `add_connection`/`update_connection` and the key
+  operations all raise `BackendUnavailable` (a `RuntimeError`) until the daemon
+  client is up. In particular **`ctx.settings.get()` raises rather than
+  returning your `default`**: a silent default is indistinguishable from "unset",
+  so a plugin that loads a store at `activate()` and writes the whole store back
+  on the next edit would erase it. Read your settings in the `app_started`
+  handler and keep a plain in-memory default until then.
+- **`app_started`** fires once the window is presented *and* daemon client
+  selection has resolved — your cue that live UI/terminal calls and
+  daemon-backed calls are safe. It is deliberately held for the backend, so it
+  can arrive a moment after the window appears. If the daemon is genuinely
+  unavailable the event still fires, and those calls then raise honestly.
+  One exception: key operations (`list_keys`, `delete_key`, `generate_key`) also
+  need the daemon to confirm its operation mode, which can land shortly after
+  `app_started` — `list_keys()` reports `[]` until it does, so drive key work
+  from a user action rather than straight off the event.
 - **`deactivate()`** is best-effort, called at shutdown after `app_shutdown`.
 
 ---
@@ -226,7 +243,7 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 - Read-only for plugins — choosing/configuring providers is the user's job. See `IDENTITY_PROVIDERS.md` for the provider contract.
 
 ### Settings — `ctx.settings` (app config, scoped to your plugin id)
-- `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`.
+- `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`. Daemon-owned: both raise `BackendUnavailable` before `app_started`, and `get` raises rather than returning `default` (see [the lifecycle contract](#3-the-lifecycle-contract-read-this)).
 
 ### Threading
 - `run_on_ui_thread(fn, *args)` — run `fn(*args)` on the GTK main thread. Use to return from a background worker before touching UI or calling `add_connection`/`open_connection`.
@@ -376,7 +393,8 @@ ctx.settings.set("region", "fra1")          # app config: plugins.<id>.region
 region = ctx.settings.get("region", "fra1")
 ```
 
-Never put credentials in `settings`; use `secrets`.
+Never put credentials in `settings`; use `secrets`. Both are daemon-owned — call
+them from `app_started` onwards, never from `activate()`.
 
 ---
 

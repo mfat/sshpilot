@@ -377,6 +377,14 @@ class PluginHost:
         self._terminal_widgets: Dict[str, Any] = {}
         # Attachment handles are daemon resources, not a session registry.
         self._plugin_attachments: Dict[str, Any] = {}
+        # app_started is the documented "now you may use the backend" signal,
+        # so it is held until daemon client selection resolves. The window
+        # presents before that async selection completes, so emitting on
+        # present() would hand plugins a context whose daemon-backed calls all
+        # raise. See notify_backend_settled().
+        self._app_started_requested = False
+        self._app_started_emitted = False
+        self._backend_settled = False
 
     # --- binding ------------------------------------------------------
     def bind_window(self, window) -> None:
@@ -475,6 +483,32 @@ class PluginHost:
 
     # --- app lifecycle (called from main.py) --------------------------
     def dispatch_app_started(self) -> None:
+        """Record that the window is up; emit once the backend has settled.
+
+        Both conditions must hold before ``app_started`` fires, and they can
+        complete in either order: the daemon client may already be selected
+        when the first window is built, or selection may finish seconds after
+        the window is presented."""
+        self._app_started_requested = True
+        self._emit_app_started_if_ready()
+
+    def notify_backend_settled(self) -> None:
+        """Daemon client selection has resolved — attached or unavailable.
+
+        Called by the window from both outcomes. A failed selection still
+        settles: plugins must get ``app_started`` so they can run, and their
+        daemon-backed calls then raise honestly instead of never firing."""
+        if self._backend_settled:
+            return
+        self._backend_settled = True
+        self._emit_app_started_if_ready()
+
+    def _emit_app_started_if_ready(self) -> None:
+        if self._app_started_emitted:
+            return
+        if not (self._app_started_requested and self._backend_settled):
+            return
+        self._app_started_emitted = True
         self.events.emit(Events.APP_STARTED, None)
 
     def dispatch_app_shutdown(self) -> None:

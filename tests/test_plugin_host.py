@@ -635,8 +635,41 @@ def test_app_lifecycle_events():
     host.events.subscribe(Events.APP_STARTED, lambda p: fired.append("start"), plugin_id="p")
     host.events.subscribe(Events.APP_SHUTDOWN, lambda p: fired.append("stop"), plugin_id="p")
     host.dispatch_app_started()
+    host.notify_backend_settled()
     host.dispatch_app_shutdown()
     assert fired == ["start", "stop"]
+
+
+def test_app_started_held_until_backend_settles():
+    """The window presents before daemon client selection finishes, so
+    app_started must wait — plugins are told it means the backend is usable."""
+    host, _, _ = _host_with_window()
+    fired = []
+    host.events.subscribe(Events.APP_STARTED, lambda p: fired.append(p), plugin_id="p")
+
+    host.dispatch_app_started()
+    assert fired == []          # window is up, backend is not
+
+    host.notify_backend_settled()
+    assert fired == [None]
+
+
+def test_app_started_fires_when_backend_settles_first():
+    """A client already selected when the first window is built settles before
+    the window presents; app_started must still fire, exactly once."""
+    host, _, _ = _host_with_window()
+    fired = []
+    host.events.subscribe(Events.APP_STARTED, lambda p: fired.append(p), plugin_id="p")
+
+    host.notify_backend_settled()
+    assert fired == []          # backend is ready, window is not up yet
+
+    host.dispatch_app_started()
+    assert fired == [None]
+
+    host.notify_backend_settled()
+    host.dispatch_app_started()
+    assert fired == [None]      # repeat calls never re-emit
 
 
 def test_open_connection_resolution():
@@ -952,11 +985,39 @@ def test_context_facades_are_scoped_by_plugin_id():
     seen = []
     ctx.events.subscribe(Events.APP_STARTED, lambda p: seen.append(p))
     host.dispatch_app_started()
+    host.notify_backend_settled()
     assert seen == [None]
 
     ctx.ui.register_page("deploy", "Deploy", "icon", lambda: "W")
     host.bind_window(FakeWindow())
     ctx.ui.open_page("deploy")  # namespaced internally to "acme:deploy"
+
+
+def test_settings_raise_instead_of_answering_without_a_backend():
+    """A read that quietly returns the caller's default is indistinguishable
+    from "unset", so a plugin that loads a store at activate() and writes the
+    whole store back on the next edit would erase it. Fail loudly instead."""
+    from sshpilot.plugins.api import BackendUnavailable
+
+    cm = FakeCM()
+    host = PluginHost(connection_manager=cm)   # no window => no daemon client
+    ctx = PluginContext(plugin_id="notes", app_config=FakeConfig(), connection_manager=cm,
+                        protocol_registry=registry_mod.ProtocolRegistry(), host=host)
+
+    with pytest.raises(BackendUnavailable):
+        ctx.settings.get("notes", {})
+    with pytest.raises(BackendUnavailable):
+        ctx.settings.set("notes", {"box": "text"})
+
+    stored = {"notes": {"box": "text"}}
+    host._window = types.SimpleNamespace(
+        client=types.SimpleNamespace(
+            get_plugin_setting=lambda _p, key, default=None: stored.get(key, default),
+            set_plugin_setting=lambda _p, key, value: stored.__setitem__(key, value),
+        )
+    )
+    assert ctx.settings.get("notes", {}) == {"box": "text"}
+    assert ctx.settings.get("absent", "d") == "d"
 
 
 def test_context_without_host_is_safe():
