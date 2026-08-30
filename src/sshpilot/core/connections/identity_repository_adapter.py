@@ -255,10 +255,30 @@ def reconcile_identity_state(
     # reintroducing the original bug. Retire it instead: its own frozen
     # alias is conclusively no longer available to reclaim, so nothing sound
     # remains to resolve its ambiguity by.
+    #
+    # A ghost is retired for a second reason too: renaming one of two colliding
+    # aliases away disambiguates nothing. The renamed entry joins the ordinary
+    # pool but still sits at the ghost's destination, so it is exactly as
+    # likely to be the ghost as the candidate alias that stayed put. Judging
+    # the ghost against its recorded candidate aliases alone made that look
+    # like a clean one-to-one match and resolved what is really a coin flip,
+    # migrating one connection's display name, groups and tags onto the other.
+    # It cannot be held back as still-pending either: the state model requires
+    # a pending ambiguity's aliases to be unclaimed, and these now belong to
+    # ordinary identities. So there is nothing sound left to resolve it by.
     ordinary_new_aliases = {projection.alias for projection in ordinary_new}
+    ordinary_new_anchors = {
+        projection.destination_anchor
+        for projection in ordinary_new
+        if projection.destination_anchor is not None
+    }
     retiring_ghost_uuids = {
         entry.uuid for entry in ambiguous_old
         if entry.projection.alias in ordinary_new_aliases
+        or (
+            entry.projection.destination_anchor is not None
+            and entry.projection.destination_anchor in ordinary_new_anchors
+        )
     }
     if retiring_ghost_uuids:
         ambiguous_old = tuple(

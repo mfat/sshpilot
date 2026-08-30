@@ -1,0 +1,13 @@
+{
+  "name": "collision_survivor_is_not_a_coin_flip",
+  "description": "A two-way collision leaves both connections unresolved; one of the two colliding aliases is then externally renamed away. The surviving candidate alias and the newly renamed one sit at the same destination, so which of them the unresolved identity belongs to is still a coin flip. Production must not resolve it by picking the alias that happens to still be named in the ambiguity record -- doing so migrated one connection's display name onto the other. See external_collide_and_rename's contract in state_machine.py: any resolution is allowed except a marker landing on the wrong logical connection.",
+  "initial_connections": [
+    {"ref": "base", "hostname": "0.0.example", "port": 22},
+    {"ref": "other", "hostname": "0.0.example", "port": 1}
+  ],
+  "operations": [
+    {"op": "external_rename_single", "ref": "base", "suffix": "0"},
+    {"op": "external_collide_and_rename", "a": "base", "b": "other"},
+    {"op": "external_rename_single", "ref": "base", "suffix": "0"}
+  ]
+}
