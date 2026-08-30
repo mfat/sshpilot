@@ -17,10 +17,13 @@ from sshpilot.api.models import (
     StoreConnectionPasswordRequest,
     UpdateConnectionRequest,
 )
+from sshpilot.api.models.connections import extract_plugin_data
 
 
+# The columns a connection carries outside its config patch.  Narrower than
+# ``CONNECTION_CORE_DATA_FIELDS`` on purpose: an SSH config patch may legally
+# carry ``aliases``, which is not a plugin FieldSpec value.
 _CORE_FIELDS = frozenset({"nickname", "hostname", "host", "username", "port", "protocol"})
-_SENSITIVE_PARTS = ("password", "passphrase", "secret", "token", "credential", "private_key")
 
 
 class DaemonConnectionServices:
@@ -68,14 +71,11 @@ class DaemonConnectionServices:
         return self._projection.disconnect(handler_id)
 
     @staticmethod
-    def _plugin_data(data):
-        return {
-            key: value
-            for key, value in dict(data).items()
-            if key not in _CORE_FIELDS
-            and not key.startswith("__")
-            and not any(part in key.lower() for part in _SENSITIVE_PARTS)
-        }
+    def _plugin_data(protocol, data):
+        # Delegate to the daemon's own projection filter so the write side can
+        # never accept a key the read side strips (which would reopen blank
+        # and then be saved back empty).
+        return extract_plugin_data(protocol, data)
 
     @staticmethod
     def _config_patch(data):
@@ -97,7 +97,7 @@ class DaemonConnectionServices:
             protocol=protocol,
             display_name=str(values.get("display_name", "") or ""),
             config_patch=self._config_patch(values) if protocol == "ssh" else {},
-            plugin_data=self._plugin_data(values) if protocol != "ssh" else {},
+            plugin_data=self._plugin_data(protocol, values),
         )
         result = client.create_connection(request)
         password = values.get("password")
@@ -128,7 +128,7 @@ class DaemonConnectionServices:
             port=int(values.get("port", getattr(connection, "port", 22)) or 22),
             display_name=(values["display_name"] if "display_name" in values else UNSET),
             config_patch=self._config_patch(values) if protocol == "ssh" else {},
-            plugin_data=self._plugin_data(values) if protocol != "ssh" else {},
+            plugin_data=self._plugin_data(protocol, values),
         )
         connection_id = connection_id_for(connection)
         client.update_connection(connection_id, request)

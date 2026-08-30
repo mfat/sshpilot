@@ -273,7 +273,11 @@ CONNECTION_CORE_DATA_FIELDS = frozenset(
         "authored_directives",
     }
 )
-_PLUGIN_DATA_SENSITIVE_PARTS = (
+# Field names that must never carry a secret into ``plugin_data``.  Shared by
+# every layer that filters plugin values (the daemon projection, the GTK
+# plugin services facade, and the connection-store backup path) so the three
+# can never drift apart.
+PLUGIN_DATA_SENSITIVE_PARTS = (
     "password",
     "passphrase",
     "secret",
@@ -283,18 +287,32 @@ _PLUGIN_DATA_SENSITIVE_PARTS = (
 )
 
 
+def is_sensitive_field_name(key: str) -> bool:
+    """Whether a connection ``data`` key looks like it holds a secret."""
+    lowered = str(key).lower()
+    return any(part in lowered for part in PLUGIN_DATA_SENSITIVE_PARTS)
+
+
 def extract_plugin_data(
     protocol: str, data: Optional[Mapping[str, Any]] = None
 ) -> Dict[str, Any]:
-    """Return secret-free protocol FieldSpec values from a connection record."""
+    """Return secret-free protocol FieldSpec values from a connection record.
+
+    This is the single plugin-value filter, applied in *both* directions: what
+    the daemon strips when projecting ``ConnectionDetails.plugin_data`` is
+    exactly what the client refuses to persist.  A narrower write-side filter
+    would let a FieldSpec keyed like a core column (``source``, ``uuid``,
+    ``generation``, …) be saved into ``record.data`` — where it collides with
+    the record's own bookkeeping — and then be stripped on read, so the field
+    reopens blank and is saved back empty.
+    """
     if (protocol or "ssh") == "ssh":
         return {}
     result: Dict[str, Any] = {}
     for key, value in dict(data or {}).items():
         if key in CONNECTION_CORE_DATA_FIELDS or key.startswith("__"):
             continue
-        lowered = key.lower()
-        if any(part in lowered for part in _PLUGIN_DATA_SENSITIVE_PARTS):
+        if is_sensitive_field_name(key):
             continue
         result[key] = value
     return result

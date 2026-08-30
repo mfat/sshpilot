@@ -48,6 +48,7 @@ from ...api.models.connections import (
     SaveSshConfigTextRequest,
     SshConfigText,
     MAX_DISPLAY_NAME_LENGTH,
+    is_sensitive_field_name,
 )
 from ...api.models.common import validate_ssh_host_alias
 from ...api.models.secrets import (
@@ -152,28 +153,23 @@ _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
 }
 
-# Defense-in-depth secret filter mirroring the GTK client's own
-# ``_SENSITIVE_PARTS`` convention (``sshpilot/gtk/daemon_connection_services.py``):
-# no field in ``_PORTABLE_PROTOCOL_FIELDS`` currently matches this today, but
-# a hand-crafted backup file or a future plugin field must never be able to
-# smuggle a secret into the logical connection_store through ``plugin_data``.
-_SENSITIVE_DATA_PARTS = ("password", "passphrase", "secret", "token", "credential", "private_key")
-
-
-def _is_sensitive_field_name(key: str) -> bool:
-    lowered = key.lower()
-    return any(part in lowered for part in _SENSITIVE_DATA_PARTS)
-
 
 def _portable_plugin_data(protocol: str, data: Mapping[str, Any]) -> Dict[str, Any]:
     """The subset of ``record.data`` that is safe, portable, protocol-declared
     launch configuration — never arbitrary/unknown keys, never anything
-    matching a secret-like field name."""
+    matching a secret-like field name.
+
+    The secret-name check shares the one list every plugin-value filter uses
+    (``PLUGIN_DATA_SENSITIVE_PARTS``): no field in
+    ``_PORTABLE_PROTOCOL_FIELDS`` matches it today, but a hand-crafted backup
+    file or a future plugin field must never be able to smuggle a secret into
+    the logical connection_store through ``plugin_data``.
+    """
     allowed = _PORTABLE_PROTOCOL_FIELDS.get(protocol, ())
     return {
         key: data[key]
         for key in allowed
-        if key in data and not _is_sensitive_field_name(key)
+        if key in data and not is_sensitive_field_name(key)
     }
 
 

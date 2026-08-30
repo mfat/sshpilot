@@ -124,3 +124,46 @@ def test_update_routes_through_daemon_client():
     connection_id, request = client.updated
     assert connection_id == "demo"
     assert request.hostname == "changed.example"
+
+
+def test_plugin_payload_filter_matches_the_daemon_projection():
+    """The write filter must accept exactly what the read projection returns.
+
+    ``extract_plugin_data`` strips core columns and bookkeeping keys when it
+    builds ``ConnectionDetails.plugin_data``.  If the write side were more
+    permissive, such a key would be persisted into ``record.data`` — colliding
+    with the record's own bookkeeping — and then stripped on read, so the
+    editor would reopen it blank and save it back empty.
+    """
+    from sshpilot.api.models.connections import extract_plugin_data
+
+    facade, client = services()
+    payload = {
+        "nickname": "serial-demo",
+        "hostname": "/dev/ttyUSB0",
+        "protocol": "serial",
+        "device": "/dev/ttyUSB0",
+        "baud": "115200",
+        # Core columns and record bookkeeping must never reach plugin_data.
+        "display_name": "Serial demo",
+        "source": "~/.ssh/config",
+        "uuid": "0f0f",
+        "generation": 3,
+        "order": 2,
+        "aliases": ["other"],
+        "authored_directives": ["Host"],
+        # Secret-like names are filtered on both sides too.
+        "api_token": "must-not-be-persisted",
+    }
+
+    facade.add_connection_from_data(dict(payload))
+    assert client.created.plugin_data == extract_plugin_data("serial", payload)
+    assert client.created.plugin_data == {"device": "/dev/ttyUSB0", "baud": "115200"}
+
+    facade.update_connection(
+        facade.find_connection_by_nickname("demo"), dict(payload)
+    )
+    _connection_id, request = client.updated
+    assert request.plugin_data == extract_plugin_data("serial", payload)
+    # display_name still rides its own core column rather than plugin_data.
+    assert request.display_name == "Serial demo"
