@@ -40,10 +40,25 @@ jobs:
                      /usr/local/bin/python3.13 \
                      /usr/local/bin/python3.13-config
 
+          # macos-15-intel is Homebrew Tier 3: a formula may ship no Intel
+          # macOS bottle at all (arm64 macOS + Linux only), and brew will NOT
+          # fall back to source on its own there -- it hard-fails with
+          # "<formula>: no bottle available!". Two formulae in this dependency
+          # closure are currently affected and must be built explicitly:
+          #
+          #   appstream  (1.2.0+)  pulled in by libadwaita
+          #   pygobject3 (3.58+)   a direct dependency of the app
+          #
+          # appstream has to be built BEFORE the bulk install below, because
+          # resolving libadwaita is what drags it in. Everything else in the
+          # closure is still bottled for Intel (including both of these
+          # formulae's own build deps), so only these two compile from source.
+          # Re-check with `brew info --json=v2 <formula>` when a new one breaks:
+          # the tell is a bottle list with arm64_* and x86_64_linux but no
+          # plain sequoia/sonoma tag.
+          brew install --overwrite --build-from-source appstream
+
           # Install with overwrite flag to prevent linking errors.
-          # pygobject3 is installed separately: Homebrew 3.58+ currently ships
-          # no Intel macOS bottles (arm64 + Linux only), and macos-15-intel is
-          # Homebrew Tier 3 so brew will not auto-fallback to source.
           brew install --overwrite python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
             adwaita-icon-theme gobject-introspection py3cairo \
             create-dmg sshpass
