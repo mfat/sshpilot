@@ -60,14 +60,18 @@ class Plugin(SshPilotPlugin):
         ctx.events.subscribe(Events.SESSION_OPENED, self._on_session_opened)
         ctx.events.subscribe(Events.APP_SHUTDOWN, self._on_app_shutdown)
 
-        # Last-used region, persisted per-plugin (namespaced in app config).
-        self._region = ctx.settings.get("region", "fra1")
+        # Fallback until app_started delivers the persisted choice below.
+        self._region = "fra1"
 
     def deactivate(self) -> None:
         logger.info("mock-vps: deactivate")
 
     # --- event handlers (main thread) ---------------------------------
     def _on_app_started(self, _payload) -> None:
+        # Settings are daemon-owned, so they are readable from app_started
+        # onwards — never during activate(), where the backend does not exist
+        # yet. Last-used region, persisted per-plugin (namespaced in config).
+        self._region = self.ctx.settings.get("region", "fra1")
         self.ctx.ui.notify("Mock VPS provider ready")
 
     def _on_connection_created(self, info) -> None:

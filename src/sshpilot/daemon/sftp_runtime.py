@@ -64,7 +64,8 @@ from sshpilot.api.models.operations import (
     OperationSummary,
     RemoteFileEntry,
     RemoteFileType,
-    ServiceFailure,
+    SftpFailure,
+    SftpFailureCode,
     SftpChmodRequest,
     SftpCopyRequest,
     SftpCreateFileRequest,
@@ -387,7 +388,7 @@ class _SftpRecord:
     closed_at: Optional[datetime] = None
     owner_client_id: Optional[ClientId] = None
     attached_clients: Set[ClientId] = field(default_factory=set)
-    failure: Optional[ServiceFailure] = None
+    failure: Optional[SftpFailure] = None
     handle: Optional[SftpProcessHandle] = None
     launch_spec: Optional[SessionLaunchSpec] = None
     close_scheduled: bool = False
@@ -433,34 +434,12 @@ _ERRNO_TO_ERROR_CODE = {
     errno.EPIPE: ErrorCode.SFTP_PROTOCOL_LOST,
 }
 
-_SFTP_STATUS_TO_CODE_AND_MESSAGE = {
-    sftp_proto.FX_NO_SUCH_FILE: (
-        ErrorCode.REMOTE_PATH_NOT_FOUND,
-        "The path was not found",
-    ),
-    sftp_proto.FX_PERMISSION_DENIED: (
-        ErrorCode.REMOTE_PERMISSION_DENIED,
-        "Permission denied",
-    ),
-    sftp_proto.FX_NO_CONNECTION: (
-        ErrorCode.SFTP_PROTOCOL_LOST,
-        "The SFTP connection was lost",
-    ),
-    sftp_proto.FX_CONNECTION_LOST: (
-        ErrorCode.SFTP_PROTOCOL_LOST,
-        "The SFTP connection was lost",
-    ),
-    sftp_proto.FX_OP_UNSUPPORTED: (
-        ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
-        "The server does not support this operation",
-    ),
-}
-
-_ERROR_CODE_MESSAGES = {
-    ErrorCode.SFTP_PROTOCOL_LOST: "The SFTP connection was lost",
-    ErrorCode.REMOTE_PATH_NOT_FOUND: "The path was not found",
-    ErrorCode.REMOTE_PERMISSION_DENIED: "Permission denied",
-    ErrorCode.REMOTE_UNSUPPORTED_OPERATION: "The server does not support this operation",
+_SFTP_STATUS_TO_ERROR_CODE = {
+    sftp_proto.FX_NO_SUCH_FILE: ErrorCode.REMOTE_PATH_NOT_FOUND,
+    sftp_proto.FX_PERMISSION_DENIED: ErrorCode.REMOTE_PERMISSION_DENIED,
+    sftp_proto.FX_NO_CONNECTION: ErrorCode.SFTP_PROTOCOL_LOST,
+    sftp_proto.FX_CONNECTION_LOST: ErrorCode.SFTP_PROTOCOL_LOST,
+    sftp_proto.FX_OP_UNSUPPORTED: ErrorCode.REMOTE_UNSUPPORTED_OPERATION,
 }
 
 _GENERIC_SFTP_STATUS_TEXT = frozenset(
@@ -477,6 +456,75 @@ _GENERIC_SFTP_STATUS_TEXT = frozenset(
         "Operation unsupported",
     }
 )
+
+
+class _SftpSummaryError(SshPilotError):
+    """A direct-compatible error with structured summary presentation data."""
+
+    def __init__(
+        self,
+        error_code: ErrorCode,
+        message: str,
+        failure_code: SftpFailureCode,
+        *,
+        parameters: Optional[Dict[str, str]] = None,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(error_code, message, details=details)
+        self.summary_failure = SftpFailure(
+            code=failure_code,
+            error_code=error_code,
+            parameters=parameters or {},
+        )
+
+
+def _specific_server_diagnostic(error: SshPilotError) -> str:
+    details = error.details
+    if details.get("server_message_is_specific") is not True:
+        return ""
+    diagnostic = details.get("server_message")
+    return diagnostic if type(diagnostic) is str else ""
+
+
+def _lifecycle_failure(error: SshPilotError) -> SftpFailure:
+    code = {
+        ErrorCode.SERVER_BUSY: SftpFailureCode.COMMAND_QUEUE_FULL,
+        ErrorCode.SFTP_PROTOCOL_LOST: SftpFailureCode.CONNECTION_LOST,
+        ErrorCode.SFTP_SERVICE_NOT_FOUND: SftpFailureCode.SERVICE_NOT_FOUND,
+    }.get(error.code, SftpFailureCode.SESSION_ESTABLISHMENT_FAILED)
+    return SftpFailure(
+        code=code,
+        error_code=error.code,
+        diagnostic=_specific_server_diagnostic(error),
+    )
+
+
+def _operation_failure(error: BaseException) -> SftpFailure:
+    structured = getattr(error, "summary_failure", None)
+    if type(structured) is SftpFailure:
+        return structured
+    if isinstance(error, SshPilotError):
+        code = {
+            ErrorCode.SFTP_PROTOCOL_LOST: SftpFailureCode.CONNECTION_LOST,
+            ErrorCode.SFTP_SERVICE_NOT_FOUND: SftpFailureCode.SERVICE_NOT_FOUND,
+            ErrorCode.SFTP_SERVICE_NOT_READY: SftpFailureCode.SERVICE_NOT_READY,
+            ErrorCode.SERVICE_OWNER_REQUIRED: SftpFailureCode.SERVICE_OWNER_REQUIRED,
+            ErrorCode.REMOTE_PATH_NOT_FOUND: SftpFailureCode.PATH_NOT_FOUND,
+            ErrorCode.REMOTE_PERMISSION_DENIED: SftpFailureCode.PERMISSION_DENIED,
+            ErrorCode.PERMISSION_DENIED: SftpFailureCode.PERMISSION_DENIED,
+            ErrorCode.REMOTE_UNSUPPORTED_OPERATION: (
+                SftpFailureCode.UNSUPPORTED_OPERATION
+            ),
+        }.get(error.code, SftpFailureCode.COMMAND_FAILED)
+        return SftpFailure(
+            code=code,
+            error_code=error.code,
+            diagnostic=_specific_server_diagnostic(error),
+        )
+    return SftpFailure(
+        code=SftpFailureCode.OPERATION_FAILED_UNEXPECTEDLY,
+        error_code=ErrorCode.INTERNAL_ERROR,
+    )
 
 
 def _validate_path(value: Any, field_name: str = "remote path") -> str:
@@ -672,13 +720,15 @@ class SftpServiceRuntime:
             if handle is None:
                 raise TypeError("SFTP runner returned no process handle")
         except SshPilotError as error:
-            self._startup_failed(record, error.code, error.message)
+            self._startup_failed(record, _lifecycle_failure(error))
             return
         except Exception:
             self._startup_failed(
                 record,
-                ErrorCode.SFTP_SERVICE_NOT_READY,
-                "The SFTP session could not be established",
+                SftpFailure(
+                    code=SftpFailureCode.SESSION_ESTABLISHMENT_FAILED,
+                    error_code=ErrorCode.SFTP_SERVICE_NOT_READY,
+                ),
             )
             return
         terminate_after_start = True
@@ -716,12 +766,13 @@ class SftpServiceRuntime:
 
     def fail_pending_start(self, service_id: SftpServiceId, error: BaseException) -> None:
         if isinstance(error, SshPilotError):
-            code = error.code
-            message = error.message
+            failure = _lifecycle_failure(error)
         else:
-            code = ErrorCode.SFTP_SERVICE_NOT_READY
-            message = "The SFTP session could not be established"
-        self._startup_failed(self._records.get(service_id), code, message, guarded=True)
+            failure = SftpFailure(
+                code=SftpFailureCode.SESSION_ESTABLISHMENT_FAILED,
+                error_code=ErrorCode.SFTP_SERVICE_NOT_READY,
+            )
+        self._startup_failed(self._records.get(service_id), failure, guarded=True)
 
     def _on_process_exit(
         self, service_id: SftpServiceId, return_code: Optional[int]
@@ -741,8 +792,10 @@ class SftpServiceRuntime:
         if state is SftpServiceState.STARTING:
             self._startup_failed(
                 record,
-                ErrorCode.SFTP_SERVICE_NOT_READY,
-                "The SFTP session could not be established",
+                SftpFailure(
+                    code=SftpFailureCode.SESSION_ESTABLISHMENT_FAILED,
+                    error_code=ErrorCode.SFTP_SERVICE_NOT_READY,
+                ),
             )
             return
         if state is not SftpServiceState.READY:
@@ -759,15 +812,15 @@ class SftpServiceRuntime:
     def _startup_failed(
         self,
         record: Optional[_SftpRecord],
-        code: ErrorCode,
-        message: str,
+        failure: SftpFailure,
         *,
         guarded: bool = False,
     ) -> None:
+        del guarded
         with self._lock:
             if record is None or record.state is not SftpServiceState.STARTING:
                 return
-            record.failure = ServiceFailure(code=code.value, message=message)
+            record.failure = failure
             event = self._transition_locked(record, SftpServiceState.FAILED)
         self._publish((event,))
 
@@ -886,9 +939,9 @@ class SftpServiceRuntime:
                 return
             record.close_scheduled = False
             if record.state is SftpServiceState.CLOSING:
-                record.failure = ServiceFailure(
-                    code=ErrorCode.SERVER_BUSY.value,
-                    message="The daemon SFTP command queue is full",
+                record.failure = SftpFailure(
+                    code=SftpFailureCode.COMMAND_QUEUE_FULL,
+                    error_code=ErrorCode.SERVER_BUSY,
                 )
                 event = self._transition_locked(record, SftpServiceState.FAILED)
             else:
@@ -939,9 +992,9 @@ class SftpServiceRuntime:
             with self._lock:
                 record.close_scheduled = False
                 if record.state not in {SftpServiceState.FAILED, SftpServiceState.CLOSED}:
-                    record.failure = ServiceFailure(
-                        code=ErrorCode.SFTP_SERVICE_NOT_READY.value,
-                        message="The SFTP process could not be terminated",
+                    record.failure = SftpFailure(
+                        code=SftpFailureCode.PROCESS_TERMINATION_FAILED,
+                        error_code=ErrorCode.SFTP_SERVICE_NOT_READY,
                     )
                     events = [self._transition_locked(record, SftpServiceState.FAILED)]
                 else:
@@ -1501,9 +1554,10 @@ class SftpServiceRuntime:
             except Exception as exc:
                 raise self._map_error(exc, record) from exc
             if root_attr.is_symlink() or not root_attr.is_dir():
-                raise SshPilotError(
+                raise _SftpSummaryError(
                     ErrorCode.VALIDATION_FAILED,
                     "Directory size requires a real directory path, not a symbolic link",
+                    SftpFailureCode.DIRECTORY_SIZE_REQUIRES_REAL_DIRECTORY,
                     details={"service_id": record.service_id},
                 )
             total, file_count, directory_count = self._walk_directory_size(
@@ -1612,6 +1666,7 @@ class SftpServiceRuntime:
             connection_id=record.connection_id,
             owner_client_id=client_id,
             message=f"Measuring {path}",
+            failure_mapper=_operation_failure,
         )
 
     def _require_operation_lifecycle(self):
@@ -1673,9 +1728,10 @@ class SftpServiceRuntime:
         source = _validate_path(request.source_path)
         destination = _validate_path(request.destination_path)
         if request.recursive and _remote_path_is_descendant(source, destination):
-            raise SshPilotError(
+            raise _SftpSummaryError(
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
+                SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
                 details={"service_id": record.service_id},
             )
         client = record.handle.client
@@ -1727,9 +1783,10 @@ class SftpServiceRuntime:
             # ``_copy_file`` below, matching prior single-entry link handling.
             source_attr = client.lstat(source)
             if source_attr.is_symlink() and request.recursive:
-                raise SshPilotError(
+                raise _SftpSummaryError(
                     ErrorCode.VALIDATION_FAILED,
                     "Recursive copy of a symbolic link is not supported",
+                    SftpFailureCode.RECURSIVE_COPY_SYMLINK_UNSUPPORTED,
                     details={"service_id": record.service_id},
                 )
             try:
@@ -1741,24 +1798,27 @@ class SftpServiceRuntime:
                 ):
                     raise
             else:
-                raise SshPilotError(
+                raise _SftpSummaryError(
                     ErrorCode.REMOTE_PATH_EXISTS,
                     "The destination already exists",
+                    SftpFailureCode.DESTINATION_ALREADY_EXISTS,
                     details={"service_id": record.service_id},
                 )
             if source_attr.is_dir():
                 if not request.recursive:
-                    raise SshPilotError(
+                    raise _SftpSummaryError(
                         ErrorCode.VALIDATION_FAILED,
                         "Recursive copy is required for directories",
+                        SftpFailureCode.RECURSIVE_COPY_REQUIRED,
                         details={"service_id": record.service_id},
                     )
                 _copy_directory(source, destination)
             else:
                 if request.recursive:
-                    raise SshPilotError(
+                    raise _SftpSummaryError(
                         ErrorCode.VALIDATION_FAILED,
                         "Recursive copy requires a directory source",
+                        SftpFailureCode.RECURSIVE_COPY_REQUIRES_DIRECTORY_SOURCE,
                         details={"service_id": record.service_id},
                     )
                 _copy_file(source, destination)
@@ -1798,9 +1858,10 @@ class SftpServiceRuntime:
         destination = _validate_path(request.destination_path)
         record = self._ready_record_for_mutation(request.service_id, client_id)
         if request.recursive and _remote_path_is_descendant(source, destination):
-            raise SshPilotError(
+            raise _SftpSummaryError(
                 ErrorCode.VALIDATION_FAILED,
                 "A directory cannot be copied into itself",
+                SftpFailureCode.DIRECTORY_CANNOT_BE_COPIED_INTO_ITSELF,
                 details={"service_id": record.service_id},
             )
         runtime = self._require_operation_lifecycle()
@@ -1830,6 +1891,7 @@ class SftpServiceRuntime:
             connection_id=record.connection_id,
             owner_client_id=client_id,
             message=f"{'Moving' if request.move else 'Copying'} {source}",
+            failure_mapper=_operation_failure,
         )
 
     def remove(
@@ -1897,6 +1959,7 @@ class SftpServiceRuntime:
             connection_id=record.connection_id,
             owner_client_id=client_id,
             message=f"Deleting {path}",
+            failure_mapper=_operation_failure,
         )
 
     def _remove_recursive(
@@ -2042,10 +2105,8 @@ class SftpServiceRuntime:
             server_message = str(exc)
             if server_message:
                 details["server_message"] = server_message
-            mapped = _SFTP_STATUS_TO_CODE_AND_MESSAGE.get(exc.code)
-            if mapped is not None:
-                code, message = mapped
-            else:
+            code = _SFTP_STATUS_TO_ERROR_CODE.get(exc.code)
+            if code is None:
                 code = _ERRNO_TO_ERROR_CODE.get(
                     getattr(exc, "errno", None), ErrorCode.SFTP_COMMAND_FAILED
                 )
@@ -2053,28 +2114,24 @@ class SftpServiceRuntime:
                     server_message
                     and server_message not in _GENERIC_SFTP_STATUS_TEXT
                 ):
-                    message = server_message
-                else:
-                    message = _ERROR_CODE_MESSAGES.get(
-                        code, "The SFTP command failed"
-                    )
+                    details["server_message_is_specific"] = True
             error = SshPilotError(
                 code,
-                message,
+                code.value,
                 details=details,
                 connection_id=record.connection_id,
             )
         elif isinstance(exc, (EOFError, OSError)):
             error = SshPilotError(
                 ErrorCode.SFTP_PROTOCOL_LOST,
-                "The SFTP connection was lost",
+                ErrorCode.SFTP_PROTOCOL_LOST.value,
                 details=details,
                 connection_id=record.connection_id,
             )
         else:
             error = SshPilotError(
                 ErrorCode.SFTP_PROTOCOL_ERROR,
-                "The SFTP command failed",
+                ErrorCode.SFTP_PROTOCOL_ERROR.value,
                 details=details,
                 connection_id=record.connection_id,
             )
@@ -2084,15 +2141,28 @@ class SftpServiceRuntime:
             # covers protocol EOF while the ssh child is still listed as
             # alive. Flip to FAILED so the file-manager Retry UI appears
             # without waiting for another click.
-            self._fail_dead_connection(record, error)
+            # Direct ErrorData keeps the stable code placeholder introduced by
+            # the direct-error migration. The lifecycle event below uses the
+            # dedicated structured SFTP failure contract.
+            self._fail_dead_connection(
+                record,
+                SshPilotError(
+                    error.code,
+                    "The SFTP connection was lost",
+                    details=error.details,
+                    connection_id=record.connection_id,
+                ),
+            )
         return error
 
     def _fail_dead_connection(self, record: _SftpRecord, error: SshPilotError) -> None:
         event = None
         with self._lock:
             if record.state is SftpServiceState.READY:
-                record.failure = ServiceFailure(
-                    code=error.code.value, message=error.message
+                record.failure = SftpFailure(
+                    code=SftpFailureCode.CONNECTION_LOST,
+                    error_code=error.code,
+                    diagnostic=_specific_server_diagnostic(error),
                 )
                 event = self._transition_locked(record, SftpServiceState.FAILED)
         if event is not None:

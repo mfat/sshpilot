@@ -19,7 +19,18 @@ Auth/host-key go through the same InteractionBroker as sessions (service id as s
 
 ## Timeouts / cancellation / cleanup
 
-Startup failures record stderr classification via `ServiceFailure`.
+Lifecycle failures use `SftpFailure`: a stable `SftpFailureCode`, the existing
+machine `ErrorCode`, an exact validated parameter object, and an optional
+opaque diagnostic. Its wire object also carries the required discriminator
+`"kind": "sftp"`. Recursive SFTP `OperationSummary` failures and SFTP-backed
+`TransferSummary` failures use the same contract. GTK owns code-to-gettext
+mapping and formats parameters only after translation; the daemon never
+translates messages. Raw SSH/SFTP server text, numeric status details, stderr,
+and library/OS diagnostics are never presentation codes or msgids.
+
+The generic `ServiceFailure` contract was not changed by the SFTP migration.
+Native SCP has its own strict `ScpFailure` contract; unrelated service
+summaries retain `ServiceFailure`.
 Close is idempotent. Retained closed records are bounded.
 
 ## Ownership

@@ -6,13 +6,41 @@ from gi.repository import Adw, GLib, Gtk
 
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
+from .gtk.identity_failure_messages import format_identity_failure
 from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
 )
 from .shortcut_utils import install_esc_to_close
+from .i18n import N_
 
 logger = logging.getLogger(__name__)
+
+
+_DEPLOYMENT_START_ERROR_TEMPLATES = {
+    ErrorCode.UNSUPPORTED_CAPABILITY: N_(
+        "Public-key deployment is unavailable."
+    ),
+    ErrorCode.SERVER_BUSY: N_(
+        "The background service is busy. Try again shortly."
+    ),
+    ErrorCode.DAEMON_SHUTTING_DOWN: N_(
+        "The background service is shutting down."
+    ),
+    ErrorCode.KEY_NOT_FOUND: N_("The selected SSH key was not found."),
+    ErrorCode.INVALID_REQUEST: N_("The public-key deployment request is invalid."),
+    ErrorCode.VALIDATION_FAILED: N_(
+        "The public-key deployment request is invalid."
+    ),
+}
+
+
+def _format_deployment_start_error(error: BaseException) -> str:
+    if isinstance(error, SshPilotError):
+        template = _DEPLOYMENT_START_ERROR_TEMPLATES.get(error.code)
+        if template is not None:
+            return _(template)
+    return str(error)
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/sshcopyid_window.ui")
@@ -869,7 +897,7 @@ class SshCopyIdRunner:
             self.window._error_dialog(
                 _("SSH Key Copy Error"),
                 _("Could not start public-key deployment."),
-                _(str(exc.message)),
+                _format_deployment_start_error(exc),
             )
             return
         except Exception:
@@ -916,10 +944,18 @@ class SshCopyIdRunner:
                         _("Public-key deployment was cancelled."),
                     )
                 else:
+                    try:
+                        detail = format_identity_failure(summary.failure)
+                    except ValueError:
+                        logger.error(
+                            "Invalid public-key deployment failure payload",
+                            exc_info=True,
+                        )
+                        detail = _("Public-key deployment failed.")
                     self.window._error_dialog(
                         _("SSH Key Copy Error"),
                         _("Public-key deployment failed."),
-                        summary.message,
+                        detail,
                     )
                 return False
         except Exception:

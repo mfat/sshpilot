@@ -8,7 +8,6 @@ reconciliation decision themselves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, Optional, Set, Tuple
 
 from sshpilot.core.connections.identity_state_v2 import IdentityStateV2
@@ -90,10 +89,29 @@ def check_display_name_ownership(state: IdentityStateV2, ownership: AliasOwnersh
 
 
 def active_alias_state(state: IdentityStateV2) -> AliasState:
+    """Live alias -> (uuid, display name) bindings.
+
+    Identities named by a pending ambiguity are deliberately left out. Such an
+    identity is carried forward non-tombstoned but *unresolved*, still holding
+    the projection it had before the edit that made it ambiguous -- and that
+    frozen alias is, by construction, one the configuration no longer offers.
+
+    Rule 1 is a statement about aliases the configuration actually has, so
+    counting a ghost's stale alias as a live binding misreports the case where
+    that freed name is later reused by a genuinely new connection: production
+    retires the ghost on purpose (``retiring_ghost_uuids`` in
+    identity_repository_adapter, which exists precisely so two live identities
+    can never share one alias), and the newcomer's fresh UUID at that alias is
+    correct, not a stolen one.
+    """
+
+    unresolved = {
+        uuid for ambiguity in state.pending_ambiguities for uuid in ambiguity.old_uuids
+    }
     return {
         identity.projection.alias: (identity.uuid, identity.display_name)
         for identity in state.identities
-        if not identity.tombstone
+        if not identity.tombstone and identity.uuid not in unresolved
     }
 
 

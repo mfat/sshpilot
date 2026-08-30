@@ -21,6 +21,7 @@ import shutil
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._shell import command_split_error, split_command
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -68,6 +69,10 @@ class MoshProtocolBackend(ProtocolBackend):
                     errors.append("Port must be between 1 and 65535.")
             except (TypeError, ValueError):
                 errors.append("Port must be a number.")
+        problem = command_split_error(
+            data.get("extra_ssh_opts"), "Extra SSH options")
+        if problem:
+            errors.append(problem)
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
@@ -115,7 +120,7 @@ class MoshProtocolBackend(ProtocolBackend):
             extra += ["-l", username]
         extra_opts = (data.get("extra_ssh_opts") or "").strip()
         if extra_opts:
-            extra += shlex.split(extra_opts)
+            extra += split_command(extra_opts, "Extra SSH options")
         extra += list(auth.extra_opts or [])
 
         try:

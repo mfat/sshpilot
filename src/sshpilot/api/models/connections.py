@@ -253,6 +253,71 @@ class ConnectionSummary:
         return f"{self.username}@{host}" if self.username else host
 
 
+# Core identity columns persisted alongside plugin FieldSpec values. Excluded
+# from ``plugin_data`` projections so editors don't duplicate them.
+CONNECTION_CORE_DATA_FIELDS = frozenset(
+    {
+        "nickname",
+        "hostname",
+        "host",
+        "username",
+        "port",
+        "protocol",
+        "id",
+        "uuid",
+        "display_name",
+        "generation",
+        "order",
+        "aliases",
+        "source",
+        "authored_directives",
+    }
+)
+# Field names that must never carry a secret into ``plugin_data``.  Shared by
+# every layer that filters plugin values (the daemon projection, the GTK
+# plugin services facade, and the connection-store backup path) so the three
+# can never drift apart.
+PLUGIN_DATA_SENSITIVE_PARTS = (
+    "password",
+    "passphrase",
+    "secret",
+    "token",
+    "credential",
+    "private_key",
+)
+
+
+def is_sensitive_field_name(key: str) -> bool:
+    """Whether a connection ``data`` key looks like it holds a secret."""
+    lowered = str(key).lower()
+    return any(part in lowered for part in PLUGIN_DATA_SENSITIVE_PARTS)
+
+
+def extract_plugin_data(
+    protocol: str, data: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return secret-free protocol FieldSpec values from a connection record.
+
+    This is the single plugin-value filter, applied in *both* directions: what
+    the daemon strips when projecting ``ConnectionDetails.plugin_data`` is
+    exactly what the client refuses to persist.  A narrower write-side filter
+    would let a FieldSpec keyed like a core column (``source``, ``uuid``,
+    ``generation``, …) be saved into ``record.data`` — where it collides with
+    the record's own bookkeeping — and then be stripped on read, so the field
+    reopens blank and is saved back empty.
+    """
+    if (protocol or "ssh") == "ssh":
+        return {}
+    result: Dict[str, Any] = {}
+    for key, value in dict(data or {}).items():
+        if key in CONNECTION_CORE_DATA_FIELDS or key.startswith("__"):
+            continue
+        if is_sensitive_field_name(key):
+            continue
+        result[key] = value
+    return result
+
+
 @dataclass(frozen=True)
 class ConnectionDetails(ConnectionSummary):
     """Full v1 connection response without secret values or sensitive paths."""
@@ -264,11 +329,15 @@ class ConnectionDetails(ConnectionSummary):
     x11_forwarding: bool = False
     forwarding_rule_count: int = 0
     proxy_jump: Tuple[str, ...] = ()
+    # Non-SSH protocol FieldSpec values (device, container, pod, …). Empty for SSH.
+    plugin_data: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if self.forwarding_rule_count < 0:
             raise ValueError("forwarding rule count must not be negative")
+        if type(self.plugin_data) is not dict:
+            object.__setattr__(self, "plugin_data", dict(self.plugin_data))
 
 
 # -- Editor capabilities and details ----------------------------------------

@@ -676,6 +676,7 @@ def reconcile_identities(
     *,
     uuid_factory: Callable[[], str],
     allow_tombstone_resurrection: bool = False,
+    allow_destination_inference: bool = True,
 ) -> ReconciliationResult:
     """Reconcile one old snapshot with one new snapshot deterministically.
 
@@ -701,6 +702,17 @@ def reconcile_identities(
     creation order). Silently refusing to pick one, as before, meant every
     such identity was created fresh from its second round-trip onward,
     permanently discarding its display name.
+
+    ``allow_destination_inference`` turns off the destination phase for the
+    same authority transitions that enable resurrection. Within one root a
+    surviving destination means the sole Host there was renamed, and the
+    identity is expected to follow it. Across a root switch it means nothing
+    of the kind: the two documents are independent, and an entry in the other
+    one that merely points at the same ``(hostname, port, user)`` is a
+    different connection. Inferring across that boundary handed the other
+    root's alias the identity -- display name, group placement and tags
+    included -- instead of tombstoning it for the resurrection path that the
+    Isolated Mode round-trip contract is built on.
     """
 
     active_old = [
@@ -786,7 +798,12 @@ def reconcile_identities(
     reserved_old = set()
     reserved_new = set()
     ambiguous = []
-    for anchor in sorted(set(old_by_anchor) & set(new_by_anchor), key=repr):
+    shared_anchors = (
+        sorted(set(old_by_anchor) & set(new_by_anchor), key=repr)
+        if allow_destination_inference
+        else ()
+    )
+    for anchor in shared_anchors:
         old_bucket = old_by_anchor[anchor]
         new_bucket = new_by_anchor[anchor]
         remaining_old = list(old_bucket)

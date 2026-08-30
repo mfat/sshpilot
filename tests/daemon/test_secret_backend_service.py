@@ -19,11 +19,14 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from sshpilot.api.errors import SshPilotError
+from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models import SecretPromptKind
 from sshpilot.api.models.secrets import (
+    PROTECTED_SECRET_INTERACTIONS,
     REVISION_CONFLICT,
+    SecretMessageCode,
     SecretOperationState,
+    SecretTransferMessageCode,
     UnlockResultKind,
 )
 from sshpilot.daemon.secret_backend_service import (
@@ -343,6 +346,36 @@ def _make_service(tmp_path, *, secrets=None, backends=None, broker=None,
     return service, manager, backends, broker, path
 
 
+@pytest.mark.parametrize(
+    ("method", "args", "kwargs"),
+    (
+        (
+            "_prompt_for_secret_with_status",
+            (SecretPromptKind.BITWARDEN_UNLOCK,),
+            {"owner_client_id": "client-1"},
+        ),
+        (
+            "_prompt_for_master_password",
+            ("bitwarden",),
+            {"owner_client_id": "client-1"},
+        ),
+    ),
+)
+def test_missing_interaction_broker_exposes_stable_capability_detail(
+    method, args, kwargs
+):
+    service = SecretBackendService.__new__(SecretBackendService)
+    service._broker = None
+
+    with pytest.raises(SshPilotError) as raised:
+        getattr(service, method)(*args, **kwargs)
+
+    assert raised.value.code is ErrorCode.UNSUPPORTED_CAPABILITY
+    assert raised.value.details == {
+        "capability": PROTECTED_SECRET_INTERACTIONS
+    }
+
+
 def _all_strings(value: Any, out: Optional[List[str]] = None) -> List[str]:
     out = out if out is not None else []
     if isinstance(value, str):
@@ -438,7 +471,7 @@ def test_export_backup_reports_timeout_distinctly_from_cancellation(tmp_path):
         owner_client_id="client-1",
     )
     assert result.status == SecretOperationState.INTERACTION_REQUIRED
-    assert result.message == "Encryption password request timed out"
+    assert result.message.code is SecretTransferMessageCode.ENCRYPTION_REQUEST_TIMED_OUT
 
 
 def test_export_backup_reports_explicit_cancellation(tmp_path):
@@ -460,7 +493,7 @@ def test_export_backup_reports_explicit_cancellation(tmp_path):
         owner_client_id="client-1",
     )
     assert result.status == SecretOperationState.INTERACTION_REQUIRED
-    assert result.message == "Encryption cancelled"
+    assert result.message.code is SecretTransferMessageCode.ENCRYPTION_CANCELLED
 
 
 def test_export_backup_unencrypted_never_prompts(tmp_path):
@@ -589,7 +622,7 @@ def test_import_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkey
         monkeypatch,
     )
     assert result.status == SecretOperationState.INTERACTION_REQUIRED
-    assert result.message == "Decryption cancelled"
+    assert result.message.code is SecretTransferMessageCode.DECRYPTION_CANCELLED
 
 
 def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monkeypatch):
@@ -603,8 +636,8 @@ def test_preview_passphrase_prompt_does_not_block_metadata_state(tmp_path, monke
         lambda: service.preview_backup(source=str(source), owner_client_id="client-1"),
         monkeypatch,
     )
-    assert public.get("encrypted") is True
-    assert public.get("error") == "Decryption cancelled"
+    assert public.encrypted is True
+    assert public.error.code is SecretTransferMessageCode.DECRYPTION_CANCELLED
 
 
 # Every interactive lifecycle route, the way the frontend calls it.  These used
@@ -729,9 +762,15 @@ def test_native_command_failures_are_not_treated_as_success(tmp_path):
 
     backends["bitwarden"]._run = failed
     status = service.bitwarden_configure_server("https://vault.example.com")
-    assert status.message == "Bitwarden server configuration failed"
+    assert (
+        status.message_code
+        is SecretMessageCode.BITWARDEN_SERVER_CONFIGURATION_FAILED
+    )
     assert service.get_configuration().bitwarden_server == ""
-    assert service.bitwarden_sync().message == "Bitwarden sync failed"
+    assert (
+        service.bitwarden_sync().message_code
+        is SecretMessageCode.BITWARDEN_SYNC_FAILED
+    )
 
     rbw_path = tmp_path / "rbw"
     rbw_path.mkdir()
@@ -739,12 +778,15 @@ def test_native_command_failures_are_not_treated_as_success(tmp_path):
         rbw_path, secrets={"backend": "rbw", "session_timeout": 0}
     )
     backends["rbw"]._run = failed
-    assert service.rbw_configure("alice@example.com", "https://vault.example.com").message == (
-        "rbw configuration failed"
+    assert (
+        service.rbw_configure(
+            "alice@example.com", "https://vault.example.com"
+        ).message_code
+        is SecretMessageCode.RBW_CONFIGURATION_FAILED
     )
-    assert service.rbw_unlock().message == "rbw unlock failed"
-    assert service.rbw_sync().message == "rbw sync failed"
-    assert service.rbw_lock().message == "rbw lock failed"
+    assert service.rbw_unlock().message_code is SecretMessageCode.RBW_UNLOCK_FAILED
+    assert service.rbw_sync().message_code is SecretMessageCode.RBW_SYNC_FAILED
+    assert service.rbw_lock().message_code is SecretMessageCode.RBW_LOCK_FAILED
 
 
 def test_rbw_configure_uses_exact_set_and_unset_argv(tmp_path):
@@ -785,7 +827,7 @@ def test_rbw_configure_unset_failure_returns_typed_failure(tmp_path):
     backend._run = run
     status = service.rbw_configure("alice@example.com", "")
 
-    assert status.message == "rbw configuration failed"
+    assert status.message_code is SecretMessageCode.RBW_CONFIGURATION_FAILED
     assert ("_run", ("config", "unset", "base_url")) in backend.calls
 
 
@@ -1332,6 +1374,97 @@ def test_bitwarden_auth_challenge_retries_with_client_secret(tmp_path):
     assert SENTINEL_CHALLENGE not in _all_strings(status.to_dict())
 
 
+def test_bitwarden_failure_separates_code_from_external_diagnostic(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    external_diagnostic = "bw: invalid grant for alice@example.com"
+    backends["bitwarden"].login_results[
+        ("login_with_password", "alice@example.com", None, None, None)
+    ] = (False, external_diagnostic, False)
+
+    status = service.bitwarden_login(
+        "alice@example.com", owner_client_id="client-1"
+    )
+
+    assert status.message_code is SecretMessageCode.BITWARDEN_SIGN_IN_FAILED
+    assert status.message_parameters == {}
+    assert status.diagnostic == external_diagnostic
+    assert "Sign-in failed." not in _all_strings(status.to_dict())
+
+
+def test_bitwarden_internal_login_exception_is_not_a_user_diagnostic(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+
+    def fail_login(*_args, **_kwargs):
+        raise RuntimeError("backend exception detail")
+
+    backends["bitwarden"].login_with_password = fail_login
+
+    status = service.bitwarden_login(
+        "alice@example.com", owner_client_id="client-1"
+    )
+
+    assert status.message_code is SecretMessageCode.BITWARDEN_SIGN_IN_FAILED
+    assert status.diagnostic == ""
+    assert "backend exception detail" not in _all_strings(status.to_dict())
+    assert "Bitwarden password login failed" not in _all_strings(status.to_dict())
+
+
+def test_bitwarden_login_unlock_failure_uses_frontend_message_code(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=[SENTINEL_MASTER],
+    )
+    backends["bitwarden"].unlock = lambda _password: False
+
+    status = service.bitwarden_login(
+        "alice@example.com", owner_client_id="client-1"
+    )
+
+    assert status.logged_in is False
+    assert status.message_code is SecretMessageCode.BITWARDEN_UNLOCK_FAILED
+    assert status.message_parameters == {}
+    assert status.diagnostic == ""
+    assert "Bitwarden vault unlock failed" not in _all_strings(status.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("route", "backend"),
+    [
+        (
+            lambda service: service.bitwarden_login(
+                "alice@example.com", owner_client_id="client-1"
+            ),
+            "bitwarden",
+        ),
+        (lambda service: service.rbw_sync(), "rbw"),
+    ],
+)
+def test_backend_unavailable_errors_use_stable_code_and_parameter(
+    tmp_path, route, backend
+):
+    service, *_ = _make_service(
+        tmp_path,
+        backends={"agent": FakeBackend("agent", session_backed=False)},
+    )
+
+    with pytest.raises(SshPilotError) as raised:
+        route(service)
+
+    assert raised.value.code is ErrorCode.SECRET_BACKEND_UNAVAILABLE
+    assert raised.value.message == ErrorCode.SECRET_BACKEND_UNAVAILABLE.value
+    assert raised.value.details == {"backend": backend}
+    assert f"{backend} is unavailable" not in raised.value.message
+
+
 def test_login_needs_challenge_detection():
     assert _login_needs_challenge("bot detected, authentication challenge")
     assert _login_needs_challenge("An authentication challenge is required")
@@ -1455,6 +1588,37 @@ def test_locked_rbw_needs_unlock_and_unlock_uses_master_password(tmp_path):
     assert prompt.can_remember is True
     assert prompt.hostname == "rbw"
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
+
+
+def test_unlock_cancellation_keeps_interaction_result_and_structured_reason(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "rbw", "session_timeout": 0},
+        selected="rbw",
+    )
+    backends["rbw"]._needs_login = False
+    backends["rbw"]._unlocked = False
+
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.kind is UnlockResultKind.INTERACTION_REQUIRED
+    assert result.message_code is SecretMessageCode.UNLOCK_CANCELLED
+    assert result.diagnostic == ""
+
+
+def test_unlock_unavailable_keeps_backend_as_structured_parameter(tmp_path):
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "rbw", "session_timeout": 0},
+        selected="rbw",
+    )
+    backends["rbw"]._available = False
+
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.kind is UnlockResultKind.BACKEND_UNAVAILABLE
+    assert result.message_code is SecretMessageCode.SECRET_BACKEND_UNAVAILABLE
+    assert dict(result.message_parameters) == {"backend": "rbw"}
 
 
 # ---------------------------------------------------------------------------
@@ -1660,7 +1824,10 @@ def test_forget_master_password_fails_when_policy_persistence_fails(
         "sshpilot.daemon.secret_backend_service.save_settings", _failing_save)
     result = service.forget_master_password()
     assert result.state == SecretOperationState.FAILED
-    assert "could not be forgotten" in result.message
+    assert (
+        result.message_code
+        is SecretMessageCode.REMEMBERED_MASTER_PASSWORD_FORGET_FAILED
+    )
     assert keyring.data.get("bitwarden-master:default") is None
     assert SENTINEL_MASTER not in _all_strings(result.to_dict())
 
@@ -1721,7 +1888,7 @@ def test_unlock_result_never_carries_secret(tmp_path):
 
 def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
     """A wrong .spbk passphrase re-prompts through a fresh protected interaction."""
-    from sshpilot.api.models.secrets import SecretTransferResult
+    from sshpilot.api.models.secrets import SecretTransferMessage, SecretTransferResult
 
     class _ScriptedBroker:
         def __init__(self, secrets):
@@ -1760,12 +1927,14 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
             return SecretTransferResult(
                 operation="import", path=source, counts={}, warnings=(),
                 status=SecretOperationState.FAILED,
-                message="Wrong passphrase or corrupt backup",
+                message=SecretTransferMessage(
+                    SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+                ),
             )
         return SecretTransferResult(
             operation="import", path=source,
             counts={"restored": 1}, warnings=(),
-            status=SecretOperationState.SUCCESS, message="",
+            status=SecretOperationState.SUCCESS, message=None,
         )
 
     monkeypatch.setattr(
@@ -1787,7 +1956,7 @@ def test_import_backup_retries_wrong_passphrase(tmp_path, monkeypatch):
 
 def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkeypatch):
     """Wrong-passphrase re-prompts are bounded; the daemon stops and reports."""
-    from sshpilot.api.models.secrets import SecretTransferResult
+    from sshpilot.api.models.secrets import SecretTransferMessage, SecretTransferResult
 
     class _AlwaysWrongBroker:
         def __init__(self):
@@ -1820,7 +1989,9 @@ def test_import_backup_gives_up_after_bounded_wrong_passphrases(tmp_path, monkey
         return SecretTransferResult(
             operation="import", path=source, counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message="Wrong passphrase or corrupt backup",
+            message=SecretTransferMessage(
+                SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+            ),
         )
 
     monkeypatch.setattr(

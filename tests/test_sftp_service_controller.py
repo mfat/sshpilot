@@ -690,7 +690,8 @@ def test_failed_event_fires_on_error(controller, mock_bridge):
     from datetime import datetime, timezone
 
     from sshpilot.api.models.operations import (
-        ServiceFailure,
+        SftpFailure,
+        SftpFailureCode,
         SftpServiceState,
         SftpServiceSummary,
     )
@@ -713,7 +714,10 @@ def test_failed_event_fires_on_error(controller, mock_bridge):
         connection_id=ConnectionId("conn-1"),
         state=SftpServiceState.FAILED,
         created_at=datetime.now(timezone.utc),
-        failure=ServiceFailure(code="sftp_connection_lost", message="The SFTP connection was lost"),
+        failure=SftpFailure(
+            code=SftpFailureCode.CONNECTION_LOST,
+            error_code=ErrorCode.SFTP_PROTOCOL_LOST,
+        ),
     )
 
     controller._on_open_accepted(ready, generation)

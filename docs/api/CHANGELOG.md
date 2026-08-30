@@ -5,13 +5,96 @@ notes remain separate.
 
 ## Unreleased
 
+- Direct SFTP RPC failures now use their existing `ErrorCode` values as the
+  presentation contract instead of transporting rendered English messages.
+  GTK maps those codes to gettext messages and keeps an optional raw SFTP
+  server diagnostic separate. The `ErrorData` shape and error-code inventory
+  are unchanged, so that direct-error change required no API bump.
 - Daemon-only retirement repairs now preserve protected broadcast input
   registration, truthful operation-mode recovery, atomic reconnect publication,
   and cross-process shared-settings transactions. These are implementation
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.45 (current)
+## API 0.50 (current)
+
+### API 0.50 structured native SCP and identity failures
+
+- Bumped `API_IMPLEMENTATION_VERSION` because native SCP `TransferSummary`
+  failures and public-key deployment `OperationSummary` failures now use the
+  strict `ScpFailure` and `IdentityFailure` wire objects instead of generic
+  rendered `ServiceFailure` text.
+- Both objects carry a stable presentation code, the existing machine
+  `ErrorCode`, strict parameters, and an optional opaque diagnostic. GTK maps
+  the presentation code to gettext and appends diagnostics unchanged.
+- `ServiceFailure` and its `{code, message}` wire shape remain unchanged for
+  authorized-key removal, broadcast, forwards, and every other consumer not
+  selected by the native SCP backend or key-deployment operation kind.
+- Protected secret interaction errors now identify the stable
+  `protected_secret_interactions` capability in the existing `ErrorData.details`
+  object. This additive detail uses the existing error wire shape.
+
+## API 0.49
+
+### API 0.49 structured SFTP summary failures
+
+- Bumped `API_IMPLEMENTATION_VERSION` because SFTP lifecycle, recursive
+  operation, and upload/download summaries now carry `SftpFailure` instead of
+  a rendered English `ServiceFailure`. The strict SFTP wire object contains a
+  stable presentation code, the existing machine `ErrorCode`, validated
+  parameters, and an optional opaque server diagnostic.
+- GTK maps `SftpFailureCode` values to gettext msgids, translates before
+  formatting parameters, and appends diagnostics unchanged. SFTP producers do
+  not call gettext and no dynamic path or server diagnostic becomes a msgid.
+- The generic `ServiceFailure` model and its `{code, message}` wire shape remain
+  unchanged for native SCP transfers, identity operations, forwards, and
+  broadcast command results. Transfer backend and operation kind select the
+  permitted failure model, preventing accidental cross-domain payloads.
+
+## API 0.48
+
+### API 0.48 plugin connection editor data
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `ConnectionDetails` and
+  `ConnectionEditorDetails` now carry optional `plugin_data` so non-SSH
+  FieldSpec values (serial device, docker container, k8s pod, mosh options,
+  …) round-trip through `get_connection` / the connection editor.
+
+## API 0.47
+
+### API 0.47 structured backup/import presentation
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `SecretTransferResult` now
+  carries structured `SecretTransferMessage` values for its primary message
+  and ordered warnings instead of rendered strings, and backup preview methods
+  now return a strict `SecretTransferPreview` rather than an untyped mapping.
+- Backup/import producers return stable `SecretTransferMessageCode` values,
+  validated JSON-safe parameters, and optional opaque diagnostics. Dynamic
+  backup-section identifiers remain stable data and are mapped to localized
+  labels only by GTK.
+- GTK selects gettext templates, applies plural rules where counts affect the
+  sentence, formats parameters after translation, and appends diagnostics
+  unchanged. Backup, import, Bitwarden-note, SSH-server-backup, validation, and
+  connection-store restore messages share this presentation boundary.
+
+## Historical API entries
+
+### API 0.46 structured secret status presentation
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `SecretUnlockResult`,
+  `SecretOperationResult`, `BitwardenStatus`, and `RbwStatus` replace their
+  free-text `message` field with required `message_code`,
+  `message_parameters`, and `diagnostic` fields. Strict 0.45 decoders reject
+  the new shape, while strict 0.46 decoders require it.
+- Secret lifecycle producers now return stable `SecretMessageCode` values and
+  validated non-secret parameters. Diagnostics returned by external tools such
+  as `bw` remain unmodified in the separate `diagnostic` field and are never
+  parsed as machine contracts.
+- GTK maps only user-visible secret result codes to gettext msgids, translates
+  at display time, formats parameters afterward, and appends any external
+  diagnostic without translating it. Backend-unavailable `SshPilotError`
+  envelopes use `secret_backend_unavailable` plus a structured backend value
+  instead of a rendered English sentence.
 
 ### API 0.45 structured secret prompt presentation
 
@@ -27,8 +110,6 @@ notes remain separate.
   time, and formats the validated parameters afterward. Ordinary SSH password
   prompts retain their existing username/hostname contract and carry a null
   prompt kind with an empty parameter object.
-
-## Historical API entries
 
 ### API 0.44 clearable connection port
 

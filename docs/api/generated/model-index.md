@@ -184,6 +184,46 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: BitwardenStatus -->
+## `BitwardenStatus`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Safe Bitwarden account/lifecycle status.
+
+**Related methods:** `bitwarden_api_key_login`, `bitwarden_configure_server`, `bitwarden_lock`, `bitwarden_login`, `bitwarden_logout`, `bitwarden_sso_login`, `bitwarden_status`, `bitwarden_sync`, `bitwarden_unlock`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `logged_in` | `bool` | Yes | — | No |
+| `unlocked` | `bool` | Yes | — | No |
+| `needs_login` | `bool` | Yes | — | No |
+| `email` | `str` | Yes | — | No |
+| `server_url` | `str` | Yes | — | No |
+| `profile` | `str` | Yes | — | No |
+| `twofa_required` | `bool` | No | `false` | No |
+| `message_code` | `Optional[SecretMessageCode]` | No | `null` | No |
+| `message_parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "diagnostic": "",
+  "email": {},
+  "logged_in": {},
+  "message_code": null,
+  "message_parameters": {},
+  "needs_login": {},
+  "profile": {},
+  "server_url": {},
+  "twofa_required": false,
+  "unlocked": {}
+}
+```
+
 <!-- api-model: BroadcastTerminalInputRequest -->
 ## `BroadcastTerminalInputRequest`
 
@@ -513,6 +553,7 @@ Synthetic representation:
 | `x11_forwarding` | `bool` | No | `false` | No |
 | `forwarding_rule_count` | `int` | No | `0` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 
 Synthetic representation:
 
@@ -530,6 +571,7 @@ Synthetic representation:
   "id": "production",
   "identity_configured": false,
   "nickname": "example",
+  "plugin_data": {},
   "port": 22,
   "protocol": "ssh",
   "proxy_jump": [],
@@ -604,6 +646,7 @@ untrusted consumers.  Gated behind ``CONNECTIONS_CONFIG_READ``.
 | `x11_forwarding` | `bool` | No | `false` | No |
 | `forwarding_rule_count` | `int` | No | `0` | No |
 | `proxy_jump` | `tuple[str, ...]` | No | `[]` | No |
+| `plugin_data` | `Mapping[str, Any]` | No | `{}` | No |
 | `key_select_mode` | `int` | No | `0` | No |
 | `identity_files` | `tuple[str, ...]` | No | `[]` | No |
 | `certificate_files` | `tuple[str, ...]` | No | `[]` | No |
@@ -662,6 +705,7 @@ Synthetic representation:
   "local_command": "",
   "nickname": "example",
   "pkcs11_provider": "",
+  "plugin_data": {},
   "port": 22,
   "pre_command": "",
   "preferred_authentications": "",
@@ -1886,6 +1930,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: IdentityFailure -->
+## `IdentityFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable identity-operation failure plus an opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `IdentityFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
+}
+```
+
 <!-- api-model: InputOwner -->
 ## `InputOwner`
 
@@ -2606,7 +2678,7 @@ Synthetic representation:
 | `finished_at` | `Optional[datetime]` | No | `null` | No |
 | `progress` | `Optional[float]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[Union[ServiceFailure, SftpFailure, IdentityFailure]]` | No | `null` | No |
 | `result` | `Optional[Dict]` | No | `null` | Yes |
 
 Synthetic representation:
@@ -2883,6 +2955,42 @@ Synthetic representation:
 {
   "key_id": {},
   "text": {}
+}
+```
+
+<!-- api-model: RbwStatus -->
+## `RbwStatus`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Safe rbw account/lifecycle status.
+
+**Related methods:** `rbw_configure`, `rbw_lock`, `rbw_status`, `rbw_sync`, `rbw_unlock`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `installed` | `bool` | Yes | — | No |
+| `configured` | `bool` | Yes | — | No |
+| `unlocked` | `bool` | Yes | — | No |
+| `email` | `str` | Yes | — | No |
+| `base_url` | `str` | Yes | — | No |
+| `message_code` | `Optional[SecretMessageCode]` | No | `null` | No |
+| `message_parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "base_url": {},
+  "configured": {},
+  "diagnostic": "",
+  "email": {},
+  "installed": {},
+  "message_code": null,
+  "message_parameters": {},
+  "unlocked": {}
 }
 ```
 
@@ -3296,6 +3404,94 @@ Synthetic representation:
 {
   "expected_revision": "example",
   "text": "<sensitive value omitted>"
+}
+```
+
+<!-- api-model: ScpFailure -->
+## `ScpFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable native SCP failure plus an opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `ScpFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
+}
+```
+
+<!-- api-model: SecretOperationResult -->
+## `SecretOperationResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Safe outcome of a backend lifecycle operation.  No secret values.
+
+**Related methods:** `forget_master_password`, `keepassxc_create_database`, `keepassxc_lock`, `keepassxc_unlock`, `remember_master_password`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `state` | `SecretOperationState` | Yes | — | No |
+| `backend` | `str` | Yes | — | No |
+| `message_code` | `Optional[SecretMessageCode]` | No | `null` | No |
+| `message_parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "backend": {},
+  "diagnostic": "",
+  "message_code": null,
+  "message_parameters": {},
+  "state": {}
+}
+```
+
+<!-- api-model: SecretUnlockResult -->
+## `SecretUnlockResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Outcome of a secret-backend unlock request.  Never carries a secret.
+
+**Related methods:** `unlock_secrets`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `kind` | `UnlockResultKind` | Yes | — | No |
+| `backend` | `str` | Yes | — | No |
+| `message_code` | `Optional[SecretMessageCode]` | No | `null` | No |
+| `message_parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "backend": {},
+  "diagnostic": "",
+  "kind": {},
+  "message_code": null,
+  "message_parameters": {}
 }
 ```
 
@@ -3715,6 +3911,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: SftpFailure -->
+## `SftpFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable SFTP failure plus an optional opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `SftpFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
+}
+```
+
 <!-- api-model: SftpPathRequest -->
 ## `SftpPathRequest`
 
@@ -3915,7 +4139,7 @@ Synthetic representation:
 | `closed_at` | `Optional[datetime]` | No | `null` | No |
 | `attachment_count` | `int` | No | `0` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[SftpFailure]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -4343,7 +4567,7 @@ Synthetic representation:
 | `started_at` | `Optional[datetime]` | No | `null` | No |
 | `completed_at` | `Optional[datetime]` | No | `null` | No |
 | `owner_client_id` | `Optional[ClientId]` | No | `null` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[Union[ServiceFailure, SftpFailure, ScpFailure]]` | No | `null` | No |
 | `bytes_transferred` | `Optional[int]` | No | `null` | No |
 | `total_bytes` | `Optional[int]` | No | `null` | No |
 

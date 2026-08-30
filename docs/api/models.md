@@ -151,7 +151,10 @@ exact nonce. The retained legacy `InteractionResponse.value` is excluded from
 
 | Model | Purpose | Runtime support |
 | --- | --- | --- |
-| `ServiceFailure` | Sanitised stable failure code and message | Daemon implemented |
+| `ServiceFailure` | Generic stable code and rendered message retained for unrelated legacy consumers | Daemon implemented |
+| `ScpFailure` | Stable native SCP presentation code, machine error code, strict parameters, and opaque diagnostic | Daemon implemented |
+| `IdentityFailure` | Stable public-key deployment presentation code, machine error code, strict parameters, and opaque diagnostic | Daemon implemented |
+| `SftpFailure` | Stable SFTP presentation code, machine error code, parameters, and opaque diagnostic | Daemon implemented |
 | `SftpServiceSummary` | Immutable SFTP service lifecycle snapshot | Daemon implemented |
 | `OpenSftpRequest` | Open an SFTP service for a connection | Daemon implemented |
 | `AttachSftpRequest` | Attach to an existing SFTP service | Daemon implemented |
@@ -203,6 +206,8 @@ handling is not defined until a transport codec exists.
 | `HostKeyDecision` | `accept`, `reject` | Daemon implemented |
 | `SecretDecision` | `submit`, `cancel` | Daemon implemented |
 | `RememberPolicy` | `do_not_store`, `store_after_success`, `replace_stored_after_success`, `delete_stored_secret` | Daemon implemented |
+| `SecretMessageCode` | Stable secret lifecycle/status presentation reasons | Daemon implemented; strict codec |
+| `SecretTransferMessageCode` | Stable backup/import presentation reasons | Daemon implemented; strict codec |
 | `SftpServiceState` | `created`, `starting`, `ready`, `closing`, `closed`, `failed` | Daemon implemented |
 | `RemoteFileType` | `regular`, `directory`, `symlink`, `socket`, `fifo`, `block`, `character`, `unknown` | Daemon implemented |
 | `TransferDirection` | `upload`, `download` | Daemon implemented |
@@ -220,3 +225,18 @@ Every model has a synthetic, deterministic example in the
 from type metadata and safe placeholders; they do not instantiate live
 connections, consult persistence, or read secret providers. Sensitive values
 are shown only as `<sensitive value omitted>`.
+
+`SecretUnlockResult`, `SecretOperationResult`, `BitwardenStatus`, and
+`RbwStatus` carry a nullable `SecretMessageCode`, the exact validated string
+parameters required by that code, and a separate diagnostic. Message codes are
+machine contracts; diagnostics from `bw` or another backend are opaque and are
+never translated. The frontend selects and translates a local template before
+formatting the parameters.
+
+`SecretTransferResult` carries an optional `SecretTransferMessage` and an
+ordered tuple of structured warnings. Each message contains a stable
+`SecretTransferMessageCode`, the exact validated JSON-safe parameters for that
+code, and a separate opaque diagnostic. Backup preview methods return
+`SecretTransferPreview`, which applies the same message contract to preview
+errors instead of exposing a free-form `error` string. GTK owns translation,
+plural selection, parameter formatting, and backup-section display labels.

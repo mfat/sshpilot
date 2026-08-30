@@ -58,7 +58,19 @@ def test_mouse_tracking_reset_clears_modes():
     state = MouseTrackingState()
     state.feed(b"\x1b[?1000h")
     assert state.active is True
+    assert state.modes == (1000,)
     state.feed(b"\x1bc")
     assert state.active is False
+    assert state.modes == ()
     assert state.feed(b"\x1b[?1000h\x1bc") is False
     assert state.feed(b"\x1bc\x1b[?1000h") is True
+    assert state.modes == (1000,)
+
+
+def test_mouse_tracking_modes_are_sorted_and_stable():
+    state = MouseTrackingState()
+    state.feed(b"\x1b[?1006h")
+    state.feed(b"\x1b[?1000h")
+    assert state.modes == (1000, 1006)
+    state.feed(b"\x1b[?1000l")
+    assert state.modes == (1006,)

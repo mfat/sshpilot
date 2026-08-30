@@ -1,9 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
+from sshpilot.api.errors import ErrorCode
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.connections import ConnectionSummary
 from sshpilot.api.models.operations import (
-    ServiceFailure,
+    SftpFailure,
+    SftpFailureCode,
     SftpServiceState,
     SftpServiceSummary,
 )
@@ -344,7 +346,11 @@ def test_failed_sftp_service_reports_its_reason():
                     "sftp-1",
                     "connection-1",
                     SftpServiceState.FAILED,
-                    failure=ServiceFailure("sftp_startup_failed", "Permission denied"),
+                    failure=SftpFailure(
+                        SftpFailureCode.SESSION_ESTABLISHMENT_FAILED,
+                        ErrorCode.SFTP_SERVICE_NOT_READY,
+                        diagnostic="Permission denied",
+                    ),
                 )
             ],
         )
@@ -352,7 +358,7 @@ def test_failed_sftp_service_reports_its_reason():
 
     assert store.status_for("connection-1") == ConnectionRuntimeStatus(
         ConnectionState.FAILED,
-        "Permission denied",
+        "The SFTP session could not be established\n\nPermission denied",
     )
 
 

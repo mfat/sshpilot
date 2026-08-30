@@ -566,6 +566,21 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._refresh_operation_mode_scope()
         self.secrets_controller = self._build_secrets_controller()
         self._attach_secrets_interaction_presenter()
+        self._settle_plugin_backend()
+
+    def _settle_plugin_backend(self) -> None:
+        """Release the held ``app_started`` event now that selection resolved.
+
+        Plugins are activated during ``__init__``, long before the daemon
+        client exists, so ``app_started`` is the first point at which their
+        context can reach the backend."""
+        host = getattr(self, 'plugin_host', None)
+        if host is None:
+            return
+        try:
+            host.notify_backend_settled()
+        except Exception:
+            logger.exception("Plugin backend-settled dispatch failed")
 
     def _replace_daemon_client(self, client) -> None:
         """Atomically rebind every long-lived frontend service to *client*.
@@ -824,6 +839,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._group_mutation_controller = None
         self.plugin_connection_services.detach_client()
         self.connection_runtime_status.close()
+        self._settle_plugin_backend()
         reason = getattr(getattr(error, 'reason', None), 'value', type(error).__name__)
         logger.error(
             "Daemon client selection failed reason=%s type=%s",
@@ -4061,25 +4077,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         ]
 
         if ungrouped_nicks:
-            # Keep root connection order in sync
-            updated = False
-            for nick in ungrouped_nicks:
-                if nick not in self.group_manager.root_connections:
-                    self.group_manager.root_connections.append(nick)
-                    updated = True
-
-            existing = set(ungrouped_nicks)
-            if any(nick not in existing for nick in self.group_manager.root_connections):
-                self.group_manager.root_connections = [
-                    nick for nick in self.group_manager.root_connections
-                    if nick in existing
-                ]
-                updated = True
-
-            if updated:
-                self.group_manager._save_groups()
-
+            # Root order is daemon-owned; render from the snapshot and append
+            # any not-yet-projected ungrouped connections without local writes.
+            ungrouped_set = set(ungrouped_nicks)
+            seen = set()
             for nick in self.group_manager.root_connections:
+                if nick not in ungrouped_set:
+                    continue
+                conn = connections_dict.get(nick)
+                if conn:
+                    self.add_connection_row(conn)
+                    seen.add(nick)
+            for nick in ungrouped_nicks:
+                if nick in seen:
+                    continue
                 conn = connections_dict.get(nick)
                 if conn:
                     self.add_connection_row(conn)
@@ -4646,6 +4657,37 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.add_controller(controller)
         self._omnisearch_key_controller = controller
 
+        # The detector is otherwise keyboard-only, so it cannot tell a
+        # Shift+drag selection from the first tap of the gesture. Observe
+        # every button press (CAPTURE, never claiming the sequence) so the
+        # pointer can cancel a pending double-tap. CAPTURE is required, not
+        # incidental: VTE claims the pointer sequence as soon as its own
+        # drag-select starts, so a BUBBLE observer on the window never sees
+        # a press that landed in a terminal -- the only place this matters.
+        # Denying from the capture phase leaves VTE's selection and its
+        # mouse reports untouched.
+        pointer = Gtk.GestureClick()
+        pointer.set_button(0)
+        pointer.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        pointer.connect('pressed', self._on_omnisearch_pointer_pressed)
+        self.add_controller(pointer)
+        self._omnisearch_pointer_controller = pointer
+
+    def _on_omnisearch_pointer_pressed(self, gesture, _n_press, _x, _y) -> None:
+        self._on_omnisearch_pointer_activity()
+        # Purely an observer: deny the sequence so this gesture never competes
+        # with the terminal's own selection handling.
+        try:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+        except Exception:
+            logger.debug("Omnisearch pointer observer could not deny sequence",
+                         exc_info=True)
+
+    def _on_omnisearch_pointer_activity(self) -> None:
+        detector = getattr(self, '_omnisearch_double_shift', None)
+        if detector is not None:
+            detector.pointer_activity()
+
     def _omnisearch_uses_double_shift(self) -> bool:
         app = self.get_application()
         if app is None or not getattr(app, 'accelerators_enabled', True):
@@ -4844,22 +4886,159 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             dialog._daemon_generation = 0
             dialog.set_editor_source('local')
         elif getattr(connection, 'protocol', 'ssh') == 'ssh':
+            # The loader owns the daemon-unavailable case: an absent transport
+            # enters its retry loop like any other transport churn, and only a
+            # terminal failure disables Save (with an error and a Retry).
             dialog.set_editor_source('daemon')
             dialog.set_daemon_editor_loading()
-            if self._daemon_ready():
-                self._fetch_daemon_editor_generation(dialog, connection)
-            else:
-                dialog.set_daemon_editor_load_failed()
-                try:
-                    dialog.show_daemon_editor_load_error(
-                        on_retry=lambda: self._retry_daemon_editor_load(dialog, connection)
-                    )
-                except Exception:
-                    pass
+            self._fetch_daemon_editor_generation(dialog, connection)
         else:
-            dialog.set_editor_source('local')
+            # Plugin protocols: list rows are ConnectionSummary (no FieldSpec
+            # values). Reuse the daemon loading gate so Save stays off until
+            # ConnectionDetails.plugin_data arrives — otherwise a quick Save
+            # persists blank FieldSpecs and undoes the round-trip fix.  The
+            # hydrate owns the daemon-unavailable case itself, so an
+            # unavailable daemon lands in the same failed state as a fetch
+            # error (Save disabled, error shown, Retry offered).
+            dialog.set_editor_source('daemon')
+            dialog.set_daemon_editor_loading()
+            self._hydrate_plugin_connection_editor(dialog, connection)
 
         dialog.present()
+
+    def _plugin_editor_load_failed(self, dialog, connection) -> None:
+        """Terminal plugin-hydrate failure: block Save and offer Retry."""
+        dialog.set_daemon_editor_load_failed()
+        try:
+            dialog.show_daemon_editor_load_error(
+                on_retry=lambda: self._retry_plugin_editor_hydrate(
+                    dialog, connection
+                )
+            )
+        except Exception:
+            pass
+
+    def _hydrate_plugin_connection_editor(self, dialog, connection) -> None:
+        """Load non-SSH FieldSpec values from daemon details into the dialog.
+
+        Sidebar rows are ``ConnectionSummary`` projections without ``plugin_data``.
+        Fetching ``get_connection`` fills serial/docker/k8s/mosh fields that
+        would otherwise reopen as blanks (and silently reset on save).
+
+        Exactly one of success, terminal failure, or dialog cancellation ends
+        the chain; any late callback is ignored.  Every terminal failure —
+        including an unavailable daemon, which Retry can hit again — leaves
+        Save disabled with an error and a working Retry, never a dialog
+        wedged in the loading state.
+        """
+        from .api.connection_identity import connection_id_for
+        from .connection_dialog import _editor_details_to_connection
+
+        try:
+            connection_id = connection_id_for(connection)
+        except Exception:
+            # Reachable only for a record with no durable identity.  Report it
+            # in the dialog rather than raising out of the open-editor action,
+            # which would leave the click doing nothing at all.
+            logger.warning(
+                "Cannot hydrate a plugin editor without a durable identity",
+                exc_info=True,
+            )
+            self._plugin_editor_load_failed(dialog, connection)
+            return
+        state: Dict[str, Any] = {
+            'finished': False,
+            'request': None,
+        }
+
+        def _finished() -> bool:
+            return bool(state['finished'])
+
+        def _apply(details):
+            if _finished():
+                return
+            state['finished'] = True
+            state['request'] = None
+            try:
+                # The adapter object below replaces ``dialog.connection`` for
+                # form population, but it is not the sidebar's live record:
+                # keep that one so the save handler can still refresh its rows
+                # and tags instead of rebuilding the whole list.
+                dialog._plugin_source_connection = connection
+                dialog.connection = _editor_details_to_connection(details)
+                dialog.is_editing = True
+                # Must mark loaded before load_connection_data — daemon mode
+                # skips population while the gate is still closed.
+                dialog.set_daemon_editor_loaded(
+                    int(getattr(details, 'generation', 0) or 0)
+                )
+                dialog.load_connection_data()
+            except Exception:
+                logger.warning(
+                    "Failed to hydrate plugin editor for %s",
+                    connection_id,
+                    exc_info=True,
+                )
+                self._plugin_editor_load_failed(dialog, connection)
+
+        def _failed(error):
+            if _finished():
+                return
+            state['finished'] = True
+            state['request'] = None
+            logger.warning(
+                "Could not load plugin connection fields for %s type=%s",
+                connection_id,
+                type(error).__name__,
+            )
+            self._plugin_editor_load_failed(dialog, connection)
+
+        def _cancel(_dialog=None):
+            if state['finished']:
+                return
+            state['finished'] = True
+            request = state['request']
+            state['request'] = None
+            if request is not None:
+                try:
+                    cancel = getattr(request, 'cancel', None)
+                    if callable(cancel):
+                        cancel()
+                except Exception:
+                    pass
+
+        connect = getattr(dialog, 'connect', None)
+        if callable(connect):
+            for signal_name in ('closed', 'destroy'):
+                try:
+                    connect(signal_name, _cancel)
+                except Exception:
+                    pass
+
+        # Re-resolve the live client and bridge here rather than trusting an
+        # earlier readiness check: Retry is offered precisely when the daemon
+        # was unavailable, so it can fire while it still is.  A missing
+        # transport must reach ``_failed`` (error + Retry), never escape as an
+        # AttributeError that leaves the dialog stuck in the loading state
+        # with Save disabled and no way out.
+        bridge = self.client_bridge
+        client = self.client
+        if bridge is None or client is None:
+            _failed(RuntimeError("The daemon connection is unavailable"))
+            return
+        try:
+            state['request'] = bridge.submit(
+                lambda: client.get_connection(connection_id),
+                on_success=_apply,
+                on_error=_failed,
+            )
+        except Exception as error:
+            _failed(error)
+
+    def _retry_plugin_editor_hydrate(self, dialog, connection) -> None:
+        """Re-attempt a failed plugin FieldSpec hydrate (Retry action)."""
+        dialog.set_daemon_editor_loading()
+        self._hydrate_plugin_connection_editor(dialog, connection)
 
     def _fetch_daemon_editor_generation(self, dialog, connection):
         """Load the authoritative daemon editor snapshot (non-blocking).
@@ -4882,12 +5061,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         from .api.models.common import ConnectionId
 
         # Defensive entry guard: this loader only exists for active daemon
-        # edits.  A missing connection is a hard failure (Save stays off);
-        # leaving daemon mode mid-flight is left to the caller's gating.
+        # edits.  A missing connection is a hard failure with nothing to retry
+        # (Save stays off); leaving daemon mode mid-flight is left to the
+        # caller's gating.  An unavailable daemon is NOT handled here — it is
+        # ``_submit_fetch``'s ``_TransportUnavailable``, so Retry against a
+        # daemon that is still down re-enters the retry loop and ends in a
+        # reported failure instead of wedging the dialog in ``loading``.
         if connection is None:
             dialog.set_daemon_editor_load_failed()
-            return
-        if not self._daemon_ready():
+            try:
+                dialog.show_daemon_editor_load_error(on_retry=None)
+            except Exception:
+                pass
             return
 
         class _TransportUnavailable(Exception):
@@ -6045,11 +6230,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_connection_added(self, manager, connection):
         """Handle new connection added"""
+        # Membership and root order come from the daemon snapshot; refresh
+        # the presentation adapter then rebuild — never persist groups here.
         self.group_manager.bind_connections(self.connection_manager.connections)
-        self.group_manager.connections.setdefault(connection.id, None)
-        if connection.id not in self.group_manager.root_connections:
-            self.group_manager.root_connections.append(connection.id)
-            self.group_manager._save_groups()
         self.rebuild_connection_list()
 
     def on_projection_reset(self, manager, _connection=None):
@@ -6099,17 +6282,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self.connection_list.remove(row)
             del self.connection_rows[connection]
 
-        # Remove from group manager, including any group it was copied into
-        self.group_manager.connections.pop(connection.id, None)
-        if connection.id in self.group_manager.root_connections:
-            self.group_manager.root_connections.remove(connection.id)
-        for group in self.group_manager.groups.values():
-            if connection.id in group.get('connections', []):
-                group['connections'] = [
-                    n for n in group['connections'] if n != connection.id
-                ]
-        if not getattr(self, '_deleting_connections_batch', False):
-            self.group_manager._save_groups()
+        # Group membership is daemon-owned; re-project from the snapshot
+        # instead of mutating/persisting local group state.
+        self.group_manager.bind_connections(self.connection_manager.connections)
         self._refresh_group_rows_after_connection_removed(connection)
 
         # Close all terminals for this connection and clean up maps
@@ -7353,7 +7528,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 complete(bool(ok))
 
         if dialog.is_editing and dialog.connection is not None:
-            old_connection = dialog.connection
+            # A hydrated plugin editor points ``dialog.connection`` at a daemon
+            # DTO adapter; the sidebar keys its rows by the live record, so
+            # prefer that when the editor stashed it.
+            old_connection = (
+                getattr(dialog, '_plugin_source_connection', None)
+                or dialog.connection
+            )
             original_nickname = old_connection.nickname
             if not self.plugin_connection_services.update_connection(
                 old_connection, connection_data
@@ -7935,7 +8116,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except TypeError:
                     # Compatibility only for legacy third-party signal handlers;
                     # ConnectionDialog.SaveRequest has one fixed signature.
-                    save_completion(bool(ok), result)
+                    try:
+                        save_completion(bool(ok), result)
+                    except TypeError:
+                        save_completion(bool(ok))
             has_secret_work = bool(
                 secret_plan and (
                     secret_plan.get('password_changed')

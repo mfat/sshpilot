@@ -1,0 +1,46 @@
+"""Shared helper for built-in protocol backends: shell-word fields.
+
+Several backends let the user type a shell fragment (docker/k8s ``command``,
+mosh ``extra_ssh_opts``) and split it with :func:`shlex.split`.  A stray quote
+makes that raise :class:`ValueError`, which is a *user input* problem but
+would surface as an unexpected internal failure: ``validate`` would pass it,
+so the dialog saves happily, and the daemon's protocol launch only converts
+:class:`ProtocolError` into a reportable error.
+
+These two helpers keep such a typo on the validation path in both directions —
+reported in the editor before saving, and reported as a ``ProtocolError`` if a
+connection reaches a spawn some other way (the plugin API, an imported
+backup).
+"""
+
+from __future__ import annotations
+
+import shlex
+from typing import List, Optional
+
+from ..api import ProtocolError
+
+__all__ = ["command_split_error", "split_command"]
+
+
+def _split(value: str) -> List[str]:
+    return shlex.split(str(value or ""))
+
+
+def command_split_error(value: object, field: str) -> Optional[str]:
+    """Return a ``validate()`` message if ``value`` is not valid shell words."""
+    if not value:
+        return None
+    try:
+        _split(value)
+    except ValueError as exc:
+        return f"{field} could not be parsed: {exc}."
+    return None
+
+
+def split_command(value: object, field: str) -> List[str]:
+    """``shlex.split`` that raises ``ProtocolError`` instead of ``ValueError``."""
+    try:
+        return _split(value)
+    except ValueError as exc:
+        raise ProtocolError(f"{field} could not be parsed: {exc}.") from exc

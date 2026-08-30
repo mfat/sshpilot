@@ -86,7 +86,8 @@ the validated internal envelope.
 
 The requested feature group is unavailable. Safe details contain only the
 stable `capability` string. The daemon client uses this for all declared but
-unsupported commands.
+unsupported commands. Secret workflows use `protected_secret_interactions`
+when the daemon cannot provide their protected interaction channel.
 
 <!-- api-error: invalid_request -->
 ## `invalid_request`
@@ -290,8 +291,11 @@ channel could not be established. No command path or OS exception is exposed.
 <!-- api-error: secret_backend_unavailable -->
 ## `secret_backend_unavailable`
 
-The selected existing backend could not satisfy an automatic lookup. Locked
-KDBX/Bitwarden master-password handling remains separate from SSH interactions.
+The selected existing backend could not satisfy an automatic lookup or a
+secret lifecycle operation. The safe `backend` detail is a stable presentation
+parameter; frontends map this error code to local text instead of displaying or
+parsing the error message. Locked KDBX/Bitwarden master-password handling
+remains separate from SSH interactions.
 
 <!-- api-error: secret_storage_failed -->
 ## `secret_storage_failed`
@@ -334,6 +338,13 @@ The requested daemon operation ID is unknown or no longer retained.
 
 Schema-only code. No current client method defines an API timeout.
 
+Direct SFTP RPC responses use the stable SFTP/remote error codes below for
+frontend message selection; their `message` field is not a presentation
+contract. `details.server_message`, when present, is an opaque server
+diagnostic. The optional boolean `details.server_message_is_specific` marks a
+diagnostic that the frontend may append unchanged after its localized generic
+message. Neither diagnostic field is a gettext message identifier.
+
 <!-- api-error: sftp_service_not_found -->
 ## `sftp_service_not_found`
 
@@ -348,7 +359,7 @@ operation.
 <!-- api-error: sftp_command_failed -->
 ## `sftp_command_failed`
 
-A remote SFTP command failed with a safe translated reason.
+A remote SFTP command failed.
 
 <!-- api-error: sftp_protocol_lost -->
 ## `sftp_protocol_lost`

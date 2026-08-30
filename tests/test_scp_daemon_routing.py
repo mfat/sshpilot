@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("gi")
 
 from sshpilot import daemon_interaction_dialogs as dialogs_mod
-from sshpilot.api import Capability
+from sshpilot.api import Capability, ErrorCode, SshPilotError
 from sshpilot.api.events import EventType
 from sshpilot.api.interaction_identity import new_interaction_id
 from sshpilot.api.models import (
@@ -13,12 +13,15 @@ from sshpilot.api.models import (
     InteractionSummary,
     InteractionType,
     PasswordPrompt,
+    ScpFailure,
+    ScpFailureCode,
     SessionId,
     TransferState,
 )
 from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.operations import SftpServiceState
 from sshpilot.scp_window import ScpWindowController
+from sshpilot import scp_window as scp_window_mod
 
 
 class _Bridge:
@@ -102,7 +105,12 @@ def test_scp_start_uses_typed_client_and_never_local_process(monkeypatch):
 
 
 def test_scp_dialog_observes_terminal_transfer_state(monkeypatch):
+    labels = []
+
     class Label:
+        def __init__(self):
+            labels.append(self)
+
         def set_wrap(self, _value):
             return None
 
@@ -124,6 +132,7 @@ def test_scp_dialog_observes_terminal_transfer_state(monkeypatch):
 
     monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", Dialog)
     monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", Label)
+    monkeypatch.setattr("sshpilot.scp_window.GLib.idle_add", lambda callback: callback())
     client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
     controller = _controller(client)
     controller.start_scp_transfer(
@@ -135,6 +144,22 @@ def test_scp_dialog_observes_terminal_transfer_state(monkeypatch):
     _operation, on_started, _on_error = controller.window.client_bridge.calls[0]
     on_started(SimpleNamespace(id="transfer-1", state=TransferState.QUEUED))
     assert client.events
+    client.events[-1](
+        SimpleNamespace(
+            payload=SimpleNamespace(
+                id="transfer-1",
+                state=TransferState.FAILED,
+                failure=ScpFailure(
+                    code=ScpFailureCode.TRANSFER_FAILED,
+                    error_code=ErrorCode.TRANSFER_IO_FAILED,
+                    diagnostic="scp: permission denied",
+                ),
+            )
+        )
+    )
+    assert labels[-1].value == (
+        "Failed: The SCP transfer failed.\n\nscp: permission denied"
+    )
 
 
 def test_scp_start_rejects_missing_capability_without_fallback():
@@ -149,6 +174,32 @@ def test_scp_start_rejects_missing_capability_without_fallback():
 
     assert "unavailable" in controller.error.lower()
     assert controller.window.client_bridge.calls == []
+
+
+def test_scp_start_error_uses_stable_code(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        scp_window_mod,
+        "_",
+        lambda msgid: calls.append(msgid) or "File SCP pleine",
+    )
+    error = SshPilotError(ErrorCode.SERVER_BUSY, "finalized daemon text")
+
+    assert scp_window_mod._format_scp_start_error(error) == "File SCP pleine"
+    assert calls == ["The daemon transfer command queue is full."]
+
+
+def test_unknown_scp_start_diagnostic_remains_opaque(monkeypatch):
+    diagnostic = "daemon: opaque SCP start failure"
+    monkeypatch.setattr(
+        scp_window_mod,
+        "_",
+        lambda _msgid: pytest.fail("unknown diagnostics must not use gettext"),
+    )
+
+    assert scp_window_mod._format_scp_start_error(
+        RuntimeError(diagnostic)
+    ) == diagnostic
 
 
 def test_scp_controller_has_no_subprocess_or_vte_ownership():
@@ -589,6 +640,39 @@ def test_scp_browser_remote_path_row_reloads_on_entry_activated(monkeypatch):
     request = operation()
     assert request.path == remote_row.get_text()
     assert client.listed[-1] is request
+
+
+def test_scp_browser_uses_direct_sftp_error_formatter(monkeypatch):
+    monkeypatch.setattr(dialogs_mod.GLib, "idle_add", lambda fn, *args: fn(*args))
+    _patch_browser_widgets(monkeypatch)
+    import sshpilot.scp_window as scp_window_mod
+
+    formatted = []
+    monkeypatch.setattr(
+        scp_window_mod,
+        "format_direct_sftp_error",
+        lambda error: formatted.append(error) or "localized SFTP error",
+    )
+    client = _SftpBrowserClient(_sftp_capabilities())
+    bridge = _SftpSyncBridge()
+    controller = ScpWindowController.__new__(ScpWindowController)
+    controller.window = SimpleNamespace(client=client, client_bridge=bridge)
+    controller._show_transfer_error = lambda message: setattr(
+        controller, "error", message
+    )
+    controller._prompt_scp_download(
+        SimpleNamespace(id="conn-1", nickname="Router", host="192.168.8.1"),
+        "sftp-7",
+    )
+    _operation, _on_success, on_error = bridge.submitted[-1]
+    error = SshPilotError(
+        ErrorCode.SFTP_COMMAND_FAILED,
+        "raw daemon message",
+    )
+
+    on_error(error)
+
+    assert formatted == [error]
 
 
 def test_scp_download_browser_is_presented_before_sftp_ready(monkeypatch):

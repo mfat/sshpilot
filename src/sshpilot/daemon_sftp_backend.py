@@ -42,6 +42,8 @@ from .api.models.transfers import (
 )
 from .file_manager.common import FileEntry
 from .file_manager.exceptions import TransferCancelledException
+from .gtk.sftp_error_messages import format_direct_sftp_error
+from .gtk.sftp_failure_messages import format_sftp_failure
 from .sftp_service_controller import (
     DaemonSftpServiceController,
     SftpControllerState,
@@ -53,6 +55,25 @@ from .transfer_service_controller import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _localized_direct_error(error: BaseException) -> BaseException:
+    """Clone a direct RPC error with its frontend-rendered display message."""
+
+    if not isinstance(error, SshPilotError):
+        return error
+    message = format_direct_sftp_error(error)
+    if message == str(error):
+        return error
+    return SshPilotError(
+        error.code,
+        message,
+        details=error.details,
+        retryable=error.retryable,
+        request_id=error.request_id,
+        connection_id=error.connection_id,
+        session_id=error.session_id,
+    )
 
 
 def daemon_file_manager_capabilities_missing(client) -> frozenset:
@@ -468,7 +489,7 @@ class DaemonSftpManager(GObject.GObject):
             self._start_count_pass(target, entries)
 
         def _on_error(exc) -> None:
-            self.emit("operation-error", str(exc))
+            self.emit("operation-error", format_direct_sftp_error(exc))
 
         self._sftp_controller.list_directory(target, on_success=_on_success, on_error=_on_error)
 
@@ -559,7 +580,9 @@ class DaemonSftpManager(GObject.GObject):
         self._sftp_controller.mkdir(
             target,
             on_success=lambda r: self._safe_set(future, result=r),
-            on_error=lambda e: self._safe_set(future, exc=e),
+            on_error=lambda e: self._safe_set(
+                future, exc=_localized_direct_error(e)
+            ),
         )
         return future
 
@@ -579,7 +602,7 @@ class DaemonSftpManager(GObject.GObject):
             if isinstance(exc, SshPilotError) and exc.code is ErrorCode.REMOTE_PATH_NOT_FOUND:
                 self._safe_set(future, result=False)
             else:
-                self._safe_set(future, exc=exc)
+                self._safe_set(future, exc=_localized_direct_error(exc))
 
         self._sftp_controller.stat(target, on_success=_on_success, on_error=_on_error)
         return future
@@ -602,7 +625,7 @@ class DaemonSftpManager(GObject.GObject):
             self._safe_set(future, result=entry)
 
         def _on_error(exc) -> None:
-            self._safe_set(future, exc=exc)
+            self._safe_set(future, exc=_localized_direct_error(exc))
 
         self._sftp_controller.stat(
             target,
@@ -625,7 +648,9 @@ class DaemonSftpManager(GObject.GObject):
             source,
             target,
             on_success=lambda r: self._safe_set(future, result=r),
-            on_error=lambda e: self._safe_set(future, exc=e),
+            on_error=lambda e: self._safe_set(
+                future, exc=_localized_direct_error(e)
+            ),
         )
         return future
 
@@ -645,7 +670,7 @@ class DaemonSftpManager(GObject.GObject):
                     exc=FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), target),
                 )
             elif isinstance(exc, SshPilotError):
-                self._safe_set(future, exc=OSError(exc.message))
+                self._safe_set(future, exc=OSError(format_direct_sftp_error(exc)))
             else:
                 self._safe_set(future, exc=exc)
 
@@ -684,15 +709,19 @@ class DaemonSftpManager(GObject.GObject):
                     "progress", summary.progress or 0.0, summary.message or f"{verb}…"
                 )
 
+        def _on_error(exc) -> None:
+            resolved = self._resolve_operation_exception(exc)
+            if not recursive:
+                resolved = _localized_direct_error(resolved)
+            self._safe_set(future, exc=resolved)
+
         self._sftp_controller.copy(
             source,
             destination,
             recursive=recursive,
             move=move,
             on_success=lambda _result: self._safe_set(future, result=None),
-            on_error=lambda exc: self._safe_set(
-                future, exc=self._resolve_operation_exception(exc)
-            ),
+            on_error=_on_error,
             on_operation_started=on_operation_started,
             on_progress=on_progress,
         )
@@ -833,7 +862,11 @@ class DaemonSftpManager(GObject.GObject):
             self._safe_set(future, exc=TransferCancelledException("Transfer was cancelled"))
         else:
             failure = summary.failure
-            message = failure.message if failure is not None else "Transfer failed"
+            message = (
+                format_sftp_failure(failure)
+                if failure is not None
+                else "Transfer failed"
+            )
             self._safe_set(future, exc=OSError(message))
 
     @staticmethod

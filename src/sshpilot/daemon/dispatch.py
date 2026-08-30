@@ -3920,9 +3920,11 @@ class RequestDispatcher:
             raise ValueError("source must be a non-empty string")
         service = self._required_secrets_service()
         owner_client_id = self._required_client_id(state)
+        from sshpilot.api.transport.codec import secret_transfer_preview_to_wire
+
         return self._defer(
-            lambda: service.preview_backup(
-                source=source, owner_client_id=owner_client_id
+            lambda: secret_transfer_preview_to_wire(
+                service.preview_backup(source=source, owner_client_id=owner_client_id)
             ),
             command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
@@ -3939,7 +3941,13 @@ class RequestDispatcher:
         if type(entry_id) is not str or not entry_id.strip():
             raise ValueError("entry_id must be a non-empty string")
         service = self._required_secrets_service()
-        return self._defer(lambda: service.preview_bitwarden_backup(entry_id=entry_id))
+        from sshpilot.api.transport.codec import secret_transfer_preview_to_wire
+
+        return self._defer(
+            lambda: secret_transfer_preview_to_wire(
+                service.preview_bitwarden_backup(entry_id=entry_id)
+            )
+        )
 
     def _handle_preview_ssh_backup(
         self,
@@ -3959,11 +3967,15 @@ class RequestDispatcher:
         if type(entry_id) is not str or not entry_id.strip():
             raise ValueError("entry_id must be a non-empty string")
         service = self._required_secrets_service()
+        from sshpilot.api.transport.codec import secret_transfer_preview_to_wire
+
         return self._defer(
-            lambda: service.preview_ssh_backup(
-                connection_id=connection_id,
-                remote_dir=remote_dir,
-                entry_id=entry_id,
+            lambda: secret_transfer_preview_to_wire(
+                service.preview_ssh_backup(
+                    connection_id=connection_id,
+                    remote_dir=remote_dir,
+                    entry_id=entry_id,
+                )
             )
         )
 

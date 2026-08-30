@@ -852,10 +852,21 @@ class DaemonConnectionLaunchProvider:
         interaction_policy: str,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..plugins.api import PluginContext, ProtocolError
+        from ..plugins.loader import ensure_builtin_protocols, ensure_user_protocols
         from ..plugins.registry import protocol_registry
 
+        # Built-ins are loaded by the GTK process at startup; the daemon is a
+        # separate process and must register them before non-SSH launches.
+        app_config = self._get_app_config()
+        ensure_builtin_protocols(app_config=app_config)
         registry = protocol_registry()
         backend = registry.get_or_none(protocol)
+        if backend is None:
+            # Not a built-in, so an enabled user plugin may own it. Loading
+            # them is deferred to here so the common SSH path never imports
+            # third-party code.
+            ensure_user_protocols(app_config=app_config, protocol=protocol)
+            backend = registry.get_or_none(protocol)
         if backend is None:
             raise SshPilotError(
                 ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,

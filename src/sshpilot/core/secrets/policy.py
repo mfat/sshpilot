@@ -33,7 +33,6 @@ class SecretPolicyDecision:
 
     kind: SecretDecisionKind
     backend: str
-    message: str = ""
 
 
 # Legacy config values that should migrate to bitwarden.
@@ -109,7 +108,6 @@ def decide_unlock(
         return SecretPolicyDecision(
             kind=SecretDecisionKind.BACKEND_UNAVAILABLE,
             backend=name,
-            message=f"Secret backend {name!r} is unavailable",
         )
     # Session vaults collect a master password in-app. rbw is session-backed
     # (same GTK dialog as Bitwarden/KeePass) but keep the name gate so a locked
@@ -119,6 +117,5 @@ def decide_unlock(
         return SecretPolicyDecision(
             kind=SecretDecisionKind.UNLOCK_REQUIRED,
             backend=name,
-            message=f"Secret backend {name!r} is locked",
         )
     return SecretPolicyDecision(kind=SecretDecisionKind.READY, backend=name)

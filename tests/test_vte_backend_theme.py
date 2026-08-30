@@ -9,7 +9,7 @@ pytest.importorskip("gi")
 from sshpilot.terminal_backends import VTETerminalBackend
 
 
-def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
+def test_vte_backend_applies_palette_cursor_and_font_and_unsets_selection(monkeypatch):
     class Color:
         def parse(self, value):
             self.value = value
@@ -73,8 +73,12 @@ def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
 
     assert len(calls["colors"][2]) == 16
     assert calls["cursor"].value == "#ffffff"
-    assert calls["selection_bg"].value == "#4a90e2"
-    assert calls["selection_fg"].value == "#ffffff"
+    # The profile's highlight pair is deliberately ignored: VTE only falls back
+    # to reverse video when neither highlight color is set, which is what keeps
+    # colored output readable under a selection (and what GNOME Terminal and
+    # Ptyxis both do by default).
+    assert calls["selection_bg"] is None
+    assert calls["selection_fg"] is None
     assert calls["font"].get_size() > 0
     assert calls["redrawn"] is True
     assert styled["owner"] == []
@@ -83,7 +87,7 @@ def test_vte_backend_applies_palette_cursor_selection_and_font(monkeypatch):
     assert styled["vte"] == ["terminal-bg-test"]
 
 
-def test_group_theme_keeps_selection_distinct(monkeypatch):
+def test_group_theme_leaves_selection_reversed(monkeypatch):
     calls = {}
 
     class Color:
@@ -129,13 +133,14 @@ def test_group_theme_keeps_selection_distinct(monkeypatch):
 
     backend.apply_theme("group")
 
-    normal = (calls["bg"].red, calls["bg"].green, calls["bg"].blue)
-    selected = (
-        calls["selection_bg"].red,
-        calls["selection_bg"].green,
-        calls["selection_bg"].blue,
+    # The group color still drives the background, but no derived highlight is
+    # forced on top of it -- selections stay reversed against whatever the cell
+    # is actually painted with.
+    assert (calls["bg"].red, calls["bg"].green, calls["bg"].blue) == (
+        group.red, group.green, group.blue,
     )
-    assert selected != normal
+    assert calls["selection_bg"] is None
+    assert calls["selection_fg"] is None
 
 
 def test_optional_vte_configuration_and_links_are_non_fatal(monkeypatch):

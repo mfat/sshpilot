@@ -25,7 +25,11 @@ def validate_connection_export_payload(data: Mapping[str, Any]) -> ImportValidat
     if not isinstance(data, Mapping):
         return ImportValidationReport(
             ok=False,
-            errors=[FieldError(field="root", message="Export payload must be a mapping")],
+            errors=[FieldError(
+                field="root",
+                message="Export payload must be a mapping",
+                reason="payload_not_mapping",
+            )],
         )
 
     connections = data.get("connections")
@@ -36,13 +40,21 @@ def validate_connection_export_payload(data: Mapping[str, Any]) -> ImportValidat
         if "ssh_config" in data or "config" in data:
             return ImportValidationReport(ok=True, connection_count=0)
         errors.append(
-            FieldError(field="connections", message="Missing connections list")
+            FieldError(
+                field="connections",
+                message="Missing connections list",
+                reason="connections_list_missing",
+            )
         )
         return ImportValidationReport(ok=False, errors=errors)
 
     if not isinstance(connections, list):
         errors.append(
-            FieldError(field="connections", message="connections must be a list")
+            FieldError(
+                field="connections",
+                message="connections must be a list",
+                reason="connections_not_list",
+            )
         )
         return ImportValidationReport(ok=False, errors=errors)
 
@@ -51,7 +63,11 @@ def validate_connection_export_payload(data: Mapping[str, Any]) -> ImportValidat
     for idx, item in enumerate(connections):
         if not isinstance(item, Mapping):
             errors.append(
-                FieldError(field=f"connections[{idx}]", message="Entry must be a mapping")
+                FieldError(
+                    field=f"connections[{idx}]",
+                    message="Entry must be a mapping",
+                    reason="connection_entry_not_mapping",
+                )
             )
             continue
         nick = str(item.get("nickname") or item.get("host") or "").strip()
@@ -60,6 +76,7 @@ def validate_connection_export_payload(data: Mapping[str, Any]) -> ImportValidat
                 FieldError(
                     field=f"connections[{idx}].nickname",
                     message="Connection nickname is required",
+                    reason="connection_nickname_required",
                 )
             )
             continue
@@ -73,6 +90,7 @@ def validate_connection_export_payload(data: Mapping[str, Any]) -> ImportValidat
                     field=f"connections[{idx}].nickname",
                     message="Nickname cannot contain whitespace",
                     code=ErrorCode.VALIDATION_ERROR,
+                    reason="connection_nickname_whitespace",
                 )
             )
 
@@ -82,6 +100,7 @@ def validate_connection_export_payload(data: Mapping[str, Any]) -> ImportValidat
                 field="connections",
                 message="Duplicate nicknames in import",
                 severity="warning",
+                reason="duplicate_nicknames",
             )
         )
 

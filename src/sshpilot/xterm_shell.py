@@ -25,6 +25,46 @@ _ADDONS = (
 )
 
 
+# Injected verbatim into the page (plain string: no f-string brace doubling).
+# Kept out of the HTML template so tests can run it under a JS engine.
+SELECTION_MOUSE_REPORT_GUARD_JS = """
+  // Shift+drag is the local-selection override while a remote app owns the
+  // mouse (xterm.js: SelectionService.shouldForceSelection; VTE checks the
+  // Shift mask for the same purpose). xterm.js honours it for the press -- a
+  // Shift+mousedown is never reported -- but the mouseup listener it installs
+  // for the UP protocol never re-checks the modifier, so the *release* is
+  // still reported. That stray report is wrong on the wire (the app sees a
+  // release for a press it never got) and it also destroys the selection the
+  // user just made: reports leave through CoreService.triggerDataEvent, and
+  // SelectionService clears the selection on any user input. VTE emits
+  // nothing at all for a Shift+drag; match it by dropping every report
+  // between a forced-selection press and its release.
+  function installSelectionMouseReportGuard(term, doc) {
+    const core = term && term._core;
+    const selection = core && core._selectionService;
+    const mouse = core && core.coreMouseService;
+    if (!selection || !mouse || typeof mouse.triggerMouseEvent !== "function") return false;
+    if (typeof selection.shouldForceSelection !== "function") return false;
+    let selecting = false;
+    // Observers only, never claiming the event: capture for the press so the
+    // flag is set before any xterm.js handler runs, bubble for the release so
+    // it outlives them.
+    doc.addEventListener("mousedown", function (ev) {
+      selecting = !!selection.shouldForceSelection(ev);
+    }, true);
+    doc.addEventListener("mouseup", function () {
+      selecting = false;
+    }, false);
+    const trigger = mouse.triggerMouseEvent.bind(mouse);
+    mouse.triggerMouseEvent = function (ev) {
+      if (selecting) return false;
+      return trigger(ev);
+    };
+    return true;
+  }
+"""
+
+
 def asset_dir() -> str:
     """Resolve the xterm.js asset dir: env override → system libjs-xterm → bundled."""
     env = os.environ.get("PYXTERMJS_ASSETS_DIR")
@@ -124,7 +164,10 @@ def _build_shell_html_impl(
 <div id="terminal"></div>
 <div id="ac"></div>
 <script>
+{SELECTION_MOUSE_REPORT_GUARD_JS}
   const term = new Terminal({opts_json});
+  // True only while SearchAddon is selecting a match (see window.sshpilotSearch).
+  var selectionFromSearch = false;
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   const searchAddon = new SearchAddon.SearchAddon({{ highlightLimit: 1000 }});
@@ -148,9 +191,18 @@ def _build_shell_html_impl(
       return false;
     }}
     const opts = payload.opts || {{}};
-    const found = payload.forward
-      ? window.term.searchAddon.findNext(payload.term, opts)
-      : window.term.searchAddon.findPrevious(payload.term, opts);
+    // SearchAddon selects the hit synchronously, so onSelectionChange fires
+    // inside this call — tag it so copy-on-select does not overwrite the
+    // clipboard with every match the user steps through.
+    let found;
+    selectionFromSearch = true;
+    try {{
+      found = payload.forward
+        ? window.term.searchAddon.findNext(payload.term, opts)
+        : window.term.searchAddon.findPrevious(payload.term, opts);
+    }} finally {{
+      selectionFromSearch = false;
+    }}
     send({{
       type: "search-result",
       found: !!found,
@@ -220,6 +272,7 @@ def _build_shell_html_impl(
   term.options.linkHandler = linkHandler;
 
   term.open(document.getElementById("terminal"));
+  installSelectionMouseReportGuard(term, document);
   term.onData(d => send({{ type: "input", data: d }}));
   // X10 mouse (Ubuntu 18.04/20.04 ncurses) is 8-bit and goes through onBinary,
   // not onData. SGR mouse is ASCII and stays on onData. Base64 keeps high
@@ -412,22 +465,62 @@ def _build_shell_html_impl(
       e.preventDefault();
       return false;
     }}
-    if (window.sshpilotShortcutPassthrough) return true;
     if (e.type !== "keydown") return true;
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
     const clipboardModifier = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
-    if (!clipboardModifier) return true;
     const k = e.key.toLowerCase();
+    // Report copy/paste keys even when pass-through is on so Python logs why
+    // the shortcut never became a clipboard write (issue #1178).
+    if (window.sshpilotShortcutPassthrough) {{
+      if (clipboardModifier && (k === "c" || k === "v")) {{
+        send({{ type: "clipboard-passthrough", key: k, hasSelection: term.hasSelection() }});
+      }}
+      return true;
+    }}
+    if (!clipboardModifier) return true;
     if (k === "v") {{ e.preventDefault(); send({{ type: "paste" }}); return false; }}
     if (k === "c") {{
       e.preventDefault();
-      send({{ type: "copy", text: term.getSelection() }});
+      var selection = term.getSelection() || "";
+      send({{
+        type: "copy",
+        text: selection,
+        hasSelection: term.hasSelection(),
+        selectionLength: selection.length
+      }});
       term.focus();
       return false;
     }}
     return true;
   }});
+  // xterm.js fires onSelectionChange for every intermediate state of a drag
+  // (SelectionService refreshes on each mouse move), unlike VTE which only
+  // emits at drag end.  Report whether the drag is still in flight so
+  // copy-on-select writes the clipboard once, when the selection settles.
+  var selectionDragging = false;
+  var selectionChangedWhileDragging = false;
+  function sendSelectionChanged(dragging) {{
+    send({{
+      type: "selection-changed",
+      hasSelection: term.hasSelection(),
+      dragging: !!dragging,
+      fromSearch: !!selectionFromSearch
+    }});
+  }}
+  document.addEventListener("mousedown", function () {{
+    selectionDragging = true;
+    selectionChangedWhileDragging = false;
+  }}, true);
+  document.addEventListener("mouseup", function () {{
+    if (!selectionDragging) return;
+    selectionDragging = false;
+    if (selectionChangedWhileDragging) {{
+      selectionChangedWhileDragging = false;
+      sendSelectionChanged(false);
+    }}
+  }}, true);
   term.onSelectionChange(function () {{
-    send({{ type: "selection-changed", hasSelection: term.hasSelection() }});
+    if (selectionDragging) selectionChangedWhileDragging = true;
+    sendSelectionChanged(selectionDragging);
   }});
 </script></body></html>"""

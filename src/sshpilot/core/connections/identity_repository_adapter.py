@@ -133,13 +133,16 @@ def reconcile_identity_state(
     uuid_factory: Callable[[], str] = new_uuid4,
     explicit_continuity: Mapping[str, str] = (),
     allow_tombstone_resurrection: bool = False,
+    allow_destination_inference: bool = True,
 ) -> IdentityStateV2:
     """Apply one frozen reconciliation pass to a persisted v2 snapshot.
 
     ``explicit_continuity`` maps an old alias to a new alias for an operation
     SSH Pilot itself performed.  Those pairs bypass heuristic evidence while
     all remaining candidates use the accepted matcher unchanged.
-    Tombstone resurrection is reserved for explicit SSH authority transitions.
+    Tombstone resurrection is reserved for explicit SSH authority transitions,
+    which are also the transitions that switch destination inference off --
+    see ``reconcile_identities``.
     """
 
     if type(ssh_config_revision) is not str or not ssh_config_revision.strip():
@@ -199,12 +202,34 @@ def reconcile_identity_state(
     # (still using this pass's fresh evidence, so a genuine disambiguating
     # edit -- e.g. one candidate's destination changing -- still resolves it
     # normally); everything else reconciles exactly as before.
+    #
+    # A pending ambiguity only means something while the aliases it was
+    # recorded against are still on offer. Once every candidate alias has left
+    # the configuration -- the user switched isolated/default modes back to a
+    # config predating the edit that caused the ambiguity, reverted the file,
+    # restored a backup -- there is nothing left to resolve it by, and
+    # carrying it forward actively corrupts this pass: the identities it names
+    # get diverted out of the ordinary pool, find no ``ambiguous_new`` to
+    # match against, and are then retired as ghosts against their *own*
+    # still-present aliases, losing their UUIDs and display names to freshly
+    # created replacements that EXACT_ALIAS should have preserved untouched.
+    # Drop the moot ones; the identities they name reconcile normally, which
+    # is exactly what a no-longer-contested alias should leave behind.
+    remaining_new_aliases = {projection.alias for projection in remaining_new}
+    live_ambiguities = tuple(
+        ambiguity
+        for ambiguity in state.pending_ambiguities
+        if any(
+            candidate.alias in remaining_new_aliases
+            for candidate in ambiguity.new_projections
+        )
+    )
     still_ambiguous_uuids = {
-        uuid for ambiguity in state.pending_ambiguities for uuid in ambiguity.old_uuids
+        uuid for ambiguity in live_ambiguities for uuid in ambiguity.old_uuids
     }
     ambiguity_candidate_aliases = {
         candidate.alias
-        for ambiguity in state.pending_ambiguities
+        for ambiguity in live_ambiguities
         for candidate in ambiguity.new_projections
     }
     ambiguous_old = tuple(
@@ -230,10 +255,30 @@ def reconcile_identity_state(
     # reintroducing the original bug. Retire it instead: its own frozen
     # alias is conclusively no longer available to reclaim, so nothing sound
     # remains to resolve its ambiguity by.
+    #
+    # A ghost is retired for a second reason too: renaming one of two colliding
+    # aliases away disambiguates nothing. The renamed entry joins the ordinary
+    # pool but still sits at the ghost's destination, so it is exactly as
+    # likely to be the ghost as the candidate alias that stayed put. Judging
+    # the ghost against its recorded candidate aliases alone made that look
+    # like a clean one-to-one match and resolved what is really a coin flip,
+    # migrating one connection's display name, groups and tags onto the other.
+    # It cannot be held back as still-pending either: the state model requires
+    # a pending ambiguity's aliases to be unclaimed, and these now belong to
+    # ordinary identities. So there is nothing sound left to resolve it by.
     ordinary_new_aliases = {projection.alias for projection in ordinary_new}
+    ordinary_new_anchors = {
+        projection.destination_anchor
+        for projection in ordinary_new
+        if projection.destination_anchor is not None
+    }
     retiring_ghost_uuids = {
         entry.uuid for entry in ambiguous_old
         if entry.projection.alias in ordinary_new_aliases
+        or (
+            entry.projection.destination_anchor is not None
+            and entry.projection.destination_anchor in ordinary_new_anchors
+        )
     }
     if retiring_ghost_uuids:
         ambiguous_old = tuple(
@@ -244,12 +289,14 @@ def reconcile_identity_state(
         ambiguous_new,
         uuid_factory=uuid_factory,
         allow_tombstone_resurrection=allow_tombstone_resurrection,
+        allow_destination_inference=allow_destination_inference,
     )
     ordinary_result = reconcile_identities(
         ordinary_old,
         ordinary_new,
         uuid_factory=uuid_factory,
         allow_tombstone_resurrection=allow_tombstone_resurrection,
+        allow_destination_inference=allow_destination_inference,
     )
     combined_matched = ambiguity_result.matched + ordinary_result.matched
     combined_created = ambiguity_result.created + ordinary_result.created
@@ -263,6 +310,16 @@ def reconcile_identity_state(
     }
     created = {entry.uuid: entry for entry in combined_created}
     next_generation = state.sidecar_generation
+    # Where each identity sits right now, so a retirement can remember it and a
+    # resurrection can be put back. A tombstone may not be a group member, so
+    # this is the only place the folder survives the round trip.
+    group_of_uuid = {
+        reference.value: group.id
+        for group in state.groups
+        for reference in group.members
+        if reference.kind is ReferenceKind.SSH_UUID
+    }
+    restored_placements: dict[str, str] = {}
     identities = []
     for identity in state.identities:
         if identity.tombstone:
@@ -270,11 +327,14 @@ def reconcile_identity_state(
             match = next((item for item in matches if item.old.uuid == identity.uuid), None)
             if match is not None:
                 # Resurrect: update projection, clear tombstone flag and retired_generation
+                if identity.retired_group_id is not None:
+                    restored_placements[identity.uuid] = identity.retired_group_id
                 identities.append(replace(
                     identity,
                     projection=match.new_projection,
                     tombstone=False,
                     retired_generation=None,
+                    retired_group_id=None,
                 ))
             else:
                 identities.append(identity)
@@ -286,7 +346,12 @@ def reconcile_identity_state(
             identities.append(identity)
         elif identity.uuid in deleted_uuids:
             identities.append(
-                replace(identity, tombstone=True, retired_generation=next_generation + 1)
+                replace(
+                    identity,
+                    tombstone=True,
+                    retired_generation=next_generation + 1,
+                    retired_group_id=group_of_uuid.get(identity.uuid),
+                )
             )
         else:
             # A defensive invariant: every old active identity is matched,
@@ -309,8 +374,23 @@ def reconcile_identity_state(
         )
         for item in combined_ambiguous
     )
+    placement_groups = state.groups
+    if restored_placements:
+        placement_groups = tuple(
+            replace(
+                group,
+                members=group.members
+                + tuple(
+                    _active_reference(uuid)
+                    for uuid, group_id in sorted(restored_placements.items())
+                    if group_id == group.id
+                    and _active_reference(uuid) not in group.members
+                ),
+            )
+            for group in state.groups
+        )
     groups, root = _placement_values(
-        state.groups,
+        placement_groups,
         state.root_connections,
         active_uuids,
         tuple(created),
@@ -448,6 +528,10 @@ def state_to_service_file_state(
         alias = alias_by_uuid.get(uuid)
         if alias in current_aliases:
             metadata[alias] = values
+    # Non-SSH tags/WoL live in a separate sidecar namespace; fold them into
+    # the service metadata view so snapshots and get_metadata() see them.
+    for connection_id, values in state.non_ssh_metadata.items():
+        metadata[str(connection_id)] = values
     return ConnectionFileState(
         version=1,
         non_ssh_connections=tuple(item for item in state.non_ssh_connections),

@@ -34,6 +34,7 @@ from .settings import (
     compose_ssh_overrides,
     compute_ssh_overrides_revision,
     get_default_config,
+    get_nested,
     load_settings_strict,
     normalize_ssh_overrides,
     save_settings,
@@ -189,7 +190,11 @@ class SshOverridesService:
             nested = key[len("ssh."):]
             return self.get_ssh_config().get(nested, default)
         config = self._load_view()
-        return config.get(key, default)
+        if key in config:
+            return config[key]
+        # Dotted keys such as "plugins.enabled" are nested in the file, and a
+        # flat lookup silently answers `default` for every one of them.
+        return get_nested(config, key, default)
 
     def get_ssh_config(self) -> Dict[str, Any]:
         """Return the ``ssh`` subtree with defaults merged and the derived list.

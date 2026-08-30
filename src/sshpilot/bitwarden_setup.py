@@ -44,6 +44,7 @@ from urllib.request import Request, urlopen
 
 from gi.repository import Adw, GLib, Gtk
 
+from .gtk.secret_status_messages import format_secret_error, format_secret_message
 from .window_dialogs import parent_window
 
 logger = logging.getLogger(__name__)
@@ -1090,11 +1091,11 @@ def _login_wizard(window, controller, on_done: Callable[[bool], None]):
                     data.get("email", ""), twofa_method=twofa_method,
                 )
                 ok = bool(getattr(api_status, "logged_in", False))
-                detail = str(getattr(api_status, "message", "") or "")
+                detail = format_secret_message(api_status)
                 needs_2fa = bool(getattr(api_status, "twofa_required", False))
             except Exception as exc:
                 logger.debug("Bitwarden daemon login failed", exc_info=True)
-                ok, detail, needs_2fa = False, str(exc), False
+                ok, detail, needs_2fa = False, format_secret_error(exc), False
 
             def done():
                 close()
@@ -1146,10 +1147,10 @@ def _login_wizard(window, controller, on_done: Callable[[bool], None]):
             try:
                 api_status = controller.bitwarden_api_key_login(data.get("client_id", ""))
                 ok = bool(getattr(api_status, "logged_in", False))
-                detail = str(getattr(api_status, "message", "") or "")
+                detail = format_secret_message(api_status)
             except Exception as exc:
                 logger.debug("Bitwarden API key login failed", exc_info=True)
-                ok, detail = False, str(exc)
+                ok, detail = False, format_secret_error(exc)
 
             def done():
                 close()
@@ -1190,7 +1191,7 @@ def _login_wizard(window, controller, on_done: Callable[[bool], None]):
             try:
                 api_status = controller.bitwarden_sso_login(data.get("sso_id") or None)
                 ok = bool(getattr(api_status, "logged_in", False))
-                detail = str(getattr(api_status, "message", "") or "")
+                detail = format_secret_message(api_status)
                 if ok:
                     for _ in range(150):
                         try:
@@ -1208,7 +1209,7 @@ def _login_wizard(window, controller, on_done: Callable[[bool], None]):
                         )
             except Exception as exc:
                 logger.debug("Bitwarden SSO login failed", exc_info=True)
-                ok, detail = False, str(exc)
+                ok, detail = False, format_secret_error(exc)
 
             def done():
                 close()
@@ -1243,11 +1244,11 @@ def _prompt_gui_login(window, controller, on_done: Callable[[bool], None]):
             detail = ""
             try:
                 api_status = controller.bitwarden_configure_server(url)
-                detail = str(getattr(api_status, "message", "") or "")
-                ok = not bool(detail)
+                detail = format_secret_message(api_status)
+                ok = getattr(api_status, "message_code", None) is None
             except Exception as exc:
                 logger.debug("Bitwarden server configuration failed", exc_info=True)
-                detail = str(exc)
+                detail = format_secret_error(exc)
             GLib.idle_add(lambda: (_after_configure(ok, detail), False)[1])
 
         def _after_configure(ok, detail=""):

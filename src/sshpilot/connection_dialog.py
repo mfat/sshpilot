@@ -8,7 +8,7 @@ import logging
 import re
 import threading
 import types
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Mapping
 
 try:
     from gi.repository import Gtk, Adw, Gio, GLib, GObject, Gdk, Pango, PangoFT2
@@ -132,14 +132,29 @@ def _editor_details_to_connection(details):
         else dict(rule)
         for rule in (getattr(details, 'forwarding_rules', None) or ())
     ]
+    hostname = getattr(details, 'hostname', '') or ''
+    host = getattr(details, 'host', '') or ''
+    port = getattr(details, 'port', None) or 22
+    protocol = getattr(details, 'protocol', None) or 'ssh'
+    # Seed core columns into ``data`` so plugin FieldSpecs that reuse those
+    # names (e.g. telnet ``host``/``port``) can round-trip from editor DTOs
+    # that have no separate plugin_data blob.
+    data = dict(getattr(details, 'data', None) or {})
+    plugin_data = getattr(details, 'plugin_data', None) or {}
+    if isinstance(plugin_data, Mapping):
+        data.update(dict(plugin_data))
+    data.setdefault('hostname', hostname)
+    data.setdefault('host', hostname or host)
+    data.setdefault('port', port)
+    data.setdefault('protocol', protocol)
     return types.SimpleNamespace(
         nickname=getattr(details, 'nickname', '') or '',
         display_name=getattr(details, 'display_name', '') or '',
-        hostname=getattr(details, 'hostname', '') or '',
-        host=getattr(details, 'host', '') or '',
+        hostname=hostname,
+        host=host,
         username=getattr(details, 'username', '') or '',
-        port=getattr(details, 'port', None) or 22,
-        protocol=getattr(details, 'protocol', None) or 'ssh',
+        port=port,
+        protocol=protocol,
         proxy_jump=getattr(details, 'proxy_jump', None) or (),
         forward_agent=bool(getattr(details, 'forward_agent', False)),
         forward_agent_explicit_no=bool(
@@ -168,7 +183,7 @@ def _editor_details_to_connection(details):
         aliases=getattr(details, 'aliases', None) or (),
         source=getattr(details, 'source', '') or '',
         generation=getattr(details, 'generation', 0) or 0,
-        data=getattr(details, 'data', None) or {},
+        data=data,
         authored_directives=frozenset(
             getattr(details, 'authored_directives', None) or ()
         ),
@@ -4247,11 +4262,31 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
                 logger.debug("Load tags meta: %s", e)
 
     def _load_plugin_field_values(self):
-        """Populate rendered plugin rows from the connection's data dict."""
+        """Populate rendered plugin rows from connection data / attributes.
+
+        Daemon saves map some FieldSpec keys onto core columns (telnet's
+        ``host`` → ``hostname``, ``port`` → ``port``). Editor DTOs and
+        ``ConnectionSummary`` projections often have those attributes but an
+        empty ``.data`` dict, so fall back to attributes before the field
+        default.
+        """
         data = getattr(self.connection, 'data', None) or {}
+        conn = self.connection
         for key, (spec, _row, _getter, setter) in (
                 getattr(self, '_plugin_field_widgets', None) or {}).items():
-            value = data.get(key, spec.default)
+            if key in data and data.get(key) not in (None, ''):
+                value = data.get(key)
+            elif key == 'host':
+                value = (
+                    getattr(conn, 'hostname', None)
+                    or getattr(conn, 'host', None)
+                    or spec.default
+                )
+            elif hasattr(conn, key):
+                attr = getattr(conn, key)
+                value = spec.default if attr in (None, '') else attr
+            else:
+                value = spec.default
             if value is None:
                 continue
             try:
@@ -4295,26 +4330,29 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
 
         # The live object is only mutated by the manager after a successful
         # persist; metadata rides the payload and the dialog closes only once
-        # the window reports the save outcome.
+        # the window reports the save outcome. Match the SSH SaveRequest
+        # contract so on_connection_saved can pass (ok, result, meta_error).
         metadata = self._collect_connection_meta()
-        completion_called = [False]
 
-        def _after_saved(ok):
-            completion_called[0] = True
-            if ok:
+        def _after_saved(ok, result=None, meta_error=None):
+            self._active_save_request = None
+            if meta_error:
+                self.show_error(meta_error)
+            elif ok:
                 self.close()
             else:
                 self.show_error(_("The connection settings could not be saved."))
 
-        self.emit('connection-saved', data, metadata, {}, _after_saved)
-        if not completion_called[0]:
+        request = self.SaveRequest(_after_saved)
+        self._active_save_request = request
+        self.emit('connection-saved', data, metadata, {}, request)
+        if not request.claimed:
             # No consumer (standalone dialog, e.g. in tests): keep the legacy
             # emit-then-close behavior.
+            self._active_save_request = None
             self.close()
-            # else: consumer popped the marker and is handling the
-            # completion asynchronously (e.g. daemon bridge).  Do NOT
-            # assume failure here — the async callback will invoke
-            # _after_saved with the real result.
+            # else: consumer claimed the request and will complete it
+            # asynchronously (or already did synchronously).
 
     def _collect_connection_meta(self):
         """Collect Wake-on-LAN and tags metadata (protocol-agnostic app meta)

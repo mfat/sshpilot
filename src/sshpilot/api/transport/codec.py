@@ -162,6 +162,8 @@ from ..models.operations import (
     ForwardSummary,
     ForwardType,
     ForwardState,
+    IdentityFailure,
+    IdentityFailureCode,
     CloseForwardRequest,
     ListDirectoryRequest,
     ListDirectoryResult,
@@ -169,7 +171,11 @@ from ..models.operations import (
     OpenSftpRequest,
     RemoteFileEntry,
     RemoteFileType,
+    ScpFailure,
+    ScpFailureCode,
     ServiceFailure,
+    SftpFailure,
+    SftpFailureCode,
     SftpChmodRequest,
     SftpCopyRequest,
     SftpCreateFileRequest,
@@ -1739,6 +1745,7 @@ def connection_details_to_wire(details: ConnectionDetails) -> Dict[str, Any]:
             "x11_forwarding": details.x11_forwarding,
             "forwarding_rule_count": details.forwarding_rule_count,
             "proxy_jump": list(details.proxy_jump),
+            "plugin_data": dict(details.plugin_data),
         }
     )
     return result
@@ -1791,7 +1798,7 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
     data = _strict_fields(
         value,
         required=_SUMMARY_FIELDS | detail_fields,
-        optional={"display_name"},
+        optional={"display_name", "plugin_data"},
         context="connection details",
     )
     summary_payload = {key: data[key] for key in _SUMMARY_FIELDS}
@@ -1806,6 +1813,9 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
         authentication_method = AuthenticationMethod(data["authentication_method"])
     except (TypeError, ValueError):
         raise ValueError("connection details contain unknown authentication method") from None
+    raw_plugin_data = data.get("plugin_data", {})
+    if type(raw_plugin_data) is not dict:
+        raise ValueError("plugin_data must be an object")
     return ConnectionDetails(
         id=summary.id,
         nickname=summary.nickname,
@@ -1832,6 +1842,7 @@ def connection_details_from_wire(value: Any) -> ConnectionDetails:
             "forwarding rule count",
         ),
         proxy_jump=proxy_jump,
+        plugin_data=dict(raw_plugin_data),
     )
 
 
@@ -2103,7 +2114,7 @@ def connection_editor_details_from_wire(
         required=summary_fields | _EDITOR_DETAIL_FIELDS,
         # Additive: a daemon predating authorship evidence simply omits it, and
         # an empty tuple already means "no evidence".
-        optional={"display_name", "authored_directives"},
+        optional={"display_name", "authored_directives", "plugin_data"},
         context="connection editor details",
     )
     summary_payload = {key: data[key] for key in summary_fields}
@@ -2135,6 +2146,9 @@ def connection_editor_details_from_wire(
     authored_directives = tuple(
         _text(item, "authored directive", allow_empty=False) for item in raw_authored
     )
+    raw_plugin_data = data.get("plugin_data", {})
+    if type(raw_plugin_data) is not dict:
+        raise ValueError("plugin_data must be an object")
     return ConnectionEditorDetails(
         id=summary.id,
         nickname=summary.nickname,
@@ -2153,6 +2167,7 @@ def connection_editor_details_from_wire(
         x11_forwarding=_boolean(data["x11_forwarding"], "X11 forwarding"),
         forwarding_rule_count=_integer(data["forwarding_rule_count"], "forwarding rule count"),
         proxy_jump=proxy_jump,
+        plugin_data=dict(raw_plugin_data),
         key_select_mode=_integer(data["key_select_mode"], "key_select_mode"),
         identity_files=tuple(_identifier(f, "identity file") for f in identity_files),
         certificate_files=tuple(_identifier(f, "certificate file") for f in certificate_files),
@@ -3863,6 +3878,182 @@ def _service_failure_from_wire(value: Any) -> Optional[ServiceFailure]:
     )
 
 
+def _sftp_failure_to_wire(failure: Optional[SftpFailure]) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not SftpFailure:
+        raise TypeError("SFTP failure must be a SftpFailure or None")
+    return {
+        "kind": "sftp",
+        "code": failure.code.value,
+        "error_code": failure.error_code.value,
+        "parameters": dict(failure.parameters),
+        "diagnostic": failure.diagnostic,
+    }
+
+
+def _sftp_failure_from_wire(value: Any) -> Optional[SftpFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"kind", "code", "error_code", "parameters", "diagnostic"},
+        context="SFTP failure",
+    )
+    if data["kind"] != "sftp":
+        raise ValueError("SFTP failure contains an unknown kind")
+    try:
+        code = SftpFailureCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("SFTP failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(data["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("SFTP failure contains an unknown error code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("SFTP failure parameters must be an object")
+    return SftpFailure(
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "SFTP failure parameter name"): _text(
+                parameter, "SFTP failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            data["diagnostic"], "SFTP failure diagnostic", allow_empty=True
+        ),
+    )
+
+
+def _scp_failure_to_wire(failure: Optional[ScpFailure]) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not ScpFailure:
+        raise TypeError("SCP failure must be a ScpFailure or None")
+    return {
+        "kind": "scp",
+        "code": failure.code.value,
+        "error_code": failure.error_code.value,
+        "parameters": dict(failure.parameters),
+        "diagnostic": failure.diagnostic,
+    }
+
+
+def _scp_failure_from_wire(value: Any) -> Optional[ScpFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"kind", "code", "error_code", "parameters", "diagnostic"},
+        context="SCP failure",
+    )
+    if data["kind"] != "scp":
+        raise ValueError("SCP failure contains an unknown kind")
+    try:
+        code = ScpFailureCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("SCP failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(data["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("SCP failure contains an unknown error code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("SCP failure parameters must be an object")
+    return ScpFailure(
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "SCP failure parameter name"): _text(
+                parameter, "SCP failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            data["diagnostic"], "SCP failure diagnostic", allow_empty=True
+        ),
+    )
+
+
+def _identity_failure_to_wire(
+    failure: Optional[IdentityFailure],
+) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is not IdentityFailure:
+        raise TypeError("identity failure must be an IdentityFailure or None")
+    return {
+        "kind": "identity",
+        "code": failure.code.value,
+        "error_code": failure.error_code.value,
+        "parameters": dict(failure.parameters),
+        "diagnostic": failure.diagnostic,
+    }
+
+
+def _identity_failure_from_wire(value: Any) -> Optional[IdentityFailure]:
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"kind", "code", "error_code", "parameters", "diagnostic"},
+        context="identity failure",
+    )
+    if data["kind"] != "identity":
+        raise ValueError("identity failure contains an unknown kind")
+    try:
+        code = IdentityFailureCode(data["code"])
+    except (TypeError, ValueError):
+        raise ValueError("identity failure contains an unknown code") from None
+    try:
+        error_code = ErrorCode(data["error_code"])
+    except (TypeError, ValueError):
+        raise ValueError("identity failure contains an unknown error code") from None
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError("identity failure parameters must be an object")
+    return IdentityFailure(
+        code=code,
+        error_code=error_code,
+        parameters={
+            _identifier(key, "identity failure parameter name"): _text(
+                parameter, "identity failure parameter"
+            )
+            for key, parameter in parameters.items()
+        },
+        diagnostic=_text(
+            data["diagnostic"], "identity failure diagnostic", allow_empty=True
+        ),
+    )
+
+
+def _summary_failure_to_wire(failure: Any) -> Optional[Dict[str, Any]]:
+    if type(failure) is SftpFailure:
+        return _sftp_failure_to_wire(failure)
+    if type(failure) is ScpFailure:
+        return _scp_failure_to_wire(failure)
+    if type(failure) is IdentityFailure:
+        return _identity_failure_to_wire(failure)
+    return _service_failure_to_wire(failure)
+
+
+def _summary_failure_from_wire(value: Any) -> Optional[Any]:
+    if value is None:
+        return None
+    if type(value) is dict and "kind" in value:
+        if value["kind"] == "sftp":
+            return _sftp_failure_from_wire(value)
+        if value["kind"] == "scp":
+            return _scp_failure_from_wire(value)
+        if value["kind"] == "identity":
+            return _identity_failure_from_wire(value)
+        raise ValueError("summary failure contains an unknown kind")
+    return _service_failure_from_wire(value)
+
+
 def _optional_datetime_to_wire(value: Optional[datetime], context: str) -> Optional[str]:
     return _datetime_to_wire(value, context) if value is not None else None
 
@@ -3889,7 +4080,7 @@ def sftp_service_summary_to_wire(summary: SftpServiceSummary) -> Dict[str, Any]:
         "closed_at": _optional_datetime_to_wire(summary.closed_at, "SFTP service close time"),
         "attachment_count": summary.attachment_count,
         "owner_client_id": summary.owner_client_id,
-        "failure": _service_failure_to_wire(summary.failure),
+        "failure": _sftp_failure_to_wire(summary.failure),
     }
 
 
@@ -3924,7 +4115,7 @@ def sftp_service_summary_from_wire(value: Any) -> SftpServiceSummary:
         closed_at=_optional_datetime_from_wire(data["closed_at"], "SFTP service close time"),
         attachment_count=_integer(data["attachment_count"], "SFTP attachment count"),
         owner_client_id=_optional_client_id(data["owner_client_id"], "SFTP owner client id"),
-        failure=_service_failure_from_wire(data["failure"]),
+        failure=_sftp_failure_from_wire(data["failure"]),
     )
 
 
@@ -4464,7 +4655,7 @@ def transfer_summary_to_wire(summary: TransferSummary) -> Dict[str, Any]:
             summary.completed_at, "transfer completion time"
         ),
         "owner_client_id": summary.owner_client_id,
-        "failure": _service_failure_to_wire(summary.failure),
+        "failure": _summary_failure_to_wire(summary.failure),
     }
 
 
@@ -4523,7 +4714,7 @@ def transfer_summary_from_wire(value: Any) -> TransferSummary:
         started_at=_optional_datetime_from_wire(data["started_at"], "transfer start time"),
         completed_at=_optional_datetime_from_wire(data["completed_at"], "transfer completion time"),
         owner_client_id=_optional_client_id(data["owner_client_id"], "transfer owner client id"),
-        failure=_service_failure_from_wire(data["failure"]),
+        failure=_summary_failure_from_wire(data["failure"]),
     )
 
 
@@ -5653,22 +5844,50 @@ def secret_unlock_result_to_wire(result: Any) -> Dict[str, Any]:
     return result.to_dict()
 
 
+def _secret_message_from_wire(data: Mapping[str, Any]) -> tuple[Any, Dict[str, str], str]:
+    from ..models.secrets import SecretMessageCode
+
+    raw_code = data["message_code"]
+    if raw_code is None:
+        message_code = None
+    else:
+        if type(raw_code) is not str or raw_code not in SecretMessageCode._value2member_map_:
+            raise ValueError("message_code is not a valid secret message code")
+        message_code = SecretMessageCode(raw_code)
+    raw_parameters = data["message_parameters"]
+    if type(raw_parameters) is not dict or not all(
+        type(key) is str and type(item) is str
+        for key, item in raw_parameters.items()
+    ):
+        raise ValueError("secret message parameters must be a string object")
+    diagnostic = _text(data["diagnostic"], "diagnostic", allow_empty=True)
+    return message_code, raw_parameters, diagnostic
+
+
 def secret_unlock_result_from_wire(value: Any) -> Any:
     from ..models.secrets import SecretUnlockResult, UnlockResultKind
 
     data = _strict_fields(
         value,
-        required={"kind", "backend"},
-        optional={"message"},
+        required={
+            "kind",
+            "backend",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="secret unlock result",
     )
     kind = data["kind"]
     if type(kind) is not str or kind not in UnlockResultKind._value2member_map_:
         raise ValueError("kind is not a valid unlock result kind")
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return SecretUnlockResult(
         kind=UnlockResultKind(kind),
         backend=_text(data["backend"], "backend"),
-        message=data.get("message", ""),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5685,17 +5904,25 @@ def secret_operation_result_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"state", "backend"},
-        optional={"message"},
+        required={
+            "state",
+            "backend",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="secret operation result",
     )
     state = data["state"]
     if type(state) is not str or state not in SecretOperationState._value2member_map_:
         raise ValueError("state is not a valid secret operation state")
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return SecretOperationResult(
         state=SecretOperationState(state),
         backend=_text(data["backend"], "backend"),
-        message=data.get("message", ""),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5712,10 +5939,21 @@ def bitwarden_status_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"logged_in", "unlocked", "needs_login", "email", "server_url", "profile"},
-        optional={"twofa_required", "message"},
+        required={
+            "logged_in",
+            "unlocked",
+            "needs_login",
+            "email",
+            "server_url",
+            "profile",
+            "twofa_required",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="bitwarden status",
     )
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return BitwardenStatus(
         logged_in=_boolean(data["logged_in"], "logged_in"),
         unlocked=_boolean(data["unlocked"], "unlocked"),
@@ -5723,8 +5961,10 @@ def bitwarden_status_from_wire(value: Any) -> Any:
         email=_text(data["email"], "email", allow_empty=True),
         server_url=_text(data["server_url"], "server_url", allow_empty=True),
         profile=_text(data["profile"], "profile", allow_empty=True),
-        twofa_required=_boolean(data.get("twofa_required", False), "twofa_required"),
-        message=data.get("message", ""),
+        twofa_required=_boolean(data["twofa_required"], "twofa_required"),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5741,17 +5981,28 @@ def rbw_status_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"installed", "configured", "unlocked", "email", "base_url"},
-        optional={"message"},
+        required={
+            "installed",
+            "configured",
+            "unlocked",
+            "email",
+            "base_url",
+            "message_code",
+            "message_parameters",
+            "diagnostic",
+        },
         context="rbw status",
     )
+    message_code, message_parameters, diagnostic = _secret_message_from_wire(data)
     return RbwStatus(
         installed=_boolean(data["installed"], "installed"),
         configured=_boolean(data["configured"], "configured"),
         unlocked=_boolean(data["unlocked"], "unlocked"),
         email=_text(data["email"], "email", allow_empty=True),
         base_url=_text(data["base_url"], "base_url", allow_empty=True),
-        message=data.get("message", ""),
+        message_code=message_code,
+        message_parameters=message_parameters,
+        diagnostic=diagnostic,
     )
 
 
@@ -5763,13 +6014,34 @@ def secret_transfer_result_to_wire(result: Any) -> Dict[str, Any]:
     return result.to_dict()
 
 
+def _secret_transfer_message_from_wire(value: Any, context: str) -> Any:
+    from ..models.secrets import SecretTransferMessage, SecretTransferMessageCode
+
+    data = _strict_fields(
+        value,
+        required={"code", "parameters", "diagnostic"},
+        context=context,
+    )
+    code = data["code"]
+    if type(code) is not str or code not in SecretTransferMessageCode._value2member_map_:
+        raise ValueError(f"{context} code is invalid")
+    parameters = data["parameters"]
+    if type(parameters) is not dict:
+        raise ValueError(f"{context} parameters must be an object")
+    diagnostic = _text(data["diagnostic"], "diagnostic", allow_empty=True)
+    return SecretTransferMessage(
+        code=SecretTransferMessageCode(code),
+        parameters=parameters,
+        diagnostic=diagnostic,
+    )
+
+
 def secret_transfer_result_from_wire(value: Any) -> Any:
     from ..models.secrets import SecretOperationState, SecretTransferResult
 
     data = _strict_fields(
         value,
-        required={"operation", "path", "counts", "warnings", "status"},
-        optional={"message"},
+        required={"operation", "path", "counts", "warnings", "status", "message"},
         context="secret transfer result",
     )
     counts = data["counts"]
@@ -5778,8 +6050,8 @@ def secret_transfer_result_from_wire(value: Any) -> Any:
     ):
         raise ValueError("counts must be an object of integer counts")
     warnings = data["warnings"]
-    if type(warnings) is not list or not all(type(w) is str for w in warnings):
-        raise ValueError("warnings must be a list of strings")
+    if type(warnings) is not list:
+        raise ValueError("warnings must be a list")
     status = data["status"]
     if type(status) is not str or status not in SecretOperationState._value2member_map_:
         raise ValueError("status is not a valid secret transfer state")
@@ -5787,9 +6059,57 @@ def secret_transfer_result_from_wire(value: Any) -> Any:
         operation=data["operation"],
         path=_text(data["path"], "path", allow_empty=True),
         counts=counts,
-        warnings=tuple(warnings),
+        warnings=tuple(
+            _secret_transfer_message_from_wire(warning, "secret transfer warning")
+            for warning in warnings
+        ),
         status=SecretOperationState(status),
-        message=data.get("message", ""),
+        message=(
+            None
+            if data["message"] is None
+            else _secret_transfer_message_from_wire(
+                data["message"], "secret transfer message"
+            )
+        ),
+    )
+
+
+def secret_transfer_preview_to_wire(preview: Any) -> Dict[str, Any]:
+    from ..models.secrets import SecretTransferPreview
+
+    if type(preview) is not SecretTransferPreview:
+        raise TypeError("SecretTransferPreview is required")
+    return preview.to_dict()
+
+
+def secret_transfer_preview_from_wire(value: Any) -> Any:
+    from ..models.secrets import SecretTransferPreview
+
+    data = _strict_fields(
+        value,
+        required={"kind", "encrypted", "included", "error"},
+        context="secret transfer preview",
+    )
+    kind = _text(data["kind"], "kind")
+    if type(data["encrypted"]) is not bool:
+        raise ValueError("encrypted must be a boolean")
+    included = data["included"]
+    if type(included) is not dict or not all(
+        type(key) is str and type(item) is bool
+        for key, item in included.items()
+    ):
+        raise ValueError("included must be an object of boolean values")
+    return SecretTransferPreview(
+        kind=kind,
+        encrypted=data["encrypted"],
+        included=included,
+        error=(
+            None
+            if data["error"] is None
+            else _secret_transfer_message_from_wire(
+                data["error"], "secret transfer preview error"
+            )
+        ),
     )
 
 
@@ -6109,7 +6429,7 @@ def operation_summary_to_wire(summary: Any) -> Dict[str, Any]:
         "finished_at": _optional_datetime_to_wire(summary.finished_at, "operation finish time"),
         "progress": summary.progress,
         "owner_client_id": summary.owner_client_id,
-        "failure": _service_failure_to_wire(summary.failure),
+        "failure": _summary_failure_to_wire(summary.failure),
         "result": _json_value(summary.result, "operation result"),
     }
 
@@ -6166,7 +6486,7 @@ def operation_summary_from_wire(value: Any) -> Any:
         finished_at=_optional_datetime_from_wire(data["finished_at"], "operation finish time"),
         progress=progress,
         owner_client_id=_optional_client_id(data["owner_client_id"], "operation owner client id"),
-        failure=_service_failure_from_wire(data["failure"]),
+        failure=_summary_failure_from_wire(data["failure"]),
         result=result,
     )
 

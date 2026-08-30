@@ -48,8 +48,13 @@ from ...api.models.connections import (
     SaveSshConfigTextRequest,
     SshConfigText,
     MAX_DISPLAY_NAME_LENGTH,
+    is_sensitive_field_name,
 )
 from ...api.models.common import validate_ssh_host_alias
+from ...api.models.secrets import (
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+)
 from ..errors import CoreError, ErrorCode
 from .models import ConnectionRecord, GroupRecord
 from .identity_repository_adapter import (
@@ -148,28 +153,23 @@ _PORTABLE_PROTOCOL_FIELDS: Dict[str, Tuple[str, ...]] = {
     "mosh": ("keyfile", "extra_ssh_opts", "predict", "mosh_port"),
 }
 
-# Defense-in-depth secret filter mirroring the GTK client's own
-# ``_SENSITIVE_PARTS`` convention (``sshpilot/gtk/daemon_connection_services.py``):
-# no field in ``_PORTABLE_PROTOCOL_FIELDS`` currently matches this today, but
-# a hand-crafted backup file or a future plugin field must never be able to
-# smuggle a secret into the logical connection_store through ``plugin_data``.
-_SENSITIVE_DATA_PARTS = ("password", "passphrase", "secret", "token", "credential", "private_key")
-
-
-def _is_sensitive_field_name(key: str) -> bool:
-    lowered = key.lower()
-    return any(part in lowered for part in _SENSITIVE_DATA_PARTS)
-
 
 def _portable_plugin_data(protocol: str, data: Mapping[str, Any]) -> Dict[str, Any]:
     """The subset of ``record.data`` that is safe, portable, protocol-declared
     launch configuration — never arbitrary/unknown keys, never anything
-    matching a secret-like field name."""
+    matching a secret-like field name.
+
+    The secret-name check shares the one list every plugin-value filter uses
+    (``PLUGIN_DATA_SENSITIVE_PARTS``): no field in
+    ``_PORTABLE_PROTOCOL_FIELDS`` matches it today, but a hand-crafted backup
+    file or a future plugin field must never be able to smuggle a secret into
+    the logical connection_store through ``plugin_data``.
+    """
     allowed = _PORTABLE_PROTOCOL_FIELDS.get(protocol, ())
     return {
         key: data[key]
         for key in allowed
-        if key in data and not _is_sensitive_field_name(key)
+        if key in data and not is_sensitive_field_name(key)
     }
 
 
@@ -177,7 +177,20 @@ def _portable_plugin_data(protocol: str, data: Mapping[str, Any]) -> Dict[str, A
 class ConnectionStoreRestoreResult:
     """Non-fatal diagnostics from one ``restore_connection_store`` call."""
 
-    warnings: Tuple[str, ...] = ()
+    warnings: Tuple[SecretTransferMessage, ...] = ()
+
+
+def _restore_warning(
+    code: SecretTransferMessageCode,
+    *,
+    parameters: Optional[Mapping[str, object]] = None,
+    diagnostic: str = "",
+) -> SecretTransferMessage:
+    return SecretTransferMessage(
+        code=code,
+        parameters=dict(parameters or {}),
+        diagnostic=diagnostic,
+    )
 
 
 ChangeListener = Callable[[RepositoryChange], None]
@@ -408,12 +421,14 @@ class ConnectionRepository:
                 self._isolated = target_isolated
                 self._load_state_locked(
                     allow_tombstone_resurrection=mode_changed,
+                    allow_destination_inference=not mode_changed,
                 )
             except Exception:
                 self._ssh_store = old_store
                 self._isolated = old_isolated
                 self._load_state_locked(
                     allow_tombstone_resurrection=mode_changed,
+                    allow_destination_inference=not mode_changed,
                 )
                 raise
             after = self._build_snapshot_locked()
@@ -511,6 +526,7 @@ class ConnectionRepository:
         self,
         *,
         allow_tombstone_resurrection: bool = False,
+        allow_destination_inference: bool = True,
     ) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
@@ -548,6 +564,7 @@ class ConnectionRepository:
                         projections,
                         ssh_config_revision=ssh_config.root_revision,
                         allow_tombstone_resurrection=allow_tombstone_resurrection,
+                        allow_destination_inference=allow_destination_inference,
                     )
                     write_identity_state_v2(self._state_path, state)
                 self._identity_state = state
@@ -1396,10 +1413,13 @@ class ConnectionRepository:
             elif cid in non_ssh_ids:
                 # Non-SSH metadata is stored in its own namespace below.
                 continue
-        non_ssh_metadata = dict(state.non_ssh_metadata)
-        for record in records:
-            if record.protocol != "ssh" and record.id in self._metadata:
-                non_ssh_metadata[record.id] = self._metadata[record.id]
+        # Rebuild from live working metadata only — do not carry forward
+        # entries for deleted connections or explicitly cleared metadata.
+        non_ssh_metadata = {
+            record.id: self._metadata[record.id]
+            for record in records
+            if record.protocol != "ssh" and record.id in self._metadata
+        }
         candidate = replace(
             state,
             groups=tuple(groups),
@@ -2507,7 +2527,8 @@ class ConnectionRepository:
         )
 
     def _restore_non_ssh_connection_locked(
-        self, entry: Mapping[str, Any], *, mode: str, warnings: List[str]
+        self, entry: Mapping[str, Any], *, mode: str,
+        warnings: List[SecretTransferMessage]
     ) -> None:
         cid = str(entry["id"])
         existing = self._service.get(cid)
@@ -2535,7 +2556,13 @@ class ConnectionRepository:
                 created = self._service.create(payload)
                 self._non_ssh_generations[created.id] = 1
             except Exception as error:
-                warnings.append(f"Could not restore connection {cid!r}: {error}")
+                warnings.append(
+                    _restore_warning(
+                        SecretTransferMessageCode.CONNECTION_RESTORE_FAILED,
+                        parameters={"connection": cid},
+                        diagnostic=str(error),
+                    )
+                )
         elif mode == "replace":
             try:
                 next_generation = (
@@ -2545,11 +2572,18 @@ class ConnectionRepository:
                 self._service.update(cid, payload)
                 self._non_ssh_generations[cid] = next_generation
             except Exception as error:
-                warnings.append(f"Could not update connection {cid!r}: {error}")
+                warnings.append(
+                    _restore_warning(
+                        SecretTransferMessageCode.CONNECTION_UPDATE_FAILED,
+                        parameters={"connection": cid},
+                        diagnostic=str(error),
+                    )
+                )
         # merge mode + already-present connection: left untouched (non-destructive).
 
     def _restore_groups_locked(
-        self, imported_groups: List[Mapping[str, Any]], *, mode: str, warnings: List[str]
+        self, imported_groups: List[Mapping[str, Any]], *, mode: str,
+        warnings: List[SecretTransferMessage]
     ) -> Dict[str, str]:
         """Map each imported group id to a local group id, creating/reusing
         groups by ``(mapped_parent_id, name)`` — imported ids are never
@@ -2589,13 +2623,25 @@ class ConnectionRepository:
                     local_id = record.id
                     existing_by_key[key] = local_id
                 except Exception as error:
-                    warnings.append(f"Could not restore group {name!r}: {error}")
+                    warnings.append(
+                        _restore_warning(
+                            SecretTransferMessageCode.GROUP_RESTORE_FAILED,
+                            parameters={"group": name},
+                            diagnostic=str(error),
+                        )
+                    )
                     return None
             elif mode == "replace":
                 try:
                     self._service.set_group_color(local_id, color)
                 except Exception as error:
-                    warnings.append(f"Could not update group {name!r}: {error}")
+                    warnings.append(
+                        _restore_warning(
+                            SecretTransferMessageCode.GROUP_UPDATE_FAILED,
+                            parameters={"group": name},
+                            diagnostic=str(error),
+                        )
+                    )
             id_map[imported_id] = local_id
             return local_id
 
@@ -2610,7 +2656,11 @@ class ConnectionRepository:
                         self._service.delete_group(group.id)
                     except Exception as error:
                         warnings.append(
-                            f"Could not remove group {group.id!r}: {error}"
+                            _restore_warning(
+                                SecretTransferMessageCode.GROUP_REMOVE_FAILED,
+                                parameters={"group": group.id},
+                                diagnostic=str(error),
+                            )
                         )
 
         # Apply the backup's sibling order (user-visible state that must
@@ -2636,7 +2686,13 @@ class ConnectionRepository:
                 try:
                     self._service.place_group(local_id, parent_id, index)
                 except Exception as error:
-                    warnings.append(f"Could not order group {local_id!r}: {error}")
+                    warnings.append(
+                        _restore_warning(
+                            SecretTransferMessageCode.GROUP_ORDER_FAILED,
+                            parameters={"group": local_id},
+                            diagnostic=str(error),
+                        )
+                    )
 
         return id_map
 
@@ -2648,7 +2704,7 @@ class ConnectionRepository:
         *,
         mode: str,
         imported_connection_ids: set,
-        warnings: List[str],
+        warnings: List[SecretTransferMessage],
     ) -> None:
         if mode == "replace":
             # Evict stale membership from groups the backup persists: a
@@ -2678,7 +2734,11 @@ class ConnectionRepository:
                         self._service.remove_connection_from_group(cid, local_group_id)
                     except Exception as error:
                         warnings.append(
-                            f"Could not remove stale membership for {cid!r}: {error}"
+                            _restore_warning(
+                                SecretTransferMessageCode.STALE_MEMBERSHIP_REMOVE_FAILED,
+                                parameters={"connection": cid},
+                                diagnostic=str(error),
+                            )
                         )
 
         for entry in imported_groups:
@@ -2691,7 +2751,10 @@ class ConnectionRepository:
             )
             for cid in set(requested) - set(member_ids):
                 warnings.append(
-                    f"Connection {cid!r} referenced by a restored group was not found"
+                    _restore_warning(
+                        SecretTransferMessageCode.RESTORED_GROUP_CONNECTION_MISSING,
+                        parameters={"connection": cid},
+                    )
                 )
             if member_ids:
                 self._service.move_connections(
@@ -2708,7 +2771,10 @@ class ConnectionRepository:
         )
         for cid in set(requested_root) - set(root_ids):
             warnings.append(
-                f"Root connection {cid!r} referenced by the backup was not found"
+                _restore_warning(
+                    SecretTransferMessageCode.BACKUP_ROOT_CONNECTION_MISSING,
+                    parameters={"connection": cid},
+                )
             )
         if mode == "merge":
             # Merge is non-destructive: a connection that already belongs to
@@ -2733,13 +2799,18 @@ class ConnectionRepository:
         imported_connection_ids: set,
         *,
         mode: str,
-        warnings: List[str],
+        warnings: List[SecretTransferMessage],
     ) -> None:
         seen: set = set()
         for entry in imported_metadata:
             cid = str(entry.get("connection_id"))
             if self._service.get(cid) is None:
-                warnings.append(f"Metadata for unknown connection {cid!r} was skipped")
+                warnings.append(
+                    _restore_warning(
+                        SecretTransferMessageCode.UNKNOWN_CONNECTION_METADATA_SKIPPED,
+                        parameters={"connection": cid},
+                    )
+                )
                 continue
             seen.add(cid)
             values = entry.get("values") or {}
@@ -2755,7 +2826,13 @@ class ConnectionRepository:
                 else:
                     self._metadata.pop(cid, None)
             except Exception as error:
-                warnings.append(f"Could not restore metadata for {cid!r}: {error}")
+                warnings.append(
+                    _restore_warning(
+                        SecretTransferMessageCode.METADATA_RESTORE_FAILED,
+                        parameters={"connection": cid},
+                        diagnostic=str(error),
+                    )
+                )
         if mode == "replace":
             for cid in imported_connection_ids - seen:
                 self._metadata.pop(cid, None)
@@ -2783,7 +2860,11 @@ class ConnectionRepository:
         version = section.get("version")
         if type(version) is not int or version > CONNECTION_STORE_SECTION_VERSION:
             return ConnectionStoreRestoreResult(
-                warnings=("connection_store section version is unsupported; skipped",)
+                warnings=(
+                    _restore_warning(
+                        SecretTransferMessageCode.CONNECTION_STORE_VERSION_UNSUPPORTED
+                    ),
+                )
             )
 
         imported_connections = list(section.get("connections") or [])
@@ -2791,7 +2872,7 @@ class ConnectionRepository:
         imported_root = list(section.get("root_connection_ids") or [])
         imported_metadata = list(section.get("metadata") or [])
 
-        warnings: List[str] = []
+        warnings: List[SecretTransferMessage] = []
         with self._mutation_scope():
             before = self._begin()
             try:
@@ -2820,7 +2901,11 @@ class ConnectionRepository:
                                 )
                             except CoreError as error:
                                 warnings.append(
-                                    f"Could not restore display name for {cid!r}: {error}"
+                                    _restore_warning(
+                                        SecretTransferMessageCode.DISPLAY_NAME_RESTORE_FAILED,
+                                        parameters={"connection": cid},
+                                        diagnostic=str(error),
+                                    )
                                 )
                         continue
                     self._restore_non_ssh_connection_locked(
@@ -2835,7 +2920,11 @@ class ConnectionRepository:
                                 self._non_ssh_generations.pop(record.id, None)
                             except Exception as error:
                                 warnings.append(
-                                    f"Could not remove connection {record.id!r}: {error}"
+                                    _restore_warning(
+                                        SecretTransferMessageCode.CONNECTION_REMOVE_FAILED,
+                                        parameters={"connection": record.id},
+                                        diagnostic=str(error),
+                                    )
                                 )
 
                 id_map = self._restore_groups_locked(

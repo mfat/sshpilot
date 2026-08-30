@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from gettext import gettext as _
+from gettext import gettext as _, ngettext
 from typing import List
 
 from gi.repository import Adw, GLib, Gtk
@@ -17,9 +17,26 @@ from .authorized_keys_parser import (
     parse_file,
 )
 from .authorized_keys_service import DaemonAuthorizedKeysService
+from .gtk.sftp_error_messages import format_direct_sftp_error
 from .shortcut_utils import install_esc_to_close
 
 logger = logging.getLogger(__name__)
+
+
+def _loaded_entries_text(count: int) -> str:
+    return ngettext(
+        "Loaded {count} entry",
+        "Loaded {count} entries",
+        count,
+    ).format(count=count)
+
+
+def _added_keys_text(count: int) -> str:
+    return ngettext(
+        "Added {count} key",
+        "Added {count} keys",
+        count,
+    ).format(count=count)
 
 
 # Restriction-related flag options the user can toggle from the dialog.
@@ -222,7 +239,11 @@ class AuthorizedKeysWindow(Adw.Window):
                 items = fut.result()
             except Exception as exc:
                 logger.error("Failed to load authorized_keys: %s", exc)
-                GLib.idle_add(self._toast, _("Failed to load: {error}").format(error=exc))
+                error = format_direct_sftp_error(exc)
+                GLib.idle_add(
+                    self._toast,
+                    _("Failed to load: {error}").format(error=error),
+                )
                 GLib.idle_add(self._set_status, _("Error loading authorized_keys"))
                 return
             GLib.idle_add(self._apply_loaded, items)
@@ -260,7 +281,7 @@ class AuthorizedKeysWindow(Adw.Window):
         self._refresh_list()
         entries = [it for it in items if isinstance(it, AuthorizedKeyEntry)]
         self._set_status(
-            _("Loaded {n} entries").format(n=len(entries))
+            _loaded_entries_text(len(entries))
             if entries
             else _("No keys yet — use “Add key” to install one.")
         )
@@ -282,7 +303,11 @@ class AuthorizedKeysWindow(Adw.Window):
                 fut.result()
             except Exception as exc:
                 logger.error("Failed to save authorized_keys: %s", exc)
-                GLib.idle_add(self._toast, _("Save failed: {error}").format(error=exc))
+                error = format_direct_sftp_error(exc)
+                GLib.idle_add(
+                    self._toast,
+                    _("Save failed: {error}").format(error=error),
+                )
                 GLib.idle_add(self._save_button.set_sensitive, True)
                 GLib.idle_add(self._set_status, _("Save failed"))
                 return
@@ -585,7 +610,7 @@ class AuthorizedKeysWindow(Adw.Window):
             return
         self._set_dirty(True)
         self._refresh_list()
-        self._toast(_("Added {n} key").format(n=added))
+        self._toast(_added_keys_text(added))
 
     # ------------------------------------------------------------------
     # Raw edit fallback
@@ -995,4 +1020,3 @@ class AuthorizedKeyEntryDialog(Adw.Window):
         if self._on_saved is not None:
             self._on_saved(entry)
         self.close()
-

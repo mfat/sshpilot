@@ -4,9 +4,20 @@ from __future__ import annotations
 
 import stat
 from datetime import datetime
+from gettext import ngettext
 from typing import Optional
 
 from ..api.models.operations import RemoteFileType
+
+
+def _item_count_text(count: int) -> str:
+    """Return a localized item count for a file-manager folder."""
+
+    return ngettext(
+        "{count} item",
+        "{count} items",
+        count,
+    ).format(count=count)
 
 
 def _type_char(mode: int, file_type: Optional[RemoteFileType]) -> str:

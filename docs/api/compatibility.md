@@ -56,12 +56,16 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.45`. Version 0.45 adds required
-structured secret-prompt metadata to password interactions. A 0.44 client
-rejects the new fields under the strict field-set policy, while a 0.45 client
-requires them, so mismatched implementations are rejected during handshake
-before ordinary requests. The daemon sends a stable prompt kind and validated
-parameters; only the frontend selects and translates the displayed text.
+`API_IMPLEMENTATION_VERSION` is currently `0.50`. Version 0.50 replaces native
+SCP transfer failures and public-key deployment operation failures with strict
+`ScpFailure` and `IdentityFailure` values. A 0.49 peer expects the generic
+`{code, message}` object in those fields, while a 0.50 peer requires the
+matching discriminated object, so mismatched implementations are rejected
+during handshake before ordinary requests. The generic `ServiceFailure`
+contract remains unchanged for authorized-key removal, forwards, broadcast,
+and every other non-selected consumer. Version 0.49 introduced strict
+`SftpFailure`; the 0.48 plugin editor, 0.47 backup/import, 0.46 secret-status,
+and 0.45 secret-prompt contracts remain unchanged.
 
 The earlier 0.40 compatibility boundary remains in force: clients never
 downgrade to plaintext secret transport or select a frontend secret backend.

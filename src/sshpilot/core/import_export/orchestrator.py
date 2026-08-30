@@ -97,12 +97,19 @@ class ImportResult:
 def migrate_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
     """Migrate older schemas forward. Unknown future schemas raise."""
     if not isinstance(data, Mapping):
-        raise CoreError(ErrorCode.IMPORT_ERROR, "Payload must be a mapping")
+        raise CoreError(
+            ErrorCode.IMPORT_ERROR,
+            "Payload must be a mapping",
+            details={"reason": "payload_not_mapping"},
+        )
     version = data.get("version", data.get("schema_version", CURRENT_SCHEMA_VERSION))
     try:
         version = int(version)
     except (TypeError, ValueError) as exc:
-        raise CoreError(ErrorCode.IMPORT_ERROR, f"Invalid schema version: {version}") from exc
+        raise CoreError(
+            ErrorCode.IMPORT_ERROR,
+            f"Invalid schema version: {version}",
+        ) from exc
     if version > CURRENT_SCHEMA_VERSION:
         raise CoreError(
             ErrorCode.IMPORT_ERROR,
@@ -110,7 +117,11 @@ def migrate_payload(data: Mapping[str, Any]) -> Dict[str, Any]:
             details={"version": version},
         )
     if version < 1:
-        raise CoreError(ErrorCode.IMPORT_ERROR, f"Unsupported schema version: {version}")
+        raise CoreError(
+            ErrorCode.IMPORT_ERROR,
+            f"Unsupported schema version: {version}",
+            details={"reason": "schema_version_unsupported", "version": str(version)},
+        )
     payload = dict(data)
     payload["version"] = CURRENT_SCHEMA_VERSION
     # v1 is current — no transform yet. Hook retained for future migrations.
@@ -146,7 +157,11 @@ def plan_import(
             ok=False,
             schema_version=int(payload.get("version") or 0) if isinstance(payload, Mapping) else 0,
             strategy=strategy,
-            errors=[FieldError(field="version", message=str(exc.message or exc))],
+            errors=[FieldError(
+                field="version",
+                message=str(exc.message or exc),
+                reason=str(exc.details.get("reason") or ""),
+            )],
         )
 
     report = validate_connection_export_payload(data)

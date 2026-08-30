@@ -29,6 +29,26 @@ _PICOCOM_FLOW = {"none": "n", "hard": "h", "soft": "x"}
 _PARITY = (("none", "None"), ("even", "Even"), ("odd", "Odd"))
 _PICOCOM_PARITY = {"none": "n", "even": "e", "odd": "o"}
 
+# ``screen`` takes the line parameters as a comma-separated stty-style list
+# appended to the baud argument (``screen /dev/ttyUSB0 9600,cs7,parenb``), so
+# the fallback is not limited to device+baud.  Per ``man screen``, an
+# unspecified parameter is left to "the terminal driver […] defaults or values
+# saved from a previous connection" — nondeterministic, and invisible to the
+# user — so every parameter is emitted explicitly, including the defaults.
+_SCREEN_DATABITS = {"8": "cs8", "7": "cs7"}
+_SCREEN_PARITY = {
+    "none": ("-parenb",),
+    "even": ("parenb", "-parodd"),
+    "odd": ("parenb", "parodd"),
+}
+_SCREEN_STOPBITS = {"1": ("-cstopb",), "2": ("cstopb",)}
+# Only software flow control has an stty flag here; ``crtscts`` appears in
+# screen's status display, not among the settable options.
+_SCREEN_FLOW = {
+    "none": ("-ixon", "-ixoff"),
+    "soft": ("ixon", "ixoff"),
+}
+
 
 class SerialProtocolBackend(ProtocolBackend):
     protocol_id = "serial"
@@ -96,8 +116,33 @@ class SerialProtocolBackend(ProtocolBackend):
 
         screen = resolve_host_binary("screen")
         if screen:
-            # screen handles only the basic device+baud form.
-            return SpawnSpec(argv=[*screen, device, baud], env=dict(os.environ))
+            databits = str(data.get("databits") or "8")
+            parity = str(data.get("parity") or "none")
+            stopbits = str(data.get("stopbits") or "1")
+            # Refuse rather than drop: a serial line is not negotiated, so a
+            # parameter that silently fails to apply misframes every byte with
+            # nothing in the UI to explain it.
+            unsupported = []
+            if flow == "hard":
+                unsupported.append("hardware (RTS/CTS) flow control")
+            if databits not in _SCREEN_DATABITS:
+                unsupported.append(f"{databits} data bits")
+            if unsupported:
+                raise ProtocolError(
+                    "Only 'screen' is available, which cannot set "
+                    + " or ".join(unsupported)
+                    + ". Install 'picocom' to use this connection.")
+            settings = [
+                baud,
+                _SCREEN_DATABITS[databits],
+                *_SCREEN_PARITY.get(parity, _SCREEN_PARITY["none"]),
+                *_SCREEN_STOPBITS.get(stopbits, _SCREEN_STOPBITS["1"]),
+                *_SCREEN_FLOW.get(flow, _SCREEN_FLOW["none"]),
+            ]
+            return SpawnSpec(
+                argv=[*screen, device, ",".join(settings)],
+                env=dict(os.environ),
+            )
 
         raise ProtocolError(
             "Neither 'picocom' nor 'screen' is installed. Install one to use "

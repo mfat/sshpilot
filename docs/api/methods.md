@@ -1246,7 +1246,8 @@ Daemon-only lookup by opaque `transfer-<n>` identifier.
 
 - **Status / introduced:** Daemon only / Protocol v1 additive extension
 - **Capability / purpose:** `transfers.scp`; start one daemon-owned native OpenSSH SCP upload or download.
-- **Parameters / return:** `StartScpTransferRequest`; returns the shared `TransferSummary` lifecycle DTO.
+- **Parameters / return:** `StartScpTransferRequest`; returns the shared
+  `TransferSummary` lifecycle DTO, with `ScpFailure` on terminal failure.
 - **Errors:** `unsupported_capability`, `invalid_request`, `server_busy`, typed transfer failure, or transport errors.
 - **Behavior:** native SCP is overwrite-only; `fail`, `skip`, and `rename` conflict policies are rejected. GTK observes daemon transfer state through terminal completion.
 - **Security:** sources and destination are bounded typed paths; argv, environment, passwords, passphrases, askpass data, and process handles never cross the API.
@@ -1762,7 +1763,8 @@ finally:
   separate identity phase review.
 - **Capability / purpose:** `identity.operate`; supervise native `ssh-copy-id`
   deployment and return an operation summary.
-- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`.
+- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`, with
+  `IdentityFailure` on terminal failure.
 
 <!-- api-method: list_authorized_keys -->
 ## `list_authorized_keys`
@@ -2059,7 +2061,7 @@ status = client.bitwarden_unlock()
   inside the daemon.
 - **Parameters / return:** Keyword-only `destination: str`, optional
   `connection_ids`, `options`, and `mirror_logins`; returns
-  `SecretTransferResult` with counts and warnings only.
+  `SecretTransferResult` with counts and structured presentation messages.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the
   destination is encrypted.
@@ -2135,7 +2137,7 @@ state = client.get_secret_state()
 - **Capability / purpose:** `secrets.transfer`; import a secret backup entirely
   inside the daemon.
 - **Parameters / return:** Keyword-only `source: str`, optional `options`; returns
-  `SecretTransferResult` with counts and warnings only.
+  `SecretTransferResult` with counts and structured presentation messages.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the source is
   encrypted.
@@ -2328,8 +2330,9 @@ state = client.update_secret_selection(backend="bitwarden")
   installed / Protocol v1
 - **Capability / purpose:** `secrets.transfer`; inspect a backup file's kind,
   encryption flag and included categories without exposing its contents.
-- **Parameters / return:** Keyword-only `source: str`; returns a metadata dict
-  (`kind`, `encrypted`, `included`) — never manifest contents.
+- **Parameters / return:** Keyword-only `source: str`; returns a strict
+  `SecretTransferPreview` (`kind`, `encrypted`, `included`, optional structured
+  `error`) — never manifest contents.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed. `INTERACTION_REQUIRED` / `INTERACTION_CANCELLED` when the archive
   is encrypted.
@@ -2370,7 +2373,8 @@ entries = client.list_bitwarden_backups()
 - **Capability / purpose:** `secrets.transfer`; restore one Bitwarden backup
   note entirely inside the daemon.
 - **Parameters / return:** Keyword-only `entry_id: str`, optional `options`;
-  returns `SecretTransferResult` with counts and warnings only.
+  returns `SecretTransferResult` with counts and structured presentation
+  messages.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed.
 - **Cancellation / ordering:** Mutations serialized per daemon.
@@ -2389,8 +2393,8 @@ result = client.import_bitwarden_backup(entry_id="abc123")
   installed / Protocol v1
 - **Capability / purpose:** `secrets.transfer`; inspect one Bitwarden backup
   note's included categories (metadata only).
-- **Parameters / return:** Keyword-only `entry_id: str`; returns a metadata
-  dict (`kind`, `included`) — never manifest contents.
+- **Parameters / return:** Keyword-only `entry_id: str`; returns a strict
+  `SecretTransferPreview` — never manifest contents.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed.
 - **Cancellation / ordering:** Reads serialized per daemon.
@@ -2431,7 +2435,7 @@ entries = client.list_ssh_backups(connection_id="srv", remote_dir="~/sshpilot-ba
   SSH-stored backup entirely inside the daemon.
 - **Parameters / return:** Keyword-only `connection_id: str`,
   `remote_dir: str`, `entry_id: str`, optional `options`; returns
-  `SecretTransferResult` with counts and warnings only.
+  `SecretTransferResult` with counts and structured presentation messages.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed.
 - **Cancellation / ordering:** Mutations serialized per daemon.
@@ -2452,8 +2456,8 @@ result = client.import_ssh_backup(
 - **Capability / purpose:** `secrets.transfer`; inspect one SSH-stored
   backup's included categories (metadata only).
 - **Parameters / return:** Keyword-only `connection_id: str`,
-  `remote_dir: str`, `entry_id: str`; returns a metadata dict (`kind`,
-  `included`) — never manifest contents.
+  `remote_dir: str`, `entry_id: str`; returns a strict
+  `SecretTransferPreview` — never manifest contents.
 - **Errors / events:** `UNSUPPORTED_CAPABILITY` when the service is not
   installed.
 - **Cancellation / ordering:** Reads serialized per daemon.

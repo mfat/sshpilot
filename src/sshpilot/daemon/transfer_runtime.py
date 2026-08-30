@@ -22,7 +22,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import (
@@ -33,7 +33,12 @@ from sshpilot.api.events import (
     Subscription,
 )
 from sshpilot.api.models.common import ClientId, ConnectionId, SftpServiceId, TransferId, utc_now
-from sshpilot.api.models.operations import ServiceFailure
+from sshpilot.api.models.operations import (
+    ScpFailure,
+    ScpFailureCode,
+    SftpFailure,
+    SftpFailureCode,
+)
 from sshpilot.api.models.transfers import (
     CancelTransferRequest,
     StartScpTransferRequest,
@@ -75,6 +80,100 @@ class _TransferCancelled(Exception):
 
 class _TransferSkipped(Exception):
     """Raised when a conflict policy of SKIP means no bytes should be copied."""
+
+
+class _SftpTransferError(Exception):
+    """Carry a structured SFTP transfer failure to the lifecycle worker."""
+
+    def __init__(self, failure: SftpFailure) -> None:
+        super().__init__(failure.code.value)
+        self.failure = failure
+
+
+class _ScpTransferError(Exception):
+    """Carry a structured native SCP failure to the lifecycle worker."""
+
+    def __init__(self, failure: ScpFailure) -> None:
+        super().__init__(failure.code.value)
+        self.failure = failure
+
+
+def _sftp_transfer_error(
+    code: SftpFailureCode,
+    error_code: ErrorCode,
+    *,
+    parameters: Optional[Dict[str, str]] = None,
+    diagnostic: str = "",
+) -> _SftpTransferError:
+    return _SftpTransferError(
+        SftpFailure(
+            code=code,
+            error_code=error_code,
+            parameters=parameters or {},
+            diagnostic=diagnostic,
+        )
+    )
+
+
+def _sftp_service_failure(error: SshPilotError) -> SftpFailure:
+    code = {
+        ErrorCode.SERVER_BUSY: SftpFailureCode.TRANSFER_QUEUE_FULL,
+        ErrorCode.SFTP_PROTOCOL_LOST: SftpFailureCode.CONNECTION_LOST,
+        ErrorCode.SFTP_SERVICE_NOT_FOUND: SftpFailureCode.SERVICE_NOT_FOUND,
+        ErrorCode.SFTP_SERVICE_NOT_READY: SftpFailureCode.SERVICE_NOT_READY,
+        ErrorCode.SERVICE_OWNER_REQUIRED: SftpFailureCode.SERVICE_OWNER_REQUIRED,
+    }.get(error.code, SftpFailureCode.TRANSFER_START_FAILED)
+    return SftpFailure(code=code, error_code=error.code)
+
+
+def _scp_start_failure(error: BaseException) -> ScpFailure:
+    if isinstance(error, SshPilotError):
+        code = {
+            ErrorCode.SERVER_BUSY: ScpFailureCode.COMMAND_QUEUE_FULL,
+            ErrorCode.UNSUPPORTED_CAPABILITY: ScpFailureCode.UNAVAILABLE,
+            ErrorCode.DAEMON_SHUTTING_DOWN: ScpFailureCode.DAEMON_SHUTTING_DOWN,
+        }.get(error.code, ScpFailureCode.TRANSFER_START_FAILED)
+        error_code = error.code
+    else:
+        code = ScpFailureCode.TRANSFER_START_FAILED
+        error_code = ErrorCode.TRANSFER_IO_FAILED
+    return ScpFailure(code=code, error_code=error_code)
+
+
+def _scp_runtime_failure(error: SshPilotError, *, phase: str) -> ScpFailure:
+    details = error.details
+    detail_code = details.get("scp_failure_code")
+    try:
+        code = ScpFailureCode(detail_code)
+    except (TypeError, ValueError):
+        if phase == "target":
+            code = {
+                ErrorCode.CONNECTION_NOT_FOUND: ScpFailureCode.CONNECTION_NOT_FOUND,
+                ErrorCode.VALIDATION_FAILED: ScpFailureCode.HOST_IDENTIFIER_MISSING,
+            }.get(error.code, ScpFailureCode.TARGET_PREPARATION_FAILED)
+        else:
+            code = {
+                ErrorCode.CONNECTION_NOT_FOUND: ScpFailureCode.CONNECTION_NOT_FOUND,
+                ErrorCode.UNSUPPORTED_SESSION_PROTOCOL: (
+                    ScpFailureCode.SSH_CONNECTION_REQUIRED
+                ),
+                ErrorCode.VALIDATION_FAILED: ScpFailureCode.HOST_IDENTIFIER_MISSING,
+                ErrorCode.UNSUPPORTED_CAPABILITY: ScpFailureCode.UNAVAILABLE,
+                ErrorCode.SESSION_STARTUP_FAILED: (
+                    ScpFailureCode.TRANSFER_PREPARATION_FAILED
+                ),
+                ErrorCode.INVALID_REQUEST: (
+                    ScpFailureCode.TRANSFER_PREPARATION_FAILED
+                ),
+            }.get(error.code, ScpFailureCode.TRANSFER_FAILED)
+    diagnostic = details.get("diagnostic", "")
+    if type(diagnostic) is not str:
+        diagnostic = ""
+    return ScpFailure(
+        code=code,
+        error_code=error.code,
+        diagnostic=diagnostic.replace("\x00", ""),
+    )
 
 
 _ALLOWED_TRANSITIONS = {
@@ -134,7 +233,7 @@ class _TransferRecord:
     completed_at: Optional[datetime] = None
     bytes_total: Optional[int] = None
     bytes_completed: int = 0
-    failure: Optional[ServiceFailure] = None
+    failure: Optional[Union[ScpFailure, SftpFailure]] = None
     cancel_requested: bool = False
     local_temp_path: Optional[str] = None
     remote_temp_path: Optional[str] = None
@@ -425,13 +524,24 @@ class TransferRuntime:
         )
 
     def fail_pending_start(self, transfer_id: TransferId, error: BaseException) -> None:
-        if isinstance(error, SshPilotError):
-            code, message = error.code, error.message
-        else:
-            code, message = ErrorCode.TRANSFER_IO_FAILED, "The transfer could not be started"
         record = self._records.get(transfer_id)
-        if record is not None:
-            self._fail(record, code, message)
+        if record is None:
+            return
+        if record.backend is TransferBackend.SFTP:
+            failure = (
+                _sftp_service_failure(error)
+                if isinstance(error, SshPilotError)
+                else SftpFailure(
+                    code=SftpFailureCode.TRANSFER_START_FAILED,
+                    error_code=ErrorCode.TRANSFER_IO_FAILED,
+                )
+            )
+            self._fail_sftp(record, failure)
+            return
+        self._fail_scp(
+            record,
+            _scp_start_failure(error),
+        )
 
     def _admit_record_locked(self, record: _TransferRecord) -> None:
         from sshpilot.core.transfers import TransferQueuePolicy
@@ -476,7 +586,7 @@ class TransferRuntime:
                     record.sftp_service_id, record.owner_client_id
                 )
             except SshPilotError as error:
-                self._fail(record, error.code, error.message)
+                self._fail_sftp(record, _sftp_service_failure(error))
                 return
         try:
             if record.backend is TransferBackend.NATIVE_SCP:
@@ -494,11 +604,23 @@ class TransferRuntime:
             self._finish_completed(record)
         except _TransferCancelled:
             self._finish_cancelled(record)
+        except _SftpTransferError as error:
+            self._fail_sftp(record, error.failure)
+        except _ScpTransferError as error:
+            self._fail_scp(record, error.failure)
         except SshPilotError as error:
             if error.code is ErrorCode.OPERATION_CANCELLED:
                 self._finish_cancelled(record)
+            elif record.backend is TransferBackend.SFTP:
+                self._fail_sftp(record, _sftp_service_failure(error))
             else:
-                self._fail(record, error.code, error.message)
+                self._fail_scp(
+                    record,
+                    ScpFailure(
+                        code=ScpFailureCode.TRANSFER_FAILED,
+                        error_code=error.code,
+                    ),
+                )
         except Exception:
             with log_context(
                 transfer=transfer_id,
@@ -506,7 +628,22 @@ class TransferRuntime:
                 sftp_service=record.sftp_service_id,
             ):
                 logger.exception("transfer failed")
-            self._fail(record, ErrorCode.TRANSFER_IO_FAILED, "The transfer failed")
+            if record.backend is TransferBackend.SFTP:
+                self._fail_sftp(
+                    record,
+                    SftpFailure(
+                        code=SftpFailureCode.TRANSFER_FAILED,
+                        error_code=ErrorCode.TRANSFER_IO_FAILED,
+                    ),
+                )
+            else:
+                self._fail_scp(
+                    record,
+                    ScpFailure(
+                        code=ScpFailureCode.UNEXPECTED_FAILURE,
+                        error_code=ErrorCode.INTERNAL_ERROR,
+                    ),
+                )
         else:
             self._finish_completed(record)
         finally:
@@ -530,18 +667,32 @@ class TransferRuntime:
 
     def _run_scp(self, record: _TransferRecord) -> None:
         if self._scp_backend is None or record.scp_request is None:
-            raise SshPilotError(
-                ErrorCode.UNSUPPORTED_CAPABILITY,
-                "Native SCP transfers are unavailable",
+            raise _ScpTransferError(
+                ScpFailure(
+                    code=ScpFailureCode.UNAVAILABLE,
+                    error_code=ErrorCode.UNSUPPORTED_CAPABILITY,
+                )
             )
-        target = self._scp_backend.target_for_connection(record.connection_id)
-        self._scp_backend.run(
-            record.scp_request,
-            connection_target=target,
-            connection_id=record.connection_id,
-            transfer_id=record.transfer_id,
-            cancel_event=record.scp_cancel_event,
-        )
+        try:
+            target = self._scp_backend.target_for_connection(record.connection_id)
+        except SshPilotError as error:
+            raise _ScpTransferError(
+                _scp_runtime_failure(error, phase="target")
+            ) from error
+        try:
+            self._scp_backend.run(
+                record.scp_request,
+                connection_target=target,
+                connection_id=record.connection_id,
+                transfer_id=record.transfer_id,
+                cancel_event=record.scp_cancel_event,
+            )
+        except SshPilotError as error:
+            if error.code is ErrorCode.OPERATION_CANCELLED:
+                raise
+            raise _ScpTransferError(
+                _scp_runtime_failure(error, phase="transfer")
+            ) from error
         with self._lock:
             record.bytes_completed = record.bytes_total or 0
 
@@ -554,9 +705,9 @@ class TransferRuntime:
     def _run_upload(self, record: _TransferRecord, client) -> None:
         local_path = record.local_path
         if not os.path.isfile(local_path):
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.LOCAL_SOURCE_FILE_NOT_FOUND,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "The local source file was not found",
             )
         with self._lock:
             record.bytes_total = os.path.getsize(local_path)
@@ -580,19 +731,19 @@ class TransferRuntime:
         try:
             local_info = os.lstat(local_root)
         except OSError:
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.LOCAL_SOURCE_DIRECTORY_NOT_FOUND,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "The local source directory was not found",
             ) from None
         if stat.S_ISLNK(local_info.st_mode):
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.RECURSIVE_UPLOAD_SYMLINK_UNSUPPORTED,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "Recursive upload requires a real directory path, not a symbolic link",
             )
         if not stat.S_ISDIR(local_info.st_mode):
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.LOCAL_SOURCE_NOT_DIRECTORY,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "The local source is not a directory",
             )
         remote_root = record.remote_path
         self._check_cancel(record)
@@ -649,27 +800,27 @@ class TransferRuntime:
         try:
             source_attr = client.lstat(remote_root)
         except Exception as exc:
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.REMOTE_SOURCE_DIRECTORY_UNREADABLE,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "The remote source directory could not be read",
             ) from exc
         if source_attr.is_symlink():
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.RECURSIVE_DOWNLOAD_SYMLINK_UNSUPPORTED,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "Recursive download requires a real directory path, not a symbolic link",
             )
         if not source_attr.is_dir():
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.REMOTE_SOURCE_NOT_DIRECTORY,
                 ErrorCode.TRANSFER_IO_FAILED,
-                "The remote source is not a directory",
             )
         self._check_cancel(record)
         try:
             os.makedirs(local_root, exist_ok=True)
         except OSError as exc:
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.LOCAL_DESTINATION_DIRECTORY_CREATION_FAILED,
                 ErrorCode.TRANSFER_CONFLICT,
-                "The local destination could not be created as a directory",
             ) from exc
 
         files: List[tuple] = []
@@ -727,9 +878,10 @@ class TransferRuntime:
         try:
             attr = client.stat(remote_dir)
             if not attr.is_dir():
-                raise SshPilotError(
+                raise _sftp_transfer_error(
+                    SftpFailureCode.REMOTE_FILE_BLOCKS_DIRECTORY,
                     ErrorCode.TRANSFER_CONFLICT,
-                    f"A remote file is in the way of a directory: {remote_dir}",
+                    parameters={"remote_dir": remote_dir},
                 )
             return
         except sftp_proto.SFTPError as exc:
@@ -742,9 +894,10 @@ class TransferRuntime:
         try:
             client.mkdir(remote_dir)
         except Exception as exc:
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.REMOTE_DIRECTORY_CREATION_FAILED,
                 ErrorCode.TRANSFER_IO_FAILED,
-                f"The remote directory could not be created: {remote_dir}",
+                parameters={"remote_dir": remote_dir},
             ) from exc
 
     # -- per-file copy (atomic temp + rename) -------------------------------
@@ -842,9 +995,10 @@ class TransferRuntime:
         if decision is ConflictDecision.PROCEED:
             return path
         if decision is ConflictDecision.FAIL:
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.LOCAL_DESTINATION_EXISTS,
                 ErrorCode.TRANSFER_CONFLICT,
-                f"The local destination already exists: {path}",
+                parameters={"path": path},
             )
         if decision is ConflictDecision.SKIP:
             raise _TransferSkipped()
@@ -854,9 +1008,9 @@ class TransferRuntime:
                 candidate = f"{base} ({index}){ext}"
                 if not os.path.exists(candidate):
                     return candidate
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.NO_FREE_LOCAL_FILENAME,
                 ErrorCode.TRANSFER_CONFLICT,
-                "No free local filename could be found",
             )
         raise AssertionError("unhandled transfer conflict policy")
 
@@ -880,9 +1034,10 @@ class TransferRuntime:
         if decision is ConflictDecision.PROCEED:
             return path
         if decision is ConflictDecision.FAIL:
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.REMOTE_DESTINATION_EXISTS,
                 ErrorCode.TRANSFER_CONFLICT,
-                f"The remote destination already exists: {path}",
+                parameters={"path": path},
             )
         if decision is ConflictDecision.SKIP:
             raise _TransferSkipped()
@@ -895,9 +1050,9 @@ class TransferRuntime:
                     client.stat(candidate)
                 except Exception:
                     return candidate
-            raise SshPilotError(
+            raise _sftp_transfer_error(
+                SftpFailureCode.NO_FREE_REMOTE_FILENAME,
                 ErrorCode.TRANSFER_CONFLICT,
-                "No free remote filename could be found",
             )
         raise AssertionError("unhandled transfer conflict policy")
 
@@ -993,16 +1148,24 @@ class TransferRuntime:
             events.append(self._transition_locked(record, TransferState.CANCELLED))
         self._publish(events)
 
-    def _fail(self, record: _TransferRecord, code, message: str) -> None:
+    def _fail_scp(self, record: _TransferRecord, failure: ScpFailure) -> None:
         self._cleanup_local_temp(record)
         self._cleanup_remote_temp(record)
         with self._lock:
             if record.state in _TERMINAL_STATES:
                 return
-            record.failure = ServiceFailure(
-                code=code.value if isinstance(code, ErrorCode) else str(code),
-                message=message,
-            )
+            record.failure = failure
+            record.completed_at = self._clock()
+            event = self._transition_locked(record, TransferState.FAILED)
+        self._publish((event,))
+
+    def _fail_sftp(self, record: _TransferRecord, failure: SftpFailure) -> None:
+        self._cleanup_local_temp(record)
+        self._cleanup_remote_temp(record)
+        with self._lock:
+            if record.state in _TERMINAL_STATES:
+                return
+            record.failure = failure
             record.completed_at = self._clock()
             event = self._transition_locked(record, TransferState.FAILED)
         self._publish((event,))
@@ -1062,11 +1225,22 @@ class TransferRuntime:
                 if record.state not in _TERMINAL_STATES
             ]
         for record in stuck:
-            self._fail(
-                record,
-                ErrorCode.DAEMON_SHUTTING_DOWN,
-                "The daemon is shutting down",
-            )
+            if record.backend is TransferBackend.SFTP:
+                self._fail_sftp(
+                    record,
+                    SftpFailure(
+                        code=SftpFailureCode.DAEMON_SHUTTING_DOWN,
+                        error_code=ErrorCode.DAEMON_SHUTTING_DOWN,
+                    ),
+                )
+            else:
+                self._fail_scp(
+                    record,
+                    ScpFailure(
+                        code=ScpFailureCode.DAEMON_SHUTTING_DOWN,
+                        error_code=ErrorCode.DAEMON_SHUTTING_DOWN,
+                    ),
+                )
         with self._lock:
             self._closed = True
         self._publisher.close()

@@ -38,7 +38,15 @@ logger = logging.getLogger(__name__)
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
 from .core.connection_evidence import classify_connection_evidence
-from .terminal_input import MouseTrackingState, commit_payload_to_bytes
+from .terminal_input import (
+    MouseTrackingState,
+    commit_payload_to_bytes,
+    sgr_reports_to_legacy,
+)
+from .terminal_display_pause import (
+    DeferredDisplayFeed,
+    SelectionFeedPauseController,
+)
 
 
 # Installed once per process. Inner padding for the terminal text so the
@@ -89,6 +97,58 @@ def _link_click_is_handled(
 ) -> bool:
     """Whether a click qualifies for SSH Pilot's link-opening action."""
     return n_press == 1 and active and modifier_held and bool(uri)
+
+
+def clipboard_debug_state(widget) -> str:
+    """Return a privacy-safe snapshot of terminal clipboard/selection state.
+
+    Used to diagnose silent copy failures (issue #1178). Never includes
+    selected or clipboard text — only flags, backend identity, and mouse
+    tracking modes that explain why a selection may not stick.
+    """
+    backend = getattr(widget, "backend", None)
+    backend_name = getattr(widget, "_backend_name", None)
+    if not backend_name:
+        backend_name = type(backend).__name__ if backend is not None else "none"
+    has_selection = False
+    getter = getattr(backend, "get_has_selection", None)
+    if callable(getter):
+        try:
+            has_selection = bool(getter())
+        except Exception:
+            has_selection = False
+    tracker = getattr(widget, "_mouse_tracking", None)
+    mouse_tracking = bool(getattr(tracker, "active", False))
+    modes = getattr(tracker, "modes", ()) or ()
+    pass_through = bool(getattr(widget, "_pass_through_mode", False))
+    return (
+        f"backend={backend_name} has_selection={has_selection} "
+        f"pass_through={pass_through} mouse_tracking={mouse_tracking} "
+        f"mouse_modes={list(modes)}"
+    )
+
+
+def empty_copy_message(widget) -> str:
+    """Explain a copy that found nothing, in terms of what the terminal is doing.
+
+    While a remote application holds mouse tracking (tmux with mouse on, vim,
+    htop, full-screen CLIs) a plain drag belongs to that application and never
+    becomes a local selection, so every copy legitimately finds an empty
+    selection. Reporting nothing at all is what made issue #1178 read as "all
+    clipboard copy methods stopped working". Shift is the documented override
+    in both backends (VTE checks the Shift mask, xterm.js checks
+    ``shouldForceSelection``), so name it.
+
+    A module-level helper, like ``clipboard_debug_state`` above: the copy
+    completion paths are reached with lightweight stand-ins in tests.
+    """
+    tracker = getattr(widget, "_mouse_tracking", None)
+    if tracker is not None and getattr(tracker, "active", False):
+        return _(
+            "Nothing selected — the remote app is using the mouse; "
+            "hold Shift while dragging to select text"
+        )
+    return _("Nothing selected to copy")
 
 
 def sanitize_local_shell_env(env):
@@ -227,6 +287,10 @@ class TerminalWidget(Gtk.Box):
         self._daemon_commit_handler = None
         self._daemon_size_handler = None
         self._mouse_tracking = MouseTrackingState()
+        # PTY-less VTE cannot disconnect_pty_read() during drag-select the way
+        # Ptyxis does; buffer daemon output instead (see DeferredDisplayFeed).
+        self._display_feed_pause = DeferredDisplayFeed()
+        self._selection_feed_observer = None
         self._daemon_exit_handled = False
         self._view_only_overlay = None
         self._reconnect_handler = None
@@ -1260,12 +1324,18 @@ class TerminalWidget(Gtk.Box):
 
     def _uninstall_daemon_backend_io(self) -> None:
         """Drop previously installed daemon commit/size handlers (idempotent)."""
+        self._uninstall_selection_feed_pause()
         backend = getattr(self, 'backend', None)
         if backend is None:
             self._daemon_commit_handler = None
             self._daemon_size_handler = None
             tracker = getattr(self, "_mouse_tracking", None)
             if tracker is not None:
+                if tracker.active:
+                    logger.debug(
+                        "Terminal mouse tracking reset previously_active=True modes=%s",
+                        list(tracker.modes),
+                    )
                 tracker.reset()
             return
         for attr in ('_daemon_commit_handler', '_daemon_size_handler'):
@@ -1279,6 +1349,11 @@ class TerminalWidget(Gtk.Box):
             setattr(self, attr, None)
         tracker = getattr(self, "_mouse_tracking", None)
         if tracker is not None:
+            if tracker.active:
+                logger.debug(
+                    "Terminal mouse tracking reset previously_active=True modes=%s",
+                    list(tracker.modes),
+                )
             tracker.reset()
 
     def _install_daemon_backend_io(self) -> None:
@@ -1318,16 +1393,134 @@ class TerminalWidget(Gtk.Box):
         except Exception:
             self._daemon_size_handler = None
             logger.debug("Failed to connect daemon size handler", exc_info=True)
+        self._install_selection_feed_pause()
+
+    def _install_selection_feed_pause(self) -> None:
+        """Observe primary presses that VTE would turn into a local selection.
+
+        Only for PTY-less VTE: with a real PTY, VTE already disconnects its
+        reader during drag-select. The observer never claims the sequence,
+        so VTE's own drag-select and its mouse reports are untouched.
+        """
+        self._uninstall_selection_feed_pause()
+        if not self._needs_legacy_mouse_translation():
+            return
+        backend = getattr(self, "backend", None)
+        widget = getattr(backend, "widget", None) if backend is not None else None
+        if widget is None:
+            return
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is None:
+            return
+        observer = SelectionFeedPauseController(
+            pause,
+            mouse_tracking_active=self._selection_pause_mouse_tracking,
+            flush=self._resume_selection_display_feed,
+        )
+        try:
+            if observer.install(widget):
+                self._selection_feed_observer = observer
+        except Exception:
+            self._selection_feed_observer = None
+            logger.debug(
+                "Failed to install selection feed-pause observer",
+                exc_info=True,
+            )
+
+    def _selection_pause_mouse_tracking(self) -> bool:
+        tracker = getattr(self, "_mouse_tracking", None)
+        return bool(tracker is not None and tracker.active)
+
+    def _uninstall_selection_feed_pause(self) -> None:
+        observer = getattr(self, "_selection_feed_observer", None)
+        pause = getattr(self, "_display_feed_pause", None)
+        if observer is not None:
+            try:
+                observer.uninstall()
+            except Exception:
+                logger.debug(
+                    "Failed to remove selection feed-pause observer",
+                    exc_info=True,
+                )
+            self._selection_feed_observer = None
+        if pause is not None and pause.paused:
+            # Flush deferred bytes before dropping the observer so a detach
+            # mid-drag does not permanently drop remote output.
+            if getattr(self, "backend", None) is not None:
+                self._resume_selection_display_feed()
+            else:
+                pause.reset()
+        if pause is not None:
+            pause.reset()
+
+    def _resume_selection_display_feed(self) -> None:
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is None:
+            return
+        was_paused = pause.paused
+        buffered = pause.buffered_length
+        deferred = pause.end()
+        if was_paused and buffered:
+            logger.debug(
+                "Terminal display feed resumed flushing_bytes=%s",
+                buffered,
+            )
+        if deferred:
+            self._paint_display(deferred)
 
     def _feed_display(self, data: bytes) -> None:
         """Paint bytes on the active terminal display via the backend abstraction."""
+        pause = getattr(self, "_display_feed_pause", None)
+        if pause is not None:
+            accepted = pause.accept(data)
+            if accepted is None:
+                return
+            data = accepted
+        self._paint_display(data)
+
+    def _paint_display(self, data: bytes) -> None:
+        """Apply display bytes to the tracker + backend (never buffers)."""
         backend = getattr(self, 'backend', None)
         if backend is None:
             raise RuntimeError("No terminal backend to feed display output")
         tracker = getattr(self, "_mouse_tracking", None)
         if tracker is not None:
+            before = tracker.modes
             tracker.feed(data)
+            after = tracker.modes
+            if before != after:
+                logger.debug(
+                    "Terminal mouse tracking changed active=%s modes=%s",
+                    bool(after),
+                    list(after),
+                )
         backend.feed(data)
+        if tracker is not None and self._needs_legacy_mouse_translation():
+            # Settles on top of whatever the remote just set, so the emulator
+            # ends up in SGR whenever the remote asked for a legacy mode.
+            local_modes = tracker.take_local_mode_feed()
+            if local_modes:
+                logger.debug(
+                    "Driving emulator mouse protocol locally: %r", local_modes
+                )
+                backend.feed(local_modes)
+
+    def _needs_legacy_mouse_translation(self) -> bool:
+        """Whether this backend silently drops the emulator's legacy reports.
+
+        VTE's legacy ESC[M encoder bails before emitting ``commit`` when the
+        widget has no PTY, which is exactly the daemon-backed case (GH #1212).
+        A locally spawned VTE owns a PTY and needs none of this, and PyXterm
+        hands us its reports either way.
+        """
+        vte = getattr(getattr(self, 'backend', None), 'vte', None)
+        if vte is None:
+            return False
+        try:
+            return vte.get_pty() is None
+        except Exception:
+            logger.debug("Failed to read backend PTY state", exc_info=True)
+            return False
 
     def _on_daemon_output(self, data):
         """Handle daemon terminal output."""
@@ -1456,6 +1649,13 @@ class TerminalWidget(Gtk.Box):
 
         try:
             data = commit_payload_to_bytes(text, size)
+            tracker = getattr(self, "_mouse_tracking", None)
+            if tracker is not None and tracker.translating_legacy:
+                # The emulator is in SGR only because we put it there; the
+                # remote asked for the legacy encoding and must get it.
+                data = sgr_reports_to_legacy(data)
+                if not data:
+                    return
             self._daemon_controller.send_input(data)
         except Exception as e:
             logger.error(f"Failed to send input to daemon: {e}")
@@ -3572,8 +3772,16 @@ class TerminalWidget(Gtk.Box):
                     return True
 
                 def _cb_copy(widget, *args):
+                    logger.debug(
+                        "Terminal copy shortcut fired %s",
+                        clipboard_debug_state(self),
+                    )
                     if self.backend:
                         return _schedule_vte_action(self.copy_text)
+                    logger.debug(
+                        "Terminal copy shortcut ignored: no backend %s",
+                        clipboard_debug_state(self),
+                    )
                     return False
 
                 def _cb_paste(widget, *args):
@@ -3793,6 +4001,11 @@ class TerminalWidget(Gtk.Box):
             return False
 
         self._pass_through_mode = enabled
+        logger.debug(
+            "Terminal pass-through mode %s %s",
+            "enabled" if enabled else "disabled",
+            clipboard_debug_state(self),
+        )
         if enabled:
             self._remove_custom_shortcut_controllers()
         else:
@@ -4453,30 +4666,84 @@ class TerminalWidget(Gtk.Box):
 
     def _on_selection_changed(self, *_args):
         """Copy-on-select: mirror the terminal selection into the clipboard when
-        the preference is enabled. Silent (no toast — the signal fires on every
-        change during a drag-select), and only when a selection actually exists
-        (the signal also fires on deselect)."""
+        the preference is enabled. Silent (no toast), and only when a selection
+        actually exists (the signal also fires on deselect).
+
+        Only settled, user-driven selections are copied: the backend reports
+        search-driven selections and the intermediate states of a drag through
+        ``selection_change_is_copyable`` so stepping through search hits does
+        not overwrite the clipboard with every match."""
+        has_selection = False
         try:
-            if not self.config.get_setting('terminal.copy_on_select', False):
+            has_selection = bool(self.backend and self.backend.get_has_selection())
+        except Exception:
+            has_selection = False
+        previous = getattr(self, "_logged_has_selection", None)
+        if previous is not has_selection:
+            self._logged_has_selection = has_selection
+            logger.debug(
+                "Terminal selection changed %s",
+                clipboard_debug_state(self),
+            )
+        try:
+            copy_on_select = bool(
+                self.config.get_setting('terminal.copy_on_select', False)
+            )
+            if not copy_on_select:
                 return
-            if self.backend and self.backend.get_has_selection():
+            copyable = True
+            try:
+                copyable = bool(self.backend.selection_change_is_copyable())
+            except Exception:
+                copyable = True
+            if has_selection and copyable:
+                logger.debug(
+                    "Terminal copy-on-select invoking copy %s",
+                    clipboard_debug_state(self),
+                )
                 self.backend.copy_clipboard()
         except Exception:
             logger.debug("copy-on-select failed", exc_info=True)
 
     def copy_text(self, *, format="text"):
         """Copy selected text to clipboard"""
+        logger.debug(
+            "Terminal copy requested format=%s %s",
+            format,
+            clipboard_debug_state(self),
+        )
         if self.backend:
             def _completed(copied):
+                logger.debug(
+                    "Terminal copy completed copied=%s format=%s %s",
+                    copied,
+                    format,
+                    clipboard_debug_state(self),
+                )
                 if copied:
                     self._show_toast(_("Copied to clipboard"))
+                else:
+                    self._show_toast(empty_copy_message(self))
 
             self.backend.copy_clipboard(format=format, on_complete=_completed)
+        else:
+            logger.debug(
+                "Terminal copy skipped: no backend format=%s %s",
+                format,
+                clipboard_debug_state(self),
+            )
 
     def handle_backend_copy_result(self, copied):
         """Report a backend-owned shortcut copy through the standard UI path."""
+        logger.debug(
+            "Terminal backend-owned copy result copied=%s %s",
+            copied,
+            clipboard_debug_state(self),
+        )
         if copied:
             self._show_toast(_("Copied to clipboard"))
+        else:
+            self._show_toast(empty_copy_message(self))
 
     def paste_text(self):
         """Paste text from clipboard"""

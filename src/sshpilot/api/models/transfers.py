@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 from .common import (
     ClientId,
@@ -15,7 +15,7 @@ from .common import (
     require_identifier,
     utc_now,
 )
-from .operations import ServiceFailure
+from .operations import ScpFailure, ServiceFailure, SftpFailure
 
 
 class TransferBackend(str, Enum):
@@ -69,7 +69,7 @@ class TransferSummary:
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     owner_client_id: Optional[ClientId] = None
-    failure: Optional[ServiceFailure] = None
+    failure: Optional[Union[ServiceFailure, SftpFailure, ScpFailure]] = None
     # Legacy field retained for older schema readers.
     bytes_transferred: Optional[int] = None
     total_bytes: Optional[int] = None
@@ -111,8 +111,25 @@ class TransferSummary:
             raise ValueError("transfer completed_at must be timezone-aware or None")
         if self.owner_client_id is not None:
             require_identifier(self.owner_client_id, "transfer owner client id")
-        if self.failure is not None and type(self.failure) is not ServiceFailure:
-            raise TypeError("transfer failure must be ServiceFailure or None")
+        if self.failure is not None and type(self.failure) not in {
+            ServiceFailure,
+            SftpFailure,
+            ScpFailure,
+        }:
+            raise TypeError(
+                "transfer failure must be ServiceFailure, SftpFailure, ScpFailure, "
+                "or None"
+            )
+        if self.failure is not None:
+            expected_failure_type = (
+                SftpFailure
+                if self.backend is TransferBackend.SFTP
+                else ScpFailure
+            )
+            if type(self.failure) is not expected_failure_type:
+                raise TypeError(
+                    "transfer failure type does not match the transfer backend"
+                )
 
 
 @dataclass(frozen=True)

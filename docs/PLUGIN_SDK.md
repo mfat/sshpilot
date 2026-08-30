@@ -13,9 +13,11 @@ change without notice.
 
 - **The only import you need:** `sshpilot.plugins.api`.
 - **Current API version:** `1.9` (see [Versioning](#versioning)).
-- **Worked examples** — two provider archetypes:
-  - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — an **IP/SSH** provider: provision → get an IP → `add_connection` a normal SSH connection.
-  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/) — a **CLI/mesh** provider (real partner [easyenv.io](https://easyenv.io/cli)): a protocol backend whose connection *is* a CLI command, plus a management page. See [CLI-driven plugins](#11-cli-driven-plugins).
+- **Worked examples** — both are **IP/SSH** providers (provision → get an address
+  → `add_connection` a normal SSH connection); they differ in how much they do:
+  - [`examples/mock_vps/`](../src/sshpilot/plugins/examples/mock_vps/) — the minimal shape, against a fake provider.
+  - [`examples/easyenv_workspaces/`](../src/sshpilot/plugins/examples/easyenv_workspaces/) — the same shape against a real REST API ([easyenv.io](https://easyenv.io/cli)): sign-in with a stored token, poll until a workspace is up, then materialize its nodes as SSH connections in a group, driven from a management page.
+  - For a **protocol backend** — a connection that *is* a command rather than an SSH host — read the built-ins instead: `builtin/telnet_protocol/` (minimal) and `builtin/{docker,kubernetes,serial,mosh}_protocol/`.
 
 ---
 
@@ -119,23 +121,40 @@ class Plugin(SshPilotPlugin):
 ## 3. The lifecycle contract (read this)
 
 ```
-load  →  activate(ctx)        registration only — UI does NOT exist yet
+load  →  activate(ctx)        registration only — no UI, no backend yet
                   │
-present │  app_started event  UI is live: open pages, toast, open connections
+present │
+                  │           (daemon client is selected in the background)
+        │  app_started event  UI is live AND the backend is reachable
                   │
    …running…      connection_* / session_* events
                   │
 quit    │  app_shutdown event  then deactivate()
 ```
 
-- **`activate(ctx)` is registration only.** The main window UI is not built yet.
-  Do: `register_protocol`, `ui.register_page`, `events.subscribe`, read
-  `settings`. **Don't** call `ui.open_page`, `ui.notify`, `open_connection`, or
-  `generate_key` here — they need the live window. (Calls made early are
-  queued where possible, but don't rely on it; do live work from `app_started`
-  or later events / user actions.)
-- **`app_started`** fires once the window is presented and bound — your cue
-  that live UI/terminal/key calls are safe.
+- **`activate(ctx)` is registration only.** Neither the main window UI nor the
+  daemon backend exists yet. Do: `register_protocol`, `ui.register_page`,
+  `events.subscribe`. **Don't** call `ui.open_page`, `ui.notify`,
+  `open_connection`, or `generate_key` here — they need the live window. (Calls
+  made early are queued where possible, but don't rely on it; do live work from
+  `app_started` or later events / user actions.)
+- **Don't touch daemon-owned state in `activate()` either** — `settings`,
+  `secrets`, `identities`, `add_connection`/`update_connection` and the key
+  operations all raise `BackendUnavailable` (a `RuntimeError`) until the daemon
+  client is up. In particular **`ctx.settings.get()` raises rather than
+  returning your `default`**: a silent default is indistinguishable from "unset",
+  so a plugin that loads a store at `activate()` and writes the whole store back
+  on the next edit would erase it. Read your settings in the `app_started`
+  handler and keep a plain in-memory default until then.
+- **`app_started`** fires once the window is presented *and* daemon client
+  selection has resolved — your cue that live UI/terminal calls and
+  daemon-backed calls are safe. It is deliberately held for the backend, so it
+  can arrive a moment after the window appears. If the daemon is genuinely
+  unavailable the event still fires, and those calls then raise honestly.
+  One exception: key operations (`list_keys`, `delete_key`, `generate_key`) also
+  need the daemon to confirm its operation mode, which can land shortly after
+  `app_started` — `list_keys()` reports `[]` until it does, so drive key work
+  from a user action rather than straight off the event.
 - **`deactivate()`** is best-effort, called at shutdown after `app_shutdown`.
 
 ---
@@ -226,7 +245,7 @@ self.connect("unmap", lambda *_: self.ctx.release_multiplex(self._nick))
 - Read-only for plugins — choosing/configuring providers is the user's job. See `IDENTITY_PROVIDERS.md` for the provider contract.
 
 ### Settings — `ctx.settings` (app config, scoped to your plugin id)
-- `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`.
+- `get(key, default=None)`, `set(key, value)`. For non-secret preferences; stored under `plugins.<id>.<key>`. Daemon-owned: both raise `BackendUnavailable` before `app_started`, and `get` raises rather than returning `default` (see [the lifecycle contract](#3-the-lifecycle-contract-read-this)).
 
 ### Threading
 - `run_on_ui_thread(fn, *args)` — run `fn(*args)` on the GTK main thread. Use to return from a background worker before touching UI or calling `add_connection`/`open_connection`.
@@ -376,7 +395,8 @@ ctx.settings.set("region", "fra1")          # app config: plugins.<id>.region
 region = ctx.settings.get("region", "fra1")
 ```
 
-Never put credentials in `settings`; use `secrets`.
+Never put credentials in `settings`; use `secrets`. Both are daemon-owned — call
+them from `app_started` onwards, never from `activate()`.
 
 ---
 
@@ -496,5 +516,7 @@ gives you an IP/host, just `ctx.add_connection({...,"protocol":"ssh","host":ip})
 - **Flatpak:** inside the sandbox the host CLI isn't on `PATH`. Detect `os.path.exists("/.flatpak-info")` and prefix calls with `["flatpak-spawn", "--host"]` — both your page's `subprocess` calls **and** the `build_spawn` argv (the terminal child is sandboxed too). sshPilot's manifest already grants `--talk-name=org.freedesktop.Flatpak`.
 - **Let the CLI own its credentials.** If the tool keychains its own token (e.g. `easyenv auth login`), detect state (`auth whoami`) and optionally drive login; don't duplicate the token in `ctx.secrets`.
 
-See [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/) for the
-complete pattern (it bundles a local stub so it runs with no account).
+No shipped example implements pattern A — [`easyenv_workspaces`](../src/sshpilot/plugins/examples/easyenv_workspaces/)
+provisions over REST and hands back ordinary SSH connections (pattern B). For a
+working protocol backend read `builtin/telnet_protocol/` and
+`builtin/docker_protocol/`; the sketch above is the shape to copy.

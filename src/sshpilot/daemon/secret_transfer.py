@@ -40,6 +40,9 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from sshpilot.api.models.secrets import (
     SecretOperationState,
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+    SecretTransferPreview,
     SecretTransferResult,
 )
 from sshpilot.core.settings import CONFIG_VERSION
@@ -54,6 +57,19 @@ DEFAULT_BACKUP_OPTIONS = {
     "secrets": True,
     "private_keys": False,
 }
+
+
+def _message(
+    code: SecretTransferMessageCode,
+    *,
+    parameters: Optional[Dict[str, object]] = None,
+    diagnostic: str = "",
+) -> SecretTransferMessage:
+    return SecretTransferMessage(
+        code=code,
+        parameters=dict(parameters or {}),
+        diagnostic=diagnostic,
+    )
 
 
 def normalize_backup_options(options: Optional[Dict[str, Any]] = None) -> Dict[str, bool]:
@@ -254,16 +270,18 @@ def daemon_export_backup(
             operation="export",
             path=destination,
             counts={"credentials": 0, "private_keys": 0},
-            warnings=("Choose at least one item to include in the backup.",),
+            warnings=(_message(SecretTransferMessageCode.BACKUP_ITEMS_REQUIRED),),
             status=SecretOperationState.FAILED,
-            message="Nothing selected to export",
+            message=_message(
+                SecretTransferMessageCode.NOTHING_SELECTED_TO_EXPORT
+            ),
         )
 
     mgr = _backup_manager(
         settings_path or _settings_path(),
         connection_store_snapshot=connection_store_snapshot,
     )
-    warnings: List[str] = []
+    warnings: List[SecretTransferMessage] = []
 
     ssh_dest = _ssh_server_destination(destination)
     if ssh_dest is not None:
@@ -282,9 +300,15 @@ def daemon_export_backup(
                 counts={},
                 warnings=warnings,
                 status=SecretOperationState.FAILED,
-                message="Bitwarden is unavailable for backup",
+                message=_message(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_UNAVAILABLE
+                ),
             )
-        from sshpilot.backup_backends import BackupTooLargeForNote, BitwardenBackupBackend
+        from sshpilot.backup_backends import (
+            BackupError,
+            BackupTooLargeForNote,
+            BitwardenBackupBackend,
+        )
 
         name = "sshPilot Backup {}".format(datetime.now().strftime("%Y-%m-%d %H:%M"))
         try:
@@ -308,10 +332,24 @@ def daemon_export_backup(
             )
             # The message names the part that dominates this particular backup
             # (see ``largest_note_section``), so the warning stays generic.
-            too_large = (
-                "The backup is too large for a Bitwarden note.",
-                "Leaving out the largest part, or exporting fewer connections, "
-                "may bring it under the limit.",
+            too_large = []
+            section = getattr(exc, "largest_section", "")
+            cost = getattr(exc, "largest_section_cost", 0)
+            if section and cost:
+                too_large.append(
+                    _message(
+                        SecretTransferMessageCode.BITWARDEN_NOTE_LARGEST_SECTION,
+                        parameters={"section": section, "cost": cost},
+                    )
+                )
+            too_large.extend(
+                (
+                    _message(SecretTransferMessageCode.EXPORT_SPBK_INSTEAD),
+                    _message(
+                        SecretTransferMessageCode.BITWARDEN_BACKUP_TOO_LARGE
+                    ),
+                    _message(SecretTransferMessageCode.BITWARDEN_NOTE_REDUCE),
+                )
             )
             return SecretTransferResult(
                 operation="export",
@@ -319,7 +357,17 @@ def daemon_export_backup(
                 counts=counts,
                 warnings=tuple(too_large),
                 status=SecretOperationState.FAILED,
-                message=str(exc),
+                message=exc.transfer_message,
+            )
+        except BackupError as exc:
+            logger.error("Bitwarden backup export failed: %s", exc)
+            return SecretTransferResult(
+                operation="export",
+                path=destination,
+                counts={},
+                warnings=warnings,
+                status=SecretOperationState.FAILED,
+                message=exc.transfer_message,
             )
         except Exception as exc:
             logger.error("Bitwarden backup export failed", exc_info=True)
@@ -329,7 +377,10 @@ def daemon_export_backup(
                 counts={},
                 warnings=warnings,
                 status=SecretOperationState.FAILED,
-                message=f"Bitwarden export failed: {exc}",
+                message=_message(
+                    SecretTransferMessageCode.BITWARDEN_EXPORT_FAILED,
+                    diagnostic=str(exc),
+                ),
             )
         counts = dict(getattr(mgr, "last_export_counts", {}) or {})
         mirror = getattr(mgr, "last_mirror_counts", None)
@@ -346,7 +397,7 @@ def daemon_export_backup(
             counts=counts,
             warnings=warnings,
             status=SecretOperationState.SUCCESS,
-            message="",
+            message=None,
         )
 
     try:
@@ -364,20 +415,29 @@ def daemon_export_backup(
             counts={},
             warnings=warnings,
             status=SecretOperationState.FAILED,
-            message=f"Failed to export backup: {exc}",
+            message=_message(
+                SecretTransferMessageCode.BACKUP_EXPORT_FAILED,
+                diagnostic=str(exc),
+            ),
         )
     counts = dict(getattr(mgr, "last_export_counts", {}) or {})
     skipped = getattr(mgr, "last_export_skipped_config_files", None) or []
     if skipped:
         warnings.append(
-            "{} SSH config file(s) outside ~/.ssh were not included "
-            "(system or shared files): {}".format(len(skipped), ", ".join(skipped))
+            _message(
+                SecretTransferMessageCode.SSH_CONFIG_FILES_SKIPPED,
+                parameters={"count": len(skipped), "paths": ", ".join(skipped)},
+            )
         )
     missing_keys = getattr(mgr, "last_export_missing_key_files", None) or []
     if missing_keys:
         warnings.append(
-            "{} referenced key file(s) were missing and not included: {}".format(
-                len(missing_keys), ", ".join(missing_keys)
+            _message(
+                SecretTransferMessageCode.REFERENCED_KEY_FILES_MISSING,
+                parameters={
+                    "count": len(missing_keys),
+                    "paths": ", ".join(missing_keys),
+                },
             )
         )
     logger.info(
@@ -395,7 +455,18 @@ def daemon_export_backup(
         status=(
             SecretOperationState.SUCCESS if ok else SecretOperationState.FAILED
         ),
-        message=error or "",
+        message=(
+            getattr(mgr, "last_transfer_message", None)
+            if not ok
+            else None
+        ) or (
+            _message(
+                SecretTransferMessageCode.BACKUP_EXPORT_FAILED,
+                diagnostic=error or "",
+            )
+            if not ok
+            else None
+        ),
     )
 
 
@@ -439,14 +510,17 @@ def _daemon_export_to_ssh(
         logger.error("SSH server backup export failed: %s", exc)
         return SecretTransferResult(
             operation="export", path="ssh", counts={}, warnings=(),
-            status=SecretOperationState.FAILED, message=str(exc),
+            status=SecretOperationState.FAILED, message=exc.transfer_message,
         )
     except Exception as exc:
         logger.error("SSH server backup export failed: %s", exc)
         return SecretTransferResult(
             operation="export", path="ssh", counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message=f"SSH export failed: {exc}",
+            message=_message(
+                SecretTransferMessageCode.SSH_BACKUP_EXPORT_FAILED,
+                diagnostic=str(exc),
+            ),
         )
     counts = dict(getattr(mgr, "last_export_counts", {}) or {})
     logger.info(
@@ -455,7 +529,7 @@ def _daemon_export_to_ssh(
     )
     return SecretTransferResult(
         operation="export", path="ssh", counts=counts, warnings=(),
-        status=SecretOperationState.SUCCESS, message="",
+        status=SecretOperationState.SUCCESS, message=None,
     )
 
 
@@ -488,7 +562,10 @@ def daemon_import_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message=f"Backup file not found: {source}",
+            message=_message(
+                SecretTransferMessageCode.BACKUP_FILE_NOT_FOUND,
+                parameters={"source": source},
+            ),
         )
     mode = str((options or {}).get("mode") or "merge")
     if mode not in ("replace", "merge"):
@@ -511,20 +588,29 @@ def daemon_import_backup(
             return SecretTransferResult(
                 operation="import", path=source, counts={}, warnings=(),
                 status=SecretOperationState.FAILED,
-                message=f"Failed to import configuration: {exc}",
+                message=_message(
+                    SecretTransferMessageCode.CONFIGURATION_IMPORT_FAILED,
+                    diagnostic=str(exc),
+                ),
             )
         if not success:
             return SecretTransferResult(
                 operation="import", path=source, counts={}, warnings=(),
                 status=SecretOperationState.FAILED,
-                message=error or "The configuration could not be imported",
+                message=(
+                    getattr(mgr, "last_transfer_message", None)
+                    or _message(
+                        SecretTransferMessageCode.CONFIGURATION_IMPORT_FAILED_GENERIC,
+                        diagnostic=error or "",
+                    )
+                ),
             )
         ignored = int(getattr(mgr, "last_import_ignored_secrets", 0) or 0)
         counts = {"restored": 1, "ignored_secrets": ignored}
-        cs_warnings = tuple(getattr(mgr, "last_connection_store_warnings", []) or [])
+        cs_warnings = _connection_store_warnings(mgr)
         return SecretTransferResult(
             operation="import", path=source, counts=counts, warnings=cs_warnings,
-            status=SecretOperationState.SUCCESS, message="",
+            status=SecretOperationState.SUCCESS, message=None,
         )
 
     if manifest is None:
@@ -534,9 +620,15 @@ def daemon_import_backup(
                 operation="import",
                 path=source,
                 counts={},
-                warnings=("The archive could not be decrypted or read.",),
+                warnings=(
+                    _message(
+                        SecretTransferMessageCode.ARCHIVE_DECRYPT_OR_READ_FAILED
+                    ),
+                ),
                 status=SecretOperationState.FAILED,
-                message="Wrong passphrase or corrupt backup",
+                message=_message(
+                    SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+                ),
             )
 
     mgr = _backup_manager(
@@ -558,7 +650,10 @@ def daemon_import_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message=f"Failed to import backup: {exc}",
+            message=_message(
+                SecretTransferMessageCode.BACKUP_IMPORT_FAILED,
+                diagnostic=str(exc),
+            ),
         )
     counts = {
         "restored": restored,
@@ -566,7 +661,7 @@ def daemon_import_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings: List[str] = list(getattr(mgr, "last_connection_store_warnings", []) or [])
+    warnings = list(_connection_store_warnings(mgr))
     if not success:
         return SecretTransferResult(
             operation="import",
@@ -574,13 +669,16 @@ def daemon_import_backup(
             counts=counts,
             warnings=(),
             status=SecretOperationState.FAILED,
-            message=error or "The backup could not be imported",
+            message=(
+                getattr(mgr, "last_transfer_message", None)
+                or _message(
+                    SecretTransferMessageCode.BACKUP_IMPORT_FAILED_GENERIC,
+                    diagnostic=error or "",
+                )
+            ),
         )
     if not _persists_secrets(manager):
-        warnings.append(
-            "The selected secret backend does not persist secrets (agent); "
-            "no credentials were restored."
-        )
+        warnings.append(_message(SecretTransferMessageCode.SECRETS_NOT_PERSISTED))
     logger.info(
         "Backup imported from %s (restored=%d skipped=%d keys_written=%d keys_skipped=%d)",
         source,
@@ -595,7 +693,7 @@ def daemon_import_backup(
         counts=counts,
         warnings=tuple(warnings),
         status=SecretOperationState.SUCCESS,
-        message="",
+        message=None,
     )
 
 
@@ -620,6 +718,15 @@ def _included_categories(
         return {}
 
 
+def _connection_store_warnings(manager: Any) -> Tuple[SecretTransferMessage, ...]:
+    warnings = tuple(
+        getattr(manager, "last_connection_store_warnings", ()) or ()
+    )
+    if not all(type(warning) is SecretTransferMessage for warning in warnings):
+        raise TypeError("connection-store warnings must be structured messages")
+    return warnings
+
+
 def _read_manifest(
     source: str,
     passphrase: Optional[str] = None,
@@ -641,7 +748,7 @@ def daemon_preview_backup(
     source: str,
     passphrase: Optional[str] = None,
     settings_path: Optional[Path | str] = None,
-) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]]]:
     """Inspect a backup file without exposing its contents.
 
     Returns ``(public, manifest)``: ``public`` carries only ``kind``
@@ -653,35 +760,45 @@ def daemon_preview_backup(
     source = os.path.expanduser(source)
     if not os.path.isfile(source):
         return (
-            {"kind": "unknown", "encrypted": False, "included": {},
-             "error": f"Backup file not found: {source}"},
+            SecretTransferPreview(
+                kind="unknown",
+                error=_message(
+                    SecretTransferMessageCode.BACKUP_FILE_NOT_FOUND,
+                    parameters={"source": source},
+                ),
+            ),
             None,
         )
     from sshpilot.backup_archive import is_spbk, spbk_is_encrypted
 
     if not is_spbk(source):
         # Legacy JSON config — no secret-bearing manifest to preview.
-        return {"kind": "json", "encrypted": False, "included": {}}, None
+        return SecretTransferPreview(kind="json"), None
     try:
         encrypted = bool(spbk_is_encrypted(source))
     except Exception:
         encrypted = False
     if encrypted and not passphrase:
-        return {"kind": "spbk", "encrypted": True, "included": {}}, None
+        return SecretTransferPreview(kind="spbk", encrypted=True), None
     manifest = _read_manifest(source, passphrase)
     if manifest is None:
         return (
-            {"kind": "spbk", "encrypted": encrypted, "included": {},
-             "error": "Wrong passphrase or corrupt backup"},
+            SecretTransferPreview(
+                kind="spbk",
+                encrypted=encrypted,
+                error=_message(
+                    SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+                ),
+            ),
             None,
         )
     settings_path = settings_path or _settings_path()
     return (
-        {
-            "kind": "spbk",
-            "encrypted": encrypted,
-            "included": _included_categories(settings_path, manifest),
-        },
+        SecretTransferPreview(
+            kind="spbk",
+            encrypted=encrypted,
+            included=_included_categories(settings_path, manifest),
+        ),
         manifest,
     )
 
@@ -691,15 +808,19 @@ def daemon_preview_bitwarden_backup(
     *,
     entry_id: str,
     settings_path: Optional[Path | str] = None,
-) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]]]:
     """Preview one Bitwarden backup note: included categories (metadata only)."""
     from sshpilot.backup_backends import BitwardenBackupBackend
 
     backend = manager.get_backend("bitwarden")
     if backend is None or not _safe(lambda: backend.is_available()):
         return (
-            {"kind": "bitwarden", "included": {},
-             "error": "Bitwarden is unavailable for backup"},
+            SecretTransferPreview(
+                kind="bitwarden",
+                error=_message(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_UNAVAILABLE
+                ),
+            ),
             None,
         )
     bw_backend = BitwardenBackupBackend(backend)
@@ -708,15 +829,23 @@ def daemon_preview_bitwarden_backup(
     except Exception as exc:
         logger.error("Bitwarden backup listing failed: %s", exc)
         return (
-            {"kind": "bitwarden", "included": {},
-             "error": "Could not list Bitwarden backups"},
+            SecretTransferPreview(
+                kind="bitwarden",
+                error=_message(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_LIST_FAILED
+                ),
+            ),
             None,
         )
     entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
     if entry is None:
         return (
-            {"kind": "bitwarden", "included": {},
-             "error": "The chosen Bitwarden backup was not found"},
+            SecretTransferPreview(
+                kind="bitwarden",
+                error=_message(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_NOT_FOUND
+                ),
+            ),
             None,
         )
     try:
@@ -724,19 +853,28 @@ def daemon_preview_bitwarden_backup(
     except Exception as exc:
         logger.error("Bitwarden backup read failed: %s", exc)
         return (
-            {"kind": "bitwarden", "included": {},
-             "error": "The chosen Bitwarden backup could not be read"},
+            SecretTransferPreview(
+                kind="bitwarden",
+                error=_message(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED
+                ),
+            ),
             None,
         )
     if not isinstance(manifest, dict):
         return (
-            {"kind": "bitwarden", "included": {},
-             "error": "The chosen backup is not a valid sshPilot backup"},
+            SecretTransferPreview(
+                kind="bitwarden",
+                error=_message(SecretTransferMessageCode.INVALID_SSHPILOT_BACKUP),
+            ),
             None,
         )
     settings_path = settings_path or _settings_path()
     return (
-        {"kind": "bitwarden", "included": _included_categories(settings_path, manifest)},
+        SecretTransferPreview(
+            kind="bitwarden",
+            included=_included_categories(settings_path, manifest),
+        ),
         manifest,
     )
 
@@ -749,7 +887,7 @@ def daemon_preview_ssh_backup(
     entry_id: str,
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
-) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]]]:
     """Preview one SSH-stored backup: included categories (metadata only)."""
     from sshpilot.backup_backends import SSHServerBackupBackend
 
@@ -762,15 +900,19 @@ def daemon_preview_ssh_backup(
     except Exception as exc:
         logger.error("SSH backup listing failed: %s", exc)
         return (
-            {"kind": "ssh", "included": {},
-             "error": "Could not list backups on the SSH server"},
+            SecretTransferPreview(
+                kind="ssh",
+                error=_message(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED),
+            ),
             None,
         )
     entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
     if entry is None:
         return (
-            {"kind": "ssh", "included": {},
-             "error": "The chosen backup was not found on the SSH server"},
+            SecretTransferPreview(
+                kind="ssh",
+                error=_message(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND),
+            ),
             None,
         )
     try:
@@ -778,19 +920,25 @@ def daemon_preview_ssh_backup(
     except Exception as exc:
         logger.error("SSH backup read failed: %s", exc)
         return (
-            {"kind": "ssh", "included": {},
-             "error": "The chosen backup could not be read from the SSH server"},
+            SecretTransferPreview(
+                kind="ssh",
+                error=_message(SecretTransferMessageCode.SSH_BACKUP_READ_FAILED),
+            ),
             None,
         )
     if not isinstance(manifest, dict):
         return (
-            {"kind": "ssh", "included": {},
-             "error": "The chosen backup is not a valid sshPilot backup"},
+            SecretTransferPreview(
+                kind="ssh",
+                error=_message(SecretTransferMessageCode.INVALID_SSHPILOT_BACKUP),
+            ),
             None,
         )
     settings_path = settings_path or _settings_path()
     return (
-        {"kind": "ssh", "included": _included_categories(settings_path, manifest)},
+        SecretTransferPreview(
+            kind="ssh", included=_included_categories(settings_path, manifest)
+        ),
         manifest,
     )
 
@@ -841,7 +989,9 @@ def daemon_import_bitwarden_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message="Bitwarden is unavailable for backup",
+            message=_message(
+                SecretTransferMessageCode.BITWARDEN_BACKUP_UNAVAILABLE
+            ),
         )
     from sshpilot.backup_backends import BitwardenBackupBackend
 
@@ -856,7 +1006,9 @@ def daemon_import_bitwarden_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message="Could not list Bitwarden backups",
+            message=_message(
+                SecretTransferMessageCode.BITWARDEN_BACKUP_LIST_FAILED
+            ),
         )
     entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
     if entry is None:
@@ -866,7 +1018,9 @@ def daemon_import_bitwarden_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message="The chosen Bitwarden backup was not found",
+            message=_message(
+                SecretTransferMessageCode.BITWARDEN_BACKUP_NOT_FOUND
+            ),
         )
     if manifest is None:
         try:
@@ -879,7 +1033,9 @@ def daemon_import_bitwarden_backup(
                 counts={},
                 warnings=(),
                 status=SecretOperationState.FAILED,
-                message="The chosen Bitwarden backup could not be read",
+                message=_message(
+                    SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED
+                ),
             )
     if not isinstance(manifest, dict):
         return SecretTransferResult(
@@ -888,7 +1044,7 @@ def daemon_import_bitwarden_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message="The chosen backup is not a valid sshPilot backup",
+            message=_message(SecretTransferMessageCode.INVALID_SSHPILOT_BACKUP),
         )
 
     mgr = _backup_manager(
@@ -910,7 +1066,10 @@ def daemon_import_bitwarden_backup(
             counts={},
             warnings=(),
             status=SecretOperationState.FAILED,
-            message=f"Failed to import backup: {exc}",
+            message=_message(
+                SecretTransferMessageCode.BACKUP_IMPORT_FAILED,
+                diagnostic=str(exc),
+            ),
         )
     counts = {
         "restored": restored,
@@ -918,7 +1077,7 @@ def daemon_import_bitwarden_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings: List[str] = list(getattr(mgr, "last_connection_store_warnings", []) or [])
+    warnings = list(_connection_store_warnings(mgr))
     if not success:
         return SecretTransferResult(
             operation="import",
@@ -926,13 +1085,16 @@ def daemon_import_bitwarden_backup(
             counts=counts,
             warnings=(),
             status=SecretOperationState.FAILED,
-            message=error or "The backup could not be imported",
+            message=(
+                getattr(mgr, "last_transfer_message", None)
+                or _message(
+                    SecretTransferMessageCode.BACKUP_IMPORT_FAILED_GENERIC,
+                    diagnostic=error or "",
+                )
+            ),
         )
     if not _persists_secrets(manager):
-        warnings.append(
-            "The selected secret backend does not persist secrets (agent); "
-            "no credentials were restored."
-        )
+        warnings.append(_message(SecretTransferMessageCode.SECRETS_NOT_PERSISTED))
     logger.info(
         "Backup imported from Bitwarden (restored=%d skipped=%d keys_written=%d keys_skipped=%d)",
         restored, counts["skipped"], keys_written, counts["keys_skipped"],
@@ -943,7 +1105,7 @@ def daemon_import_bitwarden_backup(
         counts=counts,
         warnings=tuple(warnings),
         status=SecretOperationState.SUCCESS,
-        message="",
+        message=None,
     )
 
 
@@ -1182,14 +1344,14 @@ def daemon_import_ssh_backup(
         return SecretTransferResult(
             operation="import", path="ssh", counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message="Could not list backups on the SSH server",
+            message=_message(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED),
         )
     entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
     if entry is None:
         return SecretTransferResult(
             operation="import", path="ssh", counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message="The chosen backup was not found on the SSH server",
+            message=_message(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND),
         )
     if manifest is None:
         try:
@@ -1199,13 +1361,13 @@ def daemon_import_ssh_backup(
             return SecretTransferResult(
                 operation="import", path="ssh", counts={}, warnings=(),
                 status=SecretOperationState.FAILED,
-                message="The chosen backup could not be read from the SSH server",
+                message=_message(SecretTransferMessageCode.SSH_BACKUP_READ_FAILED),
             )
     if not isinstance(manifest, dict):
         return SecretTransferResult(
             operation="import", path="ssh", counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message="The chosen backup is not a valid sshPilot backup",
+            message=_message(SecretTransferMessageCode.INVALID_SSHPILOT_BACKUP),
         )
 
     mgr = _backup_manager(
@@ -1224,7 +1386,10 @@ def daemon_import_ssh_backup(
         return SecretTransferResult(
             operation="import", path="ssh", counts={}, warnings=(),
             status=SecretOperationState.FAILED,
-            message=f"Failed to import backup: {exc}",
+            message=_message(
+                SecretTransferMessageCode.BACKUP_IMPORT_FAILED,
+                diagnostic=str(exc),
+            ),
         )
     counts = {
         "restored": restored,
@@ -1232,25 +1397,28 @@ def daemon_import_ssh_backup(
         "keys_written": keys_written,
         "keys_skipped": int(getattr(mgr, "last_import_skipped_keys", 0) or 0),
     }
-    warnings: List[str] = list(getattr(mgr, "last_connection_store_warnings", []) or [])
+    warnings = list(_connection_store_warnings(mgr))
     if not success:
         return SecretTransferResult(
             operation="import", path="ssh", counts=counts, warnings=(),
             status=SecretOperationState.FAILED,
-            message=error or "The backup could not be imported",
+            message=(
+                getattr(mgr, "last_transfer_message", None)
+                or _message(
+                    SecretTransferMessageCode.BACKUP_IMPORT_FAILED_GENERIC,
+                    diagnostic=error or "",
+                )
+            ),
         )
     if not _persists_secrets(manager):
-        warnings.append(
-            "The selected secret backend does not persist secrets (agent); "
-            "no credentials were restored."
-        )
+        warnings.append(_message(SecretTransferMessageCode.SECRETS_NOT_PERSISTED))
     logger.info(
         "Backup imported from SSH server (restored=%d skipped=%d)",
         restored, counts["skipped"],
     )
     return SecretTransferResult(
         operation="import", path="ssh", counts=counts, warnings=tuple(warnings),
-        status=SecretOperationState.SUCCESS, message="",
+        status=SecretOperationState.SUCCESS, message=None,
     )
 
 

@@ -27,7 +27,12 @@ import re
 import shlex
 import tempfile
 from dataclasses import dataclass
-from typing import List, Optional, Protocol
+from typing import List, Mapping, Optional, Protocol
+
+from .api.models.secrets import (
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+)
 
 BACKUP_NOTE_MAGIC = "SSHPILOT-BACKUP-v1"
 BACKUP_ITEM_PREFIX = "sshPilot Backup"
@@ -39,9 +44,43 @@ BW_NOTE_MAX_CHARS = 10_000
 class BackupError(Exception):
     """A backup destination could not complete the operation."""
 
+    def __init__(
+        self,
+        code: SecretTransferMessageCode,
+        *,
+        parameters: Optional[Mapping[str, object]] = None,
+        diagnostic: str = "",
+    ) -> None:
+        self.transfer_message = SecretTransferMessage(
+            code=code,
+            parameters=dict(parameters or {}),
+            diagnostic=diagnostic,
+        )
+        super().__init__(code.value)
+
+    def __str__(self) -> str:
+        code = self.transfer_message.code.value
+        diagnostic = self.transfer_message.diagnostic
+        return f"{code}: {diagnostic}" if diagnostic else code
+
 
 class BackupTooLargeForNote(BackupError):
     """The encoded manifest exceeds the Bitwarden note field limit — use a ``.spbk`` file."""
+
+    def __init__(
+        self,
+        *,
+        length: int,
+        limit: int,
+        largest_section: str = "",
+        largest_section_cost: int = 0,
+    ) -> None:
+        super().__init__(
+            SecretTransferMessageCode.BITWARDEN_NOTE_TOO_LARGE,
+            parameters={"length": length, "limit": limit},
+        )
+        self.largest_section = largest_section
+        self.largest_section_cost = largest_section_cost
 
 
 @dataclass
@@ -74,11 +113,11 @@ def encode_manifest_note(manifest: dict) -> str:
 # What a reader recognizes as one part of a backup, and the manifest keys it
 # spans. Used only to explain a refused note.
 _NOTE_SECTIONS = (
-    ("app settings", ("app_config",)),
-    ("SSH config", ("ssh_config", "ssh_config_files")),
-    ("known hosts", ("known_hosts",)),
+    ("app_settings", ("app_config",)),
+    ("ssh_config", ("ssh_config", "ssh_config_files")),
+    ("known_hosts", ("known_hosts",)),
     ("credentials", ("credentials",)),
-    ("private keys", ("private_keys",)),
+    ("private_keys", ("private_keys",)),
 )
 
 
@@ -106,14 +145,20 @@ def largest_note_section(manifest: dict) -> tuple:
 def decode_manifest_note(note: str) -> dict:
     parts = (note or "").split("\n", 1)
     if len(parts) != 2 or parts[0].strip() != BACKUP_NOTE_MAGIC:
-        raise BackupError("not an sshPilot backup note")
+        raise BackupError(
+            SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED,
+            diagnostic="not an sshPilot backup note",
+        )
     try:
         raw = gzip.decompress(base64.b64decode(parts[1].strip().encode("ascii")))
         return json.loads(raw.decode("utf-8"))
     except BackupError:
         raise
     except Exception as exc:
-        raise BackupError(f"corrupt backup note: {exc}") from exc
+        raise BackupError(
+            SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED,
+            diagnostic=f"corrupt backup note: {exc}",
+        ) from exc
 
 
 # --- backends ----------------------------------------------------------------
@@ -155,13 +200,15 @@ class BitwardenBackupBackend:
             # part dominates depends entirely on the vault — app settings can
             # outweigh private keys several times over.
             label, cost = largest_note_section(manifest)
-            largest = f" Most of it is {label} ({cost} characters)." if label else ""
             raise BackupTooLargeForNote(
-                f"This backup is {len(content)} characters — larger than the Bitwarden note "
-                f"limit ({BW_NOTE_MAX_CHARS}).{largest} Export to a .spbk file instead.")
+                length=len(content),
+                limit=BW_NOTE_MAX_CHARS,
+                largest_section=label,
+                largest_section_cost=cost,
+            )
         item_id = self._bw.create_or_update_secure_note(self._item_name, content)
         if not item_id:
-            raise BackupError("Bitwarden did not save the backup note (is the vault unlocked?)")
+            raise BackupError(SecretTransferMessageCode.BITWARDEN_NOTE_SAVE_FAILED)
         return BackupEntry(id=item_id, name=self._item_name)
 
     def list_exports(self) -> List[BackupEntry]:
@@ -178,7 +225,7 @@ class BitwardenBackupBackend:
     def read(self, entry: BackupEntry, *, passphrase: Optional[str] = None) -> dict:
         note = self._bw.read_secure_note(entry.id)
         if note is None:
-            raise BackupError("Could not read the Bitwarden backup note.")
+            raise BackupError(SecretTransferMessageCode.BITWARDEN_BACKUP_READ_FAILED)
         return decode_manifest_note(note)
 
 
@@ -231,16 +278,29 @@ class SSHServerBackupBackend:
             f"mkdir -p {qdir} && test -w {qdir} && {{ df -Pk {qdir} | tail -1 || true; }}",
             timeout=60)
         if rc == -1:
-            raise BackupError(f"Could not connect to the server: {err or 'ssh failed'}")
+            raise BackupError(
+                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
+                diagnostic=err or "ssh failed",
+            )
         if rc != 0:
             raise BackupError(
-                f"Cannot create or write to {self._dir} on the server: "
-                f"{(err or out.decode('utf-8', 'replace')).strip() or 'permission denied'}")
+                SecretTransferMessageCode.SSH_SERVER_DIRECTORY_UNAVAILABLE,
+                parameters={"directory": self._dir},
+                diagnostic=(
+                    (err or out.decode("utf-8", "replace")).strip()
+                    or "permission denied"
+                ),
+            )
         avail_kb = _parse_df_avail_kb(out)
         if avail_kb is not None and avail_kb * 1024 < archive_size * 1.1:
             raise BackupError(
-                f"Not enough free space on the server: need ~{_human(archive_size)}, "
-                f"only {_human(avail_kb * 1024)} available in {self._dir}.")
+                SecretTransferMessageCode.SSH_SERVER_FREE_SPACE_INSUFFICIENT,
+                parameters={
+                    "required": _human(archive_size),
+                    "available": _human(avail_kb * 1024),
+                    "directory": self._dir,
+                },
+            )
 
     def export(self, manifest: dict, *, passphrase: Optional[str] = None) -> BackupEntry:
         from .backup_archive import write_spbk
@@ -269,8 +329,12 @@ class SSHServerBackupBackend:
             except Exception:
                 pass
             raise BackupError(
-                f"Failed to write the backup to the server: "
-                f"{(err or out.decode('utf-8', 'replace')).strip() or 'unknown error'}")
+                SecretTransferMessageCode.SSH_SERVER_WRITE_FAILED,
+                diagnostic=(
+                    (err or out.decode("utf-8", "replace")).strip()
+                    or "unknown error"
+                ),
+            )
         return BackupEntry(id=remote, name=self._name)
 
     def list_exports(self) -> List[BackupEntry]:
@@ -280,7 +344,9 @@ class SSHServerBackupBackend:
         # empty/missing dir (rc 1/2) — otherwise a connect/auth error looks like "no backups".
         if rc in (-1, 255):
             raise BackupError(
-                f"Could not connect to the server: {(err or '').strip() or 'ssh failed'}")
+                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
+                diagnostic=(err or "").strip() or "ssh failed",
+            )
         if rc != 0:
             return []
         entries: List[BackupEntry] = []
@@ -301,7 +367,9 @@ class SSHServerBackupBackend:
         rc, out, err = self._run.run_command(f"cat {_q(entry.id)}", timeout=300)
         if rc != 0:
             raise BackupError(
-                f"Could not read the backup from the server: {err.strip() or 'unknown error'}")
+                SecretTransferMessageCode.SSH_BACKUP_READ_FAILED,
+                diagnostic=err.strip() or "unknown error",
+            )
         with open(local_path, "wb") as fh:
             fh.write(out)
 

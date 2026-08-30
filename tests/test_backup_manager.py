@@ -7,6 +7,10 @@ import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
 import sshpilot.secret_storage as ss
 import sshpilot.core.connections.repository as bm_repository
+from sshpilot.api.models.secrets import (
+    SecretTransferMessage,
+    SecretTransferMessageCode,
+)
 from sshpilot.secret_storage import password_spec, sudo_password_spec
 from sshpilot.backup_archive import read_spbk
 
@@ -1119,7 +1123,10 @@ def test_apply_parsed_restores_connection_store_with_correct_mode_and_warnings(m
     config_file = config_dir / "config.json"
     config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
     config = ModeConfig(config_file, isolated=False)
-    store = _FakeConnectionStore(warnings=("a non-fatal warning",))
+    warning = SecretTransferMessage(
+        SecretTransferMessageCode.CONNECTION_STORE_VERSION_UNSUPPORTED
+    )
+    store = _FakeConnectionStore(warnings=(warning,))
     mgr = bm.BackupManager(
         config,
         FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
@@ -1142,7 +1149,7 @@ def test_apply_parsed_restores_connection_store_with_correct_mode_and_warnings(m
     assert len(store.restore_calls) == 1
     _, mode_used = store.restore_calls[0]
     assert mode_used == "merge"
-    assert mgr.last_connection_store_warnings == ["a non-fatal warning"]
+    assert mgr.last_connection_store_warnings == [warning]
 
 
 def test_apply_parsed_without_connection_store_section_still_succeeds(monkeypatch, tmp_path):
@@ -1198,6 +1205,10 @@ def test_export_backup_fails_when_connection_store_snapshot_raises(monkeypatch, 
     assert success is False
     assert error
     assert not (tmp_path / "out.spbk").exists()
+    assert mgr.last_transfer_message.code is SecretTransferMessageCode.BACKUP_EXPORT_FAILED
+    assert mgr.last_transfer_message.diagnostic == (
+        "simulated connection-store snapshot failure"
+    )
 
 
 def test_apply_parsed_fails_when_connection_store_restore_raises_for_present_section(monkeypatch, tmp_path):
@@ -1230,6 +1241,13 @@ def test_apply_parsed_fails_when_connection_store_restore_raises_for_present_sec
 
     assert success is False
     assert error
+    assert (
+        mgr.last_transfer_message.code
+        is SecretTransferMessageCode.CONNECTION_STORE_RESTORE_FAILED
+    )
+    assert mgr.last_transfer_message.diagnostic == (
+        "simulated connection-store restore failure"
+    )
 
 
 def test_apply_parsed_succeeds_when_connection_store_absent_even_with_raising_restore_fn(monkeypatch, tmp_path):
@@ -1277,9 +1295,10 @@ def test_apply_parsed_treats_unsupported_version_result_as_non_fatal(monkeypatch
     config_file = config_dir / "config.json"
     config_file.write_text(json.dumps({"ssh": {"use_isolated_config": False}}), encoding="utf-8")
     config = ModeConfig(config_file, isolated=False)
-    store = _FakeConnectionStore(
-        warnings=("connection_store section version is unsupported; skipped",)
+    warning = SecretTransferMessage(
+        SecretTransferMessageCode.CONNECTION_STORE_VERSION_UNSUPPORTED
     )
+    store = _FakeConnectionStore(warnings=(warning,))
     mgr = bm.BackupManager(
         config,
         FakeConnMgr([], str(ssh_dir / "config"), str(ssh_dir / "known_hosts")),
@@ -1299,9 +1318,7 @@ def test_apply_parsed_treats_unsupported_version_result_as_non_fatal(monkeypatch
     success, error = mgr._apply_parsed(manifest, mode="merge", create_backup=False)
 
     assert success, error
-    assert mgr.last_connection_store_warnings == [
-        "connection_store section version is unsupported; skipped"
-    ]
+    assert mgr.last_connection_store_warnings == [warning]
 
 
 def test_export_drops_machine_local_session_state(monkeypatch, tmp_path):
@@ -1405,6 +1422,7 @@ def test_import_rejects_a_payload_with_no_version(monkeypatch, tmp_path):
     ok, error = mgr._validate_import_data({"app_config": {"ui": {}}})
     assert ok is False
     assert error == "Missing 'version' field in import data"
+    assert mgr.last_transfer_message.code is SecretTransferMessageCode.IMPORT_VERSION_MISSING
 
 
 def test_import_accepts_the_schema_version_alias(monkeypatch, tmp_path):
@@ -1421,6 +1439,7 @@ def test_import_version_bounds(monkeypatch, tmp_path):
     # Newer than this build understands, and older than any real schema.
     assert mgr._validate_import_data({"version": 99, "app_config": {}}) == (
         False, "Unsupported backup version: 99")
+    assert mgr.last_transfer_message.parameters == {"version": "99"}
     assert mgr._validate_import_data({"version": 0, "app_config": {}})[0] is False
     assert mgr._validate_import_data({"version": "x", "app_config": {}}) == (
         False, "Unsupported backup version: x")
