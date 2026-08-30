@@ -430,7 +430,15 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         assume(logical_id in self.model)
         alias = self.model[logical_id].alias
         group = self.repo.create_group(group_name)
-        self.repo.copy_connection_to_group(alias, group.id)
+        # Like every other identity-targeting mutation here (see
+        # tag_connection immediately below), copy_connection_to_group resolves
+        # the alias through _assert_not_unresolved_locked and so refuses while
+        # that alias sits in pending_ambiguities. A refusal is a valid
+        # production outcome, not a bug -- this was the one rule that failed to
+        # say so.
+        self._mutate_or_tolerate_ambiguity(
+            lambda: self.repo.copy_connection_to_group(alias, group.id)
+        )
 
     @rule(logical_id=connections, tag=tag_names())
     def tag_connection(self, logical_id, tag):

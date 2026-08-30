@@ -199,12 +199,34 @@ def reconcile_identity_state(
     # (still using this pass's fresh evidence, so a genuine disambiguating
     # edit -- e.g. one candidate's destination changing -- still resolves it
     # normally); everything else reconciles exactly as before.
+    #
+    # A pending ambiguity only means something while the aliases it was
+    # recorded against are still on offer. Once every candidate alias has left
+    # the configuration -- the user switched isolated/default modes back to a
+    # config predating the edit that caused the ambiguity, reverted the file,
+    # restored a backup -- there is nothing left to resolve it by, and
+    # carrying it forward actively corrupts this pass: the identities it names
+    # get diverted out of the ordinary pool, find no ``ambiguous_new`` to
+    # match against, and are then retired as ghosts against their *own*
+    # still-present aliases, losing their UUIDs and display names to freshly
+    # created replacements that EXACT_ALIAS should have preserved untouched.
+    # Drop the moot ones; the identities they name reconcile normally, which
+    # is exactly what a no-longer-contested alias should leave behind.
+    remaining_new_aliases = {projection.alias for projection in remaining_new}
+    live_ambiguities = tuple(
+        ambiguity
+        for ambiguity in state.pending_ambiguities
+        if any(
+            candidate.alias in remaining_new_aliases
+            for candidate in ambiguity.new_projections
+        )
+    )
     still_ambiguous_uuids = {
-        uuid for ambiguity in state.pending_ambiguities for uuid in ambiguity.old_uuids
+        uuid for ambiguity in live_ambiguities for uuid in ambiguity.old_uuids
     }
     ambiguity_candidate_aliases = {
         candidate.alias
-        for ambiguity in state.pending_ambiguities
+        for ambiguity in live_ambiguities
         for candidate in ambiguity.new_projections
     }
     ambiguous_old = tuple(
