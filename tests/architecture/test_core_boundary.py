@@ -113,6 +113,7 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("plugins/host.py", "plugins", "ALL_EVENTS"),
         ("plugins/host.py", "plugins", "ConnectionInfo"),
         ("plugins/host.py", "plugins", "EventBus"),
+        ("plugins/loader.py", "plugins", "EventBus"),
         ("plugins/host.py", "plugins", "Events"),
         ("plugins/host.py", "plugins", "SessionInfo"),
     }
