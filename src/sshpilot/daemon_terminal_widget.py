@@ -79,7 +79,6 @@ class DaemonTerminalWidget(Gtk.Box):
             pass
         gesture.connect("pressed", self._on_selection_feed_pressed)
         gesture.connect("released", self._on_selection_feed_released)
-        gesture.connect("cancel", self._on_selection_feed_released)
         self._terminal.add_controller(gesture)
         self._selection_feed_gesture = gesture
 
@@ -94,9 +93,17 @@ class DaemonTerminalWidget(Gtk.Box):
             shift_held=shift_held,
         ):
             self._display_feed_pause.begin()
+        try:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+        except Exception:
+            pass
 
-    def _on_selection_feed_released(self, gesture, *args) -> None:
+    def _on_selection_feed_released(self, gesture, _n_press, _x, _y) -> None:
         self._resume_selection_display_feed()
+        try:
+            gesture.set_state(Gtk.EventSequenceState.DENIED)
+        except Exception:
+            pass
 
     def _resume_selection_display_feed(self) -> None:
         deferred = self._display_feed_pause.end()
