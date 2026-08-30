@@ -62,6 +62,21 @@ class DoubleShiftDetector:
             self._last_release_at = None
         return False
 
+    def pointer_activity(self) -> None:
+        """Cancel any pending double-tap: the pointer owns this Shift.
+
+        Shift+drag is the only way to select terminal text while a remote
+        application holds mouse tracking (issue #1178), so a Shift press that
+        brackets a drag is a selection, never half of a double-tap. Without
+        this, a second Shift+drag inside the interval opened Omnisearch and
+        took focus from the terminal, which is what made copying appear to
+        stop working after the first attempt or two.
+        """
+        self._last_release_at = None
+        self._completes_double_shift = False
+        if self._shift_down:
+            self._current_press_tainted = True
+
     def key_released(self, is_shift: bool, now: float) -> bool:
         if not is_shift or not self._shift_down:
             return False

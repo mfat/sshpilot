@@ -120,6 +120,29 @@ def clipboard_debug_state(widget) -> str:
     )
 
 
+def empty_copy_message(widget) -> str:
+    """Explain a copy that found nothing, in terms of what the terminal is doing.
+
+    While a remote application holds mouse tracking (tmux with mouse on, vim,
+    htop, full-screen CLIs) a plain drag belongs to that application and never
+    becomes a local selection, so every copy legitimately finds an empty
+    selection. Reporting nothing at all is what made issue #1178 read as "all
+    clipboard copy methods stopped working". Shift is the documented override
+    in both backends (VTE checks the Shift mask, xterm.js checks
+    ``shouldForceSelection``), so name it.
+
+    A module-level helper, like ``clipboard_debug_state`` above: the copy
+    completion paths are reached with lightweight stand-ins in tests.
+    """
+    tracker = getattr(widget, "_mouse_tracking", None)
+    if tracker is not None and getattr(tracker, "active", False):
+        return _(
+            "Nothing selected — the remote app is using the mouse; "
+            "hold Shift while dragging to select text"
+        )
+    return _("Nothing selected to copy")
+
+
 def sanitize_local_shell_env(env):
     """Return a copy of *env* stripped of the launching terminal's identity.
 
@@ -4560,6 +4583,8 @@ class TerminalWidget(Gtk.Box):
                 )
                 if copied:
                     self._show_toast(_("Copied to clipboard"))
+                else:
+                    self._show_toast(empty_copy_message(self))
 
             self.backend.copy_clipboard(format=format, on_complete=_completed)
         else:
@@ -4578,6 +4603,8 @@ class TerminalWidget(Gtk.Box):
         )
         if copied:
             self._show_toast(_("Copied to clipboard"))
+        else:
+            self._show_toast(empty_copy_message(self))
 
     def paste_text(self):
         """Paste text from clipboard"""
