@@ -81,15 +81,12 @@ def reconcile(
     old_entries,
     new_projections,
     ids=("created-1", "created-2", "created-3"),
-    *,
-    allow_tombstone_resurrection=False,
 ):
     values = iter(ids)
     return reconcile_identities(
         old_entries,
         new_projections,
         uuid_factory=lambda: next(values),
-        allow_tombstone_resurrection=allow_tombstone_resurrection,
     )
 
 
@@ -1653,250 +1650,55 @@ def test_actual_loader_restart_preserves_ambiguity_after_alias_reorder(tmp_path)
     assert [item.alias for item in result.ambiguous[0].new] == ["new-b", "new-a"]
 
 
-def test_tombstone_resurrects_when_exact_alias_returns():
-    """Tombstoned identity should resurrect when its exact alias reappears.
+def test_tombstones_never_participate_in_matching():
+    """A tombstone means the user deleted that connection from THIS root.
 
-    This scenario occurs during mode switching:
-    1. Default mode has Host "prod" with display_name "Production Server"
-    2. Switch to isolated mode (different hosts) - "prod" is tombstoned
-    3. Switch back to default mode - "prod" returns
-    4. The original identity should resurrect with display_name preserved
+    Re-adding the alias is a new connection, with a new UUID and no
+    inherited display name. Resurrection used to be switched on for a mode
+    switch, because leaving a root tombstoned everything in it and coming
+    back had to raise it all again. Each root now keeps its own sidecar, so
+    the file is simply not loaded while the other root is active -- there is
+    nothing to tombstone and nothing to resurrect, and reconciliation has no
+    notion of operation mode at all.
     """
-    # Step 1: Start with an identity for "prod" with custom display_name
-    original = old("prod-uuid", projection("prod", hostname="prod.example.com"), name="Production Server")
-
-    # Step 2: Simulate switch to isolated mode - different hosts, "prod" disappears
-    # Use different hostname to ensure no destination anchor match
-    isolated_result = reconcile(
-        [original],
-        [projection("isolated-host", hostname="isolated.local")],
-    )
-    assert isolated_result.deleted[0].uuid == "prod-uuid"
-    assert isolated_result.created[0].uuid == "created-1"
-
-    # Create tombstoned state after isolated mode
-    tombstoned = IdentityRegistryEntry(
-        uuid="prod-uuid",
-        projection=original.projection,
-        display_name="Production Server",
-        tombstone=True,
-    )
-    isolated_identity = isolated_result.created[0]
-
-    # Step 3: Switch back to default mode - "prod" returns
-    return_result = reconcile(
-        [tombstoned, isolated_identity],
-        [projection("prod", hostname="prod.example.com")],  # Original alias returns
-        ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
-    )
-
-    # Step 4: The tombstoned identity should resurrect (match), not create new
-    assert len(return_result.matched) == 1
-    assert return_result.matched[0].old.uuid == "prod-uuid"
-    assert return_result.matched[0].old.display_name == "Production Server"
-    assert return_result.matched[0].reason is MatchReason.EXACT_ALIAS
-    assert return_result.created == ()
-    assert return_result.deleted[0].uuid == "created-1"  # isolated host deleted
-
-
-def test_tombstone_resurrection_preserves_display_name_through_mode_cycle():
-    """Full mode-switch cycle: default -> isolated -> default preserves names."""
-    # Default mode identity with unique hostname
-    default_identity = old(
-        "u1",
-        projection("prod", hostname="prod.example.com"),
-        name="My Production DB",
-    )
-
-    # Switch to isolated: different projections (different hostname), default identity tombstoned
-    to_isolated = reconcile(
-        [default_identity],
-        [projection("test-server", hostname="test.local")],
-    )
-    assert to_isolated.deleted[0].uuid == "u1"
-
-    # Create the tombstoned version and new isolated identity
     tombstoned = IdentityRegistryEntry(
         uuid="u1",
-        projection=default_identity.projection,
-        display_name="My Production DB",
-        tombstone=True,
-    )
-    isolated_entry = to_isolated.created[0]
-
-    # Switch back to default: original projection returns
-    back_to_default = reconcile(
-        [tombstoned, isolated_entry],
-        [projection("prod", hostname="prod.example.com")],
-        ids=("unused",),
-        allow_tombstone_resurrection=True,
-    )
-
-    # Original identity should be resurrected with display_name intact
-    assert len(back_to_default.matched) == 1
-    match = back_to_default.matched[0]
-    assert match.old.uuid == "u1"
-    assert match.old.display_name == "My Production DB"
-    # Isolated entry should be deleted since its alias doesn't exist
-    assert len(back_to_default.deleted) == 1
-    assert back_to_default.deleted[0].uuid == "created-1"
-
-
-def test_tombstone_does_not_resurrect_without_trustworthy_anchor():
-    """Alias equality alone must not resurrect a retired identity."""
-    original = old(
-        "u1",
-        projection("prod", hostname=None),
-        name="Production Server",
-    )
-    tombstoned = IdentityRegistryEntry(
-        uuid="u1",
-        projection=original.projection,
+        projection=projection("prod", hostname="prod.example.com"),
         display_name="Production Server",
         tombstone=True,
+        retired_generation=7,
     )
 
     result = reconcile(
         [tombstoned],
-        [projection("prod", hostname=None)],
+        [projection("prod", hostname="prod.example.com")],
         ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
     )
 
     assert result.matched == ()
     assert [entry.uuid for entry in result.created] == ["new-uuid"]
+    assert result.created[0].display_name != "Production Server"
 
 
-def test_tombstone_not_resurrected_when_anchors_differ():
-    """Tombstone is NOT resurrected when destination anchors differ."""
-    # Original connection to server-a
-    original = old(
-        "u1",
-        projection("myserver", hostname="server-a.example.com"),
-        name="Old Server",
-    )
-
+def test_a_tombstoned_alias_does_not_block_a_new_connection():
+    """The retired identity must not shadow the newcomer's own evidence."""
     tombstoned = IdentityRegistryEntry(
         uuid="u1",
-        projection=original.projection,
-        display_name="Old Server",
+        projection=projection("prod", hostname="old.example.com"),
+        display_name="Old Production",
         tombstone=True,
+        retired_generation=3,
     )
-
-    # New connection with same alias but to a different server
-    result = reconcile(
-        [tombstoned],
-        [projection("myserver", hostname="server-b.example.com")],
-        ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
-    )
-
-    # Should NOT resurrect - this is a new connection to a different server
-    assert result.matched == ()
-    assert result.created[0].uuid == "new-uuid"
-    assert result.created[0].display_name == "myserver"  # Falls back to alias
-
-
-def test_duplicate_matching_tombstones_resurrect_highest_retired_generation():
-    """More than one tombstone can share an alias+anchor once an identity has
-    round-tripped through more than one authority transition (e.g. Isolated
-    Mode toggled on and off more than once). Refusing to pick one used to mean
-    every such identity was recreated from scratch on its second round trip
-    onward, silently discarding its display name forever.
-
-    The tie-break is ``retired_generation``, not ``old_entries`` position:
-    identities are persisted as a UUID-keyed object written with
-    ``sort_keys=True`` (see ``state_file.py``), so position does not survive
-    a save/reload — only the generation number does.
-    """
-    earlier_position_but_newer = IdentityRegistryEntry(
-        uuid="old-1",
-        projection=projection("prod", hostname="prod.example.com"),
-        display_name="Newer Generation",
-        tombstone=True,
-        retired_generation=50,
-    )
-    later_position_but_older = IdentityRegistryEntry(
-        uuid="old-2",
-        projection=projection("prod", hostname="prod.example.com"),
-        display_name="Older Generation",
-        tombstone=True,
-        retired_generation=10,
-    )
-
-    # List position disagrees with generation: position would pick old-2
-    # (last), generation must still pick old-1 (retired later, at gen 50).
-    result = reconcile(
-        [earlier_position_but_newer, later_position_but_older],
-        [projection("prod", hostname="prod.example.com")],
-        ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
-    )
-
-    assert result.created == ()
-    assert len(result.matched) == 1
-    assert result.matched[0].old.uuid == "old-1"
-    assert result.matched[0].old.display_name == "Newer Generation"
-    assert result.matched[0].reason is MatchReason.EXACT_ALIAS
-
-    # Swapping list order must not change the outcome.
-    swapped = reconcile(
-        [later_position_but_older, earlier_position_but_newer],
-        [projection("prod", hostname="prod.example.com")],
-        ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
-    )
-    assert swapped.matched[0].old.uuid == "old-1"
-
-
-def test_duplicate_tombstones_with_unknown_generation_fall_back_to_uuid():
-    """Legacy tombstones predating ``retired_generation`` have it as ``None``.
-
-    A known generation always outranks an unknown one; when both are unknown
-    the UUID is the final tie-break, so the choice is still deterministic
-    rather than depending on list position.
-    """
-    unknown_generation = IdentityRegistryEntry(
-        uuid="old-a",
-        projection=projection("prod", hostname="prod.example.com"),
-        display_name="No Generation Recorded",
-        tombstone=True,
-    )
-    known_generation = IdentityRegistryEntry(
-        uuid="old-b",
-        projection=projection("prod", hostname="prod.example.com"),
-        display_name="Has A Generation",
-        tombstone=True,
-        retired_generation=1,
-    )
+    live = old("u2", projection("staging", hostname="staging.example.com"))
 
     result = reconcile(
-        [known_generation, unknown_generation],
-        [projection("prod", hostname="prod.example.com")],
+        [tombstoned, live],
+        [
+            projection("prod", hostname="brand-new.example.com"),
+            projection("staging", hostname="staging.example.com"),
+        ],
         ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
     )
-    assert result.matched[0].old.uuid == "old-b"
 
-    # Both unknown: falls back to UUID, deterministically, regardless of
-    # list order.
-    both_unknown = IdentityRegistryEntry(
-        uuid="old-z",
-        projection=projection("prod", hostname="prod.example.com"),
-        display_name="Also No Generation",
-        tombstone=True,
-    )
-    forward = reconcile(
-        [unknown_generation, both_unknown],
-        [projection("prod", hostname="prod.example.com")],
-        ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
-    )
-    backward = reconcile(
-        [both_unknown, unknown_generation],
-        [projection("prod", hostname="prod.example.com")],
-        ids=("new-uuid",),
-        allow_tombstone_resurrection=True,
-    )
-    assert forward.matched[0].old.uuid == backward.matched[0].old.uuid == "old-z"
+    assert [entry.uuid for entry in result.created] == ["new-uuid"]
+    assert [match.old.uuid for match in result.matched] == ["u2"]

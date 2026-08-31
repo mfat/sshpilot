@@ -132,8 +132,6 @@ def reconcile_identity_state(
     ssh_config_revision: str,
     uuid_factory: Callable[[], str] = new_uuid4,
     explicit_continuity: Mapping[str, str] = (),
-    allow_tombstone_resurrection: bool = False,
-    allow_destination_inference: bool = True,
 ) -> IdentityStateV2:
     """Apply one frozen reconciliation pass to a persisted v2 snapshot.
 
@@ -288,15 +286,11 @@ def reconcile_identity_state(
         ambiguous_old,
         ambiguous_new,
         uuid_factory=uuid_factory,
-        allow_tombstone_resurrection=allow_tombstone_resurrection,
-        allow_destination_inference=allow_destination_inference,
     )
     ordinary_result = reconcile_identities(
         ordinary_old,
         ordinary_new,
         uuid_factory=uuid_factory,
-        allow_tombstone_resurrection=allow_tombstone_resurrection,
-        allow_destination_inference=allow_destination_inference,
     )
     combined_matched = ambiguity_result.matched + ordinary_result.matched
     combined_created = ambiguity_result.created + ordinary_result.created
@@ -310,34 +304,14 @@ def reconcile_identity_state(
     }
     created = {entry.uuid: entry for entry in combined_created}
     next_generation = state.sidecar_generation
-    # Where each identity sits right now, so a retirement can remember it and a
-    # resurrection can be put back. A tombstone may not be a group member, so
-    # this is the only place the folder survives the round trip.
-    group_of_uuid = {
-        reference.value: group.id
-        for group in state.groups
-        for reference in group.members
-        if reference.kind is ReferenceKind.SSH_UUID
-    }
-    restored_placements: dict[str, str] = {}
     identities = []
     for identity in state.identities:
         if identity.tombstone:
-            # Check if this tombstone should be resurrected (exact alias + anchor match)
-            match = next((item for item in matches if item.old.uuid == identity.uuid), None)
-            if match is not None:
-                # Resurrect: update projection, clear tombstone flag and retired_generation
-                if identity.retired_group_id is not None:
-                    restored_placements[identity.uuid] = identity.retired_group_id
-                identities.append(replace(
-                    identity,
-                    projection=match.new_projection,
-                    tombstone=False,
-                    retired_generation=None,
-                    retired_group_id=None,
-                ))
-            else:
-                identities.append(identity)
+            # Tombstones never match: the matcher only ever considers active
+            # identities, so a retired one is carried forward untouched. It
+            # means the user deleted that connection from this root, and
+            # re-adding the alias is a new connection.
+            identities.append(identity)
             continue
         match = next((item for item in matches if item.old.uuid == identity.uuid), None)
         if match is not None:
@@ -350,7 +324,6 @@ def reconcile_identity_state(
                     identity,
                     tombstone=True,
                     retired_generation=next_generation + 1,
-                    retired_group_id=group_of_uuid.get(identity.uuid),
                 )
             )
         else:
@@ -374,23 +347,8 @@ def reconcile_identity_state(
         )
         for item in combined_ambiguous
     )
-    placement_groups = state.groups
-    if restored_placements:
-        placement_groups = tuple(
-            replace(
-                group,
-                members=group.members
-                + tuple(
-                    _active_reference(uuid)
-                    for uuid, group_id in sorted(restored_placements.items())
-                    if group_id == group.id
-                    and _active_reference(uuid) not in group.members
-                ),
-            )
-            for group in state.groups
-        )
     groups, root = _placement_values(
-        placement_groups,
+        state.groups,
         state.root_connections,
         active_uuids,
         tuple(created),

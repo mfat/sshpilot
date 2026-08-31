@@ -675,56 +675,38 @@ def reconcile_identities(
     new_projections: Sequence[ConnectionIdentityProjection],
     *,
     uuid_factory: Callable[[], str],
-    allow_tombstone_resurrection: bool = False,
-    allow_destination_inference: bool = True,
 ) -> ReconciliationResult:
     """Reconcile one old snapshot with one new snapshot deterministically.
 
-    Exact aliases among active identities consume first. Tombstones remain
-    excluded unless the caller explicitly enables resurrection for a known
-    authority transition. Remaining candidates are grouped by the literal
-    ``(hostname, normalized_port)`` anchor. Within each destination, only a
-    unique evidence partition can establish a member-to-member match. Multiple
-    candidates in an otherwise matching partition are reserved as an explicit
-    ambiguity; declaration order is never identity evidence.
+    Exact aliases among active identities consume first. Tombstones never
+    participate: a tombstone means the user deleted that connection from this
+    root, and re-adding the alias is a new connection. Remaining candidates
+    are grouped by the literal ``(hostname, normalized_port)`` anchor. Within
+    each destination, only a unique evidence partition can establish a
+    member-to-member match. Multiple candidates in an otherwise matching
+    partition are reserved as an explicit ambiguity; declaration order is
+    never identity evidence.
 
-    Tombstone resurrection is the exception to that last rule: when more
-    than one tombstoned generation shares the returning alias and anchor (an
-    identity that has round-tripped through more than one authority
-    transition, e.g. Isolated Mode toggled on and off more than once), the
-    one with the highest ``retired_generation`` — the most recently retired —
-    is resurrected. Candidates with an unknown (``None``) generation, from
-    before this field existed, rank below any known generation; among
-    remaining ties the UUID breaks it, so the choice is always deterministic
-    without depending on ``old_entries`` position (which does not survive a
-    save/reload — persistence writes identities as a UUID-keyed object with
-    ``sort_keys=True``, so reloaded order is UUID-lexicographic, not
-    creation order). Silently refusing to pick one, as before, meant every
-    such identity was created fresh from its second round-trip onward,
-    permanently discarding its display name.
+    This function reconciles ONE SSH configuration root against its OWN
+    identity state. It has no notion of operation mode, and must not grow
+    one: each root owns a separate sidecar, so the other root's identities
+    are never in ``old_entries`` and cannot be matched, resurrected, or
+    captured here.
 
-    ``allow_destination_inference`` turns off the destination phase for the
-    same authority transitions that enable resurrection. Within one root a
-    surviving destination means the sole Host there was renamed, and the
-    identity is expected to follow it. Across a root switch it means nothing
-    of the kind: the two documents are independent, and an entry in the other
-    one that merely points at the same ``(hostname, port, user)`` is a
-    different connection. Inferring across that boundary handed the other
-    root's alias the identity -- display name, group placement and tags
-    included -- instead of tombstoning it for the resurrection path that the
-    Isolated Mode round-trip contract is built on.
+    It used to need that notion. While both roots shared one state file, a
+    mode switch reconciled a root against the other root's identities, so the
+    caller had to disable the destination phase (or an entry merely pointing
+    at the same ``(hostname, port, user)`` in the other document captured the
+    identity, display name, folder and tags included) and enable tombstone
+    resurrection (because leaving a root tombstoned everything in it, and
+    returning had to raise it all again). Both knobs are gone with the file
+    they existed for.
     """
-
     active_old = [
         (index, entry)
         for index, entry in enumerate(old_entries)
         if not entry.tombstone
     ]
-    tombstoned_by_alias: Dict[str, list[Tuple[int, IdentityRegistryEntry]]] = {}
-    if allow_tombstone_resurrection:
-        for index, entry in enumerate(old_entries):
-            if entry.tombstone:
-                tombstoned_by_alias.setdefault(entry.projection.alias, []).append((index, entry))
     old_aliases = [entry.projection.alias for _, entry in active_old]
     new_aliases = [projection.alias for projection in new_projections]
     if len(old_aliases) != len(set(old_aliases)):
@@ -739,37 +721,6 @@ def reconcile_identities(
     for new_index, projection in enumerate(new_projections):
         old_item = old_by_alias.get(projection.alias)
         if old_item is None:
-            new_anchor = projection.destination_anchor
-            if new_anchor is not None:
-                candidates = [
-                    entry
-                    for _candidate_index, entry in tombstoned_by_alias.get(projection.alias, ())
-                    if entry.projection.destination_anchor == new_anchor
-                ]
-                if candidates:
-                    # Known retired_generation outranks unknown (None, from
-                    # legacy data); the UUID is the final, fully
-                    # deterministic tie-break. old_entries position is
-                    # deliberately not used — it does not survive a
-                    # save/reload (see docstring).
-                    chosen = max(
-                        candidates,
-                        key=lambda entry: (
-                            entry.retired_generation is not None,
-                            entry.retired_generation
-                            if entry.retired_generation is not None
-                            else -1,
-                            entry.uuid,
-                        ),
-                    )
-                    used_new.add(new_index)
-                    matches.append(
-                        Match(
-                            chosen,
-                            projection,
-                            MatchReason.EXACT_ALIAS,
-                        )
-                    )
             continue
         old_index, old_entry = old_item
         used_old.add(old_index)
@@ -798,11 +749,7 @@ def reconcile_identities(
     reserved_old = set()
     reserved_new = set()
     ambiguous = []
-    shared_anchors = (
-        sorted(set(old_by_anchor) & set(new_by_anchor), key=repr)
-        if allow_destination_inference
-        else ()
-    )
+    shared_anchors = sorted(set(old_by_anchor) & set(new_by_anchor), key=repr)
     for anchor in shared_anchors:
         old_bucket = old_by_anchor[anchor]
         new_bucket = new_by_anchor[anchor]

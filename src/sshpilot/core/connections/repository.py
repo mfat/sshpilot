@@ -561,12 +561,7 @@ class ConnectionRepository:
             return ConnectionFileState(), False
         return read_legacy_connection_state(self._legacy_config_path), True
 
-    def _load_state_locked(
-        self,
-        *,
-        allow_tombstone_resurrection: bool = False,
-        allow_destination_inference: bool = True,
-    ) -> None:
+    def _load_state_locked(self) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
         self._loaded_ssh_config = ssh_config
@@ -602,8 +597,6 @@ class ConnectionRepository:
                         state,
                         projections,
                         ssh_config_revision=ssh_config.root_revision,
-                        allow_tombstone_resurrection=allow_tombstone_resurrection,
-                        allow_destination_inference=allow_destination_inference,
                     )
                     write_identity_state_v2(self._state_path, state)
                 self._identity_state = state
