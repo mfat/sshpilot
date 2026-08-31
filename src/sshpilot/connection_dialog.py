@@ -4124,8 +4124,12 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         for spec in specs:
             group_key = getattr(spec, 'group', 'general') or 'general'
             if group_key not in groups:
-                title = (backend.display_name or backend.protocol_id) \
-                    if group_key == 'general' else group_key.replace('_', ' ').title()
+                if group_key == 'general':
+                    title = backend.display_name or backend.protocol_id
+                elif group_key == 'advanced':
+                    title = _("Advanced")
+                else:
+                    title = group_key.replace('_', ' ').title()
                 group = Adw.PreferencesGroup(title=title)
                 groups[group_key] = group
                 ordered_groups.append(group)

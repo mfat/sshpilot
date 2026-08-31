@@ -21,7 +21,7 @@ import shutil
 from gettext import gettext as _
 from typing import Any, Dict, List
 
-from .._shell import command_split_error, split_command
+from .._shell import command_split_diagnostic, split_command
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -43,17 +43,19 @@ class MoshProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="host", label=_("Host"), kind="text", required=True,
-                      placeholder="hostname or IP address"),
+                      placeholder=_("hostname or IP address")),
             FieldSpec(key="username", label=_("Username"), kind="text",
-                      placeholder="(from ~/.ssh/config)"),
+                      placeholder=_("(from ~/.ssh/config)")),
             FieldSpec(key="port", label=_("SSH port"), kind="int", default=22),
             FieldSpec(key="keyfile", label=_("Key file"), kind="file", group="advanced"),
             FieldSpec(key="extra_ssh_opts", label=_("Extra SSH options"), kind="text",
                       placeholder="-o Compression=yes", group="advanced"),
             FieldSpec(key="predict", label=_("Local echo (predict)"), kind="choice",
                       default="adaptive", group="advanced",
-                      choices=[("adaptive", "Adaptive (default)"), ("always", "Always"),
-                               ("never", "Never"), ("experimental", "Experimental")]),
+                      choices=[("adaptive", _("Adaptive (default)")),
+                               ("always", _("Always")),
+                               ("never", _("Never")),
+                               ("experimental", _("Experimental"))]),
             FieldSpec(key="mosh_port", label=_("UDP port / range"), kind="text",
                       placeholder="60000:60010", group="advanced"),
         ]
@@ -61,18 +63,21 @@ class MoshProtocolBackend(ProtocolBackend):
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
         if not (data.get("host") or data.get("hostname")):
-            errors.append("A host is required.")
+            errors.append(_("A host is required."))
         raw_port = data.get("port", self.default_port)
         if raw_port not in (None, ""):
             try:
                 if not 0 < int(raw_port) < 65536:
-                    errors.append("Port must be between 1 and 65535.")
+                    errors.append(_("Port must be between 1 and 65535."))
             except (TypeError, ValueError):
-                errors.append("Port must be a number.")
-        problem = command_split_error(
-            data.get("extra_ssh_opts"), "Extra SSH options")
-        if problem:
-            errors.append(problem)
+                errors.append(_("Port must be a number."))
+        diagnostic = command_split_diagnostic(data.get("extra_ssh_opts"))
+        if diagnostic:
+            errors.append(
+                _("{field} could not be parsed: {diagnostic}.").format(
+                    field=_("Extra SSH options"), diagnostic=diagnostic
+                )
+            )
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
