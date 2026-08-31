@@ -236,7 +236,7 @@ class WindowActions:
         try:
             if response_id == 'split':
                 self._open_connection_batch_now(connections, title, 'split')
-            elif response_id == 'tabs':
+            elif response_id in ('tabs', 'continue'):
                 self._open_connection_batch_now(connections, title, 'tabs')
         except Exception as exc:
             logger.error("Failed to open connections: %s", exc)
@@ -245,12 +245,12 @@ class WindowActions:
     def _open_connection_batch(self, connections, title=None, prefer='split'):
         """Open ``connections``, confirming a large batch first.
 
-        ``prefer`` is what the caller asked for — 'split' (one split-view tab)
-        or 'tabs' (a tab each) — and becomes the dialog's default. Opening a
-        whole group is a single click away, so a group with dozens of hosts
-        could start that many sessions with no warning (GH #1232). Small
-        batches stay friction-free; past the threshold we ask, offering the
-        other layout as well so a mis-click can be redirected.
+        ``prefer`` is what the caller asked for: 'tabs' (a tab each) just
+        confirms, while 'split' (one split-view tab) also offers separate tabs
+        as the gentler way out. Opening a whole group is a single click away,
+        so a group with dozens of hosts could start that many sessions with no
+        warning (GH #1232). Small batches stay friction-free; past the
+        threshold we ask.
         """
         if not connections:
             return
@@ -259,17 +259,21 @@ class WindowActions:
             return
 
         if prefer == 'tabs':
-            body = _("This will start {n} connections in separate tabs.")
+            body = _("This will open {n} new connection tabs.")
         else:
             body = _("This will start {n} connections in a single tab.")
         dialog = Adw.AlertDialog(
             heading=_("Open connections?"),
             body=body.format(n=len(connections)),
         )
-        default = 'tabs' if prefer == 'tabs' else 'split'
         dialog.add_response('cancel', _("Cancel"))
-        dialog.add_response('split', _("Split View"))
-        dialog.add_response('tabs', _("Separate Tabs"))
+        if prefer == 'tabs':
+            default = 'continue'
+            dialog.add_response('continue', _("Continue"))
+        else:
+            default = 'split'
+            dialog.add_response('split', _("Split View"))
+            dialog.add_response('tabs', _("Separate Tabs"))
         dialog.set_response_appearance(default, Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response(default)
         dialog.set_close_response('cancel')
