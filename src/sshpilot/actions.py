@@ -249,7 +249,7 @@ class WindowActions:
 
         dialog = Adw.AlertDialog(
             heading=_("Open split view?"),
-            body=_("This will start {n} connections simultaneously.").format(
+            body=_("This will start {n} connections in a single tab.").format(
                 n=len(connections)
             ),
         )
