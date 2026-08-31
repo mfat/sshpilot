@@ -214,7 +214,7 @@ def test_small_group_opens_straight_into_tabs():
     assert window.created == []
 
 
-def test_large_group_in_tabs_asks_with_tabs_preselected():
+def test_large_group_in_tabs_asks_to_continue():
     window = make_window()
     conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
     window.connection_manager = FakeConnectionManager(conns)
@@ -224,12 +224,27 @@ def test_large_group_in_tabs_asks_with_tabs_preselected():
 
     assert window.tabbed == []
     dialog = FakeAlertDialog.instances[0]
-    assert dialog.default_response == "tabs"
-    assert "separate tabs" in dialog.body
+    # Continue or cancel — the tab path never offers split view instead.
+    assert dialog.responses == ["cancel", "continue"]
+    assert dialog.default_response == "continue"
+    assert dialog.body == f"This will open {len(conns)} new connection tabs."
 
-    dialog.emit_response("tabs")
+    dialog.emit_response("continue")
 
     assert window.tabbed == conns
+    assert window.created == []
+
+
+def test_cancelling_the_tabs_confirmation_opens_nothing():
+    window = make_window()
+    conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
+    window.connection_manager = FakeConnectionManager(conns)
+    window._context_menu_group_row = FakeGroupRow("Prod", [c.nickname for c in conns])
+
+    window.on_open_group_in_tabs_action(None)
+    FakeAlertDialog.instances[0].emit_response("cancel")
+
+    assert window.tabbed == []
     assert window.created == []
 
 
