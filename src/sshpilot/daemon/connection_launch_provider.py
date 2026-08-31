@@ -776,18 +776,19 @@ class DaemonConnectionLaunchProvider:
             argv.append("-f")
         argv.extend(["-i", public_key_path])
 
+        # Which known_hosts file this is depends on the operation mode, not on
+        # where the declaring file happens to sit: -F is given the file that
+        # declared the Host, so for anything pulled in through an Include that
+        # directory is a fragment's, not the root's.
         known_hosts_path = None
-        if config_file:
-            known_hosts_path = os.path.join(
-                os.path.dirname(config_file), "known_hosts"
-            )
-        else:
-            try:
-                from sshpilot.platform.paths import get_ssh_dir
+        try:
+            from sshpilot.platform.paths import known_hosts_path_for
 
-                known_hosts_path = str(get_ssh_dir() / "known_hosts")
-            except Exception:
-                known_hosts_path = None
+            known_hosts_path = str(
+                known_hosts_path_for(bool(connection.data.get("isolated_mode")))
+            )
+        except Exception:
+            known_hosts_path = None
         if known_hosts_path:
             argv += ["-o", f"UserKnownHostsFile={known_hosts_path}"]
 

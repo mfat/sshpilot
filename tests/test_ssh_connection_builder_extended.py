@@ -660,3 +660,78 @@ def test_base_command_x11_flag_only_for_ssh():
     assert '-X' not in _base_cmd('scp', effective_config=effective)
     assert '-X' not in _base_cmd('sftp', effective_config=effective)
     assert '-X' not in _base_cmd('ssh-copy-id', effective_config=effective)
+
+
+# ---------------------------------------------------------------------------
+# Isolated Mode owns its host keys
+# ---------------------------------------------------------------------------
+
+
+def _known_hosts_value(cmd: List[str]) -> str | None:
+    for i, token in enumerate(cmd):
+        if token == '-o' and i + 1 < len(cmd):
+            value = cmd[i + 1]
+            if value.startswith('UserKnownHostsFile='):
+                return value.split('=', 1)[1]
+    return None
+
+
+def test_isolated_connection_pins_the_isolated_known_hosts(monkeypatch, tmp_path):
+    """Isolated Mode must not write host keys into ~/.ssh/known_hosts.
+
+    Nothing pinned the file before, so `ssh -F <isolated config>` fell back to
+    OpenSSH's default and isolated sessions learned hosts into the user's real
+    global trust store. It is emitted as argv rather than written into the
+    isolated config because -F is given the file that *declared* the Host,
+    which for anything pulled in through an Include is a fragment.
+    """
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
+
+    cmd, _ = _build({
+        'nickname': 'iso',
+        'host': 'iso',
+        'hostname': 'iso.example.com',
+        'username': 'alice',
+        'isolated_mode': True,
+    })
+
+    assert _known_hosts_value(cmd) == str(tmp_path / 'sshpilot' / 'known_hosts')
+
+
+def test_default_connection_never_pins_known_hosts(monkeypatch, tmp_path):
+    """~/.ssh/known_hosts is shared TOFU state sshPilot does not own.
+
+    Pinning it would be a no-op for most users but would override anyone who
+    set UserKnownHostsFile themselves.
+    """
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
+
+    cmd, _ = _build({
+        'nickname': 'plain',
+        'host': 'plain',
+        'hostname': 'plain.example.com',
+        'username': 'alice',
+    })
+
+    assert _known_hosts_value(cmd) is None
+
+
+def test_a_connection_authoring_its_own_known_hosts_is_left_alone(monkeypatch, tmp_path):
+    """A Host block that sets UserKnownHostsFile keeps it.
+
+    A command-line ``-o`` beats every config file, so injecting ours
+    unconditionally would override the very directive the editor shows. When
+    the block authored it, emit nothing and let OpenSSH resolve the file.
+    """
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
+
+    cmd, _ = _build({
+        'nickname': 'iso',
+        'host': 'iso',
+        'hostname': 'iso.example.com',
+        'username': 'alice',
+        'isolated_mode': True,
+        '__authored_directives': ('hostname', 'userknownhostsfile'),
+    })
+
+    assert _known_hosts_value(cmd) is None

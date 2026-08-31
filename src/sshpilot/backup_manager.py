@@ -18,7 +18,7 @@ from .api.models.secrets import (
     SecretTransferMessage,
     SecretTransferMessageCode,
 )
-from .platform.paths import get_config_dir, get_ssh_dir
+from .platform.paths import get_config_dir, get_ssh_dir, known_hosts_path_for
 from .core.settings import CONFIG_VERSION
 from .platform.locking import settings_transaction_lock
 
@@ -437,7 +437,7 @@ class BackupManager:
 
         use_isolated = self.config.get_setting('ssh.use_isolated_config', False)
         if use_isolated:
-            return str(Path(get_config_dir()) / 'known_hosts')
+            return str(known_hosts_path_for(True))
         return None
 
     def _current_isolated_mode(self) -> bool:

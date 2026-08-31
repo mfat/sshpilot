@@ -20,7 +20,11 @@ from sshpilot.api.transport.codec import (
     daemon_status_to_wire,
     daemon_stop_result_to_wire,
 )
-from sshpilot.platform.paths import get_config_dir, get_ssh_dir
+from sshpilot.platform.paths import (
+    get_config_dir,
+    get_ssh_dir,
+    known_hosts_path_for,
+)
 
 from .lifecycle import resolve_socket_path
 
@@ -428,7 +432,11 @@ def _production_core_services():
     return CoreServices(
         connections=connections,
         configuration_backend=AuthoritativeConfigurationBackend(repository),
-        known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
+        # Resolved per call from the *active* root, so the Known Hosts editor
+        # follows a live mode switch without rebuilding the service.
+        known_hosts=KnownHostsService(
+            lambda: known_hosts_path_for(repository.ssh_config_isolated)
+        ),
         keys=key_service,
         ssh_overrides=overrides_service,
         secrets=secrets_service,

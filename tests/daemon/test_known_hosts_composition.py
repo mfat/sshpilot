@@ -49,6 +49,36 @@ def test_production_resolver_uses_headless_path_helper(monkeypatch, tmp_path):
     assert services.known_hosts._path_resolver() == override / "known_hosts"
 
 
+def test_resolver_follows_a_live_operation_mode_switch(monkeypatch, tmp_path):
+    """The known-hosts editor must edit the active root's file.
+
+    It was hardwired to ~/.ssh/known_hosts in both modes, so in Isolated Mode
+    the editor showed -- and deleted from -- the user's global trust store
+    while the sessions it was supposed to describe used a different scope
+    entirely. The resolver is called per request, so a live switch is picked
+    up without rebuilding the service.
+    """
+    from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
+    from sshpilot.platform.paths import get_config_dir
+
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    (ssh_dir / "config").write_text("Host web\n    HostName web.example\n")
+    monkeypatch.setenv("SSHPILOT_SSH_DIR", str(ssh_dir))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    services = _call_production_composition()
+    resolve = services.known_hosts._path_resolver
+
+    assert resolve() == ssh_dir / "known_hosts"
+
+    services.operation_mode.apply(SetOperationModeRequest(mode=OperationMode.ISOLATED))
+    assert resolve() == get_config_dir() / "known_hosts"
+
+    services.operation_mode.apply(SetOperationModeRequest(mode=OperationMode.DEFAULT))
+    assert resolve() == ssh_dir / "known_hosts"
+
+
 def test_test_services_may_omit_known_hosts():
     services = CoreServices(
         connections=ConnectionApplicationService(mock.Mock(), client_name="test")
