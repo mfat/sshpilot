@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.0.2" date="2026-08-31">
+      <description>
+        <p>Improvements to isolated workspace mode</p>
+        <p>Middle-click a group to open all connections in splitview</p>
+      </description>
+    </release>
     <release version="6.0.1" date="2026-08-31">
       <description>
         <p>Improvements to isolated workspace mode</p>
