@@ -75,6 +75,10 @@ def already_split(config_dir) -> bool:
 
 def _record_split(config_dir) -> None:
     marker = marker_path(config_dir)
+    # A genuinely fresh install has no config directory yet: there is nothing
+    # to split, but the result still has to be recorded or every start retries
+    # and logs a failure.
+    marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp = marker.with_name(marker.name + ".tmp")
     tmp.write_text(f"{WORKSPACE_SPLIT_VERSION}\n", encoding="utf-8")
     os.replace(tmp, marker)

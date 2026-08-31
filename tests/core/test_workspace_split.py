@@ -411,3 +411,28 @@ def test_a_fresh_install_records_the_split_without_writing_a_sidecar(rig):
     assert already_split(rig["cfg"]) is True
     assert not rig["shared"].exists()
     assert not rig["isolated"].exists()
+
+
+def test_a_first_ever_start_records_the_split_without_a_config_dir(tmp_path):
+    """A fresh install has no config directory yet.
+
+    There is nothing to split, but the outcome still has to be recorded, or
+    every start retries and logs a failure at the user.
+    """
+    from sshpilot.core.connections.workspace_split import (
+        already_split,
+        ensure_workspaces_split,
+    )
+
+    config_dir = tmp_path / "never-created"
+    assert not config_dir.exists()
+
+    assert ensure_workspaces_split(
+        config_dir=config_dir,
+        shared_path=config_dir / "connections.json",
+        isolated_path=config_dir / "connections-isolated.json",
+        default_root=tmp_path / "ssh" / "config",
+        isolated_root=config_dir / "ssh_config",
+        non_ssh_to_isolated=False,
+    ) is True
+    assert already_split(config_dir) is True
