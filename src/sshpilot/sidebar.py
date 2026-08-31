@@ -4709,11 +4709,12 @@ def _attach_connection_list_context_menu(window):
             if not row:
                 return
 
-            # Middle click opens tabs: one for a connection row, one per member
-            # for a group row (which confirms first when the group is a big one).
+            # A connection opens in a new tab; a group opens in split view,
+            # which confirms first when the group is a big one.
             is_group = not hasattr(row, 'connection') and hasattr(row, 'group_id')
             if is_group:
-                open_action = getattr(window, 'on_open_group_in_tabs_action', None)
+                open_action = getattr(
+                    window, 'on_open_group_in_split_view_action', None)
             elif hasattr(row, 'connection'):
                 open_action = getattr(window, 'on_open_new_connection_action', None)
             else:

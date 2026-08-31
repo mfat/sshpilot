@@ -226,74 +226,49 @@ class WindowActions:
         self.tab_view.set_selected_page(page)
         return svt
 
-    def _open_connection_batch_now(self, connections, title, prefer):
-        if prefer == 'tabs':
-            self._open_new_connection_tabs(connections)
-        else:
-            self._create_split_view_tab(connections, title)
-
-    def _on_connection_batch_response(self, dialog, response_id, connections, title):
+    def _on_split_view_confirm_response(self, dialog, response_id, connections, title):
         try:
-            if response_id == 'split':
-                self._open_connection_batch_now(connections, title, 'split')
+            if response_id == 'open':
+                self._create_split_view_tab(connections, title)
             elif response_id == 'tabs':
-                self._open_connection_batch_now(connections, title, 'tabs')
+                self._open_new_connection_tabs(connections)
         except Exception as exc:
-            logger.error("Failed to open connections: %s", exc)
+            logger.error("Failed to open connections in split view: %s", exc)
         dialog.close()
 
-    def _open_connection_batch(self, connections, title=None, prefer='split'):
-        """Open ``connections``, confirming a large batch first.
+    def _open_connections_in_split_view(self, connections, title=None):
+        """Open ``connections`` in one split tab, confirming large batches first.
 
-        ``prefer`` is what the caller asked for — 'split' (one split-view tab)
-        or 'tabs' (a tab each) — and becomes the dialog's default. Opening a
-        whole group is a single click away, so a group with dozens of hosts
-        could start that many sessions with no warning (GH #1232). Small
-        batches stay friction-free; past the threshold we ask, offering the
-        other layout as well so a mis-click can be redirected.
+        Opening a whole group is a single click away, so a group with dozens of
+        hosts could spawn that many sessions with no warning (GH #1232). Small
+        batches stay friction-free; past the threshold we ask.
         """
         if not connections:
             return
         if len(connections) <= SPLIT_VIEW_CONFIRM_THRESHOLD:
-            self._open_connection_batch_now(connections, title, prefer)
+            self._create_split_view_tab(connections, title)
             return
 
-        if prefer == 'tabs':
-            body = _("This will start {n} connections in separate tabs.")
-        else:
-            body = _("This will start {n} connections in a single tab.")
         dialog = Adw.AlertDialog(
-            heading=_("Open connections?"),
-            body=body.format(n=len(connections)),
+            heading=_("Open split view?"),
+            body=_("This will start {n} connections in a single tab.").format(
+                n=len(connections)
+            ),
         )
-        default = 'tabs' if prefer == 'tabs' else 'split'
         dialog.add_response('cancel', _("Cancel"))
-        dialog.add_response('split', _("Split View"))
         dialog.add_response('tabs', _("Separate Tabs"))
-        dialog.set_response_appearance(default, Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response(default)
+        dialog.add_response('open', _("Split View"))
+        dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('open')
         dialog.set_close_response('cancel')
         dialog.connect(
             'response',
-            self._on_connection_batch_response,
+            self._on_split_view_confirm_response,
             connections,
             title,
         )
         dialog.present(self)
         mark_default_response_visible(self)
-
-    def _connections_for_context_group(self):
-        """Connections of the group row the menu or gesture last targeted."""
-        group_row = getattr(self, '_context_menu_group_row', None)
-        if group_row is None:
-            return []
-        group_info = getattr(group_row, 'group_info', None) or {}
-        connections = []
-        for nick in group_info.get('connections', []):
-            conn = self.connection_manager.find_connection_by_nickname(nick)
-            if conn is not None:
-                connections.append(conn)
-        return connections
 
     def on_new_split_view_tab(self, action, param=None):
         """Open a new empty split-view tab."""
@@ -322,28 +297,29 @@ class WindowActions:
                 if conn is not None:
                     connections.append(conn)
 
-            self._open_connection_batch(connections)
+            self._open_connections_in_split_view(connections)
         except Exception as exc:
             logger.error("Failed to open connections in split view: %s", exc)
 
     def on_open_group_in_split_view_action(self, action, param=None):
         """Open all connections in a group as a new split-view tab."""
         try:
-            connections = self._connections_for_context_group()
             group_row = getattr(self, '_context_menu_group_row', None)
-            name = (getattr(group_row, 'group_info', None) or {}).get('name', '')
+            if group_row is None:
+                return
+
+            group_info = group_row.group_info
+            connections = []
+            for nick in group_info.get('connections', []):
+                conn = self.connection_manager.find_connection_by_nickname(nick)
+                if conn is not None:
+                    connections.append(conn)
+
+            name = group_info.get('name', '')
             title = _("Split View — {name}").format(name=name) if name else None
-            self._open_connection_batch(connections, title)
+            self._open_connections_in_split_view(connections, title)
         except Exception as exc:
             logger.error("Failed to open group in split view: %s", exc)
-
-    def on_open_group_in_tabs_action(self, action, param=None):
-        """Open every connection in a group as its own tab."""
-        try:
-            self._open_connection_batch(
-                self._connections_for_context_group(), prefer='tabs')
-        except Exception as exc:
-            logger.error("Failed to open group in tabs: %s", exc)
 
     def on_copy_key_to_server_action(self, action, param=None):
         """Handle copy key to server action from context menu"""
