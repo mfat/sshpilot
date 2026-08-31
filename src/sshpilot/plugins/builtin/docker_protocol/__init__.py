@@ -14,11 +14,12 @@ from gettext import gettext as _
 from typing import Any, Dict, List
 
 from .._shell import command_split_diagnostic, split_command
+from .._session_failure import BuiltinProtocolError
+from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
     PluginContext,
     ProtocolBackend,
-    ProtocolError,
     SpawnSpec,
     SshPilotPlugin,
 )
@@ -68,16 +69,22 @@ class DockerProtocolBackend(ProtocolBackend):
         data = getattr(connection, "data", None) or {}
         container = (data.get("container") or "").strip()
         if not container:
-            raise ProtocolError("No container configured for this connection.")
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.CONTAINER_REQUIRED,
+                "No container configured for this connection.",
+            )
         runtime = (data.get("runtime") or "docker")
         if runtime not in ("docker", "podman"):
             runtime = "docker"
         from .._flatpak import resolve_host_binary  # noqa: PLC0415
         binary_argv = resolve_host_binary(runtime)
         if binary_argv is None:
-            raise ProtocolError(
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.CONTAINER_RUNTIME_UNAVAILABLE,
                 f"The '{runtime}' program is not installed. Install it to use "
-                f"container connections.")
+                "container connections.",
+                parameters={"runtime": runtime},
+            )
 
         command = (data.get("command") or "sh").strip() or "sh"
         host = (data.get("docker_host") or "").strip()
@@ -92,7 +99,7 @@ class DockerProtocolBackend(ProtocolBackend):
         if workdir:
             argv += ["-w", workdir]
         argv.append(container)
-        argv += split_command(command, "Command")
+        argv += split_command(command, "command")
         return SpawnSpec(argv=argv, env=dict(os.environ))
 
 

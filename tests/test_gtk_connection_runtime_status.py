@@ -10,6 +10,8 @@ from sshpilot.api.models.operations import (
     SftpServiceSummary,
 )
 from sshpilot.api.models.sessions import (
+    PluginSessionFailure,
+    PluginSessionFailureCode,
     SessionExitInfo,
     SessionFailure,
     SessionState,
@@ -201,6 +203,39 @@ def test_closed_failed_session_retains_its_authoritative_failure():
     assert store.status_for("connection-1") == ConnectionRuntimeStatus(
         ConnectionState.FAILED,
         "permission denied (publickey,password).",
+    )
+
+
+def test_plugin_session_failure_uses_frontend_formatter(monkeypatch):
+    import sshpilot.gtk.connection_runtime_status as runtime_status
+
+    monkeypatch.setattr(
+        runtime_status,
+        "format_plugin_session_failure",
+        lambda failure: f"translated:{failure.parameters['program']}",
+    )
+    store = ConnectionRuntimeStatusStore()
+    store.attach_client(
+        Client(
+            "daemon-a",
+            [
+                session(
+                    "failed",
+                    "connection-1",
+                    SessionState.FAILED,
+                    failure=PluginSessionFailure(
+                        PluginSessionFailureCode.KUBECTL_UNAVAILABLE,
+                        ErrorCode.SESSION_STARTUP_FAILED,
+                        parameters={"program": "kubectl"},
+                    ),
+                )
+            ],
+        )
+    )
+
+    assert store.status_for("connection-1") == ConnectionRuntimeStatus(
+        ConnectionState.FAILED,
+        "translated:kubectl",
     )
 
 

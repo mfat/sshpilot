@@ -9,8 +9,10 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sshpilot.connection_manager import Connection
+from sshpilot.api.models.sessions import PluginSessionFailureCode
 from sshpilot.plugins import registry as registry_mod
-from sshpilot.plugins.api import PluginContext, ProtocolError
+from sshpilot.plugins.api import PluginContext
+from sshpilot.plugins.builtin._session_failure import BuiltinProtocolError
 from sshpilot.plugins.builtin.mosh_protocol import Plugin, MoshProtocolBackend
 from sshpilot.plugins.loader import load_plugins
 
@@ -133,8 +135,13 @@ def test_build_spawn_missing_binary(monkeypatch):
     import sshpilot.plugins.builtin.mosh_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)
     conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'h'})
-    with pytest.raises(ProtocolError, match='not installed'):
+    with pytest.raises(BuiltinProtocolError, match='not installed') as excinfo:
         MoshProtocolBackend().build_spawn(conn, _ctx())
+    assert excinfo.value.failure.code is PluginSessionFailureCode.MOSH_UNAVAILABLE
+    assert dict(excinfo.value.failure.parameters) == {
+        "client_program": "mosh",
+        "server_program": "mosh-server",
+    }
 
 
 def test_build_spawn_missing_host(monkeypatch):
@@ -143,8 +150,74 @@ def test_build_spawn_missing_host(monkeypatch):
     conn = Connection({'nickname': 'm', 'protocol': 'mosh'})
     conn.hostname = ''
     conn.host = ''
-    with pytest.raises(ProtocolError, match='[Nn]o host'):
+    with pytest.raises(BuiltinProtocolError, match='[Nn]o host') as excinfo:
         MoshProtocolBackend().build_spawn(conn, _ctx())
+    assert excinfo.value.failure.code is PluginSessionFailureCode.HOST_REQUIRED
+
+
+def test_build_spawn_preparation_error_keeps_diagnostic_separate(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+    import sshpilot.ssh_connection_builder as builder
+
+    def fail_auth(*_args, **_kwargs):
+        raise RuntimeError("opaque auth")
+
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    monkeypatch.setattr(builder, "resolve_native_auth", fail_auth)
+    conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'host'})
+
+    with pytest.raises(BuiltinProtocolError) as excinfo:
+        MoshProtocolBackend().build_spawn(conn, _ctx())
+
+    failure = excinfo.value.failure
+    assert failure.code is PluginSessionFailureCode.MOSH_PREPARATION_FAILED
+    assert failure.diagnostic == "opaque auth"
+    assert dict(failure.parameters) == {}
+
+
+def test_build_spawn_command_preparation_error_uses_same_stable_code(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+    import sshpilot.ssh_connection_builder as builder
+
+    def fail_command(*_args, **_kwargs):
+        raise ValueError("opaque command builder detail")
+
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    monkeypatch.setattr(
+        builder,
+        "resolve_native_auth",
+        lambda *_args, **_kwargs: builder.NativeAuth(env={}, extra_opts=[]),
+    )
+    monkeypatch.setattr(builder, "build_native_command", fail_command)
+    conn = Connection({'nickname': 'm', 'protocol': 'mosh', 'host': 'host'})
+
+    with pytest.raises(BuiltinProtocolError) as excinfo:
+        MoshProtocolBackend().build_spawn(conn, _ctx())
+
+    failure = excinfo.value.failure
+    assert failure.code is PluginSessionFailureCode.MOSH_PREPARATION_FAILED
+    assert failure.diagnostic == "opaque command builder detail"
+
+
+def test_build_spawn_invalid_ssh_options_use_stable_field_key(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+
+    monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/mosh')
+    _stub_ssh_builders(monkeypatch)
+    conn = Connection({
+        'nickname': 'm',
+        'protocol': 'mosh',
+        'host': 'host',
+        'extra_ssh_opts': "-o '",
+    })
+
+    with pytest.raises(BuiltinProtocolError) as excinfo:
+        MoshProtocolBackend().build_spawn(conn, _ctx())
+
+    failure = excinfo.value.failure
+    assert failure.code is PluginSessionFailureCode.ARGUMENTS_INVALID
+    assert dict(failure.parameters) == {"field": "extra_ssh_opts"}
+    assert failure.diagnostic
 
 
 def test_activate_registers_backend():

@@ -8,9 +8,15 @@ from typing import Callable, Dict, Optional
 
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.operations import SftpServiceState, SftpServiceSummary
-from sshpilot.api.models.sessions import SessionExitInfo, SessionState, SessionSummary
+from sshpilot.api.models.sessions import (
+    PluginSessionFailure,
+    SessionExitInfo,
+    SessionState,
+    SessionSummary,
+)
 from sshpilot.connection_model import ConnectionState
 
+from .plugin_session_failure_messages import format_plugin_session_failure
 from .sftp_failure_messages import format_sftp_failure
 
 
@@ -280,6 +286,8 @@ class ConnectionRuntimeStatusStore:
                     reason = ""
                 elif isinstance(latest, SftpServiceSummary):
                     reason = format_sftp_failure(latest.failure)
+                elif type(latest.failure) is PluginSessionFailure:
+                    reason = format_plugin_session_failure(latest.failure)
                 else:
                     reason = latest.failure.message
                 return ConnectionRuntimeStatus(ConnectionState.FAILED, reason)

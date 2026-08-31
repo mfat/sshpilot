@@ -58,6 +58,95 @@ def test_missing_connection_raises(provider):
     assert "does not exist" in str(exc.value).lower()
 
 
+def test_builtin_plugin_failure_survives_provider_and_session_runtime(monkeypatch):
+    from sshpilot.api.errors import ErrorCode
+    from sshpilot.api.models.common import ClientId, ConnectionId
+    from sshpilot.api.models.connections import ConnectionDetails
+    from sshpilot.api.models.sessions import (
+        OpenSessionRequest,
+        PluginSessionFailure,
+        PluginSessionFailureCode,
+        SessionState,
+    )
+    from sshpilot.daemon.session_runtime import SessionRuntime
+    import sshpilot.platform_utils as platform_utils
+
+    record = _record(
+        nickname="serial-demo",
+        protocol="serial",
+        data={
+            "device": "/dev/ttyUSB0",
+            "baud": "9600",
+            "flow": "hard",
+            "databits": "5",
+        },
+    )
+    provider = DaemonConnectionLaunchProvider(
+        lambda connection_id: record if connection_id == record.id else None,
+        secret_provider=None,
+        app_config=None,
+    )
+    monkeypatch.setattr(
+        platform_utils.shutil,
+        "which",
+        lambda name, path=None: "/usr/bin/screen" if name == "screen" else None,
+    )
+
+    class Core:
+        @staticmethod
+        def get_connection(connection_id):
+            assert connection_id == ConnectionId("serial-demo")
+            return ConnectionDetails(
+                id=ConnectionId("serial-demo"),
+                nickname="serial-demo",
+                host="",
+                hostname="",
+                username="",
+                port=22,
+                protocol="serial",
+                plugin_data=record.data,
+            )
+
+    class PreparingRunner:
+        terminal_capable = False
+
+        @staticmethod
+        def start(spec, on_exit):
+            del on_exit
+            provider.prepare_terminal_launch(
+                spec.connection_id,
+                interaction_policy="none",
+            )
+            raise AssertionError("the unsupported Serial launch must not start")
+
+        @staticmethod
+        def close():
+            return None
+
+    runtime = SessionRuntime(Core(), runner=PreparingRunner())
+    try:
+        summary = runtime.open_session(
+            OpenSessionRequest(connection_id=ConnectionId("serial-demo")),
+            client_id=ClientId("client:test"),
+        )
+    finally:
+        runtime.shutdown()
+
+    assert summary.state is SessionState.FAILED
+    assert type(summary.failure) is PluginSessionFailure
+    assert summary.failure.code is (
+        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED
+    )
+    assert summary.failure.error_code is ErrorCode.SESSION_STARTUP_FAILED
+    assert dict(summary.failure.parameters) == {
+        "fallback_program": "screen",
+        "preferred_program": "picocom",
+        "flow": "RTS/CTS",
+        "databits": "5",
+    }
+    assert summary.failure.diagnostic == ""
+
+
 def test_view_exposes_connection_fields():
     view = HeadlessConnectionView(_record())
     assert view.nickname == "web"

@@ -16,7 +16,26 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.50 (current)
+## API 0.51 (current)
+
+### API 0.51 structured builtin plugin session launch failures
+
+- Bumped `API_IMPLEMENTATION_VERSION` because builtin Docker, Kubernetes,
+  Mosh, and Serial launch-preparation failures in `SessionSummary.failure`
+  now use the strict `PluginSessionFailure` wire object rather than the
+  generic rendered `SessionFailure` text.
+- The discriminated `kind: plugin_launch` object carries a stable
+  `PluginSessionFailureCode`, the existing machine `ErrorCode`, strict
+  technical parameters, and an optional opaque diagnostic. GTK maps the code
+  to gettext, formats only after translation, and appends diagnostics
+  unchanged.
+- The generic `SessionFailure` model and its exact `{code, message}` wire shape
+  remain unchanged for SSH startup, authentication, readiness, termination,
+  runtime-exit, scheduling, and non-builtin-plugin failures.
+- `PROTOCOL_VERSION` remains `1.0`; exact API implementation negotiation
+  rejects mismatched peers before session traffic.
+
+## API 0.50
 
 ### API 0.50 structured native SCP and identity failures
 

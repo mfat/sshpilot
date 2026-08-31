@@ -8,8 +8,10 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sshpilot.connection_manager import Connection
+from sshpilot.api.models.sessions import PluginSessionFailureCode
 from sshpilot.plugins import registry as registry_mod
-from sshpilot.plugins.api import PluginContext, ProtocolError
+from sshpilot.plugins.api import PluginContext
+from sshpilot.plugins.builtin._session_failure import BuiltinProtocolError
 from sshpilot.plugins.builtin.kubernetes_protocol import Plugin, KubernetesProtocolBackend
 from sshpilot.plugins.loader import load_plugins
 
@@ -84,16 +86,19 @@ def test_build_spawn_missing_binary(monkeypatch):
     import sshpilot.plugins.builtin.kubernetes_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)
     conn = Connection({'nickname': 'k', 'protocol': 'k8s', 'pod': 'web-0'})
-    with pytest.raises(ProtocolError, match='not installed'):
+    with pytest.raises(BuiltinProtocolError, match='not installed') as excinfo:
         KubernetesProtocolBackend().build_spawn(conn, _ctx())
+    assert excinfo.value.failure.code is PluginSessionFailureCode.KUBECTL_UNAVAILABLE
+    assert dict(excinfo.value.failure.parameters) == {"program": "kubectl"}
 
 
 def test_build_spawn_missing_pod(monkeypatch):
     import sshpilot.plugins.builtin.kubernetes_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/kubectl')
     conn = Connection({'nickname': 'k', 'protocol': 'k8s'})
-    with pytest.raises(ProtocolError, match='[Nn]o pod'):
+    with pytest.raises(BuiltinProtocolError, match='[Nn]o pod') as excinfo:
         KubernetesProtocolBackend().build_spawn(conn, _ctx())
+    assert excinfo.value.failure.code is PluginSessionFailureCode.POD_REQUIRED
 
 
 def test_activate_registers_backend():

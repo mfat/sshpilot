@@ -17,6 +17,7 @@ from .api.models.sessions import (
     CloseSessionRequest,
     DetachSessionRequest,
     OpenSessionRequest,
+    PluginSessionFailure,
     SessionExitInfo,
     SessionSummary,
     SessionState,
@@ -27,10 +28,21 @@ from .api.models.terminal import (
     TerminalDimensions,
     TerminalInput,
 )
+from .gtk.plugin_session_failure_messages import format_plugin_session_failure
 
 logger = logging.getLogger(__name__)
 
 _RECOVERY_REPLAY_CHUNK_BYTES = 512 * 1024
+
+
+def _session_failure_presentation(failure) -> tuple[ErrorCode, str]:
+    if type(failure) is PluginSessionFailure:
+        return failure.error_code, format_plugin_session_failure(failure)
+    try:
+        code = ErrorCode(failure.code)
+    except ValueError:
+        code = ErrorCode.SESSION_STARTUP_FAILED
+    return code, failure.message
 
 
 class TerminalSessionState(str, Enum):
@@ -501,14 +513,11 @@ class DaemonTerminalSessionController:
             self._tab_state.state = TerminalSessionState.FAILED
             failure = getattr(summary, "failure", None)
             if failure is not None:
-                try:
-                    code = ErrorCode(failure.code)
-                except ValueError:
-                    code = ErrorCode.SESSION_STARTUP_FAILED
+                code, message = _session_failure_presentation(failure)
                 self._on_error(
                     SshPilotError(
                         code,
-                        failure.message,
+                        message,
                         session_id=summary.id,
                     )
                 )
@@ -627,11 +636,7 @@ class DaemonTerminalSessionController:
             code = ErrorCode.SESSION_STARTUP_FAILED
             message = "The session process could not be started"
             if failure is not None:
-                try:
-                    code = ErrorCode(failure.code)
-                except ValueError:
-                    code = ErrorCode.SESSION_STARTUP_FAILED
-                message = failure.message
+                code, message = _session_failure_presentation(failure)
             self._on_error(
                 SshPilotError(
                     code,
@@ -1129,14 +1134,11 @@ class DaemonTerminalSessionController:
                 )
             )
             return
-        try:
-            code = ErrorCode(failure.code)
-        except ValueError:
-            code = ErrorCode.SESSION_STARTUP_FAILED
+        code, message = _session_failure_presentation(failure)
         self._finish_attach_error(
             SshPilotError(
                 code,
-                failure.message,
+                message,
                 session_id=self._tab_state.session_id,
             )
         )

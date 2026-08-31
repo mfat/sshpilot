@@ -13,11 +13,12 @@ from gettext import gettext as _
 from typing import Any, Dict, List
 
 from .._shell import command_split_diagnostic, split_command
+from .._session_failure import BuiltinProtocolError
+from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
     PluginContext,
     ProtocolBackend,
-    ProtocolError,
     SpawnSpec,
     SshPilotPlugin,
 )
@@ -64,13 +65,19 @@ class KubernetesProtocolBackend(ProtocolBackend):
         data = getattr(connection, "data", None) or {}
         pod = (data.get("pod") or "").strip()
         if not pod:
-            raise ProtocolError("No pod configured for this connection.")
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.POD_REQUIRED,
+                "No pod configured for this connection.",
+            )
         from .._flatpak import resolve_host_binary  # noqa: PLC0415
         kubectl_argv = resolve_host_binary("kubectl")
         if kubectl_argv is None:
-            raise ProtocolError(
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.KUBECTL_UNAVAILABLE,
                 "The 'kubectl' program is not installed. Install it to use "
-                "Kubernetes connections.")
+                "Kubernetes connections.",
+                parameters={"program": "kubectl"},
+            )
 
         command = (data.get("command") or "sh").strip() or "sh"
         argv = list(kubectl_argv)
@@ -87,7 +94,7 @@ class KubernetesProtocolBackend(ProtocolBackend):
         container = (data.get("container") or "").strip()
         if container:
             argv += ["-c", container]
-        argv += ["--", *split_command(command, "Command")]
+        argv += ["--", *split_command(command, "command")]
         return SpawnSpec(argv=argv, env=dict(os.environ))
 
 

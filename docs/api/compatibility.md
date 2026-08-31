@@ -56,16 +56,17 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.50`. Version 0.50 replaces native
-SCP transfer failures and public-key deployment operation failures with strict
-`ScpFailure` and `IdentityFailure` values. A 0.49 peer expects the generic
-`{code, message}` object in those fields, while a 0.50 peer requires the
-matching discriminated object, so mismatched implementations are rejected
-during handshake before ordinary requests. The generic `ServiceFailure`
-contract remains unchanged for authorized-key removal, forwards, broadcast,
-and every other non-selected consumer. Version 0.49 introduced strict
-`SftpFailure`; the 0.48 plugin editor, 0.47 backup/import, 0.46 secret-status,
-and 0.45 secret-prompt contracts remain unchanged.
+`API_IMPLEMENTATION_VERSION` is currently `0.51`. Version 0.51 adds the strict
+`PluginSessionFailure` variant to `SessionSummary.failure` for builtin Docker,
+Kubernetes, Mosh, and Serial launch-preparation failures. A 0.50 peer accepts
+only the generic `{code, message}` object there, while a 0.51 peer also accepts
+the discriminated `kind: plugin_launch` object, so mismatched implementations
+are rejected during handshake before session traffic. The generic
+`SessionFailure` wire shape remains unchanged for SSH and every other session
+failure consumer. Version 0.50 introduced strict `ScpFailure` and
+`IdentityFailure`; version 0.49 introduced strict `SftpFailure`; the 0.48
+plugin editor, 0.47 backup/import, 0.46 secret-status, and 0.45 secret-prompt
+contracts remain unchanged.
 
 The earlier 0.40 compatibility boundary remains in force: clients never
 downgrade to plaintext secret transport or select a frontend secret backend.
