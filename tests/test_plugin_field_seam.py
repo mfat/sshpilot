@@ -29,6 +29,7 @@ so this runs in CI, unlike the pexpect/docker/socat integration tests.
 
 from __future__ import annotations
 
+import importlib
 import shutil
 
 import pytest
@@ -265,11 +266,30 @@ def test_required_fields_block_saving_and_launching(protocol, registry, tmp_path
 
 
 @pytest.mark.parametrize(
-    "protocol,field",
-    [("docker", "command"), ("k8s", "command"), ("mosh", "extra_ssh_opts")],
+    "protocol,field,field_label,module_name",
+    [
+        ("docker", "command", "Command", "docker_protocol"),
+        ("k8s", "command", "Command", "kubernetes_protocol"),
+        ("mosh", "extra_ssh_opts", "Extra SSH options", "mosh_protocol"),
+    ],
+)
+@pytest.mark.parametrize(
+    "broken_value,diagnostic",
+    [
+        ('sh -c "echo hi', "No closing quotation"),
+        ("echo \\", "No escaped character"),
+    ],
 )
 def test_unparsable_shell_field_is_reported_not_raised(
-    protocol, field, registry, tmp_path
+    protocol,
+    field,
+    field_label,
+    module_name,
+    broken_value,
+    diagnostic,
+    registry,
+    tmp_path,
+    monkeypatch,
 ):
     """A stray quote is a validation error, never an untyped ValueError.
 
@@ -279,13 +299,32 @@ def test_unparsable_shell_field_is_reported_not_raised(
     """
     from sshpilot.plugins.api import ProtocolError
 
+    translated_msgids = []
+
+    def _translate(msgid):
+        translated_msgids.append(msgid)
+        return f"translated:{msgid}"
+
+    module = importlib.import_module(
+        f"sshpilot.plugins.builtin.{module_name}"
+    )
+    monkeypatch.setattr(module, "_", _translate)
+
     backend = registry.get_or_none(protocol)
-    broken = {**CASES[protocol]["fields"], field: 'sh -c "echo hi'}
+    broken = {**CASES[protocol]["fields"], field: broken_value}
 
     problems = backend.validate(
         {"nickname": f"{protocol}-demo", "protocol": protocol, **broken}
     )
-    assert any("could not be parsed" in problem for problem in problems)
+    assert problems == [
+        (
+            "translated:translated:{field} could not be parsed: "
+            "{diagnostic}."
+        ).format(field=field_label, diagnostic=diagnostic)
+    ]
+    assert diagnostic not in translated_msgids
+    assert "{field} could not be parsed: {diagnostic}." in translated_msgids
+    assert field_label in translated_msgids
 
     # And if such a connection is reached some other way (the plugin API, an
     # imported backup), the spawn refuses it as a ProtocolError.

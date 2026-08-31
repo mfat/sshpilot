@@ -13,7 +13,7 @@ import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
-from .._shell import command_split_error, split_command
+from .._shell import command_split_diagnostic, split_command
 from ...api import (
     FieldSpec,
     PluginContext,
@@ -35,7 +35,7 @@ class DockerProtocolBackend(ProtocolBackend):
     def connection_fields(self) -> List[FieldSpec]:
         return [
             FieldSpec(key="container", label=_("Container"), kind="text", required=True,
-                      placeholder="name or id"),
+                      placeholder=_("name or id")),
             FieldSpec(key="command", label=_("Command"), kind="text", default="sh",
                       placeholder="sh"),
             FieldSpec(key="runtime", label=_("Runtime"), kind="choice", default="docker",
@@ -43,7 +43,7 @@ class DockerProtocolBackend(ProtocolBackend):
             FieldSpec(key="docker_host", label=_("Daemon host"), kind="text",
                       placeholder="ssh://user@host or tcp://host:2375", group="advanced"),
             FieldSpec(key="user", label=_("User"), kind="text",
-                      placeholder="user or UID", group="advanced"),
+                      placeholder=_("user or UID"), group="advanced"),
             FieldSpec(key="workdir", label=_("Working directory"), kind="text",
                       placeholder="/path/in/container", group="advanced"),
         ]
@@ -51,13 +51,17 @@ class DockerProtocolBackend(ProtocolBackend):
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
         if not (data.get("container") or "").strip():
-            errors.append("A container name or id is required.")
+            errors.append(_("A container name or id is required."))
         runtime = (data.get("runtime") or "docker")
         if runtime not in ("docker", "podman"):
-            errors.append("Runtime must be docker or podman.")
-        problem = command_split_error(data.get("command"), "Command")
-        if problem:
-            errors.append(problem)
+            errors.append(_("Runtime must be docker or podman."))
+        diagnostic = command_split_diagnostic(data.get("command"))
+        if diagnostic:
+            errors.append(
+                _("{field} could not be parsed: {diagnostic}.").format(
+                    field=_("Command"), diagnostic=diagnostic
+                )
+            )
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
