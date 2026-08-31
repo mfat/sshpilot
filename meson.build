@@ -1,5 +1,5 @@
 project('sshpilot',
-  version: '6.0.0',  # keep in sync with src/sshpilot/__init__.py (scripts/bump-version.sh bumps both)
+  version: '6.0.1',  # keep in sync with src/sshpilot/__init__.py (scripts/bump-version.sh bumps both)
   license: 'GPL-3.0-or-later',
   meson_version: '>= 0.59.0',
 )

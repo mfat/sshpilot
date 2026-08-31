@@ -36,15 +36,27 @@ def test_loader_discovers_and_activates_docker():
     assert registry_mod.protocol_registry().get_or_none('docker') is not None
 
 
-def test_fields_and_validate():
+def test_fields_and_validate(monkeypatch):
+    import sshpilot.plugins.builtin.docker_protocol as mod
+
+    monkeypatch.setattr(mod, "_", lambda msgid: f"translated:{msgid}")
     backend = DockerProtocolBackend()
     assert backend.capabilities() == frozenset()
     by_key = {f.key: f for f in backend.connection_fields()}
     assert by_key['container'].required
+    assert by_key['container'].placeholder == 'translated:name or id'
+    assert by_key['user'].placeholder == 'translated:user or UID'
     assert by_key['runtime'].default == 'docker'
+    assert [value for value, _label in by_key['runtime'].choices] == [
+        'docker', 'podman'
+    ]
     assert backend.validate({'container': 'web'}) == []
-    assert any('container' in e.lower() for e in backend.validate({}))
-    assert any('docker' in e.lower() for e in backend.validate({'container': 'w', 'runtime': 'nope'}))
+    assert backend.validate({}) == [
+        'translated:A container name or id is required.'
+    ]
+    assert backend.validate({'container': 'w', 'runtime': 'nope'}) == [
+        'translated:Runtime must be docker or podman.'
+    ]
 
 
 def test_build_spawn_basic(monkeypatch):

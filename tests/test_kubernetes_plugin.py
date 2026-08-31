@@ -36,13 +36,19 @@ def test_loader_discovers_and_activates_k8s():
     assert registry_mod.protocol_registry().get_or_none('k8s') is not None
 
 
-def test_fields_and_validate():
+def test_fields_and_validate(monkeypatch):
+    import sshpilot.plugins.builtin.kubernetes_protocol as mod
+
+    monkeypatch.setattr(mod, "_", lambda msgid: f"translated:{msgid}")
     backend = KubernetesProtocolBackend()
     assert backend.capabilities() == frozenset()
     by_key = {f.key: f for f in backend.connection_fields()}
     assert by_key['pod'].required
+    assert by_key['pod'].placeholder == 'translated:pod name'
+    assert by_key['container'].placeholder == 'translated:(default container)'
+    assert by_key['kube_context'].placeholder == 'translated:(current context)'
     assert backend.validate({'pod': 'web-0'}) == []
-    assert any('pod' in e.lower() for e in backend.validate({}))
+    assert backend.validate({}) == ['translated:A pod name is required.']
 
 
 def test_build_spawn_basic(monkeypatch):
