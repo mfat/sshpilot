@@ -48,6 +48,7 @@ from .gtk.connection_store import ConnectionPresentationStore
 from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
+from .dialog_focus import capture_toplevels, mark_new_dialog_default_visible
 from .key_manager import KeyManager
 from sshpilot.api.models.keys import KeyStoreScope
 from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
@@ -6878,7 +6879,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if app is not None:
             app.hold()
 
+        # Gtk.AlertDialog keeps its window to itself, so the only way to mark
+        # "Quit Anyway" as the Enter key's target is to find the toplevel it
+        # adds. Without this the two buttons look identical (GH #1231).
+        before_toplevels = capture_toplevels()
         dialog.choose(self, None, self._on_quit_alert_chosen)
+        mark_new_dialog_default_visible(before_toplevels)
 
     def _on_quit_alert_chosen(self, dialog, result):
         """Handle the quit confirmation Gtk.AlertDialog result."""
