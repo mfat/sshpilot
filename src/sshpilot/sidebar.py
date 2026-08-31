@@ -4706,25 +4706,41 @@ def _attach_connection_list_context_menu(window):
                 except Exception:
                     row = None
 
-            if not row or not hasattr(row, 'connection'):
+            if not row:
+                return
+
+            # A connection opens in a new tab; a group opens in split view,
+            # which confirms first when the group is a big one.
+            is_group = not hasattr(row, 'connection') and hasattr(row, 'group_id')
+            if is_group:
+                open_action = getattr(
+                    window, 'on_open_group_in_split_view_action', None)
+            elif hasattr(row, 'connection'):
+                open_action = getattr(window, 'on_open_new_connection_action', None)
+            else:
+                open_action = None
+            if open_action is None:
                 return
 
             previous_row = getattr(window, '_context_menu_row', None)
             previous_connection = getattr(window, '_context_menu_connection', None)
             previous_connections = getattr(window, '_context_menu_connections', None)
+            previous_group_row = getattr(window, '_context_menu_group_row', None)
 
             try:
                 window._context_menu_row = row
-                window._context_menu_connection = row.connection
+                window._context_menu_connection = getattr(row, 'connection', None)
+                window._context_menu_group_row = row if is_group else None
                 # Middle-click targets only the clicked row; a multi-select
                 # snapshot from a still-open context menu must not win.
                 window._context_menu_connections = None
-                window.on_open_new_connection_action(None, None)
+                open_action(None, None)
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             finally:
                 window._context_menu_row = previous_row
                 window._context_menu_connection = previous_connection
                 window._context_menu_connections = previous_connections
+                window._context_menu_group_row = previous_group_row
 
         middle_click.connect('pressed', _on_middle_click)
         window.connection_list.add_controller(middle_click)
