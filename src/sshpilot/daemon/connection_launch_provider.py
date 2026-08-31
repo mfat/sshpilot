@@ -20,9 +20,29 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from ..api.errors import ErrorCode, SshPilotError
 from ..api.models.connections import ConnectionId
+from ..api.models.sessions import PluginSessionFailure
 from ..core.connections.models import ConnectionRecord
 
 logger = logging.getLogger(__name__)
+
+
+class _PluginSessionLaunchError(SshPilotError):
+    """Carry one built-in plugin presentation failure to SessionRuntime."""
+
+    def __init__(
+        self,
+        failure: PluginSessionFailure,
+        *,
+        connection_id: ConnectionId,
+    ) -> None:
+        if type(failure) is not PluginSessionFailure:
+            raise TypeError("a plugin session failure is required")
+        super().__init__(
+            failure.error_code,
+            failure.code.value,
+            connection_id=connection_id,
+        )
+        self.session_failure = failure
 
 
 def _string(value: Any) -> str:
@@ -853,6 +873,7 @@ class DaemonConnectionLaunchProvider:
         interaction_policy: str,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..plugins.api import PluginContext, ProtocolError
+        from ..plugins.builtin._session_failure import BuiltinProtocolError
         from ..plugins.loader import ensure_builtin_protocols, ensure_user_protocols
         from ..plugins.registry import protocol_registry
 
@@ -883,6 +904,11 @@ class DaemonConnectionLaunchProvider:
         )
         try:
             spawn = backend.build_spawn(connection, ctx)
+        except BuiltinProtocolError as exc:
+            raise _PluginSessionLaunchError(
+                exc.failure,
+                connection_id=connection.id,
+            ) from exc
         except ProtocolError as exc:
             raise SshPilotError(
                 ErrorCode.SESSION_STARTUP_FAILED,

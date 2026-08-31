@@ -7,7 +7,7 @@ these documents describe the concrete contract.
 
 ## Reference
 
-These topic guides describe the current Protocol 1.0/API 0.47 contract:
+These topic guides describe the current Protocol 1.0/API 0.51 contract:
 
 - [Daemon lifecycle](daemon-lifecycle.md)
 - [Sessions](sessions.md)
@@ -51,7 +51,7 @@ secret APIs are included where listed by the current capabilities and methods
 references; unsupported capabilities remain explicit and never trigger a
 frontend fallback.
 
-The public API implementation version is `0.47`; the wire protocol remains
+The public API implementation version is `0.51`; the wire protocol remains
 `1.0`.
 
 The API package is GTK-free. Compatibility shims over existing managers are

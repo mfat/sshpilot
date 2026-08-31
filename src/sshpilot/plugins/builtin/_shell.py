@@ -18,9 +18,15 @@ from __future__ import annotations
 import shlex
 from typing import List, Optional
 
-from ..api import ProtocolError
+from ...api.models.sessions import PluginSessionFailureCode
+from ._session_failure import BuiltinProtocolError
 
 __all__ = ["command_split_diagnostic", "split_command"]
+
+_LEGACY_FIELD_LABELS = {
+    "command": "Command",
+    "extra_ssh_opts": "Extra SSH options",
+}
 
 
 def _split(value: str) -> List[str]:
@@ -44,8 +50,17 @@ def command_split_diagnostic(value: object) -> Optional[str]:
 
 
 def split_command(value: object, field: str) -> List[str]:
-    """``shlex.split`` that raises ``ProtocolError`` instead of ``ValueError``."""
+    """Split a stored command and keep its parser diagnostic out of the code."""
+
+    if field not in _LEGACY_FIELD_LABELS:
+        raise ValueError("unknown built-in plugin command field")
     try:
         return _split(value)
     except ValueError as exc:
-        raise ProtocolError(f"{field} could not be parsed: {exc}.") from exc
+        diagnostic = str(exc)
+        raise BuiltinProtocolError(
+            PluginSessionFailureCode.ARGUMENTS_INVALID,
+            f"{_LEGACY_FIELD_LABELS[field]} could not be parsed: {diagnostic}.",
+            parameters={"field": field},
+            diagnostic=diagnostic,
+        ) from exc

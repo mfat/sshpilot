@@ -8,8 +8,10 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from sshpilot.connection_manager import Connection
+from sshpilot.api.models.sessions import PluginSessionFailureCode
 from sshpilot.plugins import registry as registry_mod
-from sshpilot.plugins.api import PluginContext, ProtocolError
+from sshpilot.plugins.api import PluginContext
+from sshpilot.plugins.builtin._session_failure import BuiltinProtocolError
 from sshpilot.plugins.builtin.serial_protocol import Plugin, SerialProtocolBackend
 from sshpilot.plugins.loader import load_plugins
 
@@ -167,10 +169,19 @@ def test_screen_fallback_refuses_hardware_flow_control(monkeypatch):
     _screen_only(monkeypatch)
     conn = Connection({'nickname': 's', 'protocol': 'serial',
                        'device': '/dev/ttyS0', 'baud': '9600', 'flow': 'hard'})
-    with pytest.raises(ProtocolError) as excinfo:
+    with pytest.raises(BuiltinProtocolError) as excinfo:
         SerialProtocolBackend().build_spawn(conn, _ctx())
     assert 'RTS/CTS' in str(excinfo.value)
     assert 'picocom' in str(excinfo.value)
+    failure = excinfo.value.failure
+    assert failure.code is (
+        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED
+    )
+    assert dict(failure.parameters) == {
+        "fallback_program": "screen",
+        "preferred_program": "picocom",
+        "flow": "RTS/CTS",
+    }
 
 
 @pytest.mark.parametrize('databits', ['6', '5'])
@@ -180,9 +191,18 @@ def test_screen_fallback_refuses_unsupported_databits(monkeypatch, databits):
     conn = Connection({'nickname': 's', 'protocol': 'serial',
                        'device': '/dev/ttyS0', 'baud': '9600',
                        'databits': databits})
-    with pytest.raises(ProtocolError) as excinfo:
+    with pytest.raises(BuiltinProtocolError) as excinfo:
         SerialProtocolBackend().build_spawn(conn, _ctx())
     assert f'{databits} data bits' in str(excinfo.value)
+    failure = excinfo.value.failure
+    assert failure.code is (
+        PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED
+    )
+    assert dict(failure.parameters) == {
+        "fallback_program": "screen",
+        "preferred_program": "picocom",
+        "databits": databits,
+    }
 
 
 def test_screen_fallback_reports_every_unsupported_parameter(monkeypatch):
@@ -190,10 +210,20 @@ def test_screen_fallback_reports_every_unsupported_parameter(monkeypatch):
     conn = Connection({'nickname': 's', 'protocol': 'serial',
                        'device': '/dev/ttyS0', 'baud': '9600',
                        'databits': '5', 'flow': 'hard'})
-    with pytest.raises(ProtocolError) as excinfo:
+    with pytest.raises(BuiltinProtocolError) as excinfo:
         SerialProtocolBackend().build_spawn(conn, _ctx())
     message = str(excinfo.value)
     assert 'RTS/CTS' in message and '5 data bits' in message
+    failure = excinfo.value.failure
+    assert failure.code is (
+        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED
+    )
+    assert dict(failure.parameters) == {
+        "fallback_program": "screen",
+        "preferred_program": "picocom",
+        "flow": "RTS/CTS",
+        "databits": "5",
+    }
 
 
 def test_picocom_still_serves_what_screen_cannot(monkeypatch):
@@ -213,16 +243,25 @@ def test_build_spawn_missing_binaries(monkeypatch):
     import sshpilot.plugins.builtin.serial_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: None)
     conn = Connection({'nickname': 's', 'protocol': 'serial', 'device': '/dev/x'})
-    with pytest.raises(ProtocolError, match='picocom'):
+    with pytest.raises(BuiltinProtocolError, match='picocom') as excinfo:
         SerialProtocolBackend().build_spawn(conn, _ctx())
+    failure = excinfo.value.failure
+    assert failure.code is PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE
+    assert dict(failure.parameters) == {
+        "preferred_program": "picocom",
+        "fallback_program": "screen",
+    }
 
 
 def test_build_spawn_missing_device(monkeypatch):
     import sshpilot.plugins.builtin.serial_protocol as mod
     monkeypatch.setattr(mod.shutil, 'which', lambda name: '/usr/bin/picocom')
     conn = Connection({'nickname': 's', 'protocol': 'serial'})
-    with pytest.raises(ProtocolError, match='[Nn]o serial device'):
+    with pytest.raises(BuiltinProtocolError, match='[Nn]o serial device') as excinfo:
         SerialProtocolBackend().build_spawn(conn, _ctx())
+    assert excinfo.value.failure.code is (
+        PluginSessionFailureCode.SERIAL_DEVICE_REQUIRED
+    )
 
 
 def test_activate_registers_backend():

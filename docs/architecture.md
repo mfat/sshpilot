@@ -161,6 +161,13 @@ generic `ServiceFailure` remains unchanged for authorized-key removal,
 forwards, broadcast results, and other unselected consumers; these boundaries
 do not impose a repository-wide error migration.
 
+Builtin Docker, Kubernetes, Mosh, and Serial launch-preparation failures use
+the same narrow boundary through the discriminated `PluginSessionFailure`
+variant of `SessionSummary.failure`. Stable codes and strict technical
+parameters cross RPC; GTK owns gettext and appends any opaque parser or tool
+diagnostic separately. The historical `{code, message}` `SessionFailure`
+variant remains unchanged for SSH and every unselected session path.
+
 Secret values, `BW_SESSION`, KDBX transformed keys, provider credentials,
 private keys, and backup manifests do not cross the ordinary public API. They
 are not ordinary DTO fields, events, logs, or diagnostics. GTK receives typed

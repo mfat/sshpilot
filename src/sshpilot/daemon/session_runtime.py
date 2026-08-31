@@ -37,9 +37,11 @@ from sshpilot.api.models.sessions import (
     CloseSessionRequest,
     DetachSessionRequest,
     OpenSessionRequest,
+    PluginSessionFailure,
     SessionCapabilities,
     SessionExitInfo,
     SessionFailure,
+    SessionFailureValue,
     SessionState,
     SessionSummary,
 )
@@ -322,7 +324,7 @@ class _SessionRecord:
     exited_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     exit_info: Optional[SessionExitInfo] = None
-    failure: Optional[SessionFailure] = None
+    failure: Optional[SessionFailureValue] = None
     attachments: Dict[AttachmentId, _AttachmentRecord] = field(default_factory=dict)
     client_attachments: Dict[ClientId, Set[AttachmentId]] = field(default_factory=lambda: defaultdict(set))
     process_handle: Optional[SessionProcessHandle] = None
@@ -636,10 +638,14 @@ class SessionRuntime:
             if handle is None:
                 raise TypeError("session runner returned no process handle")
         except SshPilotError as error:
+            plugin_failure = getattr(error, "session_failure", None)
+            if type(plugin_failure) is not PluginSessionFailure:
+                plugin_failure = None
             self._startup_failed(
                 record,
                 error.code,
                 "The session process could not be started",
+                failure=plugin_failure,
             )
         except Exception:
             self._startup_failed(
@@ -1023,9 +1029,13 @@ class SessionRuntime:
         if isinstance(error, SshPilotError):
             code = error.code
             message = error.message
+            plugin_failure = getattr(error, "session_failure", None)
+            if type(plugin_failure) is not PluginSessionFailure:
+                plugin_failure = None
         else:
             code = ErrorCode.SESSION_STARTUP_FAILED
             message = "The session process could not be started"
+            plugin_failure = None
         with self._lock:
             try:
                 record = self._record_locked(session_id)
@@ -1035,7 +1045,10 @@ class SessionRuntime:
                 return
             record.startup_scheduled = False
             record.terminal_capable = False
-            record.failure = SessionFailure(code=code.value, message=message)
+            record.failure = plugin_failure or SessionFailure(
+                code=code.value,
+                message=message,
+            )
             event = self._transition_locked(record, SessionState.FAILED)
         self._finish_readiness(session_id)
         self._publish((event,))
@@ -1996,6 +2009,8 @@ class SessionRuntime:
         record: _SessionRecord,
         code: ErrorCode,
         message: str,
+        *,
+        failure: Optional[PluginSessionFailure] = None,
     ) -> None:
         with self._lock:
             if record.state is not SessionState.STARTING:
@@ -2003,7 +2018,10 @@ class SessionRuntime:
             record.startup_scheduled = False
             record.terminal_capable = False
             record.deferred_live_output.clear()
-            record.failure = SessionFailure(code=code.value, message=message)
+            record.failure = failure or SessionFailure(
+                code=code.value,
+                message=message,
+            )
             event = self._transition_locked(record, SessionState.FAILED)
         self._finish_readiness(record.session_id)
         self._publish((event,))

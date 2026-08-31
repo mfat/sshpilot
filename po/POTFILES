@@ -27,6 +27,7 @@ src/sshpilot/file_manager/progress_dialog.py
 src/sshpilot/file_manager/properties_dialog.py
 src/sshpilot/file_manager_window.py
 src/sshpilot/gtk/identity_failure_messages.py
+src/sshpilot/gtk/plugin_session_failure_messages.py
 src/sshpilot/gtk/scp_failure_messages.py
 src/sshpilot/gtk/secrets_interaction_presenter.py
 src/sshpilot/gtk/sftp_error_messages.py

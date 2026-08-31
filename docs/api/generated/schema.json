@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.50",
+  "api_implementation_version": "0.51",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1455,6 +1455,21 @@
       "succeeded",
       "failed",
       "cancelled"
+    ],
+    "PluginSessionFailureCode": [
+      "container_required",
+      "container_runtime_unavailable",
+      "pod_required",
+      "kubectl_unavailable",
+      "mosh_unavailable",
+      "host_required",
+      "mosh_preparation_failed",
+      "arguments_invalid",
+      "serial_device_required",
+      "serial_screen_hardware_flow_unsupported",
+      "serial_screen_databits_unsupported",
+      "serial_screen_hardware_flow_and_databits_unsupported",
+      "serial_programs_unavailable"
     ],
     "RememberPolicy": [
       "do_not_store",
@@ -5392,6 +5407,39 @@
       ],
       "status": "Schema only"
     },
+    "PluginSessionFailure": {
+      "fields": [
+        {
+          "default": null,
+          "name": "code",
+          "required": true,
+          "sensitive": false,
+          "type": "PluginSessionFailureCode"
+        },
+        {
+          "default": null,
+          "name": "error_code",
+          "required": true,
+          "sensitive": false,
+          "type": "ErrorCode"
+        },
+        {
+          "default": {},
+          "name": "parameters",
+          "required": false,
+          "sensitive": false,
+          "type": "Mapping[str, str]"
+        },
+        {
+          "default": "",
+          "name": "diagnostic",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        }
+      ],
+      "status": "Schema only"
+    },
     "PortForwardSummary": {
       "fields": [
         {
@@ -6224,7 +6272,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "SessionFailure | None"
+          "type": "SessionFailure | PluginSessionFailure | None"
         },
         {
           "default": 0,
