@@ -227,11 +227,13 @@ class WindowActions:
         return svt
 
     def _on_split_view_confirm_response(self, dialog, response_id, connections, title):
-        if response_id == 'open':
-            try:
+        try:
+            if response_id == 'open':
                 self._create_split_view_tab(connections, title)
-            except Exception as exc:
-                logger.error("Failed to open connections in split view: %s", exc)
+            elif response_id == 'tabs':
+                self._open_new_connection_tabs(connections)
+        except Exception as exc:
+            logger.error("Failed to open connections in split view: %s", exc)
         dialog.close()
 
     def _open_connections_in_split_view(self, connections, title=None):
@@ -254,7 +256,8 @@ class WindowActions:
             ),
         )
         dialog.add_response('cancel', _("Cancel"))
-        dialog.add_response('open', _("Open"))
+        dialog.add_response('tabs', _("Separate Tabs"))
+        dialog.add_response('open', _("Split View"))
         dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response('open')
         dialog.set_close_response('cancel')

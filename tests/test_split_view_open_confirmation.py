@@ -93,8 +93,12 @@ def make_window():
     """A bare WindowActions with the split-tab creation stubbed out."""
     window = WindowActions()
     window.created = []
+    window.tabbed = []
     window._create_split_view_tab = lambda connections=None, title=None: (
         window.created.append((list(connections or []), title))
+    )
+    window._open_new_connection_tabs = lambda connections: (
+        window.tabbed.extend(connections)
     )
     return window
 
@@ -132,7 +136,7 @@ def test_large_batch_asks_before_opening():
     assert len(FakeAlertDialog.instances) == 1
     dialog = FakeAlertDialog.instances[0]
     assert str(len(conns)) in dialog.body
-    assert dialog.responses == ["cancel", "open"]
+    assert dialog.responses == ["cancel", "tabs", "open"]
     assert dialog.close_response == "cancel"
     assert dialog.presented_parent is window
 
@@ -142,6 +146,18 @@ def test_large_batch_asks_before_opening():
     assert dialog.close_calls == 1
 
 
+def test_separate_tabs_response_opens_one_tab_per_connection():
+    window = make_window()
+    conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
+
+    window._open_connections_in_split_view(conns)
+    FakeAlertDialog.instances[0].emit_response("tabs")
+
+    assert window.created == [], "the split tab must not be built as well"
+    assert window.tabbed == conns
+    assert FakeAlertDialog.instances[0].close_calls == 1
+
+
 def test_cancelling_the_confirmation_opens_nothing():
     window = make_window()
 
@@ -149,6 +165,7 @@ def test_cancelling_the_confirmation_opens_nothing():
     FakeAlertDialog.instances[0].emit_response("cancel")
 
     assert window.created == []
+    assert window.tabbed == []
     assert FakeAlertDialog.instances[0].close_calls == 1
 
 
