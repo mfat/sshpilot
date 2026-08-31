@@ -20,21 +20,26 @@ from typing import List, Optional
 
 from ..api import ProtocolError
 
-__all__ = ["command_split_error", "split_command"]
+__all__ = ["command_split_diagnostic", "split_command"]
 
 
 def _split(value: str) -> List[str]:
     return shlex.split(str(value or ""))
 
 
-def command_split_error(value: object, field: str) -> Optional[str]:
-    """Return a ``validate()`` message if ``value`` is not valid shell words."""
+def command_split_diagnostic(value: object) -> Optional[str]:
+    """Return an opaque parser diagnostic for frontend validation.
+
+    The frontend caller owns the localizable template. Keeping only the raw
+    diagnostic here prevents the daemon-facing ``split_command`` path from
+    acquiring gettext behaviour.
+    """
     if not value:
         return None
     try:
         _split(value)
     except ValueError as exc:
-        return f"{field} could not be parsed: {exc}."
+        return str(exc)
     return None
 
 

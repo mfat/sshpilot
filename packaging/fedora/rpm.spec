@@ -145,7 +145,7 @@ an alternative to Putty, Termius and Mobaxterm.
 
 %changelog
 * Sun Aug 30 2026 mFat <newmfat@gmail.com> - 6.0.0-1
-- Uprovements to non-SSH protocol plugins
+- Improvements to non-SSH protocol plugins
 - Fixes text selection when using remote apps such as tmux and htop
 - Fixes SFTP File Manager retry/reconnect flow
 

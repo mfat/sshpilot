@@ -52,15 +52,31 @@ def test_loader_discovers_and_activates_mosh():
     assert backend is not None and backend.default_port == 22
 
 
-def test_fields_and_validate():
+def test_fields_and_validate(monkeypatch):
+    import sshpilot.plugins.builtin.mosh_protocol as mod
+
+    monkeypatch.setattr(mod, "_", lambda msgid: f"translated:{msgid}")
     backend = MoshProtocolBackend()
     assert backend.capabilities() == frozenset()
     by_key = {f.key: f for f in backend.connection_fields()}
     assert by_key['host'].required
+    assert by_key['host'].placeholder == 'translated:hostname or IP address'
+    assert by_key['username'].placeholder == 'translated:(from ~/.ssh/config)'
     assert by_key['keyfile'].kind == 'file'
+    assert by_key['predict'].choices == [
+        ('adaptive', 'translated:Adaptive (default)'),
+        ('always', 'translated:Always'),
+        ('never', 'translated:Never'),
+        ('experimental', 'translated:Experimental'),
+    ]
     assert backend.validate({'host': 'h'}) == []
-    assert any('host' in e.lower() for e in backend.validate({}))
-    assert any('port' in e.lower() for e in backend.validate({'host': 'h', 'port': 'x'}))
+    assert backend.validate({}) == ['translated:A host is required.']
+    assert backend.validate({'host': 'h', 'port': 65536}) == [
+        'translated:Port must be between 1 and 65535.'
+    ]
+    assert backend.validate({'host': 'h', 'port': 'x'}) == [
+        'translated:Port must be a number.'
+    ]
 
 
 def test_build_spawn_basic(monkeypatch):

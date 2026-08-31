@@ -38,20 +38,43 @@ def test_loader_discovers_and_activates_serial():
     assert backend.default_port is None
 
 
-def test_capabilities_empty_and_fields_declared():
+def test_capabilities_empty_and_fields_declared(monkeypatch):
+    import sshpilot.plugins.builtin.serial_protocol as mod
+
+    monkeypatch.setattr(mod, "_", lambda msgid: f"translated:{msgid}")
     backend = SerialProtocolBackend()
     assert backend.capabilities() == frozenset()
     by_key = {f.key: f for f in backend.connection_fields()}
     assert by_key['device'].required
     assert by_key['baud'].kind == 'choice'
     assert by_key['baud'].default == '115200'
+    assert by_key['flow'].choices == [
+        ('none', 'translated:None'),
+        ('hard', 'translated:Hardware (RTS/CTS)'),
+        ('soft', 'translated:Software (XON/XOFF)'),
+    ]
+    assert by_key['parity'].choices == [
+        ('none', 'translated:None'),
+        ('even', 'translated:Even'),
+        ('odd', 'translated:Odd'),
+    ]
 
 
-def test_validate_matrix():
+def test_validate_matrix(monkeypatch):
+    import sshpilot.plugins.builtin.serial_protocol as mod
+
+    monkeypatch.setattr(mod, "_", lambda msgid: f"translated:{msgid}")
     backend = SerialProtocolBackend()
     assert backend.validate({'device': '/dev/ttyUSB0', 'baud': '115200'}) == []
-    assert any('device' in e.lower() for e in backend.validate({'baud': '9600'}))
-    assert any('baud' in e.lower() for e in backend.validate({'device': '/dev/x', 'baud': 'abc'}))
+    assert backend.validate({'baud': '9600'}) == [
+        'translated:A serial device is required.'
+    ]
+    assert backend.validate({'device': '/dev/x', 'baud': '0'}) == [
+        'translated:Baud rate must be a positive number.'
+    ]
+    assert backend.validate({'device': '/dev/x', 'baud': 'abc'}) == [
+        'translated:Baud rate must be a number.'
+    ]
 
 
 def test_build_spawn_prefers_picocom(monkeypatch):

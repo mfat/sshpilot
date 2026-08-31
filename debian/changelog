@@ -1,7 +1,7 @@
 sshpilot (6.0.0-1) unstable; urgency=medium
 
   * Release v6.0.0.
-  * Uprovements to non-SSH protocol plugins
+  * Improvements to non-SSH protocol plugins
   * Fixes text selection when using remote apps such as tmux and htop
   * Fixes SFTP File Manager retry/reconnect flow
 

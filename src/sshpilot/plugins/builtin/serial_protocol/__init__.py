@@ -23,10 +23,8 @@ from ...api import (
 )
 
 _BAUDS = ("9600", "19200", "38400", "57600", "115200")
-_FLOW = (("none", "None"), ("hard", "Hardware (RTS/CTS)"), ("soft", "Software (XON/XOFF)"))
 # picocom -f flag values keyed by our choice value
 _PICOCOM_FLOW = {"none": "n", "hard": "h", "soft": "x"}
-_PARITY = (("none", "None"), ("even", "Even"), ("odd", "Odd"))
 _PICOCOM_PARITY = {"none": "n", "even": "e", "odd": "o"}
 
 # ``screen`` takes the line parameters as a comma-separated stty-style list
@@ -65,12 +63,15 @@ class SerialProtocolBackend(ProtocolBackend):
             FieldSpec(key="baud", label=_("Baud rate"), kind="choice", default="115200",
                       choices=[(b, b) for b in _BAUDS]),
             FieldSpec(key="flow", label=_("Flow control"), kind="choice", default="none",
-                      choices=list(_FLOW)),
+                      choices=[("none", _("None")),
+                               ("hard", _("Hardware (RTS/CTS)")),
+                               ("soft", _("Software (XON/XOFF)"))]),
             FieldSpec(key="databits", label=_("Data bits"), kind="choice", default="8",
                       choices=[("8", "8"), ("7", "7"), ("6", "6"), ("5", "5")],
                       group="advanced"),
             FieldSpec(key="parity", label=_("Parity"), kind="choice", default="none",
-                      choices=list(_PARITY), group="advanced"),
+                      choices=[("none", _("None")), ("even", _("Even")),
+                               ("odd", _("Odd"))], group="advanced"),
             FieldSpec(key="stopbits", label=_("Stop bits"), kind="choice", default="1",
                       choices=[("1", "1"), ("2", "2")], group="advanced"),
         ]
@@ -78,13 +79,13 @@ class SerialProtocolBackend(ProtocolBackend):
     def validate(self, data: Dict[str, Any]) -> List[str]:
         errors: List[str] = []
         if not (data.get("device") or "").strip():
-            errors.append("A serial device is required.")
+            errors.append(_("A serial device is required."))
         baud = data.get("baud") or "115200"
         try:
             if int(baud) <= 0:
-                errors.append("Baud rate must be a positive number.")
+                errors.append(_("Baud rate must be a positive number."))
         except (TypeError, ValueError):
-            errors.append("Baud rate must be a number.")
+            errors.append(_("Baud rate must be a number."))
         return errors
 
     def build_spawn(self, connection: Any, ctx: PluginContext) -> SpawnSpec:
