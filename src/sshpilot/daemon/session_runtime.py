@@ -335,6 +335,16 @@ class _SessionRecord:
     pty_eof: bool = False
     input_owner_attachment_id: Optional[AttachmentId] = None
     output_clients: Set[ClientId] = field(default_factory=set)
+    # Who output_clients held when the session closed. Terminal frames are
+    # handed to the server as a queue put and filtered against
+    # receives_terminal() later, on the selector thread -- so a frame produced
+    # while the session was still live can be drained after it closed. Keeping
+    # the closing membership means that frame still reaches the clients it was
+    # produced for. The EOF marker is the one that matters: _terminal_eof()
+    # performs the EXITED -> CLOSED transition under the lock *before* it
+    # dispatches, so without this the marker was always filtered out whenever
+    # the exit reaper recorded exit_info before the PTY read side saw EOF.
+    closed_output_clients: Set[ClientId] = field(default_factory=set)
     originating_client_id: Optional[ClientId] = None
     # Output produced before RUNNING by the legacy blocking auth gate. The
     # event-driven connection-evidence gate streams STARTING output directly.
@@ -1179,7 +1189,12 @@ class SessionRuntime:
     def receives_terminal(self, session_id: SessionId, client_id: ClientId) -> bool:
         with self._lock:
             record = self._records.get(session_id)
-            return bool(record is not None and client_id in record.output_clients)
+            if record is None:
+                return False
+            return (
+                client_id in record.output_clients
+                or client_id in record.closed_output_clients
+            )
 
     def client_can_interact(
         self,
@@ -1652,6 +1667,7 @@ class SessionRuntime:
                     # Clean up client tracking
                     del record.client_attachments[client_id]
                     record.output_clients.discard(client_id)
+                    record.closed_output_clients.discard(client_id)
                     record.updated_at = self._clock()
 
     def shutdown(self) -> None:
@@ -1673,6 +1689,7 @@ class SessionRuntime:
                 record.attachments.clear()
                 record.client_attachments.clear()
                 record.output_clients.clear()
+                record.closed_output_clients.clear()
                 record.input_owner_attachment_id = None
             self._terminal_callbacks.clear()
             self._closed = True
@@ -2027,6 +2044,7 @@ class SessionRuntime:
             record.closed_at = now
             record.attachments.clear()
             record.client_attachments.clear()
+            record.closed_output_clients = set(record.output_clients)
             record.output_clients.clear()
             record.input_owner_attachment_id = None
             self._evict_closed_locked()

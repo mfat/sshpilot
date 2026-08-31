@@ -28,7 +28,17 @@ from sshpilot.daemon.pty_runner import (
 from sshpilot.daemon.terminal_stream import TerminalReplayBuffer
 
 
-def _wait_until(predicate, timeout=3.0):
+# CI runs this file under pytest.ini's `-n 12` on a 4-core runner, so a real
+# PTY round trip -- fork, exec a Python interpreter, pump bytes through the
+# daemon socket, wake a subscriber thread -- can be starved for seconds at a
+# time. These deadlines only bound *failure*: a wait that is going to succeed
+# returns the moment its condition holds, so a generous budget costs a passing
+# run nothing and is what keeps a loaded runner from reporting a timing stall
+# as a defect.
+_WAIT_TIMEOUT = 15.0
+
+
+def _wait_until(predicate, timeout=_WAIT_TIMEOUT):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -112,8 +122,8 @@ def test_owned_pty_reports_tty_output_input_resize_and_exit():
         assert handle.write(b"\0abc")
         assert _wait_until(lambda: b"GOT:\0abc" in output)
         assert b"SIZE:(40, 100)" in output
-        assert exited.wait(2)
-        assert eof.wait(2)
+        assert exited.wait(_WAIT_TIMEOUT)
+        assert eof.wait(_WAIT_TIMEOUT)
         assert exit_info[0].exit_code == 0
     finally:
         runner.close()
@@ -236,7 +246,7 @@ def test_owned_pty_streams_from_isolated_local_openssh(tmp_path):
     runner = None
     try:
         ready = False
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + _WAIT_TIMEOUT
         while time.monotonic() < deadline and daemon.poll() is None:
             probe = socket.socket()
             probe.settimeout(0.1)
@@ -294,8 +304,8 @@ def test_owned_pty_streams_from_isolated_local_openssh(tmp_path):
             output.extend,
             eof.set,
         )
-        assert exited.wait(5)
-        assert eof.wait(5)
+        assert exited.wait(_WAIT_TIMEOUT)
+        assert eof.wait(_WAIT_TIMEOUT)
         assert b"SSHPILOT_OPENSSH_PTY_OK" in output
         assert exit_info[0].exit_code == 0
     finally:
@@ -310,10 +320,16 @@ def test_owned_pty_streams_from_isolated_local_openssh(tmp_path):
 
 
 def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
+    # The final read parks the child until the test says so. Without it the
+    # child exits the moment it has echoed AFTER:ping, and everything below
+    # that names an attachment is racing the daemon's EXITED -> CLOSED
+    # transition, which clears the session's attachments. setraw() has already
+    # turned off echo, so the byte that releases it adds no output.
     script = (
         "import os,time,tty;tty.setraw(0);"
         "os.write(1,b'BEFORE\\n');"
         "data=os.read(0,4);os.write(1,b'AFTER:'+data+b'\\n');"
+        "os.read(0,1);"
     )
     runner = PtySessionProcessRunner(
         lambda _spec: (
@@ -408,7 +424,8 @@ def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
                 viewer_chunks[1:],
             )
         )
-        assert eof.wait(3)
+        # Replay while the child is still parked, so the attachment this names
+        # is guaranteed to still exist.
         replay = client.replay_terminal(
             ReplayRequest(
                 session_id=opened.id,
@@ -417,6 +434,14 @@ def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
             )
         )
         assert replay.next_sequence >= len(b"BEFORE\nAFTER:ping\n")
+        client.send_terminal_input(
+            TerminalInput(
+                session_id=opened.id,
+                attachment_id=attached.attachment.id,
+                data=b"q",
+            )
+        )
+        assert eof.wait(_WAIT_TIMEOUT)
         assert _wait_until(
             lambda: client.get_session(opened.id).state is SessionState.CLOSED
         )
@@ -425,6 +450,68 @@ def test_daemon_client_receives_replay_live_input_and_eof(daemon_factory):
     finally:
         client.close()
         viewer.close()
+        runner.close()
+
+
+class _DelayedEofRunner(PtySessionProcessRunner):
+    """Hold the EOF callback so the exit reaper always records exit_info first."""
+
+    def start(self, spec, on_exit, on_output=None, on_eof=None):
+        def _late_eof():
+            time.sleep(0.5)
+            if on_eof is not None:
+                on_eof()
+
+        return super().start(spec, on_exit, on_output, _late_eof)
+
+
+def test_terminal_eof_reaches_subscriber_when_exit_lands_first(daemon_factory):
+    """The EOF marker survives the close transition that races it.
+
+    waitpid and the PTY read side are independent, so on a loaded machine the
+    reaper often records exit_info before the last read returns EOF. That makes
+    _terminal_eof() drive EXITED -> CLOSED under the lock before it dispatches,
+    and the frame it dispatches is only filtered against the session's output
+    clients later, on the daemon's selector thread. Delaying the EOF callback
+    reproduces that ordering every run.
+    """
+
+    runner = _DelayedEofRunner(
+        lambda _spec: (
+            (sys.executable, "-u", "-c", "import os;os.write(1,b'BEFORE\\n')"),
+            {"PATH": os.environ.get("PATH", "")},
+        )
+    )
+    server, _manager = daemon_factory(session_runner=runner)
+    client = DaemonClient(socket_path=server.socket_path)
+    outputs = []
+    eof = threading.Event()
+    try:
+        opened = client.open_session(
+            OpenSessionRequest(
+                connection_id=client.list_connections()[0].id,
+                dimensions=TerminalDimensions(rows=24, columns=80),
+            )
+        )
+        client.subscribe_terminal(
+            opened.id,
+            outputs.append,
+            on_eof=lambda _session_id, _sequence: eof.set(),
+        )
+        client.attach_session(
+            AttachSessionRequest(
+                session_id=opened.id,
+                request_input=True,
+                want_terminal_output=True,
+                from_sequence=0,
+            )
+        )
+        assert _wait_until(
+            lambda: b"BEFORE" in b"".join(item.data for item in outputs)
+        )
+        assert eof.wait(_WAIT_TIMEOUT)
+    finally:
+        client.close()
         runner.close()
 
 
@@ -474,7 +561,7 @@ def test_slow_terminal_subscriber_does_not_block_control_responses(
 
     def _blocked_output(_output):
         callback_entered.set()
-        assert callback_release.wait(2)
+        assert callback_release.wait(_WAIT_TIMEOUT)
 
     try:
         opened = client.open_session(
@@ -488,14 +575,18 @@ def test_slow_terminal_subscriber_does_not_block_control_responses(
                 from_sequence=0,
             )
         )
-        assert callback_entered.wait(2)
+        assert callback_entered.wait(_WAIT_TIMEOUT)
 
         started = time.monotonic()
         listed = client.list_connections()
         elapsed = time.monotonic() - started
 
         assert listed
-        assert elapsed < 1
+        # The subscriber callback is parked for _WAIT_TIMEOUT seconds; the
+        # point is that the control path is not serialised behind it. Budget a
+        # small fraction of that rather than a tight second, so a starved
+        # runner cannot turn "slower than usual" into "blocked".
+        assert elapsed < _WAIT_TIMEOUT / 5
         callback_release.set()
         subscription.close()
         client.close_session(CloseSessionRequest(session_id=opened.id))
@@ -543,7 +634,7 @@ def test_daemon_shutdown_kills_active_pty_and_stops_io_threads(
 
     server.shutdown()
 
-    assert server.wait_stopped(timeout=3)
+    assert server.wait_stopped(timeout=_WAIT_TIMEOUT)
     assert not runner._io._thread.is_alive()
     assert not runner._reaper.is_alive()
     assert runner._handles == set()
@@ -585,7 +676,7 @@ def test_terminal_subscriber_can_close_client_without_deadlock(
         )
     )
     try:
-        assert closed.wait(2)
+        assert closed.wait(_WAIT_TIMEOUT)
     finally:
         client.close()
         server.shutdown()
