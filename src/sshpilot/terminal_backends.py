@@ -1041,7 +1041,21 @@ class VTETerminalBackend:
         """
         try:
             def _on_changed(terminal, ids, _user_data=None):
-                changed = set(ids) if ids and hasattr(ids, "__iter__") else {ids}
+                # VTE reports the changed properties as a sequence, and that
+                # sequence can be empty -- notably while a terminal is being
+                # torn down. Decide on iterability alone: testing truthiness
+                # first sent an empty list down the scalar branch, where
+                # ``{ids}`` raised "unhashable type: 'list'". GTK contains a
+                # failing signal handler, so the app kept running and only
+                # this one termprop update was lost -- but it logged a
+                # CRITICAL unhandled exception and a crash.log entry every
+                # time a terminal closed.
+                if ids is None:
+                    changed = set()
+                elif hasattr(ids, "__iter__"):
+                    changed = set(ids)
+                else:
+                    changed = {ids}
                 event: dict[str, Any] = {}
                 property_id = Vte.PropertyId
                 if property_id.XTERM_TITLE in changed:
