@@ -883,10 +883,23 @@ class SshCopyIdRunner:
             from .api.connection_identity import connection_id_for
             from .api.models.identity import DeployKeyRequest
             from .api.models.keys import KeyStoreScope
-            # The key id is resolved inside the scope's root, so it has to be
-            # the scope the window is actually showing keys from. Hardcoding
-            # DEFAULT looked for an isolated-mode key under ~/.ssh.
-            scope = getattr(self.window, "_key_scope", None)
+            # The key id is resolved inside one store's root, and in Isolated
+            # Mode the picker offers keys from both, so the scope has to come
+            # from the selected key rather than from the window. Hardcoding
+            # DEFAULT looked for an isolated key under ~/.ssh; using the
+            # window's scope would look for the user's ~/.ssh key under the
+            # app directory.
+            scope = None
+            key_manager = getattr(self.window, "key_manager", None)
+            scope_for = getattr(key_manager, "scope_for", None)
+            if callable(scope_for):
+                try:
+                    scope = scope_for(ssh_key)
+                except Exception:
+                    logger.debug("Could not resolve the key's store", exc_info=True)
+                    scope = None
+            if not isinstance(scope, KeyStoreScope):
+                scope = getattr(self.window, "_key_scope", None)
             if not isinstance(scope, KeyStoreScope):
                 scope = KeyStoreScope.DEFAULT
             summary = client.deploy_key(

@@ -99,11 +99,19 @@ def test_discover_keys_projects_daemon_summaries():
     assert client.list_scopes == [KeyStoreScope.DEFAULT]
 
 
-def test_discover_keys_uses_manager_scope():
+def test_discover_keys_in_isolated_mode_includes_the_default_store():
+    """The user's ~/.ssh keys stay selectable in Isolated Mode."""
     client = _FakeClient()
     manager = KeyManager(client, KeyStoreScope.ISOLATED)
     manager.discover_keys()
-    assert client.list_scopes == [KeyStoreScope.ISOLATED]
+    assert client.list_scopes == [KeyStoreScope.ISOLATED, KeyStoreScope.DEFAULT]
+
+
+def test_discover_keys_in_default_mode_uses_only_the_default_store():
+    client = _FakeClient()
+    manager = KeyManager(client, KeyStoreScope.DEFAULT)
+    manager.discover_keys()
+    assert client.list_scopes == [KeyStoreScope.DEFAULT]
 
 
 # ---------------------------------------------------------------------------

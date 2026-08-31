@@ -45,8 +45,13 @@ document captured the identity along with its display name, folder and tags;
 and tombstone resurrection had to be enabled, because leaving a root
 tombstoned everything in it. Both are gone with the file they existed for.
 
-Also per mode: SSH key discovery and generation roots (`KeyStoreScope`),
-known_hosts, the imported-hosts fragment, and saved sessions.
+Also per mode: known_hosts, the imported-hosts fragment, and saved sessions.
+
+SSH keys sit between the two. Each mode has its own key *directory*
+(`KeyStoreScope`) and generates into it, but Isolated Mode also lists the
+user's `~/.ssh` keys, because a key is a credential rather than
+configuration — an isolated connection can name one as its `IdentityFile`
+and OpenSSH will use it.
 
 **Secrets are deliberately shared.** Passwords key on the real
 `(hostname, username)` and passphrases on the key path, so a credential

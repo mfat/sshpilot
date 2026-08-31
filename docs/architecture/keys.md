@@ -12,6 +12,15 @@ file of a daemon-discovered key.
   - `KeyStoreScope.DEFAULT` → `get_ssh_dir()`
   - `KeyStoreScope.ISOLATED` → `get_config_dir()`
   The frontend sends only the semantic scope — never a key-directory path.
+- A scope names **one** directory, and a key id only resolves inside its own
+  scope's root. In Isolated Mode the frontend therefore lists *both* stores and
+  records which scope each key came from, so a later read, delete, or deploy
+  names the store the key actually lives in. Isolated Mode isolates SSH
+  *configuration*, not credentials: an isolated connection can name
+  `~/.ssh/id_ed25519` as its `IdentityFile` and OpenSSH uses it, so hiding
+  those keys only stopped the user selecting keys their connections were
+  already using. New keys are still generated into the active scope, and
+  Default Mode never lists sshPilot's private key directory.
 - The **daemon** creates key directories, recursively discovers private keys,
   runs `ssh-keygen`, and reads public-key files for application features.
 - **GTK** renders key metadata, reads public-key text via `keys.get_public`,

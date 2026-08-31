@@ -100,6 +100,19 @@ class KeyManager(GObject.Object):
         key_list = self._controller.list_keys()
         return [SSHKey.from_summary(summary) for summary in key_list.keys]
 
+    def scope_for(self, key: SSHKey) -> KeyStoreScope:
+        """The store *this* key lives in, which is not always the active one.
+
+        Isolated Mode offers the user's ``~/.ssh`` keys alongside sshPilot's
+        own, so a selected key can belong to either root. Every request that
+        resolves a key id (deploy, read, delete) has to name the store the key
+        is actually in.
+        """
+        key_id = getattr(key, "key_id", None)
+        if not key_id:
+            return self._scope
+        return self._controller._scope_for(key_id)
+
     def read_public_key(self, key: SSHKey) -> str:
         """Return the public-key text for a daemon-discovered ``SSHKey``.
 
