@@ -883,11 +883,17 @@ class SshCopyIdRunner:
             from .api.connection_identity import connection_id_for
             from .api.models.identity import DeployKeyRequest
             from .api.models.keys import KeyStoreScope
+            # The key id is resolved inside the scope's root, so it has to be
+            # the scope the window is actually showing keys from. Hardcoding
+            # DEFAULT looked for an isolated-mode key under ~/.ssh.
+            scope = getattr(self.window, "_key_scope", None)
+            if not isinstance(scope, KeyStoreScope):
+                scope = KeyStoreScope.DEFAULT
             summary = client.deploy_key(
                 DeployKeyRequest(
                     connection_id=connection_id_for(connection),
                     key_id=key_id,
-                    scope=KeyStoreScope.DEFAULT,
+                    scope=scope,
                     force=bool(force),
                 )
             )

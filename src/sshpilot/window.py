@@ -735,6 +735,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ssh = config_data.setdefault("ssh", {})
             if isinstance(ssh, dict):
                 ssh["use_isolated_config"] = mode is OperationMode.ISOLATED
+        # Saved sessions name their tabs by nickname, and a nickname means a
+        # different server in the two roots, so the store follows the mode.
+        session_manager = getattr(self, "session_manager", None)
+        if session_manager is not None:
+            set_isolated = getattr(session_manager, "set_isolated", None)
+            if callable(set_isolated):
+                try:
+                    set_isolated(mode is OperationMode.ISOLATED)
+                except Exception:
+                    logger.warning(
+                        "Could not switch the saved-session store to %s mode",
+                        mode.value,
+                        exc_info=True,
+                    )
         if self.client is not None:
             self.key_manager = KeyManager(self.client, self._key_scope)
 

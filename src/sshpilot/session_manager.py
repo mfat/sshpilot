@@ -38,21 +38,54 @@ from .platform_utils import get_config_dir
 logger = logging.getLogger(__name__)
 
 SESSIONS_FILENAME = "sessions.json"
+ISOLATED_SESSIONS_FILENAME = "sessions-isolated.json"
+
+
+def sessions_path_for(isolated: bool) -> str:
+    """The saved-session store belonging to one operation mode.
+
+    A session names its tabs by connection nickname, and the same nickname
+    means a different server in the two SSH configuration roots -- so a
+    session saved in one mode would reopen the wrong hosts in the other.
+    The default store keeps its historical name.
+    """
+    name = ISOLATED_SESSIONS_FILENAME if isolated else SESSIONS_FILENAME
+    return os.path.join(get_config_dir(), name)
 
 
 class SessionManager:
     """Manages named tab sessions and the auto-captured previous session."""
 
-    def __init__(self, config=None, connection_manager=None):
+    def __init__(self, config=None, connection_manager=None, isolated: bool = False):
         # ``config`` is accepted for symmetry with the other managers but the
         # session store uses its own JSON file rather than the shared config.
         self.config = config
         self.sessions: Dict[str, dict] = {}
         self.previous: Optional[dict] = None
-        self._path = os.path.join(get_config_dir(), SESSIONS_FILENAME)
+        self._isolated = bool(isolated)
+        self._connection_manager = connection_manager
+        self._path = sessions_path_for(self._isolated)
         self._load()
         if connection_manager is not None:
             self.migrate_connection_references(connection_manager)
+
+    def set_isolated(self, isolated: bool) -> None:
+        """Point at the store belonging to the daemon-confirmed mode.
+
+        The window builds this before the daemon has confirmed a mode, and a
+        live switch changes which world the saved nicknames refer to, so the
+        store is repointed and re-read rather than carried across.
+        """
+        isolated = bool(isolated)
+        if isolated == self._isolated:
+            return
+        self._isolated = isolated
+        self._path = sessions_path_for(isolated)
+        self.sessions = {}
+        self.previous = None
+        self._load()
+        if self._connection_manager is not None:
+            self.migrate_connection_references(self._connection_manager)
 
     # ── persistence ──────────────────────────────────────────────────────────
 

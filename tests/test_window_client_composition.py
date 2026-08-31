@@ -86,6 +86,44 @@ def test_confirmed_mode_updates_scope_key_manager_and_config_cache():
     assert window.config.config_data["ssh"]["use_isolated_config"] is True
 
 
+def test_confirmed_mode_repoints_the_saved_session_store():
+    """Saved sessions name tabs by nickname, which means a different server
+    in each root, so the store has to follow the confirmed mode."""
+    window = _make_window()
+    window.client = object()
+    window.config = types.SimpleNamespace(
+        config_data={"config_version": 3, "ssh": {"use_isolated_config": False}}
+    )
+    switched = []
+    window.session_manager = types.SimpleNamespace(
+        set_isolated=lambda isolated: switched.append(isolated)
+    )
+
+    window._apply_confirmed_operation_mode(OperationMode.ISOLATED)
+    window._apply_confirmed_operation_mode(OperationMode.DEFAULT)
+
+    assert switched == [True, False]
+
+
+def test_a_failing_session_store_switch_does_not_break_mode_confirmation():
+    """The mode is daemon-confirmed; a frontend convenience must not veto it."""
+    window = _make_window()
+    window.client = object()
+    window.config = types.SimpleNamespace(
+        config_data={"config_version": 3, "ssh": {"use_isolated_config": False}}
+    )
+
+    def boom(_isolated):
+        raise OSError("sessions file unreadable")
+
+    window.session_manager = types.SimpleNamespace(set_isolated=boom)
+
+    window._apply_confirmed_operation_mode(OperationMode.ISOLATED)
+
+    assert window._confirmed_operation_mode is OperationMode.ISOLATED
+    assert window._key_scope is KeyStoreScope.ISOLATED
+
+
 def test_delayed_mode_confirmation_keeps_key_actions_unavailable():
     window = _make_window()
     window._confirmed_operation_mode = None
