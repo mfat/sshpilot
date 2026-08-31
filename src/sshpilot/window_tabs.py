@@ -22,7 +22,6 @@ from gettext import gettext as _
 
 from sshpilot import icon_utils
 from .connection_model import Connection
-from .dialog_focus import mark_default_response_visible
 from .dnd_payload import decode_dnd_payload, new_internal_drop_target
 from .terminal import TerminalWidget
 from .plugins.api import Capability
@@ -981,7 +980,6 @@ class WindowTabsMixin:
                 pages,
             )
             dialog.present(self)
-            mark_default_response_visible(self)
         else:
             # Toggle off, or nothing with a live session to disconnect: close
             # directly. With the toggle off, on_tab_close disconnects each tab
@@ -1027,7 +1025,6 @@ class WindowTabsMixin:
                         checkbox,
                     )
                     dialog.present(self)
-                    mark_default_response_visible(self)
                     return True  # Prevent immediate close; dialog handles it
                 child.cleanup_all()
                 return False
@@ -1075,7 +1072,6 @@ class WindowTabsMixin:
             # Connect to response signal before showing the dialog
             dialog.connect('response', self._on_tab_close_response, checkbox)
             dialog.present(self)
-            mark_default_response_visible(self)
             
             # Prevent the default close behavior while we show confirmation
             return True

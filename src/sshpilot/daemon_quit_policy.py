@@ -605,8 +605,6 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     """
     from gi.repository import Adw
 
-    from .dialog_focus import mark_default_response_visible
-
     summary = daemon_active_work_summary(getattr(window, "client", None))
     sessions = summary["sessions_active"]
     if not sessions:
@@ -635,7 +633,6 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
 
     dialog.connect("response", _on_response)
     dialog.present(window)
-    mark_default_response_visible(window)
     return dialog
 
 

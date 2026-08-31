@@ -6,11 +6,6 @@ or named a response id that was never added (an unknown default leaves the
 dialog with no default widget at all, so keyboard focus lands on the first
 button — Cancel).
 
-Getting the default right is only half of it: GTK draws no focus ring until
-the window is in focus-visible mode, so a dialog opened with the mouse showed
-two identical-looking buttons and no hint that Enter confirms. Each of these
-dialogs must therefore also mark its default response visible.
-
 Pure unit tests: ``Adw``/``Gtk`` are replaced with recording fakes, so no
 real desktop is required.
 """
@@ -20,7 +15,7 @@ import types
 
 import pytest
 
-from sshpilot import daemon_quit_policy, dialog_focus, terminal_manager, window_tabs
+from sshpilot import daemon_quit_policy, terminal_manager, window_tabs
 from sshpilot.window_tabs import WindowTabsMixin
 
 
@@ -38,7 +33,6 @@ class RecordingDialog:
         self.default_response = None
         self.close_response = None
         self.extra_child = None
-        self.focus_visible = False
         RecordingDialog.instances.append(self)
 
     @classmethod
@@ -72,9 +66,6 @@ class RecordingDialog:
     def connect(self, signal, handler, *args):
         pass
 
-    def set_focus_visible(self, visible):
-        self.focus_visible = visible
-
 
 class FakeCheckButton:
     def __init__(self, *args, **kwargs):
@@ -88,19 +79,6 @@ class FakeCheckButton:
 
     def get_active(self):
         return False
-
-
-class FocusRecordingWindow:
-    """Stands in for the main window: records the focus-ring flag."""
-
-    def __init__(self, **kwargs):
-        self.client = object()
-        self.focus_visible = False
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def set_focus_visible(self, visible):
-        self.focus_visible = visible
 
 
 class FakeConfig:
@@ -153,7 +131,7 @@ def test_daemon_quit_dialog_defaults_to_quit(monkeypatch):
         lambda client: {"sessions_active": 2},
     )
 
-    window = FocusRecordingWindow()
+    window = types.SimpleNamespace(client=object())
     daemon_quit_policy.present_daemon_quit_dialog(window, on_decision=lambda d: None)
 
     dialog = only_dialog()
@@ -162,8 +140,6 @@ def test_daemon_quit_dialog_defaults_to_quit(monkeypatch):
     # Enter confirms the quit the user asked for; Escape still cancels.
     assert dialog.default_response == "terminate"
     assert dialog.close_response == "cancel"
-    # The in-window dialog's focus ring belongs to the window it sits in.
-    assert window.focus_visible is True
 
 
 # --- Disconnect -----------------------------------------------------------
@@ -191,7 +167,6 @@ def test_disconnect_confirmation_defaults_to_disconnect(monkeypatch):
     assert_default_is_registered(dialog)
     assert dialog.default_response == "disconnect"
     assert dialog.close_response == "cancel"
-    assert dialog.focus_visible is True
 
 
 # --- Tab close ------------------------------------------------------------
@@ -230,8 +205,6 @@ class FakeTabView:
 
 def make_window(**kwargs):
     window = WindowTabsMixin()
-    window.focus_visible = False
-    window.set_focus_visible = lambda visible: setattr(window, "focus_visible", visible)
     window.config = FakeConfig(**{"confirm-disconnect": True})
     window.terminal_to_connection = {}
     window._is_start_tab_page = lambda page: False
@@ -260,8 +233,6 @@ def test_single_tab_close_defaults_to_close(fake_tab_gtk):
     assert_default_is_registered(dialog)
     assert dialog.default_response == "close"
     assert dialog.close_response == "cancel"
-    assert window.focus_visible is True
-    assert window.focus_visible is True
 
 
 def test_bulk_tab_close_defaults_to_close(fake_tab_gtk):
@@ -281,56 +252,3 @@ def test_bulk_tab_close_defaults_to_close(fake_tab_gtk):
     assert_default_is_registered(dialog)
     assert dialog.default_response == "close"
     assert dialog.close_response == "cancel"
-    assert window.focus_visible is True
-
-
-# --- dialog_focus helper --------------------------------------------------
-
-
-class FakeToplevel:
-    def __init__(self):
-        self.focus_visible = False
-
-    def get_root(self):
-        return self
-
-    def set_focus_visible(self, visible):
-        self.focus_visible = visible
-
-
-def test_new_dialog_marking_skips_windows_that_were_already_open(monkeypatch):
-    """Gtk.AlertDialog hides its window, so we mark whatever toplevel is new."""
-    existing = FakeToplevel()
-    toplevels = [existing]
-    monkeypatch.setattr(
-        dialog_focus,
-        "Gtk",
-        types.SimpleNamespace(
-            Window=types.SimpleNamespace(get_toplevels=lambda: list(toplevels))
-        ),
-    )
-    monkeypatch.setattr(
-        dialog_focus, "GLib", types.SimpleNamespace(idle_add=lambda fn: fn())
-    )
-
-    before = dialog_focus.capture_toplevels()
-    fresh = FakeToplevel()
-    toplevels.append(fresh)
-    dialog_focus.mark_new_dialog_default_visible(before)
-
-    assert fresh.focus_visible is True
-    assert existing.focus_visible is False
-
-
-def test_marking_a_widget_walks_up_to_its_window():
-    window = FakeToplevel()
-    widget = types.SimpleNamespace(get_root=lambda: window)
-
-    assert dialog_focus.mark_default_response_visible(widget) is True
-    assert window.focus_visible is True
-
-
-def test_marking_is_best_effort():
-    """A dialog we cannot reach still works; it just looks the way it did."""
-    assert dialog_focus.mark_default_response_visible(None) is False
-    assert dialog_focus.mark_default_response_visible(object()) is False
