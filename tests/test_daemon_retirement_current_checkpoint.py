@@ -188,6 +188,8 @@ def test_missing_persisted_mode_after_failed_transition_requires_recovery(tmp_pa
         config_path=tmp_path / "config.json",
         default_root=tmp_path / "default-config",
         isolated_root=tmp_path / "isolated-config",
+        default_state_path=tmp_path / "connections.json",
+        isolated_state_path=tmp_path / "connections-isolated.json",
     )
     service._prepare_target = MagicMock(side_effect=OSError("target unavailable"))
 

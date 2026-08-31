@@ -1110,6 +1110,61 @@ def _authored_extra_options(extra_ssh_config: str) -> List[str]:
     return options
 
 
+def _connection_is_isolated(connection) -> bool:
+    """Whether this connection was declared in the isolated SSH root.
+
+    The flag is stamped by the config loader from the root it parsed, so it
+    is true for a Host declared in the isolated root itself *and* for one
+    pulled into it through an Include.
+    """
+    value = getattr(connection, "isolated_mode", None)
+    if value is None:
+        data = getattr(connection, "data", None)
+        if isinstance(data, dict):
+            value = data.get("isolated_mode")
+    return bool(value)
+
+
+def _isolated_known_hosts_override(connection) -> List[str]:
+    """``-o UserKnownHostsFile=`` for an isolated-mode connection, else ``[]``.
+
+    Default Mode deliberately emits nothing: ``~/.ssh/known_hosts`` is shared
+    TOFU state for every SSH tool on the machine, so pinning it would break
+    anyone who set ``UserKnownHostsFile`` themselves and would make sshPilot
+    the owner of a file it does not own.
+
+    A command-line ``-o`` beats every config file, so a block that authored
+    its own ``UserKnownHostsFile`` would otherwise be overridden by this --
+    the opposite of the intent. When the Host block authored the directive,
+    emit nothing and let OpenSSH resolve it from the file.
+
+    Known limit: a value inherited from a ``Host *`` block is not visible
+    here. The loader records authored directives per concrete Host block and
+    does not merge wildcard blocks into a record, so an isolated config that
+    redirects known_hosts globally still gets this option. Per-host authorship
+    -- the way the connection editor writes it -- is honored.
+    """
+    if not _connection_is_isolated(connection):
+        return []
+    try:
+        from .ssh_config_formatter import _authored_directives
+
+        data = getattr(connection, "data", None)
+        if "userknownhostsfile" in _authored_directives(
+            data if isinstance(data, dict) else {}
+        ):
+            return []
+    except Exception:
+        logger.debug("Could not read authored directives", exc_info=True)
+    try:
+        from .platform.paths import known_hosts_path_for
+
+        return ["-o", f"UserKnownHostsFile={known_hosts_path_for(True)}"]
+    except Exception:
+        logger.debug("Could not resolve the isolated known_hosts path", exc_info=True)
+        return []
+
+
 def build_ssh_connection(
     ctx: ConnectionContext
 ) -> SSHConnectionCommand:
@@ -1223,6 +1278,17 @@ def build_ssh_connection(
             command_type=ctx.command_type,
             extra_args=ctx.extra_args,
         )
+
+        # Isolated Mode owns its own host keys. Emitted as argv rather than
+        # written into the isolated ssh_config, because -F is given the file
+        # that *declared* the Host -- which for anything pulled in through an
+        # Include is a fragment, not the root, so a `Host *` block in the root
+        # would never be parsed. It rides ssh_overrides, which the core
+        # builder appends last, so a connection that authors its own
+        # UserKnownHostsFile still wins.
+        isolated_known_hosts = _isolated_known_hosts_override(connection)
+        if isolated_known_hosts:
+            overrides = list(overrides) + isolated_known_hosts
 
         # Default keepalive injection into the overrides list (core builder
         # appends ssh_overrides verbatim).

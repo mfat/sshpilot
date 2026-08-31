@@ -141,13 +141,6 @@ class PersistedIdentity:
     projection: ConnectionIdentityProjection
     tombstone: bool = False
     retired_generation: Optional[int] = None
-    # The group this identity sat in when it was retired. A tombstone cannot be
-    # a group member (see validate: "tombstoned identities cannot be group
-    # members"), so leaving a root would otherwise discard the placement for
-    # good -- the identity resurrects with its UUID and display name but at the
-    # root of the tree. Remembering it here is the same bookkeeping pattern as
-    # retired_generation, and it is cleared the moment the identity comes back.
-    retired_group_id: Optional[str] = None
 
     def __post_init__(self) -> None:
         canonical_uuid(self.uuid)
@@ -163,10 +156,6 @@ class PersistedIdentity:
             raise ValueError("retired generation must be a non-negative integer")
         if not self.tombstone and self.retired_generation is not None:
             raise ValueError("active identities cannot have a retired generation")
-        if self.retired_group_id is not None and type(self.retired_group_id) is not str:
-            raise TypeError("retired group id must be a string or null")
-        if not self.tombstone and self.retired_group_id is not None:
-            raise ValueError("active identities cannot have a retired group id")
 
     def to_dict(self) -> Mapping[str, Any]:
         payload: dict[str, Any] = {
@@ -176,8 +165,6 @@ class PersistedIdentity:
         }
         if self.retired_generation is not None:
             payload["retired_generation"] = self.retired_generation
-        if self.retired_group_id is not None:
-            payload["retired_group_id"] = self.retired_group_id
         return payload
 
     @classmethod
@@ -190,7 +177,10 @@ class PersistedIdentity:
             projection=_projection_from_dict(payload.get("projection", {})),
             tombstone=payload.get("tombstone", False),
             retired_generation=payload.get("retired_generation"),
-            retired_group_id=payload.get("retired_group_id"),
+            # ``retired_group_id`` was written by builds that resurrected a
+            # tombstone on a mode switch. Each root now keeps its own sidecar,
+            # so nothing is retired by a switch and nothing has to be put
+            # back; an older file carrying the key simply drops it.
         )
 
 

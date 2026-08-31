@@ -53,6 +53,15 @@ def _replay(machine: SidecarIdentityMachine, fixture: Dict[str, Any]) -> None:
     )
     refs: Dict[str, str] = {}
 
+    def ref(name: str) -> str:
+        """Resolve a fixture-local name to the ACTIVE root's connection.
+
+        The two SSH configuration roots hold independent connections, so a
+        fixture that toggles modes and then edits "prod" means the current
+        root's own "prod" -- not the one it left behind.
+        """
+        return machine.resolve_ref(refs[name])
+
     for seed in fixture.get("initial_connections", []):
         logical_id = machine.add_connection_external(
             hostname=seed["hostname"],
@@ -67,32 +76,32 @@ def _replay(machine: SidecarIdentityMachine, fixture: Dict[str, Any]) -> None:
     for op in fixture.get("operations", []):
         kind = op["op"]
         if kind == "managed_rename":
-            machine.managed_rename(refs[op["ref"]], op["suffix"], op.get("use_raw_editor", False))
+            machine.managed_rename(ref(op["ref"]), op["suffix"], op.get("use_raw_editor", False))
         elif kind == "managed_change_destination":
             machine.managed_change_destination(
-                refs[op["ref"]], op["hostname"], op.get("username", "")
+                ref(op["ref"]), op["hostname"], op.get("username", "")
             )
         elif kind == "managed_rename_and_change_destination":
             machine.managed_rename_and_change_destination(
-                refs[op["ref"]], op["suffix"], op["hostname"], op.get("username", "")
+                ref(op["ref"]), op["suffix"], op["hostname"], op.get("username", "")
             )
         elif kind == "managed_delete":
-            machine.managed_delete(refs[op["ref"]])
+            machine.managed_delete(ref(op["ref"]))
         elif kind == "managed_duplicate":
-            refs[op["as"]] = machine.managed_duplicate(refs[op["ref"]])
+            refs[op["as"]] = machine.managed_duplicate(ref(op["ref"]))
         elif kind == "external_rename_single":
             machine.external_rename_single(
-                refs[op["ref"]], op["suffix"], op.get("use_raw_editor", False)
+                ref(op["ref"]), op["suffix"], op.get("use_raw_editor", False)
             )
         elif kind == "external_change_port":
-            machine.external_change_port(refs[op["ref"]], op["port"], op.get("use_raw_editor", False))
+            machine.external_change_port(ref(op["ref"]), op["port"], op.get("use_raw_editor", False))
         elif kind == "external_change_identity_files":
             machine.external_change_identity_files(
-                refs[op["ref"]], tuple(op["identity_files"]), op.get("use_raw_editor", False)
+                ref(op["ref"]), tuple(op["identity_files"]), op.get("use_raw_editor", False)
             )
         elif kind == "external_collide_and_rename":
             machine.external_collide_and_rename(
-                refs[op["a"]], refs[op["b"]], op.get("use_raw_editor", False)
+                ref(op["a"]), ref(op["b"]), op.get("use_raw_editor", False)
             )
         elif kind == "add_connection_reusing_deleted_alias":
             refs[op["as"]] = machine.add_connection_reusing_deleted_alias(

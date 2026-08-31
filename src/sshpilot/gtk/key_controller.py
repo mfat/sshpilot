@@ -9,9 +9,11 @@ ids, and passphrases are never retained after the request returns.
 """
 from __future__ import annotations
 
+import logging
 import threading
 
 from sshpilot.api.client import SshPilotClient
+from sshpilot.api.errors import SshPilotError
 from sshpilot.api.events import EventType
 from sshpilot.api.models import (
     InteractionDecisionRequest,
@@ -37,16 +39,41 @@ from sshpilot.api.models.keys import (
 )
 from sshpilot.runtime_identity import new_operation_id
 
+logger = logging.getLogger(__name__)
+
 
 class KeyController:
     """Stateful frontend controller for the daemon SSH-key API."""
 
     def __init__(self, client: SshPilotClient, scope: KeyStoreScope) -> None:
         self._client = client
+        # Where a NEW key is written, and the scope a key is assumed to live
+        # in when nothing better is known.
         self._scope = scope
         self._lock = threading.RLock()
         self._busy = False
         self._cached: KeyList | None = None
+        # key_id -> the scope it was listed from, so read/delete address the
+        # root the key actually lives in rather than the active one.
+        self._scope_by_key: dict[str, KeyStoreScope] = {}
+
+    def _listing_scopes(self) -> tuple[KeyStoreScope, ...]:
+        """Every scope whose keys the user should be offered.
+
+        Isolated Mode isolates SSH *configuration*, not credentials. An
+        isolated connection can name ``~/.ssh/id_ed25519`` as its IdentityFile
+        and OpenSSH uses it perfectly well -- only the picker pretended those
+        keys did not exist, so the user could not select the very keys their
+        connections were already using. Offer both stores there; Default Mode
+        has no reason to show sshPilot's private one.
+        """
+        if self._scope is KeyStoreScope.ISOLATED:
+            return (KeyStoreScope.ISOLATED, KeyStoreScope.DEFAULT)
+        return (KeyStoreScope.DEFAULT,)
+
+    def _scope_for(self, key_id: KeyId) -> KeyStoreScope:
+        with self._lock:
+            return self._scope_by_key.get(str(key_id), self._scope)
 
     def _enter_operation(self) -> None:
         with self._lock:
@@ -57,11 +84,33 @@ class KeyController:
     def list_keys(self) -> KeyList:
         self._enter_operation()
         try:
-            key_list = self._client.list_keys(
-                ListKeysRequest(scope=self._scope)
-            )
+            merged: list[KeySummary] = []
+            seen: set[str] = set()
+            scopes: dict[str, KeyStoreScope] = {}
+            for scope in self._listing_scopes():
+                try:
+                    listed = self._client.list_keys(ListKeysRequest(scope=scope))
+                except SshPilotError:
+                    # A secondary store that cannot be read must not hide the
+                    # primary one; the active scope is listed first.
+                    if scope is self._scope:
+                        raise
+                    logger.warning(
+                        "Could not list keys from the %s store", scope.value,
+                        exc_info=True,
+                    )
+                    continue
+                for summary in listed.keys:
+                    identity = str(summary.key_id)
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+                    scopes[identity] = scope
+                    merged.append(summary)
+            key_list = KeyList(keys=tuple(merged))
             with self._lock:
                 self._cached = key_list
+                self._scope_by_key = scopes
             return key_list
         finally:
             with self._lock:
@@ -71,7 +120,7 @@ class KeyController:
         self._enter_operation()
         try:
             result = self._client.read_public_key(
-                ReadPublicKeyRequest(key_id=key_id, scope=self._scope)
+                ReadPublicKeyRequest(key_id=key_id, scope=self._scope_for(key_id))
             )
             return result
         finally:
@@ -82,7 +131,7 @@ class KeyController:
         self._enter_operation()
         try:
             result = self._client.delete_key(
-                DeleteKeyRequest(key_id=key_id, scope=self._scope)
+                DeleteKeyRequest(key_id=key_id, scope=self._scope_for(key_id))
             )
             with self._lock:
                 if self._cached is not None:

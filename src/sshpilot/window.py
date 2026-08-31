@@ -48,6 +48,7 @@ from .gtk.connection_store import ConnectionPresentationStore
 from .gtk.daemon_connection_services import DaemonConnectionServices
 from .gtk.connection_runtime_status import ConnectionRuntimeStatusStore
 from .config import Config
+from .dialog_focus import capture_toplevels, mark_new_dialog_default_visible
 from .key_manager import KeyManager
 from sshpilot.api.models.keys import KeyStoreScope
 from sshpilot.api.models.daemon import OperationMode, SetOperationModeRequest
@@ -352,6 +353,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._requested_operation_mode = (
             OperationMode.ISOLATED if isolated else None
         )
+        # Set only when a mode change had to restart the daemon: the app then
+        # restarts too, once the reconnected daemon confirms the new mode.
+        self._pending_mode_change_restart = False
         self._confirmed_operation_mode = None
         self._daemon_client_generation = 0
         self._key_scope = KeyStoreScope.DEFAULT
@@ -701,11 +705,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_startup_operation_mode_result(self, result) -> None:
         if not result.accepted:
             logger.warning("Daemon rejected startup operation mode: %s", result.message)
+            self._pending_mode_change_restart = False
             if getattr(result, "recovery_required", False):
                 self._show_operation_mode_recovery(result.message)
             return
         self._requested_operation_mode = None
         self._apply_confirmed_operation_mode(result.active_mode)
+        if getattr(self, "_pending_mode_change_restart", False):
+            # A mode change that live sessions were blocking: the daemon was
+            # restarted with the user's consent, which closed every session,
+            # and it has now confirmed the new mode. The tabs those sessions
+            # belonged to are still on screen holding session ids the new
+            # daemon has never heard of, so start the app fresh rather than
+            # leave them to fail on their next request.
+            self._pending_mode_change_restart = False
+            self._restart_after_operation_mode_change()
+            return
         # This path also fires after a mid-session daemon restart (e.g. to
         # apply an operation-mode change that live sessions were blocking),
         # so an already-open Preferences window can be showing the stale
@@ -715,6 +730,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             refresh = getattr(preferences, "_request_confirmed_operation_mode", None)
             if callable(refresh):
                 refresh()
+
+    def _restart_after_operation_mode_change(self) -> None:
+        """Re-exec the app so it comes up in the newly selected workspace."""
+        try:
+            from .platform_utils import restart_app
+
+            restart_app()
+        except Exception:
+            logger.error(
+                "Could not restart after an operation-mode change", exc_info=True
+            )
 
     def _on_startup_operation_mode_error(self, error) -> None:
         """Report a failed startup mode request without losing its detail."""
@@ -735,6 +761,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             ssh = config_data.setdefault("ssh", {})
             if isinstance(ssh, dict):
                 ssh["use_isolated_config"] = mode is OperationMode.ISOLATED
+        # Saved sessions name their tabs by nickname, and a nickname means a
+        # different server in the two roots, so the store follows the mode.
+        session_manager = getattr(self, "session_manager", None)
+        if session_manager is not None:
+            set_isolated = getattr(session_manager, "set_isolated", None)
+            if callable(set_isolated):
+                try:
+                    set_isolated(mode is OperationMode.ISOLATED)
+                except Exception:
+                    logger.warning(
+                        "Could not switch the saved-session store to %s mode",
+                        mode.value,
+                        exc_info=True,
+                    )
         if self.client is not None:
             self.key_manager = KeyManager(self.client, self._key_scope)
 
@@ -6839,7 +6879,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if app is not None:
             app.hold()
 
+        # Gtk.AlertDialog keeps its window to itself, so the only way to mark
+        # "Quit Anyway" as the Enter key's target is to find the toplevel it
+        # adds. Without this the two buttons look identical (GH #1231).
+        before_toplevels = capture_toplevels()
         dialog.choose(self, None, self._on_quit_alert_chosen)
+        mark_new_dialog_default_visible(before_toplevels)
 
     def _on_quit_alert_chosen(self, dialog, result):
         """Handle the quit confirmation Gtk.AlertDialog result."""

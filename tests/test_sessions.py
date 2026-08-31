@@ -309,3 +309,54 @@ def test_preferences_persists_session_name():
     combo = types.SimpleNamespace(get_selected=lambda: 1)
     preferences.PreferencesWindow.on_startup_session_changed(prefs, combo)
     assert prefs.config.saved[-1] == ('app-startup-session-name', 'Admin')
+
+
+# ── Saved sessions are per operation mode ─────────────────────────────────────
+
+def test_saved_sessions_are_separate_per_operation_mode(tmp_path, monkeypatch):
+    """A session names its tabs by nickname, and a nickname means a different
+    server in each SSH configuration root -- so one shared store would reopen
+    the wrong hosts after a mode switch."""
+    from sshpilot import session_manager as sm
+
+    monkeypatch.setattr(sm, 'get_config_dir', lambda: str(tmp_path))
+
+    manager = sm.SessionManager()
+    manager.save_session('Default Work', {'tabs': [{'type': 'ssh', 'nickname': 'web'}]})
+
+    manager.set_isolated(True)
+    assert manager.list_session_names() == []
+    manager.save_session('Isolated Work', {'tabs': [{'type': 'ssh', 'nickname': 'web'}]})
+    assert manager.list_session_names() == ['Isolated Work']
+
+    manager.set_isolated(False)
+    assert manager.list_session_names() == ['Default Work']
+
+    assert (tmp_path / 'sessions.json').exists()
+    assert (tmp_path / 'sessions-isolated.json').exists()
+
+
+def test_session_store_path_follows_the_mode(tmp_path, monkeypatch):
+    from sshpilot import session_manager as sm
+
+    monkeypatch.setattr(sm, 'get_config_dir', lambda: str(tmp_path))
+
+    assert sm.sessions_path_for(False).endswith('sessions.json')
+    assert sm.sessions_path_for(True).endswith('sessions-isolated.json')
+
+
+def test_previous_session_is_not_carried_across_a_mode_switch(tmp_path, monkeypatch):
+    """The auto-captured previous session is workspace state too."""
+    from sshpilot import session_manager as sm
+
+    monkeypatch.setattr(sm, 'get_config_dir', lambda: str(tmp_path))
+
+    manager = sm.SessionManager()
+    manager.save_previous({'tabs': [{'type': 'ssh', 'nickname': 'web'}]})
+    assert manager.get_previous() is not None
+
+    manager.set_isolated(True)
+    assert manager.get_previous() is None
+
+    manager.set_isolated(False)
+    assert manager.get_previous() is not None

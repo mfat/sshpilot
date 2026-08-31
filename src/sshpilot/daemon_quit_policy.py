@@ -605,6 +605,8 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     """
     from gi.repository import Adw
 
+    from .dialog_focus import mark_default_response_visible
+
     summary = daemon_active_work_summary(getattr(window, "client", None))
     sessions = summary["sessions_active"]
     if not sessions:
@@ -620,7 +622,9 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     dialog.set_response_appearance(
         "terminate", Adw.ResponseAppearance.DESTRUCTIVE
     )
-    dialog.set_default_response("cancel")
+    # Quit is what the user asked for: make it the keyboard default so Enter
+    # confirms, matching the non-daemon quit prompt. Escape still cancels.
+    dialog.set_default_response("terminate")
     dialog.set_close_response("cancel")
 
     def _on_response(_dialog, response: str) -> None:
@@ -631,6 +635,7 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
 
     dialog.connect("response", _on_response)
     dialog.present(window)
+    mark_default_response_visible(window)
     return dialog
 
 

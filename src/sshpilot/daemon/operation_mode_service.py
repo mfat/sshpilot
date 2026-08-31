@@ -38,11 +38,18 @@ class OperationModeService:
         config_path: Path,
         default_root: Path,
         isolated_root: Path,
+        default_state_path: Path,
+        isolated_state_path: Path,
     ) -> None:
         self._repository = repository
         self._config_path = Path(config_path)
         self._default_root = Path(default_root)
         self._isolated_root = Path(isolated_root)
+        # Each root owns its own identity sidecar.  The two SSH configuration
+        # documents are independent, so their identities, groups, metadata and
+        # ordering must never share a state file.
+        self._default_state_path = Path(default_state_path)
+        self._isolated_state_path = Path(isolated_state_path)
         self._lock = threading.RLock()
         self._resource_probe: Callable[[], Tuple[str, ...]] = lambda: ()
         self._on_committed: Optional[Callable[[], None]] = None
@@ -143,6 +150,8 @@ class OperationModeService:
                     self._repository.transition_ssh_config(
                         SshConfigStore(target, isolated=request.mode is OperationMode.ISOLATED),
                         request.mode is OperationMode.ISOLATED,
+                        state_path=self._state_path_for(request.mode),
+                        legacy_config_path=self._legacy_config_path_for(request.mode),
                     )
                     published = True
                 except Exception:
@@ -171,6 +180,8 @@ class OperationModeService:
                         self._repository.transition_ssh_config(
                             SshConfigStore(old_target, isolated=old_mode is OperationMode.ISOLATED),
                             old_mode is OperationMode.ISOLATED,
+                            state_path=self._state_path_for(old_mode),
+                            legacy_config_path=self._legacy_config_path_for(old_mode),
                         )
                     except Exception as rollback_error:
                         rollback_errors.append(f"runtime: {rollback_error}")
@@ -280,6 +291,21 @@ class OperationModeService:
 
     def _root_for(self, mode: OperationMode) -> Path:
         return self._isolated_root if mode is OperationMode.ISOLATED else self._default_root
+
+    def _state_path_for(self, mode: OperationMode) -> Path:
+        return (
+            self._isolated_state_path
+            if mode is OperationMode.ISOLATED
+            else self._default_state_path
+        )
+
+    def _legacy_config_path_for(self, mode: OperationMode) -> Optional[Path]:
+        """Only the default root inherits the historical ``config.json`` state.
+
+        The isolated root is a document sshPilot created itself; adopting the
+        legacy connection state for it would import the default root's groups
+        and metadata the first time the user switches."""
+        return self._config_path if mode is OperationMode.DEFAULT else None
 
     @staticmethod
     def _files_for(root: Path) -> OperationModeFiles:

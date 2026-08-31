@@ -20,9 +20,15 @@ from sshpilot.api.transport.codec import (
     daemon_status_to_wire,
     daemon_stop_result_to_wire,
 )
-from sshpilot.platform.paths import get_config_dir, get_ssh_dir
+from sshpilot.platform.paths import (
+    get_config_dir,
+    get_ssh_dir,
+    known_hosts_path_for,
+)
 
 from .lifecycle import resolve_socket_path
+
+logger = logging.getLogger(__name__)
 
 
 def _resolve_ssh_root(isolated: bool) -> Path:
@@ -35,6 +41,33 @@ def _resolve_ssh_root(isolated: bool) -> Path:
     if isolated:
         return get_config_dir() / "ssh_config"
     return get_ssh_dir() / "config"
+
+
+def _resolve_state_path(isolated: bool) -> Path:
+    """Return the identity sidecar that belongs to the selected SSH root.
+
+    Each root owns its own sidecar so the two configuration documents stay
+    independent: identities, groups, tags, per-connection metadata, root
+    ordering and non-SSH connections never cross a mode switch.  The default
+    root keeps the historical ``connections.json`` name, so an older build
+    still finds a valid v2 sidecar in default mode.
+    """
+    if isolated:
+        return get_config_dir() / "connections-isolated.json"
+    return get_config_dir() / "connections.json"
+
+
+def _resolve_legacy_config_path(isolated: bool) -> Optional[Path]:
+    """Return the historical ``config.json`` state owner for this root.
+
+    Only the default root inherits the pre-sidecar connection state.  Letting
+    the isolated root adopt it would import the default root's groups and
+    metadata the first time the user switches, re-creating the leak that
+    per-root sidecars close.
+    """
+    if isolated:
+        return None
+    return get_config_dir() / "config.json"
 
 
 def _configure_logging(verbose: bool, quiet: bool = False) -> None:
@@ -244,6 +277,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return _run_management(args)
 
 
+def _split_shared_workspace_once(isolated: bool) -> None:
+    """Partition a pre-split shared sidecar into one file per SSH root.
+
+    Existing installs have a single ``connections.json`` holding both roots'
+    identities, groups, metadata and ordering. Split it before anything reads
+    it, so no reader ever observes a half-split pair. Runs at most once per
+    install and never stops the daemon from starting.
+    """
+    from sshpilot.core.connections.workspace_split import ensure_workspaces_split
+
+    ensure_workspaces_split(
+        config_dir=get_config_dir(),
+        shared_path=_resolve_state_path(False),
+        isolated_path=_resolve_state_path(True),
+        default_root=get_ssh_dir() / "config",
+        isolated_root=get_config_dir() / "ssh_config",
+        non_ssh_to_isolated=isolated,
+    )
+
+
 def _production_core_services():
     """Compose the daemon's headless application services.
 
@@ -280,12 +333,16 @@ def _production_core_services():
 
     settings = DaemonBootstrapSettings()
     isolated = settings.use_isolated_config
+    # Existing installs have one sidecar holding both roots' identities.
+    # Partition it before anything reads it, so no reader ever observes a
+    # half-split pair.
+    _split_shared_workspace_once(isolated)
     ssh_root = _resolve_ssh_root(isolated)
     ssh_store = SshConfigStore(ssh_root, isolated=isolated)
     repository = ConnectionRepository(
         ssh_store=ssh_store,
-        state_path=get_config_dir() / "connections.json",
-        legacy_config_path=get_config_dir() / "config.json",
+        state_path=_resolve_state_path(isolated),
+        legacy_config_path=_resolve_legacy_config_path(isolated),
         isolated=isolated,
     )
     operation_mode = OperationModeService(
@@ -293,6 +350,8 @@ def _production_core_services():
         config_path=get_config_dir() / "config.json",
         default_root=get_ssh_dir() / "config",
         isolated_root=get_config_dir() / "ssh_config",
+        default_state_path=_resolve_state_path(False),
+        isolated_state_path=_resolve_state_path(True),
     )
     def _build_ssh_overrides_service():
         from sshpilot.core.ssh_overrides_service import SshOverridesService
@@ -373,7 +432,11 @@ def _production_core_services():
     return CoreServices(
         connections=connections,
         configuration_backend=AuthoritativeConfigurationBackend(repository),
-        known_hosts=KnownHostsService(lambda: get_ssh_dir() / "known_hosts"),
+        # Resolved per call from the *active* root, so the Known Hosts editor
+        # follows a live mode switch without rebuilding the service.
+        known_hosts=KnownHostsService(
+            lambda: known_hosts_path_for(repository.ssh_config_isolated)
+        ),
         keys=key_service,
         ssh_overrides=overrides_service,
         secrets=secrets_service,

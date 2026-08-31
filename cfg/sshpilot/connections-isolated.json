@@ -1,0 +1,14 @@
+{
+  "groups": [],
+  "identities": {},
+  "last_reconciled_ssh_revision": "67b5ea36e50fa7b5ee3e68470ca91443d316dabcc070df1d52f654db71bce8d7",
+  "legacy_orphans": [],
+  "metadata": {},
+  "non_ssh_connections": [],
+  "non_ssh_metadata": {},
+  "observed_ssh_revision": "67b5ea36e50fa7b5ee3e68470ca91443d316dabcc070df1d52f654db71bce8d7",
+  "pending_ambiguities": [],
+  "root_connections": [],
+  "sidecar_generation": 0,
+  "version": 2
+}

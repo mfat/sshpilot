@@ -9,6 +9,7 @@ from typing import Optional
 from gi.repository import Gio, GLib, Adw, Gdk, Gtk
 from gettext import gettext as _
 
+from .dialog_focus import mark_default_response_visible
 from .terminal import TerminalWidget
 
 logger = logging.getLogger(__name__)
@@ -914,10 +915,11 @@ class TerminalManager:
             dialog.add_response("cancel", _("Cancel"))
             dialog.add_response("disconnect", _("Disconnect"))
             dialog.set_response_appearance("disconnect", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("close")
+            dialog.set_default_response("disconnect")
             dialog.set_close_response("cancel")
             dialog.connect("response", self._on_disconnect_confirmed, connection)
             dialog.present()
+            mark_default_response_visible(dialog)
         else:
             terminal = window.active_terminals[connection]
             terminal.disconnect()

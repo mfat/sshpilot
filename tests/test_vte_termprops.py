@@ -149,3 +149,46 @@ def test_cwd_uses_generic_boxed_uri_when_ref_accessor_is_not_exposed(monkeypatch
     callback, args = queued.pop()
     callback(*args)
     assert delivered == [{"cwd_uri": "file:///generic/cwd"}]
+
+
+@pytest.mark.parametrize("ids_value", [[], (), None], ids=["empty-list", "empty-tuple", "none"])
+def test_empty_termprop_change_is_ignored_not_fatal(monkeypatch, ids_value):
+    """VTE can report a change with nothing in it, notably during teardown.
+
+    The branch used to be chosen by truthiness, so an empty list fell through
+    to the scalar case and ``{ids}`` raised "unhashable type: 'list'" -- seen
+    while terminals were being closed for an operation-mode switch. GTK
+    contains a failing signal handler, so this was noisy rather than fatal:
+    a CRITICAL unhandled exception per closing terminal, and the termprop
+    update for that event dropped.
+    """
+    ids = types.SimpleNamespace(XTERM_TITLE=1, CURRENT_DIRECTORY_URI=2,
+                                SHELL_PREEXEC=3, SHELL_PRECMD=4, SHELL_POSTEXEC=5)
+    monkeypatch.setattr(terminal_backends.Vte, "PropertyId", ids, raising=False)
+    monkeypatch.setattr(terminal_backends.GLib, "idle_add",
+                        lambda *args: pytest.fail("an empty change was delivered"))
+    backend = make_backend()
+    backend.connect_termprops_changed(lambda *_args: None)
+
+    backend.vte.handler(backend.vte, ids_value)
+
+    assert backend.vte.reads == []
+
+
+def test_scalar_termprop_id_still_supported(monkeypatch):
+    """Not every VTE build passes a sequence; a bare id must still work."""
+    ids = types.SimpleNamespace(XTERM_TITLE=1, CURRENT_DIRECTORY_URI=2,
+                                SHELL_PREEXEC=3, SHELL_PRECMD=4, SHELL_POSTEXEC=5)
+    monkeypatch.setattr(terminal_backends.Vte, "PropertyId", ids, raising=False)
+    queued = []
+    monkeypatch.setattr(terminal_backends.GLib, "idle_add",
+                        lambda callback, *args: queued.append((callback, args)) or 1)
+    delivered = []
+    backend = make_backend()
+    backend.connect_termprops_changed(lambda _widget, event: delivered.append(event))
+
+    backend.vte.handler(backend.vte, 1)
+
+    callback, args = queued.pop()
+    callback(*args)
+    assert delivered == [{"title": "shell title"}]

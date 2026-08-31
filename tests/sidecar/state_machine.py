@@ -39,6 +39,7 @@ from .assertions import (
     InvariantViolation,
     active_alias_state,
     check_exact_alias_continuity,
+    check_no_cross_root_capture,
     check_state_invariants,
 )
 from .model import LogicalConnection, marker_for, render_flat_config
@@ -68,8 +69,15 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         super().__init__()
         self._tmpdir = tempfile.TemporaryDirectory(prefix="sshpilot-sidecar-")
         self.base = Path(self._tmpdir.name)
-        self.state_path = self.base / "connections.json"
         self.legacy_path = self.base / "config.json"
+        # One sidecar per SSH configuration root: the two roots are
+        # independent documents and must never share identity state.  Only the
+        # default root owns the historical config.json, so the isolated root
+        # cannot inherit its groups and metadata.
+        self.state_paths: Dict[bool, Path] = {
+            False: self.base / "connections.json",
+            True: self.base / "connections-isolated.json",
+        }
 
         default_root = self.base / "config_default"
         default_root.write_text("", encoding="utf-8")
@@ -80,20 +88,69 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
 
         self.repo = ConnectionRepository(
             ssh_store=SshConfigStore(default_root, isolated=False),
-            state_path=self.state_path,
+            state_path=self.state_paths[False],
             legacy_config_path=self.legacy_path,
             isolated=False,
         )
 
-        self.ownership = AliasOwnership()
+        # Alias ownership and alias history are per root as well: the same
+        # alias in the two roots names two unrelated servers, so continuity
+        # may only ever be judged against the same root's own history.
+        self.ownerships: Dict[bool, AliasOwnership] = {
+            False: AliasOwnership(),
+            True: AliasOwnership(),
+        }
         self._alias_seq = 0
         self._logical_seq = 0
         self._graveyard: List[str] = []
-        self._last_alias_state = active_alias_state(read_identity_state_v2(self.state_path))
+        # A "lineage" is the same real server as expressed in each root. The
+        # two roots hold independent connections, so they have independent
+        # logical ids; the lineage map lets a recorded operation sequence name
+        # a connection once and act on whichever root is currently active.
+        self.lineage: Dict[str, str] = {}
+        self.by_lineage: Dict[bool, Dict[str, str]] = {False: {}, True: {}}
+        # A root that has never been visited has no sidecar yet, and an
+        # absent file is an empty workspace, not a failure.
+        self._last_alias_states: Dict[bool, object] = {
+            False: self._alias_state_of(False),
+            True: self._alias_state_of(True),
+        }
 
     # ------------------------------------------------------------------
     # Bookkeeping helpers (test-only; never reimplement production matching)
     # ------------------------------------------------------------------
+
+    def _register_lineage(self, logical_id: str, lineage: Optional[str] = None) -> None:
+        key = lineage or logical_id
+        self.lineage[logical_id] = key
+        self.by_lineage[self.current_isolated][key] = logical_id
+
+    def resolve_ref(self, logical_id: str) -> str:
+        """Map a logical id recorded in any root to the active root's own.
+
+        Fixtures name a connection once; after a mode toggle the active root
+        holds its own connection for that name, with its own identity.
+        """
+        key = self.lineage.get(logical_id, logical_id)
+        return self.by_lineage[self.current_isolated].get(key, logical_id)
+
+    def _alias_state_of(self, isolated: bool):
+        """Live alias bindings of one root's sidecar; ``{}`` when it has none."""
+        state = read_identity_state_v2(self.state_paths[isolated])
+        return active_alias_state(state) if state is not None else {}
+
+    @property
+    def state_path(self) -> Path:
+        return self.state_paths[self.current_isolated]
+
+    @property
+    def ownership(self) -> AliasOwnership:
+        return self.ownerships[self.current_isolated]
+
+    @property
+    def legacy_path_for_current(self):
+        """Only the default root inherits the pre-sidecar config.json state."""
+        return self.legacy_path if not self.current_isolated else None
 
     @property
     def model(self) -> Dict[str, LogicalConnection]:
@@ -180,6 +237,7 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         conn = LogicalConnection(logical_id, (alias,), hostname, port, username, identity_files)
         self.model[logical_id] = conn
         self.order.append(logical_id)
+        self._register_lineage(logical_id)
         self._sync_external(use_raw_editor)
         self.repo.set_display_name(alias, marker_for(logical_id))
         self.ownership.bind(alias, logical_id)
@@ -201,6 +259,7 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         conn = LogicalConnection(logical_id, (alias,), hostname, 22, username)
         self.model[logical_id] = conn
         self.order.append(logical_id)
+        self._register_lineage(logical_id)
         self.ownership.bind(alias, logical_id)
         return logical_id
 
@@ -216,6 +275,7 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         )
         self.model[logical_id] = conn
         self.order.append(logical_id)
+        self._register_lineage(logical_id)
         self._sync_external(use_raw_editor)
         self.repo.set_display_name(alias, marker_for(logical_id))
         self.ownership.bind(alias, logical_id)
@@ -230,6 +290,7 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         conn = LogicalConnection(logical_id, (alias,), hostname, 22, username)
         self.model[logical_id] = conn
         self.order.append(logical_id)
+        self._register_lineage(logical_id)
         self._sync_external()
         self.repo.set_display_name(alias, marker_for(logical_id))
         self.ownership.bind(alias, logical_id)
@@ -351,6 +412,7 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         )
         self.model[new_logical_id] = new_conn
         self.order.append(new_logical_id)
+        self._register_lineage(new_logical_id)
         self.repo.set_display_name(result.id, marker_for(new_logical_id))
         self.ownership.bind(result.id, new_logical_id)
         return new_logical_id
@@ -469,7 +531,7 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
         self.repo = ConnectionRepository(
             ssh_store=SshConfigStore(self.roots[self.current_isolated], isolated=self.current_isolated),
             state_path=self.state_path,
-            legacy_config_path=self.legacy_path,
+            legacy_config_path=self.legacy_path_for_current,
             isolated=self.current_isolated,
         )
 
@@ -477,25 +539,56 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
     # Mode mutations
     # ------------------------------------------------------------------
 
-    @rule()
+    @rule(target=connections)
     def toggle_mode(self):
         new_isolated = not self.current_isolated
         if new_isolated not in self.roots:
             new_root = self.base / ("config_isolated" if new_isolated else "config_default")
             self.roots[new_isolated] = new_root
-            self.models[new_isolated] = {
-                lid: conn.clone() for lid, conn in self.model.items()
-            }
-            self.orders[new_isolated] = list(self.order)
+            # Seed the other root with connections that deliberately REUSE the
+            # current root's aliases and destinations, but are their own
+            # logical connections.  Cloning the model instead (as this harness
+            # used to) made both roots share logical ids, so an identity that
+            # migrated from one root to the other was indistinguishable from
+            # one that stayed put -- the harness could not see cross-root
+            # capture at all.  Overlapping roots are also the normal case: an
+            # isolated config seeded from ~/.ssh/config covers the same
+            # servers under the same names.
+            seeded: Dict[str, LogicalConnection] = {}
+            order: List[str] = []
+            lineages: List[Tuple[str, str]] = []
+            for lid in self.order:
+                source = self.model[lid]
+                twin_id = self._next_logical_id()
+                twin = source.clone()
+                twin.logical_id = twin_id
+                seeded[twin_id] = twin
+                order.append(twin_id)
+                lineages.append((twin_id, self.lineage.get(lid, lid)))
+                self.ownerships[new_isolated].bind(twin.alias, twin_id)
+            self.models[new_isolated] = seeded
+            self.orders[new_isolated] = order
             new_root.write_text(
-                render_flat_config(
-                    [self.models[new_isolated][lid] for lid in self.orders[new_isolated]]
-                ),
+                render_flat_config([seeded[lid] for lid in order]),
                 encoding="utf-8",
             )
+            fresh = order
+        else:
+            fresh = []
+            lineages = []
         new_store = SshConfigStore(self.roots[new_isolated], isolated=new_isolated)
-        self.repo.transition_ssh_config(new_store, new_isolated)
+        self.repo.transition_ssh_config(
+            new_store,
+            new_isolated,
+            state_path=self.state_paths[new_isolated],
+            legacy_config_path=self.legacy_path if not new_isolated else None,
+        )
         self.current_isolated = new_isolated
+        for twin_id, lineage in lineages:
+            self._register_lineage(twin_id, lineage)
+        # Hand the newly seeded root's connections to the fuzzer, or it could
+        # never target anything in the root it just switched into.
+        return multiple(*fresh)
 
     # ------------------------------------------------------------------
     # Differential OpenSSH oracle (semantic equivalence only, never identity)
@@ -545,8 +638,34 @@ class SidecarIdentityMachine(RuleBasedStateMachine):
             raise InvariantViolation(f"sidecar state failed to load/validate: {exc}") from exc
         check_state_invariants(state, self.ownership)
         after = active_alias_state(state)
-        check_exact_alias_continuity(self._last_alias_state, after)
-        self._last_alias_state = after
+        # Continuity is judged against this root's own history: the same alias
+        # in the other root is a different server, not the same connection.
+        check_exact_alias_continuity(
+            self._last_alias_states[self.current_isolated], after
+        )
+        self._last_alias_states[self.current_isolated] = after
+
+    @invariant()
+    def workspaces_stay_separate(self):
+        """The two roots may never share an identity."""
+        other = not self.current_isolated
+        if other not in self.roots:
+            return
+        try:
+            other_state = read_identity_state_v2(self.state_paths[other])
+        except (CoreError, ValueError, TypeError) as exc:
+            raise InvariantViolation(
+                f"the inactive workspace's sidecar failed to load/validate: {exc}"
+            ) from exc
+        if other_state is None:
+            return
+        active_state = read_identity_state_v2(self.state_path)
+        if active_state is None:
+            return
+        if self.current_isolated:
+            check_no_cross_root_capture(other_state, active_state)
+        else:
+            check_no_cross_root_capture(active_state, other_state)
 
     def teardown(self) -> None:
         self._tmpdir.cleanup()

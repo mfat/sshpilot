@@ -216,7 +216,14 @@ class ConnectionRepositoryProtocol(Protocol):
 
     def reload(self) -> ConnectionStoreSnapshot: ...
 
-    def transition_ssh_config(self, ssh_store: SshConfigStore, isolated: bool) -> ConnectionStoreSnapshot: ...
+    def transition_ssh_config(
+        self,
+        ssh_store: SshConfigStore,
+        isolated: bool,
+        *,
+        state_path: Path,
+        legacy_config_path: Optional[Path] = None,
+    ) -> ConnectionStoreSnapshot: ...
 
     def add_listener(self, callback: ChangeListener) -> None: ...
 
@@ -327,13 +334,19 @@ class ConnectionRepository:
         *,
         ssh_store: SshConfigStore,
         state_path: Path,
-        legacy_config_path: Path,
+        legacy_config_path: Optional[Path],
         isolated: bool,
     ) -> None:
         self._lock = threading.RLock()
         self._ssh_store = ssh_store
         self._state_path = Path(state_path)
-        self._legacy_config_path = Path(legacy_config_path)
+        # Only the root that owns the historical ``config.json`` connection
+        # state may migrate from it.  ``None`` means "this root has no legacy
+        # ancestor": an absent sidecar then starts empty rather than adopting
+        # the other root's groups and metadata.
+        self._legacy_config_path = (
+            Path(legacy_config_path) if legacy_config_path is not None else None
+        )
         self._isolated = bool(isolated)
         self._listeners: List[ChangeListener] = []
         self._pending_changes = []
@@ -402,34 +415,58 @@ class ConnectionRepository:
             return self._notify(before, after)
 
     def transition_ssh_config(
-        self, ssh_store: SshConfigStore, isolated: bool
+        self,
+        ssh_store: SshConfigStore,
+        isolated: bool,
+        *,
+        state_path: Path,
+        legacy_config_path: Optional[Path] = None,
     ) -> ConnectionStoreSnapshot:
-        """Atomically replace the active daemon SSH config store and reload."""
+        """Atomically replace the active daemon SSH config store and reload.
+
+        Each SSH configuration root owns its own identity sidecar, so the
+        state path moves with the store: the two roots are independent
+        documents and must never reconcile against one another's identities,
+        groups, metadata or ordering.  ``legacy_config_path`` follows the same
+        rule -- only the root that owns the historical ``config.json``
+        connection state may migrate from it (see ``_load_state_locked``), so
+        a freshly created sidecar for the other root starts empty instead of
+        inheriting the first root's groups.
+        """
         if not isinstance(ssh_store, SshConfigStore):
             raise TypeError("an SshConfigStore is required")
         with self._mutation_scope():
             before = self._build_snapshot_locked()
             old_store = self._ssh_store
             old_isolated = self._isolated
+            old_state_path = self._state_path
+            old_legacy_config_path = self._legacy_config_path
             target_isolated = bool(isolated)
-            mode_changed = old_isolated != target_isolated
             try:
                 # Load before publication so malformed or inaccessible target
                 # configuration cannot leave a partially switched authority.
                 ssh_store.load()
                 self._ssh_store = ssh_store
                 self._isolated = target_isolated
-                self._load_state_locked(
-                    allow_tombstone_resurrection=mode_changed,
-                    allow_destination_inference=not mode_changed,
+                self._state_path = Path(state_path)
+                self._legacy_config_path = (
+                    Path(legacy_config_path) if legacy_config_path is not None else None
                 )
+                # ``_migrated_legacy`` ORs forward across loads, so it has to be
+                # cleared with the workspace: whether *this* root migrated from
+                # the historical config.json is a property of the workspace we
+                # are switching to, not a sticky fact about the process.
+                self._migrated_legacy = False
+                self._legacy_migration_result = LegacyMigrationResult()
+                self._load_state_locked()
             except Exception:
                 self._ssh_store = old_store
                 self._isolated = old_isolated
-                self._load_state_locked(
-                    allow_tombstone_resurrection=mode_changed,
-                    allow_destination_inference=not mode_changed,
-                )
+                self._state_path = old_state_path
+                self._legacy_config_path = old_legacy_config_path
+                self._migrated_legacy = False
+                self._legacy_migration_result = LegacyMigrationResult()
+                self._load_state_locked()
                 raise
             after = self._build_snapshot_locked()
             return self._notify(before, after)
@@ -520,14 +557,11 @@ class ConnectionRepository:
         """Read the dedicated file, or the legacy values when it is absent."""
         if self._state_path.exists():
             return read_connection_state(self._state_path), False
+        if self._legacy_config_path is None:
+            return ConnectionFileState(), False
         return read_legacy_connection_state(self._legacy_config_path), True
 
-    def _load_state_locked(
-        self,
-        *,
-        allow_tombstone_resurrection: bool = False,
-        allow_destination_inference: bool = True,
-    ) -> None:
+    def _load_state_locked(self) -> None:
         """Load SSH first, then the UUID sidecar or a one-time v1 migration."""
         ssh_config = self._ssh_store.load()
         self._loaded_ssh_config = ssh_config
@@ -563,8 +597,6 @@ class ConnectionRepository:
                         state,
                         projections,
                         ssh_config_revision=ssh_config.root_revision,
-                        allow_tombstone_resurrection=allow_tombstone_resurrection,
-                        allow_destination_inference=allow_destination_inference,
                     )
                     write_identity_state_v2(self._state_path, state)
                 self._identity_state = state
@@ -595,9 +627,18 @@ class ConnectionRepository:
                 return
 
             # A missing dedicated sidecar still accepts the historical
-            # config.json migration, but it goes directly to v2.
+            # config.json migration, but it goes directly to v2.  Only the
+            # root that owns that legacy state may consume it: the other
+            # root's first load must start from an empty registry, or a mode
+            # switch would import the owning root's groups, metadata and
+            # ordering wholesale and re-create the very leak that per-root
+            # sidecars exist to close.
             if kind is ConnectionStateFileKind.ABSENT:
-                legacy = read_legacy_connection_state(self._legacy_config_path)
+                legacy = (
+                    read_legacy_connection_state(self._legacy_config_path)
+                    if self._legacy_config_path is not None
+                    else ConnectionFileState()
+                )
                 legacy = self._reconcile_legacy_state(ssh_config, legacy)
                 state, _report = migrate_v1_state(
                     legacy,

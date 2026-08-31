@@ -14,15 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import conftest  # noqa: F401  (installs the GI stub)
 
-from dataclasses import replace  # noqa: E402
-
 from sshpilot.core.connections.repository import (  # noqa: E402
     ConnectionRepository,
 )
 from sshpilot.core.connections.ssh_config_store import SshConfigStore  # noqa: E402
 from sshpilot.core.connections.state_file import (  # noqa: E402
     read_identity_state_v2,
-    write_identity_state_v2,
 )
 from sshpilot.core.connections.identity_state_v2 import ReferenceKind  # noqa: E402
 from sshpilot.core.errors import CoreError  # noqa: E402
@@ -40,6 +37,18 @@ def _repo(tmp_path, ssh_text: str = "", *, isolated: bool = False):
         legacy_config_path=legacy,
         isolated=isolated,
     ), root, state, legacy
+
+
+def _isolated_workspace(tmp_path, ssh_text: str):
+    """Build the isolated root plus the sidecar that belongs to it.
+
+    The two SSH configuration roots are independent documents, so each owns
+    its own identity sidecar. Every mode transition therefore carries the
+    state path for the root it is switching to.
+    """
+    root = tmp_path / "isolated_ssh_config"
+    root.write_text(ssh_text)
+    return root, tmp_path / "connections-isolated.json"
 
 
 def _write_state(path: Path, payload: dict) -> None:
@@ -486,32 +495,45 @@ def test_isolated_load_marks_records(tmp_path):
     assert record.data.get("isolated_mode") is True
 
 
-def test_mode_round_trip_preserves_display_name_and_uuid(tmp_path):
-    repo, default_root, state, _legacy = _repo(
+def test_mode_round_trip_leaves_the_departed_workspace_byte_identical(tmp_path):
+    """Leaving a root must not touch that root's sidecar at all.
+
+    Preservation of the display name and UUID used to depend on tombstoning
+    every identity on the way out and resurrecting it on the way back. With a
+    sidecar per root there is nothing to preserve: the file the excursion did
+    not load is the file that comes back, byte for byte. That is a strictly
+    stronger statement than "the display name survived".
+    """
+    repo, default_root, state, legacy = _repo(
         tmp_path,
         "Host prod\n    HostName prod.example.com\n",
     )
     repo.set_display_name("prod", "Production Database")
 
-    before_state = read_identity_state_v2(state)
+    before_bytes = state.read_bytes()
     before_identity = next(
         identity
-        for identity in before_state.identities
+        for identity in read_identity_state_v2(state).identities
         if not identity.tombstone and identity.projection.alias == "prod"
     )
 
-    isolated_root = tmp_path / "isolated_ssh_config"
-    isolated_root.write_text(
-        "Host isolated\n    HostName isolated.example.com\n"
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host isolated\n    HostName isolated.example.com\n"
     )
 
     repo.transition_ssh_config(
         SshConfigStore(isolated_root, isolated=True),
         True,
+        state_path=isolated_state,
     )
+    # The default workspace was not loaded, reconciled, or rewritten.
+    assert state.read_bytes() == before_bytes
+
     snapshot = repo.transition_ssh_config(
         SshConfigStore(default_root, isolated=False),
         False,
+        state_path=state,
+        legacy_config_path=legacy,
     )
 
     assert [item.id for item in snapshot.connections] == ["prod"]
@@ -525,21 +547,20 @@ def test_mode_round_trip_preserves_display_name_and_uuid(tmp_path):
     )
     assert after_identity.uuid == before_identity.uuid
     assert after_identity.display_name == "Production Database"
+    # No tombstone was ever minted: leaving a root is not a deletion.
+    assert all(not identity.tombstone for identity in after_state.identities)
 
 
-def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
-    """A second Isolated Mode round trip must not lose the display name.
+def test_repeated_mode_round_trips_cause_no_sidecar_churn(tmp_path):
+    """Toggling modes repeatedly must not accumulate state in either file.
 
-    Each ``transition_ssh_config`` call re-reads ``connections.json`` from
-    disk (``ConnectionRepository._load_state_locked``), and the writer
-    serializes identities as a UUID-keyed object with ``sort_keys=True``
-    (``state_file.py``), so the on-disk/reloaded order is UUID-lexicographic,
-    not creation order. A tie-break based on in-memory list position would
-    therefore pick an effectively arbitrary tombstone on the second round
-    trip, once two tombstoned generations exist for the same alias+anchor —
-    this exercises the real persistence path, not just the pure matcher.
+    The shared sidecar minted a fresh tombstone generation on every exit and
+    resurrected it on every return, so a second round trip had to pick between
+    two tombstones for the same alias -- an effectively arbitrary choice once
+    the reload order is UUID-lexicographic. With a file per root, a round trip
+    is a no-op on both files: nothing is retired, so nothing has to be chosen.
     """
-    repo, default_root, state, _legacy = _repo(
+    repo, default_root, state, legacy = _repo(
         tmp_path,
         "Host prod\n    HostName prod.example.com\n",
     )
@@ -550,16 +571,21 @@ def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
         for identity in read_identity_state_v2(state).identities
         if not identity.tombstone and identity.projection.alias == "prod"
     ).uuid
+    settled_bytes = state.read_bytes()
 
-    isolated_root = tmp_path / "isolated_ssh_config"
-    isolated_root.write_text(
-        "Host isolated\n    HostName isolated.example.com\n"
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host isolated\n    HostName isolated.example.com\n"
     )
 
     for _ in range(2):
-        repo.transition_ssh_config(SshConfigStore(isolated_root, isolated=True), True)
+        repo.transition_ssh_config(
+            SshConfigStore(isolated_root, isolated=True), True, state_path=isolated_state
+        )
         snapshot = repo.transition_ssh_config(
-            SshConfigStore(default_root, isolated=False), False
+            SshConfigStore(default_root, isolated=False),
+            False,
+            state_path=state,
+            legacy_config_path=legacy,
         )
 
     assert [item.id for item in snapshot.connections] == ["prod"]
@@ -573,20 +599,20 @@ def test_second_mode_round_trip_still_preserves_display_name_and_uuid(tmp_path):
     )
     assert after_identity.uuid == original_uuid
     assert after_identity.display_name == "Production Database"
+    # No churn at all: two full round trips left the file exactly as it was.
+    assert state.read_bytes() == settled_bytes
 
 
 def test_group_membership_survives_a_mode_round_trip(tmp_path):
-    """Leaving a root and coming back must not empty the connection's group.
+    """A folder is workspace state, so it neither empties nor crosses over.
 
-    An identity whose alias is absent from the newly active root is
-    tombstoned, and ``_placement_values`` drops group references to anything
-    not currently active -- so toggling Isolated Mode pruned the membership,
-    and the resurrection on the way back restored the identity without it.
-    The display name survives that round trip (see
-    ``test_second_mode_round_trip_still_preserves_display_name_and_uuid``);
-    placement must survive it on the same terms.
+    With one shared sidecar the round trip pruned every membership (the
+    identity was tombstoned, and placement drops references to anything not
+    currently active) and needed ``retired_group_id`` to put it back. Per
+    root, the membership is simply never touched -- and the group must not
+    appear in the other root's workspace at all.
     """
-    repo, default_root, state, _legacy = _repo(
+    repo, default_root, state, legacy = _repo(
         tmp_path,
         "Host web\n    HostName web.example.com\n",
     )
@@ -596,12 +622,24 @@ def test_group_membership_survives_a_mode_round_trip(tmp_path):
         tuple(ref.id for ref in item.groups) for item in repo.snapshot().connections
     ] == [(group.id,)]
 
-    isolated_root = tmp_path / "isolated_ssh_config"
-    isolated_root.write_text("Host other\n    HostName other.example.com\n")
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host other\n    HostName other.example.com\n"
+    )
 
-    repo.transition_ssh_config(SshConfigStore(isolated_root, isolated=True), True)
+    isolated_snapshot = repo.transition_ssh_config(
+        SshConfigStore(isolated_root, isolated=True), True, state_path=isolated_state
+    )
+    # The isolated workspace is its own world: the default root's folder is
+    # not part of it, and its connection is not filed anywhere.
+    assert [item.id for item in isolated_snapshot.connections] == ["other"]
+    assert [group.id for group in isolated_snapshot.groups] == []
+    assert tuple(ref.id for ref in isolated_snapshot.connections[0].groups) == ()
+
     snapshot = repo.transition_ssh_config(
-        SshConfigStore(default_root, isolated=False), False
+        SshConfigStore(default_root, isolated=False),
+        False,
+        state_path=state,
+        legacy_config_path=legacy,
     )
 
     assert [item.id for item in snapshot.connections] == ["web"]
@@ -618,17 +656,13 @@ def test_mode_switch_does_not_hand_one_root_identity_to_the_other(tmp_path):
     documents, and an entry in the other one that merely points at the same
     (hostname, port, user) is a different connection, not a renamed one.
 
-    ``test_second_mode_round_trip_still_preserves_display_name_and_uuid``
-    above fixes the intended semantics -- leave a root and the alias
-    tombstones, come back and it resurrects with its UUID and display name --
-    but it uses non-overlapping destinations, so it never exercises the
-    destination path. When the roots do overlap (an Isolated config seeded
-    from, or simply covering, the same servers as ~/.ssh/config, which is the
-    normal case) destination matching fires first and the other root's alias
-    captures the identity: its display name, group placement and tags follow
-    it across, and the alias it left behind is created fresh.
+    This used to be enforced by switching destination inference off for the
+    duration of a mode change. It now holds structurally: the two roots never
+    read each other's identities, because they do not share a file. The
+    strongest form of that claim is that the two sidecars' UUID sets are
+    disjoint.
     """
-    repo, default_root, state, _legacy = _repo(
+    repo, default_root, state, legacy = _repo(
         tmp_path,
         "Host web\n    HostName shared.example.com\n",
     )
@@ -640,11 +674,12 @@ def test_mode_switch_does_not_hand_one_root_identity_to_the_other(tmp_path):
     ).uuid
 
     # Same destination, different alias, different root.
-    isolated_root = tmp_path / "isolated_ssh_config"
-    isolated_root.write_text("Host prod\n    HostName shared.example.com\n")
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host prod\n    HostName shared.example.com\n"
+    )
 
     snapshot = repo.transition_ssh_config(
-        SshConfigStore(isolated_root, isolated=True), True
+        SshConfigStore(isolated_root, isolated=True), True, state_path=isolated_state
     )
 
     assert [item.id for item in snapshot.connections] == ["prod"]
@@ -653,14 +688,17 @@ def test_mode_switch_does_not_hand_one_root_identity_to_the_other(tmp_path):
     assert snapshot.connections[0].display_name != "Default Web"
     isolated_identity = next(
         identity
-        for identity in read_identity_state_v2(state).identities
+        for identity in read_identity_state_v2(isolated_state).identities
         if not identity.tombstone and identity.projection.alias == "prod"
     )
     assert isolated_identity.uuid != default_uuid
 
     # And the default root's identity is still intact on the way back.
     snapshot = repo.transition_ssh_config(
-        SshConfigStore(default_root, isolated=False), False
+        SshConfigStore(default_root, isolated=False),
+        False,
+        state_path=state,
+        legacy_config_path=legacy,
     )
     assert [item.id for item in snapshot.connections] == ["web"]
     assert snapshot.connections[0].display_name == "Default Web"
@@ -671,75 +709,130 @@ def test_mode_switch_does_not_hand_one_root_identity_to_the_other(tmp_path):
     )
     assert restored.uuid == default_uuid
 
+    # The two workspaces share no identity whatsoever.
+    default_uuids = {
+        identity.uuid for identity in read_identity_state_v2(state).identities
+    }
+    isolated_uuids = {
+        identity.uuid for identity in read_identity_state_v2(isolated_state).identities
+    }
+    assert default_uuids.isdisjoint(isolated_uuids)
 
-def test_resurrection_picks_highest_generation_among_seeded_duplicate_tombstones(
-    tmp_path,
-):
-    """Directly seed two tombstones sharing alias+anchor, disagreeing on both
-    UUID order and generation order, then drive a real authority transition
-    through ``ConnectionRepository`` and assert the higher-generation one
-    resurrects — the scenario a normal resurrecting round trip doesn't
-    produce on its own (successful resurrection reuses one UUID and never
-    lets a second tombstone accumulate), so it has to be seeded directly.
+
+def test_same_alias_in_both_roots_is_two_different_connections(tmp_path):
+    """The same Host name in both roots names two unrelated servers.
+
+    This is the normal shape of an Isolated config seeded from ~/.ssh/config
+    and then allowed to drift: both roots declare ``Host web``, pointing at
+    different machines. EXACT_ALIAS is the strongest matching rule and was
+    deliberately left untouched by the mode-switch heuristics, so with one
+    shared sidecar the isolated ``web`` inherited the default ``web``'s UUID
+    and display name outright -- the user's label for their production server
+    silently reattached to a different host. Nothing guarded this; per-root
+    sidecars make it impossible.
     """
-    repo, default_root, state, _legacy = _repo(
+    repo, default_root, state, legacy = _repo(
+        tmp_path,
+        "Host web\n    HostName default.example.com\n",
+    )
+    repo.set_display_name("web", "My Production Server")
+    default_uuid = next(
+        identity
+        for identity in read_identity_state_v2(state).identities
+        if not identity.tombstone and identity.projection.alias == "web"
+    ).uuid
+
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host web\n    HostName isolated.example.com\n"
+    )
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(isolated_root, isolated=True), True, state_path=isolated_state
+    )
+
+    assert [item.id for item in snapshot.connections] == ["web"]
+    assert snapshot.connections[0].display_name != "My Production Server"
+    isolated_uuid = next(
+        identity
+        for identity in read_identity_state_v2(isolated_state).identities
+        if not identity.tombstone and identity.projection.alias == "web"
+    ).uuid
+    assert isolated_uuid != default_uuid
+
+    # Back in the default root, the label still belongs to the right server.
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(default_root, isolated=False),
+        False,
+        state_path=state,
+        legacy_config_path=legacy,
+    )
+    assert snapshot.connections[0].display_name == "My Production Server"
+
+
+def test_mode_switch_does_not_resurrect_the_other_workspaces_tombstones(tmp_path):
+    """Entering a root is not an undelete.
+
+    While one sidecar backed both roots, leaving a root tombstoned everything
+    in it and returning had to resurrect it, so a switch was also a bulk
+    undelete -- and with two tombstones for one alias the winner came down to
+    a ``retired_generation`` tie-break (covered directly in
+    ``tests/core/test_connection_identity_reconciliation.py``). Per root there
+    is nothing to undo: a tombstone in a workspace means the user genuinely
+    deleted that connection there, and re-adding the alias is a new
+    connection, exactly as it is on an ordinary reload.
+    """
+    repo, default_root, state, legacy = _repo(
         tmp_path,
         "Host prod\n    HostName prod.example.com\n",
     )
-    repo.set_display_name("prod", "Production Database")
-
-    isolated_root = tmp_path / "isolated_ssh_config"
-    isolated_root.write_text(
-        "Host isolated\n    HostName isolated.example.com\n"
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host prod\n    HostName prod.example.com\n"
     )
-    repo.transition_ssh_config(SshConfigStore(isolated_root, isolated=True), True)
 
-    before_state = read_identity_state_v2(state)
-    genuine = next(
+    # Give the isolated workspace a genuine, previously deleted "prod".
+    repo.transition_ssh_config(
+        SshConfigStore(isolated_root, isolated=True), True, state_path=isolated_state
+    )
+    repo.set_display_name("prod", "Isolated Prod")
+    deleted_uuid = next(
         identity
-        for identity in before_state.identities
-        if identity.tombstone and identity.projection.alias == "prod"
+        for identity in read_identity_state_v2(isolated_state).identities
+        if not identity.tombstone and identity.projection.alias == "prod"
+    ).uuid
+    isolated_root.write_text("")
+    repo.reload()
+    tombstoned = next(
+        identity
+        for identity in read_identity_state_v2(isolated_state).identities
+        if identity.uuid == deleted_uuid
     )
-    assert genuine.retired_generation is not None
+    assert tombstoned.tombstone is True
 
-    # A UUID that sorts after the genuine one. After a save/reload,
-    # identities come back in UUID order (see the docstring on
-    # reconcile_identities), so a position-based tie-break over the reloaded
-    # order would pick this one last / highest-index — wrongly, since its
-    # retired_generation is lower, meaning it was retired earlier.
-    decoy_uuid = "ffffffff-ffff-4fff-8fff-ffffffffffff"
-    assert decoy_uuid > genuine.uuid
-    decoy = replace(
-        genuine,
-        uuid=decoy_uuid,
-        display_name="Decoy Older Duplicate",
-        retired_generation=max(genuine.retired_generation - 1, 0),
+    # Leave and come back with the alias restored in the file.
+    repo.transition_ssh_config(
+        SshConfigStore(default_root, isolated=False),
+        False,
+        state_path=state,
+        legacy_config_path=legacy,
     )
-
-    write_identity_state_v2(
-        state, replace(before_state, identities=before_state.identities + (decoy,))
-    )
-
+    isolated_root.write_text("Host prod\n    HostName prod.example.com\n")
     snapshot = repo.transition_ssh_config(
-        SshConfigStore(default_root, isolated=False), False
+        SshConfigStore(isolated_root, isolated=True), True, state_path=isolated_state
     )
 
     assert [item.id for item in snapshot.connections] == ["prod"]
-    assert snapshot.connections[0].display_name == "Production Database"
-
-    after_state = read_identity_state_v2(state)
-    after_identity = next(
+    live = next(
         identity
-        for identity in after_state.identities
+        for identity in read_identity_state_v2(isolated_state).identities
         if not identity.tombstone and identity.projection.alias == "prod"
     )
-    assert after_identity.uuid == genuine.uuid
-    assert after_identity.display_name == "Production Database"
-    # The decoy stays tombstoned, untouched, rather than being resurrected.
-    decoy_after = next(
-        identity for identity in after_state.identities if identity.uuid == decoy_uuid
+    assert live.uuid != deleted_uuid
+    assert live.display_name != "Isolated Prod"
+    still_dead = next(
+        identity
+        for identity in read_identity_state_v2(isolated_state).identities
+        if identity.uuid == deleted_uuid
     )
-    assert decoy_after.tombstone is True
+    assert still_dead.tombstone is True
 
 
 def test_loads_non_ssh_records_from_state_file(tmp_path):
@@ -830,6 +923,52 @@ def test_migrates_legacy_config_json(tmp_path):
     assert state.exists()
     original = json.loads(legacy.read_text())
     assert "web" in original["connections_meta"]
+
+
+def test_isolated_workspace_never_inherits_legacy_config_json(tmp_path):
+    """A first switch to Isolated Mode must not import the default's folders.
+
+    The legacy ``config.json`` connection state predates per-root sidecars and
+    belongs to the default root alone. A brand-new isolated sidecar is absent
+    on disk, and the absent-sidecar branch is exactly where that legacy
+    migration runs -- so without an owner check, the very first switch would
+    copy every default-mode group, tag and pin into the isolated workspace and
+    re-create the leak this split exists to close.
+    """
+    legacy = tmp_path / "config.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "connection_groups": {
+                    "groups": {
+                        "prod": {"id": "prod", "name": "Production", "connections": ["web"]}
+                    },
+                    "connections": {"web": "prod"},
+                    "root_connections": [],
+                },
+                "connections_meta": {"web": {"pinned": True}},
+            }
+        )
+    )
+    repo, default_root, state, legacy_path = _repo(
+        tmp_path, "Host web\n    HostName example.com\n"
+    )
+    # The default root does own that legacy state.
+    assert [group.id for group in repo.snapshot().groups] == ["prod"]
+
+    isolated_root, isolated_state = _isolated_workspace(
+        tmp_path, "Host web\n    HostName isolated.example.com\n"
+    )
+    snapshot = repo.transition_ssh_config(
+        SshConfigStore(isolated_root, isolated=True),
+        True,
+        state_path=isolated_state,
+        legacy_config_path=None,
+    )
+
+    assert [item.id for item in snapshot.connections] == ["web"]
+    assert [group.id for group in snapshot.groups] == []
+    assert snapshot.metadata == ()
 
 
 def test_no_partial_state_when_ssh_config_unreadable(tmp_path):

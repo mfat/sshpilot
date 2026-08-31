@@ -1797,7 +1797,9 @@ class PreferencesWindow(Adw.NavigationPage):
         # Default mode row
         self.default_mode_row = Adw.ExpanderRow()
         self.default_mode_row.set_title(_("Default Mode"))
-        self.default_mode_row.set_subtitle(_("SSH Pilot loads and modifies ~/.ssh/config"))
+        self.default_mode_row.set_subtitle(
+            _("SSH Pilot loads and modifies ~/.ssh/config")
+        )
         self.default_mode_radio = Gtk.CheckButton()
         self._default_mode_detail_rows = []
 
@@ -1805,7 +1807,10 @@ class PreferencesWindow(Adw.NavigationPage):
         self.isolated_mode_row = Adw.ExpanderRow()
         self.isolated_mode_row.set_title(_("Isolated Mode"))
         self.isolated_mode_row.set_subtitle(
-            _("SSH Pilot uses its own SSH configuration file")
+            _(
+                "SSH Pilot uses its own SSH configuration, connections, "
+                "folders and host keys. Saved passwords are shared."
+            )
         )
         self.isolated_mode_radio = Gtk.CheckButton()
         self._isolated_mode_detail_rows = []
@@ -3974,6 +3979,53 @@ class PreferencesWindow(Adw.NavigationPage):
             most=", ".join(described[:-1]), last=described[-1]
         )
 
+    def _prompt_operation_mode_restart(self):
+        """Offer to restart the app so it comes up in the new workspace.
+
+        Restarting is deliberately the whole answer here. Default and Isolated
+        mode are separate workspaces, and a running window holds references to
+        the one it was built against -- open tabs and their daemon sessions,
+        the SSH config editor's document, the known-hosts editor's snapshot,
+        connection dialogs. Enumerating and re-pointing each of those is a
+        long tail; starting fresh has none of it, and is how operation-mode
+        changes worked before the switch became a live transition.
+
+        The daemon has already persisted and applied the new mode, so the
+        relaunched app adopts it on its own. Declining is safe: the mode is
+        in effect for anything started from here on, and the stale references
+        are confined to what is already on screen.
+        """
+        dialog = Adw.AlertDialog(
+            heading=_("Restart SSH Pilot?"),
+            body=_(
+                "The operation mode has changed. Restart to open the new "
+                "configuration cleanly; until then, tabs and editors still "
+                "show the previous one."
+            ),
+        )
+        dialog.add_response("later", _("Later"))
+        dialog.add_response("restart", _("Restart Now"))
+        dialog.set_default_response("restart")
+        dialog.set_close_response("later")
+        dialog.set_response_appearance("restart", Adw.ResponseAppearance.SUGGESTED)
+
+        def _on_response(_dialog, response):
+            if response == "restart":
+                self._restart_app_after_mode_change()
+
+        dialog.connect("response", _on_response)
+        dialog.present(self)
+
+    @staticmethod
+    def _restart_app_after_mode_change():
+        """Re-exec the app; the daemon keeps running in the new mode."""
+        try:
+            from .platform_utils import restart_app
+
+            restart_app()
+        except Exception:
+            logger.error("Could not restart after an operation-mode change", exc_info=True)
+
     def _request_daemon_restart(self, *, on_complete, on_cancel=None):
         """Restart the daemon, confirming when live resources would be lost.
 
@@ -5958,6 +6010,12 @@ class PreferencesWindow(Adw.NavigationPage):
                             def _on_restart_complete(mode=requested):
                                 if owner is not None:
                                     owner._requested_operation_mode = mode
+                                    # The daemon restart already closed every
+                                    # session the user agreed to lose, so the
+                                    # app restarts without asking again --
+                                    # once the reconnected daemon confirms the
+                                    # mode actually applied.
+                                    owner._pending_mode_change_restart = True
                                 self._schedule_daemon_reconnect_after_restart()
 
                             def _on_restart_cancelled():
@@ -5984,6 +6042,16 @@ class PreferencesWindow(Adw.NavigationPage):
                             apply_mode(result.active_mode)
                     self._update_operation_mode_styles()
                     self._populate_operation_mode_files(result)
+                    if result.active_mode is not previous_mode:
+                        # The two modes are separate workspaces, and this
+                        # window was built against the one being left: open
+                        # tabs, editors and dialogs all still refer to the
+                        # other root's connections. Restarting is how this
+                        # used to work, and it is what makes the whole class
+                        # of stale references go away rather than chasing
+                        # each widget. The daemon has already persisted the
+                        # new mode, so the relaunched app comes up in it.
+                        self._prompt_operation_mode_restart()
                 finally:
                     self._operation_mode_request_in_flight = False
                     self._set_operation_mode_controls_sensitive(

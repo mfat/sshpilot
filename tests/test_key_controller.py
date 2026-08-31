@@ -142,11 +142,26 @@ def test_list_keys_sends_scope():
     assert result.keys[0].key_id == "key-1"
 
 
-def test_list_keys_uses_isolated_scope():
+def test_isolated_mode_offers_the_users_own_keys_too():
+    """Isolated Mode isolates SSH configuration, not credentials.
+
+    An isolated connection can name ~/.ssh/id_ed25519 as its IdentityFile and
+    OpenSSH uses it perfectly well -- only the picker pretended those keys did
+    not exist, so the user could not select the very keys their connections
+    were already using. The app's own store is listed first so it wins a tie.
+    """
     client = _FakeClient()
     controller = _controller(client, scope=KeyStoreScope.ISOLATED)
     controller.list_keys()
-    assert client.list_scopes == [KeyStoreScope.ISOLATED]
+    assert client.list_scopes == [KeyStoreScope.ISOLATED, KeyStoreScope.DEFAULT]
+
+
+def test_default_mode_does_not_list_the_isolated_store():
+    """Default Mode has no reason to show sshPilot's private key directory."""
+    client = _FakeClient()
+    controller = _controller(client, scope=KeyStoreScope.DEFAULT)
+    controller.list_keys()
+    assert client.list_scopes == [KeyStoreScope.DEFAULT]
 
 
 def test_read_public_key_sends_scope_and_id():
@@ -412,3 +427,90 @@ def test_controller_has_no_filesystem_or_gtk_imports():
     forbidden = {"gi", "Gtk", "GLib", "os", "pathlib", "subprocess", "shutil"}
     hits = sorted(name for name in imported if name.split(".")[0] in forbidden)
     assert not hits, f"key_controller.py imports forbidden modules: {hits}"
+
+
+# ---------------------------------------------------------------------------
+# Cross-store key listing in Isolated Mode
+# ---------------------------------------------------------------------------
+class _TwoStoreClient(_FakeClient):
+    """Distinct keys in each store, plus one that exists in both."""
+
+    def __init__(self, fail_scope=None):
+        super().__init__()
+        self.fail_scope = fail_scope
+        self.delete_requests = []
+        self._by_scope = {
+            KeyStoreScope.ISOLATED: KeyList(
+                keys=(_summary("key-app", "app_key"), _summary("key-both", "shared"))
+            ),
+            KeyStoreScope.DEFAULT: KeyList(
+                keys=(_summary("key-user", "id_ed25519"), _summary("key-both", "shared"))
+            ),
+        }
+
+    def list_keys(self, request):
+        self.list_scopes.append(request.scope)
+        if self.fail_scope is not None and request.scope is self.fail_scope:
+            from sshpilot.api.errors import ErrorCode, SshPilotError
+
+            raise SshPilotError(ErrorCode.INTERNAL_ERROR, "unreadable")
+        return self._by_scope[request.scope]
+
+    def read_public_key(self, request):
+        self.read_requests.append(request)
+        return self.read_result
+
+    def delete_key(self, request):
+        self.delete_requests.append(request)
+        from sshpilot.api.models.keys import DeleteKeyResult
+
+        return DeleteKeyResult(key_id=request.key_id, deleted=True)
+
+
+def test_a_key_present_in_both_stores_is_offered_once():
+    """The active store wins, so the picker never shows a duplicate."""
+    client = _TwoStoreClient()
+    controller = _controller(client, scope=KeyStoreScope.ISOLATED)
+
+    keys = controller.list_keys().keys
+
+    assert [str(key.key_id) for key in keys] == ["key-app", "key-both", "key-user"]
+    assert controller._scope_for(KeyId("key-both")) is KeyStoreScope.ISOLATED
+
+
+def test_reads_and_deletes_address_the_store_the_key_lives_in():
+    """A key id only resolves inside its own root.
+
+    Sending the active scope for a key from the other store fails with "the
+    requested SSH key was not found", so the scope has to follow the key.
+    """
+    client = _TwoStoreClient()
+    controller = _controller(client, scope=KeyStoreScope.ISOLATED)
+    controller.list_keys()
+
+    controller.read_public_key(KeyId("key-user"))
+    controller.delete_key(KeyId("key-user"))
+    controller.read_public_key(KeyId("key-app"))
+
+    assert client.read_requests[0].scope is KeyStoreScope.DEFAULT
+    assert client.delete_requests[0].scope is KeyStoreScope.DEFAULT
+    assert client.read_requests[1].scope is KeyStoreScope.ISOLATED
+
+
+def test_an_unreadable_secondary_store_does_not_hide_the_active_one():
+    """Losing ~/.ssh must degrade to sshPilot's own keys, not to an error."""
+    client = _TwoStoreClient(fail_scope=KeyStoreScope.DEFAULT)
+    controller = _controller(client, scope=KeyStoreScope.ISOLATED)
+
+    keys = controller.list_keys().keys
+
+    assert [str(key.key_id) for key in keys] == ["key-app", "key-both"]
+
+
+def test_an_unreadable_active_store_still_raises():
+    """A failure in the store the user is actually working in is real."""
+    client = _TwoStoreClient(fail_scope=KeyStoreScope.ISOLATED)
+    controller = _controller(client, scope=KeyStoreScope.ISOLATED)
+
+    with pytest.raises(Exception):
+        controller.list_keys()

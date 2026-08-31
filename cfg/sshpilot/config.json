@@ -1,0 +1,117 @@
+{
+  "command_blocks": {
+    "auto_hide_sidebar": false,
+    "commands": [],
+    "defaults_loaded": false,
+    "folders": [],
+    "insert_only": false,
+    "view_layout": "list"
+  },
+  "config_version": 3,
+  "connections_meta": {},
+  "file_manager": {
+    "icon_size_level": 1,
+    "open_externally": false,
+    "sftp_connect_timeout": 20,
+    "sftp_keepalive_count_max": 5,
+    "sftp_keepalive_interval": 30
+  },
+  "identity": {
+    "agent_socket": "",
+    "provider": "auto"
+  },
+  "logging": {
+    "level": "info"
+  },
+  "plugins": {
+    "disabled": [
+      "docker-manager"
+    ]
+  },
+  "secrets": {
+    "backend": "auto",
+    "bitwarden": {
+      "profile": ""
+    },
+    "keepassxc": {
+      "database": "",
+      "keyfile": ""
+    },
+    "session_timeout": 0
+  },
+  "security": {
+    "ssh_agent_forwarding": true,
+    "store_passwords": true
+  },
+  "shortcuts": {},
+  "ssh": {
+    "agent_preload_keys": true,
+    "agent_preload_lifetime": 0,
+    "apply_default_keepalive": true,
+    "auto_add_host_keys": true,
+    "batch_mode": false,
+    "compression": false,
+    "connection_attempts": 0,
+    "connection_timeout": 0,
+    "debug_enabled": false,
+    "default_keepalive_count": 3,
+    "default_keepalive_interval": 15,
+    "keepalive_count_max": 0,
+    "keepalive_interval": 0,
+    "ssh_overrides": [],
+    "strict_host_key_checking": "accept-new",
+    "use_isolated_config": true,
+    "verbosity": 0
+  },
+  "terminal": {
+    "audible_bell": false,
+    "copy_on_select": false,
+    "cursor_blink": true,
+    "encoding": "UTF-8",
+    "font": "Monospace 12",
+    "macos_option_key_passthrough": false,
+    "pass_through_mode": false,
+    "paste_on_right_click": false,
+    "scrollback_lines": 10000,
+    "term": null,
+    "theme": "default"
+  },
+  "ui": {
+    "auto_focus_terminal": true,
+    "confirm_close_tabs": true,
+    "group_color_child_rows": false,
+    "group_color_display": "bar",
+    "group_row_display": "nested",
+    "headerbar_show_commands": true,
+    "headerbar_show_local_terminal": true,
+    "headerbar_show_sidebar_toggle": false,
+    "headerbar_show_split_view": false,
+    "headerbar_show_terminal_theme": true,
+    "headerbar_show_theme_toggle": false,
+    "language": "",
+    "remember_window_size": true,
+    "show_hostname": true,
+    "sidebar_flat_rows": true,
+    "sidebar_hide_on_startup": false,
+    "sidebar_hide_on_terminal_open": false,
+    "sidebar_minimal_row_style": "initials",
+    "sidebar_mode": "full",
+    "sidebar_on_terminal_open": "none",
+    "sidebar_show_connection_icon": false,
+    "sidebar_show_connection_status": true,
+    "sidebar_show_group_count": true,
+    "sidebar_show_group_icon": false,
+    "sidebar_show_port_forwarding": true,
+    "sidebar_show_user_hostname": true,
+    "sidebar_show_when_no_tabs": false,
+    "sidebar_width": 250,
+    "use_group_color_in_tab": false,
+    "use_group_color_in_terminal": false,
+    "window_height": 800,
+    "window_width": 1200
+  },
+  "welcome": {
+    "background_color": null,
+    "tile_color": null
+  }
+}
