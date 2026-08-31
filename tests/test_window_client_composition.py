@@ -350,3 +350,65 @@ def test_apply_client_selection_quitting_does_not_attach():
 
     assert attached == []
     client.close.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
+# A mode change that had to restart the daemon restarts the app too
+# ---------------------------------------------------------------------------
+def _mode_result(accepted=True, mode=OperationMode.ISOLATED, **extra):
+    return types.SimpleNamespace(
+        accepted=accepted, active_mode=mode, message="", **extra
+    )
+
+
+def _window_for_mode_restart():
+    window = _make_window()
+    window.client = object()
+    window.config = types.SimpleNamespace(
+        config_data={"config_version": 3, "ssh": {"use_isolated_config": False}}
+    )
+    window._requested_operation_mode = OperationMode.ISOLATED
+    window._preferences_window = None
+    window.restarts = []
+    window._restart_after_operation_mode_change = lambda: window.restarts.append(True)
+    return window
+
+
+def test_mode_change_that_restarted_the_daemon_restarts_the_app():
+    """The daemon restart closed every session the user agreed to lose, but the
+    tabs they belonged to are still on screen holding session ids the new
+    daemon has never heard of -- so they fail with "the session does not
+    exist" instead of going away. Start fresh, which is how this worked before
+    the switch became a live transition."""
+    window = _window_for_mode_restart()
+    window._pending_mode_change_restart = True
+
+    window._on_startup_operation_mode_result(_mode_result())
+
+    assert window.restarts == [True]
+    assert window._pending_mode_change_restart is False
+
+
+def test_an_ordinary_startup_mode_request_does_not_restart_the_app():
+    """--isolated at launch takes the same path. Restarting there would loop."""
+    window = _window_for_mode_restart()
+    window._pending_mode_change_restart = False
+
+    window._on_startup_operation_mode_result(_mode_result())
+
+    assert window.restarts == []
+
+
+def test_a_rejected_mode_change_after_a_daemon_restart_does_not_restart_the_app():
+    """The mode did not change, so restarting would just lose the user's tabs
+    for nothing and hide the rejection."""
+    window = _window_for_mode_restart()
+    window._pending_mode_change_restart = True
+    window._show_operation_mode_recovery = lambda _message: None
+
+    window._on_startup_operation_mode_result(
+        _mode_result(accepted=False, mode=OperationMode.DEFAULT, recovery_required=True)
+    )
+
+    assert window.restarts == []
+    assert window._pending_mode_change_restart is False

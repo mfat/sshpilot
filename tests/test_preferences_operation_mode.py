@@ -119,6 +119,10 @@ def _make_prefs(result=None):
     prefs._suppress_operation_mode_toggle = False
     prefs._operation_mode_request_in_flight = False
     prefs._confirmed_operation_mode = OperationMode.DEFAULT
+    # A real mode change offers a restart; record it instead of building a
+    # dialog the stub GTK cannot present.
+    prefs.restart_prompts = []
+    prefs._prompt_operation_mode_restart = lambda: prefs.restart_prompts.append(True)
     return prefs, recorded
 
 
@@ -595,3 +599,44 @@ def test_restart_never_probes_status_over_a_possibly_stale_daemon(monkeypatch):
     assert completions == ["done"]
     assert len(fake.restart_calls) == 1
     assert fake.closed is True
+
+
+# ── A mode change offers a fresh start ───────────────────────────────────────
+
+def test_a_real_mode_change_offers_a_restart():
+    """Default and Isolated are separate workspaces, and this window was built
+    against the one being left: its tabs, editors and dialogs still refer to
+    the other root. Restarting is how mode changes used to work, and it is what
+    clears that whole class of stale references."""
+    result = SimpleNamespace(accepted=True, active_mode=OperationMode.ISOLATED, message="")
+    prefs, _recorded = _make_prefs(result)
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert prefs.restart_prompts == [True]
+
+
+def test_reconfirming_the_same_mode_does_not_offer_a_restart():
+    """The daemon re-confirms the active mode on every reconnect; only an
+    actual change invalidates what the window is showing."""
+    result = SimpleNamespace(accepted=True, active_mode=OperationMode.DEFAULT, message="")
+    prefs, _recorded = _make_prefs(result)
+    prefs._confirmed_operation_mode = OperationMode.DEFAULT
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert prefs.restart_prompts == []
+
+
+def test_a_rejected_mode_change_does_not_offer_a_restart():
+    """Nothing changed, so there is nothing to restart into."""
+    result = SimpleNamespace(
+        accepted=False,
+        active_mode=OperationMode.DEFAULT,
+        message="sessions are active",
+    )
+    prefs, _recorded = _make_prefs(result)
+
+    PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
+
+    assert prefs.restart_prompts == []

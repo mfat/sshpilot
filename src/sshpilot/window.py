@@ -352,6 +352,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._requested_operation_mode = (
             OperationMode.ISOLATED if isolated else None
         )
+        # Set only when a mode change had to restart the daemon: the app then
+        # restarts too, once the reconnected daemon confirms the new mode.
+        self._pending_mode_change_restart = False
         self._confirmed_operation_mode = None
         self._daemon_client_generation = 0
         self._key_scope = KeyStoreScope.DEFAULT
@@ -701,11 +704,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
     def _on_startup_operation_mode_result(self, result) -> None:
         if not result.accepted:
             logger.warning("Daemon rejected startup operation mode: %s", result.message)
+            self._pending_mode_change_restart = False
             if getattr(result, "recovery_required", False):
                 self._show_operation_mode_recovery(result.message)
             return
         self._requested_operation_mode = None
         self._apply_confirmed_operation_mode(result.active_mode)
+        if getattr(self, "_pending_mode_change_restart", False):
+            # A mode change that live sessions were blocking: the daemon was
+            # restarted with the user's consent, which closed every session,
+            # and it has now confirmed the new mode. The tabs those sessions
+            # belonged to are still on screen holding session ids the new
+            # daemon has never heard of, so start the app fresh rather than
+            # leave them to fail on their next request.
+            self._pending_mode_change_restart = False
+            self._restart_after_operation_mode_change()
+            return
         # This path also fires after a mid-session daemon restart (e.g. to
         # apply an operation-mode change that live sessions were blocking),
         # so an already-open Preferences window can be showing the stale
@@ -715,6 +729,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             refresh = getattr(preferences, "_request_confirmed_operation_mode", None)
             if callable(refresh):
                 refresh()
+
+    def _restart_after_operation_mode_change(self) -> None:
+        """Re-exec the app so it comes up in the newly selected workspace."""
+        try:
+            from .platform_utils import restart_app
+
+            restart_app()
+        except Exception:
+            logger.error(
+                "Could not restart after an operation-mode change", exc_info=True
+            )
 
     def _on_startup_operation_mode_error(self, error) -> None:
         """Report a failed startup mode request without losing its detail."""
