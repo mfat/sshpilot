@@ -1,3 +1,11 @@
+sshpilot (6.0.1-1) unstable; urgency=medium
+
+  * Release v6.0.1.
+  * Improvements to isolated workspace mode
+  * Middle-click a group to open all connections in splitview
+
+ -- Mehdi <mah.fat@gmail.com>  Mon, 31 Aug 2026 08:35:53 +0000
+
 sshpilot (6.0.0-1) unstable; urgency=medium
 
   * Release v6.0.0.
