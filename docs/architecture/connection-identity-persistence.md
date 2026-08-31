@@ -6,8 +6,8 @@ The public SSH API ID intentionally remains the OpenSSH alias.
 ## Ownership
 
 ```text
-~/.ssh/config       SSH-owned connectivity and Host alias
-connections.json   SSH Pilot-owned UUID identity and app metadata
+<active SSH root>   SSH-owned connectivity and Host alias
+<its sidecar>       SSH Pilot-owned UUID identity and app metadata
 API id              current alias-compatible selector
 display_name       UUID-owned human-readable presentation label
 secret provider     passwords, passphrases, and credential policy
@@ -16,6 +16,47 @@ secret provider     passwords, passphrases, and credential policy
 The UUID is never written into SSH config, derived from an alias, or exposed
 as the current public `ConnectionSummary.id`. Non-SSH records retain their
 protocol-local IDs.
+
+## Operation modes
+
+There are two SSH configuration roots, and they are independent documents:
+
+```text
+Default Mode    ~/.ssh/config              + <config-dir>/connections.json
+Isolated Mode   <config-dir>/ssh_config    + <config-dir>/connections-isolated.json
+```
+
+A root owns its sidecar. Identities, display names, folders, tags,
+per-connection metadata, root ordering and non-SSH connections all live in
+the sidecar, so switching mode changes the entire visible workspace and
+nothing carries across. The default root keeps the historical
+`connections.json` name and is the only root that may migrate the pre-sidecar
+`config.json` connection state; a sidecar created for the other root starts
+empty rather than inheriting it.
+
+This is what lets the reconciliation contract below be stated without a mode
+dimension. `reconcile_identities` reconciles one root against its own state:
+the other root's identities are never in `old_entries`, so they cannot be
+matched, captured, or resurrected. While one file backed both roots, a switch
+reconciled a root against the other root's identities, and the matcher needed
+two knobs to survive it — destination inference had to be disabled, or an
+entry merely pointing at the same `(hostname, port, user)` in the other
+document captured the identity along with its display name, folder and tags;
+and tombstone resurrection had to be enabled, because leaving a root
+tombstoned everything in it. Both are gone with the file they existed for.
+
+Also per mode: SSH key discovery and generation roots (`KeyStoreScope`),
+known_hosts, the imported-hosts fragment, and saved sessions.
+
+**Secrets are deliberately shared.** Passwords key on the real
+`(hostname, username)` and passphrases on the key path, so a credential
+follows the *server*, not the mode. Separating them would mean re-entering
+every password after a switch and would break keyring autofill. Isolated Mode
+isolates configuration, not credentials.
+
+Existing installs are migrated once by
+`core/connections/workspace_split.py`, which partitions a pre-split shared
+sidecar by which root's include graph declared each identity.
 
 ## Reconciliation contract
 

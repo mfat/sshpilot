@@ -1797,7 +1797,9 @@ class PreferencesWindow(Adw.NavigationPage):
         # Default mode row
         self.default_mode_row = Adw.ExpanderRow()
         self.default_mode_row.set_title(_("Default Mode"))
-        self.default_mode_row.set_subtitle(_("SSH Pilot loads and modifies ~/.ssh/config"))
+        self.default_mode_row.set_subtitle(
+            _("SSH Pilot loads and modifies ~/.ssh/config")
+        )
         self.default_mode_radio = Gtk.CheckButton()
         self._default_mode_detail_rows = []
 
@@ -1805,7 +1807,10 @@ class PreferencesWindow(Adw.NavigationPage):
         self.isolated_mode_row = Adw.ExpanderRow()
         self.isolated_mode_row.set_title(_("Isolated Mode"))
         self.isolated_mode_row.set_subtitle(
-            _("SSH Pilot uses its own SSH configuration file")
+            _(
+                "SSH Pilot uses its own SSH configuration, connections, "
+                "folders and host keys. Saved passwords are shared."
+            )
         )
         self.isolated_mode_radio = Gtk.CheckButton()
         self._isolated_mode_detail_rows = []
