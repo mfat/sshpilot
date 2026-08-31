@@ -7,6 +7,7 @@ from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
 
 from .accessibility import set_accessible_name
+from .dialog_focus import mark_default_response_visible
 from .file_manager_integration import (
     should_hide_external_terminal_options,
     should_hide_file_manager_options,
@@ -22,6 +23,11 @@ HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
 
 # Grace delay before the usage-tips banner eases into the update banner's area.
 TIPS_BANNER_DELAY_SECONDS = 4
+
+# Split view opens one pane per connection, each starting its own session. Up
+# to this many is routine and opens straight away; a bigger batch — typically a
+# large group opened by accident — is confirmed first (GH #1232).
+SPLIT_VIEW_CONFIRM_THRESHOLD = 5
 
 logger = logging.getLogger(__name__)
 
@@ -204,27 +210,73 @@ class WindowActions:
                 e,
             )
 
+    def _create_split_view_tab(self, connections=None, title=None):
+        """Append a split-view tab and fill it with ``connections``."""
+        from .split_view import SplitViewTab
+        from sshpilot import icon_utils
+
+        svt = SplitViewTab(self)
+        page = self.tab_view.append(svt)
+        page.set_title(title or _("Split View"))
+        page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
+        svt._tab_page = page
+        if connections:
+            svt.populate(connections)
+        self.show_tab_view()
+        self.tab_view.set_selected_page(page)
+        return svt
+
+    def _on_split_view_confirm_response(self, dialog, response_id, connections, title):
+        if response_id == 'open':
+            try:
+                self._create_split_view_tab(connections, title)
+            except Exception as exc:
+                logger.error("Failed to open connections in split view: %s", exc)
+        dialog.close()
+
+    def _open_connections_in_split_view(self, connections, title=None):
+        """Open ``connections`` in one split tab, confirming large batches first.
+
+        Opening a whole group is a single click away, so a group with dozens of
+        hosts could spawn that many sessions with no warning (GH #1232). Small
+        batches stay friction-free; past the threshold we ask.
+        """
+        if not connections:
+            return
+        if len(connections) <= SPLIT_VIEW_CONFIRM_THRESHOLD:
+            self._create_split_view_tab(connections, title)
+            return
+
+        dialog = Adw.AlertDialog(
+            heading=_("Open split view?"),
+            body=_("This will start {n} connections simultaneously.").format(
+                n=len(connections)
+            ),
+        )
+        dialog.add_response('cancel', _("Cancel"))
+        dialog.add_response('open', _("Open"))
+        dialog.set_response_appearance('open', Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response('open')
+        dialog.set_close_response('cancel')
+        dialog.connect(
+            'response',
+            self._on_split_view_confirm_response,
+            connections,
+            title,
+        )
+        dialog.present(self)
+        mark_default_response_visible(self)
+
     def on_new_split_view_tab(self, action, param=None):
         """Open a new empty split-view tab."""
         try:
-            from .split_view import SplitViewTab
-            from sshpilot import icon_utils
-            svt = SplitViewTab(self)
-            page = self.tab_view.append(svt)
-            page.set_title(_("Split View"))
-            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
-            svt._tab_page = page
-            self.show_tab_view()
-            self.tab_view.set_selected_page(page)
+            self._create_split_view_tab()
         except Exception as exc:
             logger.error("Failed to open new split view tab: %s", exc)
 
     def on_open_in_split_view_action(self, action, param=None):
         """Open the selected connection(s) in a new split-view tab."""
         try:
-            from .split_view import SplitViewTab
-            from sshpilot import icon_utils
-
             # Collect connections from the current selection, falling back to the
             # context-menu connection when nothing specific is selected.
             connections = []
@@ -242,26 +294,13 @@ class WindowActions:
                 if conn is not None:
                     connections.append(conn)
 
-            if not connections:
-                return
-
-            svt = SplitViewTab(self)
-            page = self.tab_view.append(svt)
-            page.set_title(_("Split View"))
-            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
-            svt._tab_page = page
-            svt.populate(connections)
-            self.show_tab_view()
-            self.tab_view.set_selected_page(page)
+            self._open_connections_in_split_view(connections)
         except Exception as exc:
             logger.error("Failed to open connections in split view: %s", exc)
 
     def on_open_group_in_split_view_action(self, action, param=None):
         """Open all connections in a group as a new split-view tab."""
         try:
-            from .split_view import SplitViewTab
-            from sshpilot import icon_utils
-
             group_row = getattr(self, '_context_menu_group_row', None)
             if group_row is None:
                 return
@@ -273,18 +312,9 @@ class WindowActions:
                 if conn is not None:
                     connections.append(conn)
 
-            if not connections:
-                return
-
-            svt = SplitViewTab(self)
-            page = self.tab_view.append(svt)
             name = group_info.get('name', '')
-            page.set_title(_("Split View — {name}").format(name=name) if name else _("Split View"))
-            page.set_icon(icon_utils.new_gicon_from_icon_name('view-dual-symbolic'))
-            svt._tab_page = page
-            svt.populate(connections)
-            self.show_tab_view()
-            self.tab_view.set_selected_page(page)
+            title = _("Split View — {name}").format(name=name) if name else None
+            self._open_connections_in_split_view(connections, title)
         except Exception as exc:
             logger.error("Failed to open group in split view: %s", exc)
 
