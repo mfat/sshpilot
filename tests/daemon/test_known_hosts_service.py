@@ -212,3 +212,48 @@ def test_concurrent_removals_serialize_with_one_winner(tmp_path):
     assert errors[0][1] is ErrorCode.STALE_EDITOR
     remaining = path.read_bytes()
     assert remaining.count(b"ssh-ed25519") + remaining.count(b"ssh-rsa") == 2
+
+
+# ── The editor edits the ACTIVE root's file ──────────────────────────────────
+
+def test_editing_in_isolated_mode_never_touches_the_global_file(tmp_path):
+    """The known-hosts editor is destructive, so it must resolve per call.
+
+    It used to be built with a hardcoded ~/.ssh/known_hosts, so in Isolated
+    Mode it listed -- and deleted from -- the user's global trust store, which
+    is shared with every other SSH tool on the machine and is not sshPilot's
+    to edit. The resolver is consulted on each request, so a live mode switch
+    is picked up without rebuilding the service.
+    """
+    default_path = tmp_path / "global_known_hosts"
+    isolated_path = tmp_path / "isolated_known_hosts"
+    default_path.write_bytes(b"global.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIglobal\n")
+    isolated_path.write_bytes(b"lab.test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIlab\n")
+
+    isolated = {"value": False}
+    service = KnownHostsService(
+        lambda: isolated_path if isolated["value"] else default_path
+    )
+
+    assert [entry.hostname for entry in service.list_known_hosts().entries] == [
+        "global.test"
+    ]
+
+    isolated["value"] = True
+    snapshot = service.list_known_hosts()
+    assert [entry.hostname for entry in snapshot.entries] == ["lab.test"]
+
+    service.remove_known_host_entries(
+        RemoveKnownHostEntriesRequest(
+            entry_ids=(snapshot.entries[0].entry_id,), revision=snapshot.revision
+        )
+    )
+
+    assert isolated_path.read_bytes() == b""
+    # The line the user actually depends on is still there.
+    assert b"global.test" in default_path.read_bytes()
+
+    isolated["value"] = False
+    assert [entry.hostname for entry in service.list_known_hosts().entries] == [
+        "global.test"
+    ]
