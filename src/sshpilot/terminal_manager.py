@@ -914,7 +914,7 @@ class TerminalManager:
             dialog.add_response("cancel", _("Cancel"))
             dialog.add_response("disconnect", _("Disconnect"))
             dialog.set_response_appearance("disconnect", Adw.ResponseAppearance.DESTRUCTIVE)
-            dialog.set_default_response("close")
+            dialog.set_default_response("disconnect")
             dialog.set_close_response("cancel")
             dialog.connect("response", self._on_disconnect_confirmed, connection)
             dialog.present()

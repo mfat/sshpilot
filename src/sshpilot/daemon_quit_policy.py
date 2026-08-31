@@ -620,7 +620,9 @@ def present_daemon_quit_dialog(window, *, on_decision) -> Any:
     dialog.set_response_appearance(
         "terminate", Adw.ResponseAppearance.DESTRUCTIVE
     )
-    dialog.set_default_response("cancel")
+    # Quit is what the user asked for: make it the keyboard default so Enter
+    # confirms, matching the non-daemon quit prompt. Escape still cancels.
+    dialog.set_default_response("terminate")
     dialog.set_close_response("cancel")
 
     def _on_response(_dialog, response: str) -> None:
