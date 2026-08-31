@@ -111,7 +111,7 @@ def test_batch_at_threshold_opens_without_asking():
     window = make_window()
     conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD)
 
-    window._open_connections_in_split_view(conns)
+    window._open_connection_batch(conns)
 
     assert FakeAlertDialog.instances == []
     assert window.created == [(conns, None)]
@@ -120,7 +120,7 @@ def test_batch_at_threshold_opens_without_asking():
 def test_empty_batch_opens_nothing():
     window = make_window()
 
-    window._open_connections_in_split_view([])
+    window._open_connection_batch([])
 
     assert FakeAlertDialog.instances == []
     assert window.created == []
@@ -130,17 +130,18 @@ def test_large_batch_asks_before_opening():
     window = make_window()
     conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
 
-    window._open_connections_in_split_view(conns, "Split View — Prod")
+    window._open_connection_batch(conns, "Split View — Prod")
 
     assert window.created == [], "nothing may open before the user confirms"
     assert len(FakeAlertDialog.instances) == 1
     dialog = FakeAlertDialog.instances[0]
     assert str(len(conns)) in dialog.body
-    assert dialog.responses == ["cancel", "tabs", "open"]
+    assert dialog.responses == ["cancel", "split", "tabs"]
+    assert dialog.default_response == "split"
     assert dialog.close_response == "cancel"
     assert dialog.presented_parent is window
 
-    dialog.emit_response("open")
+    dialog.emit_response("split")
 
     assert window.created == [(conns, "Split View — Prod")]
     assert dialog.close_calls == 1
@@ -150,7 +151,7 @@ def test_separate_tabs_response_opens_one_tab_per_connection():
     window = make_window()
     conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
 
-    window._open_connections_in_split_view(conns)
+    window._open_connection_batch(conns)
     FakeAlertDialog.instances[0].emit_response("tabs")
 
     assert window.created == [], "the split tab must not be built as well"
@@ -161,7 +162,7 @@ def test_separate_tabs_response_opens_one_tab_per_connection():
 def test_cancelling_the_confirmation_opens_nothing():
     window = make_window()
 
-    window._open_connections_in_split_view(connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1))
+    window._open_connection_batch(connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1))
     FakeAlertDialog.instances[0].emit_response("cancel")
 
     assert window.created == []
@@ -181,7 +182,7 @@ def test_group_action_confirms_large_groups_and_keeps_the_title():
 
     assert window.created == []
     assert len(FakeAlertDialog.instances) == 1
-    FakeAlertDialog.instances[0].emit_response("open")
+    FakeAlertDialog.instances[0].emit_response("split")
 
     opened, title = window.created[0]
     assert opened == conns
@@ -200,6 +201,38 @@ def test_small_group_opens_directly():
     assert window.created and window.created[0][0] == conns
 
 
+def test_small_group_opens_straight_into_tabs():
+    window = make_window()
+    conns = connections(2)
+    window.connection_manager = FakeConnectionManager(conns)
+    window._context_menu_group_row = FakeGroupRow("Lab", [c.nickname for c in conns])
+
+    window.on_open_group_in_tabs_action(None)
+
+    assert FakeAlertDialog.instances == []
+    assert window.tabbed == conns
+    assert window.created == []
+
+
+def test_large_group_in_tabs_asks_with_tabs_preselected():
+    window = make_window()
+    conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
+    window.connection_manager = FakeConnectionManager(conns)
+    window._context_menu_group_row = FakeGroupRow("Prod", [c.nickname for c in conns])
+
+    window.on_open_group_in_tabs_action(None)
+
+    assert window.tabbed == []
+    dialog = FakeAlertDialog.instances[0]
+    assert dialog.default_response == "tabs"
+    assert "separate tabs" in dialog.body
+
+    dialog.emit_response("tabs")
+
+    assert window.tabbed == conns
+    assert window.created == []
+
+
 def test_selection_action_confirms_large_selections():
     window = make_window()
     conns = connections(SPLIT_VIEW_CONFIRM_THRESHOLD + 1)
@@ -210,5 +243,5 @@ def test_selection_action_confirms_large_selections():
 
     assert window.created == []
     assert len(FakeAlertDialog.instances) == 1
-    FakeAlertDialog.instances[0].emit_response("open")
+    FakeAlertDialog.instances[0].emit_response("split")
     assert window.created == [(conns, None)]
