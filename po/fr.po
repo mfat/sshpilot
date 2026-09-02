@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-26 11:00+0200\n"
-"PO-Revision-Date: 2026-08-27 09:09+0200\n"
+"POT-Creation-Date: 2026-09-02 12:11+0200\n"
+"PO-Revision-Date: 2026-09-02 12:23+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -494,11 +494,6 @@ msgstr "Échec de la connexion : {error}"
 msgid "Connection failed"
 msgstr "Échec de la connexion"
 
-#: src/sshpilot/authorized_keys_window.py:263
-#, python-brace-format
-msgid "Loaded {n} entries"
-msgstr "Nombre d’entrées chargées : {n}"
-
 #: src/sshpilot/authorized_keys_window.py:265
 msgid "No keys yet — use “Add key” to install one."
 msgstr "Aucune clé — utilisez « Ajouter une clé » pour en installer une."
@@ -598,11 +593,6 @@ msgstr "Collez une seule ligne de clé publique OpenSSH."
 #: src/sshpilot/authorized_keys_window.py:584
 msgid "Could not parse a public key from input"
 msgstr "Aucune clé publique n’a pu être extraite de la saisie"
-
-#: src/sshpilot/authorized_keys_window.py:588
-#, python-brace-format
-msgid "Added {n} key"
-msgstr "Nombre de clés ajoutées : {n}"
 
 #: src/sshpilot/authorized_keys_window.py:608
 msgid "Raw editor unavailable"
@@ -1630,10 +1620,6 @@ msgstr "Sources facultatives pour IdentityAgent, PKCS#11 et les clés de sécuri
 #: src/sshpilot/connection_dialog.py:2879
 msgid "IdentityAgent"
 msgstr "IdentityAgent"
-
-#: src/sshpilot/connection_dialog.py:2881
-msgid "Socket path, $VARIABLE, or none"
-msgstr "Chemin du socket, $VARIABLE ou none"
 
 #: src/sshpilot/connection_dialog.py:2886
 msgid "PKCS#11 provider"
@@ -3761,10 +3747,6 @@ msgstr "Copier automatiquement le texte sélectionné dans le presse-papiers"
 msgid "Paste on right-click"
 msgstr "Coller par clic droit"
 
-#: src/sshpilot/preferences.py:717
-msgid "Right-click pastes; Shift+right-click opens the menu"
-msgstr "Le clic droit colle ; Shift+clic droit ouvre le menu"
-
 #: src/sshpilot/preferences.py:732
 msgid "Preferred Terminal"
 msgstr "Terminal préféré"
@@ -3905,10 +3887,6 @@ msgstr "Points colorés"
 #: src/sshpilot/preferences.py:977
 msgid "Use Group Color for Child Rows"
 msgstr "Utiliser la couleur du groupe pour ses lignes"
-
-#: src/sshpilot/preferences.py:979
-msgid "Apply the group's color to its connection rows as well"
-msgstr "Appliquer aussi la couleur du groupe à ses lignes de connexion"
 
 #: src/sshpilot/preferences.py:995
 msgid "Show Group Color in Tabs"
@@ -4286,10 +4264,6 @@ msgstr "SSH Pilot charge et modifie ~/.ssh/config"
 #: src/sshpilot/preferences.py:1832
 msgid "Isolated Mode"
 msgstr "Mode isolé"
-
-#: src/sshpilot/preferences.py:1834
-msgid "SSH Pilot uses its own SSH configuration file"
-msgstr "SSH Pilot utilise son propre fichier de configuration SSH"
 
 #: src/sshpilot/preferences.py:1884
 msgid "Configuration file"
@@ -4790,10 +4764,6 @@ msgstr "Les identifiants ne sont pas conservés — ssh-agent et SSH gèrent l�
 #: src/sshpilot/preferences.py:3266
 msgid "Uses the bw CLI. See bitwarden.com/help/cli."
 msgstr "Utilise la CLI bw. Consultez bitwarden.com/help/cli."
-
-#: src/sshpilot/preferences.py:3268
-msgid "Uses the rbw CLI + agent. Unlock with rbw (github.com/doy/rbw)."
-msgstr "Utilise la CLI et l’agent rbw. Déverrouillez avec rbw (github.com/doy/rbw)."
 
 #: src/sshpilot/preferences.py:3330
 msgid "Remembered in your system keyring."
@@ -5362,10 +5332,6 @@ msgstr "rbw"
 msgid "Saving rbw configuration…"
 msgstr "Enregistrement de la configuration de rbw…"
 
-#: src/sshpilot/rbw_setup.py:243
-msgid "Unlocking rbw… follow the pinentry prompt for your master password."
-msgstr "Déverrouillage de rbw… Suivez l’invite pinentry pour saisir le mot de passe principal."
-
 #: src/sshpilot/rbw_setup.py:295 src/sshpilot/rbw_setup.py:331
 msgid "Checking rbw…"
 msgstr "Vérification de rbw…"
@@ -5785,16 +5751,6 @@ msgstr "Renommer l’étiquette"
 #, python-brace-format
 msgid "Tag: {name}"
 msgstr "Étiquette : {name}"
-
-#: src/sshpilot/sidebar.py:1654
-msgid "Effective SSH config differs"
-msgstr "La configuration SSH effective diffère"
-
-#: src/sshpilot/sidebar.py:1610
-msgid ""
-"Global SSH config changes this connection's effective settings — click to "
-"compare"
-msgstr "La configuration SSH globale modifie les paramètres effectifs de cette connexion — cliquez pour les comparer"
 
 #: src/sshpilot/sidebar.py:2183
 #, python-brace-format
@@ -7322,21 +7278,6 @@ msgid ""
 "The daemon could not resolve or compare this connection's effective SSH "
 "configuration."
 msgstr "Le démon n’a pas pu résoudre ou comparer la configuration SSH effective de cette connexion."
-
-#: src/sshpilot/window.py:7725
-msgid "Global SSH config may change this connection"
-msgstr "La configuration SSH globale peut modifier cette connexion"
-
-#: src/sshpilot/window.py:7727
-msgid ""
-"Some of the values you set may be overridden or added by your global SSH "
-"configuration (for example a 'Host *' block or an included file). SSH will "
-"use the effective values, not only what you entered here."
-msgstr "Certaines valeurs définies peuvent être remplacées ou complétées par la configuration SSH globale (par exemple un bloc « Host * » ou un fichier inclus). SSH utilisera les valeurs effectives, pas seulement celles saisies ici."
-
-#: src/sshpilot/window.py:7734
-msgid "View differences…"
-msgstr "Afficher les différences…"
 
 #: src/sshpilot/window_broadcast.py:181
 msgid "No SSH Terminals Open"
@@ -9144,3 +9085,1315 @@ msgstr "Transmission directe"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "Copier la clé sur le serveur"
+
+#: src/sshpilot/actions.py:262
+#, python-brace-format
+msgid "This will open {n} new connection tabs."
+msgstr "Cette opération ouvrira {n} nouveaux onglets de connexion."
+
+#: src/sshpilot/actions.py:264
+#, python-brace-format
+msgid "This will start {n} connections in a single tab."
+msgstr "Cette opération démarrera {n} connexions dans un seul onglet."
+
+#: src/sshpilot/actions.py:266
+msgid "Open connections?"
+msgstr "Ouvrir les connexions ?"
+
+#: src/sshpilot/actions.py:276
+msgid "Separate Tabs"
+msgstr "Onglets séparés"
+
+#: src/sshpilot/actions.py:616
+msgid "Connect to the sshPilot daemon before moving groups."
+msgstr "Connectez-vous au démon sshPilot avant de déplacer des groupes."
+
+#: src/sshpilot/authorized_keys_window.py:28
+#, python-brace-format
+msgid "Loaded {count} entry"
+msgid_plural "Loaded {count} entries"
+msgstr[0] "{count} entrée chargée"
+msgstr[1] "{count} entrées chargées"
+
+#: src/sshpilot/authorized_keys_window.py:36
+#, python-brace-format
+msgid "Added {count} key"
+msgid_plural "Added {count} keys"
+msgstr[0] "{count} clé ajoutée"
+msgstr[1] "{count} clés ajoutées"
+
+#: src/sshpilot/connection_dialog.py:2241
+#: src/sshpilot/connection_dialog.py:2294
+#: src/sshpilot/connection_dialog.py:3577
+#: src/sshpilot/connection_dialog.py:3826
+msgid "Agent socket"
+msgstr "Socket de l’agent"
+
+#: src/sshpilot/connection_dialog.py:2242
+#: src/sshpilot/connection_dialog.py:3829
+msgid "Path to an ssh-agent socket"
+msgstr "Chemin vers un socket ssh-agent"
+
+#: src/sshpilot/connection_dialog.py:2244
+#: src/sshpilot/connection_dialog.py:2299
+#: src/sshpilot/connection_dialog.py:3563
+#: src/sshpilot/connection_dialog.py:3812
+msgid "Environment variable"
+msgstr "Variable d’environnement"
+
+#: src/sshpilot/connection_dialog.py:2246
+msgid "Name of a variable holding the socket path, e.g. $SSH_AUTH_SOCK"
+msgstr "Nom d’une variable contenant le chemin du socket, p. ex. $SSH_AUTH_SOCK"
+
+#: src/sshpilot/connection_dialog.py:2296
+#: src/sshpilot/connection_dialog.py:3580
+msgid "Unix-domain socket; tilde and tokens are allowed"
+msgstr "Socket de domaine Unix ; le tilde et les jetons sont autorisés"
+
+#: src/sshpilot/connection_dialog.py:2301
+msgid "Variable holding the socket path, e.g. $SSH_AUTH_SOCK"
+msgstr "Variable contenant le chemin du socket, p. ex. $SSH_AUTH_SOCK"
+
+#: src/sshpilot/connection_dialog.py:2719
+msgid "Inherited from your SSH configuration. Edit to set it for this host."
+msgstr "Hérité de votre configuration SSH. Modifiez ce champ pour le définir pour cet hôte."
+
+#: src/sshpilot/connection_dialog.py:3561
+msgid "SSH_AUTH_SOCK"
+msgstr "SSH_AUTH_SOCK"
+
+#: src/sshpilot/connection_dialog.py:3562
+#: src/sshpilot/connection_dialog.py:3811
+msgid "Socket path"
+msgstr "Chemin du socket"
+
+#: src/sshpilot/connection_dialog.py:3568
+msgid "Unix-domain socket used to communicate with ssh-agent"
+msgstr "Socket de domaine Unix utilisé pour communiquer avec ssh-agent"
+
+#: src/sshpilot/connection_dialog.py:3587
+#: src/sshpilot/connection_dialog.py:3836
+msgid "Browse for agent socket"
+msgstr "Parcourir pour sélectionner le socket de l’agent"
+
+#: src/sshpilot/connection_dialog.py:3591
+#: src/sshpilot/connection_dialog.py:3840
+msgid "Select agent socket"
+msgstr "Sélectionner le socket de l’agent"
+
+#: src/sshpilot/connection_dialog.py:4768
+msgid "The connection settings were saved, but secure storage did not answer in time. The password may have been stored anyway — reopen the connection to check before saving it again."
+msgstr "Les paramètres de connexion ont été enregistrés, mais le stockage sécurisé n’a pas répondu à temps. Le mot de passe a peut-être tout de même été enregistré — rouvrez la connexion pour le vérifier avant d’enregistrer de nouveau la connexion."
+
+#: src/sshpilot/daemon_interaction_dialogs.py:284
+msgid "SSH host key changed"
+msgstr "La clé d’hôte SSH a changé"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:286
+msgid "Verify this SSH host"
+msgstr "Vérifier cet hôte SSH"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:293
+msgid "Reject"
+msgstr "Refuser"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:295
+msgid "Accept"
+msgstr "Accepter"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:340
+#, python-brace-format
+msgid "Passphrase for {key_display_name}"
+msgstr "Phrase de passe de {key_display_name}"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:344
+msgid "SSH authentication challenge"
+msgstr "Défi d’authentification SSH"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:346
+msgid "Security key required"
+msgstr "Clé de sécurité requise"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:348
+msgid "Confirm SSH operation"
+msgstr "Confirmer l’opération SSH"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:358
+msgid "Enter and confirm a new passphrase."
+msgstr "Saisissez et confirmez une nouvelle phrase de passe."
+
+#: src/sshpilot/daemon_interaction_dialogs.py:361
+#, python-brace-format
+msgid "Authentication attempt {attempt}"
+msgstr "Tentative d’authentification {attempt}"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:404
+msgid "Confirm passphrase"
+msgstr "Confirmer la phrase de passe"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:411
+msgid "Passphrases do not match"
+msgstr "Les phrases de passe ne correspondent pas"
+
+#: src/sshpilot/daemon_interaction_dialogs.py:576
+msgid "Remember password"
+msgstr "Mémoriser le mot de passe"
+
+#: src/sshpilot/file_manager/format_utils.py:17
+#, python-brace-format
+msgid "{count} item"
+msgid_plural "{count} items"
+msgstr[0] "{count} élément"
+msgstr[1] "{count} éléments"
+
+#: src/sshpilot/file_manager/properties_dialog.py:34
+#, python-brace-format
+msgid "{folder} (calculating size...)"
+msgstr "{folder} (calcul de la taille…)"
+
+#: src/sshpilot/file_manager/properties_dialog.py:44
+#, python-brace-format
+msgid "{items} ({size})"
+msgstr "{items} ({size})"
+
+#: src/sshpilot/file_manager/properties_dialog.py:49
+msgid "Size unavailable"
+msgstr "Taille indisponible"
+
+#: src/sshpilot/file_manager/properties_dialog.py:50
+#, python-brace-format
+msgid "{items} (size unavailable)"
+msgstr "{items} (taille indisponible)"
+
+#: src/sshpilot/file_manager/properties_dialog.py:56
+#, python-brace-format
+msgid "{size} Free"
+msgstr "Espace libre : {size}"
+
+#: src/sshpilot/gtk/identity_failure_messages.py:13
+#: src/sshpilot/sshcopyid_window.py:22
+msgid "Public-key deployment is unavailable."
+msgstr "Le déploiement de clé publique est indisponible."
+
+#: src/sshpilot/gtk/identity_failure_messages.py:19
+msgid "Public-key deployment requires an SSH connection."
+msgstr "Le déploiement de clé publique nécessite une connexion SSH."
+
+#: src/sshpilot/gtk/identity_failure_messages.py:22
+msgid "The connection has no host or SSH alias."
+msgstr "La connexion ne possède aucun hôte ni alias SSH."
+
+#: src/sshpilot/gtk/identity_failure_messages.py:25
+msgid "ssh-copy-id is not installed."
+msgstr "ssh-copy-id n’est pas installé."
+
+#: src/sshpilot/gtk/identity_failure_messages.py:28
+msgid "ssh-copy-id could not be started."
+msgstr "ssh-copy-id n’a pas pu être démarré."
+
+#: src/sshpilot/gtk/identity_failure_messages.py:31
+msgid "Authentication failed while installing the public key"
+msgstr "Échec de l’authentification lors de l’installation de la clé publique"
+
+#: src/sshpilot/gtk/identity_failure_messages.py:33
+msgid "The server refused the connection"
+msgstr "Le serveur a refusé la connexion"
+
+#: src/sshpilot/gtk/identity_failure_messages.py:34
+msgid "The server could not be reached"
+msgstr "Le serveur est inaccessible"
+
+#: src/sshpilot/gtk/identity_failure_messages.py:35
+msgid "The connection timed out"
+msgstr "Délai de connexion dépassé"
+
+#: src/sshpilot/gtk/identity_failure_messages.py:37
+msgid "ssh-copy-id could not install the public key"
+msgstr "ssh-copy-id n’a pas pu installer la clé publique"
+
+#: src/sshpilot/gtk/identity_failure_messages.py:40
+#: src/sshpilot/gtk/sftp_failure_messages.py:53
+msgid "The operation failed unexpectedly"
+msgstr "L’opération a échoué de manière inattendue"
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:16
+msgid "No container is configured for this connection."
+msgstr "Aucun conteneur n’est configuré pour cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:19
+#, python-brace-format
+msgid "The '{runtime}' program is not installed. Install it to use container connections."
+msgstr "Le programme « {runtime} » n’est pas installé. Installez-le pour utiliser les connexions aux conteneurs."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:22
+msgid "No pod is configured for this connection."
+msgstr "Aucun pod n’est configuré pour cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:25
+#, python-brace-format
+msgid "The '{program}' program is not installed. Install it to use Kubernetes connections."
+msgstr "Le programme « {program} » n’est pas installé. Installez-le pour utiliser les connexions Kubernetes."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:28
+#, python-brace-format
+msgid "The '{client_program}' program is not installed. Install it (and '{server_program}' on the host) to use Mosh connections."
+msgstr "Le programme « {client_program} » n’est pas installé. Installez-le, ainsi que « {server_program} » sur l’hôte, pour utiliser les connexions Mosh."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:32
+msgid "No host is configured for this connection."
+msgstr "Aucun hôte n’est configuré pour cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:35
+msgid "The Mosh connection could not be prepared."
+msgstr "La connexion Mosh n’a pas pu être préparée."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:38
+#, python-brace-format
+msgid "{field} could not be parsed."
+msgstr "Impossible d’analyser {field}."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:41
+msgid "No serial device is configured for this connection."
+msgstr "Aucun périphérique série n’est configuré pour cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:44
+#, python-brace-format
+msgid "Only '{fallback_program}' is available, which cannot set hardware ({flow}) flow control. Install '{preferred_program}' to use this connection."
+msgstr "Seul « {fallback_program} » est disponible, mais il ne permet pas de régler le contrôle de flux matériel ({flow}). Installez « {preferred_program} » pour utiliser cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:48
+#, python-brace-format
+msgid "Only '{fallback_program}' is available, which cannot set {databits} data bits. Install '{preferred_program}' to use this connection."
+msgstr "Seul « {fallback_program} » est disponible, mais il ne permet pas de régler les bits de données sur {databits}. Installez « {preferred_program} » pour utiliser cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:52
+#, python-brace-format
+msgid "Only '{fallback_program}' is available, which cannot set hardware ({flow}) flow control or {databits} data bits. Install '{preferred_program}' to use this connection."
+msgstr "Seul « {fallback_program} » est disponible, mais il ne permet pas de régler le contrôle de flux matériel ({flow}) ni les bits de données sur {databits}. Installez « {preferred_program} » pour utiliser cette connexion."
+
+#: src/sshpilot/gtk/plugin_session_failure_messages.py:57
+#, python-brace-format
+msgid "Neither '{preferred_program}' nor '{fallback_program}' is installed. Install one to use serial connections."
+msgstr "Ni « {preferred_program} » ni « {fallback_program} » n’est installé. Installez-en un pour utiliser les connexions série."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:13 src/sshpilot/scp_window.py:37
+#: src/sshpilot/scp_window.py:1080
+msgid "Native SCP transfers are unavailable on the daemon."
+msgstr "Le démon ne prend pas en charge les transferts SCP natifs."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:16 src/sshpilot/scp_window.py:39
+msgid "The daemon transfer command queue is full."
+msgstr "La file d’attente des commandes de transfert du démon est pleine."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:22
+msgid "Native SCP transfers require an SSH connection."
+msgstr "Les transferts SCP natifs nécessitent une connexion SSH."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:25
+msgid "The connection has no SSH host identifier."
+msgstr "La connexion ne possède aucun identifiant d’hôte SSH."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:28
+msgid "The native SCP target could not be prepared."
+msgstr "La cible SCP native n’a pas pu être préparée."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:31
+msgid "The native SCP transfer could not be prepared."
+msgstr "Le transfert SCP natif n’a pas pu être préparé."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:34
+msgid "The SCP process could not be started."
+msgstr "Le processus SCP n’a pas pu être démarré."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:37
+msgid "Could not start an SFTP session on the remote host. The remote SSH server may not have an SFTP server enabled."
+msgstr "Impossible de démarrer une session SFTP sur l’hôte distant. Le serveur SSH distant n’a peut-être aucun serveur SFTP activé."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:41
+#: src/sshpilot/gtk/sftp_failure_messages.py:56
+msgid "The transfer could not be started"
+msgstr "Le transfert n’a pas pu être démarré"
+
+#: src/sshpilot/gtk/scp_failure_messages.py:43 src/sshpilot/scp_window.py:1141
+msgid "The SCP transfer failed."
+msgstr "Le transfert SCP a échoué."
+
+#: src/sshpilot/gtk/scp_failure_messages.py:44
+#: src/sshpilot/gtk/sftp_failure_messages.py:104
+msgid "The daemon is shutting down"
+msgstr "Le démon est en cours d’arrêt"
+
+#: src/sshpilot/gtk/scp_failure_messages.py:45
+msgid "The transfer failed unexpectedly."
+msgstr "Le transfert a échoué de manière inattendue."
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:33
+msgid "Bitwarden sign-in"
+msgstr "Authentification Bitwarden"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:34
+#, python-brace-format
+msgid "Enter the Bitwarden master password for {email}"
+msgstr "Saisissez le mot de passe principal Bitwarden de {email}"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:37
+msgid "Authentication challenge"
+msgstr "Défi d’authentification"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:39
+msgid "Enter the Bitwarden API client secret to complete the authentication challenge"
+msgstr "Saisissez le secret client de l’API Bitwarden pour terminer le défi d’authentification"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:44
+msgid "Two-step login code"
+msgstr "Code de connexion en deux étapes"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:45
+#, python-brace-format
+msgid "Enter the two-step login code for {email}"
+msgstr "Saisissez le code de connexion en deux étapes pour {email}"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:48
+msgid "Bitwarden API key"
+msgstr "Clé API Bitwarden"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:49
+#, python-brace-format
+msgid "Enter the API key client secret for {client_id}"
+msgstr "Saisissez le secret client de la clé API pour {client_id}"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:52
+msgid "Unlock Bitwarden"
+msgstr "Déverrouiller Bitwarden"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:53
+msgid "Enter the Bitwarden master password to unlock the vault"
+msgstr "Saisissez le mot de passe principal Bitwarden pour déverrouiller le coffre-fort"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:56
+msgid "New KeePass database"
+msgstr "Nouvelle base de données KeePass"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:57
+msgid "Enter a master password for the new KeePass database"
+msgstr "Saisissez un mot de passe principal pour la nouvelle base de données KeePass"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:60
+msgid "Unlock KeePass"
+msgstr "Déverrouiller KeePass"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:61
+msgid "Enter the master password to unlock the KeePass database"
+msgstr "Saisissez le mot de passe principal pour déverrouiller la base de données KeePass"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:65
+#, python-brace-format
+msgid "Enter the master password to remember for {name}"
+msgstr "Saisissez le mot de passe principal à mémoriser pour {name}"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:68
+msgid "Encrypt backup"
+msgstr "Chiffrer la sauvegarde"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:69
+msgid "Enter a passphrase to encrypt the backup"
+msgstr "Saisissez une phrase de passe pour chiffrer la sauvegarde"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:72
+msgid "Decrypt backup"
+msgstr "Déchiffrer la sauvegarde"
+
+#: src/sshpilot/gtk/secrets_interaction_presenter.py:73
+msgid "Enter the passphrase to decrypt the backup"
+msgstr "Saisissez la phrase de passe pour déchiffrer la sauvegarde"
+
+#: src/sshpilot/gtk/sftp_error_messages.py:12
+#: src/sshpilot/gtk/sftp_failure_messages.py:28
+msgid "The path was not found"
+msgstr "Le chemin est introuvable"
+
+#: src/sshpilot/gtk/sftp_error_messages.py:14
+#: src/sshpilot/gtk/sftp_failure_messages.py:16
+msgid "The SFTP connection was lost"
+msgstr "La connexion SFTP a été perdue"
+
+#: src/sshpilot/gtk/sftp_error_messages.py:16
+#: src/sshpilot/gtk/sftp_failure_messages.py:31
+msgid "The server does not support this operation"
+msgstr "Le serveur ne prend pas en charge cette opération"
+
+#: src/sshpilot/gtk/sftp_error_messages.py:18
+#: src/sshpilot/gtk/sftp_error_messages.py:19
+#: src/sshpilot/gtk/sftp_failure_messages.py:33
+msgid "The SFTP command failed"
+msgstr "La commande SFTP a échoué"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:14
+msgid "The SFTP session could not be established"
+msgstr "La session SFTP n’a pas pu être établie"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:18
+msgid "The daemon SFTP command queue is full"
+msgstr "La file d’attente des commandes SFTP du démon est pleine"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:21
+msgid "The SFTP process could not be terminated"
+msgstr "Le processus SFTP n’a pas pu être arrêté"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:23
+msgid "The SFTP service was not found"
+msgstr "Le service SFTP est introuvable"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:24
+msgid "The SFTP service is not ready"
+msgstr "Le service SFTP n’est pas prêt"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:26
+msgid "Only the originating client may mutate this SFTP service"
+msgstr "Seul le client d’origine peut modifier ce service SFTP"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:35
+msgid "Directory size requires a real directory path, not a symbolic link"
+msgstr "Le calcul de la taille d’un répertoire nécessite un chemin de répertoire réel, et non un lien symbolique"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:38
+msgid "A directory cannot be copied into itself"
+msgstr "Un répertoire ne peut pas être copié dans lui-même"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:41
+msgid "Recursive copy of a symbolic link is not supported"
+msgstr "La copie récursive d’un lien symbolique n’est pas prise en charge"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:44
+msgid "The destination already exists"
+msgstr "La destination existe déjà"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:47
+msgid "Recursive copy is required for directories"
+msgstr "La copie récursive est requise pour les répertoires"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:50
+msgid "Recursive copy requires a directory source"
+msgstr "La copie récursive nécessite un répertoire source"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:59
+msgid "The daemon transfer command queue is full"
+msgstr "La file d’attente des commandes de transfert du démon est pleine"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:61
+msgid "The transfer failed"
+msgstr "Le transfert a échoué"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:63
+msgid "The local source file was not found"
+msgstr "Le fichier source local est introuvable"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:66
+msgid "The local source directory was not found"
+msgstr "Le répertoire source local est introuvable"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:69
+msgid "Recursive upload requires a real directory path, not a symbolic link"
+msgstr "L’envoi récursif nécessite un chemin de répertoire réel, et non un lien symbolique"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:72
+msgid "The local source is not a directory"
+msgstr "La source locale n’est pas un répertoire"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:75
+msgid "The remote source directory could not be read"
+msgstr "Le répertoire source distant n’a pas pu être lu"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:78
+msgid "Recursive download requires a real directory path, not a symbolic link"
+msgstr "Le téléchargement récursif nécessite un chemin de répertoire réel, et non un lien symbolique"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:81
+msgid "The remote source is not a directory"
+msgstr "La source distante n’est pas un répertoire"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:84
+msgid "The local destination could not be created as a directory"
+msgstr "La destination locale n’a pas pu être créée sous forme de répertoire"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:87
+#, python-brace-format
+msgid "A remote file is in the way of a directory: {remote_dir}"
+msgstr "Un fichier distant occupe l’emplacement d’un répertoire : {remote_dir}"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:90
+#, python-brace-format
+msgid "The remote directory could not be created: {remote_dir}"
+msgstr "Le répertoire distant n’a pas pu être créé : {remote_dir}"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:93
+#, python-brace-format
+msgid "The local destination already exists: {path}"
+msgstr "La destination locale existe déjà : {path}"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:96
+#, python-brace-format
+msgid "The remote destination already exists: {path}"
+msgstr "La destination distante existe déjà : {path}"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:99
+msgid "No free local filename could be found"
+msgstr "Impossible de trouver un nom de fichier local disponible"
+
+#: src/sshpilot/gtk/sftp_failure_messages.py:102
+msgid "No free remote filename could be found"
+msgstr "Impossible de trouver un nom de fichier distant disponible"
+
+#: src/sshpilot/gtk/secret_status_messages.py:20
+#, python-brace-format
+msgid "Secret backend '{backend}' is unavailable"
+msgstr "La méthode de stockage des secrets « {backend} » est indisponible"
+
+#: src/sshpilot/gtk/secret_status_messages.py:22
+msgid "Unlock cancelled"
+msgstr "Déverrouillage annulé"
+
+#: src/sshpilot/gtk/secret_status_messages.py:23
+msgid "The vault could not be unlocked"
+msgstr "Le coffre-fort n’a pas pu être déverrouillé"
+
+#: src/sshpilot/gtk/secret_status_messages.py:24
+#: src/sshpilot/gtk/secret_status_messages.py:47
+#, python-brace-format
+msgid "{backend} is unavailable"
+msgstr "{backend} est indisponible"
+
+#: src/sshpilot/gtk/secret_status_messages.py:26
+msgid "Bitwarden server configuration failed"
+msgstr "Échec de la configuration du serveur Bitwarden"
+
+#: src/sshpilot/gtk/secret_status_messages.py:28
+msgid "Login cancelled"
+msgstr "Authentification annulée"
+
+#: src/sshpilot/gtk/secret_status_messages.py:30
+msgid "Authentication challenge cancelled"
+msgstr "Défi d’authentification annulé"
+
+#: src/sshpilot/gtk/secret_status_messages.py:33
+msgid "Two-step login cancelled"
+msgstr "Connexion en deux étapes annulée"
+
+#: src/sshpilot/gtk/secret_status_messages.py:37
+msgid "Bitwarden vault unlock failed"
+msgstr "Échec du déverrouillage du coffre-fort Bitwarden"
+
+#: src/sshpilot/gtk/secret_status_messages.py:39
+msgid "rbw sync failed"
+msgstr "Échec de la synchronisation rbw"
+
+#: src/sshpilot/gtk/secret_status_messages.py:40
+msgid "A database path is required"
+msgstr "Un chemin de base de données est requis"
+
+#: src/sshpilot/gtk/secret_status_messages.py:42
+msgid "The KeePass database could not be created or unlocked"
+msgstr "Impossible de créer ou de déverrouiller la base de données KeePass"
+
+#: src/sshpilot/gtk/secret_status_messages.py:51
+msgid "The secret settings could not be loaded"
+msgstr "Les paramètres des secrets n’ont pas pu être chargés"
+
+#: src/sshpilot/gtk/secret_status_messages.py:52
+msgid "The secret settings could not be saved"
+msgstr "Les paramètres des secrets n’ont pas pu être enregistrés"
+
+#: src/sshpilot/gtk/secret_status_messages.py:57
+msgid "Protected secret interactions are unavailable"
+msgstr "La saisie protégée de secrets est indisponible"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:20
+msgid "Nothing selected to export"
+msgstr "Aucun élément sélectionné à exporter"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:23
+msgid "Bitwarden is unavailable for backup"
+msgstr "Bitwarden est indisponible pour la sauvegarde"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:26
+#, python-brace-format
+msgid "This backup is {length} characters — larger than the Bitwarden note limit ({limit})."
+msgstr "Cette sauvegarde compte {length} caractères — elle dépasse la limite des notes Bitwarden ({limit})."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:29
+msgid "The backup is too large for a Bitwarden note."
+msgstr "La sauvegarde est trop volumineuse pour une note Bitwarden."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:32
+msgid "Leaving out the largest part, or exporting fewer connections, may bring it under the limit."
+msgstr "Omettre la partie la plus volumineuse ou exporter moins de connexions peut permettre de repasser sous la limite."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:35
+msgid "Export to a .spbk file instead."
+msgstr "Exportez plutôt vers un fichier .spbk."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:41
+msgid "Failed to export backup."
+msgstr "Échec de l’exportation de la sauvegarde."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:44
+msgid "SSH export failed."
+msgstr "Échec de l’exportation SSH."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:47
+#, python-brace-format
+msgid "Backup file not found: {source}"
+msgstr "Fichier de sauvegarde introuvable : {source}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:50
+msgid "Failed to import configuration."
+msgstr "Échec de l’importation de la configuration."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:53
+msgid "The configuration could not be imported"
+msgstr "La configuration n’a pas pu être importée"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:56
+msgid "The archive could not be decrypted or read."
+msgstr "Impossible de déchiffrer ou de lire l’archive."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:59
+msgid "Wrong passphrase or corrupt backup"
+msgstr "Phrase de passe incorrecte ou sauvegarde corrompue"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:62
+msgid "Failed to import backup."
+msgstr "Échec de l’importation de la sauvegarde."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:68
+msgid "The selected secret backend does not persist secrets (agent); no credentials were restored."
+msgstr "La méthode de stockage des secrets sélectionnée ne conserve pas les secrets (agent) ; aucun identifiant n’a été restauré."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:71
+msgid "Could not list Bitwarden backups"
+msgstr "Impossible d’obtenir la liste des sauvegardes Bitwarden"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:74
+msgid "The chosen Bitwarden backup was not found"
+msgstr "La sauvegarde Bitwarden choisie est introuvable"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:77
+msgid "The chosen Bitwarden backup could not be read"
+msgstr "La sauvegarde Bitwarden choisie n’a pas pu être lue"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:80
+msgid "The chosen backup is not a valid sshPilot backup"
+msgstr "La sauvegarde choisie n’est pas une sauvegarde sshPilot valide"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:83
+msgid "Could not list backups on the SSH server"
+msgstr "Impossible d’obtenir la liste des sauvegardes sur le serveur SSH"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:86
+msgid "The chosen backup was not found on the SSH server"
+msgstr "La sauvegarde choisie est introuvable sur le serveur SSH"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:89
+msgid "The chosen backup could not be read from the SSH server"
+msgstr "La sauvegarde choisie n’a pas pu être lue depuis le serveur SSH"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:92
+msgid "Encryption password request timed out"
+msgstr "Délai dépassé pour la demande du mot de passe de chiffrement"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:94
+msgid "Encryption cancelled"
+msgstr "Chiffrement annulé"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:95
+msgid "Decryption cancelled"
+msgstr "Déchiffrement annulé"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:97
+msgid "Bitwarden did not save the backup note (is the vault unlocked?)"
+msgstr "Bitwarden n’a pas enregistré la note de sauvegarde (le coffre-fort est-il déverrouillé ?)"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:100
+msgid "Could not connect to the server."
+msgstr "Impossible de se connecter au serveur."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:103
+#, python-brace-format
+msgid "Cannot create or write to {directory} on the server."
+msgstr "Impossible de créer {directory} sur le serveur ou d’y écrire."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:106
+#, python-brace-format
+msgid "Not enough free space on the server: need ~{required}, only {available} available in {directory}."
+msgstr "Espace libre insuffisant sur le serveur : environ {required} requis, seulement {available} disponibles dans {directory}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:109
+msgid "Failed to write the backup to the server."
+msgstr "Échec de l’écriture de la sauvegarde sur le serveur."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:111
+msgid "Invalid JSON file."
+msgstr "Fichier JSON non valide."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:113
+msgid "Import data must be a JSON object"
+msgstr "Les données d’importation doivent être un objet JSON"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:116
+msgid "Missing 'version' field in import data"
+msgstr "Le champ 'version' manque dans les données d’importation"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:119
+#, python-brace-format
+msgid "Unsupported backup version: {version}"
+msgstr "Version de sauvegarde non prise en charge : {version}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:122
+#, python-brace-format
+msgid "Unsupported schema version: {version}"
+msgstr "Version de schéma non prise en charge : {version}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:125
+msgid "Missing 'app_config' field in import data"
+msgstr "Le champ 'app_config' manque dans les données d’importation"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:128
+msgid "'app_config' must be a JSON object"
+msgstr "'app_config' doit être un objet JSON"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:131
+msgid "connections must be a list"
+msgstr "Le champ « connections » doit être une liste"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:134
+msgid "Connection entry must be a mapping"
+msgstr "L’entrée de connexion doit être un objet associatif"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:137
+msgid "Connection nickname is required"
+msgstr "Le surnom de la connexion est requis"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:140
+msgid "Nickname cannot contain whitespace"
+msgstr "Le surnom ne peut pas contenir d’espace"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:143
+msgid "Failed to replace configuration."
+msgstr "Échec du remplacement de la configuration."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:146
+msgid "Failed to merge configuration."
+msgstr "Échec de la fusion de la configuration."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:149
+msgid "Could not restore non-SSH connections, groups, or metadata."
+msgstr "Impossible de restaurer les connexions non-SSH, les groupes ou les métadonnées."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:152
+msgid "The connection data in this backup uses an unsupported version and was skipped."
+msgstr "Les données de connexion de cette sauvegarde utilisent une version non prise en charge et ont été ignorées."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:155
+#, python-brace-format
+msgid "Could not restore connection {connection}."
+msgstr "Impossible de restaurer la connexion {connection}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:158
+#, python-brace-format
+msgid "Could not update connection {connection}."
+msgstr "Impossible de mettre à jour la connexion {connection}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:161
+#, python-brace-format
+msgid "Could not restore group {group}."
+msgstr "Impossible de restaurer le groupe {group}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:164
+#, python-brace-format
+msgid "Could not update group {group}."
+msgstr "Impossible de mettre à jour le groupe {group}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:167
+#, python-brace-format
+msgid "Could not remove group {group}."
+msgstr "Impossible de supprimer le groupe {group}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:170
+#, python-brace-format
+msgid "Could not order group {group}."
+msgstr "Impossible de définir l’ordre du groupe {group}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:173
+#, python-brace-format
+msgid "Could not remove stale group membership for {connection}."
+msgstr "Impossible de supprimer l’ancienne appartenance au groupe de {connection}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:176
+#, python-brace-format
+msgid "Connection {connection} referenced by a restored group was not found."
+msgstr "La connexion {connection} référencée par un groupe restauré est introuvable."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:179
+#, python-brace-format
+msgid "Root connection {connection} referenced by the backup was not found."
+msgstr "La connexion racine {connection} référencée par la sauvegarde est introuvable."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:182
+#, python-brace-format
+msgid "Metadata for unknown connection {connection} was skipped."
+msgstr "Les métadonnées de la connexion inconnue {connection} ont été ignorées."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:185
+#, python-brace-format
+msgid "Could not restore metadata for {connection}."
+msgstr "Impossible de restaurer les métadonnées de {connection}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:188
+#, python-brace-format
+msgid "Could not restore the display name for {connection}."
+msgstr "Impossible de restaurer le nom d’affichage de {connection}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:191
+#, python-brace-format
+msgid "Could not remove connection {connection}."
+msgstr "Impossible de supprimer la connexion {connection}."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:196
+msgid "app settings"
+msgstr "paramètres de l’application"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:197
+msgid "SSH config"
+msgstr "Configuration SSH"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:198
+msgid "known hosts"
+msgstr "hôtes connus"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:199
+msgid "credentials"
+msgstr "identifiants"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:209
+#, python-brace-format
+msgid "Most of it is {label} ({cost} character)."
+msgid_plural "Most of it is {label} ({cost} characters)."
+msgstr[0] "Partie la plus volumineuse : {label} ({cost} caractère)."
+msgstr[1] "Partie la plus volumineuse : {label} ({cost} caractères)."
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:215
+#, python-brace-format
+msgid "{count} SSH config file outside ~/.ssh was not included (system or shared file): {paths}"
+msgid_plural "{count} SSH config files outside ~/.ssh were not included (system or shared files): {paths}"
+msgstr[0] "{count} fichier de configuration SSH hors de ~/.ssh n’a pas été inclus (fichier système ou partagé) : {paths}"
+msgstr[1] "{count} fichiers de configuration SSH hors de ~/.ssh n’ont pas été inclus (fichiers système ou partagés) : {paths}"
+
+#: src/sshpilot/gtk/secret_transfer_messages.py:221
+#, python-brace-format
+msgid "{count} referenced key file was missing and not included: {paths}"
+msgid_plural "{count} referenced key files were missing and not included: {paths}"
+msgstr[0] "{count} fichier de clé référencé était introuvable et n’a pas été inclus : {paths}"
+msgstr[1] "{count} fichiers de clé référencés étaient introuvables et n’ont pas été inclus : {paths}"
+
+#: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:39
+msgid "name or id"
+msgstr "nom ou identifiant"
+
+#: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:47
+msgid "user or UID"
+msgstr "utilisateur ou UID"
+
+#: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:55
+msgid "A container name or id is required."
+msgstr "Un nom ou un identifiant de conteneur est requis."
+
+#: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:58
+msgid "Runtime must be docker or podman."
+msgstr "Le moteur d’exécution doit être docker ou podman."
+
+#: src/sshpilot/plugins/builtin/docker_protocol/__init__.py:62
+#: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:58
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:78
+#, python-brace-format
+msgid "{field} could not be parsed: {diagnostic}."
+msgstr "Impossible d’analyser {field} : {diagnostic}."
+
+#: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:38
+msgid "pod name"
+msgstr "nom du pod"
+
+#: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:40
+msgid "(default container)"
+msgstr "(conteneur par défaut)"
+
+#: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:44
+msgid "(current context)"
+msgstr "(contexte actuel)"
+
+#: src/sshpilot/plugins/builtin/kubernetes_protocol/__init__.py:54
+msgid "A pod name is required."
+msgstr "Un nom de pod est requis."
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:47
+msgid "hostname or IP address"
+msgstr "nom d’hôte ou adresse IP"
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:49
+msgid "(from ~/.ssh/config)"
+msgstr "(depuis ~/.ssh/config)"
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:56
+msgid "Adaptive (default)"
+msgstr "Adaptatif (par défaut)"
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:57
+msgid "Always"
+msgstr "Toujours"
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:58
+msgid "Never"
+msgstr "Jamais"
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:59
+msgid "Experimental"
+msgstr "Expérimental"
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:67
+msgid "A host is required."
+msgstr "Un hôte est requis."
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:72
+msgid "Port must be between 1 and 65535."
+msgstr "Le port doit être compris entre 1 et 65535."
+
+#: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:74
+msgid "Port must be a number."
+msgstr "Le port doit être un nombre."
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:68
+msgid "Hardware (RTS/CTS)"
+msgstr "Matériel (RTS/CTS)"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:69
+msgid "Software (XON/XOFF)"
+msgstr "Logiciel (XON/XOFF)"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:74
+msgid "Even"
+msgstr "Paire"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:75
+msgid "Odd"
+msgstr "Impaire"
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:83
+msgid "A serial device is required."
+msgstr "Un périphérique série est requis."
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:87
+msgid "Baud rate must be a positive number."
+msgstr "Le débit en bauds doit être un nombre positif."
+
+#: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:89
+msgid "Baud rate must be a number."
+msgstr "Le débit en bauds doit être un nombre."
+
+#: src/sshpilot/preferences.py:681
+msgid "Right-click pastes; Shift+right-click opens the menu. Disabled automatically while a remote app (htop, vim, tmux) is using the mouse."
+msgstr "Le clic droit colle ; Maj+clic droit ouvre le menu. Cette fonction est automatiquement désactivée lorsqu’une application distante (htop, vim, tmux) utilise la souris."
+
+#: src/sshpilot/preferences.py:948
+msgid "Apply the group's color to its connections and subgroups as well"
+msgstr "Appliquer également la couleur du groupe à ses connexions et sous-groupes"
+
+#: src/sshpilot/preferences.py:1811
+msgid "SSH Pilot uses its own SSH configuration, connections, folders and host keys. Saved passwords are shared."
+msgstr "SSH Pilot utilise sa propre configuration SSH, ses propres connexions, dossiers et clés d’hôte. Les mots de passe enregistrés sont partagés."
+
+#: src/sshpilot/preferences.py:3246
+msgid "Uses the rbw CLI + agent. github.com/doy/rbw"
+msgstr "Utilise la CLI et l’agent rbw. github.com/doy/rbw"
+
+#: src/sshpilot/preferences.py:3999
+msgid "Restart SSH Pilot?"
+msgstr "Redémarrer SSH Pilot ?"
+
+#: src/sshpilot/preferences.py:4001
+msgid "The operation mode has changed. Restart to open the new configuration cleanly; until then, tabs and editors still show the previous one."
+msgstr "Le mode de fonctionnement a changé. Redémarrez pour ouvrir proprement la nouvelle configuration ; d’ici là, les onglets et les éditeurs affichent encore la précédente."
+
+#: src/sshpilot/scp_window.py:40 src/sshpilot/sshcopyid_window.py:28
+msgid "The background service is shutting down."
+msgstr "Le service d’arrière-plan est en cours d’arrêt."
+
+#: src/sshpilot/scp_window.py:41 src/sshpilot/scp_window.py:341
+#: src/sshpilot/scp_window.py:1049
+msgid "The daemon transfer service is unavailable."
+msgstr "Le service de transfert du démon est indisponible."
+
+#: src/sshpilot/scp_window.py:42
+msgid "The daemon connection was closed."
+msgstr "La connexion au démon a été fermée."
+
+#: src/sshpilot/scp_window.py:43
+msgid "The daemon transfer request timed out."
+msgstr "Délai dépassé pour la demande de transfert du démon."
+
+#: src/sshpilot/scp_window.py:347
+msgid "Remote browsing requires the daemon SFTP service."
+msgstr "La navigation distante nécessite le service SFTP du démon."
+
+#: src/sshpilot/scp_window.py:1096
+msgid "The SCP transfer request is invalid."
+msgstr "La demande de transfert SCP n’est pas valide."
+
+#: src/sshpilot/scp_window.py:1100
+msgid "Upload files (SCP)"
+msgstr "Envoyer des fichiers (SCP)"
+
+#: src/sshpilot/scp_window.py:1102
+msgid "Download files (SCP)"
+msgstr "Télécharger des fichiers (SCP)"
+
+#: src/sshpilot/scp_window.py:1133
+msgid "Completed"
+msgstr "Terminé"
+
+#: src/sshpilot/scp_window.py:1135
+msgid "Cancelled"
+msgstr "Annulé"
+
+#: src/sshpilot/scp_window.py:1142
+#, python-brace-format
+msgid "Failed: {failure}"
+msgstr "Échec : {failure}"
+
+#: src/sshpilot/scp_window.py:1144
+msgid "Starting…"
+msgstr "Démarrage…"
+
+#: src/sshpilot/scp_window.py:1146
+msgid "Cancelling…"
+msgstr "Annulation…"
+
+#: src/sshpilot/scp_window.py:1149 src/sshpilot/text_editor.py:1462
+msgid "Uploading…"
+msgstr "Envoi…"
+
+#: src/sshpilot/scp_window.py:1151 src/sshpilot/text_editor.py:618
+msgid "Downloading…"
+msgstr "Téléchargement…"
+
+#: src/sshpilot/scp_window.py:1197
+msgid "Starting SCP transfer…"
+msgstr "Démarrage du transfert SCP…"
+
+#: src/sshpilot/scp_window.py:1225
+#, python-brace-format
+msgid "Transfer failed: {error}"
+msgstr "Échec du transfert : {error}"
+
+#: src/sshpilot/sidebar.py:3164
+msgid "Drop here to move to the top level"
+msgstr "Déposer ici pour déplacer au niveau supérieur"
+
+#: src/sshpilot/sidebar.py:4454
+msgid "Copy SSH Command"
+msgstr "Copier la commande SSH"
+
+#: src/sshpilot/sshcopyid_window.py:25
+msgid "The background service is busy. Try again shortly."
+msgstr "Le service d’arrière-plan est occupé. Réessayez dans un instant."
+
+#: src/sshpilot/sshcopyid_window.py:30
+msgid "The selected SSH key was not found."
+msgstr "La clé SSH sélectionnée est introuvable."
+
+#: src/sshpilot/sshcopyid_window.py:31 src/sshpilot/sshcopyid_window.py:33
+msgid "The public-key deployment request is invalid."
+msgstr "La demande de déploiement de clé publique n’est pas valide."
+
+#: src/sshpilot/terminal.py:148
+msgid "Nothing selected — the remote app is using the mouse; hold Shift while dragging to select text"
+msgstr "Aucun texte sélectionné — l’application distante utilise la souris ; maintenez Maj enfoncée pendant le glisser pour sélectionner du texte"
+
+#: src/sshpilot/terminal.py:151
+msgid "Nothing selected to copy"
+msgstr "Aucun élément sélectionné à copier"
+
+#: src/sshpilot/text_editor.py:61
+msgid "Edit as root is unavailable on this host."
+msgstr "La modification en tant que root est indisponible sur cet hôte."
+
+#: src/sshpilot/text_editor.py:64
+msgid "The sudo password was not accepted."
+msgstr "Le mot de passe sudo n’a pas été accepté."
+
+#: src/sshpilot/text_editor.py:67
+msgid "Your user isn't allowed to run sudo on this host."
+msgstr "Votre compte utilisateur n’est pas autorisé à exécuter sudo sur cet hôte."
+
+#: src/sshpilot/text_editor.py:70
+msgid "The remote file is too large to edit."
+msgstr "Le fichier distant est trop volumineux pour être modifié."
+
+#: src/sshpilot/text_editor.py:73
+msgid "The remote file changed or no longer exists."
+msgstr "Le fichier distant a été modifié ou n’existe plus."
+
+#: src/sshpilot/text_editor.py:76
+msgid "The remote file could not be replaced."
+msgstr "Le fichier distant n’a pas pu être remplacé."
+
+#: src/sshpilot/text_editor.py:79
+msgid "The privileged remote operation failed."
+msgstr "L’opération distante privilégiée a échoué."
+
+#: src/sshpilot/text_editor.py:82
+msgid "The SSH command could not be started."
+msgstr "La commande SSH n’a pas pu être démarrée."
+
+#: src/sshpilot/text_editor.py:84
+msgid "The privileged operation timed out."
+msgstr "Délai de l’opération privilégiée dépassé."
+
+#: src/sshpilot/text_editor.py:85
+msgid "The privileged operation was cancelled."
+msgstr "L’opération privilégiée a été annulée."
+
+#: src/sshpilot/text_editor.py:89
+msgid "Failed to read file as root"
+msgstr "Échec de la lecture du fichier en tant que root"
+
+#: src/sshpilot/text_editor.py:90
+msgid "Failed to save file as root"
+msgstr "Échec de l’enregistrement du fichier en tant que root"
+
+#: src/sshpilot/text_editor.py:112
+msgid "Failed to download file"
+msgstr "Échec du téléchargement du fichier"
+
+#: src/sshpilot/text_editor.py:114
+msgid "Failed to save file"
+msgstr "Échec de l’enregistrement du fichier"
+
+#: src/sshpilot/text_editor.py:1378
+#, python-brace-format
+msgid "Failed to save file: {error}"
+msgstr "Échec de l’enregistrement du fichier : {error}"
+
+#: src/sshpilot/text_editor.py:1421
+msgid "Saved successfully"
+msgstr "Enregistrement réussi"
+
+#: src/sshpilot/text_editor.py:1447 src/sshpilot/text_editor.py:1513
+#: src/sshpilot/text_editor.py:1587
+msgid "Permission denied — try “Edit as root”."
+msgstr "Permission refusée — essayez « Modifier en tant que root »."
+
+#: src/sshpilot/text_editor.py:1486
+msgid "Uploaded successfully"
+msgstr "Envoi réussi"
+
+#: src/sshpilot/text_editor.py:1517
+#, python-brace-format
+msgid "Upload failed: {error}"
+msgstr "Échec de l’envoi : {error}"
+
+#: src/sshpilot/text_editor.py:1618
+msgid "Discard changes?"
+msgstr "Abandonner les modifications ?"
+
+#: src/sshpilot/text_editor.py:1620
+msgid "Editing as root re-reads the file from the host and discards your unsaved changes."
+msgstr "La modification en tant que root relit le fichier depuis l’hôte et ignore vos modifications non enregistrées."
+
+#: src/sshpilot/text_editor.py:1645
+msgid "Reading as root…"
+msgstr "Lecture en tant que root…"
+
+#: src/sshpilot/text_editor.py:1678
+msgid "The remote file no longer exists."
+msgstr "Le fichier distant n’existe plus."
+
+#: src/sshpilot/text_editor.py:1691
+msgid "Editing as root"
+msgstr "Modification en tant que root"
+
+#: src/sshpilot/window.py:7056
+msgid "SSH command copied"
+msgstr "Commande SSH copiée"
+
+#: src/sshpilot/window.py:7065 src/sshpilot/window.py:7071
+msgid "SSH command unavailable"
+msgstr "Commande SSH indisponible"
+
+#: src/sshpilot/window.py:7066
+msgid "This daemon cannot prepare the SSH command for this connection."
+msgstr "Ce démon ne peut pas préparer la commande SSH de cette connexion."
+
+#: src/sshpilot/window.py:7072
+msgid "The SSH command for this connection could not be prepared."
+msgstr "La commande SSH de cette connexion n’a pas pu être préparée."
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
+msgid "Improvements to isolated workspace mode"
+msgstr "Améliorations du mode isolé"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:72
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:78
+msgid "Middle-click a group to open all connections in splitview"
+msgstr "Clic avec le bouton central sur un groupe pour ouvrir toutes les connexions dans une vue scindée"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:83
+msgid "Improvements to non-SSH protocol plugins"
+msgstr "Améliorations des greffons de protocoles non-SSH"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:84
+msgid "Fixes text selection when using remote apps such as tmux and htop"
+msgstr "Correction de la sélection de texte lors de l’utilisation d’applications distantes telles que tmux et htop"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:85
+msgid "Fixes SFTP File Manager retry/reconnect flow"
+msgstr "Correction du processus de nouvelle tentative et de reconnexion du gestionnaire de fichiers SFTP"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
+msgid "New \"Copy SSH Command\" context-menu action"
+msgstr "Nouvelle action « Copier la commande SSH » dans le menu contextuel"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:91
+msgid "Fixes rbw secret backend"
+msgstr "Correction de la méthode de stockage des secrets rbw"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:92
+msgid "Other bug fixes and improvements"
+msgstr "Corrections de bogues et autres améliorations"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:97
+msgid "Fixed Bitwarden login issue"
+msgstr "Correction d’un problème d’authentification Bitwarden"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:102
+msgid "Faster startup"
+msgstr "Démarrage plus rapide"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:103
+msgid "Vault unlock prompt now displayed on startup"
+msgstr "Affichage de la demande de déverrouillage du coffre-fort au démarrage"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:104
+msgid "Privacy toggle hides hostnames and IP addresses in start page too"
+msgstr "Le réglage de confidentialité masque également les noms d’hôte et les adresses IP sur la page d’accueil"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:109
+msgid "Fixed subgroups not inheriting parent group color"
+msgstr "Correction de l’absence d’héritage de la couleur du groupe parent par les sous-groupes"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:110
+msgid "Added option to remember passwords to password prompts"
+msgstr "Ajout d’une option de mémorisation des mots de passe dans les demandes de mot de passe"
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:111
+msgid "Minor fixes to DnD in sidebar"
+msgstr "Corrections mineures du glisser-déposer dans la barre latérale"
