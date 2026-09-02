@@ -2439,18 +2439,19 @@ class FilePane(Gtk.Box):
         # Apply sorting to get final entries
         sorted_entries = self._sort_entries(self._raw_entries)
 
-        # Update the list store. Names are sanitised on the way in because GTK
-        # cannot encode the lone surrogates os.scandir() hands back for local
-        # files whose bytes are not valid UTF-8. A row GTK still refuses is
-        # dropped from both the store and ``self._entries`` so the two stay
-        # index-aligned -- one bad entry must never blank the whole pane.
-        self._list_store.remove_all()
+        # Build the row objects first. Names are sanitised on the way in
+        # because GTK cannot encode the lone surrogates os.scandir() hands back
+        # for local files whose bytes are not valid UTF-8. A row GTK still
+        # refuses is dropped from both the store and ``self._entries`` so the
+        # two stay index-aligned -- one bad entry must never blank the whole
+        # pane.
+        row_objects: List[Gtk.StringObject] = []
         shown_entries: List[FileEntry] = []
         restored_selection: List[int] = []
         for entry in sorted_entries:
             suffix = "/" if entry.is_dir else ""
             try:
-                self._list_store.append(
+                row_objects.append(
                     Gtk.StringObject.new(safe_display_text(entry.name) + suffix)
                 )
             except Exception as exc:
@@ -2459,7 +2460,18 @@ class FilePane(Gtk.Box):
             if preserve_selection and entry.name in selected_names:
                 restored_selection.append(len(shown_entries))
             shown_entries.append(entry)
+
+        # ``self._entries`` must be current *before* the store changes: GTK
+        # binds the new rows synchronously from inside the store mutation and
+        # the cell factories resolve each row's metadata through
+        # ``self._entries[position]``. Publishing the store first would bind the
+        # new listing against the previous directory's entries, painting rows
+        # that name files which are not there (they only correct themselves on
+        # the next rebuild, i.e. after a manual reload).
         self._entries = shown_entries
+        # One splice instead of remove_all() + N appends, so the view sees a
+        # single items-changed for the whole listing.
+        self._list_store.splice(0, self._list_store.get_n_items(), row_objects)
 
         self._selection_model.unselect_all()
         self._selection_anchor = None

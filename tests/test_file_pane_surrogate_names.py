@@ -41,11 +41,17 @@ class FakeListStore:
     def __init__(self):
         self.items = []
 
+    def get_n_items(self):
+        return len(self.items)
+
     def remove_all(self):
         self.items = []
 
     def append(self, item):
         self.items.append(item)
+
+    def splice(self, position, n_removals, additions):
+        self.items[position:position + n_removals] = list(additions)
 
 
 class FakeSelectionModel:
