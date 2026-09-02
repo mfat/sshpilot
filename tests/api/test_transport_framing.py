@@ -226,3 +226,28 @@ def test_update_command_fields_envelope_round_trip():
 
     assert decode_envelope(encode_envelope(request)) == request
 
+
+def test_surrogate_escaped_local_paths_survive_a_round_trip():
+    """A local filename whose bytes are not valid UTF-8 reaches the daemon intact.
+
+    ``os.scandir`` hands such names back surrogate-escaped, so the frontend has
+    no valid-UTF-8 spelling of the path to send; strict encoding made those
+    files impossible to transfer at all (issue #1235).
+    """
+    bad_path = "/home/user/\udce5\udcb1 broken.txt"
+    request = RequestEnvelope(
+        protocol_version="1.0",
+        request_id="request-1",
+        method="sftp.upload",
+        params={"local_path": bad_path},
+        client_id="client-1",
+    )
+
+    decoded = FrameDecoder().feed(encode_frame(encode_envelope(request)))
+
+    assert decoded == [encode_envelope(request)]
+    assert decoded[0]["params"]["local_path"] == bad_path
+    # The bytes on the wire are the file's real name once the escape is undone.
+    assert bad_path.encode("utf-8", "surrogateescape").endswith(
+        b"\xe5\xb1 broken.txt"
+    )

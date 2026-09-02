@@ -57,6 +57,7 @@ from .file_manager import (
     _HAS_ALERT_DIALOG,
     _load_first_doc_path,
     _load_grant_for_host,
+    safe_display_text,
 )
 
 import logging
@@ -823,6 +824,7 @@ class FileManagerWindow(Adw.Window):
             return
 
         from .file_manager.pane import present_error_alert, toast_overflows
+        message = safe_display_text(message)
         if toast_overflows(message):
             present_error_alert(self._toast_overlay, message)
             return
@@ -880,7 +882,9 @@ class FileManagerWindow(Adw.Window):
                         message or "Connection failed",
                     )
                 elif hasattr(self, '_toast_overlay') and self._toast_overlay:
-                    toast = Adw.Toast.new(message or "Connection failed")
+                    toast = Adw.Toast.new(
+                        safe_display_text(message) or "Connection failed"
+                    )
                     toast.set_priority(Adw.ToastPriority.HIGH)
                     self._toast_overlay.add_toast(toast)
             except (AttributeError, RuntimeError, GLib.Error, TypeError) as exc:
@@ -1223,7 +1227,7 @@ class FileManagerWindow(Adw.Window):
             total_count = len(files_to_transfer)
 
             if conflict_count == 1:
-                filename = os.path.basename(conflicts[0][1])
+                filename = safe_display_text(os.path.basename(conflicts[0][1]))
                 title = "File Already Exists"
                 message = f"'{filename}' already exists in the destination folder."
             else:
@@ -1610,9 +1614,12 @@ class FileManagerWindow(Adw.Window):
             source = posixpath.join(base_dir, entry.name)
             join = posixpath.join
 
-        dialog = Adw.AlertDialog.new("Rename Item", f"Enter a new name for {entry.name}")
+        display_name = safe_display_text(entry.name)
+        dialog = Adw.AlertDialog.new(
+            "Rename Item", f"Enter a new name for {display_name}"
+        )
         name_entry = Gtk.Entry()
-        name_entry.set_text(entry.name)
+        name_entry.set_text(display_name)
         dialog.set_extra_child(name_entry)
         dialog.add_response("cancel", _("Cancel"))
         dialog.add_response("ok", _("Rename"))
@@ -1685,7 +1692,7 @@ class FileManagerWindow(Adw.Window):
 
         count = len(entries)
         if count == 1:
-            message = f"Delete {entries[0].name}?"
+            message = f"Delete {safe_display_text(entries[0].name)}?"
             title = "Delete Item"
         else:
             message = f"Delete {count} items?"

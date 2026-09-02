@@ -27,7 +27,10 @@ class FramingError(Exception):
 
 def _decode_payload(payload: bytes) -> Dict[str, Any]:
     try:
-        text = payload.decode("utf-8")
+        # ``surrogatepass`` mirrors encode_frame(): it restores the lone
+        # surrogates that carry filesystem bytes which are not valid UTF-8.
+        # Any other malformed sequence still raises.
+        text = payload.decode("utf-8", "surrogatepass")
     except UnicodeDecodeError:
         raise FramingError(
             ErrorCode.INVALID_FRAME,
@@ -53,6 +56,11 @@ def encode_frame(message: Dict[str, Any], *, max_size: int = MAX_FRAME_SIZE) -> 
 
     if type(message) is not dict:
         raise TypeError("transport message must be a dictionary")
+    # ``surrogatepass``: local paths can contain lone surrogates, because
+    # os.scandir() decodes undecodable filesystem bytes with
+    # ``surrogateescape``. Strict UTF-8 refuses those, which would make a file
+    # whose name is not valid UTF-8 impossible to transfer. _decode_payload()
+    # restores them byte-for-byte on the other end.
     try:
         payload = json.dumps(
             message,
@@ -60,7 +68,7 @@ def encode_frame(message: Dict[str, Any], *, max_size: int = MAX_FRAME_SIZE) -> 
             separators=(",", ":"),
             sort_keys=True,
             allow_nan=False,
-        ).encode()
+        ).encode("utf-8", "surrogatepass")
     except (TypeError, ValueError, RecursionError):
         raise FramingError(
             ErrorCode.INVALID_FRAME,

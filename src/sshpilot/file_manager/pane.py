@@ -32,7 +32,7 @@ from .portal_docs import (
 )
 from .properties_dialog import PropertiesDialog
 from .common import FileEntry
-from .format_utils import _human_time, _item_count_text
+from .format_utils import _human_time, _item_count_text, safe_display_text
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,8 @@ def toast_overflows(text: str) -> bool:
 
 def present_error_alert(anchor: Gtk.Widget, text: str) -> None:
     """Show *text* in an alert dialog on *anchor*'s root window."""
+    # Error text often embeds a path, which may not be valid UTF-8.
+    text = safe_display_text(text)
     try:
         if hasattr(Adw, "AlertDialog"):
             dialog = Adw.AlertDialog(heading=_("Error"), body=text)
@@ -778,7 +780,7 @@ class FilePane(Gtk.Box):
             set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
-        display_name = entry.name + ("/" if entry.is_dir else "")
+        display_name = safe_display_text(entry.name) + ("/" if entry.is_dir else "")
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
         from ..icon_utils import set_icon_from_name
@@ -890,7 +892,7 @@ class FilePane(Gtk.Box):
             set_icon_from_name(icon, self._resolve_entry_icon(raw_name, is_dir))
             return
 
-        display_name = entry.name + ("/" if entry.is_dir else "")
+        display_name = safe_display_text(entry.name) + ("/" if entry.is_dir else "")
         name_label.set_text(display_name)
         name_label.set_tooltip_text(display_name)
         text = self._size_column_text(entry)
@@ -2019,7 +2021,7 @@ class FilePane(Gtk.Box):
 
     def _set_current_pathbar_text(self, path: str) -> None:
         """Set the path bar text with human-friendly display formatting."""
-        display_path = _pretty_path_for_display(path)
+        display_path = safe_display_text(_pretty_path_for_display(path))
         self.toolbar.path_entry.set_text(display_path)
 
     @staticmethod
@@ -2050,11 +2052,11 @@ class FilePane(Gtk.Box):
             modified_text = "Unknown"
 
         return {
-            "name": entry.name,
+            "name": safe_display_text(entry.name),
             "type": entry_type,
             "size": size_text,
             "modified": modified_text,
-            "location": location,
+            "location": safe_display_text(location),
         }
 
     def _is_text_file(self, entry: FileEntry) -> bool:
@@ -2353,7 +2355,9 @@ class FilePane(Gtk.Box):
         """Swap the file view for an error message + Retry pill after a
         failed directory load."""
         self._load_error_path = path
-        self._load_error_label.set_text(message or "Failed to load directory")
+        self._load_error_label.set_text(
+            safe_display_text(message) or "Failed to load directory"
+        )
         current = self._stack.get_visible_child_name()
         if current not in ("load-error", "connecting"):
             self._pre_error_view = current
@@ -2362,7 +2366,9 @@ class FilePane(Gtk.Box):
 
     def show_connecting(self, message: str) -> None:
         """Show a spinner + status message while connecting."""
-        self._connecting_label.set_text(message or "Connecting…")
+        self._connecting_label.set_text(
+            safe_display_text(message) or "Connecting…"
+        )
         current = self._stack.get_visible_child_name()
         if current not in ("load-error", "connecting"):
             self._pre_error_view = current
@@ -2372,7 +2378,7 @@ class FilePane(Gtk.Box):
     def set_connecting_status(self, message: str) -> None:
         """Update the status line of the connecting view (if showing)."""
         if self._stack.get_visible_child_name() == "connecting":
-            self._connecting_label.set_text(message)
+            self._connecting_label.set_text(safe_display_text(message))
 
     def _clear_load_error(self) -> None:
         if self._stack.get_visible_child_name() in ("load-error", "connecting"):
@@ -2430,16 +2436,29 @@ class FilePane(Gtk.Box):
         ]
 
         # Apply sorting to get final entries
-        self._entries = self._sort_entries(self._raw_entries)
-        
-        # Update the list store
+        sorted_entries = self._sort_entries(self._raw_entries)
+
+        # Update the list store. Names are sanitised on the way in because GTK
+        # cannot encode the lone surrogates os.scandir() hands back for local
+        # files whose bytes are not valid UTF-8. A row GTK still refuses is
+        # dropped from both the store and ``self._entries`` so the two stay
+        # index-aligned -- one bad entry must never blank the whole pane.
         self._list_store.remove_all()
+        shown_entries: List[FileEntry] = []
         restored_selection: List[int] = []
-        for idx, entry in enumerate(self._entries):
+        for entry in sorted_entries:
             suffix = "/" if entry.is_dir else ""
-            self._list_store.append(Gtk.StringObject.new(entry.name + suffix))
+            try:
+                self._list_store.append(
+                    Gtk.StringObject.new(safe_display_text(entry.name) + suffix)
+                )
+            except Exception as exc:
+                logger.debug("Skipping undisplayable entry %r: %s", entry.name, exc)
+                continue
             if preserve_selection and entry.name in selected_names:
-                restored_selection.append(idx)
+                restored_selection.append(len(shown_entries))
+            shown_entries.append(entry)
+        self._entries = shown_entries
 
         self._selection_model.unselect_all()
         self._selection_anchor = None
@@ -3015,6 +3034,9 @@ class FilePane(Gtk.Box):
 
     def show_toast(self, text: str, timeout: int = -1) -> None:
         """Show a toast; messages too long for a toast escalate to an alert."""
+        # Messages routinely embed a filename or path, which on the local side
+        # may not be valid UTF-8; GTK refuses to encode those.
+        text = safe_display_text(text)
         if toast_overflows(text):
             # ponytail: long toasts are always errors today; revisit if a
             # long informational toast ever appears.
