@@ -16,7 +16,13 @@ import logging
 from .exceptions import TransferCancelledException
 
 logger = logging.getLogger(__name__)
-from .format_utils import _human_size, _human_time, _mode_to_octal, _mode_to_str
+from .format_utils import (
+    _human_size,
+    _human_time,
+    _mode_to_octal,
+    _mode_to_str,
+    safe_display_text,
+)
 from .pane import (
     FilePane,
     _DEFAULT_ICON_LEVEL,
@@ -145,6 +151,7 @@ __all__ = [
     "_save_doc",
     "_sftp_path_exists",
     "create_file_manager_backend",
+    "safe_display_text",
     "stat_isdir",
     "walk_remote",
 ]

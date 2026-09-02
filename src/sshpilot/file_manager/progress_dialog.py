@@ -16,6 +16,8 @@ from typing import Optional
 
 from gi.repository import Adw, GLib, Gtk, Pango
 
+from .format_utils import safe_display_text
+
 
 logger = logging.getLogger(__name__)
 
@@ -264,8 +266,8 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             )
 
         if filename:
-            self.current_file = filename
-            self.file_label.set_text(filename)
+            self.current_file = safe_display_text(filename)
+            self.file_label.set_text(self.current_file)
 
     def set_paths(self, source: Optional[str] = None,
                   destination: Optional[str] = None) -> None:
@@ -275,10 +277,12 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         full untruncated path is exposed as a tooltip on hover.
         """
         if source:
+            source = safe_display_text(source)
             self.source_label.set_text(_("From: {path}").format(path=source))
             self.source_label.set_tooltip_text(source)
             self.source_label.set_visible(True)
         if destination:
+            destination = safe_display_text(destination)
             self.dest_label.set_text(_("To: {path}").format(path=destination))
             self.dest_label.set_tooltip_text(destination)
             self.dest_label.set_visible(True)
@@ -370,10 +374,10 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         if fraction is not None:
             self._latest_fraction = fraction
         if message:
-            self._latest_message = message
+            self._latest_message = safe_display_text(message)
         if current_file:
-            self.current_file = current_file
-            self._latest_file = current_file
+            self.current_file = safe_display_text(current_file)
+            self._latest_file = self.current_file
         return False
 
     def on_bytes(self, transferred: int, total: int) -> None:

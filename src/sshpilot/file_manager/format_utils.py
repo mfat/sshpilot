@@ -78,3 +78,31 @@ def _mode_to_octal(mode: int) -> str:
     # Extract only the permission bits (last 9 bits)
     perm_bits = mode & 0o777
     return oct(perm_bits)[2:]  # Remove '0o' prefix
+
+
+def safe_display_text(value: str) -> str:
+    """Return *value* with un-encodable lone surrogates replaced by U+FFFD.
+
+    Names read from the local filesystem come back surrogate-escaped when their
+    bytes are not valid UTF-8 (``os.scandir`` decodes with ``surrogateescape``).
+    PyGObject encodes every Python string to UTF-8 for the C call and raises
+    ``UnicodeEncodeError`` on surrogates, so a single badly-encoded filename
+    would otherwise take down a whole directory listing.  Every string handed to
+    GTK/Pango must pass through here; callers keep the original value for
+    filesystem operations.
+    """
+
+    if not isinstance(value, str):
+        return value
+    try:
+        value.encode("utf-8")
+        return value
+    except UnicodeEncodeError:
+        pass
+    try:
+        return value.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+    except UnicodeEncodeError:
+        # Surrogates outside the 0xDC80-0xDCFF range the escape handler covers.
+        return "".join(
+            "�" if "\ud800" <= char <= "\udfff" else char for char in value
+        )
