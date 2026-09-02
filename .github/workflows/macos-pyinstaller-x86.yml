@@ -27,6 +27,40 @@ jobs:
       - name: Install Homebrew dependencies
         run: |
           brew update
+
+          # Homebrew returns 1 when ANY formula's post-install step fails, even
+          # though every formula installed fine. On Intel that now bites us:
+          # formulae without an Intel bottle get built from source as
+          # dependencies, and openssl@3 3.6.4's post-install (symlinking the
+          # ca-certificates bundle into etc/openssl@3) fails on this runner.
+          # Treat "installed, but a post-install step failed" as a warning and
+          # keep going; a formula that genuinely did not install still fails.
+          brew_install() {
+            local args=("$@") formulae=() f log
+            for f in "${args[@]}"; do
+              case "$f" in -*) ;; *) formulae+=("$f") ;; esac
+            done
+            if brew install "${args[@]}"; then
+              return 0
+            fi
+            echo "::warning::brew install exited non-zero - checking whether the formulae landed"
+            for log in "$HOME"/Library/Logs/Homebrew/*/post_install*; do
+              [ -f "$log" ] || continue
+              echo "--- $log ---"
+              tail -n 40 "$log"
+            done
+            # Most likely culprit: the CA bundle post-install. Re-run it in
+            # dependency order; harmless when it was not the problem.
+            brew postinstall ca-certificates || true
+            brew postinstall openssl@3 || true
+            for f in "${formulae[@]}"; do
+              if ! brew list --versions "$f" >/dev/null 2>&1; then
+                echo "::error::$f is not installed"
+                return 1
+              fi
+            done
+            echo "All requested formulae are installed; continuing."
+          }
           
           # Forcefully unlink any conflicting brew versions
           for v in 3.14 3.13 3.12 3.11 3.10; do
@@ -50,20 +84,22 @@ jobs:
           #   pygobject3 (3.58+)   a direct dependency of the app
           #
           # appstream has to be built BEFORE the bulk install below, because
-          # resolving libadwaita is what drags it in. Everything else in the
-          # closure is still bottled for Intel (including both of these
-          # formulae's own build deps), so only these two compile from source.
+          # resolving libadwaita is what drags it in. Other formulae in the
+          # closure that lost their Intel bottle (openssl@3 3.6.4, pcre2 10.48)
+          # do get built from source on their own when pulled in as
+          # dependencies -- slow, but it works; these two are the ones brew
+          # refuses outright when asked for directly.
           # Re-check with `brew info --json=v2 <formula>` when a new one breaks:
           # the tell is a bottle list with arm64_* and x86_64_linux but no
           # plain sequoia/sonoma tag.
-          brew install --overwrite --build-from-source appstream
+          brew_install --overwrite --build-from-source appstream
 
           # Install with overwrite flag to prevent linking errors.
-          brew install --overwrite python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
+          brew_install --overwrite python@3.13 gtk4 libadwaita vte3 gtksourceview5 \
             adwaita-icon-theme gobject-introspection py3cairo \
             create-dmg sshpass
 
-          brew install --overwrite --build-from-source pygobject3
+          brew_install --overwrite --build-from-source pygobject3
           brew unlink python@3.14 2>/dev/null || true
           brew link --overwrite --force python@3.13
           brew link --overwrite libadwaita
