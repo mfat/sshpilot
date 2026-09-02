@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from sshpilot.api.errors import ErrorCode
 from sshpilot.api.events import CoreEvent, EventType
 from sshpilot.api.models.common import (
     AttachmentId,
@@ -17,6 +18,8 @@ from sshpilot.api.models.sessions import (
     CloseSessionRequest,
     DetachSessionRequest,
     OpenSessionRequest,
+    PluginSessionFailure,
+    PluginSessionFailureCode,
     SessionCapabilities,
     SessionExitInfo,
     SessionFailure,
@@ -130,6 +133,85 @@ def test_session_summary_codec_round_trip_includes_safe_failure_and_exit():
     }
     assert "command" not in repr(encoded)
     assert "environment" not in repr(encoded)
+    assert encoded["failure"] == {
+        "code": "session_startup_failed",
+        "message": "The session could not start",
+    }
+    assert "kind" not in encoded["failure"]
+
+
+def test_plugin_session_failure_codec_round_trip_is_discriminated():
+    summary = replace(
+        _summary(SessionState.FAILED),
+        failure=PluginSessionFailure(
+            code=PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED,
+            error_code=ErrorCode.SESSION_STARTUP_FAILED,
+            parameters={
+                "fallback_program": "screen",
+                "preferred_program": "picocom",
+                "databits": "5",
+            },
+            diagnostic="opaque parser detail",
+        ),
+    )
+
+    encoded = session_summary_to_wire(summary)
+    decoded = session_summary_from_wire(encoded)
+
+    assert decoded == summary
+    assert encoded["failure"] == {
+        "kind": "plugin_launch",
+        "code": "serial_screen_databits_unsupported",
+        "error_code": "session_startup_failed",
+        "parameters": {
+            "fallback_program": "screen",
+            "preferred_program": "picocom",
+            "databits": "5",
+        },
+        "diagnostic": "opaque parser detail",
+    }
+    assert "message" not in encoded["failure"]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        {
+            "kind": "unknown",
+            "code": "container_required",
+            "error_code": "session_startup_failed",
+            "parameters": {},
+            "diagnostic": "",
+        },
+        {
+            "kind": "plugin_launch",
+            "code": "unknown",
+            "error_code": "session_startup_failed",
+            "parameters": {},
+            "diagnostic": "",
+        },
+        {
+            "kind": "plugin_launch",
+            "code": "container_required",
+            "error_code": "session_startup_failed",
+            "parameters": {"unexpected": "value"},
+            "diagnostic": "",
+        },
+        {
+            "kind": "plugin_launch",
+            "code": "container_required",
+            "error_code": "session_startup_failed",
+            "parameters": {},
+            "diagnostic": {"not": "text"},
+        },
+    ],
+)
+def test_plugin_session_failure_codec_rejects_unknown_or_invalid_payload(failure):
+    encoded = session_summary_to_wire(_summary())
+    encoded["failure"] = failure
+
+    with pytest.raises((TypeError, ValueError)):
+        session_summary_from_wire(encoded)
 
 
 def test_session_response_codec_rejects_malformed_session_id():
@@ -199,6 +281,40 @@ def test_session_event_codec_round_trip_is_typed(event_type, payload):
     assert decoded.payload == payload
     assert decoded.sequence == 41
     assert decoded.session_id == summary.id
+
+
+def test_plugin_session_failure_round_trips_through_session_event():
+    summary = replace(
+        _summary(SessionState.FAILED),
+        failure=PluginSessionFailure(
+            code=PluginSessionFailureCode.MOSH_PREPARATION_FAILED,
+            error_code=ErrorCode.SESSION_STARTUP_FAILED,
+            diagnostic="opaque native command detail",
+        ),
+    )
+    event = CoreEvent(
+        type=EventType.SESSION_STATE_CHANGED,
+        payload=summary,
+        sequence=0,
+        connection_id=summary.connection_id,
+        session_id=summary.id,
+    )
+
+    envelope = public_event_to_envelope(
+        event,
+        sequence=42,
+        protocol_version="1.0",
+    )
+    decoded = public_event_from_envelope(envelope)
+
+    assert envelope.payload["failure"] == {
+        "kind": "plugin_launch",
+        "code": "mosh_preparation_failed",
+        "error_code": "session_startup_failed",
+        "parameters": {},
+        "diagnostic": "opaque native command detail",
+    }
+    assert decoded.payload == summary
 
 
 def test_session_event_name_payload_mismatch_and_internal_object_are_rejected():

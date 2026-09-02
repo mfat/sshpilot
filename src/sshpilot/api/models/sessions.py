@@ -3,7 +3,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import FrozenSet, Optional
+from types import MappingProxyType
+from typing import FrozenSet, Mapping, Optional, Union
+
+from ..errors import ErrorCode
 
 from .common import (
     AttachmentId,
@@ -93,6 +96,127 @@ class SessionFailure:
         require_identifier(self.message, "session failure message")
 
 
+class PluginSessionFailureCode(str, Enum):
+    """Stable presentation reasons for built-in plugin launch failures."""
+
+    CONTAINER_REQUIRED = "container_required"
+    CONTAINER_RUNTIME_UNAVAILABLE = "container_runtime_unavailable"
+    POD_REQUIRED = "pod_required"
+    KUBECTL_UNAVAILABLE = "kubectl_unavailable"
+    MOSH_UNAVAILABLE = "mosh_unavailable"
+    HOST_REQUIRED = "host_required"
+    MOSH_PREPARATION_FAILED = "mosh_preparation_failed"
+    ARGUMENTS_INVALID = "arguments_invalid"
+    SERIAL_DEVICE_REQUIRED = "serial_device_required"
+    SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED = (
+        "serial_screen_hardware_flow_unsupported"
+    )
+    SERIAL_SCREEN_DATABITS_UNSUPPORTED = "serial_screen_databits_unsupported"
+    SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED = (
+        "serial_screen_hardware_flow_and_databits_unsupported"
+    )
+    SERIAL_PROGRAMS_UNAVAILABLE = "serial_programs_unavailable"
+
+
+_PLUGIN_SESSION_FAILURE_PARAMETER_KEYS = {
+    code: frozenset() for code in PluginSessionFailureCode
+}
+_PLUGIN_SESSION_FAILURE_PARAMETER_KEYS.update(
+    {
+        PluginSessionFailureCode.CONTAINER_RUNTIME_UNAVAILABLE: frozenset(
+            {"runtime"}
+        ),
+        PluginSessionFailureCode.KUBECTL_UNAVAILABLE: frozenset({"program"}),
+        PluginSessionFailureCode.MOSH_UNAVAILABLE: frozenset(
+            {"client_program", "server_program"}
+        ),
+        PluginSessionFailureCode.ARGUMENTS_INVALID: frozenset({"field"}),
+        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED: frozenset(
+            {"fallback_program", "preferred_program", "flow"}
+        ),
+        PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED: frozenset(
+            {"fallback_program", "preferred_program", "databits"}
+        ),
+        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED: frozenset(
+            {"fallback_program", "preferred_program", "flow", "databits"}
+        ),
+        PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE: frozenset(
+            {"preferred_program", "fallback_program"}
+        ),
+    }
+)
+
+
+@dataclass(frozen=True)
+class PluginSessionFailure:
+    """One localizable built-in plugin launch failure and opaque diagnostic."""
+
+    code: PluginSessionFailureCode
+    error_code: ErrorCode
+    parameters: Mapping[str, str] = field(default_factory=dict)
+    diagnostic: str = ""
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, PluginSessionFailureCode):
+            raise TypeError("plugin session failure code is invalid")
+        if self.error_code is not ErrorCode.SESSION_STARTUP_FAILED:
+            raise ValueError(
+                "plugin session failure error code must be session_startup_failed"
+            )
+        if not isinstance(self.parameters, Mapping):
+            raise TypeError("plugin session failure parameters must be a mapping")
+        parameters = dict(self.parameters)
+        if set(parameters) != _PLUGIN_SESSION_FAILURE_PARAMETER_KEYS[self.code]:
+            raise ValueError(
+                "plugin session failure parameters do not match the failure code"
+            )
+        if any(
+            type(value) is not str or not value or "\x00" in value
+            for value in parameters.values()
+        ):
+            raise ValueError(
+                "plugin session failure parameters must be non-empty strings"
+            )
+        if self.code is PluginSessionFailureCode.CONTAINER_RUNTIME_UNAVAILABLE:
+            if parameters["runtime"] not in {"docker", "podman"}:
+                raise ValueError("plugin session failure runtime is invalid")
+        if self.code is PluginSessionFailureCode.KUBECTL_UNAVAILABLE:
+            if parameters["program"] != "kubectl":
+                raise ValueError("plugin session failure program is invalid")
+        if self.code is PluginSessionFailureCode.MOSH_UNAVAILABLE:
+            if parameters != {
+                "client_program": "mosh",
+                "server_program": "mosh-server",
+            }:
+                raise ValueError("plugin session failure Mosh programs are invalid")
+        if self.code is PluginSessionFailureCode.ARGUMENTS_INVALID:
+            if parameters["field"] not in {"command", "extra_ssh_opts"}:
+                raise ValueError("plugin session failure field is invalid")
+        if self.code in {
+            PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED,
+            PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED,
+            PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED,
+            PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE,
+        }:
+            if (
+                parameters["fallback_program"] != "screen"
+                or parameters["preferred_program"] != "picocom"
+            ):
+                raise ValueError("plugin session failure serial programs are invalid")
+        if "flow" in parameters and parameters["flow"] != "RTS/CTS":
+            raise ValueError("plugin session failure flow control is invalid")
+        if "databits" in parameters and parameters["databits"] not in {"5", "6"}:
+            raise ValueError("plugin session failure data bits are invalid")
+        if type(self.diagnostic) is not str or "\x00" in self.diagnostic:
+            raise ValueError(
+                "plugin session failure diagnostic must be a string without NUL"
+            )
+        object.__setattr__(self, "parameters", MappingProxyType(parameters))
+
+
+SessionFailureValue = Union[SessionFailure, PluginSessionFailure]
+
+
 @dataclass(frozen=True)
 class SessionSummary:
     id: SessionId
@@ -102,7 +226,7 @@ class SessionSummary:
     input_owner: Optional[InputOwner] = None
     capabilities: SessionCapabilities = field(default_factory=SessionCapabilities)
     exit_info: Optional[SessionExitInfo] = None
-    failure: Optional[SessionFailure] = None
+    failure: Optional[SessionFailureValue] = None
     attachment_count: int = 0
 
     def __post_init__(self) -> None:
@@ -118,8 +242,13 @@ class SessionSummary:
             raise TypeError("session capabilities must be SessionCapabilities")
         if self.exit_info is not None and type(self.exit_info) is not SessionExitInfo:
             raise TypeError("session exit information must be SessionExitInfo or None")
-        if self.failure is not None and type(self.failure) is not SessionFailure:
-            raise TypeError("session failure must be SessionFailure or None")
+        if self.failure is not None and type(self.failure) not in {
+            SessionFailure,
+            PluginSessionFailure,
+        }:
+            raise TypeError(
+                "session failure must be SessionFailure, PluginSessionFailure, or None"
+            )
         if type(self.attachment_count) is not int or self.attachment_count < 0:
             raise ValueError("session attachment count must not be negative")
 

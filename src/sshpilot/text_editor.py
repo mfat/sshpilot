@@ -44,6 +44,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _display(text: str) -> str:
+    """Make *text* safe to hand to GTK.
+
+    A local file whose name is not valid UTF-8 reaches us surrogate-escaped and
+    PyGObject refuses to encode it. Imported lazily: file_manager.pane imports
+    this module, so a module-level import would be circular.
+    """
+    from .file_manager.format_utils import safe_display_text
+
+    return safe_display_text(text)
+
+
 _PRIVILEGED_FILE_ERROR_TEMPLATES = {
     ErrorCode.UNSUPPORTED_CAPABILITY: N_(
         "Edit as root is unavailable on this host."
@@ -263,7 +275,7 @@ class RemoteFileEditorWindow(Adw.Window):
         self.set_transient_for(parent)
         self.set_modal(False)  # Allow multiple editors
         self.set_default_size(900, 600)
-        self.set_title(_("Edit {file_name}").format(file_name=file_name))
+        self.set_title(_("Edit {file_name}").format(file_name=_display(file_name)))
         
         self._is_local = is_local
         self._file_path = file_path  # Can be remote path or local path
@@ -1010,6 +1022,10 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _show_toast(self, text: str, timeout: int = 3) -> None:
         """Show a toast message safely (same style as FilePane)."""
+        # Messages can embed a filename or path, which GTK refuses to encode
+        # when its bytes are not valid UTF-8. UnicodeEncodeError is a
+        # ValueError, so the except clause below would not catch it.
+        text = _display(text)
         try:
             # Dismiss any existing toast first
             if self._current_toast:
@@ -1173,10 +1189,10 @@ class RemoteFileEditorWindow(Adw.Window):
         """Update the headerbar title (modified marker) and path subtitle."""
         if modified is None:
             modified = self._buffer.get_modified() if self._buffer else False
-        base = self._title_text or self._file_name
+        base = _display(self._title_text or self._file_name)
         if getattr(self, "_title_widget", None) is not None:
             self._title_widget.set_title(f"• {base}" if modified else base)
-            subtitle = self._pretty_path()
+            subtitle = _display(self._pretty_path())
             if getattr(self, "_root_mode", False):
                 subtitle = _("{subtitle}  —  editing as root").format(subtitle=subtitle)
             self._title_widget.set_subtitle(subtitle)
@@ -1717,11 +1733,15 @@ class RemoteFileEditorWindow(Adw.Window):
         
         if has_changes:
             # Show confirmation dialog - text differs for local vs remote
+            # A name GTK cannot encode would raise out of this handler, and
+            # PyGObject turns that into a False return -- closing the window
+            # and discarding the very changes we are asking about.
+            display_name = _display(self._file_name)
             if self._is_local:
-                dialog_text = f"You have unsaved changes to {self._file_name}. Save changes before closing?"
+                dialog_text = f"You have unsaved changes to {display_name}. Save changes before closing?"
                 save_label = _("Save")
             else:
-                dialog_text = f"You have unsaved changes to {self._file_name}. Upload changes before closing?"
+                dialog_text = f"You have unsaved changes to {display_name}. Upload changes before closing?"
                 save_label = _("Save & Upload")
             
             dialog = Adw.AlertDialog.new(

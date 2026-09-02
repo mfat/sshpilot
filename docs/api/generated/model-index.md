@@ -2876,6 +2876,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: PluginSessionFailure -->
+## `PluginSessionFailure`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One localizable built-in plugin launch failure and opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `PluginSessionFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": "container_required",
+  "diagnostic": "",
+  "error_code": "unsupported_capability",
+  "parameters": {}
+}
+```
+
 <!-- api-model: PortForwardSummary -->
 ## `PortForwardSummary`
 
@@ -3610,7 +3638,7 @@ Synthetic representation:
 | `input_owner` | `InputOwner | None` | No | `null` | No |
 | `capabilities` | `SessionCapabilities` | No | `{"supported": []}` | No |
 | `exit_info` | `SessionExitInfo | None` | No | `null` | No |
-| `failure` | `SessionFailure | None` | No | `null` | No |
+| `failure` | `SessionFailure | PluginSessionFailure | None` | No | `null` | No |
 | `attachment_count` | `int` | No | `0` | No |
 
 Synthetic representation:

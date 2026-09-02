@@ -22,11 +22,12 @@ from gettext import gettext as _
 from typing import Any, Dict, List
 
 from .._shell import command_split_diagnostic, split_command
+from .._session_failure import BuiltinProtocolError
+from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
     PluginContext,
     ProtocolBackend,
-    ProtocolError,
     SpawnSpec,
     SshPilotPlugin,
 )
@@ -89,16 +90,25 @@ class MoshProtocolBackend(ProtocolBackend):
         # Flatpak that needs mosh should include it in the runtime.
         mosh = shutil.which("mosh")
         if not mosh:
-            raise ProtocolError(
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.MOSH_UNAVAILABLE,
                 "The 'mosh' program is not installed. Install it (and "
-                "mosh-server on the host) to use Mosh connections.")
+                "mosh-server on the host) to use Mosh connections.",
+                parameters={
+                    "client_program": "mosh",
+                    "server_program": "mosh-server",
+                },
+            )
 
         data = getattr(connection, "data", None) or {}
         host = (data.get("host") or data.get("hostname")
                 or getattr(connection, "hostname", "")
                 or getattr(connection, "host", "")).strip()
         if not host:
-            raise ProtocolError("No host configured for this connection.")
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.HOST_REQUIRED,
+                "No host configured for this connection.",
+            )
 
         # Reuse the single SSH command/auth path (docs/architecture.md): never hand-roll ssh.
         from ....ssh_connection_builder import (  # noqa: PLC0415
@@ -108,7 +118,12 @@ class MoshProtocolBackend(ProtocolBackend):
         try:
             auth = resolve_native_auth(connection, ctx.connection_manager, ctx.config)
         except Exception as exc:
-            raise ProtocolError(str(exc)) from exc
+            diagnostic = str(exc)
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.MOSH_PREPARATION_FAILED,
+                diagnostic,
+                diagnostic=diagnostic,
+            ) from exc
 
         extra: List[str] = []
         try:
@@ -125,14 +140,19 @@ class MoshProtocolBackend(ProtocolBackend):
             extra += ["-l", username]
         extra_opts = (data.get("extra_ssh_opts") or "").strip()
         if extra_opts:
-            extra += split_command(extra_opts, "Extra SSH options")
+            extra += split_command(extra_opts, "extra_ssh_opts")
         extra += list(auth.extra_opts or [])
 
         try:
             ssh_argv = build_native_command(
                 connection, ctx.config, command_type="ssh", extra_args=extra)
         except Exception as exc:
-            raise ProtocolError(str(exc)) from exc
+            diagnostic = str(exc)
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.MOSH_PREPARATION_FAILED,
+                diagnostic,
+                diagnostic=diagnostic,
+            ) from exc
         # build_native_command appends the target host as the last token; mosh
         # supplies the host itself, so the --ssh value is the ssh prefix only.
         ssh_prefix = ssh_argv[:-1] if len(ssh_argv) > 1 else ssh_argv

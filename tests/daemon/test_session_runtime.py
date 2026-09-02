@@ -14,6 +14,7 @@ from sshpilot.api.models.sessions import (
     DetachSessionRequest,
     OpenSessionRequest,
     SessionExitInfo,
+    SessionFailure,
     SessionState,
 )
 from sshpilot.api.models.terminal import ResizeTerminalRequest, TerminalDimensions
@@ -606,6 +607,7 @@ def test_startup_failure_is_a_real_failed_session_without_sensitive_details():
             client_id=ClientId("client:a"),
         )
         assert opened.state is SessionState.FAILED
+        assert type(opened.failure) is SessionFailure
         assert opened.failure.code == ErrorCode.SESSION_STARTUP_FAILED.value
         assert opened.failure.message == "The session process could not be started"
         assert "sensitive" not in repr(opened)

@@ -13,11 +13,12 @@ import shutil  # noqa: F401  # kept: tests patch this module's `shutil.which`
 from gettext import gettext as _
 from typing import Any, Dict, List
 
+from .._session_failure import BuiltinProtocolError
+from ....api.models.sessions import PluginSessionFailureCode
 from ...api import (
     FieldSpec,
     PluginContext,
     ProtocolBackend,
-    ProtocolError,
     SpawnSpec,
     SshPilotPlugin,
 )
@@ -92,7 +93,10 @@ class SerialProtocolBackend(ProtocolBackend):
         data = getattr(connection, "data", None) or {}
         device = (data.get("device") or "").strip()
         if not device:
-            raise ProtocolError("No serial device configured for this connection.")
+            raise BuiltinProtocolError(
+                PluginSessionFailureCode.SERIAL_DEVICE_REQUIRED,
+                "No serial device configured for this connection.",
+            )
         baud = str(data.get("baud") or "115200")
         flow = str(data.get("flow") or "none")
 
@@ -129,10 +133,32 @@ class SerialProtocolBackend(ProtocolBackend):
             if databits not in _SCREEN_DATABITS:
                 unsupported.append(f"{databits} data bits")
             if unsupported:
-                raise ProtocolError(
+                parameters = {
+                    "fallback_program": "screen",
+                    "preferred_program": "picocom",
+                }
+                if flow == "hard" and databits not in _SCREEN_DATABITS:
+                    code = (
+                        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_AND_DATABITS_UNSUPPORTED
+                    )
+                    parameters.update({"flow": "RTS/CTS", "databits": databits})
+                elif flow == "hard":
+                    code = (
+                        PluginSessionFailureCode.SERIAL_SCREEN_HARDWARE_FLOW_UNSUPPORTED
+                    )
+                    parameters["flow"] = "RTS/CTS"
+                else:
+                    code = (
+                        PluginSessionFailureCode.SERIAL_SCREEN_DATABITS_UNSUPPORTED
+                    )
+                    parameters["databits"] = databits
+                raise BuiltinProtocolError(
+                    code,
                     "Only 'screen' is available, which cannot set "
                     + " or ".join(unsupported)
-                    + ". Install 'picocom' to use this connection.")
+                    + ". Install 'picocom' to use this connection.",
+                    parameters=parameters,
+                )
             settings = [
                 baud,
                 _SCREEN_DATABITS[databits],
@@ -145,9 +171,15 @@ class SerialProtocolBackend(ProtocolBackend):
                 env=dict(os.environ),
             )
 
-        raise ProtocolError(
+        raise BuiltinProtocolError(
+            PluginSessionFailureCode.SERIAL_PROGRAMS_UNAVAILABLE,
             "Neither 'picocom' nor 'screen' is installed. Install one to use "
-            "serial connections.")
+            "serial connections.",
+            parameters={
+                "preferred_program": "picocom",
+                "fallback_program": "screen",
+            },
+        )
 
 
 class Plugin(SshPilotPlugin):

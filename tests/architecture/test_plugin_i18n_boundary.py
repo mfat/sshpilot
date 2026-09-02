@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src" / "sshpilot"
 BUILTINS = SOURCE / "plugins" / "builtin"
 SHELL = BUILTINS / "_shell.py"
+FAILURE_PRODUCER = BUILTINS / "_session_failure.py"
+SESSION_RUNTIME = SOURCE / "daemon" / "session_runtime.py"
+LAUNCH_PROVIDER = SOURCE / "daemon" / "connection_launch_provider.py"
+FAILURE_PRESENTER = SOURCE / "gtk" / "plugin_session_failure_messages.py"
 PLUGIN_PATHS = (
     BUILTINS / "docker_protocol" / "__init__.py",
     BUILTINS / "kubernetes_protocol" / "__init__.py",
@@ -89,7 +93,51 @@ def test_frontend_gettext_owners_are_in_potfiles():
     for path in PLUGIN_PATHS:
         assert str(path.relative_to(ROOT)) in potfiles
     assert "src/sshpilot/connection_dialog.py" in potfiles
+    assert "src/sshpilot/gtk/plugin_session_failure_messages.py" in potfiles
     assert "src/sshpilot/plugins/builtin/_shell.py" not in potfiles
+    assert "src/sshpilot/plugins/builtin/_session_failure.py" not in potfiles
+    assert "src/sshpilot/daemon/connection_launch_provider.py" not in potfiles
+    assert "src/sshpilot/daemon/session_runtime.py" not in potfiles
+
+
+def test_plugin_session_failure_gettext_stays_in_frontend_presenter():
+    daemon_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (FAILURE_PRODUCER, LAUNCH_PROVIDER, SESSION_RUNTIME)
+    )
+    presenter = FAILURE_PRESENTER.read_text(encoding="utf-8")
+
+    assert "N_(" in presenter
+    assert "gettext" not in daemon_sources
+    assert "N_(" not in daemon_sources
+
+
+def test_builtin_spawn_paths_emit_structured_codes_not_message_discriminants():
+    for path in (*PLUGIN_PATHS, SHELL):
+        source = path.read_text(encoding="utf-8")
+        assert "BuiltinProtocolError(" in source
+        assert "if str(exc)" not in source
+        assert "if message ==" not in source
+
+    provider = LAUNCH_PROVIDER.read_text(encoding="utf-8")
+    assert "except BuiltinProtocolError" in provider
+    assert "exc.failure" in provider
+    assert "str(exc) ==" not in provider
+
+
+def test_plugin_session_wire_kind_has_no_rendered_message():
+    codec = (SOURCE / "api" / "transport" / "codec.py").read_text(
+        encoding="utf-8"
+    )
+    start = codec.index("def _session_failure_to_wire")
+    end = codec.index("def _session_failure_from_wire")
+    encoder = codec[start:end]
+
+    assert '"kind": "plugin_launch"' in encoder
+    assert '"parameters": dict(failure.parameters)' in encoder
+    assert '"diagnostic": failure.diagnostic' in encoder
+    plugin_branch = encoder[encoder.index("if type(failure) is PluginSessionFailure") :]
+    assert '"message"' not in plugin_branch
 
 
 def test_non_ssh_release_note_typo_is_fixed_in_every_maintained_source():

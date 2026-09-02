@@ -165,3 +165,53 @@ def test_direct_operation_error_reaches_retry_pane_localized():
     win._right_pane.show_load_error.assert_called_once_with(
         "/root-only", "Accès refusé"
     )
+
+
+# --- refresh must use the pane's real path, not the path bar ----------------
+#
+# The path bar holds a display string: GLib collapses $HOME to "~" and renders
+# a directory whose name is not valid UTF-8 as a percent-escaped file:// URI.
+# Refreshing against it lists a path that does not exist.
+
+BAD_DIR = "/home/alice/bad\udce5\udcb1dir"
+BAD_DIR_AS_DISPLAYED = "file:///home/alice/bad%E5%B1dir"
+
+
+def test_local_refresh_uses_the_real_path_not_the_displayed_one():
+    win = _window()
+    pane = win._left_pane
+    pane._is_remote = False
+    pane._current_path = BAD_DIR
+    pane.toolbar.path_entry.get_text.return_value = BAD_DIR_AS_DISPLAYED
+    win._load_local = MagicMock()
+
+    win._force_refresh_pane(pane)
+
+    win._load_local.assert_called_once_with(BAD_DIR)
+
+
+def test_remote_refresh_uses_the_real_path_not_the_displayed_one():
+    win = _window()
+    pane = win._right_pane
+    pane._is_remote = True
+    pane._current_path = BAD_DIR
+    pane.toolbar.path_entry.get_text.return_value = BAD_DIR_AS_DISPLAYED
+    win._manager = MagicMock()
+
+    win._force_refresh_pane(pane)
+
+    win._manager.listdir.assert_called_once_with(BAD_DIR)
+    assert win._pending_paths[pane] == BAD_DIR
+
+
+def test_refresh_falls_back_to_the_path_bar_when_the_pane_has_no_path():
+    win = _window()
+    pane = win._left_pane
+    pane._is_remote = False
+    pane._current_path = None
+    pane.toolbar.path_entry.get_text.return_value = "/srv/../srv/data"
+    win._load_local = MagicMock()
+
+    win._force_refresh_pane(pane)
+
+    win._load_local.assert_called_once_with("/srv/data")

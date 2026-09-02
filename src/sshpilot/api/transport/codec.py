@@ -138,6 +138,8 @@ from ..models.sessions import (
     DetachSessionRequest,
     InputOwner,
     OpenSessionRequest,
+    PluginSessionFailure,
+    PluginSessionFailureCode,
     SessionCapabilities,
     SessionExitInfo,
     SessionFailure,
@@ -2941,6 +2943,80 @@ def session_exit_info_from_wire(value: Any) -> SessionExitInfo:
     )
 
 
+def _session_failure_to_wire(failure: Any) -> Optional[Dict[str, Any]]:
+    if failure is None:
+        return None
+    if type(failure) is SessionFailure:
+        return {"code": failure.code, "message": failure.message}
+    if type(failure) is PluginSessionFailure:
+        return {
+            "kind": "plugin_launch",
+            "code": failure.code.value,
+            "error_code": failure.error_code.value,
+            "parameters": dict(failure.parameters),
+            "diagnostic": failure.diagnostic,
+        }
+    raise TypeError(
+        "session failure must be a SessionFailure, PluginSessionFailure, or None"
+    )
+
+
+def _session_failure_from_wire(value: Any) -> Any:
+    if value is None:
+        return None
+    if type(value) is dict and "kind" in value:
+        data = _strict_fields(
+            value,
+            required={"kind", "code", "error_code", "parameters", "diagnostic"},
+            context="plugin session failure",
+        )
+        if data["kind"] != "plugin_launch":
+            raise ValueError("session failure contains an unknown kind")
+        try:
+            code = PluginSessionFailureCode(data["code"])
+        except (TypeError, ValueError):
+            raise ValueError(
+                "plugin session failure contains an unknown code"
+            ) from None
+        try:
+            error_code = ErrorCode(data["error_code"])
+        except (TypeError, ValueError):
+            raise ValueError(
+                "plugin session failure contains an unknown error code"
+            ) from None
+        parameters = data["parameters"]
+        if type(parameters) is not dict:
+            raise ValueError("plugin session failure parameters must be an object")
+        return PluginSessionFailure(
+            code=code,
+            error_code=error_code,
+            parameters={
+                _identifier(key, "plugin session failure parameter name"): _text(
+                    parameter,
+                    "plugin session failure parameter",
+                )
+                for key, parameter in parameters.items()
+            },
+            diagnostic=_text(
+                data["diagnostic"],
+                "plugin session failure diagnostic",
+                allow_empty=True,
+            ),
+        )
+    failure_fields = _strict_fields(
+        value,
+        required={"code", "message"},
+        context="session failure",
+    )
+    return SessionFailure(
+        code=_identifier(failure_fields["code"], "session failure code"),
+        message=_identifier(
+            failure_fields["message"],
+            "session failure message",
+        ),
+    )
+
+
 def session_summary_to_wire(summary: SessionSummary) -> Dict[str, Any]:
     if type(summary) is not SessionSummary:
         raise TypeError("session summary is required")
@@ -2963,9 +3039,7 @@ def session_summary_to_wire(summary: SessionSummary) -> Dict[str, Any]:
         "exit_info": (
             session_exit_info_to_wire(summary.exit_info) if summary.exit_info is not None else None
         ),
-        "failure": (
-            {"code": failure.code, "message": failure.message} if failure is not None else None
-        ),
+        "failure": _session_failure_to_wire(failure),
         "attachment_count": summary.attachment_count,
     }
 
@@ -3016,21 +3090,7 @@ def session_summary_from_wire(value: Any) -> SessionSummary:
     exit_info = (
         session_exit_info_from_wire(data["exit_info"]) if data["exit_info"] is not None else None
     )
-    failure_data = data["failure"]
-    failure = None
-    if failure_data is not None:
-        failure_fields = _strict_fields(
-            failure_data,
-            required={"code", "message"},
-            context="session failure",
-        )
-        failure = SessionFailure(
-            code=_identifier(failure_fields["code"], "session failure code"),
-            message=_identifier(
-                failure_fields["message"],
-                "session failure message",
-            ),
-        )
+    failure = _session_failure_from_wire(data["failure"])
     return SessionSummary(
         id=_session_id(data["id"], "session id"),
         connection_id=ConnectionId(_identifier(data["connection_id"], "session connection id")),

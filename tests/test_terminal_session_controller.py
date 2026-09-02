@@ -654,6 +654,53 @@ def test_session_state_changed_running_observed(active_session):
     on_state_changed.assert_called_once()
 
 
+def test_plugin_startup_failure_is_formatted_when_frontend_handles_event(
+    active_session,
+    monkeypatch,
+):
+    from sshpilot.api.errors import ErrorCode
+    from sshpilot.api.events import EventType
+    from sshpilot.api.models.sessions import (
+        PluginSessionFailure,
+        PluginSessionFailureCode,
+        SessionState,
+        SessionSummary,
+    )
+    import sshpilot.terminal_session_controller as controller_module
+
+    controller, on_event, _on_state_changed = active_session
+    errors = []
+    controller._on_error = errors.append
+    monkeypatch.setattr(
+        controller_module,
+        "format_plugin_session_failure",
+        lambda failure: f"translated:{failure.parameters['runtime']}",
+    )
+    summary = SessionSummary(
+        id=controller.tab_state.session_id,
+        connection_id=ConnectionId("test-connection"),
+        state=SessionState.FAILED,
+        failure=PluginSessionFailure(
+            code=PluginSessionFailureCode.CONTAINER_RUNTIME_UNAVAILABLE,
+            error_code=ErrorCode.SESSION_STARTUP_FAILED,
+            parameters={"runtime": "podman"},
+        ),
+    )
+
+    on_event(
+        _session_event(
+            EventType.SESSION_STATE_CHANGED,
+            summary,
+            controller.tab_state.session_id,
+        )
+    )
+
+    assert controller.state is TerminalSessionState.FAILED
+    assert len(errors) == 1
+    assert errors[0].code is ErrorCode.SESSION_STARTUP_FAILED
+    assert errors[0].message == "translated:podman"
+
+
 def test_session_closed_event_with_wrong_payload_ignored(active_session):
     """Malformed SESSION_CLOSED payloads must not affect the tab."""
     from types import SimpleNamespace

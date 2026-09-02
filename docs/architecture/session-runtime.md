@@ -47,6 +47,14 @@ persisted or restored after restart.
 Records remain visible in creation order after closure. Retention is bounded
 to the newest 100 closed records. Active records are never evicted.
 
+Builtin non-SSH launch preparation has one narrow public exception to generic
+failure presentation: `PluginSessionFailure` carries a stable code, strict
+technical parameters, and an optional opaque diagnostic under the
+`plugin_launch` wire discriminator. GTK translates that code at display time.
+Ordinary SSH startup, authentication, readiness, runtime, and termination
+failures keep the historical `SessionFailure(code, message)` model and exact
+wire shape.
+
 ## State machine
 
 The enforced states are `created`, `starting`, `running`, `closing`, `exited`,
