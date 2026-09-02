@@ -2211,7 +2211,15 @@ class FileManagerWindow(Adw.Window):
 
     def _force_refresh_pane(self, pane: FilePane, highlight_name: Optional[str] = None) -> None:
         """Force refresh a pane by directly calling listdir and updating UI"""
-        path = pane.toolbar.path_entry.get_text() or "/"
+        # The path bar holds a *display* string, not a path: GLib collapses
+        # $HOME to "~" and renders a directory whose name is not valid UTF-8 as
+        # a percent-escaped file:// URI. Refresh against the pane's real path,
+        # the way the other refresh/paste call sites already do.
+        path = getattr(pane, '_current_path', None)
+        if not path:
+            path = pane.toolbar.path_entry.get_text() or "/"
+            if not pane._is_remote:
+                path = self._normalize_local_path(path)
         logger.debug(f"_force_refresh_pane: refreshing {('remote' if pane._is_remote else 'local')} pane for path: {path}")
         
         # Mark as refreshing to show success toast

@@ -154,3 +154,150 @@ def test_a_row_gtk_still_rejects_does_not_blank_the_pane(monkeypatch):
         "alpha.txt",
         "zeta.txt",
     ]
+
+
+# --- the sinks that take a name straight from the entry ---------------------
+#
+# The stubbed gi in these tests does not enforce UTF-8 the way PyGObject does,
+# so each of these installs a recorder that raises the same UnicodeEncodeError
+# real GTK raises. That is the whole invariant: no string reaching a GTK/Adw
+# constructor may carry a lone surrogate.
+
+
+def _strict(name, returns=None):
+    """A GTK/Adw stand-in that rejects arguments PyGObject could not encode."""
+    import unittest.mock
+
+    calls = []
+
+    def check(value):
+        if isinstance(value, str):
+            value.encode("utf-8")
+
+    class Recorder:
+        def __init__(self, *args, **kwargs):
+            for value in args:
+                check(value)
+            for value in kwargs.values():
+                check(value)
+            calls.append((args, kwargs))
+            self._mock = unittest.mock.MagicMock()
+
+        def __getattr__(self, attr):
+            return getattr(self._mock, attr)
+
+        @classmethod
+        def new(cls, *args, **kwargs):
+            return cls(*args, **kwargs)
+
+    Recorder.__name__ = name
+    Recorder.calls = calls
+    return Recorder
+
+
+def test_properties_dialog_header_shows_a_name_gtk_can_encode(monkeypatch):
+    import sys
+    import unittest.mock
+
+    module = _load_file_manager_window()
+    dialogs = sys.modules["sshpilot.file_manager.properties_dialog"]
+    from sshpilot import icon_utils
+
+    label = _strict("Label")
+    monkeypatch.setattr(dialogs.Gtk, "Label", label, raising=False)
+    monkeypatch.setattr(dialogs.Gtk, "Box", unittest.mock.MagicMock(), raising=False)
+    monkeypatch.setattr(dialogs.Gtk, "Orientation", unittest.mock.MagicMock(), raising=False)
+    monkeypatch.setattr(dialogs.Gtk, "Align", unittest.mock.MagicMock(), raising=False)
+    monkeypatch.setattr(
+        icon_utils,
+        "new_image_from_icon_name",
+        lambda *a, **k: unittest.mock.MagicMock(),
+    )
+
+    dialog = dialogs.PropertiesDialog.__new__(dialogs.PropertiesDialog)
+    dialog._entry = module.FileEntry(BAD_NAME, False, 12, 0.0, None)
+    dialog._current_path = "/tmp"
+    dialog._is_remote_file = lambda: True
+
+    dialogs.PropertiesDialog._create_header_block(dialog)
+
+    assert label.calls[0][1]["label"] == "� broken.txt"
+
+
+def test_properties_dialog_parent_row_shows_a_path_gtk_can_encode(monkeypatch):
+    import sys
+
+    module = _load_file_manager_window()
+    dialogs = sys.modules["sshpilot.file_manager.properties_dialog"]
+    row = _strict("ActionRow")
+    monkeypatch.setattr(dialogs.Adw, "ActionRow", row, raising=False)
+
+    dialog = dialogs.PropertiesDialog.__new__(dialogs.PropertiesDialog)
+    dialog._entry = module.FileEntry("file.txt", False, 12, 0.0, None)
+    dialog._current_path = "/tmp/bad\udce5dir"
+    dialog._is_remote_file = lambda: True
+
+    dialogs.PropertiesDialog._create_parent_folder_row(dialog)
+
+    assert row.calls[0][1]["subtitle"] == "/tmp/bad�dir"
+
+
+def test_fallback_properties_dialog_heading_is_encodable(monkeypatch):
+    import sys
+
+    module = _load_file_manager_window()
+    pane_mod = sys.modules["sshpilot.file_manager.pane"]
+    message_dialog = _strict("MessageDialog")
+    monkeypatch.setattr(pane_mod.Adw, "MessageDialog", message_dialog, raising=False)
+
+    pane = module.FilePane.__new__(module.FilePane)
+    entry = module.FileEntry(BAD_NAME, False, 12, 0.0, None)
+    details = dict.fromkeys(("name", "type", "size", "modified", "location"), "—")
+
+    module.FilePane._show_fallback_properties_dialog(pane, entry, details, None)
+
+    assert message_dialog.calls[0][1]["heading"] == "� broken.txt Properties"
+
+
+def test_editor_toast_is_encodable(monkeypatch):
+    import sys
+
+    _load_file_manager_window()
+    editor = sys.modules["sshpilot.text_editor"]
+    toast = _strict("Toast")
+    monkeypatch.setattr(editor.Adw, "Toast", toast, raising=False)
+
+    window = editor.RemoteFileEditorWindow.__new__(editor.RemoteFileEditorWindow)
+    window._current_toast = None
+    window._toast_overlay = type("Overlay", (), {"add_toast": lambda self, _t: None})()
+
+    editor.RemoteFileEditorWindow._show_toast(window, f"Save failed: {BAD_NAME}")
+
+    assert toast.calls[0][0][0] == "Save failed: � broken.txt"
+
+
+def test_closing_an_edited_file_still_prompts(monkeypatch):
+    """The unsaved-changes prompt must survive a name GTK cannot encode.
+
+    ``_check_and_close`` runs inside the ``close-request`` handler, and
+    PyGObject turns an exception there into a ``False`` return -- which closes
+    the window and discards the changes the prompt was about.
+    """
+    import sys
+
+    _load_file_manager_window()
+    editor = sys.modules["sshpilot.text_editor"]
+    alert = _strict("AlertDialog")
+    monkeypatch.setattr(editor.Adw, "AlertDialog", alert, raising=False)
+
+    window = editor.RemoteFileEditorWindow.__new__(editor.RemoteFileEditorWindow)
+    window._buffer = type("Buffer", (), {"get_modified": lambda self: True})()
+    window._is_local = True
+    window._file_name = BAD_NAME
+
+    editor.RemoteFileEditorWindow._check_and_close(window)
+
+    assert alert.calls, "the prompt was skipped"
+    assert alert.calls[0][0][1] == (
+        "You have unsaved changes to � broken.txt. Save changes before closing?"
+    )

@@ -17,6 +17,7 @@ from .format_utils import (
     _item_count_text,
     _mode_to_octal,
     _mode_to_str,
+    safe_display_text,
 )
 from ..shortcut_utils import install_esc_to_close
 
@@ -124,8 +125,9 @@ class PropertiesDialog(Adw.Window):
         icon.add_css_class("card")
         box.append(icon)
         
-        # Name (centered, bold)
-        name_label = Gtk.Label(label=self._entry.name)
+        # Name (centered, bold). GTK cannot encode the lone surrogates a
+        # filename whose bytes are not valid UTF-8 arrives with.
+        name_label = Gtk.Label(label=safe_display_text(self._entry.name))
         name_label.add_css_class("title-3")
         box.append(name_label)
         
@@ -184,7 +186,9 @@ class PropertiesDialog(Adw.Window):
         if not parent_path:
             parent_path = "/"
         
-        row = Adw.ActionRow(title=_("Parent Folder"), subtitle=parent_path)
+        row = Adw.ActionRow(
+            title=_("Parent Folder"), subtitle=safe_display_text(parent_path)
+        )
         row.add_css_class("card")
         
         # Add folder open button for local files

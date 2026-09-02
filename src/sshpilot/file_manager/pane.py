@@ -2315,7 +2315,8 @@ class FilePane(Gtk.Box):
 
     def _show_fallback_properties_dialog(self, entry: FileEntry, details: Dict[str, str], window: Gtk.Window) -> None:
         """Fallback to simple properties dialog if modern dialog fails."""
-        heading = f"{entry.name} Properties" if entry.name else "Properties"
+        display_name = safe_display_text(entry.name)
+        heading = f"{display_name} Properties" if display_name else "Properties"
         body_lines = [
             f"Name: {details['name']}",
             f"Type: {details['type']}",

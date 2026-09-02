@@ -1022,6 +1022,10 @@ class RemoteFileEditorWindow(Adw.Window):
     
     def _show_toast(self, text: str, timeout: int = 3) -> None:
         """Show a toast message safely (same style as FilePane)."""
+        # Messages can embed a filename or path, which GTK refuses to encode
+        # when its bytes are not valid UTF-8. UnicodeEncodeError is a
+        # ValueError, so the except clause below would not catch it.
+        text = _display(text)
         try:
             # Dismiss any existing toast first
             if self._current_toast:
@@ -1729,11 +1733,15 @@ class RemoteFileEditorWindow(Adw.Window):
         
         if has_changes:
             # Show confirmation dialog - text differs for local vs remote
+            # A name GTK cannot encode would raise out of this handler, and
+            # PyGObject turns that into a False return -- closing the window
+            # and discarding the very changes we are asking about.
+            display_name = _display(self._file_name)
             if self._is_local:
-                dialog_text = f"You have unsaved changes to {self._file_name}. Save changes before closing?"
+                dialog_text = f"You have unsaved changes to {display_name}. Save changes before closing?"
                 save_label = _("Save")
             else:
-                dialog_text = f"You have unsaved changes to {self._file_name}. Upload changes before closing?"
+                dialog_text = f"You have unsaved changes to {display_name}. Upload changes before closing?"
                 save_label = _("Save & Upload")
             
             dialog = Adw.AlertDialog.new(
