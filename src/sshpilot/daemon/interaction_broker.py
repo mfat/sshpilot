@@ -151,6 +151,7 @@ class _AskpassContext:
     confirm_passphrase: bool = False
     interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
     confirmation_secret: Optional[bytearray] = None
+    cancelled: bool = False
     closed: bool = False
 
 
@@ -1113,6 +1114,39 @@ class InteractionBroker:
                     return context
         return None
 
+    def _mark_context_cancelled(self, token: str) -> None:
+        """Record that the user dismissed a prompt for this SSH child.
+
+        An askpass helper that declines is indistinguishable to OpenSSH from a
+        wrong answer, so it re-prompts until NumberOfPasswordPrompts is spent
+        (three keyboard-interactive rounds, and one round can carry several
+        questions). Without this flag every Cancel is answered by an identical
+        replacement dialog a few milliseconds later, which reads as a prompt
+        that cannot be dismissed at all (issue #1236).
+        """
+        with self._condition:
+            context = self._askpass_contexts.get(token)
+            if context is not None:
+                context.cancelled = True
+
+    def _context_cancelled(self, token: str) -> bool:
+        with self._condition:
+            context = self._askpass_contexts.get(token)
+            return context is not None and context.cancelled
+
+    def _was_cancelled(self, interaction_id: InteractionId) -> bool:
+        """True when this interaction ended in ``CANCELLED``.
+
+        Read after the wait returns, so an unanswered prompt (``EXPIRED``,
+        ``FAILED``) is not mistaken for a user refusal. A record already
+        evicted from the completed ring counts as not cancelled.
+        """
+        with self._condition:
+            record = self._records.get(interaction_id)
+            return (
+                record is not None
+                and record.summary.state is InteractionState.CANCELLED
+            )
 
     def wait_for_result(
         self,
@@ -1193,6 +1227,28 @@ class InteractionBroker:
                 transport.settimeout(timeout)
             except OSError:
                 pass
+
+    def _transport_cancel_check(
+        self,
+        helper_transport: Optional[socket.socket],
+    ) -> tuple[Optional[Callable[[], bool]], List[bool]]:
+        """Cancel-check for a helper socket plus a flag recording whether it fired.
+
+        A prompt cancelled because the askpass helper went away is OpenSSH
+        tearing the prompt down, not the user pressing Cancel — only the latter
+        may suppress this SSH child's remaining prompts.
+        """
+        fired: List[bool] = [False]
+        if helper_transport is None:
+            return None, fired
+
+        def _check() -> bool:
+            if self._transport_is_closed(helper_transport):
+                fired[0] = True
+                return True
+            return False
+
+        return _check, fired
 
     def cancel(
         self,
@@ -1523,6 +1579,15 @@ class InteractionBroker:
         hint: str = "",
         helper_transport: Optional[socket.socket] = None,
     ) -> Optional[bytearray]:
+        if self._context_cancelled(token):
+            # The user already dismissed a prompt for this SSH child. Decline
+            # the rest of OpenSSH's retries silently instead of replacing the
+            # dialog they just closed; ssh spends its remaining attempts and
+            # exits, and classify_startup_failure reports OPERATION_CANCELLED.
+            append_askpass_log(
+                "ASKPASS: prompt declined; user cancelled this connection"
+            )
+            return None
         normalized_hint = hint.strip().lower()
         prompt_type = (
             "presence" if normalized_hint == "none"
@@ -1704,14 +1769,10 @@ class InteractionBroker:
             prompt=public_prompt,
             attempt=attempt,
         )
-        result = self.wait_for_result(
-            interaction.id,
-            cancel_check=(
-                None
-                if helper_transport is None
-                else lambda: self._transport_is_closed(helper_transport)
-            ),
-        )
+        cancel_check, transport_gone = self._transport_cancel_check(helper_transport)
+        result = self.wait_for_result(interaction.id, cancel_check=cancel_check)
+        if not transport_gone[0] and self._was_cancelled(interaction.id):
+            self._mark_context_cancelled(token)
         if (
             result is None
             or result.decision is not SecretDecision.SUBMIT
@@ -1843,27 +1904,17 @@ class InteractionBroker:
             prompt=prompt,
             attempt=attempt,
         )
+        cancel_check, transport_gone = self._transport_cancel_check(helper_transport)
         if presence:
             # Presence is a passive notification.  OpenSSH ends its askpass
             # helper when the hardware operation finishes; no answer frame is
-            # required (or meaningful).
-            self.wait_for_result(
-                interaction.id,
-                cancel_check=(
-                    None
-                    if helper_transport is None
-                    else lambda: self._transport_is_closed(helper_transport)
-                ),
-            )
+            # required (or meaningful).  Closing the reminder is not a refusal
+            # to authenticate, so it never suppresses later prompts.
+            self.wait_for_result(interaction.id, cancel_check=cancel_check)
             return None
-        result = self.wait_for_result(
-            interaction.id,
-            cancel_check=(
-                None
-                if helper_transport is None
-                else lambda: self._transport_is_closed(helper_transport)
-            ),
-        )
+        result = self.wait_for_result(interaction.id, cancel_check=cancel_check)
+        if not transport_gone[0] and self._was_cancelled(interaction.id):
+            self._mark_context_cancelled(token)
         if result is None or result.decision is not SecretDecision.SUBMIT or result.secret is None:
             if result is not None:
                 result.clear()

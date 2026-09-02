@@ -1700,3 +1700,91 @@ def test_two_broadcast_targets_receive_independent_operation_askpass_contexts(br
     assert all(context.hostname != "sensitive command" for context in contexts)
     broker.cancel_session(scope)
     assert not broker._askpass_contexts
+
+
+def _await_single_interaction(instance: InteractionBroker, timeout: float = 5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        interactions = instance.list(CLIENT_A)
+        if interactions:
+            return interactions[0]
+        time.sleep(0.01)
+    return None
+
+
+def test_cancelled_otp_prompt_is_not_replaced_by_openssh_retries(monkeypatch) -> None:
+    """Cancel must dismiss an OTP prompt for good — see issue #1236.
+
+    An askpass helper that declines looks to OpenSSH exactly like a wrong
+    answer, so it re-runs the helper until NumberOfPasswordPrompts is spent
+    (measured against a google-authenticator sshd: three rounds ~18 ms apart).
+    Each retry used to raise a fresh KEYBOARD_INTERACTIVE interaction, so the
+    dialog the user just closed was replaced by an identical one and Cancel
+    looked broken. Every retry after a cancel must now be declined silently.
+    """
+    instance = InteractionBroker(secret_timeout=5, host_key_timeout=5)
+    try:
+        monkeypatch.setattr(
+            instance, "_effective_ssh_config", lambda _argv, _environment=None: {}
+        )
+        _argv, environment = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {
+                    "HOME": "/tmp",
+                    "PATH": os.environ.get("PATH", ""),
+                    "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
+                },
+            ),
+        )
+        prompt = "(alice@example.test) Verification code: "
+
+        first = subprocess.Popen(
+            (environment["SSH_ASKPASS"], prompt),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        interaction = _await_single_interaction(instance)
+        assert interaction is not None
+        assert interaction.type is InteractionType.KEYBOARD_INTERACTIVE
+
+        instance.claim(interaction.id, CLIENT_A)
+        instance.respond(
+            InteractionDecisionRequest(
+                interaction_id=interaction.id,
+                secret_decision=SecretDecision.CANCEL,
+            ),
+            CLIENT_A,
+        )
+        _stdout, stderr = first.communicate(timeout=5)
+        assert first.returncode == 1, stderr
+
+        # OpenSSH immediately re-runs the helper for the same SSH child.
+        second = subprocess.Popen(
+            (environment["SSH_ASKPASS"], prompt),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        _stdout, stderr = second.communicate(timeout=5)
+        assert second.returncode == 1, stderr
+        # No replacement dialog: the retry never became a new interaction.
+        assert [
+            summary
+            for summary in instance.list(CLIENT_A)
+            if summary.state is InteractionState.PENDING
+        ] == []
+        assert instance.classify_startup_failure(SESSION_ID) is (
+            ErrorCode.OPERATION_CANCELLED
+        )
+    finally:
+        instance.close()
