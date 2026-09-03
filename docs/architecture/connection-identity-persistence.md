@@ -99,14 +99,21 @@ for the current observed revision while `last_reconciled_ssh_revision` remains
 the last fully reconciled revision. A later complete revision recomputes the
 result; stale ambiguity is never reused.
 
-`FINALIZE_TARGET` and `ABORT_BASE` resolve a pending intent. Any other
-classification -- `REQUIRES_RECONCILIATION`, `STALE_INTENT`, or an intent that
-cannot be read or parsed -- means the intent can no longer be placed against
-what is on disk, so it is discarded and the ordinary load continues: the
-sidecar is read and `reconcile_identity_state` carries UUIDs, display names,
+`FINALIZE_TARGET` and `ABORT_BASE` resolve a pending intent.
+`REQUIRES_RECONCILIATION`, `STALE_INTENT`, and an intent that cannot be read
+or parsed all mean the same thing -- the intent can no longer be placed
+against what is on disk -- so it is discarded and the ordinary load
+continues: the sidecar is read, and when its `observed_ssh_revision` no
+longer matches, `reconcile_identity_state` carries UUIDs, display names,
 group membership and metadata across the drift, exactly as it does when the
 SSH configuration is edited outside the app. An unplaceable intent is not
 evidence about the sidecar and never makes the repository read-only.
+
+`DEFERRED` is the one classification that keeps its intent: "cannot be
+evaluated yet" is not "unusable", and a later start with a complete revision
+can still finalize or abort it. It does not block either. It is currently
+unreachable from load -- `root_revision` is always a complete digest -- but
+discarding on it would throw away a still-actionable intent.
 
 An earlier design preserved such an intent and disabled identity-owned
 mutations "until a complete safe recovery is available". No recovery ever
@@ -215,9 +222,11 @@ dangling and duplicate references are removed, group parent cycles and unknown
 parents are broken, and anything left unplaced is appended to root -- the same
 repair `_reconcile_legacy_state` already performs for v1. Pending ambiguities
 are dropped, since reconciliation recomputes them. If an invariant still
-survives every targeted repair, salvage keeps the records and gives up the
-organization around them; only bytes that are not a JSON object yield an
-empty result.
+survives every targeted repair, salvage falls back to keeping the records and
+giving up the organization around them, and only if that also fails does it
+return an empty state -- as it does for bytes that are not a JSON object at
+all. Salvage never raises: a caller reaching for it has already been refused
+by the strict reader and needs an answer it can proceed with.
 
 The damaged bytes are copied to a timestamped `connections.json.corrupt-*`
 sibling *before* the salvaged state is written, so nothing salvage dropped is
@@ -361,5 +370,13 @@ restart stability, stopped/live/raw-editor safe rename, 2:2 ambiguity,
 metadata/group/root UUID ownership, alias reuse, DisplayName-only mutation,
 prepared mutation side effects, and intent crash windows. API artifacts are
 generated and checked after the additive `display_name` field.
+
+`tests/core/test_connection_identity_salvage.py` covers salvage: per-entry
+recovery of a partly damaged document, placement repair, group parent cycles,
+unparseable bytes, the end-to-end repository recovery, and the guarantee that
+repeated damage never clobbers an earlier quarantine copy. The pending-intent
+policy -- unplaceable and malformed intents discarded, a planted symlink
+ignored rather than followed, and the app writable throughout -- is covered in
+`tests/core/test_connection_repository_uuid_integration.py`.
 
 **VERDICT: INTERNAL UUID IDENTITY + DISPLAYNAME MIGRATION COMPLETE — PUBLIC API IDS REMAIN ALIAS-BASED**
