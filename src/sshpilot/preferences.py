@@ -1651,12 +1651,13 @@ class PreferencesWindow(Adw.NavigationPage):
         interface_page.add(headerbar_group)
 
         # Tips group at the bottom of the Interface page. Lets users
-        # re-enable the terminal tips banner after dismissing it with
-        # "Don't show again".
+        # re-enable the tips banner after dismissing it with "Don't show again".
         tips_group = Adw.PreferencesGroup(title=_("Tips"))
         show_tips_switch = Adw.SwitchRow()
-        show_tips_switch.set_title(_("Show Terminal Tips"))
-        show_tips_switch.set_subtitle(_("Show usage tips in a banner when a terminal opens"))
+        show_tips_switch.set_title(_("Show Tips"))
+        show_tips_switch.set_subtitle(
+            _("Show usage tips in a banner at the top of the window")
+        )
         show_tips_switch.set_active(
             bool(self.config.get_setting('terminal.show_tips', True))
         )
@@ -6563,9 +6564,23 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Failed to update sidebar show port forwarding preference: %s", exc)
 
     def on_show_tips_toggled(self, switch, *args):
-        """Persist whether the terminal tips banner is shown."""
+        """Persist and apply the tips-banner preference immediately."""
         try:
-            self.config.set_setting('terminal.show_tips', bool(switch.get_active()))
+            active = bool(switch.get_active())
+            self.config.set_setting('terminal.show_tips', active)
+            win = self.parent_window
+            if win is None:
+                return
+            if active:
+                # Immediate reveal so re-enabling after "Don't show again"
+                # (or after toggling off) does not wait for the next startup.
+                show = getattr(win, '_maybe_show_tips_banner', None)
+                if callable(show):
+                    show(delay_seconds=0)
+            else:
+                hide = getattr(win, '_hide_tips_banner', None)
+                if callable(hide):
+                    hide()
         except Exception as exc:
             logger.error("Failed to update show terminal tips preference: %s", exc)
 
