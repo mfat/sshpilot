@@ -611,10 +611,15 @@ def test_recovery_crash_window_matrix(tmp_path: Path):
     assert intent_path.exists()
 
     write_identity_state_v2(sidecar, replace(base, sidecar_generation=2))
-    decision = classify_identity_transaction_recovery(
-        read_identity_state_v2(sidecar), intent, "rev-old"
+    newer_sidecar = read_identity_state_v2(sidecar)
+    decision = recover_pending_identity_transaction(
+        sidecar, actual_ssh_revision="rev-external"
     )
     assert decision.action is IdentityRecoveryAction.STALE_INTENT
+    # A stale journal cannot be applied safely, but its newer sidecar is
+    # already authoritative and must not lock every later mutation forever.
+    assert read_identity_state_v2(sidecar) == newer_sidecar
+    assert not intent_path.exists()
 
     assert classify_identity_transaction_recovery(
         base, intent, None

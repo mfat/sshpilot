@@ -834,9 +834,11 @@ def recover_pending_identity_transaction(
 ) -> "IdentityRecoveryDecision":
     """Apply only unambiguous pending-intent recovery decisions.
 
-    TARGET and BASE revisions are finalized/aborted respectively. Unrelated,
-    incomplete, stale, or corrupt state is left for a higher-level adapter and
-    is never resolved by guessing.
+    TARGET and BASE revisions are finalized/aborted respectively. An intent
+    superseded by both an unrelated SSH revision and a newer sidecar is
+    discarded without changing the sidecar. Other stale, incomplete, or
+    corrupt state is left for a higher-level adapter and is never resolved by
+    guessing.
     """
     from .identity_state_v2 import (
         IdentityRecoveryAction,
@@ -869,5 +871,15 @@ def recover_pending_identity_transaction(
             write_identity_state_v2(sidecar_path, intent.target_state)
         clear_pending_identity_transaction(intent_path)
     elif decision.action is IdentityRecoveryAction.ABORT_BASE:
+        clear_pending_identity_transaction(intent_path)
+    elif (
+        decision.action is IdentityRecoveryAction.STALE_INTENT
+        and actual_ssh_revision
+        not in (intent.base_ssh_revision, intent.target_ssh_revision)
+    ):
+        # The SSH configuration moved independently and the sidecar also
+        # advanced beyond this intent. Retaining this obsolete journal would
+        # permanently block mutations after a restart. Do not apply either
+        # snapshot; the current sidecar remains authoritative.
         clear_pending_identity_transaction(intent_path)
     return decision
