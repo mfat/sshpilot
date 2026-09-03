@@ -245,6 +245,16 @@ all -- an I/O error, a permission failure, a symlink, a document past the size
 limit -- is a different condition: there is nothing to salvage and nothing to
 copy aside, so that still degrades.
 
+That condition is the only one left that disables saving, so it is logged at
+ERROR and in full, both when it is detected and on every save it refuses. The
+message names the file, distinguishes it from salvageable damage, states that
+SSH connections still load and launch while nothing can be saved, and gives
+the likely cause -- symlink, size limit, permissions, or filesystem error --
+from the chained OS error. Every mutation captures its transaction files
+before writing, so a file the daemon cannot open is refused there with the
+same explanation and a `CONNECTION_STATE_IO_ERROR`, rather than escaping as a
+bare `PermissionError` that reaches the user as an unexplained failed save.
+
 ## Managed SSH transactions and recovery
 
 Managed create/update/delete/duplicate/split uses the prepared SSH mutation

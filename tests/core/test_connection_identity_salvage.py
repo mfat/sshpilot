@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 from pathlib import Path
+
+import pytest
 
 from sshpilot.core.connections.identity_salvage import salvage_identity_state_v2
 from sshpilot.core.connections.repository import ConnectionRepository
 from sshpilot.core.connections.ssh_config_store import SshConfigStore
 from sshpilot.core.connections.state_file import read_identity_state_v2
+from sshpilot.core.errors import CoreError
 
 
 def _repo(tmp_path: Path, text: str):
@@ -198,3 +203,77 @@ def test_repeated_damage_never_clobbers_an_earlier_quarantine(tmp_path):
         if ".corrupt-" in item.name
     )
     assert kept == sorted([first_damage, second_damage])
+
+
+def _messages(caplog):
+    return "\n".join(record.getMessage() for record in caplog.records)
+
+
+def test_unreadable_state_file_is_logged_clearly_at_startup(tmp_path, caplog):
+    """The one condition that still disables saving must announce itself.
+
+    The original field report was hard to act on precisely because it did
+    not: the save failed, the log named no file, and nothing said saving was
+    off until it was fixed.
+    """
+    root = tmp_path / "ssh_config"
+    root.write_text("Host web\n    HostName web.example\n", encoding="utf-8")
+    state = tmp_path / "connections.json"
+    state.symlink_to(tmp_path / "elsewhere")
+
+    with caplog.at_level(logging.ERROR):
+        repo = ConnectionRepository(
+            ssh_store=SshConfigStore(root, isolated=True),
+            state_path=state,
+            legacy_config_path=tmp_path / "config.json",
+            isolated=True,
+        )
+
+    assert repo._identity_state_unavailable is True
+    text = _messages(caplog)
+    assert any(record.levelno >= logging.ERROR for record in caplog.records)
+    # Names the file, says what still works, says what does not, and says
+    # what to do about it.
+    assert str(state) in text
+    assert "nothing can be saved" in text
+    assert "still load and launch" in text
+    assert "symbolic link" in text
+    # SSH connections stay usable throughout.
+    assert [item.id for item in repo.snapshot().connections] == ["web"]
+
+
+@pytest.mark.parametrize(
+    "plant, expected",
+    [
+        (lambda state: state.symlink_to(state.parent / "elsewhere"), "symbolic link"),
+        (lambda state: _deny(state), "Permission was denied"),
+    ],
+)
+def test_a_refused_save_says_why_every_time(tmp_path, caplog, plant, expected):
+    """A save that cannot proceed must never fail silently in the log."""
+    root = tmp_path / "ssh_config"
+    root.write_text("Host web\n    HostName web.example\n", encoding="utf-8")
+    state = tmp_path / "connections.json"
+    plant(state)
+    repo = ConnectionRepository(
+        ssh_store=SshConfigStore(root, isolated=True),
+        state_path=state,
+        legacy_config_path=tmp_path / "config.json",
+        isolated=True,
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(CoreError):
+            repo.create_connection(
+                {"nickname": "fresh", "hostname": "f.example", "protocol": "ssh"}
+            )
+
+    text = _messages(caplog)
+    assert str(state) in text
+    assert expected in text
+
+
+def _deny(state):
+    state.write_text('{"version": 2}', encoding="utf-8")
+    os.chmod(state, 0o000)

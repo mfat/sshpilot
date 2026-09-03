@@ -362,6 +362,7 @@ class ConnectionRepository:
         self._identity_state: Optional[IdentityStateV2] = None
         self._identity_state_unavailable = False
         self._identity_recovery_required = False
+        self._identity_unavailable_reason: Optional[str] = None
         self._pending_identity_target: Optional[IdentityStateV2] = None
         self._loaded_ssh_config: Optional[LoadedSshConfiguration] = None
         self._metadata: Dict[str, Dict[str, Any]] = {}
@@ -663,12 +664,7 @@ class ConnectionRepository:
                 if isinstance(exc, CoreError)
                 else type(exc).__name__
             )
-            logger.warning(
-                "Failed to load auxiliary connection state; continuing with "
-                "SSH configuration only (reason=%s)",
-                failure_reason,
-            )
-            self._enter_identity_degraded_locked(failure_reason)
+            self._enter_identity_degraded_locked(failure_reason, exc)
             self._publish_state_locked(
                 ssh_config,
                 ConnectionFileState(),
@@ -813,12 +809,73 @@ class ConnectionRepository:
                 exc_info=True,
             )
 
-    def _enter_identity_degraded_locked(self, reason: str) -> None:
-        """Drop any previously trusted UUID state after auxiliary failure."""
+    @staticmethod
+    def _identity_failure_hint(reason: str, exc: Optional[BaseException]) -> str:
+        """Name the likely cause so the log says what to actually go and fix."""
+        detail = getattr(exc, "diagnostic_reason", "") if exc is not None else ""
+        # OS errors are deliberately wrapped in a generic CoreError so no
+        # path leaks into an API message; the original is still chained, and
+        # it is the only thing that can tell permissions from a bad disk.
+        cause = getattr(exc, "__cause__", None)
+        if detail == "unsafe state-file target":
+            return (
+                "The path is a symbolic link. The daemon never reads or writes "
+                "through one; replace it with a regular file."
+            )
+        if detail == "state file exceeds size limit":
+            return (
+                "The file is larger than the 16 MiB limit and was not read. "
+                "Move it aside to start a new one."
+            )
+        if isinstance(exc, PermissionError) or isinstance(cause, PermissionError):
+            return (
+                "Permission was denied. Check that the file and its directory "
+                "are owned by this user and writable."
+            )
+        if (
+            isinstance(exc, OSError)
+            or isinstance(cause, OSError)
+            or reason in {"io_error", "OSError"}
+        ):
+            return (
+                "The filesystem reported an error. Check free space, disk "
+                "health, and whether the filesystem is mounted read-only."
+            )
+        return (
+            "Move the file aside to start a new one; SSH Pilot will rebuild "
+            "it from the SSH configuration."
+        )
+
+    def _enter_identity_degraded_locked(
+        self, reason: str, exc: Optional[BaseException] = None
+    ) -> None:
+        """Drop trusted UUID state and say plainly what just stopped working.
+
+        This is the one remaining condition that disables saving, so it is
+        logged at ERROR and in full.  Reaching it quietly is what made the
+        original field report so hard to act on: the user's save failed, the
+        log said only that a mutation had failed, and nothing named the file
+        or said that saving was off until it was fixed.
+        """
         self._identity_state = None
         self._identity_state_unavailable = True
         self._identity_recovery_required = True
-        logger.warning("UUID identity state is degraded (reason=%s)", reason)
+        self._identity_unavailable_reason = reason
+        logger.error(
+            "Connection state file is unusable: %s (reason=%s). Damaged "
+            "*content* is salvaged automatically -- this is a file the daemon "
+            "cannot read or write at all, so there is nothing to salvage and "
+            "nothing to copy aside. SSH connections still load and launch "
+            "from the SSH configuration, but nothing can be saved: new "
+            "connections, edits, groups, tags, and non-SSH connections "
+            "(Docker, Kubernetes, serial, telnet, Mosh) will all fail until "
+            "this file is readable and writable again. %s",
+            self._state_path,
+            reason,
+            self._identity_failure_hint(reason, exc),
+        )
+        if exc is not None:
+            logger.debug("Connection state file failure detail", exc_info=exc)
 
     def _reconcile_legacy_state(
         self,
@@ -1212,11 +1269,21 @@ class ConnectionRepository:
 
     def _require_identity_state_locked(self) -> IdentityStateV2:
         if self._identity_state_unavailable or self._identity_state is None:
+            # Say why on every refusal, not only once at startup.  A user who
+            # hits this sees a save do nothing; the log has to connect that
+            # back to the file, or the failure is unactionable.
+            logger.error(
+                "Refusing a connection change: %s could not be read or "
+                "written at startup (reason=%s), so saving is disabled. See "
+                "the earlier 'Connection state file is unusable' error.",
+                self._state_path,
+                self._identity_unavailable_reason or "unknown",
+            )
             raise CoreError(
                 ErrorCode.CONNECTION_STATE_IO_ERROR,
                 "UUID identity state is unavailable",
                 diagnostic_category="identity_state_unavailable",
-                diagnostic_reason="identity sidecar is corrupt or unsupported",
+                diagnostic_reason="identity sidecar could not be read or written",
             )
         return self._identity_state
 
@@ -1639,12 +1706,37 @@ class ConnectionRepository:
                 captured[path] = (False, b"", 0, False, None, None, None)
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                logger.error(
+                    "Cannot save: %s is not a regular file (it is a %s). "
+                    "The daemon never writes through one; replace it with a "
+                    "regular file.",
+                    path,
+                    "symbolic link" if stat.S_ISLNK(info.st_mode) else "special file",
+                )
                 raise CoreError(
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "The mutation target is unsafe",
                 )
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(path, flags)
+            try:
+                fd = os.open(path, flags)
+            except OSError as exc:
+                # Every mutation captures before it writes, so this is where a
+                # file the daemon cannot open stops a save.  Raising the raw
+                # OSError here escaped as an unexplained failure -- the exact
+                # silent save this logging exists to prevent.
+                logger.error(
+                    "Cannot save: %s could not be opened (%s). %s",
+                    path,
+                    type(exc).__name__,
+                    self._identity_failure_hint(type(exc).__name__, exc),
+                )
+                raise CoreError(
+                    ErrorCode.CONNECTION_STATE_IO_ERROR,
+                    "The connection state file could not be read",
+                    diagnostic_category="io_error",
+                    diagnostic_reason="mutation target could not be opened",
+                ) from exc
             try:
                 opened = os.fstat(fd)
                 if opened.st_dev != info.st_dev or opened.st_ino != info.st_ino:
