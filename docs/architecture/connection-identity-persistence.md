@@ -115,8 +115,7 @@ which the degraded state forbids, so a single unplaceable intent left saving
 broken on that install permanently, silently, across restarts.
 
 A sidecar that is itself corrupt or unsupported is a separate condition and
-still degrades (see "v1 migration"): there is no readable sidecar left to
-reconcile, so that case is not addressed by discarding an intent.
+is handled by salvage (see "Salvaging a damaged sidecar").
 
 ## v2 sidecar
 
@@ -185,15 +184,57 @@ appended deterministically to root. The migration is idempotent and never
 modifies legacy `config.json`.
 
 The repository never returns to normal v1 writes after successful migration.
-Corrupt or unsupported v2 is preserved; SSH remains readable/launchable where
-possible, while UUID-owned mutations are degraded rather than applied to an
-invented empty registry.
+Corrupt or unsupported v2 is salvaged rather than degraded or replaced by an
+invented empty registry -- see "Salvaging a damaged sidecar".
 
 Legacy `connections_meta` entries are validated independently. An unsafe or
 malformed auxiliary entry is omitted from migration while valid groups, root
 order, non-SSH records, and other valid metadata continue through the same
 migration. The legacy source file is never rewritten, and the safe-metadata
 validator is not weakened or used to sanitize an unsafe value into acceptance.
+
+## Salvaging a damaged sidecar
+
+The strict reader is all-or-nothing: one invalid entry invalidates the whole
+document. That is correct for the normal path, but refusing on that basis was
+a second way into a permanent read-only state, and the most expensive one --
+non-SSH records (Docker, Kubernetes, serial, telnet, Mosh) exist *only* in
+this file, so those users saw their connections disappear with no way back.
+
+`CORRUPT` and `UNSUPPORTED` therefore go to `salvage_identity_state_v2`, which
+is lenient about the container and strict about every entry. Identities,
+groups, group members, references, non-SSH records and metadata values are
+each rebuilt with the same constructors and validators the strict reader
+uses; anything that fails is dropped and counted, and nothing is invented,
+repaired or reinterpreted. A single bad entry costs that entry alone -- a
+group with one unreadable member keeps its other members.
+
+Placement is the one thing salvage repairs rather than drops, because
+`IdentityStateV2` requires every active connection to be placed exactly once:
+dangling and duplicate references are removed, group parent cycles and unknown
+parents are broken, and anything left unplaced is appended to root -- the same
+repair `_reconcile_legacy_state` already performs for v1. Pending ambiguities
+are dropped, since reconciliation recomputes them. If an invariant still
+survives every targeted repair, salvage keeps the records and gives up the
+organization around them; only bytes that are not a JSON object yield an
+empty result.
+
+The damaged bytes are copied to a timestamped `connections.json.corrupt-*`
+sibling *before* the salvaged state is written, so nothing salvage dropped is
+actually lost and repeated attempts never clobber an earlier copy. An
+`UNSUPPORTED` (future-version) document is a downgrade rather than corruption,
+and that verbatim copy is what keeps an older build from silently destroying
+state a newer one can still read. The salvaged state is then reconciled
+against the SSH configuration like any other load, and the repository stays
+writable.
+
+The counts are logged, because a damaged file that quietly yields fewer
+connections than the user had is worse than one that says what it cost.
+
+Salvage covers damaged *content*. A file that cannot be read or written at
+all -- an I/O error, a permission failure, a symlink, a document past the size
+limit -- is a different condition: there is nothing to salvage and nothing to
+copy aside, so that still degrades.
 
 ## Managed SSH transactions and recovery
 

@@ -23,6 +23,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -753,6 +754,35 @@ def migrate_connection_state_v1_to_v2(
     state, report = migrate_v1_state(legacy, projections, **kwargs)
     write_identity_state_v2(path, state)
     return state, report
+
+
+def read_state_bytes_for_salvage(path: Path) -> Optional[bytes]:
+    """Read a damaged state file's exact bytes under the normal guards.
+
+    Salvage needs the raw document the strict reader rejected.  The same
+    symlink, metadata and size refusals still apply -- a file that is unsafe
+    to read is unsafe to salvage.
+    """
+    return _read_state_bytes(Path(path))
+
+
+def quarantine_connection_state_file(path: Path, raw: bytes) -> Path:
+    """Copy damaged state aside before anything overwrites it.
+
+    Salvage keeps what it can parse; the copy keeps everything, including
+    whatever salvage had to drop, so a damaged file is never the end of the
+    story.  Written with the ordinary hardened policy and a timestamped
+    sibling name, so repeated attempts never clobber an earlier copy.
+    """
+    path = Path(path)
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    target = path.with_name(f"{path.name}.corrupt-{stamp}")
+    suffix = 0
+    while target.exists() or target.is_symlink():
+        suffix += 1
+        target = path.with_name(f"{path.name}.corrupt-{stamp}-{suffix}")
+    _atomic_write_bytes(target, raw, prefix=".connections-corrupt-")
+    return target
 
 
 def identity_transaction_intent_path(path: Path) -> Path:

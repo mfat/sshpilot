@@ -80,6 +80,8 @@ from .state_file import (
     probe_connection_state_file,
     read_identity_state_v2,
     read_pending_identity_transaction,
+    read_state_bytes_for_salvage,
+    quarantine_connection_state_file,
     recover_pending_identity_transaction,
     read_connection_state,
     read_legacy_connection_state,
@@ -88,6 +90,7 @@ from .state_file import (
     write_pending_identity_transaction,
     clear_pending_identity_transaction,
 )
+from .identity_salvage import salvage_identity_state_v2
 from .identity_state_v2 import (
     IdentityRecoveryAction,
     IdentityRecoveryDecision,
@@ -649,17 +652,11 @@ class ConnectionRepository:
                 )
                 return
 
-            # Corrupt/unsupported state is never replaced by an empty v2
-            # registry.  Keep SSH launch/read availability through an empty
-            # decoration projection and make identity mutations fail safely.
-            logger.warning(
-                "Failed to load auxiliary connection state; continuing with SSH "
-                "configuration only (reason=%s)",
-                kind.value,
-            )
-            self._enter_identity_degraded_locked(kind.value)
-            file_state = ConnectionFileState()
-            self._publish_state_locked(ssh_config, file_state, migrated=False)
+            # Corrupt or unsupported state is never replaced by an empty v2
+            # registry, and never makes the app read-only either.  Copy the
+            # damaged file aside, salvage every entry that still validates,
+            # and carry on writable with what survived.
+            self._salvage_state_locked(kind, ssh_config, projections)
         except Exception as exc:
             failure_reason = (
                 exc.diagnostic_category
@@ -677,6 +674,66 @@ class ConnectionRepository:
                 ConnectionFileState(),
                 migrated=False,
             )
+
+    def _salvage_state_locked(
+        self,
+        kind: ConnectionStateFileKind,
+        ssh_config: LoadedSshConfiguration,
+        projections,
+    ) -> None:
+        """Recover what a damaged sidecar still supports, then stay writable.
+
+        The strict reader is all-or-nothing: one bad entry invalidates the
+        whole document.  Refusing on that basis was the second way into a
+        permanent read-only state, and the costliest one -- non-SSH records
+        (Docker, Kubernetes, serial, telnet, Mosh) exist *only* in this file,
+        so a user with those saw them vanish from the app with no way back.
+
+        The damaged bytes are copied aside first, so nothing salvage drops is
+        actually lost, then every entry that validates strictly is kept and
+        reconciled against the SSH configuration like any other load.  A file
+        that cannot be read at all -- an I/O or permission failure rather
+        than bad content -- is a different problem: there is nothing to
+        salvage and nothing to back up, so that still degrades.
+        """
+        raw = read_state_bytes_for_salvage(self._state_path)
+        if raw is None:
+            raise _repository_error("Damaged identity state disappeared during load")
+        salvaged, report = salvage_identity_state_v2(raw)
+        # Quarantine before the write below replaces the original.  If this
+        # fails the directory is almost certainly unwritable, in which case
+        # the write fails too and the caller degrades with the original file
+        # still intact -- nothing is destroyed without a copy beside it.
+        quarantine = quarantine_connection_state_file(self._state_path, raw)
+        state = reconcile_identity_state(
+            salvaged,
+            projections,
+            ssh_config_revision=ssh_config.root_revision,
+        )
+        write_identity_state_v2(self._state_path, state)
+        self._identity_state = state
+        self._identity_state_unavailable = False
+        self._identity_recovery_required = False
+        if report.unreadable:
+            logger.warning(
+                "Auxiliary connection state was unreadable (reason=%s); "
+                "starting a new one. The damaged file was kept as %s",
+                kind.value,
+                quarantine.name,
+            )
+        else:
+            logger.warning(
+                "Salvaged auxiliary connection state (reason=%s): %s. The "
+                "damaged file was kept as %s",
+                kind.value,
+                report.summary(),
+                quarantine.name,
+            )
+        self._publish_state_locked(
+            ssh_config,
+            state_to_service_file_state(state, ssh_config.connections),
+            migrated=True,
+        )
 
     def _recover_or_discard_intent_locked(
         self,

@@ -986,7 +986,20 @@ def test_no_partial_state_when_ssh_config_unreadable(tmp_path):
     assert repo.snapshot().generation == before.generation
 
 
-def test_malformed_canonical_state_does_not_block_ssh_startup(tmp_path, caplog):
+def _quarantine_copies(tmp_path):
+    return sorted(
+        item for item in tmp_path.iterdir() if ".corrupt-" in item.name
+    )
+
+
+def test_malformed_canonical_state_is_salvaged_and_stays_writable(
+    tmp_path, caplog
+):
+    """Bytes that are not JSON support no salvage, but must not block saving.
+
+    The damaged file is copied aside first, so starting a new sidecar never
+    destroys the only copy of whatever it held.
+    """
     root = tmp_path / "ssh_config"
     root.write_text("Host web\n    HostName web.example\n")
     state = tmp_path / "connections.json"
@@ -995,11 +1008,22 @@ def test_malformed_canonical_state_does_not_block_ssh_startup(tmp_path, caplog):
     with caplog.at_level(logging.WARNING):
         repo, _root, _state, _legacy = _repo(tmp_path)
     assert [record.id for record in repo.snapshot().connections] == ["web"]
-    assert state.read_bytes() == before
-    assert "Failed to load auxiliary connection state" in caplog.text
+    assert repo._identity_state_unavailable is False
+    quarantined = _quarantine_copies(tmp_path)
+    assert [item.read_bytes() for item in quarantined] == [before]
+    assert "unreadable" in caplog.text
+    assert repo.create_connection(
+        {"nickname": "fresh", "hostname": "fresh.example", "protocol": "ssh"}
+    ).id == "fresh"
 
 
-def test_unsupported_canonical_state_does_not_block_ssh_startup(tmp_path):
+def test_unsupported_canonical_state_is_kept_verbatim_before_salvage(tmp_path):
+    """A future version is a downgrade, not corruption.
+
+    The newer document is copied aside byte-for-byte before this build writes
+    its own, so running an older SSH Pilot never silently destroys state the
+    newer one can still read.
+    """
     state = tmp_path / "connections.json"
     _write_state(
         state,
@@ -1015,7 +1039,9 @@ def test_unsupported_canonical_state_does_not_block_ssh_startup(tmp_path):
         tmp_path, "Host web\n    HostName web.example\n"
     )
     assert [record.id for record in repo.snapshot().connections] == ["web"]
-    assert state.read_bytes() == before
+    assert repo._identity_state_unavailable is False
+    quarantined = _quarantine_copies(tmp_path)
+    assert [item.read_bytes() for item in quarantined] == [before]
 
 
 @pytest.mark.parametrize(
