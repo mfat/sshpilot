@@ -79,6 +79,7 @@ from .state_file import (
     GroupFileState,
     probe_connection_state_file,
     read_identity_state_v2,
+    read_pending_identity_transaction,
     recover_pending_identity_transaction,
     read_connection_state,
     read_legacy_connection_state,
@@ -87,7 +88,11 @@ from .state_file import (
     write_pending_identity_transaction,
     clear_pending_identity_transaction,
 )
-from .identity_state_v2 import IdentityRecoveryAction, IdentityTransactionIntent
+from .identity_state_v2 import (
+    IdentityRecoveryAction,
+    IdentityRecoveryDecision,
+    IdentityTransactionIntent,
+)
 
 # Kept as a module attribute for legacy test/integration hooks.  Production
 # writes in this repository are v2-only after migration.
@@ -570,25 +575,13 @@ class ConnectionRepository:
             kind = probe_connection_state_file(self._state_path)
             if kind is ConnectionStateFileKind.V2:
                 intent_path = identity_transaction_intent_path(self._state_path)
-                # ``Path.exists()`` is false for a dangling symlink.  Treat
-                # every symlink companion as a pending auxiliary-state
-                # failure so it cannot be silently ignored as "no intent".
+                # ``Path.exists()`` is false for a dangling symlink.  Test
+                # for one explicitly so a planted companion is classified and
+                # discarded rather than silently read as "no intent".
                 if intent_path.exists() or intent_path.is_symlink():
-                    decision = recover_pending_identity_transaction(
-                        self._state_path,
-                        actual_ssh_revision=ssh_config.root_revision,
-                        intent_path=intent_path,
+                    self._recover_or_discard_intent_locked(
+                        intent_path, ssh_config
                     )
-                    if decision.action not in {
-                        IdentityRecoveryAction.NO_PENDING,
-                        IdentityRecoveryAction.FINALIZE_TARGET,
-                        IdentityRecoveryAction.ABORT_BASE,
-                    }:
-                        self._enter_identity_degraded_locked(decision.reason)
-                        self._publish_state_locked(
-                            ssh_config, ConnectionFileState(), migrated=False
-                        )
-                        return
                 state = read_identity_state_v2(self._state_path)
                 if state is None:
                     raise _repository_error("Identity state disappeared during load")
@@ -683,6 +676,84 @@ class ConnectionRepository:
                 ssh_config,
                 ConnectionFileState(),
                 migrated=False,
+            )
+
+    def _recover_or_discard_intent_locked(
+        self,
+        intent_path: Path,
+        ssh_config: LoadedSshConfiguration,
+    ) -> None:
+        """Finish an actionable pending transaction; discard an unusable one.
+
+        A ``.pending`` note exists so a crash between the SSH write and the
+        sidecar write can be resolved.  FINALIZE_TARGET and ABORT_BASE are
+        that resolution.  Every other classification means the note can no
+        longer be placed against what is on disk -- the config moved to an
+        unrelated revision, the sidecar moved past the note's base, or the
+        note itself is malformed.
+
+        Such a note is not evidence of anything recoverable, so it is thrown
+        away and the ordinary load continues.  The sidecar is still readable
+        and ``reconcile_identity_state`` -- the same pass that already runs
+        whenever the SSH config is edited outside the app -- carries UUIDs,
+        display names, group membership and metadata across the drift.
+
+        Refusing instead was strictly worse.  It dropped in-memory identity
+        state and disabled every identity-owned mutation, and nothing could
+        lift that: the note is only ever cleared at the end of a *successful*
+        mutation, which is exactly what the degraded state forbids.  One
+        unplaceable note therefore made saving fail, with nothing shown to
+        the user, on that install forever.
+        """
+        # Validate the note on its own first.  A note that cannot be read or
+        # parsed is as unusable as one that cannot be placed, and separating
+        # the two reads keeps this from swallowing a rejection that is really
+        # about the *sidecar* -- that one still belongs to the caller.
+        try:
+            read_pending_identity_transaction(intent_path)
+        except CoreError as exc:
+            decision = IdentityRecoveryDecision(
+                IdentityRecoveryAction.STALE_INTENT,
+                f"pending transaction is unreadable ({exc.diagnostic_category})",
+            )
+        else:
+            decision = recover_pending_identity_transaction(
+                self._state_path,
+                actual_ssh_revision=ssh_config.root_revision,
+                intent_path=intent_path,
+            )
+        if decision.action in {
+            IdentityRecoveryAction.NO_PENDING,
+            IdentityRecoveryAction.FINALIZE_TARGET,
+            IdentityRecoveryAction.ABORT_BASE,
+        }:
+            return
+        if decision.action is IdentityRecoveryAction.DEFERRED:
+            # "Cannot be evaluated yet" is not "unusable".  Keep the note and
+            # let the load continue; a later start with a complete revision
+            # can still finalize or abort it.  Unreachable from here today --
+            # ``root_revision`` is always a complete digest -- but discarding
+            # on it would throw away a still-actionable note.
+            logger.warning(
+                "Deferring a pending identity transaction (reason=%s)",
+                decision.reason,
+            )
+            return
+        logger.warning(
+            "Discarding an unusable pending identity transaction "
+            "(reason=%s); reconciling the sidecar against the current SSH "
+            "configuration instead",
+            decision.reason,
+        )
+        try:
+            clear_pending_identity_transaction(intent_path)
+        except Exception:
+            # Reconciliation below does not depend on the note being gone,
+            # and blocking the load over a file we already decided to ignore
+            # is the behaviour this path exists to remove.
+            logger.warning(
+                "Could not remove the unusable pending identity transaction",
+                exc_info=True,
             )
 
     def _enter_identity_degraded_locked(self, reason: str) -> None:

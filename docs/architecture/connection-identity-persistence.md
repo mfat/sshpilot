@@ -99,12 +99,24 @@ for the current observed revision while `last_reconciled_ssh_revision` remains
 the last fully reconciled revision. A later complete revision recomputes the
 result; stale ambiguity is never reused.
 
-If recovery is `REQUIRES_RECONCILIATION`, `STALE_INTENT`, `DEFERRED`, or the
-pending intent is corrupt, the repository drops any previously trusted in-
-memory UUID state, preserves the sidecar and intent, publishes SSH aliases
-without UUID-owned decorations, and disables identity-owned mutations until a
-complete safe recovery/reconciliation is available. A valid SSH configuration
-remains launchable.
+`FINALIZE_TARGET` and `ABORT_BASE` resolve a pending intent. Any other
+classification -- `REQUIRES_RECONCILIATION`, `STALE_INTENT`, or an intent that
+cannot be read or parsed -- means the intent can no longer be placed against
+what is on disk, so it is discarded and the ordinary load continues: the
+sidecar is read and `reconcile_identity_state` carries UUIDs, display names,
+group membership and metadata across the drift, exactly as it does when the
+SSH configuration is edited outside the app. An unplaceable intent is not
+evidence about the sidecar and never makes the repository read-only.
+
+An earlier design preserved such an intent and disabled identity-owned
+mutations "until a complete safe recovery is available". No recovery ever
+arrived: the intent is only cleared at the end of a *successful* mutation,
+which the degraded state forbids, so a single unplaceable intent left saving
+broken on that install permanently, silently, across restarts.
+
+A sidecar that is itself corrupt or unsupported is a separate condition and
+still degrades (see "v1 migration"): there is no readable sidecar left to
+reconcile, so that case is not addressed by discarding an intent.
 
 ## v2 sidecar
 
@@ -223,15 +235,21 @@ The main sidecar limit is 16 MiB serialized bytes. The same-directory pending
 intent limit is 32 MiB, and its nested target must independently fit 16 MiB.
 Both readers and writers enforce these closure rules.
 
-Recovery is conservative:
+Recovery applies an intent only where it is unambiguous, and never lets an
+intent it cannot apply stop the app from working:
 
 | Actual SSH revision | Sidecar state | Action |
 |---|---|---|
 | target | base generation or exact target | finalize target and clear intent |
 | base | base generation | clear intent and retain base |
-| unrelated | base generation | require reconciliation; do not guess |
-| any | newer/conflicting sidecar | stale intent; never overwrite |
+| unrelated | base generation | discard intent; reconcile the sidecar |
+| any | newer/conflicting sidecar | discard intent; reconcile the sidecar |
+| unreadable or malformed intent | any | discard intent; reconcile the sidecar |
 | unavailable/partial | any | defer; do not apply or clear |
+
+Discarding never overwrites the sidecar with an intent target that was not
+verified as committed. It drops the intent and hands the sidecar to the normal
+reconciliation pass, which is the same drift handling an external edit gets.
 
 Pre-replace failures leave the old target byte-for-byte unchanged. A failure
 after `os.replace()` while syncing the parent reports durability unknown; the
