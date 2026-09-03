@@ -1092,34 +1092,21 @@ class WindowActions:
         Tips are read from ``sshpilot/resources/tips.md`` — one tip per line — so
         they can be added or edited without touching the source. That file lives
         in the bundled ``resources`` directory, which the packaging copies into
-        every install, so it ships everywhere. Blank lines and lines starting
-        with ``#`` are ignored. Returns an empty list when the file is missing or
-        unreadable, in which case no tips are shown.
+        every install, so it ships everywhere. Language-specific
+        ``tips.<lang>.md`` files win when present (translated as data, not
+        gettext). ``{primary}`` becomes Ctrl/Strg/⌘ for the platform, and
+        ``[file-manager]`` / ``[external-terminal]`` tips are dropped when those
+        features are hidden. Returns an empty list when no tip file is readable.
         """
+        from .tips import load_window_tips
+
         here = os.path.dirname(os.path.abspath(__file__))
-        # Tips are data, not code, so they are translated as data: drop a
-        # tips.<lang>.md next to tips.md and it wins for that language. Routing
-        # them through gettext instead would mean the .md could no longer be
-        # edited without an extraction pass, which is the one property this file
-        # exists to have.
-        candidates = tuple(
-            os.path.join(here, 'resources', f'tips.{code}.md')
-            for code in _ui_language_codes()
-        ) + (os.path.join(here, 'resources', 'tips.md'),)
-        for path in candidates:
-            try:
-                with open(path, encoding='utf-8') as fh:
-                    raw_lines = fh.readlines()
-            except OSError:
-                continue
-            tips = []
-            for line in raw_lines:
-                text = line.strip()
-                if not text or text.startswith('#'):
-                    continue
-                tips.append(text)
-            return tips
-        return []
+        return load_window_tips(
+            os.path.join(here, 'resources'),
+            _ui_language_codes(),
+            include_file_manager=not should_hide_file_manager_options(),
+            include_external_terminal=not should_hide_external_terminal_options(),
+        )
 
     def _maybe_show_tips_banner(self):
         """Show a usage tip in the banner area, if the user hasn't opted out.
