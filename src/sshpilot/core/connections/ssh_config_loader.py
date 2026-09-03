@@ -597,21 +597,34 @@ def _parse_host_config(
 def _compute_revision(
     files: List[Path], content_overrides: Optional[Mapping[Path, bytes]] = None
 ) -> str:
-    """Deterministic SHA-256 over each file's path-relative identity + bytes."""
+    """Deterministic SHA-256 over each file's absolute identity + bytes.
+
+    The per-file identity must depend only on the configuration document,
+    never on the process that reads it.  Revisions are persisted (the
+    sidecar's ``observed_ssh_revision``, a pending transaction's base/target
+    revisions) and compared across daemon restarts, so anything ambient in
+    this hash makes an unchanged config look changed on the next launch.
+    ``os.path.relpath`` resolved against the current working directory did
+    exactly that: the same bytes hashed differently depending on where the
+    daemon happened to be started from, which spuriously re-reconciled the
+    sidecar on every launch and, with a pending intent on disk, turned a
+    recoverable ABORT_BASE/FINALIZE_TARGET into an unrecoverable
+    ``STALE_INTENT`` that permanently degrades identity state.
+    """
     hasher = hashlib.sha256()
     overrides = {
         Path(key).resolve(): bytes(value)
         for key, value in (content_overrides or {}).items()
     }
     for path in files:
+        resolved = path.resolve()
         try:
-            data = overrides.get(path.resolve())
+            data = overrides.get(resolved)
             if data is None:
                 data = path.read_bytes()
         except OSError as exc:
             raise _config_error("SSH configuration could not be read completely") from exc
-        rel = os.path.relpath(path)
-        hasher.update(rel.encode("utf-8"))
+        hasher.update(resolved.as_posix().encode("utf-8"))
         hasher.update(b"\x00")
         hasher.update(data)
         hasher.update(b"\x00")

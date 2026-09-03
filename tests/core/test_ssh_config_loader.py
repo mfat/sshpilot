@@ -1,5 +1,6 @@
 """Headless SSH config loader tests (golden fixtures from Task 0)."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -545,3 +546,29 @@ def test_clearing_the_port_returns_the_host_to_the_inherited_one(tmp_path):
     assert "Host *\n    Port 2323\n" in text  # the global is untouched
     after = _only_record(load_ssh_configuration(path, isolated=True), "web")
     assert "port" not in after.authored_directives
+
+
+def test_revision_does_not_depend_on_working_directory(tmp_path, monkeypatch):
+    """Revisions outlive the process, so nothing ambient may enter the hash.
+
+    They are persisted (the sidecar's ``observed_ssh_revision``, a pending
+    transaction's base/target revisions) and compared after a restart, where
+    the daemon's working directory is simply whatever it inherited.  A
+    CWD-relative per-file identity made the same bytes hash differently per
+    launch, which re-reconciled the sidecar for nothing and turned a
+    recoverable pending intent into a permanent degrade.
+    """
+    (tmp_path / "frag").mkdir()
+    (tmp_path / "frag" / "a.conf").write_text(
+        "Host a\n    HostName a.example.com\n", encoding="utf-8"
+    )
+    root = tmp_path / "config"
+    root.write_text(
+        f"Include {tmp_path}/frag/*.conf\nHost b\n    HostName b.example.com\n",
+        encoding="utf-8",
+    )
+    revisions = set()
+    for cwd in (tmp_path, tmp_path / "frag", os.path.sep):
+        monkeypatch.chdir(cwd)
+        revisions.add(load_ssh_configuration(root, isolated=False).root_revision)
+    assert len(revisions) == 1

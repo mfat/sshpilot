@@ -744,3 +744,33 @@ def test_delete_then_alias_reuse_allocates_new_uuid_and_keeps_tombstone(tmp_path
     assert active[0].projection.alias == "old"
     assert active[0].uuid != old_uuid
     assert any(item.uuid == old_uuid for item in tombstones)
+
+
+def test_clean_rollback_leaves_no_orphaned_pending_intent(tmp_path, monkeypatch):
+    """Rollback's resync must classify its own note and clear it.
+
+    Nothing else would: the only other caller of
+    ``clear_pending_identity_transaction`` runs at the end of a *successful*
+    mutation, and a surviving note that later fails to classify degrades
+    identity state permanently.  Rollback restores the sidecar and SSH root
+    to base, so the note recovers as ABORT_BASE during ``_resync_from_files``.
+    """
+    repo, root, state = _repo(tmp_path, "Host old\n    HostName old.example\n")
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+
+    def fail_commit(_prepared):
+        raise OSError("injected SSH commit failure")
+
+    monkeypatch.setattr(repo._ssh_store, "commit_prepared", fail_commit)
+    with pytest.raises(OSError, match="injected SSH commit failure"):
+        repo.update_connection(
+            "old",
+            {"nickname": "new", "hostname": "new.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert not identity_transaction_intent_path(state).exists()
+    assert repo._identity_state_unavailable is False
