@@ -61,6 +61,11 @@
 
 
 
+    <release version="6.0.4" date="2026-09-05">
+      <description>
+        <p>Bug fixes</p>
+      </description>
+    </release>
     <release version="6.0.3" date="2026-09-02">
       <description>
         <p>Bug fixes</p>
