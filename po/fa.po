@@ -2,21 +2,22 @@
 # Copyright (C) 2026 THE sshpilot'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the sshpilot package.
 # Automatically generated, 2026.
+# mFat <newmfat@gmail.com>, 2026.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-09-05 11:35+0330\n"
-"PO-Revision-Date: 2026-09-05 11:35+0330\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-09-05 16:17+0330\n"
+"Last-Translator: mFat <newmfat@gmail.com>\n"
+"Language-Team: Persian\n"
 "Language: fa\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
-""
+"X-Generator: Gtranslator 50.0\n"
 
 #: src/sshpilot/actions.py:36 src/sshpilot/preferences.py:1619
 msgid "Sidebar Toggle Button"
@@ -24,7 +25,7 @@ msgstr "دکمه جابجایی نوار کناری"
 
 #: src/sshpilot/actions.py:37 src/sshpilot/preferences.py:1625
 msgid "Split View Button"
-msgstr "دکمه Split View"
+msgstr "دکمه نمایش چند قابی"
 
 #: src/sshpilot/actions.py:38 src/sshpilot/preferences.py:1631
 msgid "Command Snippets Button"
@@ -143,7 +144,7 @@ msgstr "جدا کردن برگه ها"
 #: src/sshpilot/actions.py:339 src/sshpilot/window_tabs.py:1247
 #, python-brace-format
 msgid "Split View — {name}"
-msgstr "نمای تقسیم -{name}"
+msgstr "نمای چند قابی -{name}"
 
 #: src/sshpilot/actions.py:385 src/sshpilot/actions.py:513
 #: src/sshpilot/connection_dialog.py:4901 src/sshpilot/file_manager/pane.py:55
@@ -268,8 +269,10 @@ msgid "Save Session"
 msgstr "ذخیره جلسه"
 
 #: src/sshpilot/actions.py:659
-msgid "Enter a name for this session. Saving with an existing name overwrites it."
-msgstr "یک نام برای این جلسه وارد کنید. ذخیره با یک نام موجود، آن را بازنویسی می کند."
+msgid ""
+"Enter a name for this session. Saving with an existing name overwrites it."
+msgstr ""
+"یک نام برای این جلسه وارد کنید. ذخیره با یک نام موجود، آن را بازنویسی می کند."
 
 #: src/sshpilot/actions.py:662 src/sshpilot/actions.py:663
 #: src/sshpilot/actions.py:925
@@ -324,8 +327,12 @@ msgstr "باز کنید"
 
 #: src/sshpilot/actions.py:782
 #, python-brace-format
-msgid "Replace the current tabs with session \"{name}\", or add it to the current tabs?"
-msgstr "برگه های فعلی را با جلسه \"{name}\" جایگزین کنید، یا آن را به برگه های فعلی اضافه کنید؟"
+msgid ""
+"Replace the current tabs with session \"{name}\", or add it to the current "
+"tabs?"
+msgstr ""
+"برگه های فعلی را با جلسه \"{name}\" جایگزین کنید، یا آن را به برگه های فعلی "
+"اضافه کنید؟"
 
 #: src/sshpilot/actions.py:785
 msgid "Add to Current"
@@ -542,7 +549,8 @@ msgstr "اتصال ناموفق بود"
 
 #: src/sshpilot/authorized_keys_window.py:286
 msgid "No keys yet — use “Add key” to install one."
-msgstr "هنوز هیچ کلیدی وجود ندارد - برای نصب کلید از «افزودن کلید» استفاده کنید."
+msgstr ""
+"هنوز هیچ کلیدی وجود ندارد - برای نصب کلید از «افزودن کلید» استفاده کنید."
 
 #: src/sshpilot/authorized_keys_window.py:297 src/sshpilot/text_editor.py:1386
 msgid "Saving…"
@@ -583,7 +591,9 @@ msgstr "این ورودی autorized_keys حذف خواهد شد."
 
 #: src/sshpilot/authorized_keys_window.py:428
 msgid "SSH keys require the background service. Start it and try again."
-msgstr "کلیدهای SSH به سرویس پس زمینه نیاز دارند. آن را شروع کنید و دوباره امتحان کنید."
+msgstr ""
+"کلیدهای SSH به سرویس پس زمینه نیاز دارند. آن را شروع کنید و دوباره امتحان "
+"کنید."
 
 #: src/sshpilot/authorized_keys_window.py:447
 msgid "Could not start listing local keys."
@@ -620,8 +630,12 @@ msgid "Could not start reading the public key."
 msgstr "خواندن کلید عمومی آغاز نشد."
 
 #: src/sshpilot/authorized_keys_window.py:553
-msgid "The public key for the selected key is not available. Generate it with ssh-keygen and try again."
-msgstr "کلید عمومی برای کلید انتخاب شده در دسترس نیست. آن را با ssh-keygen تولید کنید و دوباره امتحان کنید."
+msgid ""
+"The public key for the selected key is not available. Generate it with ssh-"
+"keygen and try again."
+msgstr ""
+"کلید عمومی برای کلید انتخاب شده در دسترس نیست. آن را با ssh-keygen تولید "
+"کنید و دوباره امتحان کنید."
 
 #: src/sshpilot/authorized_keys_window.py:557
 msgid "Could not read the public key."
@@ -668,8 +682,12 @@ msgid "Restrictions"
 msgstr "محدودیت ها"
 
 #: src/sshpilot/authorized_keys_window.py:733
-msgid "If ‘restrict’ is on, all forwardings/PTY/user-rc are denied unless re-enabled here."
-msgstr "اگر «محدودیت» روشن باشد، همه ارسالu200cها/PTY/user-rc رد میu200cشوند مگر اینکه در اینجا دوباره فعال شوند."
+msgid ""
+"If ‘restrict’ is on, all forwardings/PTY/user-rc are denied unless re-"
+"enabled here."
+msgstr ""
+"اگر «محدودیت» روشن باشد، همه ارسالu200cها/PTY/user-rc رد میu200cشوند مگر "
+"اینکه در اینجا دوباره فعال شوند."
 
 #: src/sshpilot/authorized_keys_window.py:736
 msgid "Apply ‘restrict’"
@@ -681,7 +699,8 @@ msgstr "مرجع گواهی"
 
 #: src/sshpilot/authorized_keys_window.py:743
 msgid "Treat this entry as a CA that signs user certificates."
-msgstr "این ورودی را به عنوان یک CA که گواهی های کاربر را امضا می کند، در نظر بگیرید."
+msgstr ""
+"این ورودی را به عنوان یک CA که گواهی های کاربر را امضا می کند، در نظر بگیرید."
 
 #: src/sshpilot/authorized_keys_window.py:773
 msgid "Source / identity"
@@ -708,8 +727,12 @@ msgid "expiry-time (e.g. YYYYMMDDHHMM or 20260101)"
 msgstr "زمان انقضا (i.n. YYYYMMDDHHMMSS یا 20260101)"
 
 #: src/sshpilot/authorized_keys_window.py:812
-msgid "environment= entries (NAME=value, one per line). Often ignored unless sshd's PermitUserEnvironment is on."
-msgstr "محیط = ورودی (NAME = مقدار، یک در هر خط). اغلب نادیده گرفته می شود مگر اینکه PermitUserEnvironment sshd روشن باشد."
+msgid ""
+"environment= entries (NAME=value, one per line). Often ignored unless sshd's "
+"PermitUserEnvironment is on."
+msgstr ""
+"محیط = ورودی (NAME = مقدار، یک در هر خط). اغلب نادیده گرفته می شود مگر اینکه "
+"PermitUserEnvironment sshd روشن باشد."
 
 #: src/sshpilot/authorized_keys_window.py:831
 msgid "Tunneling"
@@ -753,8 +776,12 @@ msgid "Preserved unknown options"
 msgstr "گزینه های ناشناخته حفظ شده است"
 
 #: src/sshpilot/authorized_keys_window.py:888
-msgid "These options are not modelled by this editor but will be re-emitted verbatim."
-msgstr "این گزینهu200cها توسط این ویرایشگر مدلu200cسازی نشدهu200cاند، اما کلمه به کلمه دوباره ارسال میu200cشوند."
+msgid ""
+"These options are not modelled by this editor but will be re-emitted "
+"verbatim."
+msgstr ""
+"این گزینهu200cها توسط این ویرایشگر مدلu200cسازی نشدهu200cاند، اما کلمه به "
+"کلمه دوباره ارسال میu200cشوند."
 
 #: src/sshpilot/bitwarden_setup.py:100
 #, python-brace-format
@@ -778,16 +805,20 @@ msgid "Could not download the Bitwarden CLI."
 msgstr "Bitwarden CLI دانلود نشد."
 
 #: src/sshpilot/bitwarden_setup.py:236
-msgid "The Bitwarden CLI was installed but could not be verified. Try restarting sshPilot."
+msgid ""
+"The Bitwarden CLI was installed but could not be verified. Try restarting "
+"sshPilot."
 msgstr "Bitwarden CLI نصب شد اما تأیید نشد. sshPilot را مجددا راه اندازی کنید."
 
 #: src/sshpilot/bitwarden_setup.py:252
 #, python-brace-format
 msgid ""
-"The CLI will be downloaded on your system (outside the Flatpak sandbox) and installed to:\n"
+"The CLI will be downloaded on your system (outside the Flatpak sandbox) and "
+"installed to:\n"
 "\n"
 "    {path}"
-msgstr "CLI در سیستم شما (خارج از سندباکس Flatpak) دانلود و در:{path}نصب خواهد شد"
+msgstr ""
+"CLI در سیستم شما (خارج از سندباکس Flatpak) دانلود و در:{path}نصب خواهد شد"
 
 #: src/sshpilot/bitwarden_setup.py:256
 #, python-brace-format
@@ -815,16 +846,24 @@ msgid "Installation failed."
 msgstr "نصب انجام نشد."
 
 #: src/sshpilot/bitwarden_setup.py:287
-msgid "The install command finished but “bw” is still not available. Try restarting sshPilot."
-msgstr "دستور نصب به پایان رسید اما \"bw\" هنوز در دسترس نیست. sshPilot را مجددا راه اندازی کنید."
+msgid ""
+"The install command finished but “bw” is still not available. Try restarting "
+"sshPilot."
+msgstr ""
+"دستور نصب به پایان رسید اما \"bw\" هنوز در دسترس نیست. sshPilot را مجددا راه "
+"اندازی کنید."
 
 #: src/sshpilot/bitwarden_setup.py:663
 msgid "Open a terminal"
 msgstr "یک ترمینال باز کنید"
 
 #: src/sshpilot/bitwarden_setup.py:664
-msgid "Could not open a built-in terminal from Settings. Open a system terminal manually and run the commands shown in the next dialog."
-msgstr "ترمینال داخلی از تنظیمات باز نشد. یک ترمینال سیستم را به صورت دستی باز کنید و دستورات نشان داده شده در گفتگوی بعدی را اجرا کنید."
+msgid ""
+"Could not open a built-in terminal from Settings. Open a system terminal "
+"manually and run the commands shown in the next dialog."
+msgstr ""
+"ترمینال داخلی از تنظیمات باز نشد. یک ترمینال سیستم را به صورت دستی باز کنید "
+"و دستورات نشان داده شده در گفتگوی بعدی را اجرا کنید."
 
 #: src/sshpilot/bitwarden_setup.py:684
 #, python-brace-format
@@ -846,7 +885,9 @@ msgid ""
 "    {command}\n"
 "\n"
 "{note}Then return here and choose “Try again”."
-msgstr "Bitwarden CLI (\"bw\") نصب نشده است. یک ترمینال را باز کنید و اجرا کنید:{command}{note}سپس به اینجا برگردید و «دوباره امتحان کنید» را انتخاب کنید."
+msgstr ""
+"Bitwarden CLI (\"bw\") نصب نشده است. یک ترمینال را باز کنید و اجرا کنید:"
+"{command}{note}سپس به اینجا برگردید و «دوباره امتحان کنید» را انتخاب کنید."
 
 #: src/sshpilot/bitwarden_setup.py:695
 msgid "Open terminal"
@@ -881,16 +922,24 @@ msgstr "Bitwarden CLI نصب نشد."
 msgid ""
 "{detail}\n"
 "\n"
-"Accounts enrolled in an organization's trusted-device policy cannot access vault data through the Bitwarden CLI."
-msgstr "{detail}حسابu200cهای ثبتu200cشده در خطu200cمشی دستگاه مورد اعتماد سازمان نمیu200cتوانند از طریق Bitwarden CLI به دادهu200cهای صندوق دسترسی داشته باشند."
+"Accounts enrolled in an organization's trusted-device policy cannot access "
+"vault data through the Bitwarden CLI."
+msgstr ""
+"{detail}حسابu200cهای ثبتu200cشده در خطu200cمشی دستگاه مورد اعتماد سازمان "
+"نمیu200cتوانند از طریق Bitwarden CLI به دادهu200cهای صندوق دسترسی داشته "
+"باشند."
 
 #: src/sshpilot/bitwarden_setup.py:790
 #, python-brace-format
 msgid ""
 "{detail}\n"
 "\n"
-"If Bitwarden asked for additional authentication, enter your personal API key client secret in the auth-challenge field (Account Settings → Security → Keys)."
-msgstr "{detail}اگر Bitwarden درخواست احراز هویت اضافی کرد، راز مشتری کلید API شخصی خود را در فیلد چالش احراز هویت وارد کنید (تنظیمات حساب → امنیت → کلیدها)."
+"If Bitwarden asked for additional authentication, enter your personal API "
+"key client secret in the auth-challenge field (Account Settings → Security → "
+"Keys)."
+msgstr ""
+"{detail}اگر Bitwarden درخواست احراز هویت اضافی کرد، راز مشتری کلید API شخصی "
+"خود را در فیلد چالش احراز هویت وارد کنید (تنظیمات حساب → امنیت → کلیدها)."
 
 #: src/sshpilot/bitwarden_setup.py:795
 #: src/sshpilot/gtk/secret_status_messages.py:35
@@ -903,13 +952,19 @@ msgstr "سرورهای Bitwarden"
 
 #: src/sshpilot/bitwarden_setup.py:809
 msgid ""
-"Choose which Bitwarden server to use before signing in. Self-hosted Vaultwarden URLs are supported.\n"
+"Choose which Bitwarden server to use before signing in. Self-hosted "
+"Vaultwarden URLs are supported.\n"
 "\n"
-"CAs from the system trust store are trusted automatically. For a CA outside it, set NODE_EXTRA_CA_CERTS to your bundle in the environment before signing in."
+"CAs from the system trust store are trusted automatically. For a CA outside "
+"it, set NODE_EXTRA_CA_CERTS to your bundle in the environment before signing "
+"in."
 msgstr ""
-"انتخاب کنید کدام سرور Bitwarden را قبل از ورود به سیستم استفاده کنید. URL های Vaultwarden خود میزبانی شده پشتیبانی می شوند.\n"
+"انتخاب کنید کدام سرور Bitwarden را قبل از ورود به سیستم استفاده کنید. URL "
+"های Vaultwarden خود میزبانی شده پشتیبانی می شوند.\n"
 "\n"
-"CA های ذخیره اعتماد سیستم به طور خودکار مورد اعتماد هستند. برای CA خارج از آن، قبل از ورود به سیستم، NODE_EXTRA_CA_CERTS را در بسته خود در محیط تنظیم کنید."
+"CA های ذخیره اعتماد سیستم به طور خودکار مورد اعتماد هستند. برای CA خارج از "
+"آن، قبل از ورود به سیستم، NODE_EXTRA_CA_CERTS را در بسته خود در محیط تنظیم "
+"کنید."
 
 #: src/sshpilot/bitwarden_setup.py:817
 msgid "Bitwarden Cloud (US — default)"
@@ -988,8 +1043,12 @@ msgid "Two-step login"
 msgstr "ورود دو مرحله ای"
 
 #: src/sshpilot/bitwarden_setup.py:1077
-msgid "Choose your two-step login method. The verification code is requested securely by the daemon."
-msgstr "روش ورود دو مرحله ای خود را انتخاب کنید. کد تأیید به طور ایمن توسط دیمون درخواست می شود."
+msgid ""
+"Choose your two-step login method. The verification code is requested "
+"securely by the daemon."
+msgstr ""
+"روش ورود دو مرحله ای خود را انتخاب کنید. کد تأیید به طور ایمن توسط دیمون "
+"درخواست می شود."
 
 #: src/sshpilot/bitwarden_setup.py:1080
 msgid "Two-step login method"
@@ -1004,8 +1063,12 @@ msgid "Sign in with API key"
 msgstr "با کلید API وارد شوید"
 
 #: src/sshpilot/bitwarden_setup.py:1137
-msgid "Enter your personal API key client ID. The client secret is requested securely by the daemon."
-msgstr "شناسه مشتری کلید API شخصی خود را وارد کنید. رمز مشتری به طور ایمن توسط دیمون درخواست می شود."
+msgid ""
+"Enter your personal API key client ID. The client secret is requested "
+"securely by the daemon."
+msgstr ""
+"شناسه مشتری کلید API شخصی خود را وارد کنید. رمز مشتری به طور ایمن توسط دیمون "
+"درخواست می شود."
 
 #: src/sshpilot/bitwarden_setup.py:1139
 msgid "Client ID"
@@ -1016,8 +1079,12 @@ msgid "Sign in with SSO"
 msgstr "با SSO وارد شوید"
 
 #: src/sshpilot/bitwarden_setup.py:1180
-msgid "SSO opens in your web browser. Leave the organization identifier empty for the default SSO flow."
-msgstr "SSO در مرورگر وب شما باز می شود. شناسه سازمان را برای جریان پیش فرض SSO خالی بگذارید."
+msgid ""
+"SSO opens in your web browser. Leave the organization identifier empty for "
+"the default SSO flow."
+msgstr ""
+"SSO در مرورگر وب شما باز می شود. شناسه سازمان را برای جریان پیش فرض SSO خالی "
+"بگذارید."
 
 #: src/sshpilot/bitwarden_setup.py:1182
 msgid "Organization ID (optional)"
@@ -1033,7 +1100,9 @@ msgstr "ورود به سیستم SSO را در مرورگر خود کامل کن
 
 #: src/sshpilot/bitwarden_setup.py:1207
 msgid "SSO sign-in timed out. Complete sign-in in the browser and try again."
-msgstr "زمان ورود به سیستم SSO تمام شد. ورود به سیستم را در مرورگر کامل کنید و دوباره امتحان کنید."
+msgstr ""
+"زمان ورود به سیستم SSO تمام شد. ورود به سیستم را در مرورگر کامل کنید و "
+"دوباره امتحان کنید."
 
 #: src/sshpilot/bitwarden_setup.py:1239
 msgid "Configuring server…"
@@ -1044,7 +1113,8 @@ msgid "Server configuration failed"
 msgstr "پیکربندی سرور ناموفق بود"
 
 #: src/sshpilot/bitwarden_setup.py:1261
-msgid "Could not set the Bitwarden server URL. Check the address and try again."
+msgid ""
+"Could not set the Bitwarden server URL. Check the address and try again."
 msgstr "URL سرور Bitwarden تنظیم نشد. آدرس را بررسی کنید و دوباره امتحان کنید."
 
 #: src/sshpilot/bitwarden_setup.py:1308
@@ -1053,8 +1123,12 @@ msgstr "Bitwarden آماده است"
 
 #: src/sshpilot/bitwarden_setup.py:1309
 #, python-brace-format
-msgid "The Bitwarden CLI is installed, you are signed in, and your vault is unlocked. No further setup is needed.{source}"
-msgstr "Bitwarden CLI نصب شده است، شما وارد سیستم شده اید و قفل صندوق شما باز می شود. نیازی به تنظیم بیشتر نیست.{source}"
+msgid ""
+"The Bitwarden CLI is installed, you are signed in, and your vault is "
+"unlocked. No further setup is needed.{source}"
+msgstr ""
+"Bitwarden CLI نصب شده است، شما وارد سیستم شده اید و قفل صندوق شما باز می "
+"شود. نیازی به تنظیم بیشتر نیست.{source}"
 
 #: src/sshpilot/bitwarden_setup.py:1321
 msgid "Vault locked"
@@ -1062,7 +1136,8 @@ msgstr "طاق قفل شده"
 
 #: src/sshpilot/bitwarden_setup.py:1322
 msgid "You are signed in to Bitwarden but the vault is locked. Unlock now?"
-msgstr "شما به Bitwarden وارد شده اید اما خزانه قفل شده است. اکنون قفل باز شود؟"
+msgstr ""
+"شما به Bitwarden وارد شده اید اما خزانه قفل شده است. اکنون قفل باز شود؟"
 
 #: src/sshpilot/bitwarden_setup.py:1323 src/sshpilot/window_dialogs.py:390
 msgid "Unlock"
@@ -1074,8 +1149,12 @@ msgid "Not signed in"
 msgstr "وارد نشده است"
 
 #: src/sshpilot/bitwarden_setup.py:1342
-msgid "The Bitwarden CLI is installed but you are not signed in. Continue to sign in?"
-msgstr "Bitwarden CLI نصب شده است اما شما وارد سیستم نشده اید. به ورود به سیستم ادامه می دهید؟"
+msgid ""
+"The Bitwarden CLI is installed but you are not signed in. Continue to sign "
+"in?"
+msgstr ""
+"Bitwarden CLI نصب شده است اما شما وارد سیستم نشده اید. به ورود به سیستم "
+"ادامه می دهید؟"
 
 #: src/sshpilot/bitwarden_setup.py:1370 src/sshpilot/bitwarden_setup.py:1439
 msgid "Bitwarden unavailable"
@@ -1103,7 +1182,9 @@ msgstr "Bitwarden CLI یافت نشد"
 #: src/sshpilot/bitwarden_setup.py:1500
 #, python-brace-format
 msgid ""
-"Install the Bitwarden CLI (the “bw” command) and try again. Use “Set up Bitwarden…” in Preferences to download the official binary automatically, or get it from:\n"
+"Install the Bitwarden CLI (the “bw” command) and try again. Use “Set up "
+"Bitwarden…” in Preferences to download the official binary automatically, or "
+"get it from:\n"
 "\n"
 "  {url}\n"
 "\n"
@@ -1111,8 +1192,13 @@ msgid ""
 "\n"
 "    {path}\n"
 "\n"
-"For self-hosted or EU cloud, set the server in the setup wizard before signing in."
-msgstr "Bitwarden CLI (دستور bw) را نصب کنید و دوباره امتحان کنید. از «Set up Bitwarden…» در Preferences برای دانلود خودکار باینری رسمی استفاده کنید، یا آن را از:{url}sshPilot نصب می کند:{path}برای راه اندازی سرور EU، قبل از ورود به سیستم ابری، تنظیمات ابری را تنظیم می کند."
+"For self-hosted or EU cloud, set the server in the setup wizard before "
+"signing in."
+msgstr ""
+"Bitwarden CLI (دستور bw) را نصب کنید و دوباره امتحان کنید. از «Set up "
+"Bitwarden…» در Preferences برای دانلود خودکار باینری رسمی استفاده کنید، یا "
+"آن را از:{url}sshPilot نصب می کند:{path}برای راه اندازی سرور EU، قبل از ورود "
+"به سیستم ابری، تنظیمات ابری را تنظیم می کند."
 
 #: src/sshpilot/command_blocks.py:555
 msgid " (copy)"
@@ -1321,7 +1407,7 @@ msgstr "تکراری"
 #: src/sshpilot/window.py:3609 src/sshpilot/window.py:3851
 #: src/sshpilot/window_help.py:169
 msgid "Broadcast Command"
-msgstr "فرمان پخش"
+msgstr "پخش فرمان"
 
 #: src/sshpilot/command_blocks.py:2311
 msgid "Run on host…"
@@ -1505,7 +1591,7 @@ msgstr "پیشرفته"
 #: src/sshpilot/connection_dialog.py:1981
 #: src/sshpilot/connection_dialog.py:3745 src/sshpilot/sidebar.py:4467
 msgid "Wake on LAN"
-msgstr "روی LAN بیدار شوید"
+msgstr "روشن کردن از طریق شبکه"
 
 #: src/sshpilot/connection_dialog.py:2241
 #: src/sshpilot/connection_dialog.py:2294
@@ -1590,7 +1676,9 @@ msgstr "فایل گواهی SSH را انتخاب کنید"
 
 #: src/sshpilot/connection_dialog.py:2719
 msgid "Inherited from your SSH configuration. Edit to set it for this host."
-msgstr "از پیکربندی SSH شما به ارث رسیده است. برای تنظیم آن برای این میزبان ویرایش کنید."
+msgstr ""
+"از پیکربندی SSH شما به ارث رسیده است. برای تنظیم آن برای این میزبان ویرایش "
+"کنید."
 
 #: src/sshpilot/connection_dialog.py:2922
 #: src/sshpilot/connection_dialog.py:4673
@@ -1809,8 +1897,12 @@ msgid "Pick from existing tags"
 msgstr "از برچسب های موجود انتخاب کنید"
 
 #: src/sshpilot/connection_dialog.py:3746
-msgid "Optional. Set MAC address to wake this host from the context menu. Host must be on the same subnet for detection."
-msgstr "اختیاری. آدرس MAC را تنظیم کنید تا این میزبان از منوی زمینه بیدار شود. میزبان برای شناسایی باید در همان زیرشبکه باشد."
+msgid ""
+"Optional. Set MAC address to wake this host from the context menu. Host must "
+"be on the same subnet for detection."
+msgstr ""
+"اختیاری. آدرس MAC را تنظیم کنید تا این میزبان از منوی زمینه بیدار شود. "
+"میزبان برای شناسایی باید در همان زیرشبکه باشد."
 
 #: src/sshpilot/connection_dialog.py:3748
 msgid "MAC address"
@@ -1888,7 +1980,8 @@ msgstr "هیچ فرمان از راه دور را اجرا نکنید (پرچم 
 
 #: src/sshpilot/connection_dialog.py:3882
 msgid "Do not start a remote shell or command (SessionType none)"
-msgstr "پوسته یا فرمان از راه دور را راهu200cاندازی نکنید (SessionType هیچ کدام)"
+msgstr ""
+"پوسته یا فرمان از راه دور را راهu200cاندازی نکنید (SessionType هیچ کدام)"
 
 #: src/sshpilot/connection_dialog.py:3885
 msgid "Session"
@@ -1900,7 +1993,7 @@ msgstr "اتصال را برای ارسال پورت بدون شروع جلسه 
 
 #: src/sshpilot/connection_dialog.py:3894
 msgid "Port Forwarding Rules"
-msgstr "قوانین حمل و نقل بندری"
+msgstr "قوانین پورت فورواردینگ"
 
 #: src/sshpilot/connection_dialog.py:3895
 msgid "Add, edit, or remove port forwarding rules for this connection"
@@ -1912,7 +2005,7 @@ msgstr "قانون اضافه کنید"
 
 #: src/sshpilot/connection_dialog.py:3908
 msgid "Add a new port forwarding rule"
-msgstr "یک قانون حمل و نقل پورت جدید اضافه کنید"
+msgstr "یک قانون فورواردینگ پورت جدید اضافه کنید"
 
 #. Port info button
 #: src/sshpilot/connection_dialog.py:3913
@@ -1921,7 +2014,8 @@ msgstr "مشاهده اطلاعات پورت"
 
 #: src/sshpilot/connection_dialog.py:3915
 msgid "View information about currently used ports and potential conflicts"
-msgstr "اطلاعات مربوط به پورت های استفاده شده فعلی و تداخل احتمالی را مشاهده کنید"
+msgstr ""
+"اطلاعات مربوط به پورت های استفاده شده فعلی و تداخل احتمالی را مشاهده کنید"
 
 #: src/sshpilot/connection_dialog.py:3928
 msgid "No port forwarding rules configured"
@@ -1942,7 +2036,8 @@ msgstr ""
 "حمل و نقل پورت به شما امکان می دهد اتصالات شبکه را به طور ایمن تونل کنید.\n"
 "\n"
 "• <b>بازارسال محلی</b>: یک پورت راه دور را به دستگاه محلی خود بازارسال کنید\n"
-"• <b>بازارسال از راه دور</b>: یک پورت محلی را به دستگاه راه دور باز ارسال کنید\n"
+"• <b>بازارسال از راه دور</b>: یک پورت محلی را به دستگاه راه دور باز ارسال "
+"کنید\n"
 "• <b>ارسال پویا</b>: یک پروکسی در دستگاه SOCKS خود ایجاد کنید"
 
 #: src/sshpilot/connection_dialog.py:3961
@@ -1954,14 +2049,18 @@ msgid ""
 "Run a command automatically on connect.\n"
 "\n"
 "• Pre-Connection Command: Runs locally before connecting.\n"
-"• Local Command: Runs on your machine after connection (requires PermitLocalCommand).\n"
-"• Remote Command: Runs on the remote host (RequestTTY is configured separately)."
+"• Local Command: Runs on your machine after connection (requires "
+"PermitLocalCommand).\n"
+"• Remote Command: Runs on the remote host (RequestTTY is configured "
+"separately)."
 msgstr ""
 "یک فرمان را به طور خودکار در اتصال اجرا کنید.\n"
 "\n"
 "• دستور Pre-Connection: قبل از اتصال به صورت محلی اجرا می شود.\n"
-"• Local Command: پس از اتصال روی دستگاه شما اجرا می شود (به PermitLocalCommand نیاز دارد).\n"
-"• Remote Command: روی میزبان راه دور اجرا می شود (RequestTTY به طور جداگانه پیکربندی می شود)."
+"• Local Command: پس از اتصال روی دستگاه شما اجرا می شود (به "
+"PermitLocalCommand نیاز دارد).\n"
+"• Remote Command: روی میزبان راه دور اجرا می شود (RequestTTY به طور جداگانه "
+"پیکربندی می شود)."
 
 #: src/sshpilot/connection_dialog.py:3969
 msgid "Pre-Connection Command"
@@ -2026,23 +2125,41 @@ msgstr "ذخیره در{backend}"
 
 #: src/sshpilot/connection_dialog.py:4684
 msgid "Saving passwords and passphrases to secure storage…"
-msgstr "در حال ذخیره گذرواژهu200cها و عبارتu200cهای عبور برای ذخیرهu200cسازی ایمن…"
+msgstr ""
+"در حال ذخیره گذرواژهu200cها و عبارتu200cهای عبور برای ذخیرهu200cسازی ایمن…"
 
 #: src/sshpilot/connection_dialog.py:4768
-msgid "The connection settings were saved, but secure storage did not answer in time. The password may have been stored anyway — reopen the connection to check before saving it again."
-msgstr "تنظیمات اتصال ذخیره شد، اما فضای ذخیرهu200cسازی ایمن به موقع پاسخ نداد. رمز عبور ممکن است به هر حال ذخیره شده باشد - اتصال را دوباره باز کنید تا قبل از ذخیره مجدد آن را بررسی کنید."
+msgid ""
+"The connection settings were saved, but secure storage did not answer in "
+"time. The password may have been stored anyway — reopen the connection to "
+"check before saving it again."
+msgstr ""
+"تنظیمات اتصال ذخیره شد، اما فضای ذخیرهu200cسازی ایمن به موقع پاسخ نداد. رمز "
+"عبور ممکن است به هر حال ذخیره شده باشد - اتصال را دوباره باز کنید تا قبل از "
+"ذخیره مجدد آن را بررسی کنید."
 
 #: src/sshpilot/connection_dialog.py:4832
-msgid "The connection settings were saved, but secure storage rejected a password or passphrase. Please try saving again."
-msgstr "تنظیمات اتصال ذخیره شد، اما فضای ذخیره ایمن رمز عبور یا عبارت عبور را رد کرد. لطفاً دوباره سعی کنید ذخیره کنید."
+msgid ""
+"The connection settings were saved, but secure storage rejected a password "
+"or passphrase. Please try saving again."
+msgstr ""
+"تنظیمات اتصال ذخیره شد، اما فضای ذخیره ایمن رمز عبور یا عبارت عبور را رد "
+"کرد. لطفاً دوباره سعی کنید ذخیره کنید."
 
 #: src/sshpilot/connection_dialog.py:4924
-msgid "The connection could not be loaded from the service. You can retry or close the editor."
-msgstr "اتصال از سرویس بارگیری نشد. می توانید دوباره امتحان کنید یا ویرایشگر را ببندید."
+msgid ""
+"The connection could not be loaded from the service. You can retry or close "
+"the editor."
+msgstr ""
+"اتصال از سرویس بارگیری نشد. می توانید دوباره امتحان کنید یا ویرایشگر را "
+"ببندید."
 
 #: src/sshpilot/connection_dialog.py:4927
-msgid "The connection could not be loaded from the service. Please close the editor and try again."
-msgstr "اتصال از سرویس بارگیری نشد. لطفا ویرایشگر را ببندید و دوباره امتحان کنید."
+msgid ""
+"The connection could not be loaded from the service. Please close the editor "
+"and try again."
+msgstr ""
+"اتصال از سرویس بارگیری نشد. لطفا ویرایشگر را ببندید و دوباره امتحان کنید."
 
 #: src/sshpilot/connection_dialog.py:4931
 msgid "Could not load connection"
@@ -2228,7 +2345,8 @@ msgstr "نام (Z-A)"
 
 #: src/sshpilot/connection_sort.py:62
 msgid "Sort connections alphabetically by display name in reverse"
-msgstr "اتصالات را بر اساس حروف الفبا بر اساس نام نمایشی به صورت معکوس مرتب کنید"
+msgstr ""
+"اتصالات را بر اساس حروف الفبا بر اساس نام نمایشی به صورت معکوس مرتب کنید"
 
 #: src/sshpilot/core/validation/connection.py:47
 msgid "Connection name is required"
@@ -2450,7 +2568,7 @@ msgstr "... و{n}بیشتر"
 
 #: src/sshpilot/daemon_quit_policy.py:529
 msgid "Could not quit completely"
-msgstr "نمی توانست به طور کامل ترک کند"
+msgstr "نتوانست به طور کامل خارج شود"
 
 #: src/sshpilot/daemon_quit_policy.py:529
 msgid "Something is still running."
@@ -2468,7 +2586,7 @@ msgstr "خروج از SSH Pilot؟"
 #: src/sshpilot/daemon_quit_policy.py:621 src/sshpilot/shortcut_editor.py:50
 #: src/sshpilot/window.py:3910 src/sshpilot/window_help.py:25
 msgid "Quit"
-msgstr "ترک کنید"
+msgstr "خروج"
 
 #: src/sshpilot/daemon_sessions_dialog.py:29
 msgid "Daemon Terminal Sessions"
@@ -2527,7 +2645,8 @@ msgstr ""
 
 #: src/sshpilot/daemon_terminal_policy.py:277
 msgid ""
-"The running SSH Pilot service is incompatible with this application version.\n"
+"The running SSH Pilot service is incompatible with this application "
+"version.\n"
 "Restart or upgrade the service.\n"
 "The connection was not opened in legacy mode."
 msgstr ""
@@ -2549,7 +2668,8 @@ msgid ""
 "The running service cannot securely handle authentication prompts.\n"
 "The connection was not opened in legacy mode."
 msgstr ""
-"سرویس در حال اجرا نمی تواند به طور ایمن از فرمان های احراز هویت استفاده کند.\n"
+"سرویس در حال اجرا نمی تواند به طور ایمن از فرمان های احراز هویت استفاده "
+"کند.\n"
 "اتصال در حالت قدیمی باز نشد."
 
 #: src/sshpilot/daemon_terminal_policy.py:299
@@ -2672,12 +2792,22 @@ msgstr ""
 "ممکن است باینری ssh در دسترس نباشد، یا اتصال هنوز ذخیره نشده باشد."
 
 #: src/sshpilot/effective_config_dialog.py:229
-msgid "No differences — what this connection's Host block resolves to matches what SSH will actually use. Choose “Show full configuration” to inspect every setting."
-msgstr "هیچ تفاوتی وجود ندارد - آنچه که بلوک میزبان این اتصال حل می کند تا با آنچه SSH واقعاً استفاده می کند مطابقت داشته باشد. \"نمایش پیکربندی کامل\" را برای بازرسی هر تنظیمات انتخاب کنید."
+msgid ""
+"No differences — what this connection's Host block resolves to matches what "
+"SSH will actually use. Choose “Show full configuration” to inspect every "
+"setting."
+msgstr ""
+"هیچ تفاوتی وجود ندارد - آنچه که بلوک میزبان این اتصال حل می کند تا با آنچه "
+"SSH واقعاً استفاده می کند مطابقت داشته باشد. \"نمایش پیکربندی کامل\" را برای "
+"بازرسی هر تنظیمات انتخاب کنید."
 
 #: src/sshpilot/effective_config_dialog.py:241
-msgid "What this connection's Host block resolves to differs from what SSH will actually use. SSH applies the effective values shown below."
-msgstr "آنچه که بلوک میزبان این اتصال حل می کند با آنچه SSH واقعاً استفاده می کند متفاوت است. SSH مقادیر موثر نشان داده شده در زیر را اعمال می کند."
+msgid ""
+"What this connection's Host block resolves to differs from what SSH will "
+"actually use. SSH applies the effective values shown below."
+msgstr ""
+"آنچه که بلوک میزبان این اتصال حل می کند با آنچه SSH واقعاً استفاده می کند "
+"متفاوت است. SSH مقادیر موثر نشان داده شده در زیر را اعمال می کند."
 
 #: src/sshpilot/effective_config_dialog.py:245
 msgid "Settings that differ"
@@ -3006,8 +3136,12 @@ msgstr "هیچ ظرفی برای این اتصال پیکربندی نشده ا�
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:19
 #, python-brace-format
-msgid "The '{runtime}' program is not installed. Install it to use container connections."
-msgstr "برنامه \"{runtime}\" نصب نشده است. برای استفاده از اتصالات کانتینر آن را نصب کنید."
+msgid ""
+"The '{runtime}' program is not installed. Install it to use container "
+"connections."
+msgstr ""
+"برنامه \"{runtime}\" نصب نشده است. برای استفاده از اتصالات کانتینر آن را نصب "
+"کنید."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:22
 msgid "No pod is configured for this connection."
@@ -3015,13 +3149,21 @@ msgstr "هیچ pod برای این اتصال پیکربندی نشده است."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:25
 #, python-brace-format
-msgid "The '{program}' program is not installed. Install it to use Kubernetes connections."
-msgstr "برنامه \"{program}\" نصب نشده است. برای استفاده از اتصالات Kubernetes آن را نصب کنید."
+msgid ""
+"The '{program}' program is not installed. Install it to use Kubernetes "
+"connections."
+msgstr ""
+"برنامه \"{program}\" نصب نشده است. برای استفاده از اتصالات Kubernetes آن را "
+"نصب کنید."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:28
 #, python-brace-format
-msgid "The '{client_program}' program is not installed. Install it (and '{server_program}' on the host) to use Mosh connections."
-msgstr "برنامه \"{client_program}\" نصب نشده است. برای استفاده از اتصالات Mosh، آن را نصب کنید (و '{server_program}' روی هاست)."
+msgid ""
+"The '{client_program}' program is not installed. Install it (and "
+"'{server_program}' on the host) to use Mosh connections."
+msgstr ""
+"برنامه \"{client_program}\" نصب نشده است. برای استفاده از اتصالات Mosh، آن "
+"را نصب کنید (و '{server_program}' روی هاست)."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:32
 msgid "No host is configured for this connection."
@@ -3042,23 +3184,42 @@ msgstr "هیچ دستگاه سریالی برای این اتصال پیکربن
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:44
 #, python-brace-format
-msgid "Only '{fallback_program}' is available, which cannot set hardware ({flow}) flow control. Install '{preferred_program}' to use this connection."
-msgstr "فقط \"{fallback_program}\" موجود است که نمی تواند کنترل جریان سخت افزاری ({flow}) را تنظیم کند. برای استفاده از این اتصال، «{preferred_program}» را نصب کنید."
+msgid ""
+"Only '{fallback_program}' is available, which cannot set hardware ({flow}) "
+"flow control. Install '{preferred_program}' to use this connection."
+msgstr ""
+"فقط \"{fallback_program}\" موجود است که نمی تواند کنترل جریان سخت افزاری "
+"({flow}) را تنظیم کند. برای استفاده از این اتصال، «{preferred_program}» را "
+"نصب کنید."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:48
 #, python-brace-format
-msgid "Only '{fallback_program}' is available, which cannot set {databits} data bits. Install '{preferred_program}' to use this connection."
-msgstr "فقط \"{fallback_program}\" موجود است که نمی تواند بیت های داده{databits}را تنظیم کند. برای استفاده از این اتصال، «{preferred_program}» را نصب کنید."
+msgid ""
+"Only '{fallback_program}' is available, which cannot set {databits} data "
+"bits. Install '{preferred_program}' to use this connection."
+msgstr ""
+"فقط \"{fallback_program}\" موجود است که نمی تواند بیت های داده{databits}را "
+"تنظیم کند. برای استفاده از این اتصال، «{preferred_program}» را نصب کنید."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:52
 #, python-brace-format
-msgid "Only '{fallback_program}' is available, which cannot set hardware ({flow}) flow control or {databits} data bits. Install '{preferred_program}' to use this connection."
-msgstr "فقط \"{fallback_program}\" موجود است که نمی تواند کنترل جریان سخت افزاری ({flow}) یا بیت های داده{databits}را تنظیم کند. برای استفاده از این اتصال، «{preferred_program}» را نصب کنید."
+msgid ""
+"Only '{fallback_program}' is available, which cannot set hardware ({flow}) "
+"flow control or {databits} data bits. Install '{preferred_program}' to use "
+"this connection."
+msgstr ""
+"فقط \"{fallback_program}\" موجود است که نمی تواند کنترل جریان سخت افزاری "
+"({flow}) یا بیت های داده{databits}را تنظیم کند. برای استفاده از این اتصال، "
+"«{preferred_program}» را نصب کنید."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:57
 #, python-brace-format
-msgid "Neither '{preferred_program}' nor '{fallback_program}' is installed. Install one to use serial connections."
-msgstr "نه \"{preferred_program}\" و نه \"{fallback_program}\" نصب نشده است. یکی را برای استفاده از اتصالات سریال نصب کنید."
+msgid ""
+"Neither '{preferred_program}' nor '{fallback_program}' is installed. Install "
+"one to use serial connections."
+msgstr ""
+"نه \"{preferred_program}\" و نه \"{fallback_program}\" نصب نشده است. یکی را "
+"برای استفاده از اتصالات سریال نصب کنید."
 
 #: src/sshpilot/gtk/plugin_session_failure_messages.py:64
 #: src/sshpilot/plugins/builtin/mosh_protocol/__init__.py:52
@@ -3096,8 +3257,12 @@ msgid "The SCP process could not be started."
 msgstr "فرآیند SCP نمی تواند شروع شود."
 
 #: src/sshpilot/gtk/scp_failure_messages.py:37
-msgid "Could not start an SFTP session on the remote host. The remote SSH server may not have an SFTP server enabled."
-msgstr "یک جلسه SFTP در میزبان راه دور شروع نشد. سرور SSH راه دور ممکن است سرور SFTP فعال نداشته باشد."
+msgid ""
+"Could not start an SFTP session on the remote host. The remote SSH server "
+"may not have an SFTP server enabled."
+msgstr ""
+"یک جلسه SFTP در میزبان راه دور شروع نشد. سرور SSH راه دور ممکن است سرور SFTP "
+"فعال نداشته باشد."
 
 #: src/sshpilot/gtk/scp_failure_messages.py:41
 #: src/sshpilot/gtk/sftp_failure_messages.py:56
@@ -3131,8 +3296,11 @@ msgid "Authentication challenge"
 msgstr "چالش احراز هویت"
 
 #: src/sshpilot/gtk/secrets_interaction_presenter.py:39
-msgid "Enter the Bitwarden API client secret to complete the authentication challenge"
-msgstr "برای تکمیل چالش احراز هویت، رمز سرویس گیرنده Bitwarden API را وارد کنید"
+msgid ""
+"Enter the Bitwarden API client secret to complete the authentication "
+"challenge"
+msgstr ""
+"برای تکمیل چالش احراز هویت، رمز سرویس گیرنده Bitwarden API را وارد کنید"
 
 #: src/sshpilot/gtk/secrets_interaction_presenter.py:44
 msgid "Two-step login code"
@@ -3264,7 +3432,8 @@ msgstr "فقط مشتری اصلی ممکن است این سرویس SFTP را �
 
 #: src/sshpilot/gtk/sftp_failure_messages.py:35
 msgid "Directory size requires a real directory path, not a symbolic link"
-msgstr "اندازه دایرکتوری به یک مسیر دایرکتوری واقعی نیاز دارد، نه یک پیوند نمادین"
+msgstr ""
+"اندازه دایرکتوری به یک مسیر دایرکتوری واقعی نیاز دارد، نه یک پیوند نمادین"
 
 #: src/sshpilot/gtk/sftp_failure_messages.py:38
 msgid "A directory cannot be copied into itself"
@@ -3316,7 +3485,8 @@ msgstr "دایرکتوری منبع راه دور خوانده نشد"
 
 #: src/sshpilot/gtk/sftp_failure_messages.py:78
 msgid "Recursive download requires a real directory path, not a symbolic link"
-msgstr "دانلود بازگشتی به یک مسیر دایرکتوری واقعی نیاز دارد، نه یک پیوند نمادین"
+msgstr ""
+"دانلود بازگشتی به یک مسیر دایرکتوری واقعی نیاز دارد، نه یک پیوند نمادین"
 
 #: src/sshpilot/gtk/sftp_failure_messages.py:81
 msgid "The remote source is not a directory"
@@ -3432,16 +3602,24 @@ msgstr "Bitwarden برای پشتیبان گیری در دسترس نیست"
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:26
 #, python-brace-format
-msgid "This backup is {length} characters — larger than the Bitwarden note limit ({limit})."
-msgstr "این نسخه پشتیبان دارای کاراکترهای{length}است - بزرگتر از حد یادداشت Bitwarden ({limit})."
+msgid ""
+"This backup is {length} characters — larger than the Bitwarden note limit "
+"({limit})."
+msgstr ""
+"این نسخه پشتیبان دارای کاراکترهای{length}است - بزرگتر از حد یادداشت "
+"Bitwarden ({limit})."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:29
 msgid "The backup is too large for a Bitwarden note."
 msgstr "نسخه پشتیبان برای یادداشت Bitwarden بسیار بزرگ است."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:32
-msgid "Leaving out the largest part, or exporting fewer connections, may bring it under the limit."
-msgstr "کنار گذاشتن بزرگu200cترین بخش، یا صادرات اتصالات کمتر، ممکن است آن را زیر حد مجاز قرار دهد."
+msgid ""
+"Leaving out the largest part, or exporting fewer connections, may bring it "
+"under the limit."
+msgstr ""
+"کنار گذاشتن بزرگu200cترین بخش، یا صادرات اتصالات کمتر، ممکن است آن را زیر حد "
+"مجاز قرار دهد."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:35
 msgid "Export to a .spbk file instead."
@@ -3491,8 +3669,11 @@ msgid "The backup could not be imported"
 msgstr "نسخه پشتیبان وارد نشد"
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:68
-msgid "The selected secret backend does not persist secrets (agent); no credentials were restored."
-msgstr "باطن مخفی انتخاب شده رازها را حفظ نمی کند (عامل). هیچ اعتباری بازیابی نشد"
+msgid ""
+"The selected secret backend does not persist secrets (agent); no credentials "
+"were restored."
+msgstr ""
+"باطن مخفی انتخاب شده رازها را حفظ نمی کند (عامل). هیچ اعتباری بازیابی نشد"
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:71
 msgid "Could not list Bitwarden backups"
@@ -3549,8 +3730,12 @@ msgstr "نمی توان روی سرور{directory}ایجاد یا نوشت."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:106
 #, python-brace-format
-msgid "Not enough free space on the server: need ~{required}, only {available} available in {directory}."
-msgstr "فضای خالی کافی در سرور وجود ندارد: به{required}نیاز دارید، فقط{available}در{directory}موجود است."
+msgid ""
+"Not enough free space on the server: need ~{required}, only {available} "
+"available in {directory}."
+msgstr ""
+"فضای خالی کافی در سرور وجود ندارد: به{required}نیاز دارید، فقط{available}"
+"در{directory}موجود است."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:109
 msgid "Failed to write the backup to the server."
@@ -3615,8 +3800,12 @@ msgid "Could not restore non-SSH connections, groups, or metadata."
 msgstr "اتصالات، گروهu200cها یا ابردادهu200cهای غیر SSH بازیابی نشد."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:152
-msgid "The connection data in this backup uses an unsupported version and was skipped."
-msgstr "داده های اتصال در این نسخه پشتیبان از نسخه پشتیبانی نشده استفاده می کند و از آن صرفنظر شده است."
+msgid ""
+"The connection data in this backup uses an unsupported version and was "
+"skipped."
+msgstr ""
+"داده های اتصال در این نسخه پشتیبان از نسخه پشتیبانی نشده استفاده می کند و از "
+"آن صرفنظر شده است."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:155
 #, python-brace-format
@@ -3713,17 +3902,27 @@ msgstr[1] "بخش عمدهٔ آن {label} است ({cost} نویسه)."
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:215
 #, python-brace-format
-msgid "{count} SSH config file outside ~/.ssh was not included (system or shared file): {paths}"
-msgid_plural "{count} SSH config files outside ~/.ssh were not included (system or shared files): {paths}"
-msgstr[0] "{count} فایل پیکربندی SSH خارج از ~/.ssh گنجانده نشد (فایل سیستمی یا اشتراکی): {paths}"
-msgstr[1] "{count} فایل پیکربندی SSH خارج از ~/.ssh گنجانده نشدند (فایل‌های سیستمی یا اشتراکی): {paths}"
+msgid ""
+"{count} SSH config file outside ~/.ssh was not included (system or shared "
+"file): {paths}"
+msgid_plural ""
+"{count} SSH config files outside ~/.ssh were not included (system or shared "
+"files): {paths}"
+msgstr[0] ""
+"{count} فایل پیکربندی SSH خارج از ~/.ssh گنجانده نشد (فایل سیستمی یا "
+"اشتراکی): {paths}"
+msgstr[1] ""
+"{count} فایل پیکربندی SSH خارج از ~/.ssh گنجانده نشدند (فایل‌های سیستمی یا "
+"اشتراکی): {paths}"
 
 #: src/sshpilot/gtk/secret_transfer_messages.py:221
 #, python-brace-format
 msgid "{count} referenced key file was missing and not included: {paths}"
-msgid_plural "{count} referenced key files were missing and not included: {paths}"
+msgid_plural ""
+"{count} referenced key files were missing and not included: {paths}"
 msgstr[0] "{count} فایل کلید ارجاع‌داده‌شده موجود نبود و گنجانده نشد: {paths}"
-msgstr[1] "{count} فایل کلید ارجاع‌داده‌شده موجود نبودند و گنجانده نشدند: {paths}"
+msgstr[1] ""
+"{count} فایل کلید ارجاع‌داده‌شده موجود نبودند و گنجانده نشدند: {paths}"
 
 #: src/sshpilot/host_picker.py:38
 msgid "No connections in inventory"
@@ -3738,8 +3937,12 @@ msgid "Remove this entry"
 msgstr "این ورودی را حذف کنید"
 
 #: src/sshpilot/known_hosts_editor.py:269
-msgid "The known-hosts file changed on disk. Your list has been refreshed — review it before removing entries again."
-msgstr "فایل host-host روی دیسک تغییر کرد. لیست شما به روز شده است - قبل از حذف مجدد ورودی ها، آن را مرور کنید."
+msgid ""
+"The known-hosts file changed on disk. Your list has been refreshed — review "
+"it before removing entries again."
+msgstr ""
+"فایل host-host روی دیسک تغییر کرد. لیست شما به روز شده است - قبل از حذف مجدد "
+"ورودی ها، آن را مرور کنید."
 
 #. Show the message and start exactly one reload; keep the controls
 #. disabled until that reload finishes. Never retry the mutation.
@@ -3803,19 +4006,25 @@ msgstr "فایل کامل را تغییر دهید"
 msgid ""
 "No log file at {path} yet.\n"
 "\n"
-"Use the app for a moment and refresh — entries will appear as soon as something is logged."
+"Use the app for a moment and refresh — entries will appear as soon as "
+"something is logged."
 msgstr ""
 "هنوز فایل لاگ در{path}وجود ندارد.\n"
 "\n"
-"برای لحظه ای از برنامه استفاده کنید و آن را به روز کنید - به محض اینکه چیزی ثبت شد، ورودی ها ظاهر می شوند."
+"برای لحظه ای از برنامه استفاده کنید و آن را به روز کنید - به محض اینکه چیزی "
+"ثبت شد، ورودی ها ظاهر می شوند."
 
 #: src/sshpilot/log_viewer.py:695
 msgid "(log is empty)"
 msgstr "(log خالی است)"
 
 #: src/sshpilot/log_viewer.py:708
-msgid "No lines match the current filters. Try lowering the level filter or clearing the search box."
-msgstr "هیچ خطی با فیلترهای فعلی مطابقت ندارد. فیلتر سطح را پایین بیاورید یا کادر جستجو را پاک کنید."
+msgid ""
+"No lines match the current filters. Try lowering the level filter or "
+"clearing the search box."
+msgstr ""
+"هیچ خطی با فیلترهای فعلی مطابقت ندارد. فیلتر سطح را پایین بیاورید یا کادر "
+"جستجو را پاک کنید."
 
 #: src/sshpilot/log_viewer.py:743
 #, python-brace-format
@@ -3851,8 +4060,12 @@ msgstr "کپی شد - آن را در گزارش اشکال خود جایگذار
 
 #: src/sshpilot/log_viewer.py:1109
 #: src/sshpilot/resources/ui/log_viewer_window.ui:53
-msgid "Log lines may contain hostnames, usernames, and file paths. Review before sharing."
-msgstr "خطوط گزارش ممکن است شامل نام میزبان، نام کاربری و مسیرهای فایل باشد. قبل از اشتراک گذاری مرور کنید"
+msgid ""
+"Log lines may contain hostnames, usernames, and file paths. Review before "
+"sharing."
+msgstr ""
+"خطوط گزارش ممکن است شامل نام میزبان، نام کاربری و مسیرهای فایل باشد. قبل از "
+"اشتراک گذاری مرور کنید"
 
 #: src/sshpilot/macos_menubar.py:51 src/sshpilot/sidebar.py:4094
 #: src/sshpilot/window.py:3844
@@ -3867,7 +4080,7 @@ msgstr "ترمینال محلی جدید"
 #: src/sshpilot/macos_menubar.py:53 src/sshpilot/window.py:3491
 #: src/sshpilot/window.py:3846
 msgid "New Split View"
-msgstr "نمای تقسیم جدید"
+msgstr "نمای چند قابی جدید"
 
 #: src/sshpilot/macos_menubar.py:56 src/sshpilot/window.py:3865
 msgid "Save Session…"
@@ -3955,7 +4168,7 @@ msgstr "ویرایشگر پیکربندی SSH"
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:10
 #: src/sshpilot/resources/ui/known_hosts_editor.ui:20
 msgid "Known Hosts Editor"
-msgstr "ویرایشگر Hosts شناخته شده"
+msgstr "ویرایشگر known hosts"
 
 #: src/sshpilot/macos_menubar.py:99 src/sshpilot/window.py:3859
 msgid "Manage Local authorized_keys…"
@@ -4008,7 +4221,7 @@ msgstr "گزارش مشکل…"
 
 #: src/sshpilot/macos_menubar.py:128 src/sshpilot/window.py:3905
 msgid "Help"
-msgstr "کمک کنید"
+msgstr "راهنما"
 
 #: src/sshpilot/omni_search.py:58 src/sshpilot/welcome_page.py:107
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:725
@@ -4040,7 +4253,8 @@ msgstr "جستجوی اتصالات و دستورات"
 
 #: src/sshpilot/omni_search.py:663
 msgid "Press Shift twice to search connections, tools or type ssh commands"
-msgstr "برای جستجوی اتصالات، ابزارها یا تایپ دستورات ssh، Shift را دوبار فشار دهید"
+msgstr ""
+"برای جستجوی اتصالات، ابزارها یا تایپ دستورات ssh، Shift را دوبار فشار دهید"
 
 #: src/sshpilot/omni_search.py:671
 msgid "Search connections, tools or type ssh commands"
@@ -4119,8 +4333,12 @@ msgid "Command (optional)"
 msgstr "فرمان (اختیاری)"
 
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:333
-msgid "Parsed like a shell line; quotes are respected and each argument is passed safely (not run through a remote shell)"
-msgstr "تجزیه مانند یک خط پوسته; نقل قول ها رعایت می شوند و هر آرگومان با خیال راحت منتقل می شود (از طریق پوسته راه دور اجرا نمی شود)"
+msgid ""
+"Parsed like a shell line; quotes are respected and each argument is passed "
+"safely (not run through a remote shell)"
+msgstr ""
+"تجزیه مانند یک خط پوسته; نقل قول ها رعایت می شوند و هر آرگومان با خیال راحت "
+"منتقل می شود (از طریق پوسته راه دور اجرا نمی شود)"
 
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:338
 msgid "Ports (host : container)"
@@ -4300,7 +4518,8 @@ msgstr "پشته را خراب کنید؟"
 #: src/sshpilot/plugins/builtin/docker_manager/tab_compose.py:158
 #, python-brace-format
 msgid "This stops and removes all containers, networks for “{name}”."
-msgstr "این همه کانتینرها، شبکهu200cها را برای \"{name}\" متوقف و حذف میu200cکند."
+msgstr ""
+"این همه کانتینرها، شبکهu200cها را برای \"{name}\" متوقف و حذف میu200cکند."
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_containers.py:28
 msgid "Filter by name / image / id…"
@@ -4352,8 +4571,11 @@ msgid "System prune"
 msgstr "هرس سیستمی"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:34
-msgid "docker system prune -f (dangling images, stopped containers, unused networks)"
-msgstr "سیستم docker prune -f (تصاویر آویزان، کانتینرهای متوقف شده، شبکه های استفاده نشده)"
+msgid ""
+"docker system prune -f (dangling images, stopped containers, unused networks)"
+msgstr ""
+"سیستم docker prune -f (تصاویر آویزان، کانتینرهای متوقف شده، شبکه های استفاده "
+"نشده)"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:38
 msgid "Prune volumes"
@@ -4373,7 +4595,9 @@ msgstr "تصاویر استفاده نشده را هرس کنید؟"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:136
 msgid "Removes all dangling images (untagged layers not used by a container)."
-msgstr "تمام تصاویر آویزان را حذف می کند (لایه های بدون برچسب که توسط ظرف استفاده نمی شود)."
+msgstr ""
+"تمام تصاویر آویزان را حذف می کند (لایه های بدون برچسب که توسط ظرف استفاده "
+"نمی شود)."
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:175
 msgid "Remove image?"
@@ -4385,15 +4609,21 @@ msgstr "سیستم هرس را اجرا کنید؟"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:195
 msgid "Removes all dangling images, stopped containers, and unused networks."
-msgstr "تمام تصاویر آویزان، ظروف متوقف شده و شبکه های استفاده نشده را حذف می کند."
+msgstr ""
+"تمام تصاویر آویزان، ظروف متوقف شده و شبکه های استفاده نشده را حذف می کند."
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:212
 msgid "Prune unused volumes?"
 msgstr "حجم های استفاده نشده را هرس کنید؟"
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_images.py:213
-msgid "Removes ALL volumes not used by a container — this can delete orphaned database data permanently. Type PRUNE to confirm."
-msgstr "همه حجمu200cهایی را که توسط یک کانتینر استفاده نمیu200cشوند حذف میu200cکند - این میu200cتواند دادهu200cهای پایگاه داده یتیم را برای همیشه حذف کند. PRUNE را برای تایید تایپ کنید."
+msgid ""
+"Removes ALL volumes not used by a container — this can delete orphaned "
+"database data permanently. Type PRUNE to confirm."
+msgstr ""
+"همه حجمu200cهایی را که توسط یک کانتینر استفاده نمیu200cشوند حذف میu200cکند - "
+"این میu200cتواند دادهu200cهای پایگاه داده یتیم را برای همیشه حذف کند. PRUNE "
+"را برای تایید تایپ کنید."
 
 #: src/sshpilot/plugins/builtin/docker_manager/tab_listings.py:97
 msgid "Remove volume?"
@@ -4793,8 +5023,11 @@ msgid "Terminal Shortcut Pass-through"
 msgstr "میانبر ترمینال عبور از طریق"
 
 #: src/sshpilot/preferences.py:613
-msgid "Disable all keyboard shortcuts, pass all key events directly to terminal"
-msgstr "همه میانبرهای صفحه کلید را غیرفعال کنید، همه رویدادهای کلیدی را مستقیماً به ترمینال منتقل کنید"
+msgid ""
+"Disable all keyboard shortcuts, pass all key events directly to terminal"
+msgstr ""
+"همه میانبرهای صفحه کلید را غیرفعال کنید، همه رویدادهای کلیدی را مستقیماً به "
+"ترمینال منتقل کنید"
 
 #: src/sshpilot/preferences.py:622
 msgid "Command autocomplete"
@@ -4809,16 +5042,23 @@ msgid "Suggest from remote history"
 msgstr "پیشنهاد از تاریخ راه دور"
 
 #: src/sshpilot/preferences.py:635
-msgid "Also fetch the remote host's shell history over SSH (applies to new tabs)"
-msgstr "همچنین تاریخچه پوسته میزبان راه دور را از طریق SSH واکشی کنید (برای برگه های جدید اعمال می شود)"
+msgid ""
+"Also fetch the remote host's shell history over SSH (applies to new tabs)"
+msgstr ""
+"همچنین تاریخچه پوسته میزبان راه دور را از طریق SSH واکشی کنید (برای برگه های "
+"جدید اعمال می شود)"
 
 #: src/sshpilot/preferences.py:650
 msgid "Option key character input"
 msgstr "ورودی کاراکتر کلید گزینه"
 
 #: src/sshpilot/preferences.py:652
-msgid "Send Option-generated characters directly without ESC prefix (fixes international keyboard layouts)"
-msgstr "کاراکترهای ایجاد شده توسط گزینه را مستقیماً بدون پیشوند ESC ارسال کنید (طرح بندی صفحه کلید بین المللی را اصلاح می کند)"
+msgid ""
+"Send Option-generated characters directly without ESC prefix (fixes "
+"international keyboard layouts)"
+msgstr ""
+"کاراکترهای ایجاد شده توسط گزینه را مستقیماً بدون پیشوند ESC ارسال کنید (طرح "
+"بندی صفحه کلید بین المللی را اصلاح می کند)"
 
 #. Mouse behavior group
 #: src/sshpilot/preferences.py:666
@@ -4838,8 +5078,12 @@ msgid "Paste on right-click"
 msgstr "چسباندن روی کلیک راست"
 
 #: src/sshpilot/preferences.py:681
-msgid "Right-click pastes; Shift+right-click opens the menu. Disabled automatically while a remote app (htop, vim, tmux) is using the mouse."
-msgstr "رب های کلیک راست؛ Shift + راست کلیک منو باز می شود. هنگامی که یک برنامه راه دور (htop، vim، tmux) از ماوس استفاده می کند، به طور خودکار غیرفعال می شود."
+msgid ""
+"Right-click pastes; Shift+right-click opens the menu. Disabled automatically "
+"while a remote app (htop, vim, tmux) is using the mouse."
+msgstr ""
+"رب های کلیک راست؛ Shift + راست کلیک منو باز می شود. هنگامی که یک برنامه راه "
+"دور (htop، vim، tmux) از ماوس استفاده می کند، به طور خودکار غیرفعال می شود."
 
 #: src/sshpilot/preferences.py:698
 msgid "Preferred Terminal"
@@ -4911,8 +5155,11 @@ msgid "Daemon idle shutdown (seconds)"
 msgstr "خاموش شدن بیکار دیمون (ثانیه)"
 
 #: src/sshpilot/preferences.py:854
-msgid "Exit when idle with no clients or live resources. 0 keeps the daemon running."
-msgstr "در صورت بیکار بودن و بدون مشتری یا منابع زنده خارج شوید. 0 دیمون را در حال اجرا نگه می دارد."
+msgid ""
+"Exit when idle with no clients or live resources. 0 keeps the daemon running."
+msgstr ""
+"در صورت بیکار بودن و بدون مشتری یا منابع زنده خارج شوید. 0 دیمون را در حال "
+"اجرا نگه می دارد."
 
 #: src/sshpilot/preferences.py:862
 msgid "Daemon status"
@@ -4927,8 +5174,12 @@ msgid "Restart daemon"
 msgstr "دیمون را دوباره راه اندازی کنید"
 
 #: src/sshpilot/preferences.py:873
-msgid "Stops the daemon and reconnects automatically. Live sessions cannot survive a restart."
-msgstr "دیمون را متوقف می کند و به طور خودکار دوباره وصل می شود. جلسات زنده نمی توانند از راه اندازی مجدد دوام بیاورند."
+msgid ""
+"Stops the daemon and reconnects automatically. Live sessions cannot survive "
+"a restart."
+msgstr ""
+"دیمون را متوقف می کند و به طور خودکار دوباره وصل می شود. جلسات زنده نمی "
+"توانند از راه اندازی مجدد دوام بیاورند."
 
 #: src/sshpilot/preferences.py:876 src/sshpilot/preferences.py:3949
 msgid "Restart"
@@ -5243,8 +5494,11 @@ msgid "When a Terminal Opens"
 msgstr "هنگامی که یک ترمینال باز می شود"
 
 #: src/sshpilot/preferences.py:1503
-msgid "What happens to the sidebar when any session opens, including local terminals"
-msgstr "با باز شدن هر جلسه، از جمله پایانه های محلی، چه اتفاقی برای نوار کناری می افتد"
+msgid ""
+"What happens to the sidebar when any session opens, including local terminals"
+msgstr ""
+"با باز شدن هر جلسه، از جمله پایانه های محلی، چه اتفاقی برای نوار کناری می "
+"افتد"
 
 #: src/sshpilot/preferences.py:1505
 msgid "Do Nothing"
@@ -5288,12 +5542,15 @@ msgid "Header Bar Buttons"
 msgstr "دکمه های هدر نوار"
 
 #: src/sshpilot/preferences.py:1620
-msgid "Show the button that hides/shows the sidebar (F9 still works when hidden)"
-msgstr "نمایش دکمه ای که نوار کناری را پنهان/نمایش می دهد (F9 همچنان در حالت پنهان کار می کند)"
+msgid ""
+"Show the button that hides/shows the sidebar (F9 still works when hidden)"
+msgstr ""
+"نمایش دکمه ای که نوار کناری را پنهان/نمایش می دهد (F9 همچنان در حالت پنهان "
+"کار می کند)"
 
 #: src/sshpilot/preferences.py:1626
 msgid "Show the split-view button (the grid icon that starts a split view)"
-msgstr "نمایش دکمه split-view (نماد شبکه ای که نمای تقسیم شده را شروع می کند)"
+msgstr "نمایش دکمه split-view (نماد شبکه ای که نمای چند قابی را شروع می کند)"
 
 #: src/sshpilot/preferences.py:1632
 msgid "Show the command snippets toggle button"
@@ -5353,7 +5610,8 @@ msgid "Shortcut Editor Unavailable"
 msgstr "ویرایشگر میانبر در دسترس نیست"
 
 #: src/sshpilot/preferences.py:1787
-msgid "The shortcut editor could not be loaded. Please check the logs for details."
+msgid ""
+"The shortcut editor could not be loaded. Please check the logs for details."
 msgstr "ویرایشگر میانبر بارگیری نشد. لطفا گزارش ها را برای جزئیات بررسی کنید."
 
 #. Operation mode selection
@@ -5374,8 +5632,12 @@ msgid "Isolated Mode"
 msgstr "حالت ایزوله"
 
 #: src/sshpilot/preferences.py:1812
-msgid "SSH Pilot uses its own SSH configuration, connections, folders and host keys. Saved passwords are shared."
-msgstr "SSH Pilot از پیکربندی SSH، اتصالات، پوشه ها و کلیدهای میزبان خود استفاده می کند. رمزهای عبور ذخیره شده به اشتراک گذاشته می شوند."
+msgid ""
+"SSH Pilot uses its own SSH configuration, connections, folders and host "
+"keys. Saved passwords are shared."
+msgstr ""
+"SSH Pilot از پیکربندی SSH، اتصالات، پوشه ها و کلیدهای میزبان خود استفاده می "
+"کند. رمزهای عبور ذخیره شده به اشتراک گذاشته می شوند."
 
 #: src/sshpilot/preferences.py:1864
 msgid "Configuration file"
@@ -5417,16 +5679,24 @@ msgid "Logging"
 msgstr "ورود به سیستم"
 
 #: src/sshpilot/preferences.py:2011
-msgid "Controls how verbose sshPilot is in the console and the rotated log file. The command-line flags --verbose / --quiet always override this."
-msgstr "نحوه پرمخاطب بودن sshPilot در کنسول و فایل گزارش چرخش شده را کنترل می کند. پرچم های خط فرمان --verbose / --quiet همیشه این را نادیده می گیرند."
+msgid ""
+"Controls how verbose sshPilot is in the console and the rotated log file. "
+"The command-line flags --verbose / --quiet always override this."
+msgstr ""
+"نحوه پرمخاطب بودن sshPilot در کنسول و فایل گزارش چرخش شده را کنترل می کند. "
+"پرچم های خط فرمان --verbose / --quiet همیشه این را نادیده می گیرند."
 
 #: src/sshpilot/preferences.py:2016
 msgid "Log Level"
 msgstr "سطح ورود به سیستم"
 
 #: src/sshpilot/preferences.py:2018
-msgid "Default is concise; switch to Debug if you're filing a bug or chasing an issue"
-msgstr "پیش فرض مختصر است. اگر مشکلی را ثبت می کنید یا مشکلی را دنبال می کنید، به Debug بروید"
+msgid ""
+"Default is concise; switch to Debug if you're filing a bug or chasing an "
+"issue"
+msgstr ""
+"پیش فرض مختصر است. اگر مشکلی را ثبت می کنید یا مشکلی را دنبال می کنید، به "
+"Debug بروید"
 
 #: src/sshpilot/preferences.py:2038
 msgid "Secret Storage"
@@ -5434,11 +5704,17 @@ msgstr "ذخیره سازی مخفی"
 
 #: src/sshpilot/preferences.py:2040
 msgid ""
-"Where sshPilot stores passwords and key passphrases. Switching does not migrate existing secrets.\n"
-"Note: Bitwarden/Vaultwarden keep the unlocked session token in the environment while sshPilot runs, so other programs running as your user can read the vault until you quit."
+"Where sshPilot stores passwords and key passphrases. Switching does not "
+"migrate existing secrets.\n"
+"Note: Bitwarden/Vaultwarden keep the unlocked session token in the "
+"environment while sshPilot runs, so other programs running as your user can "
+"read the vault until you quit."
 msgstr ""
-"جایی که sshPilot رمزهای عبور و عبارات عبور کلیدی را ذخیره می کند. سوئیچینگ اسرار موجود را منتقل نمی کند.\n"
-"توجه: Bitwarden/Vaultwarden رمز نشست قفل نشده را در حین اجرای sshPilot در محیط نگه می دارد، بنابراین سایر برنامه هایی که به عنوان کاربر شما اجرا می شوند، می توانند vault را بخوانند تا زمانی که شما از آن خارج شوید."
+"جایی که sshPilot رمزهای عبور و عبارات عبور کلیدی را ذخیره می کند. سوئیچینگ "
+"اسرار موجود را منتقل نمی کند.\n"
+"توجه: Bitwarden/Vaultwarden رمز نشست قفل نشده را در حین اجرای sshPilot در "
+"محیط نگه می دارد، بنابراین سایر برنامه هایی که به عنوان کاربر شما اجرا می "
+"شوند، می توانند vault را بخوانند تا زمانی که شما از آن خارج شوید."
 
 #: src/sshpilot/preferences.py:2048
 msgid "Secret storage backend"
@@ -5507,13 +5783,24 @@ msgid "bw data directory (account/profile)"
 msgstr "فهرست اطلاعات bw (حساب/نمایه)"
 
 #: src/sshpilot/preferences.py:2143
-msgid " Under Flatpak, use the host path (e.g. /home/you/.config/Bitwarden CLI) or leave empty for the host default — the app runs `bw` on the host."
-msgstr "در Flatpak، از مسیر میزبان (به عنوان مثال /home/you/.config/Bitwarden CLI) استفاده کنید یا برای پیشu200cفرض میزبان خالی بگذارید – برنامه «bw» را روی میزبان اجرا میu200cکند."
+msgid ""
+" Under Flatpak, use the host path (e.g. /home/you/.config/Bitwarden CLI) or "
+"leave empty for the host default — the app runs `bw` on the host."
+msgstr ""
+"در Flatpak، از مسیر میزبان (به عنوان مثال /home/you/.config/Bitwarden CLI) "
+"استفاده کنید یا برای پیشu200cفرض میزبان خالی بگذارید – برنامه «bw» را روی "
+"میزبان اجرا میu200cکند."
 
 #: src/sshpilot/preferences.py:2147
 #, python-brace-format
-msgid "Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for a specific account. Empty = the default account. Leave empty for a single Bitwarden account.{flatpak_note}"
-msgstr "اختیاری. مسیری به دایرکتوری داده «bw» (BITWARDENCLI_APPDATA_DIR) برای یک حساب خاص. خالی = حساب پیش فرض. برای یک حساب Bitwarden خالی بگذارید.{flatpak_note}"
+msgid ""
+"Optional. Path to a `bw` data directory (BITWARDENCLI_APPDATA_DIR) for a "
+"specific account. Empty = the default account. Leave empty for a single "
+"Bitwarden account.{flatpak_note}"
+msgstr ""
+"اختیاری. مسیری به دایرکتوری داده «bw» (BITWARDENCLI_APPDATA_DIR) برای یک "
+"حساب خاص. خالی = حساب پیش فرض. برای یک حساب Bitwarden خالی بگذارید."
+"{flatpak_note}"
 
 #: src/sshpilot/preferences.py:2156
 msgid "Choose data directory"
@@ -5540,8 +5827,11 @@ msgid "Vault lock timeout (minutes)"
 msgstr "پایان قفل خرک (دقیقه)"
 
 #: src/sshpilot/preferences.py:2197
-msgid "Re-ask for the master password after this idle time. 0 = until app exits."
-msgstr "پس از این زمان بیکاری مجدداً رمز اصلی را بخواهید. 0 = تا زمانی که برنامه خارج شود."
+msgid ""
+"Re-ask for the master password after this idle time. 0 = until app exits."
+msgstr ""
+"پس از این زمان بیکاری مجدداً رمز اصلی را بخواهید. 0 = تا زمانی که برنامه خارج "
+"شود."
 
 #. Forget a remembered master password (saved in the OS keyring via the unlock
 #. dialog's "Remember" option). This is the only way to clear it once saved,
@@ -5559,16 +5849,26 @@ msgid "No secret storage"
 msgstr "بدون ذخیره سازی مخفی"
 
 #: src/sshpilot/preferences.py:2222
-msgid "Passwords and passphrases are not saved by sshPilot. Use ssh-agent and SSH's own prompts instead."
-msgstr "گذرواژهu200cها و عبارتu200cهای عبور توسط sshPilot ذخیره نمیu200cشوند. به جای آن از ssh-agent و درخواست های خود SSH استفاده کنید."
+msgid ""
+"Passwords and passphrases are not saved by sshPilot. Use ssh-agent and SSH's "
+"own prompts instead."
+msgstr ""
+"گذرواژهu200cها و عبارتu200cهای عبور توسط sshPilot ذخیره نمیu200cشوند. به جای "
+"آن از ssh-agent و درخواست های خود SSH استفاده کنید."
 
 #: src/sshpilot/preferences.py:2239
 msgid "SSH Identity"
 msgstr "هویت SSH"
 
 #: src/sshpilot/preferences.py:2241
-msgid "Default identity provider whose agent/keys are offered to connections. The per-connection key is set on each connection (IdentityFile); this is the global default."
-msgstr "ارائهu200cدهنده هویت پیشu200cفرض که عامل/کلیدهای آن به اتصالات ارائه میu200cشود. کلید هر اتصال در هر اتصال تنظیم می شود (IdentityFile). این پیش فرض جهانی است."
+msgid ""
+"Default identity provider whose agent/keys are offered to connections. The "
+"per-connection key is set on each connection (IdentityFile); this is the "
+"global default."
+msgstr ""
+"ارائهu200cدهنده هویت پیشu200cفرض که عامل/کلیدهای آن به اتصالات ارائه "
+"میu200cشود. کلید هر اتصال در هر اتصال تنظیم می شود (IdentityFile). این پیش "
+"فرض جهانی است."
 
 #: src/sshpilot/preferences.py:2247
 msgid "Default SSH agent"
@@ -5604,8 +5904,12 @@ msgid "Custom SSH Options"
 msgstr "گزینه های SSH سفارشی"
 
 #: src/sshpilot/preferences.py:2428
-msgid "These settings apply to all connections and override values from ~/.ssh/config. Explicit per-connection settings always win."
-msgstr "این تنظیمات برای همه اتصالات اعمال می شود و مقادیر ~/.ssh/config را لغو می کند. تنظیمات صریح در هر اتصال همیشه برنده هستند."
+msgid ""
+"These settings apply to all connections and override values from ~/.ssh/"
+"config. Explicit per-connection settings always win."
+msgstr ""
+"این تنظیمات برای همه اتصالات اعمال می شود و مقادیر ~/.ssh/config را لغو می "
+"کند. تنظیمات صریح در هر اتصال همیشه برنده هستند."
 
 #: src/sshpilot/preferences.py:2432
 msgid "SSH Settings"
@@ -5624,8 +5928,13 @@ msgid "Apply default keepalive"
 msgstr "Keealive پیش فرض را اعمال کنید"
 
 #: src/sshpilot/preferences.py:2454
-msgid "Detect dropped connections automatically when no ServerAlive value is set here or in ~/.ssh/config. Explicit values always win."
-msgstr "هنگامی که هیچ مقدار ServerAlive در اینجا یا در ~/.ssh/config تنظیم نشده باشد، اتصالات قطع شده را به طور خودکار شناسایی کنید. ارزش های صریح همیشه برنده هستند."
+msgid ""
+"Detect dropped connections automatically when no ServerAlive value is set "
+"here or in ~/.ssh/config. Explicit values always win."
+msgstr ""
+"هنگامی که هیچ مقدار ServerAlive در اینجا یا در ~/.ssh/config تنظیم نشده "
+"باشد، اتصالات قطع شده را به طور خودکار شناسایی کنید. ارزش های صریح همیشه "
+"برنده هستند."
 
 #: src/sshpilot/preferences.py:2464
 msgid "ServerAlive Interval (s)"
@@ -5653,7 +5962,9 @@ msgstr "مالتی پلکس کردن اتصال SSH را فعال کنید"
 
 #: src/sshpilot/preferences.py:2508
 msgid "Reuse one connection per host (ControlMaster) for faster reconnects"
-msgstr "برای اتصال مجدد سریعتر از یک اتصال در هر میزبان (ControlMaster) مجدد استفاده کنید"
+msgstr ""
+"برای اتصال مجدد سریعتر از یک اتصال در هر میزبان (ControlMaster) مجدد استفاده "
+"کنید"
 
 #: src/sshpilot/preferences.py:2515
 msgid "SSH Verbosity (-v)"
@@ -5681,7 +5992,8 @@ msgstr "گزینه های مدیریت فایل"
 
 #: src/sshpilot/preferences.py:2603
 msgid "These preferences only affect sshPilot's built-in SFTP file manager."
-msgstr "این تنظیمات برگزیده فقط روی مدیر فایل SFTP داخلی sshPilot تأثیر می گذارد."
+msgstr ""
+"این تنظیمات برگزیده فقط روی مدیر فایل SFTP داخلی sshPilot تأثیر می گذارد."
 
 #: src/sshpilot/preferences.py:2607
 msgid "Open File Manager in Separate Window"
@@ -5696,32 +6008,45 @@ msgid "Advanced SFTP Settings"
 msgstr "تنظیمات پیشرفته SFTP"
 
 #: src/sshpilot/preferences.py:2663
-msgid "Fine-tune options that only apply to sshPilot's built-in SFTP file manager."
-msgstr "تنظیمات دقیقی که فقط برای مدیریت فایل SFTP داخلی sshPilot اعمال می شود."
+msgid ""
+"Fine-tune options that only apply to sshPilot's built-in SFTP file manager."
+msgstr ""
+"تنظیمات دقیقی که فقط برای مدیریت فایل SFTP داخلی sshPilot اعمال می شود."
 
 #: src/sshpilot/preferences.py:2668
 msgid "SFTP Keepalive Interval (seconds)"
 msgstr "SFTP Keepalive Interval (ثانیه)"
 
 #: src/sshpilot/preferences.py:2670
-msgid "How often the built-in file manager sends keepalives. Set to 0 to disable."
-msgstr "هر چند وقت یکبار مدیر فایل داخلی نگهدارنده ها را ارسال می کند. برای غیرفعال کردن، روی 0 تنظیم کنید."
+msgid ""
+"How often the built-in file manager sends keepalives. Set to 0 to disable."
+msgstr ""
+"هر چند وقت یکبار مدیر فایل داخلی نگهدارنده ها را ارسال می کند. برای غیرفعال "
+"کردن، روی 0 تنظیم کنید."
 
 #: src/sshpilot/preferences.py:2685
 msgid "SFTP Keepalive Retry Limit"
 msgstr "محدودیت تلاش مجدد SFTP Keepalive"
 
 #: src/sshpilot/preferences.py:2687
-msgid "Number of failed keepalives tolerated by the built-in file manager before raising an error."
-msgstr "تعداد نگهدارندهu200cهای ناموفق که قبل از ایجاد خطا توسط مدیر فایل داخلی تحمل میu200cشوند."
+msgid ""
+"Number of failed keepalives tolerated by the built-in file manager before "
+"raising an error."
+msgstr ""
+"تعداد نگهدارندهu200cهای ناموفق که قبل از ایجاد خطا توسط مدیر فایل داخلی تحمل "
+"میu200cشوند."
 
 #: src/sshpilot/preferences.py:2702
 msgid "SFTP Connection Timeout (seconds)"
 msgstr "پایان زمان اتصال SFTP (ثانیه)"
 
 #: src/sshpilot/preferences.py:2704
-msgid "Time allowed for the built-in file manager to establish a session; 0 uses the default."
-msgstr "زمان مجاز برای مدیر فایل داخلی برای ایجاد یک جلسه. 0 از پیش فرض استفاده می کند."
+msgid ""
+"Time allowed for the built-in file manager to establish a session; 0 uses "
+"the default."
+msgstr ""
+"زمان مجاز برای مدیر فایل داخلی برای ایجاد یک جلسه. 0 از پیش فرض استفاده می "
+"کند."
 
 #. If no internal file manager, create empty page with message
 #: src/sshpilot/preferences.py:2719
@@ -5843,7 +6168,8 @@ msgid "Sign in…"
 msgstr "ورود به سیستم…"
 
 #: src/sshpilot/preferences.py:3241
-msgid "Credentials are not persisted — ssh-agent and SSH handle authentication."
+msgid ""
+"Credentials are not persisted — ssh-agent and SSH handle authentication."
 msgstr "اعتبارنامه ها باقی نمی مانند - ssh-agent و SSH احراز هویت دسته."
 
 #: src/sshpilot/preferences.py:3245
@@ -5860,7 +6186,8 @@ msgstr "در دسته کلید سیستم شما به خاطر سپرده می �
 
 #: src/sshpilot/preferences.py:3310
 msgid "Not saved. Use “Remember master password” when unlocking."
-msgstr "ذخیره نشده است. هنگام باز کردن قفل از «رمز عبور اصلی را به خاطر بسپارید»."
+msgstr ""
+"ذخیره نشده است. هنگام باز کردن قفل از «رمز عبور اصلی را به خاطر بسپارید»."
 
 #: src/sshpilot/preferences.py:3568
 msgid "Signing out of Bitwarden…"
@@ -5895,20 +6222,29 @@ msgid "File already exists"
 msgstr "فایل از قبل وجود دارد"
 
 #: src/sshpilot/preferences.py:3752
-msgid "A file already exists at that path. Use the open button to use it, or choose a new name."
-msgstr "یک فایل از قبل در آن مسیر وجود دارد. برای استفاده از آن از دکمه باز کردن استفاده کنید یا یک نام جدید انتخاب کنید."
+msgid ""
+"A file already exists at that path. Use the open button to use it, or choose "
+"a new name."
+msgstr ""
+"یک فایل از قبل در آن مسیر وجود دارد. برای استفاده از آن از دکمه باز کردن "
+"استفاده کنید یا یک نام جدید انتخاب کنید."
 
 #: src/sshpilot/preferences.py:3770 src/sshpilot/preferences.py:3805
 msgid "Cannot Create Database"
 msgstr "نمی توان پایگاه داده ایجاد کرد"
 
 #: src/sshpilot/preferences.py:3780
-msgid "Creating the database… the master password prompt is shown by the daemon."
+msgid ""
+"Creating the database… the master password prompt is shown by the daemon."
 msgstr "ایجاد پایگاه داده… اعلان رمز عبور اصلی توسط دیمون نشان داده می شود."
 
 #: src/sshpilot/preferences.py:3806
-msgid "Failed to create the database. Make sure pykeepass is installed and the location is writable."
-msgstr "ایجاد پایگاه داده ناموفق بود. مطمئن شوید که pykeepass نصب شده است و مکان قابل نوشتن است."
+msgid ""
+"Failed to create the database. Make sure pykeepass is installed and the "
+"location is writable."
+msgstr ""
+"ایجاد پایگاه داده ناموفق بود. مطمئن شوید که pykeepass نصب شده است و مکان "
+"قابل نوشتن است."
 
 #: src/sshpilot/preferences.py:3816
 msgid "Database Created"
@@ -5940,8 +6276,13 @@ msgid "Restart the local daemon?"
 msgstr "دیمون محلی را دوباره راه اندازی کنید؟"
 
 #: src/sshpilot/preferences.py:3944
-msgid "Live terminal sessions, SFTP services, transfers, and forwards owned by this daemon will be lost. They cannot survive a restart."
-msgstr "جلسات ترمینال زنده، خدمات SFTP، نقل و انتقالات و فورواردهای متعلق به این دیمون از بین خواهند رفت. آنها نمی توانند از راه اندازی مجدد جان سالم به در ببرند."
+msgid ""
+"Live terminal sessions, SFTP services, transfers, and forwards owned by this "
+"daemon will be lost. They cannot survive a restart."
+msgstr ""
+"جلسات ترمینال زنده، خدمات SFTP، نقل و انتقالات و فورواردهای متعلق به این "
+"دیمون از بین خواهند رفت. آنها نمی توانند از راه اندازی مجدد جان سالم به در "
+"ببرند."
 
 #: src/sshpilot/preferences.py:3968
 msgid "your open terminal sessions"
@@ -5977,8 +6318,12 @@ msgid "Restart SSH Pilot?"
 msgstr "راه اندازی مجدد SSH Pilot؟"
 
 #: src/sshpilot/preferences.py:4002
-msgid "The operation mode has changed. Restart to open the new configuration cleanly; until then, tabs and editors still show the previous one."
-msgstr "حالت عملیات تغییر کرده است. راه اندازی مجدد برای باز کردن پیکربندی جدید به طور تمیز. تا آن زمان، برگه ها و ویرایشگرها همچنان مورد قبلی را نشان می دهند."
+msgid ""
+"The operation mode has changed. Restart to open the new configuration "
+"cleanly; until then, tabs and editors still show the previous one."
+msgstr ""
+"حالت عملیات تغییر کرده است. راه اندازی مجدد برای باز کردن پیکربندی جدید به "
+"طور تمیز. تا آن زمان، برگه ها و ویرایشگرها همچنان مورد قبلی را نشان می دهند."
 
 #: src/sshpilot/preferences.py:4007 src/sshpilot/preferences.py:4775
 msgid "Later"
@@ -6046,8 +6391,12 @@ msgid "User Plugins"
 msgstr "پلاگین های کاربر"
 
 #: src/sshpilot/preferences.py:4517
-msgid "Third-party plugins run with full application privileges; only enable plugins you trust. Restart required."
-msgstr "پلاگین های شخص ثالث با امتیازات کامل برنامه اجرا می شوند. فقط افزونه هایی را که به آنها اعتماد دارید فعال کنید. راه اندازی مجدد لازم است."
+msgid ""
+"Third-party plugins run with full application privileges; only enable "
+"plugins you trust. Restart required."
+msgstr ""
+"پلاگین های شخص ثالث با امتیازات کامل برنامه اجرا می شوند. فقط افزونه هایی را "
+"که به آنها اعتماد دارید فعال کنید. راه اندازی مجدد لازم است."
 
 #: src/sshpilot/preferences.py:4557
 msgid "Remove plugin"
@@ -6062,8 +6411,12 @@ msgid "Available Plugins"
 msgstr "پلاگین های موجود"
 
 #: src/sshpilot/preferences.py:4575
-msgid "From the SSH Pilot plugin registry. Toggling one on downloads, verifies, and installs it (restart to load)."
-msgstr "از رجیستری پلاگین SSH Pilot. تغییر دادن یکی در بارگیری، تأیید و نصب آن (راه اندازی مجدد برای بارگیری)."
+msgid ""
+"From the SSH Pilot plugin registry. Toggling one on downloads, verifies, and "
+"installs it (restart to load)."
+msgstr ""
+"از رجیستری پلاگین SSH Pilot. تغییر دادن یکی در بارگیری، تأیید و نصب آن (راه "
+"اندازی مجدد برای بارگیری)."
 
 #: src/sshpilot/preferences.py:4577
 msgid "Checking the plugin registry…"
@@ -6149,8 +6502,12 @@ msgid "{action} “{name}”?"
 msgstr "{action}\"{name}\"؟"
 
 #: src/sshpilot/preferences.py:4887
-msgid "Plugins run with full application privileges and are not sandboxed. Only continue if you trust the source."
-msgstr "پلاگینu200cها با امتیازات کامل برنامه اجرا میu200cشوند و سندباکس نیستند. فقط در صورت اعتماد به منبع ادامه دهید."
+msgid ""
+"Plugins run with full application privileges and are not sandboxed. Only "
+"continue if you trust the source."
+msgstr ""
+"پلاگینu200cها با امتیازات کامل برنامه اجرا میu200cشوند و سندباکس نیستند. فقط "
+"در صورت اعتماد به منبع ادامه دهید."
 
 #: src/sshpilot/preferences.py:4890
 msgid "Requested permissions:"
@@ -6161,8 +6518,12 @@ msgid "No special permissions declared."
 msgstr "هیچ مجوز خاصی اعلام نشده است."
 
 #: src/sshpilot/preferences.py:4901
-msgid "Permissions are declared by the author for transparency; they are not enforced. Changes take effect after restarting sshPilot."
-msgstr "مجوزها برای شفافیت توسط نویسنده اعلام شده است. آنها اجرا نمی شوند. تغییرات پس از راه اندازی مجدد sshPilot اعمال می شوند."
+msgid ""
+"Permissions are declared by the author for transparency; they are not "
+"enforced. Changes take effect after restarting sshPilot."
+msgstr ""
+"مجوزها برای شفافیت توسط نویسنده اعلام شده است. آنها اجرا نمی شوند. تغییرات "
+"پس از راه اندازی مجدد sshPilot اعمال می شوند."
 
 #: src/sshpilot/preferences.py:4912
 msgid "SHA-256"
@@ -6181,7 +6542,8 @@ msgid "Checksum mismatch"
 msgstr "عدم تطابق جمع چک"
 
 #: src/sshpilot/preferences.py:4948
-msgid "The archive's SHA-256 doesn't match the expected value; install cancelled."
+msgid ""
+"The archive's SHA-256 doesn't match the expected value; install cancelled."
 msgstr "SHA-256 بایگانی با مقدار مورد انتظار مطابقت ندارد. نصب لغو شد"
 
 #: src/sshpilot/preferences.py:4959
@@ -6227,7 +6589,9 @@ msgstr "افزونه ناسازگار"
 #: src/sshpilot/preferences.py:5069
 #, python-brace-format
 msgid "This plugin targets API v{required}, but this app provides v{provided}."
-msgstr "این افزونه API v{required}را هدف قرار می دهد، اما این برنامه v{provided}را ارائه می دهد."
+msgstr ""
+"این افزونه API v{required}را هدف قرار می دهد، اما این برنامه v{provided}را "
+"ارائه می دهد."
 
 #: src/sshpilot/preferences.py:5072
 msgid "The plugin has no __init__.py."
@@ -6254,7 +6618,8 @@ msgstr "پلاگین نصب شده است"
 #: src/sshpilot/preferences.py:5125
 #, python-brace-format
 msgid "Installed '{plugin}'. Restart SSH Pilot to load it."
-msgstr "\"{plugin}\" نصب شده است. SSH Pilot را مجدداً راه اندازی کنید تا بارگیری شود."
+msgstr ""
+"\"{plugin}\" نصب شده است. SSH Pilot را مجدداً راه اندازی کنید تا بارگیری شود."
 
 #: src/sshpilot/preferences.py:5130
 msgid "Remove plugin?"
@@ -6276,7 +6641,9 @@ msgstr "افزونه حذف شد"
 #: src/sshpilot/preferences.py:5153
 #, python-brace-format
 msgid "Removed '{name}'. Restart SSH Pilot to unload it if it was active."
-msgstr "\"{name}\" حذف شد. SSH Pilot را مجدداً راه اندازی کنید تا در صورت فعال بودن، آن را تخلیه کنید."
+msgstr ""
+"\"{name}\" حذف شد. SSH Pilot را مجدداً راه اندازی کنید تا در صورت فعال بودن، "
+"آن را تخلیه کنید."
 
 #: src/sshpilot/preferences.py:5172
 msgid "Open plugin page"
@@ -6351,20 +6718,23 @@ msgid "Terminal Backend Change"
 msgstr "تغییر باطن پایانه"
 
 #: src/sshpilot/preferences.py:6439
-msgid ""
-"This change will only apply to new terminal tabs.\n"
-""
-msgstr ""
-"این تغییر فقط برای برگه های ترمینال جدید اعمال می شود.\n"
-""
+msgid "This change will only apply to new terminal tabs.\n"
+msgstr "این تغییر فقط برای برگه های ترمینال جدید اعمال می شود.\n"
 
 #: src/sshpilot/rbw_setup.py:111
 msgid "rbw not found"
 msgstr "rbw پیدا نشد"
 
 #: src/sshpilot/rbw_setup.py:113
-msgid "SSH Pilot is set to use rbw — an unofficial Bitwarden client — for secret storage, but the “rbw” command was not found. Install it, then restart SSH Pilot or retry from Preferences ▸ Secret Storage."
-msgstr "SSH Pilot قرار است از rbw - یک کلاینت غیر رسمی Bitwarden - برای ذخیره سازی مخفی استفاده کند، اما دستور \"rbw\" یافت نشد. آن را نصب کنید، سپس SSH Pilot را مجددا راه اندازی کنید یا از Preferences ▸ Secret Storage دوباره امتحان کنید."
+msgid ""
+"SSH Pilot is set to use rbw — an unofficial Bitwarden client — for secret "
+"storage, but the “rbw” command was not found. Install it, then restart SSH "
+"Pilot or retry from Preferences ▸ Secret Storage."
+msgstr ""
+"SSH Pilot قرار است از rbw - یک کلاینت غیر رسمی Bitwarden - برای ذخیره سازی "
+"مخفی استفاده کند، اما دستور \"rbw\" یافت نشد. آن را نصب کنید، سپس SSH Pilot "
+"را مجددا راه اندازی کنید یا از Preferences ▸ Secret Storage دوباره امتحان "
+"کنید."
 
 #: src/sshpilot/rbw_setup.py:118
 msgid "View rbw on GitHub"
@@ -6383,11 +6753,13 @@ msgstr "به عنوان{email}وارد سیستم شده و قفل آن را ب�
 msgid ""
 "rbw could not be unlocked.\n"
 "\n"
-"Check that a pinentry program is configured (`rbw config set pinentry …`) and try again, or run `rbw login` in a terminal."
+"Check that a pinentry program is configured (`rbw config set pinentry …`) "
+"and try again, or run `rbw login` in a terminal."
 msgstr ""
 "rbw را نمی توان آنلاک کرد.\n"
 "\n"
-"بررسی کنید که یک برنامه pinentry پیکربندی شده باشد («rbw config set pinentry…») و دوباره امتحان کنید یا «rbw login» را در ترمینال اجرا کنید."
+"بررسی کنید که یک برنامه pinentry پیکربندی شده باشد («rbw config set "
+"pinentry…») و دوباره امتحان کنید یا «rbw login» را در ترمینال اجرا کنید."
 
 #: src/sshpilot/rbw_setup.py:152
 msgid "rbw setup failed"
@@ -6398,8 +6770,12 @@ msgid "Configure rbw"
 msgstr "rbw را پیکربندی کنید"
 
 #: src/sshpilot/rbw_setup.py:165
-msgid "Enter your Bitwarden account email. For a self-hosted Vaultwarden, also set the server URL (leave empty for the official bitwarden.com)."
-msgstr "ایمیل حساب Bitwarden خود را وارد کنید. برای Vaultwarden خود میزبان، URL سرور را نیز تنظیم کنید (برای bitwarden.com رسمی خالی بگذارید)."
+msgid ""
+"Enter your Bitwarden account email. For a self-hosted Vaultwarden, also set "
+"the server URL (leave empty for the official bitwarden.com)."
+msgstr ""
+"ایمیل حساب Bitwarden خود را وارد کنید. برای Vaultwarden خود میزبان، URL سرور "
+"را نیز تنظیم کنید (برای bitwarden.com رسمی خالی بگذارید)."
 
 #: src/sshpilot/rbw_setup.py:175
 msgid "Account email"
@@ -6578,8 +6954,12 @@ msgid "Remote destination"
 msgstr "مقصد راه دور"
 
 #: src/sshpilot/scp_window.py:985
-msgid "Enter a remote directory (e.g., ~/ or /var/tmp). Files will be uploaded using scp."
-msgstr "یک دایرکتوری راه دور (به عنوان مثال ~/ یا /var/tmp) وارد کنید. فایل ها با استفاده از scp آپلود خواهند شد."
+msgid ""
+"Enter a remote directory (e.g., ~/ or /var/tmp). Files will be uploaded "
+"using scp."
+msgstr ""
+"یک دایرکتوری راه دور (به عنوان مثال ~/ یا /var/tmp) وارد کنید. فایل ها با "
+"استفاده از scp آپلود خواهند شد."
 
 #: src/sshpilot/scp_window.py:1096
 msgid "The SCP transfer request is invalid."
@@ -6639,13 +7019,19 @@ msgstr "طاق"
 
 #: src/sshpilot/secret_unlock_dialog.py:165
 msgid ""
-"Bitwarden is selected for secret storage, but the “bw” command was not found. Passwords and passphrases will not be stored or autofilled until the CLI is installed.\n"
+"Bitwarden is selected for secret storage, but the “bw” command was not "
+"found. Passwords and passphrases will not be stored or autofilled until the "
+"CLI is installed.\n"
 "\n"
-"Open Settings ▸ Security & Credentials to change the backend, or set up Bitwarden now."
+"Open Settings ▸ Security & Credentials to change the backend, or set up "
+"Bitwarden now."
 msgstr ""
-"Bitwarden برای ذخیره سازی مخفی انتخاب شده است، اما دستور \"bw\" یافت نشد. گذرواژهu200cها و عبارتu200cهای عبور تا زمانی که CLI نصب نشود، ذخیره یا تکمیل نمیu200cشوند.\n"
+"Bitwarden برای ذخیره سازی مخفی انتخاب شده است، اما دستور \"bw\" یافت نشد. "
+"گذرواژهu200cها و عبارتu200cهای عبور تا زمانی که CLI نصب نشود، ذخیره یا تکمیل "
+"نمیu200cشوند.\n"
 "\n"
-"تنظیمات ▸ امنیت و اعتبارنامه را باز کنید تا باطن را تغییر دهید، یا اکنون Bitwarden را راه اندازی کنید."
+"تنظیمات ▸ امنیت و اعتبارنامه را باز کنید تا باطن را تغییر دهید، یا اکنون "
+"Bitwarden را راه اندازی کنید."
 
 #: src/sshpilot/secret_unlock_dialog.py:172
 #: src/sshpilot/secret_unlock_dialog.py:217
@@ -6663,31 +7049,46 @@ msgstr "باطن مخفی در دسترس نیست"
 #: src/sshpilot/secret_unlock_dialog.py:189
 #, python-brace-format
 msgid ""
-"{name} is selected for secret storage but is not available on this system. Passwords and passphrases will not be stored or autofilled until it is available.\n"
+"{name} is selected for secret storage but is not available on this system. "
+"Passwords and passphrases will not be stored or autofilled until it is "
+"available.\n"
 "\n"
-"Open Settings ▸ Security & Credentials to fix the setup or choose another backend."
+"Open Settings ▸ Security & Credentials to fix the setup or choose another "
+"backend."
 msgstr ""
-"{name}برای ذخیره سازی مخفی انتخاب شده است اما در این سیستم در دسترس نیست. گذرواژهu200cها و عبارتu200cهای عبور تا زمانی که در دسترس نباشند ذخیره یا تکمیل نمیu200cشوند.\n"
+"{name}برای ذخیره سازی مخفی انتخاب شده است اما در این سیستم در دسترس نیست. "
+"گذرواژهu200cها و عبارتu200cهای عبور تا زمانی که در دسترس نباشند ذخیره یا "
+"تکمیل نمیu200cشوند.\n"
 "\n"
-"تنظیمات ▸ امنیت و اعتبار را باز کنید تا تنظیمات را برطرف کنید یا باطن دیگری را انتخاب کنید."
+"تنظیمات ▸ امنیت و اعتبار را باز کنید تا تنظیمات را برطرف کنید یا باطن دیگری "
+"را انتخاب کنید."
 
 #: src/sshpilot/secret_unlock_dialog.py:210
 msgid ""
-"Bitwarden is selected for secret storage, but you are not signed in. Passwords and passphrases will not be stored or autofilled until you sign in and unlock your vault.\n"
+"Bitwarden is selected for secret storage, but you are not signed in. "
+"Passwords and passphrases will not be stored or autofilled until you sign in "
+"and unlock your vault.\n"
 "\n"
 "Open Settings ▸ Security & Credentials to change the backend, or sign in now."
 msgstr ""
-"Bitwarden برای ذخیرهu200cسازی مخفی انتخاب شده است، اما شما وارد سیستم نشدهu200cاید. گذرواژهu200cها و عبارتu200cهای عبور ذخیره یا تکمیل نمیu200cشوند تا زمانی که وارد سیستم شوید و قفل صندوق خود را باز نکنید.\n"
+"Bitwarden برای ذخیرهu200cسازی مخفی انتخاب شده است، اما شما وارد سیستم "
+"نشدهu200cاید. گذرواژهu200cها و عبارتu200cهای عبور ذخیره یا تکمیل "
+"نمیu200cشوند تا زمانی که وارد سیستم شوید و قفل صندوق خود را باز نکنید.\n"
 "\n"
-"تنظیمات ▸ امنیت و اعتبارنامه ها را باز کنید تا قسمت پشتیبان را تغییر دهید، یا اکنون وارد شوید."
+"تنظیمات ▸ امنیت و اعتبارنامه ها را باز کنید تا قسمت پشتیبان را تغییر دهید، "
+"یا اکنون وارد شوید."
 
 #: src/sshpilot/secret_unlock_dialog.py:234
 #, python-brace-format
 msgid ""
-"{name} is selected for secret storage but you are not signed in. Passwords and passphrases will not be stored or autofilled until you sign in.\n"
+"{name} is selected for secret storage but you are not signed in. Passwords "
+"and passphrases will not be stored or autofilled until you sign in.\n"
 "\n"
 "Open Settings ▸ Security & Credentials to fix the setup."
-msgstr "{name}برای ذخیرهu200cسازی مخفی انتخاب شده است اما شما وارد سیستم نشدهu200cاید. گذرواژهu200cها و عبارتu200cهای عبور ذخیره یا تکمیل نمیu200cشوند تا زمانی که وارد سیستم شوید."
+msgstr ""
+"{name}برای ذخیرهu200cسازی مخفی انتخاب شده است اما شما وارد سیستم "
+"نشدهu200cاید. گذرواژهu200cها و عبارتu200cهای عبور ذخیره یا تکمیل "
+"نمیu200cشوند تا زمانی که وارد سیستم شوید."
 
 #: src/sshpilot/secret_unlock_dialog.py:543
 #, python-brace-format
@@ -6834,8 +7235,12 @@ msgstr "میانبر در حال حاضر استفاده می‌شود"
 
 #: src/sshpilot/shortcut_editor.py:601
 #, python-brace-format
-msgid "This shortcut is already assigned to “{action}”. Replacing it will disable that assignment."
-msgstr "این میانبر از قبل به «{action}» اختصاص داده شده است. جایگزینی آن، این انتساب را غیرفعال می‌کند."
+msgid ""
+"This shortcut is already assigned to “{action}”. Replacing it will disable "
+"that assignment."
+msgstr ""
+"این میانبر از قبل به «{action}» اختصاص داده شده است. جایگزینی آن، این انتساب "
+"را غیرفعال می‌کند."
 
 #: src/sshpilot/shutdown.py:160
 msgid "Closing Connections"
@@ -7290,8 +7695,12 @@ msgid "Key May Have Been Generated"
 msgstr "احتمالاً کلید تولید شده است"
 
 #: src/sshpilot/sshcopyid_window.py:784
-msgid "The connection was lost while generating the key. The key may have been created. Check the key list; generation was not retried."
-msgstr "هنگام تولید کلید، اتصال قطع شد. ممکن است کلید ایجاد شده باشد. فهرست کلیدها را بررسی کنید؛ تولید کلید دوباره تکرار نشد."
+msgid ""
+"The connection was lost while generating the key. The key may have been "
+"created. Check the key list; generation was not retried."
+msgstr ""
+"هنگام تولید کلید، اتصال قطع شد. ممکن است کلید ایجاد شده باشد. فهرست کلیدها "
+"را بررسی کنید؛ تولید کلید دوباره تکرار نشد."
 
 #: src/sshpilot/sshcopyid_window.py:804
 msgid "A key with that name already exists."
@@ -7340,8 +7749,12 @@ msgid "Public-key deployment failed."
 msgstr "استقرار کلید عمومی ناموفق بود."
 
 #: src/sshpilot/terminal.py:148
-msgid "Nothing selected — the remote app is using the mouse; hold Shift while dragging to select text"
-msgstr "چیزی انتخاب نشده است — برنامهٔ دوردست در حال استفاده از ماوس است؛ برای انتخاب متن هنگام کشیدن ماوس، کلید Shift را نگه دارید"
+msgid ""
+"Nothing selected — the remote app is using the mouse; hold Shift while "
+"dragging to select text"
+msgstr ""
+"چیزی انتخاب نشده است — برنامهٔ دوردست در حال استفاده از ماوس است؛ برای انتخاب "
+"متن هنگام کشیدن ماوس، کلید Shift را نگه دارید"
 
 #: src/sshpilot/terminal.py:151
 msgid "Nothing selected to copy"
@@ -7447,68 +7860,68 @@ msgid "Copy Link"
 msgstr "کپی پیوند"
 
 #: src/sshpilot/terminal.py:3382
-msgid "Copy	⌘C"
-msgstr "کپی	⌘C"
+msgid "Copy\t⌘C"
+msgstr "کپی\t⌘C"
 
 #: src/sshpilot/terminal.py:3385 src/sshpilot/terminal.py:3402
 msgid "Copy as HTML"
 msgstr "کپی به‌صورت HTML"
 
 #: src/sshpilot/terminal.py:3386
-msgid "Paste	⌘V"
-msgstr "جای‌گذاری	⌘V"
+msgid "Paste\t⌘V"
+msgstr "جای‌گذاری\t⌘V"
 
 #: src/sshpilot/terminal.py:3387
-msgid "Select All	⌘A"
-msgstr "انتخاب همه	⌘A"
+msgid "Select All\t⌘A"
+msgstr "انتخاب همه\t⌘A"
 
 #: src/sshpilot/terminal.py:3389
-msgid "Zoom In	⌘="
-msgstr "بزرگ‌نمایی	⌘="
+msgid "Zoom In\t⌘="
+msgstr "بزرگ‌نمایی\t⌘="
 
 #: src/sshpilot/terminal.py:3390
-msgid "Zoom Out	⌘-"
-msgstr "کوچک‌نمایی	⌘-"
+msgid "Zoom Out\t⌘-"
+msgstr "کوچک‌نمایی\t⌘-"
 
 #: src/sshpilot/terminal.py:3391
-msgid "Reset Zoom	⌘0"
-msgstr "بازنشانی بزرگ‌نمایی	⌘0"
+msgid "Reset Zoom\t⌘0"
+msgstr "بازنشانی بزرگ‌نمایی\t⌘0"
 
 #: src/sshpilot/terminal.py:3394
-msgid "Search	⌘F"
-msgstr "جستجو	⌘F"
+msgid "Search\t⌘F"
+msgstr "جستجو\t⌘F"
 
 #: src/sshpilot/terminal.py:3395 src/sshpilot/terminal.py:3413
 msgid "Save Output…"
 msgstr "ذخیرهٔ خروجی…"
 
 #: src/sshpilot/terminal.py:3399
-msgid "Copy	Ctrl+Shift+C"
-msgstr "کپی	Ctrl+Shift+C"
+msgid "Copy\tCtrl+Shift+C"
+msgstr "کپی\tCtrl+Shift+C"
 
 #: src/sshpilot/terminal.py:3404
-msgid "Paste	Ctrl+Shift+V"
-msgstr "جای‌گذاری	Ctrl+Shift+V"
+msgid "Paste\tCtrl+Shift+V"
+msgstr "جای‌گذاری\tCtrl+Shift+V"
 
 #: src/sshpilot/terminal.py:3405
-msgid "Select All	Ctrl+Shift+A"
-msgstr "انتخاب همه	Ctrl+Shift+A"
+msgid "Select All\tCtrl+Shift+A"
+msgstr "انتخاب همه\tCtrl+Shift+A"
 
 #: src/sshpilot/terminal.py:3407
-msgid "Zoom In	Ctrl++"
-msgstr "بزرگ‌نمایی	Ctrl++"
+msgid "Zoom In\tCtrl++"
+msgstr "بزرگ‌نمایی\tCtrl++"
 
 #: src/sshpilot/terminal.py:3408
-msgid "Zoom Out	Ctrl+-"
-msgstr "کوچک‌نمایی	Ctrl+-"
+msgid "Zoom Out\tCtrl+-"
+msgstr "کوچک‌نمایی\tCtrl+-"
 
 #: src/sshpilot/terminal.py:3409
-msgid "Reset Zoom	Ctrl+0"
-msgstr "بازنشانی بزرگ‌نمایی	Ctrl+0"
+msgid "Reset Zoom\tCtrl+0"
+msgstr "بازنشانی بزرگ‌نمایی\tCtrl+0"
 
 #: src/sshpilot/terminal.py:3412
-msgid "Search	Ctrl+Shift+F"
-msgstr "جستجو	Ctrl+Shift+F"
+msgid "Search\tCtrl+Shift+F"
+msgstr "جستجو\tCtrl+Shift+F"
 
 #: src/sshpilot/terminal_manager.py:363
 msgid ""
@@ -7566,15 +7979,19 @@ msgstr "اتصال مجدد برقرار شود؟"
 
 #: src/sshpilot/terminal_manager.py:1477
 msgid "If you changed settings, you can reconnect to apply them."
-msgstr "اگر تنظیمات را تغییر داده‌اید، می‌توانید برای اعمال آن‌ها مجدداً متصل شوید."
+msgstr ""
+"اگر تنظیمات را تغییر داده‌اید، می‌توانید برای اعمال آن‌ها مجدداً متصل شوید."
 
 #: src/sshpilot/terminal_manager.py:1534 src/sshpilot/terminal_manager.py:1678
 msgid "Reconnection Failed"
 msgstr "اتصال مجدد ناموفق بود"
 
 #: src/sshpilot/terminal_manager.py:1536 src/sshpilot/terminal_manager.py:1681
-msgid "Failed to reconnect with the new settings. Please try connecting again manually."
-msgstr "اتصال مجدد با تنظیمات جدید انجام نشد. لطفاً به‌صورت دستی دوباره متصل شوید."
+msgid ""
+"Failed to reconnect with the new settings. Please try connecting again "
+"manually."
+msgstr ""
+"اتصال مجدد با تنظیمات جدید انجام نشد. لطفاً به‌صورت دستی دوباره متصل شوید."
 
 #: src/sshpilot/terminal_search.py:59
 msgid "Search Terminal"
@@ -7768,8 +8185,12 @@ msgid "Discard changes?"
 msgstr "تغییرات نادیده گرفته شود؟"
 
 #: src/sshpilot/text_editor.py:1620
-msgid "Editing as root re-reads the file from the host and discards your unsaved changes."
-msgstr "ویرایش به‌عنوان root فایل را مجدداً از Host می‌خواند و تغییرات ذخیره‌نشدهٔ شما را نادیده می‌گیرد."
+msgid ""
+"Editing as root re-reads the file from the host and discards your unsaved "
+"changes."
+msgstr ""
+"ویرایش به‌عنوان root فایل را مجدداً از Host می‌خواند و تغییرات ذخیره‌نشدهٔ شما را "
+"نادیده می‌گیرد."
 
 #: src/sshpilot/text_editor.py:1624
 msgid "Discard and continue"
@@ -7849,7 +8270,9 @@ msgstr "اخیر"
 
 #: src/sshpilot/welcome_page.py:557
 msgid "Double click a host to connect or press + to create a new connection"
-msgstr "برای اتصال روی یک Host دوبار کلیک کنید یا برای ایجاد اتصال جدید + را فشار دهید"
+msgstr ""
+"برای اتصال روی یک Host دوبار کلیک کنید یا برای ایجاد اتصال جدید + را فشار "
+"دهید"
 
 #: src/sshpilot/welcome_page.py:559
 msgid "Press + to create a new connection"
@@ -7885,8 +8308,12 @@ msgstr "پلاگین غیرفعال است"
 
 #: src/sshpilot/welcome_page.py:704
 #, python-format
-msgid "The %s plugin is disabled. Enable it from Settings ▸ Plugins, then restart SSH Pilot to use this feature."
-msgstr "پلاگین %s غیرفعال است. آن را از تنظیمات ▸ افزونه‌ها فعال کرده و سپس برای استفاده از این قابلیت SSH Pilot را مجدداً راه‌اندازی کنید."
+msgid ""
+"The %s plugin is disabled. Enable it from Settings ▸ Plugins, then restart "
+"SSH Pilot to use this feature."
+msgstr ""
+"پلاگین %s غیرفعال است. آن را از تنظیمات ▸ افزونه‌ها فعال کرده و سپس برای "
+"استفاده از این قابلیت SSH Pilot را مجدداً راه‌اندازی کنید."
 
 #: src/sshpilot/welcome_page.py:709
 msgid "Open Settings"
@@ -7925,7 +8352,9 @@ msgid "A running background service uses an incompatible protocol version."
 msgstr "سرویس پس‌زمینهٔ در حال اجرا از نسخهٔ ناسازگاری از پروتکل استفاده می‌کند."
 
 #: src/sshpilot/window.py:146
-msgid "A background service from a different app version is running and could not be replaced."
+msgid ""
+"A background service from a different app version is running and could not "
+"be replaced."
 msgstr "سرویس پس‌زمینه‌ای از نسخهٔ دیگری از برنامه در حال اجراست و جایگزین نشد."
 
 #: src/sshpilot/window.py:150
@@ -7942,16 +8371,24 @@ msgstr "راه‌اندازی سرویس پس‌زمینه امکان‌پذیر
 
 #: src/sshpilot/window.py:906
 #, python-format
-msgid "SSH Pilot requires its background service. %s Retry, restart the service, inspect diagnostics, or exit."
-msgstr "برنامهٔ SSH Pilot به سرویس پس‌زمینهٔ خود نیاز دارد. %s دوباره تلاش کنید، سرویس را مجدداً راه‌اندازی کنید، اطلاعات تشخیصی را بررسی کنید، یا خارج شوید."
+msgid ""
+"SSH Pilot requires its background service. %s Retry, restart the service, "
+"inspect diagnostics, or exit."
+msgstr ""
+"برنامهٔ SSH Pilot به سرویس پس‌زمینهٔ خود نیاز دارد. %s دوباره تلاش کنید، سرویس "
+"را مجدداً راه‌اندازی کنید، اطلاعات تشخیصی را بررسی کنید، یا خارج شوید."
 
 #: src/sshpilot/window.py:997
 msgid "Restore Daemon Sessions?"
 msgstr "نشست‌های دیمن بازیابی شوند؟"
 
 #: src/sshpilot/window.py:999
-msgid "One or more SSH sessions are still running in the local service. Restore them into tabs now?"
-msgstr "یک یا چند نشست SSH همچنان در سرویس محلی در حال اجرا هستند. آیا مایلید اکنون آن‌ها را در زبانه‌ها بازیابی کنید؟"
+msgid ""
+"One or more SSH sessions are still running in the local service. Restore "
+"them into tabs now?"
+msgstr ""
+"یک یا چند نشست SSH همچنان در سرویس محلی در حال اجرا هستند. آیا مایلید اکنون "
+"آن‌ها را در زبانه‌ها بازیابی کنید؟"
 
 #: src/sshpilot/window.py:1003 src/sshpilot/window.py:1232
 msgid "Not Now"
@@ -7967,8 +8404,12 @@ msgid "SSH Pilot closed unexpectedly"
 msgstr "برنامهٔ SSH Pilot به‌طور غیرمنتظره‌ای بسته شد"
 
 #: src/sshpilot/window.py:1222
-msgid "An error report from your previous session was saved. Sending it helps us find and fix the problem."
-msgstr "گزارش خطایی از نشست قبلی شما ذخیره شد. ارسال آن به ما در یافتن و رفع مشکل کمک می‌کند."
+msgid ""
+"An error report from your previous session was saved. Sending it helps us "
+"find and fix the problem."
+msgstr ""
+"گزارش خطایی از نشست قبلی شما ذخیره شد. ارسال آن به ما در یافتن و رفع مشکل "
+"کمک می‌کند."
 
 #: src/sshpilot/window.py:1282
 msgid "Report a Problem"
@@ -7982,19 +8423,28 @@ msgid ""
 msgstr ""
 "اطلاعات تشخیصی در بریده‌دان شما کپی شد.\n"
 "\n"
-"برای باز کردن صفحهٔ ثبت مشکل روی «تأیید» کلیک کرده و سپس آن را در گزارش جای‌گذاری (Ctrl+V) کنید."
+"برای باز کردن صفحهٔ ثبت مشکل روی «تأیید» کلیک کرده و سپس آن را در گزارش "
+"جای‌گذاری (Ctrl+V) کنید."
 
 #: src/sshpilot/window.py:1291
-msgid "Press OK to open the issue page. You can attach your logs from Help ▸ View Logs."
-msgstr "برای باز کردن صفحهٔ ثبت مشکل روی «تأیید» کلیک کنید. می‌توانید گزارش‌های خود را از «راهنما ▸ مشاهدهٔ گزارش‌ها» پیوست نمایید."
+msgid ""
+"Press OK to open the issue page. You can attach your logs from Help ▸ View "
+"Logs."
+msgstr ""
+"برای باز کردن صفحهٔ ثبت مشکل روی «تأیید» کلیک کنید. می‌توانید گزارش‌های خود را "
+"از «راهنما ▸ مشاهدهٔ گزارش‌ها» پیوست نمایید."
 
 #: src/sshpilot/window.py:1371 src/sshpilot/window.py:1386
 msgid "Daemon Sessions Unavailable"
 msgstr "نشست‌های دیمن در دسترس نیستند"
 
 #: src/sshpilot/window.py:1373
-msgid "Daemon sessions are not available. Enable daemon-backed SSH terminals and ensure the local service is running."
-msgstr "نشست‌های دیمن در دسترس نیستند. ترمینال‌های SSH تحت پشتیبانی دیمن را فعال کرده و از اجرای سرویس محلی اطمینان حاصل کنید."
+msgid ""
+"Daemon sessions are not available. Enable daemon-backed SSH terminals and "
+"ensure the local service is running."
+msgstr ""
+"نشست‌های دیمن در دسترس نیستند. ترمینال‌های SSH تحت پشتیبانی دیمن را فعال کرده "
+"و از اجرای سرویس محلی اطمینان حاصل کنید."
 
 #: src/sshpilot/window.py:1387
 msgid "The local SSH Pilot service bridge is unavailable."
@@ -8014,12 +8464,14 @@ msgid ""
 "Saved to:\n"
 "{path}\n"
 "\n"
-"Secrets are redacted. Your saved connections and SSH config are not included; a maintainer can request them separately if needed."
+"Secrets are redacted. Your saved connections and SSH config are not "
+"included; a maintainer can request them separately if needed."
 msgstr ""
 "ذخیره شد در:\n"
 "{path}\n"
 "\n"
-"اطلاعات محرمانه سانسور شده‌اند. اتصال‌های ذخیره‌شده و پیکربندی SSH شما گنجانده نشده‌اند؛ نگه‌دارنده در صورت نیاز می‌تواند آن‌ها را جداگانه درخواست کند."
+"اطلاعات محرمانه سانسور شده‌اند. اتصال‌های ذخیره‌شده و پیکربندی SSH شما گنجانده "
+"نشده‌اند؛ نگه‌دارنده در صورت نیاز می‌تواند آن‌ها را جداگانه درخواست کند."
 
 #: src/sshpilot/window.py:1418
 msgid "Open Folder"
@@ -8233,12 +8685,17 @@ msgstr "شروع"
 
 #: src/sshpilot/window.py:4608
 #, python-brace-format
-msgid "Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new tab"
-msgstr "تغییر به فهرست اتصال — ↑/↓ پیمایش، Enter باز کردن، {modifier}+Enter زبانهٔ جدید"
+msgid ""
+"Switched to connection list — ↑/↓ navigate, Enter open, {modifier}+Enter new "
+"tab"
+msgstr ""
+"تغییر به فهرست اتصال — ↑/↓ پیمایش، Enter باز کردن، {modifier}+Enter زبانهٔ "
+"جدید"
 
 #: src/sshpilot/window.py:4685 src/sshpilot/window.py:4836
 msgid "Search mode — Type to filter connections, Esc to clear and hide"
-msgstr "حالت جستجو — برای فیلتر کردن اتصال‌ها تایپ کنید، Esc برای پاک کردن و پنهان‌سازی"
+msgstr ""
+"حالت جستجو — برای فیلتر کردن اتصال‌ها تایپ کنید، Esc برای پاک کردن و پنهان‌سازی"
 
 #: src/sshpilot/window.py:4854
 #, python-brace-format
@@ -8247,8 +8704,12 @@ msgstr "جستجو پنهان شد — {modifier}+F برای جستجوی دوب
 
 #: src/sshpilot/window.py:5299
 #, python-brace-format
-msgid "\"{host}\" is part of a configuration block with [{count}] other hosts. How would you like to apply your changes?"
-msgstr "«{host}» بخشی از یک بلوک پیکربندی به همراه [{count}] Host دیگر است. مایلید تغییرات شما چگونه اعمال شوند؟"
+msgid ""
+"\"{host}\" is part of a configuration block with [{count}] other hosts. How "
+"would you like to apply your changes?"
+msgstr ""
+"«{host}» بخشی از یک بلوک پیکربندی به همراه [{count}] Host دیگر است. مایلید "
+"تغییرات شما چگونه اعمال شوند؟"
 
 #: src/sshpilot/window.py:5301
 msgid "Warning"
@@ -8263,8 +8724,11 @@ msgid "Edit as Separate Connection"
 msgstr "ویرایش به‌عنوان اتصال جداگانه"
 
 #: src/sshpilot/window.py:5352
-msgid "SSH config editing requires the background service. Start it and try again."
-msgstr "ویرایش پیکربندی SSH نیازمند سرویس پس‌زمینه است. آن را راه‌اندازی کرده و دوباره تلاش کنید."
+msgid ""
+"SSH config editing requires the background service. Start it and try again."
+msgstr ""
+"ویرایش پیکربندی SSH نیازمند سرویس پس‌زمینه است. آن را راه‌اندازی کرده و دوباره "
+"تلاش کنید."
 
 #. the daemon resolves the active config file
 #: src/sshpilot/window.py:5361 src/sshpilot/window.py:5373
@@ -8302,16 +8766,24 @@ msgid "Operation mode recovery required"
 msgstr "بازیابی حالت عملیات ضروری است"
 
 #: src/sshpilot/window.py:5439
-msgid "The daemon could not restore a consistent SSH configuration mode. Do not start new operations until the daemon is restarted or the reported state is repaired."
-msgstr "دیمن نتوانست حالت سازگار پیکربندی SSH را بازیابی کند. تا زمانی که دیمن مجدداً راه‌اندازی نشده یا وضعیت گزارش‌شده ترمیم نیافته، عملیات جدیدی آغاز نکنید."
+msgid ""
+"The daemon could not restore a consistent SSH configuration mode. Do not "
+"start new operations until the daemon is restarted or the reported state is "
+"repaired."
+msgstr ""
+"دیمن نتوانست حالت سازگار پیکربندی SSH را بازیابی کند. تا زمانی که دیمن مجدداً "
+"راه‌اندازی نشده یا وضعیت گزارش‌شده ترمیم نیافته، عملیات جدیدی آغاز نکنید."
 
 #: src/sshpilot/window.py:5464
 msgid "Key Service Unavailable"
 msgstr "سرویس کلید در دسترس نیست"
 
 #: src/sshpilot/window.py:5466
-msgid "SSH keys require the background service. Restart the service and try again."
-msgstr "کلیدهای SSH به سرویس پس‌زمینه نیاز دارند. سرویس را مجدداً راه‌اندازی کرده و دوباره تلاش کنید."
+msgid ""
+"SSH keys require the background service. Restart the service and try again."
+msgstr ""
+"کلیدهای SSH به سرویس پس‌زمینه نیاز دارند. سرویس را مجدداً راه‌اندازی کرده و "
+"دوباره تلاش کنید."
 
 #: src/sshpilot/window.py:5487
 msgid "Generate SSH Key"
@@ -8332,7 +8804,9 @@ msgstr "تولید"
 #: src/sshpilot/window.py:5575
 #, python-brace-format
 msgid "A key named '{name}' already exists. Try '{suggestion}' instead."
-msgstr "کلیدی با نام «{name}» از قبل وجود دارد. به‌جای آن «{suggestion}» را امتحان کنید."
+msgstr ""
+"کلیدی با نام «{name}» از قبل وجود دارد. به‌جای آن «{suggestion}» را امتحان "
+"کنید."
 
 #: src/sshpilot/window.py:5672
 msgid "No Server Selected"
@@ -8470,8 +8944,12 @@ msgid "No Terminal Found"
 msgstr "هیچ ترمینالی پیدا نشد"
 
 #: src/sshpilot/window.py:7398
-msgid "Could not find a suitable terminal application. Please install a terminal like gnome-terminal, konsole, or xterm."
-msgstr "برنامهٔ ترمینال مناسبی پیدا نشد. لطفاً ترمینالی مانند gnome-terminal، konsole یا xterm را نصب کنید."
+msgid ""
+"Could not find a suitable terminal application. Please install a terminal "
+"like gnome-terminal, konsole, or xterm."
+msgstr ""
+"برنامهٔ ترمینال مناسبی پیدا نشد. لطفاً ترمینالی مانند gnome-terminal، konsole "
+"یا xterm را نصب کنید."
 
 #: src/sshpilot/window.py:7417
 msgid "SSH Connection Failed"
@@ -8531,7 +9009,9 @@ msgid "Failed to save connection"
 msgstr "ذخیرهٔ اتصال انجام نشد"
 
 #: src/sshpilot/window.py:8234
-msgid "The daemon could not resolve or compare this connection's effective SSH configuration."
+msgid ""
+"The daemon could not resolve or compare this connection's effective SSH "
+"configuration."
 msgstr "دیمن نتوانست پیکربندی مؤثر SSH این اتصال را ارزیابی یا مقایسه کند."
 
 #: src/sshpilot/window_broadcast.py:181
@@ -8590,8 +9070,12 @@ msgid "Store password"
 msgstr "ذخیرهٔ گذرواژه"
 
 #: src/sshpilot/window_dialogs.py:456
-msgid "Secret storage is set to SSH Agent Only — passwords and passphrases are not saved by sshPilot."
-msgstr "ذخیره‌سازی راز روی «تنها ssh-agent» تنظیم شده است — گذرواژه‌ها و عبارت‌های عبور توسط sshPilot ذخیره نمی‌شوند."
+msgid ""
+"Secret storage is set to SSH Agent Only — passwords and passphrases are not "
+"saved by sshPilot."
+msgstr ""
+"ذخیره‌سازی راز روی «تنها ssh-agent» تنظیم شده است — گذرواژه‌ها و عبارت‌های عبور "
+"توسط sshPilot ذخیره نمی‌شوند."
 
 #: src/sshpilot/window_dialogs.py:555
 msgid "Known hosts unavailable"
@@ -8627,8 +9111,11 @@ msgid "Private key files"
 msgstr "پرونده‌های کلید خصوصی"
 
 #: src/sshpilot/window_dialogs.py:697
-msgid "Not recommended — protect the backup with a passphrase if you include keys."
-msgstr "توصیه نمی‌شود — اگر کلیدها را شامل می‌کنید، از پشتیبان با یک عبارت عبور محافظت نمایید."
+msgid ""
+"Not recommended — protect the backup with a passphrase if you include keys."
+msgstr ""
+"توصیه نمی‌شود — اگر کلیدها را شامل می‌کنید، از پشتیبان با یک عبارت عبور محافظت "
+"نمایید."
 
 #: src/sshpilot/window_dialogs.py:706 src/sshpilot/window_dialogs.py:1899
 msgid "Saved secrets (passwords and passphrases)"
@@ -8663,8 +9150,10 @@ msgid "Also copy saved secrets as Bitwarden login items"
 msgstr "همچنین رونوشت رازهای ذخیره‌شده به عنوان موارد ورود Bitwarden"
 
 #: src/sshpilot/window_dialogs.py:845
-msgid "Creates normal login entries in your vault in addition to the backup note."
-msgstr "علاوه بر یادداشت پشتیبان، ورودی‌های ورود عادی را در خزنه‌تان ایجاد می‌کند."
+msgid ""
+"Creates normal login entries in your vault in addition to the backup note."
+msgstr ""
+"علاوه بر یادداشت پشتیبان، ورودی‌های ورود عادی را در خزنه‌تان ایجاد می‌کند."
 
 #: src/sshpilot/window_dialogs.py:871 src/sshpilot/window_dialogs.py:1649
 msgid "Selected server"
@@ -8696,8 +9185,12 @@ msgid "Bitwarden encrypts the backup with your vault credentials."
 msgstr "برنامهٔ Bitwarden پشتیبان را با اطلاعات اعتبار خزنه‌تان رمزنگاری می‌کند."
 
 #: src/sshpilot/window_dialogs.py:995
-msgid "Select at least one connection to include its saved passwords or private keys."
-msgstr "حداقل یک اتصال را انتخاب کنید تا گذرواژه‌ها یا کلیدهای خصوصی ذخیره‌شدهٔ آن گنجانده شود."
+msgid ""
+"Select at least one connection to include its saved passwords or private "
+"keys."
+msgstr ""
+"حداقل یک اتصال را انتخاب کنید تا گذرواژه‌ها یا کلیدهای خصوصی ذخیره‌شدهٔ آن "
+"گنجانده شود."
 
 #: src/sshpilot/window_dialogs.py:1009
 msgid "Choose a server to back up to."
@@ -8708,8 +9201,12 @@ msgid "Private Key Files"
 msgstr "پرونده‌های کلید خصوصی"
 
 #: src/sshpilot/window_dialogs.py:1043
-msgid "It is not recommended to move your private keys to another machine. If you still want to do this, make sure to protect the backup with a passphrase."
-msgstr "انتقال کلیدهای خصوصی‌تان به دستگاه دیگر توصیه نمی‌شود. اگر باز هم مایل به انجام این کار هستید، حتماً از پشتیبان با یک عبارت عبور محافظت کنید."
+msgid ""
+"It is not recommended to move your private keys to another machine. If you "
+"still want to do this, make sure to protect the backup with a passphrase."
+msgstr ""
+"انتقال کلیدهای خصوصی‌تان به دستگاه دیگر توصیه نمی‌شود. اگر باز هم مایل به "
+"انجام این کار هستید، حتماً از پشتیبان با یک عبارت عبور محافظت کنید."
 
 #: src/sshpilot/window_dialogs.py:1083
 msgid "Export to Bitwarden"
@@ -8744,7 +9241,8 @@ msgid "Export Cancelled"
 msgstr "برون‌ریزی لغو شد"
 
 #: src/sshpilot/window_dialogs.py:1152
-msgid "Secret storage is managed by the sshPilot daemon, which is not connected."
+msgid ""
+"Secret storage is managed by the sshPilot daemon, which is not connected."
 msgstr "ذخیره‌سازی راز توسط دیمن sshPilot مدیریت می‌شود که متصل نیست."
 
 #: src/sshpilot/window_dialogs.py:1181
@@ -8796,8 +9294,12 @@ msgstr "برون‌ریزی بدون رمزنگاری؟"
 
 #: src/sshpilot/window_dialogs.py:1242
 #, python-brace-format
-msgid "{items} will be written in PLAIN TEXT and readable by anyone with the file. Continue?"
-msgstr "{items} به صورت متن آشکار نوشته شده و برای هرکسی که این پرونده را داشته باشد خوانا خواهد بود. ادامه می‌دهید؟"
+msgid ""
+"{items} will be written in PLAIN TEXT and readable by anyone with the file. "
+"Continue?"
+msgstr ""
+"{items} به صورت متن آشکار نوشته شده و برای هرکسی که این پرونده را داشته باشد "
+"خوانا خواهد بود. ادامه می‌دهید؟"
 
 #: src/sshpilot/window_dialogs.py:1244
 msgid "Go Back"
@@ -8981,24 +9483,44 @@ msgid "Replace your global SSH config?"
 msgstr "پیکربندی سراسری SSH شما جایگزین شود؟"
 
 #: src/sshpilot/window_dialogs.py:1991
-msgid "Replace mode will overwrite the Default user SSH configuration entirely. That configuration is shared with ssh, scp, git and other SSH tools; unmanaged Host, Include and Match rules may be lost. Choose Merge instead to add hosts without overwriting."
-msgstr "حالت جایگزینی، پیکربندی پیش‌فرض SSH کاربر را کاملاً بازنویسی خواهد کرد. این پیکربندی با ssh، scp، git و سایر ابزارهای SSH مشترک است؛ ممکن است قواعد مدیریت‌نشدهٔ Host، Include و Match از دست بروند. در عوض، «ادغام» را برای افزودن میزبان‌ها بدون بازنویسی انتخاب کنید."
+msgid ""
+"Replace mode will overwrite the Default user SSH configuration entirely. "
+"That configuration is shared with ssh, scp, git and other SSH tools; "
+"unmanaged Host, Include and Match rules may be lost. Choose Merge instead to "
+"add hosts without overwriting."
+msgstr ""
+"حالت جایگزینی، پیکربندی پیش‌فرض SSH کاربر را کاملاً بازنویسی خواهد کرد. این "
+"پیکربندی با ssh، scp، git و سایر ابزارهای SSH مشترک است؛ ممکن است قواعد "
+"مدیریت‌نشدهٔ Host، Include و Match از دست بروند. در عوض، «ادغام» را برای "
+"افزودن میزبان‌ها بدون بازنویسی انتخاب کنید."
 
 #: src/sshpilot/window_dialogs.py:1998
 msgid "Replace Anyway"
 msgstr "در هر صورت جایگزین شود"
 
 #: src/sshpilot/window_dialogs.py:2028
-msgid "Secret storage is managed by the sshPilot daemon, which is not connected, so the operation was cancelled."
-msgstr "ذخیره‌سازی راز توسط دیمن sshPilot مدیریت می‌شود که متصل نیست، بنابراین عملیات لغو شد."
+msgid ""
+"Secret storage is managed by the sshPilot daemon, which is not connected, so "
+"the operation was cancelled."
+msgstr ""
+"ذخیره‌سازی راز توسط دیمن sshPilot مدیریت می‌شود که متصل نیست، بنابراین عملیات "
+"لغو شد."
 
 #: src/sshpilot/window_dialogs.py:2039
-msgid "Could not verify the secret vault, so the operation was cancelled to avoid leaving saved credentials out. Try again."
-msgstr "امکان تأیید خزنهٔ راز وجود نداشت، بنابراین عملیات برای جلوگیری از جا ماندن اطلاعات اعتبار ذخیره‌شده لغو شد. دوباره تلاش کنید."
+msgid ""
+"Could not verify the secret vault, so the operation was cancelled to avoid "
+"leaving saved credentials out. Try again."
+msgstr ""
+"امکان تأیید خزنهٔ راز وجود نداشت، بنابراین عملیات برای جلوگیری از جا ماندن "
+"اطلاعات اعتبار ذخیره‌شده لغو شد. دوباره تلاش کنید."
 
 #: src/sshpilot/window_dialogs.py:2053
-msgid "Your secret vault must be unlocked to include or restore saved credentials. Unlock it and try again."
-msgstr "خزنهٔ راز شما برای گنجاندن یا بازیابی اطلاعات اعتبار ذخیره‌شده باید قفل‌گشایی شود. آن را قفل‌گشایی کرده و دوباره تلاش کنید."
+msgid ""
+"Your secret vault must be unlocked to include or restore saved credentials. "
+"Unlock it and try again."
+msgstr ""
+"خزنهٔ راز شما برای گنجاندن یا بازیابی اطلاعات اعتبار ذخیره‌شده باید قفل‌گشایی "
+"شود. آن را قفل‌گشایی کرده و دوباره تلاش کنید."
 
 #: src/sshpilot/window_dialogs.py:2068 src/sshpilot/window_dialogs.py:2079
 #: src/sshpilot/window_dialogs.py:2093 src/sshpilot/window_dialogs.py:2108
@@ -9033,20 +9555,38 @@ msgid ", "
 msgstr "، "
 
 #: src/sshpilot/window_dialogs.py:2173
-msgid "{} credential(s) already existed and were left untouched — sshPilot never overwrites a saved secret."
-msgstr "{} اطلاعات اعتبار از قبل وجود داشت و دست‌نخورده باقی ماند — sshPilot هرگز رازی ذخیره‌شده را بازنویسی نمی‌کند."
+msgid ""
+"{} credential(s) already existed and were left untouched — sshPilot never "
+"overwrites a saved secret."
+msgstr ""
+"{} اطلاعات اعتبار از قبل وجود داشت و دست‌نخورده باقی ماند — sshPilot هرگز "
+"رازی ذخیره‌شده را بازنویسی نمی‌کند."
 
 #: src/sshpilot/window_dialogs.py:2176
-msgid "{} private key(s) already existed and were left untouched — sshPilot never overwrites a private key."
-msgstr "{} کلید خصوصی از قبل وجود داشت و دست‌نخورده باقی ماند — sshPilot هرگز کلید خصوصی را بازنویسی نمی‌کند."
+msgid ""
+"{} private key(s) already existed and were left untouched — sshPilot never "
+"overwrites a private key."
+msgstr ""
+"{} کلید خصوصی از قبل وجود داشت و دست‌نخورده باقی ماند — sshPilot هرگز کلید "
+"خصوصی را بازنویسی نمی‌کند."
 
 #: src/sshpilot/window_dialogs.py:2179
-msgid "{} saved password(s)/key(s) in this .json file were not imported — legacy JSON backups can't restore secrets. Use an encrypted .spbk backup to include them."
-msgstr "{} گذرواژه/کلید ذخیره‌شده در این پروندهٔ .json درون‌ریزی نشد — پشتیبان‌های قدیمی JSON نمی‌توانند رازها را بازیابی کنند. برای گنجاندن آن‌ها از یک پشتیبان رمزنگاری‌شدهٔ .spbk استفاده کنید."
+msgid ""
+"{} saved password(s)/key(s) in this .json file were not imported — legacy "
+"JSON backups can't restore secrets. Use an encrypted .spbk backup to include "
+"them."
+msgstr ""
+"{} گذرواژه/کلید ذخیره‌شده در این پروندهٔ .json درون‌ریزی نشد — پشتیبان‌های قدیمی "
+"JSON نمی‌توانند رازها را بازیابی کنند. برای گنجاندن آن‌ها از یک پشتیبان "
+"رمزنگاری‌شدهٔ .spbk استفاده کنید."
 
 #: src/sshpilot/window_dialogs.py:2186
-msgid "Reload now to apply the imported configuration. Some settings may still need a full restart of sshPilot to take effect."
-msgstr "برای اعمال پیکربندی درون‌ریزی‌شده، اکنون دوباره بارگیری کنید. برخی تنظیمات برای اعمال ممکن است همچنان نیازمند راه‌اندازی مجدد کامل sshPilot باشند."
+msgid ""
+"Reload now to apply the imported configuration. Some settings may still need "
+"a full restart of sshPilot to take effect."
+msgstr ""
+"برای اعمال پیکربندی درون‌ریزی‌شده، اکنون دوباره بارگیری کنید. برخی تنظیمات "
+"برای اعمال ممکن است همچنان نیازمند راه‌اندازی مجدد کامل sshPilot باشند."
 
 #: src/sshpilot/window_dialogs.py:2191
 msgid "Import Successful"
@@ -9358,16 +9898,25 @@ msgid "Manage your servers with ease"
 msgstr "مدیریت آسان سرورهای شما"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:10
-msgid "SSH Pilot is a user-friendly SSH connection manager featuring built-in tabbed terminal, remote file management, key transfer, port forwarding and more. It's an alternative to Putty, Termius and Mobaxterm."
-msgstr "‏SSH Pilot یک مدیر اتصال کاربرپسند SSH با پایانهٔ زبانه‌دار داخلی، مدیریت پروندهٔ دوردست، انتقال کلید، هدایت درگاه و موارد دیگر است. جایگزینی برای Putty، Termius و Mobaxterm."
+msgid ""
+"SSH Pilot is a user-friendly SSH connection manager featuring built-in "
+"tabbed terminal, remote file management, key transfer, port forwarding and "
+"more. It's an alternative to Putty, Termius and Mobaxterm."
+msgstr ""
+"‏SSH Pilot یک مدیر اتصال کاربرپسند SSH با پایانهٔ زبانه‌دار داخلی، مدیریت "
+"پروندهٔ دوردست، انتقال کلید، هدایت درگاه و موارد دیگر است. جایگزینی برای "
+"Putty، Termius و Mobaxterm."
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:12
 msgid "Manage multiple machines from a unified, clean interface"
 msgstr "مدیریت چندین دستگاه از یک رابط تمیز و یکپارچه"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:13
-msgid "Transfer files to and from servers using the built-in file manager (SFTP and SCP)"
-msgstr "انتقال پرونده‌ها به و از سرورها با استفاده از مدیر فایل داخلی (SFTP و SCP)"
+msgid ""
+"Transfer files to and from servers using the built-in file manager (SFTP and "
+"SCP)"
+msgstr ""
+"انتقال پرونده‌ها به و از سرورها با استفاده از مدیر فایل داخلی (SFTP و SCP)"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:14
 msgid "Tuned for fast keyboard navigation with customizable shortcuts"
@@ -9378,7 +9927,8 @@ msgid "Easily generate and transfer SSH keys to servers"
 msgstr "تولید و انتقال آسان کلیدهای SSH به سرورها"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:16
-msgid "Loads existing ~/.ssh/config and works with standard SSH keys and settings"
+msgid ""
+"Loads existing ~/.ssh/config and works with standard SSH keys and settings"
 msgstr "بارگیری ‎~/.ssh/config موجود و کار با کلیدها و تنظیمات استاندارد SSH"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:17
@@ -9434,7 +9984,8 @@ msgstr "بهبودهای افزایه‌های پروتکل‌های غیر SSH"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:84
 msgid "Fixes text selection when using remote apps such as tmux and htop"
-msgstr "رفع مشکل انتخاب متن هنگام استفاده از برنامه‌های دوردست مانند tmux و htop"
+msgstr ""
+"رفع مشکل انتخاب متن هنگام استفاده از برنامه‌های دوردست مانند tmux و htop"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:85
 msgid "Fixes SFTP File Manager retry/reconnect flow"
@@ -9466,7 +10017,8 @@ msgstr "اعلان قفل‌گشایی خزنه اکنون هنگام راه‌�
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:104
 msgid "Privacy toggle hides hostnames and IP addresses in start page too"
-msgstr "ضامن حریم خصوصی نام‌های میزبان و نشانی‌های IP را در صفحهٔ آغازین نیز پنهان می‌کند"
+msgstr ""
+"ضامن حریم خصوصی نام‌های میزبان و نشانی‌های IP را در صفحهٔ آغازین نیز پنهان می‌کند"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:109
 msgid "Fixed subgroups not inheriting parent group color"
@@ -9481,7 +10033,8 @@ msgid "Minor fixes to DnD in sidebar"
 msgstr "اصلاحات جزئی در کشیدن و رها کردن در نوار کناری"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:116
-msgid "Added new terminal theme selector, added option to access it from tab bar"
+msgid ""
+"Added new terminal theme selector, added option to access it from tab bar"
 msgstr "افزودن انتخاب‌گر جدید پوستهٔ پایانه و گزینهٔ دسترسی به آن از نوار زبانه"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:117
@@ -9534,16 +10087,25 @@ msgid "Minor UI improvements"
 msgstr "بهبودهای جزئی رابط کاربری"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:148
-msgid "Integrated tab bar into header for a cleaner, more minimal user interface"
+msgid ""
+"Integrated tab bar into header for a cleaner, more minimal user interface"
 msgstr "ادغام نوار زبانه در سربرگ برای یک رابط کاربری تمیزتر و مینیمال‌تر"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:149
-msgid "Revamped Command Snippets panel - the snippets are now displayed in a floating panel"
-msgstr "بازطراحی پانل قطعه‌کدهای دستور - قطعه‌کدها اکنون در یک پانل شناور نمایش داده می‌شوند"
+msgid ""
+"Revamped Command Snippets panel - the snippets are now displayed in a "
+"floating panel"
+msgstr ""
+"بازطراحی پانل قطعه‌کدهای دستور - قطعه‌کدها اکنون در یک پانل شناور نمایش داده "
+"می‌شوند"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:150
-msgid "Added keyboard support to Snippets - you can assign your desired shortcut for the popup"
-msgstr "افزودن پشتیبانی صفحه‌کلید به قطعه‌کدها - می‌توانید میان‌بر دلخواه خود را برای پنجرهٔ بازشو اختصاص دهید"
+msgid ""
+"Added keyboard support to Snippets - you can assign your desired shortcut "
+"for the popup"
+msgstr ""
+"افزودن پشتیبانی صفحه‌کلید به قطعه‌کدها - می‌توانید میان‌بر دلخواه خود را برای "
+"پنجرهٔ بازشو اختصاص دهید"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:151
 msgid "Added theme selector to main menu, inspired by Ptyxis"
@@ -9561,8 +10123,11 @@ msgid "Bug fixes and improvements"
 msgstr "رفع اشکالات و بهبودها"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:162
-msgid "Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on macOS)"
-msgstr "تجربهٔ تمام‌صفحهٔ بهبودیافته (فعال‌سازی با F11 در لینوکس، Cmd+Ctrl+F در macOS)"
+msgid ""
+"Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on "
+"macOS)"
+msgstr ""
+"تجربهٔ تمام‌صفحهٔ بهبودیافته (فعال‌سازی با F11 در لینوکس، Cmd+Ctrl+F در macOS)"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:163
 msgid "Improved app menu on macOS"
@@ -9594,18 +10159,30 @@ msgstr "معرفی رابط برنامه‌نویسی (API) برنامهٔ SSH P
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:214
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:225
-msgid "Introducing Omnisearch—a powerful, versatile pop-up search box accessible from anywhere by double-pressing the Shift key"
-msgstr "معرفی Omnisearch — جعبهٔ جست‌وجوی بازشوی قدرتمند و همه‌کاره، قابل دسترسی از هرجا با فشردن دوبار کلید Shift"
+msgid ""
+"Introducing Omnisearch—a powerful, versatile pop-up search box accessible "
+"from anywhere by double-pressing the Shift key"
+msgstr ""
+"معرفی Omnisearch — جعبهٔ جست‌وجوی بازشوی قدرتمند و همه‌کاره، قابل دسترسی از "
+"هرجا با فشردن دوبار کلید Shift"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:215
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:226
-msgid "Added a minimal sidebar mode that uses a narrow, icon-only strip to free up horizontal screen space"
-msgstr "افزودن حالت نوار کناری مینیمال با استفاده از نواری باریک و فقط دارای نقشک برای آزادسازی فضای افقی صفحه"
+msgid ""
+"Added a minimal sidebar mode that uses a narrow, icon-only strip to free up "
+"horizontal screen space"
+msgstr ""
+"افزودن حالت نوار کناری مینیمال با استفاده از نواری باریک و فقط دارای نقشک "
+"برای آزادسازی فضای افقی صفحه"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:216
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:227
-msgid "Added an option to open the file manager in SSH terminal panes from the tab context menu"
-msgstr "افزودن گزینه‌ای برای باز کردن مدیر فایل در قاب‌های پایانهٔ SSH از منوی زمینه‌ای زبانه"
+msgid ""
+"Added an option to open the file manager in SSH terminal panes from the tab "
+"context menu"
+msgstr ""
+"افزودن گزینه‌ای برای باز کردن مدیر فایل در قاب‌های پایانهٔ SSH از منوی زمینه‌ای "
+"زبانه"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:217
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:228
@@ -9619,8 +10196,12 @@ msgstr "بهبود ظاهر و تجربهٔ کلی مدیر فایل SFTP"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:219
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:230
-msgid "Fixed an issue that delayed application shutdown when local terminal tabs were open"
-msgstr "رفع مشکلی که هنگام باز بودن زبانه‌های پایانهٔ محلی، خروج از برنامه را به تأخیر می‌انداخت"
+msgid ""
+"Fixed an issue that delayed application shutdown when local terminal tabs "
+"were open"
+msgstr ""
+"رفع مشکلی که هنگام باز بودن زبانه‌های پایانهٔ محلی، خروج از برنامه را به تأخیر "
+"می‌انداخت"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:220
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:231
@@ -9629,12 +10210,20 @@ msgid "Various bug fixes and UI improvements"
 msgstr "انواع رفع اشکال و بهبودهای رابط کاربری"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:236
-msgid "Introducing Omnisearch - a powerful, versatile pop-up search box you can activate from anywhere by double-pressing the Shift key"
-msgstr "معرفی Omnisearch - جعبهٔ جست‌وجوی بازشوی قدرتمند و همه‌کاره که با فشردن دوبار کلید Shift از هرجا می‌توانید فعالش کنید"
+msgid ""
+"Introducing Omnisearch - a powerful, versatile pop-up search box you can "
+"activate from anywhere by double-pressing the Shift key"
+msgstr ""
+"معرفی Omnisearch - جعبهٔ جست‌وجوی بازشوی قدرتمند و همه‌کاره که با فشردن دوبار "
+"کلید Shift از هرجا می‌توانید فعالش کنید"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:237
-msgid "Introducing a minimal mode for the sidebar - use a narrow, icon-only strip instead of the default full sidebar to reclaim more horizontal screen space"
-msgstr "معرفی حالت مینیمال برای نوار کناری - استفاده از نواری باریک و فقط دارای نقشک به جای نوار کناری کامل برای بازپس‌گیری فضای افقی بیشتر"
+msgid ""
+"Introducing a minimal mode for the sidebar - use a narrow, icon-only strip "
+"instead of the default full sidebar to reclaim more horizontal screen space"
+msgstr ""
+"معرفی حالت مینیمال برای نوار کناری - استفاده از نواری باریک و فقط دارای نقشک "
+"به جای نوار کناری کامل برای بازپس‌گیری فضای افقی بیشتر"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:238
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:275
@@ -9642,8 +10231,12 @@ msgid "Various bug fixes and improvements"
 msgstr "انواع رفع اشکال و بهبودها"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:243
-msgid "Enhanced CLI interface - start sshpilot from commandline like \"sshpilot user@host\", use --sftp to open the file manager"
-msgstr "رابط خط فرمان بهبودیافته - شروع sshpilot از خط فرمان مانند «sshpilot user@host»، استفاده از --sftp برای باز کردن مدیر فایل"
+msgid ""
+"Enhanced CLI interface - start sshpilot from commandline like \"sshpilot "
+"user@host\", use --sftp to open the file manager"
+msgstr ""
+"رابط خط فرمان بهبودیافته - شروع sshpilot از خط فرمان مانند «sshpilot "
+"user@host»، استفاده از --sftp برای باز کردن مدیر فایل"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:274
 msgid "German translation"
@@ -9708,8 +10301,12 @@ msgid "Reorganized main menu"
 msgstr "بازچینش منوی اصلی"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:336
-msgid "Backup settings and credentials to Bitwarden/Vaultwarden right from SSH Pilot and restore on other devices"
-msgstr "پشتیبان‌گیری از تنظیمات و اطلاعات اعتبار در Bitwarden/Vaultwarden مستقیماً از SSH Pilot و بازیابی در دستگاه‌های دیگر"
+msgid ""
+"Backup settings and credentials to Bitwarden/Vaultwarden right from SSH "
+"Pilot and restore on other devices"
+msgstr ""
+"پشتیبان‌گیری از تنظیمات و اطلاعات اعتبار در Bitwarden/Vaultwarden مستقیماً از "
+"SSH Pilot و بازیابی در دستگاه‌های دیگر"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:337
 msgid "More credential storage backends including Keepass, Bitwarden and rbw"
@@ -9728,8 +10325,10 @@ msgid "Fixes SCP bug in Flatpak"
 msgstr "رفع مشکل SCP در فلت‌پک (Flatpak)"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:345
-msgid "Adds \"Edit as Root\" button to text editor. Edit eny remote files with sudo"
-msgstr "افزودن دکمهٔ «ویرایش با ریشه» به ویرایشگر متن. ویرایش هر پروندهٔ دوردست با sudo"
+msgid ""
+"Adds \"Edit as Root\" button to text editor. Edit eny remote files with sudo"
+msgstr ""
+"افزودن دکمهٔ «ویرایش با ریشه» به ویرایشگر متن. ویرایش هر پروندهٔ دوردست با sudo"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:346
 msgid "Better logging and diagnostics suite"
@@ -9841,11 +10440,16 @@ msgid "Improved connection editor"
 msgstr "ویرایشگر اتصال بهبودیافته"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:438
-msgid "Added fallback for older libadwaita versions failing to load connection editor"
-msgstr "افزودن راهکار جایگزین برای نگارش‌های قدیمی‌تر libadwaita که در بارگیری ویرایشگر اتصال ناموفق بودند"
+msgid ""
+"Added fallback for older libadwaita versions failing to load connection "
+"editor"
+msgstr ""
+"افزودن راهکار جایگزین برای نگارش‌های قدیمی‌تر libadwaita که در بارگیری "
+"ویرایشگر اتصال ناموفق بودند"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:453
-msgid "Drag and drop a connection on an existing terminal to create a split view"
+msgid ""
+"Drag and drop a connection on an existing terminal to create a split view"
 msgstr "کشیدن و رها کردن یک اتصال روی پایانهٔ موجود برای ایجاد نمای تفکیک‌شده"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:454
@@ -9889,11 +10493,17 @@ msgid "Improved .ssh/config parsing logic"
 msgstr "منطق تجزیهٔ ‎.ssh/config بهبودیافته"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:473
-msgid "Added type-ahead search - open the app, start typing and press enter. The first matching host will be connected"
-msgstr "افزودن جست‌وجوی همگام با تایپ - برنامه را باز کنید، شروع به تایپ نمایید و کلید Enter را فشار دهید تا اتصال با اولین میزبان منطبق برقرار شود"
+msgid ""
+"Added type-ahead search - open the app, start typing and press enter. The "
+"first matching host will be connected"
+msgstr ""
+"افزودن جست‌وجوی همگام با تایپ - برنامه را باز کنید، شروع به تایپ نمایید و "
+"کلید Enter را فشار دهید تا اتصال با اولین میزبان منطبق برقرار شود"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:474
-msgid "Made it easier to switch between the terminal and connection list with Ctrl+Shift+L"
+msgid ""
+"Made it easier to switch between the terminal and connection list with "
+"Ctrl+Shift+L"
 msgstr "جابه‌جایی آسان‌تر میان پایانه و فهرست اتصال‌ها با Ctrl+Shift+L"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:480
@@ -9918,36 +10528,60 @@ msgid "Changed default connection list shortcut to Ctrl+Shift+L"
 msgstr "میان‌بر پیش‌فرض فهرست اتصال‌ها به Ctrl+Shift+L تغییر یافت"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:500
-msgid "Introducing Command Blocks - Organize your favorite commands in folders, insert them into terminal with a simple double-click"
-msgstr "معرفی بلوک‌های دستور - دستورهای برگزیدهٔ خود را در پوشه‌ها سازمان‌دهی کرده و با یک دوبار کلیک ساده در پایانه درج کنید"
+msgid ""
+"Introducing Command Blocks - Organize your favorite commands in folders, "
+"insert them into terminal with a simple double-click"
+msgstr ""
+"معرفی بلوک‌های دستور - دستورهای برگزیدهٔ خود را در پوشه‌ها سازمان‌دهی کرده و با "
+"یک دوبار کلیک ساده در پایانه درج کنید"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:501
-msgid "Choose a command from your command snippet intventory to run on a single host or a group of machines"
-msgstr "دستوری را از فهرست موجودی قطعه‌کدهای دستورتان برای اجرا روی یک میزبان یا گروهی از دستگاه‌ها انتخاب کنید"
+msgid ""
+"Choose a command from your command snippet intventory to run on a single "
+"host or a group of machines"
+msgstr ""
+"دستوری را از فهرست موجودی قطعه‌کدهای دستورتان برای اجرا روی یک میزبان یا "
+"گروهی از دستگاه‌ها انتخاب کنید"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:502
 msgid "More improvements to Split View"
 msgstr "بهبودهای بیشتر در نمای تفکیک‌شده"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:507
-msgid "New \"Sessions\" feature — Save, open, rename, and delete snapshots of your open tabs and restore them automatically"
-msgstr "قابلیت جدید «نشست‌ها» — ذخیره، باز کردن، تغییر نام و حذف عکس‌های فوری از زبانه‌های بازتان و بازیابی خودکار آن‌ها"
+msgid ""
+"New \"Sessions\" feature — Save, open, rename, and delete snapshots of your "
+"open tabs and restore them automatically"
+msgstr ""
+"قابلیت جدید «نشست‌ها» — ذخیره، باز کردن، تغییر نام و حذف عکس‌های فوری از "
+"زبانه‌های بازتان و بازیابی خودکار آن‌ها"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:508
 msgid "Pin saved sessions to the start page for one-click restore"
 msgstr "سنجاق کردن نشست‌های ذخیره‌شده به صفحهٔ آغازین برای بازیابی با یک کلیک"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:509
-msgid "Copy to group — Add a connection to another group without removing it from its current group(s). Same connection can appear in multiple groups."
-msgstr "رونوشت به گروه — افزودن یک اتصال به گروهی دیگر بدون حذف آن از گروه(های) فعلی‌اش. همان اتصال می‌تواند در چندین گروه نمایش یابد."
+msgid ""
+"Copy to group — Add a connection to another group without removing it from "
+"its current group(s). Same connection can appear in multiple groups."
+msgstr ""
+"رونوشت به گروه — افزودن یک اتصال به گروهی دیگر بدون حذف آن از گروه(های) "
+"فعلی‌اش. همان اتصال می‌تواند در چندین گروه نمایش یابد."
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:510
-msgid "Jump host picker — Pick jump hosts from your saved connections when editing a connection."
-msgstr "انتخاب‌گر میزبان پرش — هنگام ویرایش یک اتصال، میزبان‌های پرش را از میان اتصال‌های ذخیره‌شده‌تان برگزینید."
+msgid ""
+"Jump host picker — Pick jump hosts from your saved connections when editing "
+"a connection."
+msgstr ""
+"انتخاب‌گر میزبان پرش — هنگام ویرایش یک اتصال، میزبان‌های پرش را از میان "
+"اتصال‌های ذخیره‌شده‌تان برگزینید."
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:511
-msgid "Better Split View - Resize terminal panes freely, drag and drop an entire group onto a Split View"
-msgstr "نمای تفکیک‌شدهٔ بهتر - تغییر اندازهٔ آزادانهٔ قاب‌های پایانه، کشیدن و رها کردن یک گروه کامل در یک نمای تفکیک‌شده"
+msgid ""
+"Better Split View - Resize terminal panes freely, drag and drop an entire "
+"group onto a Split View"
+msgstr ""
+"نمای تفکیک‌شدهٔ بهتر - تغییر اندازهٔ آزادانهٔ قاب‌های پایانه، کشیدن و رها کردن یک "
+"گروه کامل در یک نمای تفکیک‌شده"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:512
 msgid "Minor UI fixes and improvements"
@@ -9965,8 +10599,11 @@ msgid "- Bug fixes"
 msgstr "- رفع اشکالات"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:524
-msgid "- New \"Splt View\" feature - view terminals side by side inside any terminal tab"
-msgstr "- ویژگی جدید «نمای تفکیک‌شده» - مشاهدهٔ پایانه‌ها کنار هم درون هر زبانهٔ پایانه"
+msgid ""
+"- New \"Splt View\" feature - view terminals side by side inside any "
+"terminal tab"
+msgstr ""
+"- ویژگی جدید «نمای تفکیک‌شده» - مشاهدهٔ پایانه‌ها کنار هم درون هر زبانهٔ پایانه"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:525
 msgid "- New context menu item to copy host address"
@@ -9989,8 +10626,11 @@ msgid "- Add option to save Quick Connect host"
 msgstr "- افزودن گزینهٔ ذخیرهٔ میزبان اتصال سریع"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:552
-msgid "- Added option to rename a tab - Double-click any terminal tab to rename"
-msgstr "- افزودن گزینه برای تغییر نام زبانه - دوبار کلیک روی هر زبانهٔ پایانه برای تغییر نام"
+msgid ""
+"- Added option to rename a tab - Double-click any terminal tab to rename"
+msgstr ""
+"- افزودن گزینه برای تغییر نام زبانه - دوبار کلیک روی هر زبانهٔ پایانه برای "
+"تغییر نام"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:553
 msgid "- Added support for Wake on Lan"
@@ -10030,7 +10670,8 @@ msgstr "- افزودن گزینه برای تغییر اندازهٔ نوار ک
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:594
 msgid "- Fixed long host values making sidebar too wide"
-msgstr "- رفع مشکل مقادیر طولانی میزبان که نوار کناری را بیش از حد عریض می‌کردند"
+msgstr ""
+"- رفع مشکل مقادیر طولانی میزبان که نوار کناری را بیش از حد عریض می‌کردند"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:595
 msgid "- Bug fixes and UI improvements"
@@ -10038,7 +10679,8 @@ msgstr "- رفع اشکالات و بهبودهای رابط کاربری"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:601
 msgid "- Drag and drop files and folders on terminal to upload via SCP"
-msgstr "- کشیدن و رها کردن پرونده‌ها و پوشه‌ها روی پایانه برای بارگذاری از طریق SCP"
+msgstr ""
+"- کشیدن و رها کردن پرونده‌ها و پوشه‌ها روی پایانه برای بارگذاری از طریق SCP"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:613
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:622
@@ -10179,8 +10821,12 @@ msgid "Copy log output"
 msgstr "رونوشت از خروجی گزارش"
 
 #: src/sshpilot/resources/ui/log_viewer_window.ui:33
-msgid "Copy platform info and recent frontend, daemon, askpass, and crash diagnostics to the clipboard for a bug report."
-msgstr "رونوشت از اطلاعات پلتفرم و عیب‌یابی‌های اخیر فرانت‌اند، دیمن، askpass و خرابی‌ها به تخته‌گیره جهت گزارش اشکال."
+msgid ""
+"Copy platform info and recent frontend, daemon, askpass, and crash "
+"diagnostics to the clipboard for a bug report."
+msgstr ""
+"رونوشت از اطلاعات پلتفرم و عیب‌یابی‌های اخیر فرانت‌اند، دیمن، askpass و خرابی‌ها "
+"به تخته‌گیره جهت گزارش اشکال."
 
 #: src/sshpilot/resources/ui/log_viewer_window.ui:42
 msgid "More log actions"
@@ -10195,16 +10841,24 @@ msgid "Category:"
 msgstr "دسته‌بندی:"
 
 #: src/sshpilot/resources/ui/log_viewer_window.ui:114
-msgid "Which local process log to view. Bug-report output keeps each process in a labelled section."
-msgstr "گزارش کدام فرایند محلی مشاهده شود. خروجی گزارش اشکال هر فرایند را در بخشی با برچسب مشخص نگه می‌دارد."
+msgid ""
+"Which local process log to view. Bug-report output keeps each process in a "
+"labelled section."
+msgstr ""
+"گزارش کدام فرایند محلی مشاهده شود. خروجی گزارش اشکال هر فرایند را در بخشی با "
+"برچسب مشخص نگه می‌دارد."
 
 #: src/sshpilot/resources/ui/log_viewer_window.ui:124
 msgid "Level:"
 msgstr "سطح:"
 
 #: src/sshpilot/resources/ui/log_viewer_window.ui:134
-msgid "Show lines at the selected level and above (display only). What is actually written to the log files is controlled in Preferences → Advanced → Logging."
-msgstr "نمایش خط‌ها در سطح انتخاب‌شده و بالاتر (فقط نمایشی). آنچه واقعاً در پرونده‌های گزارش نوشته می‌شود در تنظیمات ← پیشرفته ← گزارش‌گیری کنترل می‌شود."
+msgid ""
+"Show lines at the selected level and above (display only). What is actually "
+"written to the log files is controlled in Preferences → Advanced → Logging."
+msgstr ""
+"نمایش خط‌ها در سطح انتخاب‌شده و بالاتر (فقط نمایشی). آنچه واقعاً در پرونده‌های "
+"گزارش نوشته می‌شود در تنظیمات ← پیشرفته ← گزارش‌گیری کنترل می‌شود."
 
 #: src/sshpilot/resources/ui/log_viewer_window.ui:149
 msgid "Search visible lines (case-insensitive)"
@@ -10293,7 +10947,9 @@ msgstr "میان‌بر جدید را فشار دهید"
 
 #: src/sshpilot/resources/ui/shortcut_capture_dialog.ui:33
 msgid "Press Esc to cancel. Shortcuts must include a key (modifiers optional)."
-msgstr "برای لغو Esc را فشار دهید. میان‌برها باید شامل یک کلید باشند (کلیدهای تبدیل اختیاری هستند)."
+msgstr ""
+"برای لغو Esc را فشار دهید. میان‌برها باید شامل یک کلید باشند (کلیدهای تبدیل "
+"اختیاری هستند)."
 
 #: src/sshpilot/resources/ui/shortcut_editor_window.ui:21
 msgid "Customize keyboard shortcuts"
@@ -10307,4 +10963,3 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
-
