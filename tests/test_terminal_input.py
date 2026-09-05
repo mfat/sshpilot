@@ -25,6 +25,36 @@ def test_x10_mouse_high_bytes_are_preserved_via_latin1():
     assert commit_payload_to_bytes(text, 6)[4] == 232
 
 
+def test_ctrl_space_nul_survives_gtype_string_truncation():
+    # VTE's "commit" signal is declared with G_TYPE_STRING, so PyGObject
+    # stops at the NUL and hands us "" while size still says 1. Captured
+    # from real key presses on a PTY-less VTE 0.84 (GH #1240); the same
+    # widget with a PTY writes b"\x00" straight to the pty.
+    assert commit_payload_to_bytes("", 1) == b"\x00"  # Ctrl+Space, Ctrl+@, Ctrl+2
+
+
+def test_ctrl_alt_space_keeps_its_trailing_nul():
+    # Ctrl+Alt+Space is ESC NUL; the string stops after ESC, size says 2.
+    assert commit_payload_to_bytes("\x1b", 2) == b"\x1b\x00"
+
+
+def test_lone_escape_is_not_padded():
+    # Ctrl+[ and Ctrl+3 commit the same text as Ctrl+Alt+Space. Only size
+    # tells them apart, so a matching size must never grow the payload.
+    assert commit_payload_to_bytes("\x1b", 1) == b"\x1b"
+
+
+def test_empty_payload_without_length_stays_empty():
+    assert commit_payload_to_bytes("", 0) == b""
+    assert commit_payload_to_bytes("") == b""
+
+
+def test_multibyte_text_truncated_at_nul_pads_after_utf8():
+    # Padding has to extend the encoding that matches the reported length,
+    # not the shorter latin-1 one: "é\0" is three bytes on the wire.
+    assert commit_payload_to_bytes("é", 3) == "é".encode("utf-8") + b"\x00"
+
+
 def test_bytes_payload_is_returned_unchanged():
     payload = b"\x1b[M\xe8("
     assert commit_payload_to_bytes(payload, len(payload)) == payload
