@@ -6,8 +6,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-02 12:11+0200\n"
-"PO-Revision-Date: 2026-09-02 12:23+0200\n"
+"POT-Creation-Date: 2026-09-05 13:28+0200\n"
+"PO-Revision-Date: 2026-09-05 13:32+0200\n"
 "Last-Translator: French translation contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
@@ -4202,19 +4202,18 @@ msgid "Show the button that opens a local terminal"
 msgstr "Afficher le bouton qui ouvre un terminal local"
 
 #. Tips group at the bottom of the Interface page. Lets users
-#. re-enable the terminal tips banner after dismissing it with
-#. "Don't show again".
-#: src/sshpilot/preferences.py:1682
+#. re-enable the tips banner after dismissing it with "Don't show again".
+#: src/sshpilot/preferences.py:1655
 msgid "Tips"
 msgstr "Astuces"
 
-#: src/sshpilot/preferences.py:1684
-msgid "Show Terminal Tips"
-msgstr "Afficher les astuces du terminal"
+#: src/sshpilot/preferences.py:1657
+msgid "Show Tips"
+msgstr "Afficher les astuces"
 
-#: src/sshpilot/preferences.py:1685
-msgid "Show usage tips in a banner when a terminal opens"
-msgstr "Afficher des astuces d’utilisation dans une bannière à l’ouverture d’un terminal"
+#: src/sshpilot/preferences.py:1659
+msgid "Show usage tips in a banner at the top of the window"
+msgstr "Afficher des astuces d’utilisation dans une bannière en haut de la fenêtre"
 
 #: src/sshpilot/preferences.py:1696 src/sshpilot/preferences.py:2779
 msgid "Interface"
@@ -5340,7 +5339,7 @@ msgstr "Vérification de rbw…"
 msgid "Authentication failed or cancelled."
 msgstr "Échec ou annulation de l’authentification."
 
-#: src/sshpilot/scp_window.py:129 src/sshpilot/sidebar.py:4727
+#: src/sshpilot/scp_window.py:153
 msgid "Legacy: Transfer files with scp"
 msgstr "Ancien mode : transférer des fichiers avec scp"
 
@@ -5909,6 +5908,10 @@ msgstr "Actions de la connexion"
 #, python-brace-format
 msgid "Copy public key to server for passwordless login ({shortcut}+Shift+K)"
 msgstr "Copier la clé publique sur le serveur pour une connexion sans mot de passe ({shortcut}+Shift+K)"
+
+#: src/sshpilot/sidebar.py:4846
+msgid "Transfer files with scp"
+msgstr "Transférer des fichiers avec scp"
 
 #: src/sshpilot/sidebar.py:4738
 #, python-brace-format
