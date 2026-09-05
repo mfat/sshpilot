@@ -533,10 +533,17 @@ def test_split_intent_cleanup_failure_restores_original_config_and_state(
     assert not identity_transaction_intent_path(state).exists()
 
 
-def test_sidecar_write_durability_failure_preserves_intent_for_recovery(
+def test_sidecar_write_durability_failure_recovers_without_blocking(
     tmp_path, monkeypatch
 ):
-    """An uncertain sidecar replace must not be mistaken for a clean commit."""
+    """An uncertain sidecar replace must not be mistaken for a clean commit.
+
+    The note left by such a write can never be placed again -- the sidecar
+    has moved past its base while the SSH root is back at it -- so it is
+    discarded and the sidecar is reconciled against the SSH configuration.
+    The uncommitted target must not survive that, and the repository must
+    stay writable rather than refusing every later save.
+    """
     repo, root, state = _repo(
         tmp_path, "Host old\n    HostName old.example\n"
     )
@@ -558,8 +565,24 @@ def test_sidecar_write_durability_failure_preserves_intent_for_recovery(
         )
 
     assert root.read_bytes() == base_root
-    assert identity_transaction_intent_path(state).exists()
-    assert repo._identity_state_unavailable is True
+    assert not identity_transaction_intent_path(state).exists()
+    del repo
+
+    # The durability glitch passes; the next start must come up usable.
+    monkeypatch.setattr(
+        repository_module, "write_identity_state_v2", real_write
+    )
+    restarted, _root, _state = _repo(tmp_path, root.read_text())
+    assert restarted._identity_state_unavailable is False
+    assert [item.id for item in restarted.snapshot().connections] == ["old"]
+    active = [
+        item for item in read_identity_state_v2(state).identities
+        if not item.tombstone
+    ]
+    assert [item.projection.alias for item in active] == ["old"]
+    assert restarted.create_connection(
+        {"nickname": "fresh", "hostname": "fresh.example", "protocol": "ssh"}
+    ).id == "fresh"
 
 
 def test_managed_create_allocates_new_uuid_for_duplicate_destination(tmp_path):
@@ -643,7 +666,13 @@ def test_display_name_noop_does_not_rewrite_sidecar(tmp_path):
     assert after.st_mtime_ns == before.st_mtime_ns
 
 
-def test_corrupt_pending_intent_drops_previously_trusted_identity(tmp_path):
+def test_corrupt_pending_intent_is_discarded_and_keeps_identity(tmp_path):
+    """A note that cannot be parsed says nothing about the sidecar.
+
+    It is thrown away rather than treated as a reason to distrust identity
+    state: the sidecar still reads cleanly, so the app keeps the display name
+    it holds and stays writable.
+    """
     repo, root, state = _repo(
         tmp_path, "Host prod\n    HostName server.example\n"
     )
@@ -651,11 +680,11 @@ def test_corrupt_pending_intent_drops_previously_trusted_identity(tmp_path):
     pending = identity_transaction_intent_path(state)
     pending.write_text("{broken", encoding="utf-8")
     restarted, _root, _state = _repo(tmp_path, root.read_text())
-    assert restarted.snapshot().connections[0].display_name == "prod"
-    with pytest.raises(CoreError) as exc:
-        restarted.set_display_name("prod", "Should not write")
-    assert exc.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
-    assert pending.read_text(encoding="utf-8") == "{broken"
+    assert restarted._identity_state_unavailable is False
+    assert restarted.snapshot().connections[0].display_name == "Production"
+    assert not pending.exists()
+    restarted.set_display_name("prod", "Renamed")
+    assert restarted.snapshot().connections[0].display_name == "Renamed"
 
 
 def test_ambiguous_alias_rejects_identity_mutations_but_remains_visible(tmp_path):
@@ -681,7 +710,13 @@ def test_ambiguous_alias_rejects_identity_mutations_but_remains_visible(tmp_path
     assert persisted.pending_ambiguities
 
 
-def test_dangling_pending_intent_symlink_enters_degraded_state(tmp_path):
+def test_dangling_pending_intent_symlink_is_ignored_not_followed(tmp_path):
+    """A planted symlink is never read or written through, and never blocks.
+
+    ``clear_pending_identity_transaction`` still refuses to operate through
+    the link, so it stays on disk; ignoring it is safe precisely because it
+    is never followed, and the repository must remain writable regardless.
+    """
     repo, _root, state = _repo(
         tmp_path, "Host prod\n    HostName server.example\n"
     )
@@ -693,10 +728,12 @@ def test_dangling_pending_intent_symlink_enters_degraded_state(tmp_path):
     )
 
     assert restarted.snapshot().connections[0].id == "prod"
+    assert restarted._identity_state_unavailable is False
     assert intent_path.is_symlink()
-    with pytest.raises(CoreError) as exc_info:
-        restarted.set_display_name("prod", "Unavailable")
-    assert exc_info.value.code is ErrorCode.CONNECTION_STATE_IO_ERROR
+    assert not (tmp_path / "missing-intent").exists()
+    restarted.set_display_name("prod", "Available")
+    assert restarted.snapshot().connections[0].display_name == "Available"
+    assert not (tmp_path / "missing-intent").exists()
 
 
 def test_groups_and_metadata_follow_uuid_across_external_alias_rename(tmp_path):
@@ -744,3 +781,141 @@ def test_delete_then_alias_reuse_allocates_new_uuid_and_keeps_tombstone(tmp_path
     assert active[0].projection.alias == "old"
     assert active[0].uuid != old_uuid
     assert any(item.uuid == old_uuid for item in tombstones)
+
+
+def test_clean_rollback_leaves_no_orphaned_pending_intent(tmp_path, monkeypatch):
+    """Rollback's resync must classify its own note and clear it.
+
+    Nothing else would: the only other caller of
+    ``clear_pending_identity_transaction`` runs at the end of a *successful*
+    mutation, and a surviving note that later fails to classify degrades
+    identity state permanently.  Rollback restores the sidecar and SSH root
+    to base, so the note recovers as ABORT_BASE during ``_resync_from_files``.
+    """
+    repo, root, state = _repo(tmp_path, "Host old\n    HostName old.example\n")
+    base_root = root.read_bytes()
+    base_sidecar = state.read_bytes()
+
+    def fail_commit(_prepared):
+        raise OSError("injected SSH commit failure")
+
+    monkeypatch.setattr(repo._ssh_store, "commit_prepared", fail_commit)
+    with pytest.raises(OSError, match="injected SSH commit failure"):
+        repo.update_connection(
+            "old",
+            {"nickname": "new", "hostname": "new.example", "protocol": "ssh"},
+            expected_generation=0,
+        )
+
+    assert root.read_bytes() == base_root
+    assert state.read_bytes() == base_sidecar
+    assert not identity_transaction_intent_path(state).exists()
+    assert repo._identity_state_unavailable is False
+
+
+def _leave_orphaned_intent(monkeypatch, repo, **connection):
+    """Commit a mutation but skip the note cleanup, as a crash would."""
+    monkeypatch.setattr(
+        repository_module, "clear_pending_identity_transaction", lambda _p: None
+    )
+    repo.create_connection(connection)
+    monkeypatch.undo()
+
+
+def test_unplaceable_pending_intent_is_discarded_instead_of_blocking(
+    tmp_path, monkeypatch
+):
+    """The field failure: a note that survived a crash bricked every save.
+
+    Recovery classified it as STALE_INTENT, which dropped identity state and
+    disabled identity-owned mutations -- and nothing could lift that, because
+    the note is only cleared at the end of a *successful* mutation.  Every
+    restart re-degraded, so saving stayed broken on that install forever.
+    """
+    repo, root, state = _repo(tmp_path, "Host old\n    HostName old.example\n")
+    _leave_orphaned_intent(
+        monkeypatch, repo, nickname="a", hostname="a.example", protocol="ssh"
+    )
+    assert identity_transaction_intent_path(state).exists()
+    del repo
+
+    # An external edit, so the note now matches neither base nor target.
+    root.write_text(
+        root.read_text() + "\nHost manual\n    HostName manual.example\n",
+        encoding="utf-8",
+    )
+    restarted, _root, _state = _repo(tmp_path, root.read_text())
+    assert restarted._identity_state_unavailable is False
+    assert not identity_transaction_intent_path(state).exists()
+    assert restarted.create_connection(
+        {"nickname": "fresh", "hostname": "fresh.example", "protocol": "ssh"}
+    ).id == "fresh"
+
+
+def test_discarding_a_pending_intent_keeps_names_groups_and_metadata(
+    tmp_path, monkeypatch
+):
+    """Discarding the note must not cost the user their organization.
+
+    The sidecar is still readable, so the ordinary reconciliation pass -- the
+    one that already runs whenever the SSH config is edited outside the app --
+    carries UUID, display name, group membership and metadata across.
+    """
+    repo, root, state = _repo(tmp_path, "Host alpha\n    HostName a.example\n")
+    group = repo.create_group("Work")
+    repo.assign_connection_to_group("alpha", group.id)
+    repo.update_connection_metadata("alpha", {"tags": ["prod"]})
+    repo.update_connection(
+        "alpha",
+        {
+            "nickname": "alpha",
+            "hostname": "a.example",
+            "protocol": "ssh",
+            "display_name": "Alpha Box",
+        },
+    )
+    before = read_identity_state_v2(state)
+    uuid = next(
+        item.uuid for item in before.identities
+        if not item.tombstone and item.projection.alias == "alpha"
+    )
+    _leave_orphaned_intent(
+        monkeypatch, repo, nickname="b", hostname="b.example", protocol="ssh"
+    )
+    del repo
+
+    # Renamed behind the app's back, so the note is unplaceable.
+    root.write_text(
+        root.read_text().replace("Host alpha", "Host alpha2"), encoding="utf-8"
+    )
+    restarted, _root, _state = _repo(tmp_path, root.read_text())
+    assert restarted._identity_state_unavailable is False
+    after = read_identity_state_v2(state)
+    carried = next(
+        item for item in after.identities
+        if not item.tombstone and item.uuid == uuid
+    )
+    assert carried.projection.alias == "alpha2"
+    assert carried.display_name == "Alpha Box"
+    assert dict(after.metadata)[uuid] == {"tags": ["prod"]}
+    assert any(
+        ConnectionReference(ReferenceKind.SSH_UUID, uuid) in item.members
+        for item in after.groups
+    )
+
+
+def test_malformed_pending_intent_is_discarded_instead_of_blocking(
+    tmp_path,
+):
+    """A note that cannot even be parsed is as unusable as an unplaceable one."""
+    repo, _root, state = _repo(tmp_path, "Host old\n    HostName old.example\n")
+    del repo
+    identity_transaction_intent_path(state).write_text(
+        "{ not a transaction", encoding="utf-8"
+    )
+    restarted, _root, _state = _repo(tmp_path, "Host old\n    HostName old.example\n")
+    assert restarted._identity_state_unavailable is False
+    assert not identity_transaction_intent_path(state).exists()
+    assert restarted.create_connection(
+        {"nickname": "fresh", "hostname": "fresh.example", "protocol": "ssh"}
+    ).id == "fresh"

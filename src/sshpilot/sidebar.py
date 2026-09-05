@@ -4843,7 +4843,7 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.scp_button = icon_utils.new_button_from_icon_name('vertical-arrows-long-symbolic')
     window.scp_button.add_css_class('flat')
     _expand_toolbar_button(window.scp_button)
-    window.scp_button.set_tooltip_text(_('Legacy: Transfer files with scp'))
+    window.scp_button.set_tooltip_text(_('Transfer files with scp'))
     window.scp_button.set_sensitive(False)
     window.scp_button.connect('clicked', window.on_scp_button_clicked)
     window.connection_toolbar.append(window.scp_button)

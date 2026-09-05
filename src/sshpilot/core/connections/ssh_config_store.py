@@ -25,7 +25,6 @@ import shlex
 import shutil
 import stat
 import tempfile
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -772,44 +771,29 @@ class SshConfigStore:
             remove_connection_id=connection_id if new_name != connection_id else None,
         )
 
+    # Both predicted revisions below MUST agree byte-for-byte with the
+    # revision the loader computes after the write lands -- a prepared
+    # ``target_revision`` is later checked against the committed
+    # ``root_revision`` (see ``_verify_committed_target_locked``), so any
+    # drift between the two implementations fails every mutation.  They
+    # therefore delegate to the loader's ``_compute_revision`` with the
+    # pending bytes supplied as a content override rather than re-deriving
+    # the hash here.
+
     def _revision_for_root_bytes(self, root_bytes: bytes) -> str:
         """Compute the source-tree revision with the root bytes substituted."""
-        hasher = hashlib.sha256()
         files = _resolve_config_files(self._root_path)
-        for path in files:
-            data = root_bytes if Path(path) == self._root_path.resolve() else Path(path).read_bytes()
-            rel = os.path.relpath(path)
-            hasher.update(rel.encode("utf-8"))
-            hasher.update(b"\x00")
-            hasher.update(data)
-            hasher.update(b"\x00")
         if not files and not self._root_path.exists():
-            rel = os.path.relpath(self._root_path)
-            hasher.update(rel.encode("utf-8"))
-            hasher.update(b"\x00")
-            hasher.update(root_bytes)
-            hasher.update(b"\x00")
-        return hasher.hexdigest()
+            files = [self._root_path]
+        return _compute_revision(files, {self._root_path: root_bytes})
 
     def _revision_for_path_bytes(self, target: Path, target_bytes: bytes) -> str:
         """Compute a source-tree revision with one participating file replaced."""
-        hasher = hashlib.sha256()
         files = _resolve_config_files(self._root_path)
         target_resolved = target.resolve()
-        for path in files:
-            data = target_bytes if Path(path).resolve() == target_resolved else Path(path).read_bytes()
-            rel = os.path.relpath(path)
-            hasher.update(rel.encode("utf-8"))
-            hasher.update(b"\x00")
-            hasher.update(data)
-            hasher.update(b"\x00")
         if target_resolved not in {Path(path).resolve() for path in files}:
-            rel = os.path.relpath(target)
-            hasher.update(rel.encode("utf-8"))
-            hasher.update(b"\x00")
-            hasher.update(target_bytes)
-            hasher.update(b"\x00")
-        return hasher.hexdigest()
+            files = [*files, target]
+        return _compute_revision(files, {target: target_bytes})
 
     # -- lookups -----------------------------------------------------------
 

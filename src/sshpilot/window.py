@@ -1481,7 +1481,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.debug(f"Failed to schedule preferences preloading: {e}")
 
-        # Check for updates if enabled in preferences
+        # Check for updates if enabled in preferences. Tips share the update
+        # banner's area, so when a startup check runs they wait for its result
+        # (or for the user to dismiss an update). When the check is disabled,
+        # surface tips on their own — otherwise "Show tips" appears broken.
         try:
             check_on_startup = self.config.get_setting('updates.check_on_startup', True)
             if check_on_startup:
@@ -1500,8 +1503,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     )
 
                 check_for_updates_async(on_update_check_complete)
+            else:
+                self._maybe_show_tips_banner()
         except Exception as e:
             logger.debug(f"Failed to check for updates on startup: {e}")
+            try:
+                self._maybe_show_tips_banner()
+            except Exception:
+                pass
 
         return False  # Don't repeat
 

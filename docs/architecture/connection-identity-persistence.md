@@ -99,12 +99,30 @@ for the current observed revision while `last_reconciled_ssh_revision` remains
 the last fully reconciled revision. A later complete revision recomputes the
 result; stale ambiguity is never reused.
 
-If recovery is `REQUIRES_RECONCILIATION`, `STALE_INTENT`, `DEFERRED`, or the
-pending intent is corrupt, the repository drops any previously trusted in-
-memory UUID state, preserves the sidecar and intent, publishes SSH aliases
-without UUID-owned decorations, and disables identity-owned mutations until a
-complete safe recovery/reconciliation is available. A valid SSH configuration
-remains launchable.
+`FINALIZE_TARGET` and `ABORT_BASE` resolve a pending intent.
+`REQUIRES_RECONCILIATION`, `STALE_INTENT`, and an intent that cannot be read
+or parsed all mean the same thing -- the intent can no longer be placed
+against what is on disk -- so it is discarded and the ordinary load
+continues: the sidecar is read, and when its `observed_ssh_revision` no
+longer matches, `reconcile_identity_state` carries UUIDs, display names,
+group membership and metadata across the drift, exactly as it does when the
+SSH configuration is edited outside the app. An unplaceable intent is not
+evidence about the sidecar and never makes the repository read-only.
+
+`DEFERRED` is the one classification that keeps its intent: "cannot be
+evaluated yet" is not "unusable", and a later start with a complete revision
+can still finalize or abort it. It does not block either. It is currently
+unreachable from load -- `root_revision` is always a complete digest -- but
+discarding on it would throw away a still-actionable intent.
+
+An earlier design preserved such an intent and disabled identity-owned
+mutations "until a complete safe recovery is available". No recovery ever
+arrived: the intent is only cleared at the end of a *successful* mutation,
+which the degraded state forbids, so a single unplaceable intent left saving
+broken on that install permanently, silently, across restarts.
+
+A sidecar that is itself corrupt or unsupported is a separate condition and
+is handled by salvage (see "Salvaging a damaged sidecar").
 
 ## v2 sidecar
 
@@ -173,15 +191,69 @@ appended deterministically to root. The migration is idempotent and never
 modifies legacy `config.json`.
 
 The repository never returns to normal v1 writes after successful migration.
-Corrupt or unsupported v2 is preserved; SSH remains readable/launchable where
-possible, while UUID-owned mutations are degraded rather than applied to an
-invented empty registry.
+Corrupt or unsupported v2 is salvaged rather than degraded or replaced by an
+invented empty registry -- see "Salvaging a damaged sidecar".
 
 Legacy `connections_meta` entries are validated independently. An unsafe or
 malformed auxiliary entry is omitted from migration while valid groups, root
 order, non-SSH records, and other valid metadata continue through the same
 migration. The legacy source file is never rewritten, and the safe-metadata
 validator is not weakened or used to sanitize an unsafe value into acceptance.
+
+## Salvaging a damaged sidecar
+
+The strict reader is all-or-nothing: one invalid entry invalidates the whole
+document. That is correct for the normal path, but refusing on that basis was
+a second way into a permanent read-only state, and the most expensive one --
+non-SSH records (Docker, Kubernetes, serial, telnet, Mosh) exist *only* in
+this file, so those users saw their connections disappear with no way back.
+
+`CORRUPT` and `UNSUPPORTED` therefore go to `salvage_identity_state_v2`, which
+is lenient about the container and strict about every entry. Identities,
+groups, group members, references, non-SSH records and metadata values are
+each rebuilt with the same constructors and validators the strict reader
+uses; anything that fails is dropped and counted, and nothing is invented,
+repaired or reinterpreted. A single bad entry costs that entry alone -- a
+group with one unreadable member keeps its other members.
+
+Placement is the one thing salvage repairs rather than drops, because
+`IdentityStateV2` requires every active connection to be placed exactly once:
+dangling and duplicate references are removed, group parent cycles and unknown
+parents are broken, and anything left unplaced is appended to root -- the same
+repair `_reconcile_legacy_state` already performs for v1. Pending ambiguities
+are dropped, since reconciliation recomputes them. If an invariant still
+survives every targeted repair, salvage falls back to keeping the records and
+giving up the organization around them, and only if that also fails does it
+return an empty state -- as it does for bytes that are not a JSON object at
+all. Salvage never raises: a caller reaching for it has already been refused
+by the strict reader and needs an answer it can proceed with.
+
+The damaged bytes are copied to a timestamped `connections.json.corrupt-*`
+sibling *before* the salvaged state is written, so nothing salvage dropped is
+actually lost and repeated attempts never clobber an earlier copy. An
+`UNSUPPORTED` (future-version) document is a downgrade rather than corruption,
+and that verbatim copy is what keeps an older build from silently destroying
+state a newer one can still read. The salvaged state is then reconciled
+against the SSH configuration like any other load, and the repository stays
+writable.
+
+The counts are logged, because a damaged file that quietly yields fewer
+connections than the user had is worse than one that says what it cost.
+
+Salvage covers damaged *content*. A file that cannot be read or written at
+all -- an I/O error, a permission failure, a symlink, a document past the size
+limit -- is a different condition: there is nothing to salvage and nothing to
+copy aside, so that still degrades.
+
+That condition is the only one left that disables saving, so it is logged at
+ERROR and in full, both when it is detected and on every save it refuses. The
+message names the file, distinguishes it from salvageable damage, states that
+SSH connections still load and launch while nothing can be saved, and gives
+the likely cause -- symlink, size limit, permissions, or filesystem error --
+from the chained OS error. Every mutation captures its transaction files
+before writing, so a file the daemon cannot open is refused there with the
+same explanation and a `CONNECTION_STATE_IO_ERROR`, rather than escaping as a
+bare `PermissionError` that reaches the user as an unexplained failed save.
 
 ## Managed SSH transactions and recovery
 
@@ -223,15 +295,21 @@ The main sidecar limit is 16 MiB serialized bytes. The same-directory pending
 intent limit is 32 MiB, and its nested target must independently fit 16 MiB.
 Both readers and writers enforce these closure rules.
 
-Recovery is conservative:
+Recovery applies an intent only where it is unambiguous, and never lets an
+intent it cannot apply stop the app from working:
 
 | Actual SSH revision | Sidecar state | Action |
 |---|---|---|
 | target | base generation or exact target | finalize target and clear intent |
 | base | base generation | clear intent and retain base |
-| unrelated | base generation | require reconciliation; do not guess |
-| any | newer/conflicting sidecar | stale intent; never overwrite |
+| unrelated | base generation | discard intent; reconcile the sidecar |
+| any | newer/conflicting sidecar | discard intent; reconcile the sidecar |
+| unreadable or malformed intent | any | discard intent; reconcile the sidecar |
 | unavailable/partial | any | defer; do not apply or clear |
+
+Discarding never overwrites the sidecar with an intent target that was not
+verified as committed. It drops the intent and hands the sidecar to the normal
+reconciliation pass, which is the same drift handling an external edit gets.
 
 Pre-replace failures leave the old target byte-for-byte unchanged. A failure
 after `os.replace()` while syncing the parent reports durability unknown; the
@@ -302,5 +380,13 @@ restart stability, stopped/live/raw-editor safe rename, 2:2 ambiguity,
 metadata/group/root UUID ownership, alias reuse, DisplayName-only mutation,
 prepared mutation side effects, and intent crash windows. API artifacts are
 generated and checked after the additive `display_name` field.
+
+`tests/core/test_connection_identity_salvage.py` covers salvage: per-entry
+recovery of a partly damaged document, placement repair, group parent cycles,
+unparseable bytes, the end-to-end repository recovery, and the guarantee that
+repeated damage never clobbers an earlier quarantine copy. The pending-intent
+policy -- unplaceable and malformed intents discarded, a planted symlink
+ignored rather than followed, and the app writable throughout -- is covered in
+`tests/core/test_connection_repository_uuid_integration.py`.
 
 **VERDICT: INTERNAL UUID IDENTITY + DISPLAYNAME MIGRATION COMPLETE — PUBLIC API IDS REMAIN ALIAS-BASED**

@@ -56,21 +56,36 @@ def commit_payload_to_bytes(text: CommitPayload, size: Optional[int] = None) -> 
     8-bit sequence) arrive as latin-1-mapped characters whose original byte
     length is ``size``. Prefer latin-1 when that matches ``size`` and UTF-8
     would not.
+
+    ``size`` also rescues the NUL bytes ``G_TYPE_STRING`` throws away. VTE
+    declares ``commit`` with a C string, so PyGObject stops at the first NUL
+    while ``size`` still counts the whole payload: Ctrl+Space (and Ctrl+@,
+    Ctrl+2) arrives as ``("", 1)`` instead of ``"\0"``, Ctrl+Alt+Space as
+    ``("\x1b", 2)`` instead of ``"\x1b\0"``. Only the daemon path notices,
+    because a PTY-backed VTE writes those bytes itself (GH #1240). ``size``
+    is what tells Ctrl+[ (``("\x1b", 1)``) apart from Ctrl+Alt+Space, so pad
+    the short encoding back out rather than guessing from the text alone.
     """
     if isinstance(text, (bytes, bytearray, memoryview)):
         return bytes(text)
-    if not text:
-        return b""
-    utf8 = text.encode("utf-8")
     reported = None if size is None else int(size)
+    if not text:
+        # Truncated to nothing: the payload was NUL bytes all the way.
+        return b"\x00" * reported if reported and reported > 0 else b""
+    utf8 = text.encode("utf-8")
     if reported is None or reported == len(utf8):
         return utf8
     try:
-        raw = text.encode("latin-1")
+        raw: Optional[bytes] = text.encode("latin-1")
     except UnicodeEncodeError:
-        return utf8
-    if len(raw) == reported:
+        raw = None
+    if raw is not None and len(raw) == reported:
         return raw
+    # Neither encoding reaches ``size``, so trailing NULs were dropped. Try
+    # UTF-8 first: every key VTE encodes with a NUL is a keyboard payload.
+    for candidate in (utf8, raw):
+        if candidate is not None and len(candidate) < reported:
+            return candidate + b"\x00" * (reported - len(candidate))
     return utf8
 
 

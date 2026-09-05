@@ -79,6 +79,9 @@ from .state_file import (
     GroupFileState,
     probe_connection_state_file,
     read_identity_state_v2,
+    read_pending_identity_transaction,
+    read_state_bytes_for_salvage,
+    quarantine_connection_state_file,
     recover_pending_identity_transaction,
     read_connection_state,
     read_legacy_connection_state,
@@ -87,7 +90,12 @@ from .state_file import (
     write_pending_identity_transaction,
     clear_pending_identity_transaction,
 )
-from .identity_state_v2 import IdentityRecoveryAction, IdentityTransactionIntent
+from .identity_salvage import salvage_identity_state_v2
+from .identity_state_v2 import (
+    IdentityRecoveryAction,
+    IdentityRecoveryDecision,
+    IdentityTransactionIntent,
+)
 
 # Kept as a module attribute for legacy test/integration hooks.  Production
 # writes in this repository are v2-only after migration.
@@ -354,6 +362,7 @@ class ConnectionRepository:
         self._identity_state: Optional[IdentityStateV2] = None
         self._identity_state_unavailable = False
         self._identity_recovery_required = False
+        self._identity_unavailable_reason: Optional[str] = None
         self._pending_identity_target: Optional[IdentityStateV2] = None
         self._loaded_ssh_config: Optional[LoadedSshConfiguration] = None
         self._metadata: Dict[str, Dict[str, Any]] = {}
@@ -570,25 +579,13 @@ class ConnectionRepository:
             kind = probe_connection_state_file(self._state_path)
             if kind is ConnectionStateFileKind.V2:
                 intent_path = identity_transaction_intent_path(self._state_path)
-                # ``Path.exists()`` is false for a dangling symlink.  Treat
-                # every symlink companion as a pending auxiliary-state
-                # failure so it cannot be silently ignored as "no intent".
+                # ``Path.exists()`` is false for a dangling symlink.  Test
+                # for one explicitly so a planted companion is classified and
+                # discarded rather than silently read as "no intent".
                 if intent_path.exists() or intent_path.is_symlink():
-                    decision = recover_pending_identity_transaction(
-                        self._state_path,
-                        actual_ssh_revision=ssh_config.root_revision,
-                        intent_path=intent_path,
+                    self._recover_or_discard_intent_locked(
+                        intent_path, ssh_config
                     )
-                    if decision.action not in {
-                        IdentityRecoveryAction.NO_PENDING,
-                        IdentityRecoveryAction.FINALIZE_TARGET,
-                        IdentityRecoveryAction.ABORT_BASE,
-                    }:
-                        self._enter_identity_degraded_locked(decision.reason)
-                        self._publish_state_locked(
-                            ssh_config, ConnectionFileState(), migrated=False
-                        )
-                        return
                 state = read_identity_state_v2(self._state_path)
                 if state is None:
                     raise _repository_error("Identity state disappeared during load")
@@ -656,41 +653,229 @@ class ConnectionRepository:
                 )
                 return
 
-            # Corrupt/unsupported state is never replaced by an empty v2
-            # registry.  Keep SSH launch/read availability through an empty
-            # decoration projection and make identity mutations fail safely.
-            logger.warning(
-                "Failed to load auxiliary connection state; continuing with SSH "
-                "configuration only (reason=%s)",
-                kind.value,
-            )
-            self._enter_identity_degraded_locked(kind.value)
-            file_state = ConnectionFileState()
-            self._publish_state_locked(ssh_config, file_state, migrated=False)
+            # Corrupt or unsupported state is never replaced by an empty v2
+            # registry, and never makes the app read-only either.  Copy the
+            # damaged file aside, salvage every entry that still validates,
+            # and carry on writable with what survived.
+            self._salvage_state_locked(kind, ssh_config, projections)
         except Exception as exc:
             failure_reason = (
                 exc.diagnostic_category
                 if isinstance(exc, CoreError)
                 else type(exc).__name__
             )
-            logger.warning(
-                "Failed to load auxiliary connection state; continuing with "
-                "SSH configuration only (reason=%s)",
-                failure_reason,
-            )
-            self._enter_identity_degraded_locked(failure_reason)
+            self._enter_identity_degraded_locked(failure_reason, exc)
             self._publish_state_locked(
                 ssh_config,
                 ConnectionFileState(),
                 migrated=False,
             )
 
-    def _enter_identity_degraded_locked(self, reason: str) -> None:
-        """Drop any previously trusted UUID state after auxiliary failure."""
+    def _salvage_state_locked(
+        self,
+        kind: ConnectionStateFileKind,
+        ssh_config: LoadedSshConfiguration,
+        projections,
+    ) -> None:
+        """Recover what a damaged sidecar still supports, then stay writable.
+
+        The strict reader is all-or-nothing: one bad entry invalidates the
+        whole document.  Refusing on that basis was the second way into a
+        permanent read-only state, and the costliest one -- non-SSH records
+        (Docker, Kubernetes, serial, telnet, Mosh) exist *only* in this file,
+        so a user with those saw them vanish from the app with no way back.
+
+        The damaged bytes are copied aside first, so nothing salvage drops is
+        actually lost, then every entry that validates strictly is kept and
+        reconciled against the SSH configuration like any other load.  A file
+        that cannot be read at all -- an I/O or permission failure rather
+        than bad content -- is a different problem: there is nothing to
+        salvage and nothing to back up, so that still degrades.
+        """
+        raw = read_state_bytes_for_salvage(self._state_path)
+        if raw is None:
+            raise _repository_error("Damaged identity state disappeared during load")
+        salvaged, report = salvage_identity_state_v2(raw)
+        # Quarantine before the write below replaces the original.  If this
+        # fails the directory is almost certainly unwritable, in which case
+        # the write fails too and the caller degrades with the original file
+        # still intact -- nothing is destroyed without a copy beside it.
+        quarantine = quarantine_connection_state_file(self._state_path, raw)
+        state = reconcile_identity_state(
+            salvaged,
+            projections,
+            ssh_config_revision=ssh_config.root_revision,
+        )
+        write_identity_state_v2(self._state_path, state)
+        self._identity_state = state
+        self._identity_state_unavailable = False
+        self._identity_recovery_required = False
+        if report.unreadable:
+            logger.warning(
+                "Auxiliary connection state was unreadable (reason=%s); "
+                "starting a new one. The damaged file was kept as %s",
+                kind.value,
+                quarantine.name,
+            )
+        else:
+            logger.warning(
+                "Salvaged auxiliary connection state (reason=%s): %s. The "
+                "damaged file was kept as %s",
+                kind.value,
+                report.summary(),
+                quarantine.name,
+            )
+        self._publish_state_locked(
+            ssh_config,
+            state_to_service_file_state(state, ssh_config.connections),
+            migrated=True,
+        )
+
+    def _recover_or_discard_intent_locked(
+        self,
+        intent_path: Path,
+        ssh_config: LoadedSshConfiguration,
+    ) -> None:
+        """Finish an actionable pending transaction; discard an unusable one.
+
+        A ``.pending`` note exists so a crash between the SSH write and the
+        sidecar write can be resolved.  FINALIZE_TARGET and ABORT_BASE are
+        that resolution.  Every other classification means the note can no
+        longer be placed against what is on disk -- the config moved to an
+        unrelated revision, the sidecar moved past the note's base, or the
+        note itself is malformed.
+
+        Such a note is not evidence of anything recoverable, so it is thrown
+        away and the ordinary load continues.  The sidecar is still readable
+        and ``reconcile_identity_state`` -- the same pass that already runs
+        whenever the SSH config is edited outside the app -- carries UUIDs,
+        display names, group membership and metadata across the drift.
+
+        Refusing instead was strictly worse.  It dropped in-memory identity
+        state and disabled every identity-owned mutation, and nothing could
+        lift that: the note is only ever cleared at the end of a *successful*
+        mutation, which is exactly what the degraded state forbids.  One
+        unplaceable note therefore made saving fail, with nothing shown to
+        the user, on that install forever.
+        """
+        # Validate the note on its own first.  A note that cannot be read or
+        # parsed is as unusable as one that cannot be placed, and separating
+        # the two reads keeps this from swallowing a rejection that is really
+        # about the *sidecar* -- that one still belongs to the caller.
+        try:
+            read_pending_identity_transaction(intent_path)
+        except CoreError as exc:
+            decision = IdentityRecoveryDecision(
+                IdentityRecoveryAction.STALE_INTENT,
+                f"pending transaction is unreadable ({exc.diagnostic_category})",
+            )
+        else:
+            decision = recover_pending_identity_transaction(
+                self._state_path,
+                actual_ssh_revision=ssh_config.root_revision,
+                intent_path=intent_path,
+            )
+        if decision.action in {
+            IdentityRecoveryAction.NO_PENDING,
+            IdentityRecoveryAction.FINALIZE_TARGET,
+            IdentityRecoveryAction.ABORT_BASE,
+        }:
+            return
+        if decision.action is IdentityRecoveryAction.DEFERRED:
+            # "Cannot be evaluated yet" is not "unusable".  Keep the note and
+            # let the load continue; a later start with a complete revision
+            # can still finalize or abort it.  Unreachable from here today --
+            # ``root_revision`` is always a complete digest -- but discarding
+            # on it would throw away a still-actionable note.
+            logger.warning(
+                "Deferring a pending identity transaction (reason=%s)",
+                decision.reason,
+            )
+            return
+        logger.warning(
+            "Discarding an unusable pending identity transaction "
+            "(reason=%s); reconciling the sidecar against the current SSH "
+            "configuration instead",
+            decision.reason,
+        )
+        try:
+            clear_pending_identity_transaction(intent_path)
+        except Exception:
+            # Reconciliation below does not depend on the note being gone,
+            # and blocking the load over a file we already decided to ignore
+            # is the behaviour this path exists to remove.
+            logger.warning(
+                "Could not remove the unusable pending identity transaction",
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _identity_failure_hint(reason: str, exc: Optional[BaseException]) -> str:
+        """Name the likely cause so the log says what to actually go and fix."""
+        detail = getattr(exc, "diagnostic_reason", "") if exc is not None else ""
+        # OS errors are deliberately wrapped in a generic CoreError so no
+        # path leaks into an API message; the original is still chained, and
+        # it is the only thing that can tell permissions from a bad disk.
+        cause = getattr(exc, "__cause__", None)
+        if detail == "unsafe state-file target":
+            return (
+                "The path is a symbolic link. The daemon never reads or writes "
+                "through one; replace it with a regular file."
+            )
+        if detail == "state file exceeds size limit":
+            return (
+                "The file is larger than the 16 MiB limit and was not read. "
+                "Move it aside to start a new one."
+            )
+        if isinstance(exc, PermissionError) or isinstance(cause, PermissionError):
+            return (
+                "Permission was denied. Check that the file and its directory "
+                "are owned by this user and writable."
+            )
+        if (
+            isinstance(exc, OSError)
+            or isinstance(cause, OSError)
+            or reason in {"io_error", "OSError"}
+        ):
+            return (
+                "The filesystem reported an error. Check free space, disk "
+                "health, and whether the filesystem is mounted read-only."
+            )
+        return (
+            "Move the file aside to start a new one; SSH Pilot will rebuild "
+            "it from the SSH configuration."
+        )
+
+    def _enter_identity_degraded_locked(
+        self, reason: str, exc: Optional[BaseException] = None
+    ) -> None:
+        """Drop trusted UUID state and say plainly what just stopped working.
+
+        This is the one remaining condition that disables saving, so it is
+        logged at ERROR and in full.  Reaching it quietly is what made the
+        original field report so hard to act on: the user's save failed, the
+        log said only that a mutation had failed, and nothing named the file
+        or said that saving was off until it was fixed.
+        """
         self._identity_state = None
         self._identity_state_unavailable = True
         self._identity_recovery_required = True
-        logger.warning("UUID identity state is degraded (reason=%s)", reason)
+        self._identity_unavailable_reason = reason
+        logger.error(
+            "Connection state file is unusable: %s (reason=%s). Damaged "
+            "*content* is salvaged automatically -- this is a file the daemon "
+            "cannot read or write at all, so there is nothing to salvage and "
+            "nothing to copy aside. SSH connections still load and launch "
+            "from the SSH configuration, but nothing can be saved: new "
+            "connections, edits, groups, tags, and non-SSH connections "
+            "(Docker, Kubernetes, serial, telnet, Mosh) will all fail until "
+            "this file is readable and writable again. %s",
+            self._state_path,
+            reason,
+            self._identity_failure_hint(reason, exc),
+        )
+        if exc is not None:
+            logger.debug("Connection state file failure detail", exc_info=exc)
 
     def _reconcile_legacy_state(
         self,
@@ -1084,11 +1269,21 @@ class ConnectionRepository:
 
     def _require_identity_state_locked(self) -> IdentityStateV2:
         if self._identity_state_unavailable or self._identity_state is None:
+            # Say why on every refusal, not only once at startup.  A user who
+            # hits this sees a save do nothing; the log has to connect that
+            # back to the file, or the failure is unactionable.
+            logger.error(
+                "Refusing a connection change: %s could not be read or "
+                "written at startup (reason=%s), so saving is disabled. See "
+                "the earlier 'Connection state file is unusable' error.",
+                self._state_path,
+                self._identity_unavailable_reason or "unknown",
+            )
             raise CoreError(
                 ErrorCode.CONNECTION_STATE_IO_ERROR,
                 "UUID identity state is unavailable",
                 diagnostic_category="identity_state_unavailable",
-                diagnostic_reason="identity sidecar is corrupt or unsupported",
+                diagnostic_reason="identity sidecar could not be read or written",
             )
         return self._identity_state
 
@@ -1511,12 +1706,37 @@ class ConnectionRepository:
                 captured[path] = (False, b"", 0, False, None, None, None)
                 continue
             if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+                logger.error(
+                    "Cannot save: %s is not a regular file (it is a %s). "
+                    "The daemon never writes through one; replace it with a "
+                    "regular file.",
+                    path,
+                    "symbolic link" if stat.S_ISLNK(info.st_mode) else "special file",
+                )
                 raise CoreError(
                     ErrorCode.CONNECTION_STATE_IO_ERROR,
                     "The mutation target is unsafe",
                 )
             flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(path, flags)
+            try:
+                fd = os.open(path, flags)
+            except OSError as exc:
+                # Every mutation captures before it writes, so this is where a
+                # file the daemon cannot open stops a save.  Raising the raw
+                # OSError here escaped as an unexplained failure -- the exact
+                # silent save this logging exists to prevent.
+                logger.error(
+                    "Cannot save: %s could not be opened (%s). %s",
+                    path,
+                    type(exc).__name__,
+                    self._identity_failure_hint(type(exc).__name__, exc),
+                )
+                raise CoreError(
+                    ErrorCode.CONNECTION_STATE_IO_ERROR,
+                    "The connection state file could not be read",
+                    diagnostic_category="io_error",
+                    diagnostic_reason="mutation target could not be opened",
+                ) from exc
             try:
                 opened = os.fstat(fd)
                 if opened.st_dev != info.st_dev or opened.st_ino != info.st_ino:
