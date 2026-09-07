@@ -56,17 +56,19 @@ supported version `1.0` during handshake and rejects unsupported versions.
 Application versions are not compatibility signals. A later minor-negotiation
 policy must be documented and tested before changing this rule.
 
-`API_IMPLEMENTATION_VERSION` is currently `0.51`. Version 0.51 adds the strict
-`PluginSessionFailure` variant to `SessionSummary.failure` for builtin Docker,
-Kubernetes, Mosh, and Serial launch-preparation failures. A 0.50 peer accepts
-only the generic `{code, message}` object there, while a 0.51 peer also accepts
-the discriminated `kind: plugin_launch` object, so mismatched implementations
-are rejected during handshake before session traffic. The generic
-`SessionFailure` wire shape remains unchanged for SSH and every other session
-failure consumer. Version 0.50 introduced strict `ScpFailure` and
-`IdentityFailure`; version 0.49 introduced strict `SftpFailure`; the 0.48
-plugin editor, 0.47 backup/import, 0.46 secret-status, and 0.45 secret-prompt
-contracts remain unchanged.
+`API_IMPLEMENTATION_VERSION` is currently `0.54`. Version 0.54 replaces the
+rendered `{code, message}` `ServiceFailure` in `HostInfoSummary.failure` with a
+strict `HostInfoFailure` carrying a stable presentation code, machine error
+code, strict parameters, and an opaque diagnostic. Exact implementation
+negotiation rejects a 0.53 peer before Host Info traffic; the shared
+`ServiceFailure` wire shape remains unchanged for its other consumers. Version
+0.54 also adds to the snapshot -- `cpu_times`, CPU and memory pressure, process
+counts, inode and mount detail, and further `/proc/meminfo` fields -- and adds
+the `LIVE` probe with `HostInfoSummary.live`; those are additions a 0.53 peer
+simply does not know about. Version 0.53 extended the host-information
+snapshot, 0.52 introduced Host Info, 0.51 introduced strict builtin-plugin
+session failures, 0.50 introduced strict `ScpFailure` and `IdentityFailure`,
+and 0.49 introduced strict `SftpFailure`.
 
 The earlier 0.40 compatibility boundary remains in force: clients never
 downgrade to plaintext secret transport or select a frontend secret backend.

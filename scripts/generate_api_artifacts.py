@@ -151,6 +151,7 @@ IMPLEMENTED_MODELS = {
     "SessionFailure",
     "SessionSummary",
     "ExternalTerminalLaunchSpec",
+    "HostInfoFailure",
     "IdentityFailure",
     "ScpFailure",
     "ServiceFailure",

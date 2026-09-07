@@ -161,6 +161,13 @@ generic `ServiceFailure` remains unchanged for authorized-key removal,
 forwards, broadcast results, and other unselected consumers; these boundaries
 do not impose a repository-wide error migration.
 
+Host-information summaries apply the same narrow boundary through
+`HostInfoFailure`. The daemon projects generic broadcast outcomes into stable
+Host Info codes at the subsystem boundary, keeps remote SSH stderr or unknown
+technical text in the diagnostic field, and never transports a finalized UI
+sentence for those failures. GTK owns their gettext mapping. The underlying
+broadcast `ServiceFailure` contract remains unchanged.
+
 Builtin Docker, Kubernetes, Mosh, and Serial launch-preparation failures use
 the same narrow boundary through the discriminated `PluginSessionFailure`
 variant of `SessionSummary.failure`. Stable codes and strict technical

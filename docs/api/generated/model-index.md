@@ -2092,6 +2092,34 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: HostInfoFailure -->
+## `HostInfoFailure`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** One localizable host-info failure plus an opaque diagnostic.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `code` | `HostInfoFailureCode` | Yes | — | No |
+| `error_code` | `ErrorCode` | Yes | — | No |
+| `parameters` | `Mapping[str, str]` | No | `{}` | No |
+| `diagnostic` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "code": {},
+  "diagnostic": "",
+  "error_code": {},
+  "parameters": {}
+}
+```
+
 <!-- api-model: HostInfoRequest -->
 ## `HostInfoRequest`
 
@@ -2252,7 +2280,7 @@ paying for the full gather, and ``live`` carries the rest of what the
 | `probe` | `HostInfoProbe` | No | `full` | No |
 | `snapshot` | `Optional[HostInfoSnapshot]` | No | `null` | No |
 | `counters` | `Tuple[InterfaceCounters, ...]` | No | `[]` | No |
-| `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `failure` | `Optional[HostInfoFailure]` | No | `null` | No |
 | `live` | `Optional[LiveSample]` | No | `null` | No |
 
 Synthetic representation:
