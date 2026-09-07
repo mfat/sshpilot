@@ -125,6 +125,10 @@ class SecretBackendService:
             secret_manager = get_secret_manager()
         self._manager = secret_manager
         self._broker = interaction_broker
+        # Remote backup transport (SFTP first, one-shot commands second).
+        # Injected by the daemon server once the SFTP/transfer/broadcast
+        # runtimes exist, exactly like the interaction broker above.
+        self._backup_transport: Any = None
         self._connections_source = connections_source
         # Two more narrow bound-method callables, parallel to
         # ``connections_source`` above — the portable connection-store
@@ -165,6 +169,13 @@ class SecretBackendService:
         """Inject the daemon's interaction broker once it exists (the broker is
         created per-session-runtime, after this service is composed)."""
         self._broker = broker
+
+    def attach_backup_transport(self, transport: Any) -> None:
+        """Inject the remote backup transport once the runtimes it delegates to
+        exist. Backups are file transfers, so they ride the file manager's SFTP
+        stack and fall back to the one-shot command service Host Info uses;
+        without this the SSH-server destination has nowhere to put bytes."""
+        self._backup_transport = transport
 
     @contextmanager
     def _locked_operation(self):
@@ -1240,6 +1251,7 @@ class SecretBackendService:
                 passphrase=passphrase,
                 settings_path=self._path,
                 connection_store_snapshot=self._connection_store_snapshot,
+                transport=self._backup_transport,
             )
 
     def preview_backup(
@@ -1327,26 +1339,64 @@ class SecretBackendService:
         remote_dir: str,
         entry_id: str,
         options: Optional[Dict[str, Any]] = None,
+        owner_client_id=None,
     ) -> SecretTransferPreview:
-        """Preview one SSH-stored backup: included categories (metadata only)."""
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
-            from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
+        """Preview one SSH-stored backup: included categories (metadata only).
 
-            public, manifest = daemon_preview_ssh_backup(
-                self._manager,
-                connection_id=connection_id,
-                remote_dir=remote_dir,
-                entry_id=entry_id,
-                connections_source=self._connections_source,
-                settings_path=self._path,
-            )
-            if manifest is not None:
-                self._cache_manifest(
-                    self._manifest_key("ssh", f"{connection_id}:{entry_id}"), manifest
+        Same shape as :meth:`preview_backup`: an encrypted archive collects its
+        passphrase through a protected interaction and the decrypted manifest is
+        cached, so the import that follows neither re-prompts nor downloads the
+        archive again.
+        """
+        from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
+
+        key = self._manifest_key("ssh", f"{connection_id}:{entry_id}")
+
+        def _preview(passphrase):
+            with self._lock:
+                self._apply_environment(self._load_strict())
+                return daemon_preview_ssh_backup(
+                    self._manager,
+                    connection_id=connection_id,
+                    remote_dir=remote_dir,
+                    entry_id=entry_id,
+                    connections_source=self._connections_source,
+                    settings_path=self._path,
+                    transport=self._backup_transport,
+                    passphrase=passphrase,
                 )
+
+        public, manifest = _preview(None)
+        if manifest is not None:
+            self._cache_manifest(key, manifest)
             return public
+        if not public.encrypted or public.error is not None:
+            return public
+
+        # The passphrase interaction runs without the service lock, for the same
+        # reason as preview_backup: a concurrent secrets.state.get would block on
+        # its five-second timeout and cancel this very interaction.
+        prompt = self._prompt_for_secret(
+            SecretPromptKind.BACKUP_DECRYPT,
+            owner_client_id=owner_client_id,
+        )
+        if prompt is None:
+            return SecretTransferPreview(
+                kind=public.kind,
+                encrypted=public.encrypted,
+                included=public.included,
+                error=SecretTransferMessage(
+                    SecretTransferMessageCode.DECRYPTION_CANCELLED
+                ),
+            )
+        passphrase = prompt.decode("utf-8", "replace")
+        _clear_secret(prompt)
+
+        public, manifest = _preview(passphrase)
+        if manifest is not None:
+            self._cache_manifest(key, manifest)
+        return public
+
 
     def import_backup(
         self,
@@ -1523,6 +1573,7 @@ class SecretBackendService:
                 remote_dir=remote_dir,
                 connections_source=self._connections_source,
                 settings_path=self._path,
+                transport=self._backup_transport,
             )
 
     def import_ssh_backup(
@@ -1532,26 +1583,71 @@ class SecretBackendService:
         remote_dir: str,
         entry_id: str,
         options: Optional[Dict[str, Any]] = None,
+        owner_client_id=None,
     ) -> SecretTransferResult:
-        with self._lock:
-            config = self._load_strict()
-            self._apply_environment(config)
-            from sshpilot.daemon.secret_transfer import daemon_import_ssh_backup
+        """Restore one SSH-stored backup.
 
+        The preview normally leaves the decrypted manifest in the cache, so this
+        neither prompts nor downloads again. If that cache expired, an encrypted
+        archive re-prompts here through the same bounded retry the local-file
+        import uses.
+        """
+        from sshpilot.daemon.secret_transfer import daemon_import_ssh_backup
+
+        with self._lock:
+            self._apply_environment(self._load_strict())
             manifest = self._pop_cached_manifest(
                 self._manifest_key("ssh", f"{connection_id}:{entry_id}")
             )
-            return daemon_import_ssh_backup(
-                self._manager,
-                connection_id=connection_id,
-                remote_dir=remote_dir,
-                entry_id=entry_id,
-                options=options,
-                connections_source=self._connections_source,
-                settings_path=self._path,
-                manifest=manifest,
-                connection_store_restore=self._connection_store_restore,
-            )
+
+        passphrase = None
+        result = None
+        for attempt in range(self._MAX_IMPORT_PASSPHRASE_ATTEMPTS):
+            if manifest is None and attempt > 0:
+                prompt = self._prompt_for_secret(
+                    SecretPromptKind.BACKUP_DECRYPT,
+                    owner_client_id=owner_client_id,
+                )
+                if prompt is None:
+                    return SecretTransferResult(
+                        operation="import",
+                        path="ssh",
+                        counts={},
+                        warnings=(),
+                        status=SecretOperationState.INTERACTION_REQUIRED,
+                        message=SecretTransferMessage(
+                            SecretTransferMessageCode.DECRYPTION_CANCELLED
+                        ),
+                    )
+                passphrase = prompt.decode("utf-8", "replace")
+                _clear_secret(prompt)
+            with self._lock:
+                self._apply_environment(self._load_strict())
+                result = daemon_import_ssh_backup(
+                    self._manager,
+                    connection_id=connection_id,
+                    remote_dir=remote_dir,
+                    entry_id=entry_id,
+                    options=options,
+                    connections_source=self._connections_source,
+                    settings_path=self._path,
+                    manifest=manifest,
+                    connection_store_restore=self._connection_store_restore,
+                    transport=self._backup_transport,
+                    passphrase=passphrase,
+                )
+            last_attempt = attempt + 1 >= self._MAX_IMPORT_PASSPHRASE_ATTEMPTS
+            if (
+                result.status is SecretOperationState.FAILED
+                and result.message is not None
+                and result.message.code
+                is SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+                and not last_attempt
+            ):
+                continue
+            return result
+        return result
+
 
     def import_bitwarden_backup(
         self,

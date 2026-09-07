@@ -24,7 +24,6 @@ import gzip
 import json
 import os
 import re
-import shlex
 import tempfile
 from dataclasses import dataclass
 from typing import List, Mapping, Optional, Protocol
@@ -236,68 +235,76 @@ DEFAULT_SSH_BACKUP_DIR = "~/sshpilot-backups"
 _BACKUP_NAME_DATE_RE = re.compile(r"(\d{4})(\d{2})(\d{2})")
 
 
-def _q(path: str) -> str:
-    """Shell-quote a remote path while still letting the remote shell expand a leading ``~/``
-    (``shlex.quote`` would neutralise the tilde). Everything after the tilde is quoted, so a
-    user-typed path with spaces/metacharacters can't break out of the command."""
-    if path == "~":
-        return "~"
-    if path.startswith("~/"):
-        return "~/" + shlex.quote(path[2:])
-    return shlex.quote(path)
+class RemoteBackupStore(Protocol):
+    """The remote-filesystem surface a backup destination needs.
+
+    Implementations live in the daemon (:mod:`sshpilot.daemon.backup_transport`):
+    one over the file manager's SFTP stack, one over the same one-shot command
+    service Host Info uses. Every method raises :class:`BackupError` carrying the
+    caller-facing message code, so this module never spawns ``ssh`` itself and
+    stays GTK-free and transport-agnostic.
+    """
+
+    def ensure_directory(self, path: str) -> None:
+        """Create *path* if absent and confirm it is writable."""
+
+    def free_space_bytes(self, path: str) -> Optional[int]:
+        """Free bytes on the filesystem holding *path*, or ``None`` if unknown."""
+
+    def list_backups(self, path: str) -> List[BackupEntry]:
+        """Every ``*.spbk`` directly in *path* (``.part`` uploads excluded)."""
+
+    def upload(self, local_path: str, remote_path: str) -> None:
+        """Copy a local file to *remote_path*, atomically and leaving no partial
+        file behind on failure."""
+
+    def download(self, remote_path: str, local_path: str) -> None:
+        """Copy *remote_path* to a local file, byte for byte."""
+
+
+def backup_entry_for(remote_path: str) -> BackupEntry:
+    """A listing entry for one remote ``.spbk``, dated from its filename.
+
+    Shared by every store so a backup is labelled identically however it was
+    listed; app-generated names carry ``…_YYYYMMDD_HHMM.spbk``.
+    """
+    base = remote_path.rsplit("/", 1)[-1]
+    match = _BACKUP_NAME_DATE_RE.search(base)
+    date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}" if match else ""
+    return BackupEntry(id=remote_path, name=base, date=date)
 
 
 class SSHServerBackupBackend:
     """Store the ``.spbk`` archive as a file in a directory on one of the user's own SSH servers.
 
-    Transport is the plain ssh exec channel (``cat``), not the SFTP subsystem, so it works
-    anywhere ssh does. ``runner`` is a duck-typed object exposing
-    ``run_command(cmd, *, input=None, timeout=…) -> (exit_code, stdout_bytes, stderr_text)`` —
-    in the app this is an :class:`OpenSSHSFTPManager` (which rides the shared native-auth path);
-    in tests it is a fake. Kept GTK-free like the other backends."""
+    Transport is delegated entirely to *store* (a :class:`RemoteBackupStore`) —
+    in the daemon that is the file manager's SFTP stack, falling back to the
+    one-shot command service Host Info uses for hosts with no SFTP subsystem;
+    in tests it is a fake. This class owns only the backup *policy*: where the
+    archive lives, how much room it needs, and what the listing looks like.
+    """
     name = "ssh"
 
-    def __init__(self, runner, remote_dir: str = DEFAULT_SSH_BACKUP_DIR, *, item_name: str = ""):
-        self._run = runner
+    def __init__(self, store: RemoteBackupStore, remote_dir: str = DEFAULT_SSH_BACKUP_DIR,
+                 *, item_name: str = ""):
+        self._store = store
         self._dir = (remote_dir or DEFAULT_SSH_BACKUP_DIR).rstrip("/") or DEFAULT_SSH_BACKUP_DIR
         self._name = item_name or "sshpilot_backup.spbk"
 
     def _remote_path(self, name: str) -> str:
-        """Logical (unquoted) remote path for ``name`` in the backup dir. Quote at command build."""
+        """Logical remote path for ``name`` in the backup dir."""
         return f"{self._dir}/{name}"
 
     def preflight(self, archive_size: int) -> None:
-        """Ensure the remote dir exists and is writable and has room. Raises ``BackupError``.
-
-        One round-trip: create the dir, confirm it's writable, and read free space. A launch
-        failure (``exit_code == -1``) means we couldn't even reach the host over ssh."""
-        qdir = _q(self._dir)
-        # Only the create/write check gates preflight; df is best-effort ("|| true") so a
-        # missing/broken df on the remote doesn't masquerade as a permission error.
-        rc, out, err = self._run.run_command(
-            f"mkdir -p {qdir} && test -w {qdir} && {{ df -Pk {qdir} | tail -1 || true; }}",
-            timeout=60)
-        if rc == -1:
-            raise BackupError(
-                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
-                diagnostic=err or "ssh failed",
-            )
-        if rc != 0:
-            raise BackupError(
-                SecretTransferMessageCode.SSH_SERVER_DIRECTORY_UNAVAILABLE,
-                parameters={"directory": self._dir},
-                diagnostic=(
-                    (err or out.decode("utf-8", "replace")).strip()
-                    or "permission denied"
-                ),
-            )
-        avail_kb = _parse_df_avail_kb(out)
-        if avail_kb is not None and avail_kb * 1024 < archive_size * 1.1:
+        """Ensure the remote dir exists, is writable, and has room. Raises ``BackupError``."""
+        self._store.ensure_directory(self._dir)
+        available = self._store.free_space_bytes(self._dir)
+        if available is not None and available < archive_size * 1.1:
             raise BackupError(
                 SecretTransferMessageCode.SSH_SERVER_FREE_SPACE_INSUFFICIENT,
                 parameters={
                     "required": _human(archive_size),
-                    "available": _human(avail_kb * 1024),
+                    "available": _human(available),
                     "directory": self._dir,
                 },
             )
@@ -308,70 +315,27 @@ class SSHServerBackupBackend:
             tmp_path = tmp.name
         try:
             write_spbk(tmp_path, manifest, passphrase or None)
-            with open(tmp_path, "rb") as fh:
-                data = fh.read()
+            # The archive is streamed from this file rather than read into
+            # memory, so a large key set costs no more than its size on disk.
+            self.preflight(os.path.getsize(tmp_path))
+            remote = self._remote_path(self._name)
+            self._store.upload(tmp_path, remote)
         finally:
             try:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-        self.preflight(len(data))
-        remote = self._remote_path(self._name)
-        qpart, qfinal = _q(remote + ".part"), _q(remote)
-        # ponytail: whole archive is read into memory for the cat stdin upload — fine for typical
-        # backups (config + secrets); switch to OpenSSHSFTPManager.upload() if large key sets matter.
-        rc, out, err = self._run.run_command(
-            f"cat > {qpart} && mv {qpart} {qfinal}", input=data, timeout=300)
-        if rc != 0:
-            # Best-effort: don't leave a half-written .part behind (it's excluded from listings).
-            try:
-                self._run.run_command(f"rm -f {qpart}", timeout=30)
-            except Exception:
-                pass
-            raise BackupError(
-                SecretTransferMessageCode.SSH_SERVER_WRITE_FAILED,
-                diagnostic=(
-                    (err or out.decode("utf-8", "replace")).strip()
-                    or "unknown error"
-                ),
-            )
         return BackupEntry(id=remote, name=self._name)
 
     def list_exports(self) -> List[BackupEntry]:
-        qdir = _q(self._dir)
-        rc, out, err = self._run.run_command(f"ls -1 {qdir}/*.spbk 2>/dev/null", timeout=60)
-        # Distinguish an ssh-level failure (rc 255) or launch failure (rc -1) from a genuinely
-        # empty/missing dir (rc 1/2) — otherwise a connect/auth error looks like "no backups".
-        if rc in (-1, 255):
-            raise BackupError(
-                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
-                diagnostic=(err or "").strip() or "ssh failed",
-            )
-        if rc != 0:
-            return []
-        entries: List[BackupEntry] = []
-        for line in out.decode("utf-8", "replace").splitlines():
-            path = line.strip()
-            if not path:
-                continue
-            base = path.rsplit("/", 1)[-1]
-            m = _BACKUP_NAME_DATE_RE.search(base)
-            date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
-            entries.append(BackupEntry(id=path, name=base, date=date))
+        entries = list(self._store.list_backups(self._dir))
         entries.sort(key=lambda e: e.name, reverse=True)
         return entries
 
     def download(self, entry: BackupEntry, local_path: str) -> None:
         """Fetch the raw ``.spbk`` bytes to ``local_path`` (leaves any encryption intact so the
         existing import flow can prompt for the passphrase)."""
-        rc, out, err = self._run.run_command(f"cat {_q(entry.id)}", timeout=300)
-        if rc != 0:
-            raise BackupError(
-                SecretTransferMessageCode.SSH_BACKUP_READ_FAILED,
-                diagnostic=err.strip() or "unknown error",
-            )
-        with open(local_path, "wb") as fh:
-            fh.write(out)
+        self._store.download(entry.id, local_path)
 
     def read(self, entry: BackupEntry, *, passphrase: Optional[str] = None) -> dict:
         from .backup_archive import read_spbk
@@ -385,15 +349,6 @@ class SSHServerBackupBackend:
                 os.unlink(tmp_path)
             except OSError:
                 pass
-
-
-def _parse_df_avail_kb(out: bytes) -> Optional[int]:
-    """Available KB from a ``df -Pk … | tail -1`` line (POSIX field 4). None if unparseable."""
-    try:
-        fields = out.decode("utf-8", "replace").split()
-        return int(fields[3])
-    except (ValueError, IndexError):
-        return None
 
 
 def _human(num_bytes: float) -> str:

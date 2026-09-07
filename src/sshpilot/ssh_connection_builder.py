@@ -427,10 +427,7 @@ def build_native_command(
         cmd.extend(['-F', config_override])
 
     if app_config:
-        try:
-            app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
-        except Exception:
-            app_ssh_config = {}
+        app_ssh_config = _app_ssh_config(app_config)
         overrides = app_ssh_config.get('ssh_overrides', [])
         if isinstance(overrides, (list, tuple)):
             for entry in overrides:
@@ -477,6 +474,20 @@ class ConnectionContext:
     interaction_policy: str = "normal"
     target_override: Optional[str] = None
     force_tty: bool = False  # Force a remote TTY allocation (-t)
+
+
+def _app_ssh_config(app_config: Any) -> Dict[str, Any]:
+    """App-level ``ssh.*`` preferences as a dict, whatever ``app_config`` is.
+
+    Always a mapping: callers index it directly, and a config shim that returns
+    ``None`` (or anything else) must not take the whole command build down."""
+    if not app_config or not hasattr(app_config, 'get_ssh_config'):
+        return {}
+    try:
+        values = app_config.get_ssh_config()
+    except Exception:
+        return {}
+    return values if isinstance(values, dict) else {}
 
 
 def _get_ssh_config_value(
@@ -773,12 +784,7 @@ def _build_base_ssh_command(
     # would defeat its interactive purpose (first login usually needs a prompt).
     is_copy_id = (command_type == 'ssh-copy-id')
 
-    app_ssh_config = {}
-    if app_config:
-        try:
-            app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
-        except Exception:
-            pass
+    app_ssh_config = _app_ssh_config(app_config)
 
     # Directives this Host block authored, emitted before the app-wide
     # Preferences below so the connection's own values win — the same rule the
@@ -1257,16 +1263,11 @@ def build_ssh_connection(
             except Exception:
                 config_override = None
 
-        app_ssh_config = {}
+        app_ssh_config = _app_ssh_config(app_config)
         overrides: List[str] = []
-        if app_config:
-            try:
-                app_ssh_config = app_config.get_ssh_config() if hasattr(app_config, 'get_ssh_config') else {}
-            except Exception:
-                app_ssh_config = {}
-            raw_overrides = app_ssh_config.get('ssh_overrides', [])
-            if isinstance(raw_overrides, (list, tuple)):
-                overrides = [str(entry) for entry in raw_overrides if entry]
+        raw_overrides = app_ssh_config.get('ssh_overrides', [])
+        if isinstance(raw_overrides, (list, tuple)):
+            overrides = [str(entry) for entry in raw_overrides if entry]
 
         # Directives this Host block authored are re-emitted as argv so the
         # session uses what the editor shows, even when an earlier `Host *`

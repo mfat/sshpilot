@@ -653,8 +653,11 @@ def test_preview_bitwarden_and_ssh_delegate_to_service():
         _state(),
     )
     assert r2.operation()["kind"] == "ssh"
+    # The client id rides along so an encrypted archive's passphrase prompt has
+    # somewhere to go.
     service.preview_ssh_backup.assert_called_once_with(
-        connection_id="srv", remote_dir="~/bk", entry_id="e2")
+        connection_id="srv", remote_dir="~/bk", entry_id="e2",
+        owner_client_id="client-1")
 
 
 def test_preview_params_are_validated():

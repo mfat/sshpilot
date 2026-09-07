@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # Canonical field model
@@ -253,3 +253,127 @@ def ssh_settings_from_values(
         "debug_enabled": debug_enabled,
         "controlmaster": controlmaster,
     }
+
+
+# ---------------------------------------------------------------------------
+# Effective SSH settings for command builders
+# ---------------------------------------------------------------------------
+
+
+def ssh_config_from_settings(get_setting: Callable[[str, Any], Any]) -> Dict[str, Any]:
+    """Return the effective ``ssh.*`` settings, coerced and defaulted.
+
+    ``get_setting`` is a ``(dotted_key, default) -> value`` reader over the app
+    settings. Every consumer of app-level SSH preferences (the GTK ``Config``
+    and the daemon's headless settings shim) goes through here, so a builder
+    sees the same dict whichever side of the daemon boundary it runs on.
+    """
+
+    defaults: Dict[str, Any] = {
+        'auto_add_host_keys': True,
+        'batch_mode': False,
+        'compression': False,
+        'debug_enabled': False,
+        'strict_host_key_checking': 'accept-new',
+        'use_isolated_config': False,
+        'verbosity': 0,
+        'ssh_overrides': [],
+        'apply_default_keepalive': True,
+        'default_keepalive_interval': 15,
+        'default_keepalive_count': 3,
+    }
+
+    optional_int_keys = {
+        'connection_attempts',
+        'connection_timeout',
+        'keepalive_count_max',
+        'keepalive_interval',
+    }
+
+    # Internal keepalive defaults applied when the user hasn't set their own
+    # keepalive. Always present (non-optional) so the builder can rely on them.
+    positive_int_keys = {
+        'default_keepalive_interval',
+        'default_keepalive_count',
+    }
+
+    bool_keys = {
+        'auto_add_host_keys',
+        'batch_mode',
+        'compression',
+        'debug_enabled',
+        'use_isolated_config',
+        'apply_default_keepalive',
+    }
+
+    config: Dict[str, Any] = {}
+
+    for key, default_value in defaults.items():
+        value = get_setting(f'ssh.{key}', default_value)
+
+        if key in bool_keys:
+            if isinstance(value, bool):
+                pass
+            elif isinstance(value, str):
+                lowered = value.strip().lower()
+                value = lowered in {'1', 'true', 'yes', 'on'}
+            else:
+                value = bool(value)
+        elif key in optional_int_keys:
+            # handled separately after defaults loop
+            pass
+        elif key in positive_int_keys:
+            try:
+                coerced_int = int(value)
+            except (TypeError, ValueError):
+                coerced_int = int(default_value)
+            value = coerced_int if coerced_int > 0 else int(default_value)
+        elif key == 'strict_host_key_checking':
+            if value is None:
+                value = default_value
+            else:
+                strict_value = str(value).strip()
+                if not strict_value:
+                    value = ''
+                else:
+                    normalized = strict_value.lower()
+                    if normalized in {'accept-new', 'yes', 'no', 'ask'}:
+                        value = 'accept-new' if normalized == 'accept-new' else normalized
+                    else:
+                        value = default_value
+        elif key == 'ssh_overrides':
+            if isinstance(value, (list, tuple)):
+                coerced: List[str] = []
+                for entry in value:
+                    if entry is None:
+                        continue
+                    coerced.append(str(entry))
+                value = coerced
+            else:
+                value = []
+
+        config[key] = value
+
+    for key in optional_int_keys:
+        raw_value = get_setting(f'ssh.{key}', None)
+        if raw_value in (None, ''):
+            config[key] = None
+            continue
+        try:
+            coerced = int(raw_value)
+        except (TypeError, ValueError):
+            config[key] = None
+            continue
+        if coerced <= 0:
+            config[key] = None
+        else:
+            config[key] = coerced
+
+    # verbosity remains treated as integer, defaulting to 0 when unset
+    verbosity_value = get_setting('ssh.verbosity', defaults['verbosity'])
+    try:
+        config['verbosity'] = int(verbosity_value)
+    except (TypeError, ValueError):
+        config['verbosity'] = defaults['verbosity']
+
+    return config

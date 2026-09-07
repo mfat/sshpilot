@@ -4011,7 +4011,7 @@ class RequestDispatcher:
     def _handle_preview_ssh_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         params = request.params
         if set(params) != {"connection_id", "remote_dir", "entry_id"}:
@@ -4026,6 +4026,7 @@ class RequestDispatcher:
         if type(entry_id) is not str or not entry_id.strip():
             raise ValueError("entry_id must be a non-empty string")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         from sshpilot.api.transport.codec import secret_transfer_preview_to_wire
 
         return self._defer(
@@ -4034,6 +4035,7 @@ class RequestDispatcher:
                     connection_id=connection_id,
                     remote_dir=remote_dir,
                     entry_id=entry_id,
+                    owner_client_id=owner_client_id,
                 )
             )
         )
@@ -4092,7 +4094,7 @@ class RequestDispatcher:
     def _handle_import_ssh_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_transfer_result_to_wire
 
@@ -4112,6 +4114,7 @@ class RequestDispatcher:
         if not isinstance(options, dict):
             raise ValueError("options must be an object")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: secret_transfer_result_to_wire(
                 service.import_ssh_backup(
@@ -4119,6 +4122,7 @@ class RequestDispatcher:
                     remote_dir=remote_dir,
                     entry_id=entry_id,
                     options=options,
+                    owner_client_id=owner_client_id,
                 )
             )
         )
