@@ -11,6 +11,8 @@ from sshpilot.api.models.host_info import (
     CpuInfo,
     FailedUnit,
     FilesystemUsage,
+    HostInfoFailure,
+    HostInfoFailureCode,
     HostInfoProbe,
     HostInfoRequest,
     HostInfoSnapshot,
@@ -30,6 +32,7 @@ from sshpilot.api.models.host_info import (
     SocketDirection,
     TemperatureReading,
 )
+from sshpilot.api.errors import ErrorCode
 from sshpilot.api.models.operations import (
     OperationId,
     OperationKind,
@@ -161,6 +164,64 @@ def test_summary_round_trips_with_counters_and_no_snapshot():
 def test_summary_round_trips_with_a_full_snapshot():
     summary = HostInfoSummary(_operation(), HostInfoProbe.FULL, _snapshot(), ())
     assert host_info_summary_from_wire(host_info_summary_to_wire(summary)) == summary
+
+
+def test_summary_failure_round_trips_without_rendered_ui_text():
+    failure = HostInfoFailure(
+        HostInfoFailureCode.PROBE_FAILED,
+        ErrorCode.REMOTE_COMMAND_FAILED,
+        parameters={},
+        diagnostic="ssh: connect to host example.test port 22: Connection refused",
+    )
+    summary = HostInfoSummary(
+        _operation(), HostInfoProbe.FULL, None, (), failure
+    )
+
+    wire = host_info_summary_to_wire(summary)
+
+    assert wire["failure"] == {
+        "kind": "host_info",
+        "code": "probe_failed",
+        "error_code": "remote_command_failed",
+        "parameters": {},
+        "diagnostic": failure.diagnostic,
+    }
+    assert "message" not in wire["failure"]
+    assert host_info_summary_from_wire(wire) == summary
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    (
+        ("kind", "other", "unknown kind"),
+        ("code", "other", "unknown code"),
+        ("error_code", "other", "unknown error code"),
+        ("parameters", [], "must be an object"),
+        ("message", "rendered English", "unsupported fields"),
+    ),
+)
+def test_invalid_host_info_failure_payload_is_rejected(field, value, match):
+    summary = HostInfoSummary(
+        _operation(),
+        failure=HostInfoFailure(
+            HostInfoFailureCode.PROBE_FAILED,
+            ErrorCode.REMOTE_COMMAND_FAILED,
+        ),
+    )
+    wire = host_info_summary_to_wire(summary)
+    wire["failure"][field] = value
+
+    with pytest.raises(ValueError, match=match):
+        host_info_summary_from_wire(wire)
+
+
+def test_host_info_failure_rejects_unexpected_parameters():
+    with pytest.raises(ValueError, match="parameters do not match"):
+        HostInfoFailure(
+            HostInfoFailureCode.PROBE_FAILED,
+            ErrorCode.REMOTE_COMMAND_FAILED,
+            parameters={"message": "rendered English"},
+        )
 
 
 def test_unknown_fields_are_rejected():

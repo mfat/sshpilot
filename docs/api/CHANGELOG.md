@@ -16,7 +16,28 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.53 (current)
+## API 0.54 (current)
+
+### API 0.54 structured host-information failures
+
+- Bumped `API_IMPLEMENTATION_VERSION` because `HostInfoSummary.failure` now
+  carries a strict `HostInfoFailure` instead of the generic rendered
+  `ServiceFailure`. The wire object contains a stable `HostInfoFailureCode`,
+  the existing machine `ErrorCode`, strict parameters, and an optional opaque
+  diagnostic.
+- GTK maps the Host Info code to gettext msgids and formats only after
+  translation. Remote SSH stderr and unknown technical failure text remain
+  separate diagnostics and are never gettext inputs.
+- Unreadable remote output is now returned as a structured summary failure
+  instead of an `invalid_request` response carrying a rendered English
+  sentence. Probe execution, parsing, cancellation, and success results are
+  otherwise unchanged.
+- The shared `ServiceFailure` model and its `{code, message}` wire shape remain
+  unchanged for broadcast commands, forwards, and other consumers.
+  `PROTOCOL_VERSION` remains `1.0`; exact API implementation negotiation
+  rejects mismatched peers before Host Info traffic.
+
+## API 0.53
 
 ### API 0.53 host information beyond what one session can see
 

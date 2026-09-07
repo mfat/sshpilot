@@ -190,8 +190,10 @@ are classified potentially sensitive because result semantics are plugin-defined
 
 `HostInfoRequest` names a connection and a `HostInfoProbe`. `HostInfoSummary`
 pairs the operation with what it has produced: a `HostInfoSnapshot` for a
-completed full probe, `InterfaceCounters` for either probe, and a
-`ServiceFailure` when the probe failed.
+completed full probe, `InterfaceCounters` for either probe, and a strict
+`HostInfoFailure` when the probe failed. A failure carries a stable
+`HostInfoFailureCode`, the machine `ErrorCode`, exact validated parameters,
+and an optional opaque diagnostic. It never carries rendered UI text.
 
 `HostInfoSnapshot` aggregates `CpuInfo`, `MemoryInfo`, `LoadAverage`, and
 tuples of `FilesystemUsage`, `NetworkInterface`, `TemperatureReading`,
@@ -200,6 +202,8 @@ DNS servers, and the SSH port the probe arrived on.
 
 These models carry values only — bytes as integers, temperatures as numbers,
 no formatted or localized text — so every frontend renders them consistently.
+A frontend maps `HostInfoFailureCode` to its own localized presentation and
+formats parameters only after translation; diagnostics are appended unchanged.
 A reading the host does not publish is `None` rather than a substituted
 default: `MemoryInfo.available_bytes` is `None` on a kernel that omits
 `MemAvailable`, and `ssh_port` is `None` when the port could not be

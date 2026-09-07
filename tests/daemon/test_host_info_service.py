@@ -14,13 +14,18 @@ from sshpilot.api.models.broadcast import (
     HostCommandState,
 )
 from sshpilot.api.models.common import ClientId, ConnectionId
-from sshpilot.api.models.host_info import HostInfoProbe, HostInfoRequest
+from sshpilot.api.models.host_info import (
+    HostInfoFailureCode,
+    HostInfoProbe,
+    HostInfoRequest,
+)
 from sshpilot.api.models.interactions import ExecutionInteractionMode
 from sshpilot.api.models.operations import (
     OperationId,
     OperationKind,
     OperationState,
     OperationSummary,
+    ServiceFailure,
 )
 from sshpilot.core.host_info import FULL_PROBE_COMMAND, NETWORK_COUNTERS_COMMAND
 from sshpilot.daemon.host_info_service import HostInfoService
@@ -97,6 +102,7 @@ def test_full_probe_sends_the_core_probe_text_interactively():
     assert summary.snapshot.hostname == "router"
     assert summary.snapshot.memory.used_bytes == 512 * 1024
     assert summary.counters[0].rx_bytes == 100
+    assert summary.failure is None
 
 
 def test_counter_probe_is_cheap_and_never_raises_its_own_prompt():
@@ -131,7 +137,7 @@ def test_a_running_probe_reports_no_result_yet():
     assert summary.failure is None
 
 
-def test_a_failed_probe_surfaces_the_remote_error():
+def test_a_failed_probe_keeps_the_remote_error_as_an_opaque_diagnostic():
     broadcast = FakeBroadcastService(
         HostCommandResult(
             CONNECTION, HostCommandState.FAILED, 127, "", "sh: ip: not found"
@@ -144,7 +150,118 @@ def test_a_failed_probe_surfaces_the_remote_error():
 
     assert summary.snapshot is None
     assert summary.failure is not None
-    assert summary.failure.message == "sh: ip: not found"
+    assert summary.failure.code is HostInfoFailureCode.PROBE_FAILED
+    assert summary.failure.error_code is ErrorCode.REMOTE_COMMAND_FAILED
+    assert summary.failure.parameters == {}
+    assert summary.failure.diagnostic == "sh: ip: not found"
+
+
+@pytest.mark.parametrize(
+    ("service_code", "expected_code", "expected_error"),
+    (
+        (
+            "broadcast_timeout",
+            HostInfoFailureCode.PROBE_TIMED_OUT,
+            ErrorCode.OPERATION_TIMED_OUT,
+        ),
+        (
+            "broadcast_nonzero_exit",
+            HostInfoFailureCode.PROBE_FAILED,
+            ErrorCode.REMOTE_COMMAND_FAILED,
+        ),
+        (
+            "broadcast_launch_failed",
+            HostInfoFailureCode.PROBE_START_FAILED,
+            ErrorCode.SESSION_STARTUP_FAILED,
+        ),
+        (
+            ErrorCode.CONNECTION_NOT_FOUND.value,
+            HostInfoFailureCode.CONNECTION_NOT_FOUND,
+            ErrorCode.CONNECTION_NOT_FOUND,
+        ),
+        (
+            ErrorCode.UNSUPPORTED_SESSION_PROTOCOL.value,
+            HostInfoFailureCode.SSH_CONNECTION_REQUIRED,
+            ErrorCode.UNSUPPORTED_SESSION_PROTOCOL,
+        ),
+    ),
+)
+def test_broadcast_failure_codes_project_to_host_info_codes(
+    service_code, expected_code, expected_error
+):
+    broadcast = FakeBroadcastService(
+        HostCommandResult(
+            CONNECTION,
+            HostCommandState.FAILED,
+            failure=ServiceFailure(service_code, "rendered backend text"),
+        ),
+        state=OperationState.FAILED,
+    )
+
+    summary = HostInfoService(broadcast).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+
+    assert summary.failure.code is expected_code
+    assert summary.failure.error_code is expected_error
+    assert summary.failure.diagnostic == ""
+
+
+def test_unknown_broadcast_failure_text_is_only_an_opaque_diagnostic():
+    broadcast = FakeBroadcastService(
+        HostCommandResult(
+            CONNECTION,
+            HostCommandState.FAILED,
+            failure=ServiceFailure("vendor_failure", "vendor diagnostic 71"),
+        ),
+        state=OperationState.FAILED,
+    )
+
+    summary = HostInfoService(broadcast).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+
+    assert summary.failure.code is HostInfoFailureCode.PROBE_FAILED
+    assert summary.failure.diagnostic == "vendor diagnostic 71"
+
+
+def test_unclassified_machine_error_text_is_only_an_opaque_diagnostic():
+    broadcast = FakeBroadcastService(
+        HostCommandResult(
+            CONNECTION,
+            HostCommandState.FAILED,
+            failure=ServiceFailure(
+                ErrorCode.PERMISSION_DENIED.value,
+                "policy engine diagnostic 29",
+            ),
+        ),
+        state=OperationState.FAILED,
+    )
+
+    summary = HostInfoService(broadcast).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+
+    assert summary.failure.code is HostInfoFailureCode.PROBE_FAILED
+    assert summary.failure.error_code is ErrorCode.PERMISSION_DENIED
+    assert summary.failure.diagnostic == "policy engine diagnostic 29"
+
+
+def test_unreadable_system_information_is_a_structured_summary_failure(monkeypatch):
+    def reject(_output):
+        raise ValueError("invalid remote counter")
+
+    monkeypatch.setattr("sshpilot.daemon.host_info_service.parse_host_info", reject)
+    summary = HostInfoService(_succeeded(FULL_OUTPUT)).start(
+        HostInfoRequest(CONNECTION), owner_client_id=CLIENT
+    )
+
+    assert summary.snapshot is None
+    assert summary.failure.code is (
+        HostInfoFailureCode.UNREADABLE_SYSTEM_INFORMATION
+    )
+    assert summary.failure.error_code is ErrorCode.REMOTE_COMMAND_FAILED
+    assert summary.failure.diagnostic == ""
 
 
 def test_get_and_cancel_delegate_to_the_broadcast_operation():
