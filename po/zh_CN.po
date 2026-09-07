@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-06 22:52+0330\n"
+"POT-Creation-Date: 2026-09-07 11:08+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -48,7 +48,7 @@ msgstr "本地终端按钮"
 #: src/sshpilot/window_help.py:213 src/sshpilot/window_session.py:150
 #: src/sshpilot/window_tabs.py:1227 src/sshpilot/window_tabs.py:1361
 #: src/sshpilot/window_tabs.py:1539
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:734
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:745
 msgid "Split View"
 msgstr "分屏视图"
 
@@ -256,7 +256,7 @@ msgstr "确定要删除空分组“{name}”吗？"
 
 #: src/sshpilot/actions.py:579 src/sshpilot/actions.py:906
 #: src/sshpilot/actions.py:961 src/sshpilot/authorized_keys_window.py:390
-#: src/sshpilot/command_blocks.py:2336 src/sshpilot/file_manager_window.py:1703
+#: src/sshpilot/command_blocks.py:2389 src/sshpilot/file_manager_window.py:1703
 #: src/sshpilot/sidebar.py:4534 src/sshpilot/window.py:1869
 msgid "Delete"
 msgstr "删除"
@@ -409,7 +409,7 @@ msgstr "安全密钥"
 #: src/sshpilot/askpass_utils.py:846
 #: src/sshpilot/daemon_interaction_dialogs.py:367
 #: src/sshpilot/daemon_sessions_dialog.py:35
-#: src/sshpilot/machine_info_dialog.py:532
+#: src/sshpilot/machine_info_dialog.py:837
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:444
 #: src/sshpilot/preferences.py:4875 src/sshpilot/sshcopyid_window.py:559
 #: src/sshpilot/terminal.py:1059 src/sshpilot/welcome_page.py:708
@@ -1356,66 +1356,66 @@ msgstr "输入要运行的 shell 命令："
 msgid "Run"
 msgstr "运行"
 
-#: src/sshpilot/command_blocks.py:2087
+#: src/sshpilot/command_blocks.py:2094
 msgid "Interactive Command"
 msgstr "交互式命令"
 
-#: src/sshpilot/command_blocks.py:2177
+#: src/sshpilot/command_blocks.py:2230
 msgid "No groups with connections"
 msgstr "无包含连接的分组"
 
-#: src/sshpilot/command_blocks.py:2194
+#: src/sshpilot/command_blocks.py:2247
 msgid "Filter groups…"
 msgstr "筛选分组…"
 
-#: src/sshpilot/command_blocks.py:2227
+#: src/sshpilot/command_blocks.py:2280
 #, python-format
 msgid "%d connections"
 msgstr "%d 个连接"
 
-#: src/sshpilot/command_blocks.py:2227
+#: src/sshpilot/command_blocks.py:2280
 msgid "1 connection"
 msgstr "1 个连接"
 
-#: src/sshpilot/command_blocks.py:2286
+#: src/sshpilot/command_blocks.py:2339
 msgid "No connections in group"
 msgstr "分组中无连接"
 
-#: src/sshpilot/command_blocks.py:2300 src/sshpilot/macos_menubar.py:77
+#: src/sshpilot/command_blocks.py:2353 src/sshpilot/macos_menubar.py:77
 msgid "Edit"
 msgstr "编辑"
 
-#: src/sshpilot/command_blocks.py:2302 src/sshpilot/window_tabs.py:248
+#: src/sshpilot/command_blocks.py:2355 src/sshpilot/window_tabs.py:248
 msgid "Duplicate"
 msgstr "创建副本"
 
 #. Banner title
 #. The banner title is a sibling label, and GTK/PyGObject cannot publish
 #. a labelled-by relation, so name the entry directly.
-#: src/sshpilot/command_blocks.py:2306 src/sshpilot/macos_menubar.py:91
+#: src/sshpilot/command_blocks.py:2359 src/sshpilot/macos_menubar.py:91
 #: src/sshpilot/shortcut_editor.py:63 src/sshpilot/window.py:3584
 #: src/sshpilot/window.py:3609 src/sshpilot/window.py:3851
 #: src/sshpilot/window_help.py:169
 msgid "Broadcast Command"
 msgstr "广播命令"
 
-#: src/sshpilot/command_blocks.py:2311
+#: src/sshpilot/command_blocks.py:2364
 msgid "Run on host…"
 msgstr "在主机上运行…"
 
-#: src/sshpilot/command_blocks.py:2316
+#: src/sshpilot/command_blocks.py:2369
 msgid "Run for group…"
 msgstr "在分组上运行…"
 
-#: src/sshpilot/command_blocks.py:2324
+#: src/sshpilot/command_blocks.py:2377
 msgid "Remove from Favorites"
 msgstr "从收藏中移除"
 
-#: src/sshpilot/command_blocks.py:2330
+#: src/sshpilot/command_blocks.py:2383
 msgid "Add to Favorites"
 msgstr "添加到收藏"
 
-#: src/sshpilot/command_blocks.py:2357
+#: src/sshpilot/command_blocks.py:2410
 msgid "Command deleted"
 msgstr "命令已删除"
 
@@ -1773,7 +1773,7 @@ msgid "Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."
 msgstr "IdentityAgent、PKCS#11 和 FIDO 安全密钥的可选来源。"
 
 #: src/sshpilot/connection_dialog.py:3560
-#: src/sshpilot/machine_info_dialog.py:1522
+#: src/sshpilot/machine_info_dialog.py:1998
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:67
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:74
 #: src/sshpilot/shortcut_editor.py:442 src/sshpilot/shortcut_editor.py:456
@@ -1873,7 +1873,7 @@ msgstr "用户名"
 #: src/sshpilot/connection_dialog_port_forwarding.py:191
 #: src/sshpilot/connection_dialog_port_forwarding.py:558
 #: src/sshpilot/effective_config_dialog.py:34
-#: src/sshpilot/machine_info_dialog.py:1555
+#: src/sshpilot/machine_info_dialog.py:2030
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
 msgid "Port"
 msgstr "端口"
@@ -3926,7 +3926,7 @@ msgstr "守护进程"
 msgid "Crash"
 msgstr "崩溃"
 
-#: src/sshpilot/log_viewer.py:574 src/sshpilot/machine_info_dialog.py:536
+#: src/sshpilot/log_viewer.py:574 src/sshpilot/machine_info_dialog.py:841
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:620
 #: src/sshpilot/preferences.py:864
 msgid "Refresh"
@@ -4010,135 +4010,160 @@ msgid ""
 "sharing."
 msgstr "日志行可能包含主机名、用户名和文件路径。分享前请核对。"
 
-#: src/sshpilot/machine_info_dialog.py:125
-#: src/sshpilot/machine_info_dialog.py:141
-#: src/sshpilot/machine_info_dialog.py:169
-#: src/sshpilot/machine_info_dialog.py:187
-#: src/sshpilot/machine_info_dialog.py:204
-#: src/sshpilot/machine_info_dialog.py:208
-#: src/sshpilot/machine_info_dialog.py:1155
-#: src/sshpilot/machine_info_dialog.py:1377
-#: src/sshpilot/machine_info_dialog.py:1606
+#: src/sshpilot/machine_info_dialog.py:156
+#: src/sshpilot/machine_info_dialog.py:172
+#: src/sshpilot/machine_info_dialog.py:200
+#: src/sshpilot/machine_info_dialog.py:218
+#: src/sshpilot/machine_info_dialog.py:235
+#: src/sshpilot/machine_info_dialog.py:250
+#: src/sshpilot/machine_info_dialog.py:1539
+#: src/sshpilot/machine_info_dialog.py:1665
+#: src/sshpilot/machine_info_dialog.py:1767
+#: src/sshpilot/machine_info_dialog.py:1863
+#: src/sshpilot/machine_info_dialog.py:2080
 msgid "N/A"
 msgstr "不可用"
 
-#: src/sshpilot/machine_info_dialog.py:127
-#: src/sshpilot/machine_info_dialog.py:143
+#: src/sshpilot/machine_info_dialog.py:158
+#: src/sshpilot/machine_info_dialog.py:174
 #, python-format
 msgid "%d B"
 msgstr "%d B"
 
-#: src/sshpilot/machine_info_dialog.py:157
+#: src/sshpilot/machine_info_dialog.py:188
 #, python-format
 msgid "%d B/s"
 msgstr "%d B/s"
 
-#: src/sshpilot/machine_info_dialog.py:175
+#: src/sshpilot/machine_info_dialog.py:206
 #, python-format
 msgid "%d day"
 msgid_plural "%d days"
 msgstr[0] "%d 天"
 
-#: src/sshpilot/machine_info_dialog.py:177
+#: src/sshpilot/machine_info_dialog.py:208
 #, python-format
 msgid "%d hour"
 msgid_plural "%d hours"
 msgstr[0] "%d 小时"
 
-#: src/sshpilot/machine_info_dialog.py:179
+#: src/sshpilot/machine_info_dialog.py:210
 #, python-format
 msgid "%d minute"
 msgid_plural "%d minutes"
 msgstr[0] "%d 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:181
+#: src/sshpilot/machine_info_dialog.py:212
 msgid "Less than a minute"
 msgstr "不到一分钟"
 
-#: src/sshpilot/machine_info_dialog.py:182
-#: src/sshpilot/machine_info_dialog.py:1391 src/sshpilot/window_dialogs.py:2171
+#: src/sshpilot/machine_info_dialog.py:213
+#: src/sshpilot/machine_info_dialog.py:1877 src/sshpilot/window_dialogs.py:2171
 msgid ", "
 msgstr ", "
 
-#: src/sshpilot/machine_info_dialog.py:189
+#: src/sshpilot/machine_info_dialog.py:220
 #, python-format
 msgid "%.2f GHz"
 msgstr "%.2f GHz"
 
-#: src/sshpilot/machine_info_dialog.py:190
+#: src/sshpilot/machine_info_dialog.py:221
 #, python-format
 msgid "%.0f MHz"
 msgstr "%.0f MHz"
 
-#: src/sshpilot/machine_info_dialog.py:194
+#: src/sshpilot/machine_info_dialog.py:225
 #, python-format
 msgid "%d%%"
 msgstr "%d%%"
 
-#: src/sshpilot/machine_info_dialog.py:204
+#: src/sshpilot/machine_info_dialog.py:235
+#: src/sshpilot/machine_info_dialog.py:246
 #, python-format
 msgid "%.1f%%"
 msgstr "%.1f%%"
 
-#: src/sshpilot/machine_info_dialog.py:235
+#: src/sshpilot/machine_info_dialog.py:302
 msgid "Loopback"
 msgstr "回环"
 
-#: src/sshpilot/machine_info_dialog.py:236
+#: src/sshpilot/machine_info_dialog.py:303
 msgid "Wi-Fi"
 msgstr "Wi-Fi"
 
-#: src/sshpilot/machine_info_dialog.py:237
+#: src/sshpilot/machine_info_dialog.py:304
 msgid "Ethernet"
 msgstr "以太网"
 
-#: src/sshpilot/machine_info_dialog.py:238
-#: src/sshpilot/machine_info_dialog.py:246
-#: src/sshpilot/machine_info_dialog.py:1641
+#: src/sshpilot/machine_info_dialog.py:305
+#: src/sshpilot/machine_info_dialog.py:313
+#: src/sshpilot/machine_info_dialog.py:2115
 msgid "Unknown"
 msgstr "未知"
 
-#: src/sshpilot/machine_info_dialog.py:243
+#: src/sshpilot/machine_info_dialog.py:310
 msgid "Up"
 msgstr "已启用"
 
-#: src/sshpilot/machine_info_dialog.py:244
+#: src/sshpilot/machine_info_dialog.py:311
 msgid "Down"
 msgstr "已停用"
 
-#: src/sshpilot/machine_info_dialog.py:245
+#: src/sshpilot/machine_info_dialog.py:312
 msgid "No carrier"
 msgstr "无载波"
 
-#: src/sshpilot/machine_info_dialog.py:500
-#: src/sshpilot/machine_info_dialog.py:655
+#: src/sshpilot/machine_info_dialog.py:635
+msgid "CPU utilization"
+msgstr "CPU 使用率"
+
+#: src/sshpilot/machine_info_dialog.py:645
+#: src/sshpilot/machine_info_dialog.py:1527
+msgid "Total"
+msgstr "总计"
+
+#: src/sshpilot/machine_info_dialog.py:685
+#, python-format
+msgid "%d more core"
+msgid_plural "%d more cores"
+msgstr[0] "另有 %d 个核心"
+
+#: src/sshpilot/machine_info_dialog.py:730
+#, python-format
+msgid ""
+"user %(user)s · system %(system)s · iowait %(iowait)s · steal %(steal)s · "
+"idle %(idle)s"
+msgstr "用户 %(user)s · 系统 %(system)s · I/O 等待 %(iowait)s · 被窃取 %(steal)s · 空闲 %(idle)s"
+
+#: src/sshpilot/machine_info_dialog.py:804
+#: src/sshpilot/machine_info_dialog.py:960
 msgid "Gathering host information…"
 msgstr "正在收集主机信息…"
 
-#: src/sshpilot/machine_info_dialog.py:518
+#: src/sshpilot/machine_info_dialog.py:823
 msgid "Host Info"
 msgstr "主机信息"
 
-#: src/sshpilot/machine_info_dialog.py:538
+#: src/sshpilot/machine_info_dialog.py:843
 msgid "Refresh host information"
 msgstr "刷新主机信息"
 
-#: src/sshpilot/machine_info_dialog.py:553
+#: src/sshpilot/machine_info_dialog.py:858
 #, python-format
 msgid "%(nickname)s — %(user)s@%(host)s"
 msgstr "%(nickname)s — %(user)s@%(host)s"
 
-#: src/sshpilot/machine_info_dialog.py:557
+#: src/sshpilot/machine_info_dialog.py:862
 #, python-format
 msgid "%(nickname)s — %(host)s"
 msgstr "%(nickname)s — %(host)s"
 
-#: src/sshpilot/machine_info_dialog.py:649
+#: src/sshpilot/machine_info_dialog.py:954
 msgid "Daemon connection unavailable."
 msgstr "守护进程连接不可用。"
 
-#: src/sshpilot/machine_info_dialog.py:664
-#: src/sshpilot/machine_info_dialog.py:685
+#: src/sshpilot/machine_info_dialog.py:969
+#: src/sshpilot/machine_info_dialog.py:998
 #, python-format
 msgid ""
 "Could not gather host information.\n"
@@ -4149,459 +4174,451 @@ msgstr ""
 "\n"
 "%s"
 
-#: src/sshpilot/machine_info_dialog.py:668
+#: src/sshpilot/machine_info_dialog.py:973
 msgid "The host returned no system information."
 msgstr "主机未返回系统信息。"
 
-#: src/sshpilot/machine_info_dialog.py:737
+#: src/sshpilot/machine_info_dialog.py:1050
 #, python-format
 msgid "Updated %d second ago"
 msgid_plural "Updated %d seconds ago"
 msgstr[0] "%d 秒前更新"
 
-#: src/sshpilot/machine_info_dialog.py:743
+#: src/sshpilot/machine_info_dialog.py:1056
 #, python-format
 msgid "Updated %d minute ago"
 msgid_plural "Updated %d minutes ago"
 msgstr[0] "%d 分钟前更新"
 
-#: src/sshpilot/machine_info_dialog.py:829
-#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:103
-msgid "Overview"
-msgstr "概览"
-
-#: src/sshpilot/machine_info_dialog.py:830
-msgid "Resources"
-msgstr "资源"
-
-#: src/sshpilot/machine_info_dialog.py:831
-msgid "Storage"
-msgstr "存储"
-
-#: src/sshpilot/machine_info_dialog.py:832
-#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:352
-msgid "Network"
-msgstr "网络"
-
-#: src/sshpilot/machine_info_dialog.py:833
-msgid "Traffic"
-msgstr "流量"
-
-#: src/sshpilot/machine_info_dialog.py:834
-msgid "System"
-msgstr "系统"
-
-#: src/sshpilot/machine_info_dialog.py:891
-#, python-format
-msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
-msgstr "负载 %(one).2f · %(five).2f · %(fifteen).2f"
-
-#: src/sshpilot/machine_info_dialog.py:904
-#: src/sshpilot/machine_info_dialog.py:1057
-msgid "CPU"
-msgstr "CPU"
-
-#: src/sshpilot/machine_info_dialog.py:914
-#, python-format
-msgid "swap %(used)s / %(total)s"
-msgstr "交换 %(used)s / %(total)s"
-
-#: src/sshpilot/machine_info_dialog.py:921
-#: src/sshpilot/machine_info_dialog.py:965
-#: src/sshpilot/machine_info_dialog.py:1058
-#: src/sshpilot/machine_info_dialog.py:1084
-msgid "Memory"
-msgstr "内存"
-
-#: src/sshpilot/machine_info_dialog.py:922
-#: src/sshpilot/machine_info_dialog.py:933
-#: src/sshpilot/machine_info_dialog.py:1235
+#: src/sshpilot/machine_info_dialog.py:1177
+#: src/sshpilot/machine_info_dialog.py:1306
+#: src/sshpilot/machine_info_dialog.py:1316
+#: src/sshpilot/machine_info_dialog.py:1747
 #, python-format
 msgid "%(used)s / %(total)s"
 msgstr "%(used)s / %(total)s"
 
-#: src/sshpilot/machine_info_dialog.py:938
+#: src/sshpilot/machine_info_dialog.py:1190
+#, python-format
+msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
+msgstr "负载 %(one).2f · %(five).2f · %(fifteen).2f"
+
+#: src/sshpilot/machine_info_dialog.py:1200
+#, python-format
+msgid "swap %(used)s / %(total)s"
+msgstr "交换 %(used)s / %(total)s"
+
+#: src/sshpilot/machine_info_dialog.py:1236
+#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:103
+msgid "Overview"
+msgstr "概览"
+
+#: src/sshpilot/machine_info_dialog.py:1237
+msgid "Resources"
+msgstr "资源"
+
+#: src/sshpilot/machine_info_dialog.py:1238
+msgid "Storage"
+msgstr "存储"
+
+#: src/sshpilot/machine_info_dialog.py:1239
+#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:352
+msgid "Network"
+msgstr "网络"
+
+#: src/sshpilot/machine_info_dialog.py:1240
+msgid "Traffic"
+msgstr "流量"
+
+#: src/sshpilot/machine_info_dialog.py:1241
+msgid "System"
+msgstr "系统"
+
+#. CPU utilization is a difference between two /proc/stat readings, and
+#. the gather only took the first, so this starts unknown and fills in
+#. on the next live sample.  It deliberately does not fall back to the
+#. load average: load is a queue length, and showing it here under a
+#. "CPU" heading is what this replaced.
+#: src/sshpilot/machine_info_dialog.py:1294
+#: src/sshpilot/machine_info_dialog.py:1447
+#: src/sshpilot/machine_info_dialog.py:1558
+msgid "CPU"
+msgstr "CPU"
+
+#: src/sshpilot/machine_info_dialog.py:1302
+#: src/sshpilot/machine_info_dialog.py:1346
+#: src/sshpilot/machine_info_dialog.py:1448
+#: src/sshpilot/machine_info_dialog.py:1559
+#: src/sshpilot/machine_info_dialog.py:1582
+msgid "Memory"
+msgstr "内存"
+
+#: src/sshpilot/machine_info_dialog.py:1321
 #, python-format
 msgid "%(fstype)s on %(device)s"
 msgstr "%(fstype)s 位于 %(device)s"
 
-#: src/sshpilot/machine_info_dialog.py:946
+#. Storage does not move between samples, so this gauge keeps no history.
+#: src/sshpilot/machine_info_dialog.py:1327
 msgid "Root filesystem"
 msgstr "根文件系统"
 
-#: src/sshpilot/machine_info_dialog.py:955
+#: src/sshpilot/machine_info_dialog.py:1336
 msgid "Hostname"
 msgstr "主机名"
 
-#: src/sshpilot/machine_info_dialog.py:958
-#: src/sshpilot/machine_info_dialog.py:1207
+#: src/sshpilot/machine_info_dialog.py:1339
+#: src/sshpilot/machine_info_dialog.py:1717
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:62
 msgid "Device"
 msgstr "设备"
 
-#: src/sshpilot/machine_info_dialog.py:961
+#: src/sshpilot/machine_info_dialog.py:1342
 msgid "Operating system"
 msgstr "操作系统"
 
-#: src/sshpilot/machine_info_dialog.py:962
+#: src/sshpilot/machine_info_dialog.py:1343
 msgid "Kernel"
 msgstr "内核"
 
-#: src/sshpilot/machine_info_dialog.py:963
+#: src/sshpilot/machine_info_dialog.py:1344
 msgid "Processor"
 msgstr "处理器"
 
-#: src/sshpilot/machine_info_dialog.py:964
+#: src/sshpilot/machine_info_dialog.py:1345
 msgid "CPU frequency"
 msgstr "CPU 频率"
 
-#: src/sshpilot/machine_info_dialog.py:966
+#: src/sshpilot/machine_info_dialog.py:1347
 msgid "Uptime"
 msgstr "运行时间"
 
-#: src/sshpilot/machine_info_dialog.py:967
+#: src/sshpilot/machine_info_dialog.py:1348
 msgid "Booted"
 msgstr "启动时间"
 
-#: src/sshpilot/machine_info_dialog.py:979
+#: src/sshpilot/machine_info_dialog.py:1360
 #, python-format
 msgid "%(cores)d cores · %(threads)d threads · %(sockets)d sockets"
 msgstr "%(cores)d 核心 · %(threads)d 线程 · %(sockets)d 插槽"
 
-#: src/sshpilot/machine_info_dialog.py:985
+#: src/sshpilot/machine_info_dialog.py:1366
 #, python-format
 msgid "%d core"
 msgid_plural "%d cores"
 msgstr[0] "%d 核心"
 
-#: src/sshpilot/machine_info_dialog.py:989
+#: src/sshpilot/machine_info_dialog.py:1370
 #, python-format
 msgid "%(model)s (%(topology)s)"
 msgstr "%(model)s (%(topology)s)"
 
-#: src/sshpilot/machine_info_dialog.py:1001
+#: src/sshpilot/machine_info_dialog.py:1387
 msgid "Load average"
 msgstr "平均负载"
 
-#: src/sshpilot/machine_info_dialog.py:1005
+#: src/sshpilot/machine_info_dialog.py:1391
 msgid "1 min"
 msgstr "1 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:1006
+#: src/sshpilot/machine_info_dialog.py:1392
 msgid "5 min"
 msgstr "5 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:1007
+#: src/sshpilot/machine_info_dialog.py:1393
 msgid "15 min"
 msgstr "15 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:1036
-#, python-format
-msgid "Based on %d CPU"
-msgid_plural "Based on %d CPUs"
-msgstr[0] "基于 %d 个 CPU"
+#: src/sshpilot/machine_info_dialog.py:1449
+msgid "I/O"
+msgstr "I/O"
 
-#: src/sshpilot/machine_info_dialog.py:1039
-msgid "CPU count unavailable."
-msgstr "无法获取 CPU 数量。"
+#: src/sshpilot/machine_info_dialog.py:1452
+msgid "Pressure stall"
+msgstr "资源压力"
 
-#: src/sshpilot/machine_info_dialog.py:1053
+#: src/sshpilot/machine_info_dialog.py:1455
+msgid "This host does not report pressure stall"
+msgstr "此主机不报告资源压力"
+
+#: src/sshpilot/machine_info_dialog.py:1466
+msgid "Stalled"
+msgstr "阻塞"
+
+#: src/sshpilot/machine_info_dialog.py:1467
+msgid "10 s"
+msgstr "10 秒"
+
+#: src/sshpilot/machine_info_dialog.py:1468
+msgid "60 s"
+msgstr "60 秒"
+
+#: src/sshpilot/machine_info_dialog.py:1469
+msgid "300 s"
+msgstr "300 秒"
+
+#: src/sshpilot/machine_info_dialog.py:1485
+msgid "Some tasks"
+msgstr "部分任务"
+
+#: src/sshpilot/machine_info_dialog.py:1485
+msgid "All tasks"
+msgstr "全部任务"
+
+#: src/sshpilot/machine_info_dialog.py:1505
+msgid "Process table"
+msgstr "进程表"
+
+#: src/sshpilot/machine_info_dialog.py:1508
+msgid "No process counts reported"
+msgstr "未报告进程计数"
+
+#: src/sshpilot/machine_info_dialog.py:1528
+msgid "Running"
+msgstr "运行中"
+
+#: src/sshpilot/machine_info_dialog.py:1529
+msgid "Sleeping"
+msgstr "睡眠"
+
+#: src/sshpilot/machine_info_dialog.py:1530
+msgid "Stopped"
+msgstr "已停止"
+
+#: src/sshpilot/machine_info_dialog.py:1531
+msgid "Zombie"
+msgstr "僵尸"
+
+#: src/sshpilot/machine_info_dialog.py:1532
+msgid "Threads"
+msgstr "线程"
+
+#: src/sshpilot/machine_info_dialog.py:1533
+msgid "PID limit"
+msgstr "PID 上限"
+
+#: src/sshpilot/machine_info_dialog.py:1554
 msgid "Top processes"
 msgstr "占用最高的进程"
 
-#: src/sshpilot/machine_info_dialog.py:1056
+#: src/sshpilot/machine_info_dialog.py:1557
 msgid "Process"
 msgstr "进程"
 
-#: src/sshpilot/machine_info_dialog.py:1074
+#: src/sshpilot/machine_info_dialog.py:1575
 msgid "No process list reported"
 msgstr "未报告进程列表"
 
-#. Above 100% is a real reading, not an overflow: the host measures a
-#. share of one CPU, and a threaded process uses several.
-#: src/sshpilot/machine_info_dialog.py:1078
-msgid "A share of one CPU, ranked by the host."
-msgstr "占单个 CPU 的比例，由主机排序。"
-
-#: src/sshpilot/machine_info_dialog.py:1102
-msgid "MemTotal"
-msgstr "MemTotal"
-
-#: src/sshpilot/machine_info_dialog.py:1103
-msgid "MemFree"
-msgstr "MemFree"
-
-#: src/sshpilot/machine_info_dialog.py:1104
-msgid "Buffers"
-msgstr "Buffers"
-
-#: src/sshpilot/machine_info_dialog.py:1105
-msgid "Cached"
-msgstr "Cached"
-
-#: src/sshpilot/machine_info_dialog.py:1106
-msgid "MemAvailable"
-msgstr "MemAvailable"
-
-#: src/sshpilot/machine_info_dialog.py:1127
+#: src/sshpilot/machine_info_dialog.py:1637
 msgid "Swap"
 msgstr "Swap"
 
-#: src/sshpilot/machine_info_dialog.py:1134
+#: src/sshpilot/machine_info_dialog.py:1644
 #, python-format
 msgid "%(used)s / %(total)s · %(percent)s"
 msgstr "%(used)s / %(total)s · %(percent)s"
 
-#: src/sshpilot/machine_info_dialog.py:1151
+#: src/sshpilot/machine_info_dialog.py:1661
 msgid "Temperatures"
 msgstr "温度"
 
-#: src/sshpilot/machine_info_dialog.py:1187
+#: src/sshpilot/machine_info_dialog.py:1697
 #, python-format
 msgid "%d °C"
 msgstr "%d °C"
 
-#: src/sshpilot/machine_info_dialog.py:1203
+#: src/sshpilot/machine_info_dialog.py:1713
 msgid "Filesystems"
 msgstr "文件系统"
 
-#: src/sshpilot/machine_info_dialog.py:1206
+#: src/sshpilot/machine_info_dialog.py:1716
 msgid "Mount point"
 msgstr "挂载点"
 
-#: src/sshpilot/machine_info_dialog.py:1208
+#: src/sshpilot/machine_info_dialog.py:1718
 msgid "Usage"
 msgstr "使用率"
 
-#: src/sshpilot/machine_info_dialog.py:1209
+#: src/sshpilot/machine_info_dialog.py:1719
 msgid "Used / Size"
 msgstr "已用 / 容量"
 
-#: src/sshpilot/machine_info_dialog.py:1210
+#: src/sshpilot/machine_info_dialog.py:1720
 msgid "Available"
 msgstr "可用"
 
-#: src/sshpilot/machine_info_dialog.py:1224
-#, python-format
-msgid "%(device)s · %(fstype)s"
-msgstr "%(device)s · %(fstype)s"
+#: src/sshpilot/machine_info_dialog.py:1721
+msgid "Inodes"
+msgstr "Inode"
 
-#: src/sshpilot/machine_info_dialog.py:1260
+#: src/sshpilot/machine_info_dialog.py:1742
+#: src/sshpilot/machine_info_dialog.py:1840
+#: src/sshpilot/machine_info_dialog.py:2122
+msgid " · "
+msgstr " · "
+
+#: src/sshpilot/machine_info_dialog.py:1791
 msgid "No filesystems reported"
 msgstr "未报告文件系统"
 
-#: src/sshpilot/machine_info_dialog.py:1262
-msgid "Only physical disks are shown."
-msgstr "仅显示物理磁盘。"
-
-#: src/sshpilot/machine_info_dialog.py:1268
-msgid "I/O pressure"
-msgstr "I/O 压力"
-
-#: src/sshpilot/machine_info_dialog.py:1272
-msgid "This host does not report I/O pressure"
-msgstr "此主机不报告 I/O 压力"
-
-#: src/sshpilot/machine_info_dialog.py:1283
-msgid "10 s"
-msgstr "10 秒"
-
-#: src/sshpilot/machine_info_dialog.py:1284
-msgid "60 s"
-msgstr "60 秒"
-
-#: src/sshpilot/machine_info_dialog.py:1285
-msgid "300 s"
-msgstr "300 秒"
-
-#: src/sshpilot/machine_info_dialog.py:1289
-msgid "Some tasks stalled"
-msgstr "部分任务被阻塞"
-
-#: src/sshpilot/machine_info_dialog.py:1290
-msgid "All tasks stalled"
-msgstr "全部任务被阻塞"
-
-#: src/sshpilot/machine_info_dialog.py:1305
-msgid "Share of each window spent waiting on storage."
-msgstr "每个时间窗口中等待存储的比例。"
-
-#: src/sshpilot/machine_info_dialog.py:1315
+#: src/sshpilot/machine_info_dialog.py:1801
 msgid "Interfaces"
 msgstr "网络接口"
 
-#: src/sshpilot/machine_info_dialog.py:1353
+#: src/sshpilot/machine_info_dialog.py:1839
 #, python-format
 msgid "MTU %d"
 msgstr "MTU %d"
 
-#: src/sshpilot/machine_info_dialog.py:1354
-#: src/sshpilot/machine_info_dialog.py:1648
-msgid " · "
-msgstr " · "
-
-#: src/sshpilot/machine_info_dialog.py:1364
+#: src/sshpilot/machine_info_dialog.py:1850
 msgid "No interfaces reported"
 msgstr "未报告网络接口"
 
-#: src/sshpilot/machine_info_dialog.py:1371
+#: src/sshpilot/machine_info_dialog.py:1857
 msgid "Routing & resolution"
 msgstr "路由与解析"
 
-#: src/sshpilot/machine_info_dialog.py:1374
+#: src/sshpilot/machine_info_dialog.py:1860
 #, python-format
 msgid "%(gateway)s via %(interface)s"
 msgstr "%(gateway)s 经由 %(interface)s"
 
-#: src/sshpilot/machine_info_dialog.py:1380
+#: src/sshpilot/machine_info_dialog.py:1866
 #, python-format
 msgid "%(port)d/tcp (%(process)s)"
 msgstr "%(port)d/tcp (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:1384
-#: src/sshpilot/machine_info_dialog.py:1560
+#: src/sshpilot/machine_info_dialog.py:1870
+#: src/sshpilot/machine_info_dialog.py:2035
 #, python-format
 msgid "%d/tcp"
 msgstr "%d/tcp"
 
-#: src/sshpilot/machine_info_dialog.py:1390
+#: src/sshpilot/machine_info_dialog.py:1876
 msgid "Default gateway"
 msgstr "默认网关"
 
-#: src/sshpilot/machine_info_dialog.py:1391
+#: src/sshpilot/machine_info_dialog.py:1877
 msgid "DNS servers"
 msgstr "DNS 服务器"
 
-#: src/sshpilot/machine_info_dialog.py:1392
+#: src/sshpilot/machine_info_dialog.py:1878
 msgid "Listening SSH port"
 msgstr "监听的 SSH 端口"
 
-#: src/sshpilot/machine_info_dialog.py:1404
-msgid "Live — sampled every 2 s."
-msgstr "实时 — 每 2 秒采样一次。"
-
-#: src/sshpilot/machine_info_dialog.py:1409
+#: src/sshpilot/machine_info_dialog.py:1888
 msgid "Bandwidth"
 msgstr "带宽"
 
-#: src/sshpilot/machine_info_dialog.py:1412
+#: src/sshpilot/machine_info_dialog.py:1891
 msgid "Network interface"
 msgstr "网络接口"
 
-#: src/sshpilot/machine_info_dialog.py:1413
+#: src/sshpilot/machine_info_dialog.py:1892
 msgid "Received"
 msgstr "已接收"
 
-#: src/sshpilot/machine_info_dialog.py:1414
+#: src/sshpilot/machine_info_dialog.py:1893
 msgid "Transmitted"
 msgstr "已发送"
 
-#: src/sshpilot/machine_info_dialog.py:1415
+#: src/sshpilot/machine_info_dialog.py:1894
 msgid "Rate ↓"
 msgstr "速率 ↓"
 
-#: src/sshpilot/machine_info_dialog.py:1416
+#: src/sshpilot/machine_info_dialog.py:1895
 msgid "Rate ↑"
 msgstr "速率 ↑"
 
-#: src/sshpilot/machine_info_dialog.py:1445
+#: src/sshpilot/machine_info_dialog.py:1922
 msgid "No interface counters reported"
 msgstr "未报告接口计数器"
 
-#: src/sshpilot/machine_info_dialog.py:1447
-msgid "Totals since boot."
-msgstr "自启动以来的累计值。"
-
-#: src/sshpilot/machine_info_dialog.py:1449
+#: src/sshpilot/machine_info_dialog.py:1925
 msgid "Remote sessions"
 msgstr "远程会话"
 
-#: src/sshpilot/machine_info_dialog.py:1463
+#: src/sshpilot/machine_info_dialog.py:1939
 #, python-format
 msgid "Incoming · %d established"
 msgid_plural "Incoming · %d established"
 msgstr[0] "入站 · 已建立 %d 个"
 
-#: src/sshpilot/machine_info_dialog.py:1465
+#: src/sshpilot/machine_info_dialog.py:1941
 #, python-format
 msgid "Outgoing · %d established"
 msgid_plural "Outgoing · %d established"
 msgstr[0] "出站 · 已建立 %d 个"
 
-#: src/sshpilot/machine_info_dialog.py:1515
+#: src/sshpilot/machine_info_dialog.py:1991
 #, python-format
 msgid "%d more"
 msgid_plural "%d more"
 msgstr[0] "另有 %d 个"
 
-#: src/sshpilot/machine_info_dialog.py:1530
-#: src/sshpilot/machine_info_dialog.py:1569
-msgid "Some process names need root."
-msgstr "部分进程名称需要 root 权限。"
-
-#: src/sshpilot/machine_info_dialog.py:1546
+#: src/sshpilot/machine_info_dialog.py:2021
 msgid "Distribution"
 msgstr "发行版"
 
-#: src/sshpilot/machine_info_dialog.py:1547
+#: src/sshpilot/machine_info_dialog.py:2022
 msgid "Architecture"
 msgstr "架构"
 
-#: src/sshpilot/machine_info_dialog.py:1552
+#: src/sshpilot/machine_info_dialog.py:2027
 msgid "Listening services"
 msgstr "监听的服务"
 
-#: src/sshpilot/machine_info_dialog.py:1556
+#: src/sshpilot/machine_info_dialog.py:2031
 msgid "Service"
 msgstr "服务"
 
-#: src/sshpilot/machine_info_dialog.py:1567
+#: src/sshpilot/machine_info_dialog.py:2042
 msgid "No listening services reported"
 msgstr "未报告监听的服务"
 
-#: src/sshpilot/machine_info_dialog.py:1571
+#: src/sshpilot/machine_info_dialog.py:2045
 msgid "Failed units"
 msgstr "失败的单元"
 
 #. Also what a host without systemd looks like: neither has a
 #. failed unit to report.
-#: src/sshpilot/machine_info_dialog.py:1584
+#: src/sshpilot/machine_info_dialog.py:2058
 msgid "No failed units"
 msgstr "无失败的单元"
 
-#: src/sshpilot/machine_info_dialog.py:1591
+#: src/sshpilot/machine_info_dialog.py:2065
 msgid "SSH host keys"
 msgstr "SSH 主机密钥"
 
-#: src/sshpilot/machine_info_dialog.py:1594
+#: src/sshpilot/machine_info_dialog.py:2068
 msgid "Algorithm"
 msgstr "算法"
 
-#: src/sshpilot/machine_info_dialog.py:1595
+#: src/sshpilot/machine_info_dialog.py:2069
 msgid "Fingerprint"
 msgstr "指纹"
 
-#: src/sshpilot/machine_info_dialog.py:1596
+#: src/sshpilot/machine_info_dialog.py:2070
 msgid "Bits"
 msgstr "位数"
 
-#: src/sshpilot/machine_info_dialog.py:1611
+#: src/sshpilot/machine_info_dialog.py:2085
 msgid "No host keys reported"
 msgstr "未报告主机密钥"
 
-#: src/sshpilot/machine_info_dialog.py:1614
+#: src/sshpilot/machine_info_dialog.py:2088
 msgid "Logged-in users"
 msgstr "已登录用户"
 
-#: src/sshpilot/machine_info_dialog.py:1626
+#: src/sshpilot/machine_info_dialog.py:2100
 msgid "No remote sessions"
 msgstr "无远程会话"
 
-#: src/sshpilot/machine_info_dialog.py:1626
+#: src/sshpilot/machine_info_dialog.py:2100
 msgid "No logged-in users"
 msgstr "无已登录用户"
 
-#: src/sshpilot/machine_info_dialog.py:1647
+#: src/sshpilot/machine_info_dialog.py:2121
 msgid "local console"
 msgstr "本地控制台"
 
@@ -4762,7 +4779,7 @@ msgid "Help"
 msgstr "帮助"
 
 #: src/sshpilot/omni_search.py:58 src/sshpilot/welcome_page.py:107
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:730
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:741
 msgid "SFTP File Manager"
 msgstr "SFTP 文件管理器"
 
@@ -5705,7 +5722,7 @@ msgstr "重启"
 #: src/sshpilot/terminal_manager.py:951 src/sshpilot/terminal_manager.py:1459
 #: src/sshpilot/window.py:2346 src/sshpilot/window_tabs.py:1262
 #: src/sshpilot/window_tabs.py:1348
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:726
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:737
 msgid "Terminal"
 msgstr "终端"
 
@@ -7147,23 +7164,23 @@ msgstr "3 个连接"
 msgid "Using system accent color"
 msgstr "使用系统强调色"
 
-#: src/sshpilot/preferences.py:6074
+#: src/sshpilot/preferences.py:6144
 msgid "Encoding"
 msgstr "编码"
 
-#: src/sshpilot/preferences.py:6075
+#: src/sshpilot/preferences.py:6145
 msgid "Character encoding for the integrated terminal"
 msgstr "集成终端的字符编码"
 
-#: src/sshpilot/preferences.py:6212
+#: src/sshpilot/preferences.py:6282
 msgid "Could not save SSH settings. Please check the values and try again."
 msgstr "无法保存 SSH 设置。请检查设置值并重试。"
 
-#: src/sshpilot/preferences.py:6416
+#: src/sshpilot/preferences.py:6486
 msgid "Terminal Backend Change"
 msgstr "终端后端变更"
 
-#: src/sshpilot/preferences.py:6419
+#: src/sshpilot/preferences.py:6489
 msgid "This change will only apply to new terminal tabs.\n"
 msgstr "此更改仅适用于新的终端标签页。\n"
 
@@ -10321,215 +10338,228 @@ msgid "mFat"
 msgstr "mFat"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:66
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:176
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:188
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:264
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:269
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:274
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:317
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:323
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:82
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:187
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:199
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:270
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:275
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:280
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:285
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:328
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:336
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:364
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:369
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:376
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:410
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:422
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:428
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:334
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:339
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:347
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:375
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:380
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:387
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:421
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:433
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:448
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:453
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:480
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:500
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:439
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:444
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:459
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:464
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:491
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:511
 msgid "Bug fixes"
 msgstr "错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:76
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:82
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
+msgid ""
+"Introducing \"Host Info\" - detailed info about any host, available from the "
+"context menu"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:72
+msgid ""
+"New languages: Spanish, Portuguese, Brazilian Portuguese, Chinese, Russian "
+"and Persian"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:87
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:93
 msgid "Improvements to isolated workspace mode"
 msgstr "改进隔离工作区模式"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:83
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:94
 msgid "Middle-click a group to open all connections in splitview"
 msgstr "中键点击分组可在分屏视图中打开所有连接"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:99
 msgid "Improvements to non-SSH protocol plugins"
 msgstr "改进非 SSH 协议插件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:89
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:100
 msgid "Fixes text selection when using remote apps such as tmux and htop"
 msgstr "修复使用 tmux 和 htop 等远程应用时的文本选择问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:101
 msgid "Fixes SFTP File Manager retry/reconnect flow"
 msgstr "修复 SFTP 文件管理器的重试/重新连接流程"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:95
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:106
 msgid "New \"Copy SSH Command\" context-menu action"
 msgstr "上下文菜单新增“复制 SSH 命令”操作"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:96
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
 msgid "Fixes rbw secret backend"
 msgstr "修复 rbw 机密存储后端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:97
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
 msgid "Other bug fixes and improvements"
 msgstr "其他错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:102
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:113
 msgid "Fixed Bitwarden login issue"
 msgstr "修复 Bitwarden 登录问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:118
 msgid "Faster startup"
 msgstr "更快的启动速度"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:119
 msgid "Vault unlock prompt now displayed on startup"
 msgstr "启动时显示密码库解锁提示"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:109
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:120
 msgid "Privacy toggle hides hostnames and IP addresses in start page too"
 msgstr "隐私开关在起始页中同样隐藏主机名和 IP 地址"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:114
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:125
 msgid "Fixed subgroups not inheriting parent group color"
 msgstr "修复子分组未继承父分组颜色的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:115
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:126
 msgid "Added option to remember passwords to password prompts"
 msgstr "密码提示中添加了记住密码的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:116
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:127
 msgid "Minor fixes to DnD in sidebar"
 msgstr "侧边栏拖放操作的小修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:121
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:132
 msgid ""
 "Added new terminal theme selector, added option to access it from tab bar"
 msgstr "添加新的终端主题选择器，并添加从标签栏访问它的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:122
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:133
 msgid "Fixed vault unlock issue"
 msgstr "修复密码库解锁问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:123
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:134
 msgid "Fixed backup encryption issue"
 msgstr "修复备份加密问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:124
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:707
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:135
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:718
 msgid "Minor UI fixes"
 msgstr "细微界面修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:129
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:140
 msgid "Improved drag & drop for connections across groups"
 msgstr "改进跨分组连接的拖放操作"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:130
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
 msgid "Improved connection status reporting"
 msgstr "改进连接状态报告"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:131
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
 msgid "Minor bug fixes"
 msgstr "细微错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:136
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:249
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:438
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:147
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:260
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:265
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:449
 msgid "Bug fixes and UI improvements"
 msgstr "错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:152
 msgid "Fixes drag and drop reordering not working"
 msgstr "修复拖放重新排序不起作用的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:153
 msgid "Adds manual sorting option"
 msgstr "添加手动排序选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:147
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:158
 msgid "Added French translation"
 msgstr "添加法语翻译"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:148
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:157
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:159
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:168
 msgid "Minor UI improvements"
 msgstr "细微界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:153
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:164
 msgid ""
 "Integrated tab bar into header for a cleaner, more minimal user interface"
 msgstr "将标签栏整合到顶栏中，打造更简洁、更小巧的用户界面"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:154
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:165
 msgid ""
 "Revamped Command Snippets panel - the snippets are now displayed in a "
 "floating panel"
 msgstr "改进命令片段面板 — 片段现在显示在浮动面板中"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:155
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:166
 msgid ""
 "Added keyboard support to Snippets - you can assign your desired shortcut "
 "for the popup"
 msgstr "为命令片段添加键盘支持 — 您可以为弹窗分配所需的快捷键"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:156
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:167
 msgid "Added theme selector to main menu, inspired by Ptyxis"
 msgstr "受 Ptyxis 启发，在主菜单中添加了主题选择器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:162
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:171
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:181
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:193
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:198
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:203
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:208
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:173
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:182
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:192
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:204
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:209
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:214
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:484
 msgid "Bug fixes and improvements"
 msgstr "错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:167
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:178
 msgid ""
 "Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on "
 "macOS)"
 msgstr "改进全屏体验（Linux 上按 F11 激活，macOS 上按 Cmd+Ctrl+F 激活）"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:168
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:179
 msgid "Improved app menu on macOS"
 msgstr "改进 macOS 上的应用程序菜单"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:169
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:180
 msgid "Added animated effect to omnisearch"
 msgstr "为全局搜索 (Omnisearch) 添加动画效果"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:170
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:181
 msgid "Added workaround for French keyboard layout on macOS"
 msgstr "添加针对 macOS 法语键盘布局的临时解决方案"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:186
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:197
 msgid "Improved effective config diff tool"
 msgstr "改进生效配置差异对比工具"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:187
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:198
 msgid "Improved experience when switching operation mode"
 msgstr "改进切换运行模式时的体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:213
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:224
 msgid "Migrated the code base to a new daemon-based system"
 msgstr "将代码库迁移到全新的基于守护进程的系统"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:214
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
 msgid "Introducing SSH Pilot API"
 msgstr "引入 SSH Pilot API"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:230
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
 msgid ""
 "Introducing Omnisearch—a powerful, versatile pop-up search box accessible "
 "from anywhere by double-pressing the Shift key"
@@ -10537,51 +10567,51 @@ msgstr ""
 "引入 Omnisearch — 一个功能强大、用途广泛的弹出式搜索框，双击 Shift 键即可随处"
 "访问"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:220
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:231
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
 msgid ""
 "Added a minimal sidebar mode that uses a narrow, icon-only strip to free up "
 "horizontal screen space"
 msgstr "添加极简侧边栏模式，使用狭窄的纯图标栏释放水平屏幕空间"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:221
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:232
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:243
 msgid ""
 "Added an option to open the file manager in SSH terminal panes from the tab "
 "context menu"
 msgstr "在标签页上下文菜单中添加在 SSH 终端窗格中打开文件管理器的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:222
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:233
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:244
 msgid "Added an option to open a terminal in file manager tabs"
 msgstr "添加在文件管理器标签页中打开终端的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:223
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:234
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:245
 msgid "Improved the appearance and overall experience of the SFTP file manager"
 msgstr "改进 SFTP 文件管理器的外观和整体体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:224
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:235
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:246
 msgid ""
 "Fixed an issue that delayed application shutdown when local terminal tabs "
 "were open"
 msgstr "修复在打开本地终端标签页时导致应用程序关闭延迟的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:236
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:247
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:501
 msgid "Various bug fixes and UI improvements"
 msgstr "各种错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:252
 msgid ""
 "Introducing Omnisearch - a powerful, versatile pop-up search box you can "
 "activate from anywhere by double-pressing the Shift key"
 msgstr ""
 "引入 Omnisearch — 一个功能强大的弹出式搜索框，双击 Shift 键即可随处唤出"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:253
 msgid ""
 "Introducing a minimal mode for the sidebar - use a narrow, icon-only strip "
 "instead of the default full sidebar to reclaim more horizontal screen space"
@@ -10589,12 +10619,12 @@ msgstr ""
 "引入极简侧边栏模式 — 使用狭窄的纯图标栏代替默认的完整侧边栏，以节省更多水平屏"
 "幕空间"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:243
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:280
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:291
 msgid "Various bug fixes and improvements"
 msgstr "各种错误修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:248
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
 msgid ""
 "Enhanced CLI interface - start sshpilot from commandline like \"sshpilot "
 "user@host\", use --sftp to open the file manager"
@@ -10602,69 +10632,69 @@ msgstr ""
 "增强命令行界面 — 通过类似 “sshpilot user@host” 的命令行启动 sshpilot，使用 --"
 "sftp 打开文件管理器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:279
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:290
 msgid "German translation"
 msgstr "德语翻译"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:285
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
 msgid "Meson build system"
 msgstr "Meson 构建系统"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:286
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
 msgid "Migrated to GNOME rcommended project structure"
 msgstr "迁移至 GNOME 推荐的项目结构"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:291
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:302
 msgid "Migrated to meson build system"
 msgstr "迁移至 Meson 构建系统"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:307
 msgid "Enhanced support for multi-step authentication challenges"
 msgstr "增强对多步身份验证质询的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:305
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:308
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:316
 msgid "Better support for FIDO hardware keys"
 msgstr "更好地支持 FIDO 硬件密钥"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:298
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:306
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:309
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:317
 msgid "More robust password autofill flow"
 msgstr "更健壮的密码自动填充流程"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:299
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:310
 msgid "Redesigned SCP dialog"
 msgstr "重新设计 SCP 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:304
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:315
 msgid "Enhanced suppot for multi-sttep authentication challenges"
 msgstr "增强对多步身份验证质询的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:307
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:318
 msgid "Revamped SCP dialogs"
 msgstr "改进 SCP 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:312
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:323
 msgid "Bug fixes and minor UI improvements"
 msgstr "错误修复和细微界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:322
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:333
 msgid "Improvements for Xterm.js terminal backend"
 msgstr "Xterm.js 终端后端的改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:333
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:344
 msgid "Docker Console UI improvements"
 msgstr "Docker 控制台界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:334
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:345
 msgid "File manager UI improvements"
 msgstr "文件管理器界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:335
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:346
 msgid "Reorganized main menu"
 msgstr "重新组织主菜单"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:341
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:352
 msgid ""
 "Backup settings and credentials to Bitwarden/Vaultwarden right from SSH "
 "Pilot and restore on other devices"
@@ -10672,248 +10702,248 @@ msgstr ""
 "直接在 SSH Pilot 中将设置和凭据备份到 Bitwarden/Vaultwarden，并在其他设备上恢"
 "复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:342
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:353
 msgid "More credential storage backends including Keepass, Bitwarden and rbw"
 msgstr "更多凭据存储后端，包括 KeePass、Bitwarden 和 rbw"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:343
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:354
 msgid "Improvements to Pyxtermjs terminal backend"
 msgstr "Pyxtermjs 终端后端的改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:344
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:355
 msgid "Various bug fixes and performance improvements"
 msgstr "各种错误修复和性能改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:349
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:360
 msgid "Fixes SCP bug in Flatpak"
 msgstr "修复 Flatpak 中的 SCP 错误"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:350
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:361
 msgid ""
 "Adds \"Edit as Root\" button to text editor. Edit eny remote files with sudo"
 msgstr "文本编辑器中添加“以 Root 身份编辑”按钮。使用 sudo 编辑任何远程文件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:351
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:362
 msgid "Better logging and diagnostics suite"
 msgstr "更完善的日志记录与诊断套件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:356
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:367
 msgid "Improved drag and drop and group nesting experience"
 msgstr "改进拖放和分组嵌套体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:361
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:372
 msgid "Added support for nested groups"
 msgstr "添加对嵌套分组的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:362
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:373
 msgid "Improvements to Drag & Drop experience in connection list"
 msgstr "改进连接列表中的拖放体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:363
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:374
 msgid "Fixed scp failing to download directories"
 msgstr "修复 scp 无法下载目录的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:370
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:381
 msgid "Performance improvements for SFTP file manager"
 msgstr "SFTP 文件管理器的性能改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:371
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:382
 msgid "Added option to copy text on select"
 msgstr "添加选择文本时自动复制的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:381
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:392
 msgid "New Docker/Podman management console"
 msgstr "新增 Docker/Podman 管理控制台"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:382
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:393
 msgid "New plugin feature + plugin SDk with a bunch of experimental plugins"
 msgstr "全新插件功能 + 插件 SDK，附带一系列实验性插件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:383
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:394
 msgid "Support for additional protocols (mosh, serial, etc.)"
 msgstr "支持其他协议（mosh、串口等）"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:384
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:393
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:395
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:404
 msgid "UI fixes and improvements"
 msgstr "界面修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:389
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:400
 msgid "Docker/Podman container management console"
 msgstr "Docker/Podman 容器管理控制台"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:390
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
 msgid "New plugin framework and SDK"
 msgstr "新的插件框架与 SDK"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:391
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:402
 msgid "New plugin settings to install and manage plugins"
 msgstr "用于安装和管理插件的新插件设置"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:392
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:403
 msgid "Improved SSH config editor"
 msgstr "改进的 SSH 配置编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:394
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
 msgid "Additional protocols"
 msgstr "其他协议"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:399
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:410
 msgid "New \"Tags\" feature: add tags to connections"
 msgstr "新增“标签”功能：为连接添加标签"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:400
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:411
 msgid "Search now supports tags"
 msgstr "搜索现在支持标签"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:412
 msgid "New tags view for the connection list"
 msgstr "连接列表的新标签视图"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:402
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:413
 msgid "Drag and drop a connection on a tag group to apply tag"
 msgstr "将连接拖放到标签分组以应用标签"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:403
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:414
 msgid "Added inline autocompletion for tags"
 msgstr "为标签添加内联自动补全"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:404
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
 msgid "Added inline autocompletion for jump hosts"
 msgstr "为跳板主机添加内联自动补全"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
 msgid "Added support for selecting connections with space key"
 msgstr "添加对使用空格键选择连接的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:426
 msgid "Updated ssh-copy-id dialog"
 msgstr "更新 ssh-copy-id 对话框"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:427
 msgid "Fixes macOS keychain prompting repeatedly"
 msgstr "修复 macOS 钥匙串重复提示的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:417
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:428
 msgid "Minor UI improvements and bug fixes"
 msgstr "细微界面改进和错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:427
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:438
 msgid "Improved connection editor"
 msgstr "改进的连接编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:443
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:454
 msgid ""
 "Added fallback for older libadwaita versions failing to load connection "
 "editor"
 msgstr "为无法加载连接编辑器的旧版本 libadwaita 添加回退方案"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:458
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:469
 msgid ""
 "Drag and drop a connection on an existing terminal to create a split view"
 msgstr "将连接拖放到现有终端以创建分屏视图"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:459
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:470
 msgid "New first-run dialog and option to back up .ssh/config"
 msgstr "新的首次运行对话框和备份 .ssh/config 的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:460
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:471
 msgid "Updated connection status indicators"
 msgstr "更新的连接状态指示器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:461
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:472
 msgid "Updated port forwarding indicators"
 msgstr "更新的端口转发指示器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:462
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
 msgid "New sidebar behavior options — configure autohide from Settings"
 msgstr "新的侧边栏行为选项 — 在“设置”中配置自动隐藏"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:463
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:474
 msgid "Improvements to Split View"
 msgstr "分屏视图改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:464
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:475
 msgid "Added local terminal button to the headerbar"
 msgstr "在顶栏添加本地终端按钮"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:465
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:476
 msgid "New toggles for headerbar buttons"
 msgstr "顶栏按钮的新切换开关"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:466
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:477
 msgid "More improvements for the command sidebar"
 msgstr "命令侧边栏的更多改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:467
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:478
 msgid "New option to add multiple private keys and certificates"
 msgstr "添加多个私钥和证书的新选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:468
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:479
 msgid "Improved .ssh/config parsing logic"
 msgstr "改进的 .ssh/config 解析逻辑"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:478
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
 msgid ""
 "Added type-ahead search - open the app, start typing and press enter. The "
 "first matching host will be connected"
 msgstr "添加即键即搜 — 打开应用，直接键入并按回车即可连接第一个匹配的主机"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:479
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
 msgid ""
 "Made it easier to switch between the terminal and connection list with "
 "Ctrl+Shift+L"
 msgstr "更轻松地使用 Ctrl+Shift+L 在终端和连接列表之间切换"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:485
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:495
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:496
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:506
 msgid "Better look and feel for built-in file manager"
 msgstr "内置文件管理器拥有更好的外观与体验"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:486
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:497
 msgid "Zoom control for file manager"
 msgstr "文件管理器的缩放控件"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:487
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:498
 msgid "New option to always show Commands sidebar"
 msgstr "始终显示命令侧边栏的新选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:488
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:499
 msgid "More reliable SFTP file transfers"
 msgstr "更可靠的 SFTP 文件传输"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:500
 msgid "Changed default connection list shortcut to Ctrl+Shift+L"
 msgstr "将默认的连接列表快捷键更改为 Ctrl+Shift+L"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:505
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:516
 msgid ""
 "Introducing Command Blocks - Organize your favorite commands in folders, "
 "insert them into terminal with a simple double-click"
 msgstr "引入命令块 — 在文件夹中组织您喜爱的命令，双击即可轻松插入终端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:506
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:517
 msgid ""
 "Choose a command from your command snippet intventory to run on a single "
 "host or a group of machines"
 msgstr "从命令片段清单中选择命令，以在单个主机或一组机器上运行"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:507
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:518
 msgid "More improvements to Split View"
 msgstr "分屏视图的更多改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:512
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:523
 msgid ""
 "New \"Sessions\" feature — Save, open, rename, and delete snapshots of your "
 "open tabs and restore them automatically"
 msgstr ""
 "新增“会话”功能 — 保存、打开、重命名和删除已打开标签页的快照，并自动恢复它们"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:513
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:524
 msgid "Pin saved sessions to the start page for one-click restore"
 msgstr "将保存的会话固定到起始页，一键恢复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:514
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:525
 msgid ""
 "Copy to group — Add a connection to another group without removing it from "
 "its current group(s). Same connection can appear in multiple groups."
@@ -10921,202 +10951,202 @@ msgstr ""
 "复制到分组 — 将连接添加到另一个分组，而不从当前分组中移除。同一个连接可以出现"
 "在多个分组中。"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:515
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:526
 msgid ""
 "Jump host picker — Pick jump hosts from your saved connections when editing "
 "a connection."
 msgstr "跳板主机选择器 — 编辑连接时可从保存的连接中挑选跳板主机。"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:516
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:527
 msgid ""
 "Better Split View - Resize terminal panes freely, drag and drop an entire "
 "group onto a Split View"
 msgstr "更出色的分屏视图 — 自由调整终端窗格大小，将整个分组拖放到分屏视图中"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:517
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:528
 msgid "Minor UI fixes and improvements"
 msgstr "细微界面修复与改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:523
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:543
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:549
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:571
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:592
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:612
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:635
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:687
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:534
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:554
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:560
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:582
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:603
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:623
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:646
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:698
 msgid "- Bug fixes"
 msgstr "- 错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:529
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:540
 msgid ""
 "- New \"Splt View\" feature - view terminals side by side inside any "
 "terminal tab"
 msgstr "- 新增“分屏视图”功能 — 在任意终端标签页内并排查看终端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:530
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:541
 msgid "- New context menu item to copy host address"
 msgstr "- 上下文菜单新增复制主机地址项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:536
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:547
 msgid "- Updated flatpak to GNOME Platform 50"
 msgstr "- 将 Flatpak 更新到 GNOME Platform 50"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:542
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:553
 msgid "- Added URL support to terminal"
 msgstr "- 终端添加 URL 支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:555
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:566
 msgid "- Fixes for Quick Connect function"
 msgstr "- 修复快速连接功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:556
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:567
 msgid "- Add option to save Quick Connect host"
 msgstr "- 添加保存快速连接主机的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:557
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:568
 msgid ""
 "- Added option to rename a tab - Double-click any terminal tab to rename"
 msgstr "- 添加重命名标签页的选项 — 双击任意终端标签页即可重命名"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:558
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:569
 msgid "- Added support for Wake on Lan"
 msgstr "- 添加对局域网唤醒 (Wake on LAN) 的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:559
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:570
 msgid "- Added pre-connection command support"
 msgstr "- 添加对连接前命令的支持"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:565
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:576
 msgid "- Minor bug fixes"
 msgstr "- 细微错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:577
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:588
 msgid "- Fixed saved secrets not used for login"
 msgstr "- 修复保存的机密未用于登录的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:583
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:594
 msgid "- Support for sidebar resizing"
 msgstr "- 支持调整侧边栏大小"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:584
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:595
 msgid "- Toggles for info labels in sidebar"
 msgstr "- 侧边栏信息标签切换开关"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:585
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:596
 msgid "- Updated color badges"
 msgstr "- 更新颜色标记"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:586
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:597
 msgid "- Various bug fixes and UI improvements"
 msgstr "- 各种错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:598
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:609
 msgid "- Added option to resize sidebar"
 msgstr "- 添加调整侧边栏大小的选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:599
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:610
 msgid "- Fixed long host values making sidebar too wide"
 msgstr "- 修复较长的主机名导致侧边栏过宽的问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:600
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:611
 msgid "- Bug fixes and UI improvements"
 msgstr "- 错误修复和界面改进"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:606
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:617
 msgid "- Drag and drop files and folders on terminal to upload via SCP"
 msgstr "- 拖放文件和文件夹到终端以通过 SCP 上传"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:618
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:627
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:638
 msgid "- Make terminal fullscreen with F11"
 msgstr "- 按 F11 使终端全屏"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:619
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:630
 msgid "- Improvements for SCP file transfers"
 msgstr "- 改进 SCP 文件传输"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:620
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:631
 msgid "- Drag and drop files and folders directly on terminal widget"
 msgstr "- 直接在终端部件上拖放文件和文件夹"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:621
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:632
 msgid "- Updated password/passphrase prompts with option to store secrets"
 msgstr "- 更新密码/口令提示，附带存储机密选项"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:628
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:639
 msgid "- Added xterm.js as an alternative terminal backend"
 msgstr "- 添加 xterm.js 作为备选终端后端"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:640
 msgid "- Added graphical prompts for passwords/passphrases"
 msgstr "- 为密码/口令添加图形提示"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:641
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:652
 msgid "- Fixed black toolbar in file manager"
 msgstr "- 修复文件管理器中的黑色工具栏问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:642
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:653
 msgid "- Fixed nano editor issue when run under KDE Plasma desktop"
 msgstr "- 修复在 KDE Plasma 桌面下运行时的 nano 编辑器问题"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:648
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:659
 msgid "- Enhanced text editor for built-in file manager"
 msgstr "- 增强内置文件管理器的文本编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:654
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:665
 msgid "- Bug fixes for SFTP file manager"
 msgstr "- SFTP 文件管理器的错误修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:660
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:671
 msgid "- Improvements to built-in file manager, new text editor"
 msgstr "- 改进内置文件管理器，全新文本编辑器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:661
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:672
 msgid "- Added file mmanager button to connection rows"
 msgstr "- 在连接行中添加文件管理器按钮"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:662
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:673
 msgid "- Sort button now sorts groups too"
 msgstr "- 排序按钮现在也对分组进行排序"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:668
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:679
 msgid "- Fixed file manager bug when password authentication is selected"
 msgstr "- 修复选择密码身份验证时的文件管理器错误"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:674
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:685
 msgid "- Redesigned start page, with card and list layouts"
 msgstr "- 重新设计的起始页，支持卡片和列表布局"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:675
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:686
 msgid "- Minor UI fixes"
 msgstr "- 细微界面修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:681
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:692
 msgid "- Update notifier fixes"
 msgstr "- 更新通知器修复"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:693
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:704
 msgid "- Added update notifier"
 msgstr "- 添加更新通知器"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:699
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:710
 msgid "- New feature: Import/Export configuration"
 msgstr "- 新功能：导入/导出配置"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:700
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:711
 msgid "- Better log output"
 msgstr "- 更好的日志输出"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:706
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:717
 msgid "Added sorting to connection list"
 msgstr "连接列表新增排序功能"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:722
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:733
 msgid "Main Window"
 msgstr "主窗口"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:738
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:749
 msgid "Transfer SSH Keys"
 msgstr "传输 SSH 密钥"
 
@@ -11304,6 +11334,54 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#~ msgid "MemTotal"
+#~ msgstr "MemTotal"
+
+#~ msgid "MemFree"
+#~ msgstr "MemFree"
+
+#~ msgid "Buffers"
+#~ msgstr "Buffers"
+
+#~ msgid "Cached"
+#~ msgstr "Cached"
+
+#~ msgid "MemAvailable"
+#~ msgstr "MemAvailable"
+
+#, python-format
+#~ msgid "Based on %d CPU"
+#~ msgid_plural "Based on %d CPUs"
+#~ msgstr[0] "基于 %d 个 CPU"
+
+#~ msgid "CPU count unavailable."
+#~ msgstr "无法获取 CPU 数量。"
+
+#~ msgid "A share of one CPU, ranked by the host."
+#~ msgstr "占单个 CPU 的比例，由主机排序。"
+
+#, python-format
+#~ msgid "%(device)s · %(fstype)s"
+#~ msgstr "%(device)s · %(fstype)s"
+
+#~ msgid "Only physical disks are shown."
+#~ msgstr "仅显示物理磁盘。"
+
+#~ msgid "I/O pressure"
+#~ msgstr "I/O 压力"
+
+#~ msgid "Share of each window spent waiting on storage."
+#~ msgstr "每个时间窗口中等待存储的比例。"
+
+#~ msgid "Live — sampled every 2 s."
+#~ msgstr "实时 — 每 2 秒采样一次。"
+
+#~ msgid "Totals since boot."
+#~ msgstr "自启动以来的累计值。"
+
+#~ msgid "Some process names need root."
+#~ msgstr "部分进程名称需要 root 权限。"
 
 #~ msgid "Verify Configuration"
 #~ msgstr "验证配置"

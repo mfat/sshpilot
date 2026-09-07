@@ -595,7 +595,7 @@ def test_pressure_covers_all_three_resources_not_only_storage():
     assert "Pressure stall" in texts
     assert {"CPU", "Memory", "I/O"} <= set(texts)
     assert "1.1%" in texts and "2.2%" in texts and "3.3%" in texts
-    assert "Some" in texts and "All" in texts
+    assert "Some tasks" in texts and "All tasks" in texts
 
     # It is no longer on Storage, which now points at where it went.
     assert "Pressure stall" not in _texts(_dialog(snapshot)._build_storage())
@@ -608,9 +608,9 @@ def test_a_cpu_without_a_full_pressure_line_omits_that_row():
     snapshot = _snapshot(cpu_pressure_some=PressureStall(2.2, 1.5, 0.9))
     texts = _texts(_dialog(snapshot)._build_resources())
     assert "2.2%" in texts
-    # The one "All" row present belongs to I/O or memory, never to CPU; with
-    # only CPU reporting there is no "All" row at all.
-    assert "All" not in texts
+    # The one "All tasks" row present belongs to I/O or memory, never to CPU;
+    # with only CPU reporting there is no "All tasks" row at all.
+    assert "All tasks" not in texts
 
 
 def test_a_kernel_without_psi_says_so_rather_than_showing_zeroes():

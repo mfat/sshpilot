@@ -1470,15 +1470,19 @@ class MachineInfoDialog:
             )
         )
         for title, some, full in rows:
-            for label, stall in ((_("Some"), some), (_("All"), full)):
+            # "Some tasks"/"All tasks" rather than "Some"/"All": a bare "All"
+            # shares its msgid with an unrelated filter elsewhere in the app
+            # and is translated there as the mass "everything", which is the
+            # wrong word for a count of tasks.
+            for is_some, stall in ((True, some), (False, full)):
                 # /proc/pressure/cpu has no "full" line -- every task cannot be
                 # waiting for a CPU while one of them is using it -- so an
                 # absent row is skipped rather than shown as unknown.
-                if stall is None and label == _("All"):
+                if stall is None and not is_some:
                     continue
-                name = _value_label(title if label == _("Some") else "")
+                name = _value_label(title if is_some else "")
                 name.add_css_class("caption")
-                kind = _value_label(label)
+                kind = _value_label(_("Some tasks") if is_some else _("All tasks"))
                 kind.add_css_class("caption")
                 kind.set_opacity(0.6)
                 cells = [name, kind]
@@ -1592,21 +1596,24 @@ class MachineInfoDialog:
         readings.set_selection_mode(Gtk.SelectionMode.NONE)
         readings.set_max_children_per_line(5)
         readings.set_min_children_per_line(2)
-        # The kernel's own field names, so a reading here can be matched
-        # against /proc/meminfo on the host without a translation table.
+        # /proc/meminfo field names, deliberately NOT translated: they are
+        # identifiers to match against the host, not prose. Translating them
+        # also collides -- "Active"/"Inactive" are a preference's state
+        # elsewhere in the app, which would render this table as "Aktiv" and
+        # "Inaktiv" beside untranslated "Shmem" and "Slab".
         for key, value in (
-            (_("MemTotal"), _format_bytes(memory.total_bytes or None)),
-            (_("MemFree"), _format_bytes(memory.free_bytes)),
-            (_("Buffers"), _format_bytes(memory.buffers_bytes)),
-            (_("Cached"), _format_bytes(memory.cached_bytes)),
-            (_("MemAvailable"), _format_bytes(memory.available_bytes)),
-            (_("Active"), _format_bytes(memory.active_bytes)),
-            (_("Inactive"), _format_bytes(memory.inactive_bytes)),
-            (_("Shmem"), _format_bytes(memory.shmem_bytes)),
-            (_("Dirty"), _format_bytes(memory.dirty_bytes)),
-            (_("Writeback"), _format_bytes(memory.writeback_bytes)),
-            (_("Slab"), _format_bytes(memory.slab_bytes)),
-            (_("SReclaimable"), _format_bytes(memory.slab_reclaimable_bytes)),
+            ("MemTotal", _format_bytes(memory.total_bytes or None)),
+            ("MemFree", _format_bytes(memory.free_bytes)),
+            ("Buffers", _format_bytes(memory.buffers_bytes)),
+            ("Cached", _format_bytes(memory.cached_bytes)),
+            ("MemAvailable", _format_bytes(memory.available_bytes)),
+            ("Active", _format_bytes(memory.active_bytes)),
+            ("Inactive", _format_bytes(memory.inactive_bytes)),
+            ("Shmem", _format_bytes(memory.shmem_bytes)),
+            ("Dirty", _format_bytes(memory.dirty_bytes)),
+            ("Writeback", _format_bytes(memory.writeback_bytes)),
+            ("Slab", _format_bytes(memory.slab_bytes)),
+            ("SReclaimable", _format_bytes(memory.slab_reclaimable_bytes)),
         ):
             item = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             name = Gtk.Label(label=key)
