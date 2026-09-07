@@ -656,7 +656,7 @@ class _CpuSection:
         self._bar = _usage_bar(None, height=10)
         inner.append(self._bar)
 
-        self._breakdown = _caption(_("Waiting for a second sample…"))
+        self._breakdown = _caption("")
         inner.append(self._breakdown)
         card.append(inner)
         self.widget.append(card)
@@ -724,7 +724,7 @@ class _CpuSection:
         total = aggregate.total if aggregate is not None else None
         self._set(self._bar, self._reading, total)
         if aggregate is None:
-            self._breakdown.set_text(_("Waiting for a second sample…"))
+            self._breakdown.set_text("")
         else:
             self._breakdown.set_text(
                 _("user %(user)s · system %(system)s · iowait %(iowait)s"
@@ -1350,7 +1350,6 @@ class MachineInfoDialog:
         )
         _key_value_rows(card, rows)
         page.append(card)
-        page.append(_caption(_("CPU and memory update live; sampled every 2 s.")))
         return page
 
     def _processor_text(self) -> str:
@@ -1424,14 +1423,6 @@ class MachineInfoDialog:
             card.append(inner)
             load_row.append(card)
         page.append(load_row)
-        page.append(
-            _caption(
-                ngettext("Based on %d CPU", "Based on %d CPUs", processors)
-                % processors
-                if processors
-                else _("CPU count unavailable.")
-            )
-        )
 
         page.append(self._pressure_section())
         page.append(self._process_counts_section())
@@ -1502,9 +1493,6 @@ class MachineInfoDialog:
                     cells.append(reading)
                 table.add_row(cells)
         section.append(table.widget)
-        section.append(
-            _caption(_("Share of each window spent waiting on that resource."))
-        )
         return section
 
     def _process_counts_section(self) -> Gtk.Box:
@@ -1538,6 +1526,7 @@ class MachineInfoDialog:
             (_("Stopped"), counts.stopped),
             (_("Zombie"), counts.zombie),
             (_("Threads"), counts.threads),
+            (_("PID limit"), counts.pid_max),
         ):
             item = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             name = Gtk.Label(label=key)
@@ -1552,16 +1541,6 @@ class MachineInfoDialog:
         if counts.pid_max and counts.total is not None:
             fraction = counts.total / counts.pid_max
             inner.append(_usage_bar(fraction, height=6))
-            inner.append(
-                _caption(
-                    _("%(total)d of the kernel's %(limit)d PID limit (%(percent)s)")
-                    % {
-                        "total": counts.total,
-                        "limit": counts.pid_max,
-                        "percent": _format_percent(fraction),
-                    }
-                )
-            )
         card.append(inner)
         section.append(card)
         return section
@@ -1591,9 +1570,6 @@ class MachineInfoDialog:
         if not processes:
             table.add_empty(_("No process list reported"))
         section.append(table.widget)
-        # Above 100% is a real reading, not an overflow: the host measures a
-        # share of one CPU, and a threaded process uses several.
-        section.append(_caption(_("A share of one CPU, ranked by the host.")))
         return section
 
     def _memory_section(self) -> Gtk.Box:
@@ -1807,11 +1783,6 @@ class MachineInfoDialog:
         if not filesystems:
             table.add_empty(_("No filesystems reported"))
         page.append(table.widget)
-        page.append(
-            _caption(
-                _("Only physical disks are shown. Pressure stall is on Resources.")
-            )
-        )
         return page
 
     # -- Network --------------------------------------------------------
@@ -1907,13 +1878,6 @@ class MachineInfoDialog:
 
     def _build_traffic(self) -> Gtk.Box:
         page = _page()
-        page.append(
-            _caption(
-                _("Live — sampled every 2 s while this window is in front."),
-                dim=0.75,
-            )
-        )
-
         page.append(_section_label(_("Bandwidth")))
         table = _Table(
             (
@@ -1950,7 +1914,6 @@ class MachineInfoDialog:
         if not counters:
             table.add_empty(_("No interface counters reported"))
         page.append(table.widget)
-        page.append(_caption(_("Totals since boot.")))
 
         page.append(_section_label(_("Remote sessions")))
         page.append(self._sessions_card(remote_only=True))
@@ -2033,7 +1996,6 @@ class MachineInfoDialog:
             column.append(card)
             columns.append(column)
         page.append(columns)
-        page.append(_caption(_("Some process names need root.")))
         return page
 
     # -- System ---------------------------------------------------------
@@ -2072,7 +2034,6 @@ class MachineInfoDialog:
         if not snapshot.listening_ports:
             listening.add_empty(_("No listening services reported"))
         page.append(listening.widget)
-        page.append(_caption(_("Some process names need root.")))
 
         page.append(_section_label(_("Failed units")))
         units = _card()

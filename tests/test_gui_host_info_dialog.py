@@ -180,11 +180,26 @@ def test_an_unreported_memory_availability_reads_as_na_everywhere():
 
 
 def test_a_missing_cpu_count_does_not_break_the_load_gauges():
+    """Load is only readable per CPU, so without a count the bars must render
+    as unknown rather than picking a severity out of an unscaled number."""
+
+    from sshpilot.machine_info_dialog import _SEVERITY_UNKNOWN
+
     snapshot = _snapshot(cpu=CpuInfo(model="Unknown"))
     dialog = _dialog(snapshot)
     assert isinstance(dialog._build_overview(), Gtk.Box)
-    texts = _texts(dialog._build_resources())
-    assert any("CPU count unavailable" in text for text in texts)
+
+    page = dialog._build_resources()
+    assert isinstance(page, Gtk.Box)
+    # The load figures are still reported; only their severity is withheld.
+    assert "1.00" in _texts(page)
+    load_bars = [
+        widget
+        for widget in _walk(page)
+        if isinstance(widget, Gtk.LevelBar)
+        and _SEVERITY_UNKNOWN in widget.get_css_classes()
+    ]
+    assert load_bars
 
 
 def test_memory_and_temperatures_are_stacked_not_side_by_side():
