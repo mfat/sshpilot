@@ -1017,6 +1017,98 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: CpuTimes -->
+## `CpuTimes`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** Cumulative CPU jiffies for one line of ``/proc/stat``.
+
+``name`` is ``"cpu"`` for the aggregate and ``"cpuN"`` for a single logical
+processor.  These are counters since boot, not a utilization: a percentage
+only exists between two readings, which is why nothing here is a percent.
+Kernels that stop early (no ``guest_nice``, or no ``steal`` at all) leave
+the trailing fields ``None`` rather than reporting a zero the host never
+published.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `name` | `str` | Yes | — | No |
+| `user` | `Optional[int]` | No | `null` | No |
+| `nice` | `Optional[int]` | No | `null` | No |
+| `system` | `Optional[int]` | No | `null` | No |
+| `idle` | `Optional[int]` | No | `null` | No |
+| `iowait` | `Optional[int]` | No | `null` | No |
+| `irq` | `Optional[int]` | No | `null` | No |
+| `softirq` | `Optional[int]` | No | `null` | No |
+| `steal` | `Optional[int]` | No | `null` | No |
+| `guest` | `Optional[int]` | No | `null` | No |
+| `guest_nice` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "guest": null,
+  "guest_nice": null,
+  "idle": null,
+  "iowait": null,
+  "irq": null,
+  "name": "example",
+  "nice": null,
+  "softirq": null,
+  "steal": null,
+  "system": null,
+  "user": null
+}
+```
+
+<!-- api-model: CpuUtilization -->
+## `CpuUtilization`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** A share of CPU time between two :class:`CpuTimes` readings, in percent.
+
+Every field is a percentage of that window, so they sum to roughly 100 for
+the aggregate and for each core alike.  ``total`` is ``100 - idle`` and
+therefore *includes* ``iowait``, which is also reported separately: a host
+stalled on storage is not idle, but it is not computing either.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `total` | `Optional[float]` | No | `null` | No |
+| `user` | `Optional[float]` | No | `null` | No |
+| `system` | `Optional[float]` | No | `null` | No |
+| `idle` | `Optional[float]` | No | `null` | No |
+| `iowait` | `Optional[float]` | No | `null` | No |
+| `irq` | `Optional[float]` | No | `null` | No |
+| `softirq` | `Optional[float]` | No | `null` | No |
+| `steal` | `Optional[float]` | No | `null` | No |
+| `nice` | `Optional[float]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "idle": null,
+  "iowait": null,
+  "irq": null,
+  "nice": null,
+  "softirq": null,
+  "steal": null,
+  "system": null,
+  "total": null,
+  "user": null
+}
+```
+
 <!-- api-model: CreateConnectionRequest -->
 ## `CreateConnectionRequest`
 
@@ -1679,6 +1771,10 @@ Synthetic representation:
 | `used_bytes` | `Optional[int]` | No | `null` | No |
 | `available_bytes` | `Optional[int]` | No | `null` | No |
 | `use_percent` | `Optional[int]` | No | `null` | No |
+| `options` | `str` | No | `` | No |
+| `inodes_total` | `Optional[int]` | No | `null` | No |
+| `inodes_used` | `Optional[int]` | No | `null` | No |
+| `inodes_free` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -1687,7 +1783,11 @@ Synthetic representation:
   "available_bytes": null,
   "device": {},
   "fstype": "",
+  "inodes_free": null,
+  "inodes_total": null,
+  "inodes_used": null,
   "mount_point": {},
+  "options": "",
   "size_bytes": null,
   "use_percent": null,
   "used_bytes": null
@@ -2035,7 +2135,7 @@ Synthetic representation:
 | `uptime_seconds` | `Optional[float]` | No | `null` | No |
 | `boot_time` | `str` | No | `` | No |
 | `cpu` | `CpuInfo` | No | `{"bogomips": null, "cores_per_socket": null, "frequency_mhz": null, "logical_processors": null, "model": "", "sockets": null, "threads_per_core": null}` | No |
-| `memory` | `MemoryInfo` | No | `{"available_bytes": null, "buffers_bytes": 0, "cached_bytes": 0, "free_bytes": 0, "swap_free_bytes": 0, "swap_total_bytes": 0, "total_bytes": 0}` | No |
+| `memory` | `MemoryInfo` | No | `{"active_bytes": null, "available_bytes": null, "buffers_bytes": 0, "cached_bytes": 0, "dirty_bytes": null, "free_bytes": 0, "inactive_bytes": null, "shmem_bytes": null, "slab_bytes": null, "slab_reclaimable_bytes": null, "swap_free_bytes": 0, "swap_total_bytes": 0, "total_bytes": 0, "writeback_bytes": null}` | No |
 | `load_average` | `Optional[LoadAverage]` | No | `null` | No |
 | `filesystems` | `Tuple[FilesystemUsage, ...]` | No | `[]` | No |
 | `interfaces` | `Tuple[NetworkInterface, ...]` | No | `[]` | No |
@@ -2056,6 +2156,14 @@ Synthetic representation:
 | `host_keys` | `Tuple[HostKeyFingerprint, ...]` | No | `[]` | No |
 | `io_pressure_some` | `Optional[PressureStall]` | No | `null` | No |
 | `io_pressure_full` | `Optional[PressureStall]` | No | `null` | No |
+| `cpu_pressure_some` | `Optional[PressureStall]` | No | `null` | No |
+| `cpu_pressure_full` | `Optional[PressureStall]` | No | `null` | No |
+| `memory_pressure_some` | `Optional[PressureStall]` | No | `null` | No |
+| `memory_pressure_full` | `Optional[PressureStall]` | No | `null` | No |
+| `cpu_times` | `Tuple[CpuTimes, ...]` | No | `[]` | No |
+| `process_counts` | `Optional[ProcessCounts]` | No | `null` | No |
+| `context_switches` | `Optional[int]` | No | `null` | No |
+| `interrupts` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -2063,6 +2171,7 @@ Synthetic representation:
 {
   "architecture": "",
   "boot_time": "",
+  "context_switches": null,
   "cpu": {
     "bogomips": null,
     "cores_per_socket": null,
@@ -2072,6 +2181,9 @@ Synthetic representation:
     "sockets": null,
     "threads_per_core": null
   },
+  "cpu_pressure_full": null,
+  "cpu_pressure_some": null,
+  "cpu_times": [],
   "default_gateway": "",
   "default_gateway_interface": "",
   "device_model": "",
@@ -2081,23 +2193,34 @@ Synthetic representation:
   "host_keys": [],
   "hostname": "",
   "interfaces": [],
+  "interrupts": null,
   "io_pressure_full": null,
   "io_pressure_some": null,
   "kernel": "",
   "listening_ports": [],
   "load_average": null,
   "memory": {
+    "active_bytes": null,
     "available_bytes": null,
     "buffers_bytes": 0,
     "cached_bytes": 0,
+    "dirty_bytes": null,
     "free_bytes": 0,
+    "inactive_bytes": null,
+    "shmem_bytes": null,
+    "slab_bytes": null,
+    "slab_reclaimable_bytes": null,
     "swap_free_bytes": 0,
     "swap_total_bytes": 0,
-    "total_bytes": 0
+    "total_bytes": 0,
+    "writeback_bytes": null
   },
+  "memory_pressure_full": null,
+  "memory_pressure_some": null,
   "os_id": "",
   "os_pretty_name": "",
   "os_version_id": "",
+  "process_counts": null,
   "processes": [],
   "sessions": [],
   "sockets": [],
@@ -2115,9 +2238,10 @@ Synthetic representation:
 **Introduced:** Protocol v1
 **Purpose:** A host-info operation plus whatever it has produced so far.
 
-``snapshot`` is populated only for a completed ``FULL`` probe; ``counters``
-is populated by both probes so a frontend can sample bandwidth without
-paying for the full gather.
+``snapshot`` is populated only for a completed ``FULL`` probe.  ``counters``
+is populated by every probe so a frontend can sample bandwidth without
+paying for the full gather, and ``live`` carries the rest of what the
+``LIVE`` probe read.
 
 **Related methods:** `cancel_host_info`, `get_host_info`, `start_host_info`
 **Related events:** None
@@ -2129,6 +2253,7 @@ paying for the full gather.
 | `snapshot` | `Optional[HostInfoSnapshot]` | No | `null` | No |
 | `counters` | `Tuple[InterfaceCounters, ...]` | No | `[]` | No |
 | `failure` | `Optional[ServiceFailure]` | No | `null` | No |
+| `live` | `Optional[LiveSample]` | No | `null` | No |
 
 Synthetic representation:
 
@@ -2136,6 +2261,7 @@ Synthetic representation:
 {
   "counters": [],
   "failure": null,
+  "live": null,
   "operation": "status",
   "probe": "full",
   "snapshot": null
@@ -2759,6 +2885,38 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: LiveSample -->
+## `LiveSample`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** One reading of the cheap probe the dialog repeats while it is open.
+
+Counters (``counters``, ``cpu_times``) mean nothing on their own -- a rate
+is the difference between two of these -- while ``memory`` and
+``load_average`` are instantaneous and usable from the first sample.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `counters` | `Tuple[InterfaceCounters, ...]` | No | `[]` | No |
+| `cpu_times` | `Tuple[CpuTimes, ...]` | No | `[]` | No |
+| `memory` | `Optional[MemoryInfo]` | No | `null` | No |
+| `load_average` | `Optional[LoadAverage]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "counters": [],
+  "cpu_times": [],
+  "load_average": null,
+  "memory": null
+}
+```
+
 <!-- api-model: LoadAverage -->
 ## `LoadAverage`
 
@@ -2864,18 +3022,32 @@ substituting ``MemFree`` or the total.
 | `buffers_bytes` | `int` | No | `0` | No |
 | `swap_total_bytes` | `int` | No | `0` | No |
 | `swap_free_bytes` | `int` | No | `0` | No |
+| `active_bytes` | `Optional[int]` | No | `null` | No |
+| `inactive_bytes` | `Optional[int]` | No | `null` | No |
+| `shmem_bytes` | `Optional[int]` | No | `null` | No |
+| `dirty_bytes` | `Optional[int]` | No | `null` | No |
+| `writeback_bytes` | `Optional[int]` | No | `null` | No |
+| `slab_bytes` | `Optional[int]` | No | `null` | No |
+| `slab_reclaimable_bytes` | `Optional[int]` | No | `null` | No |
 
 Synthetic representation:
 
 ```json
 {
+  "active_bytes": null,
   "available_bytes": null,
   "buffers_bytes": 0,
   "cached_bytes": 0,
+  "dirty_bytes": null,
   "free_bytes": 0,
+  "inactive_bytes": null,
+  "shmem_bytes": null,
+  "slab_bytes": null,
+  "slab_reclaimable_bytes": null,
   "swap_free_bytes": 0,
   "swap_total_bytes": 0,
-  "total_bytes": 0
+  "total_bytes": 0,
+  "writeback_bytes": null
 }
 ```
 
@@ -3442,6 +3614,43 @@ Synthetic representation:
   "avg10": {},
   "avg300": {},
   "avg60": {}
+}
+```
+
+<!-- api-model: ProcessCounts -->
+## `ProcessCounts`
+
+**Status:** Schema only
+**Introduced:** Protocol v1
+**Purpose:** How many processes the host is running, and how it classifies them.
+
+``pid_max`` is the kernel's ceiling, so ``total`` can be shown against a
+real denominator instead of against nothing.
+
+**Related methods:** None
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `total` | `Optional[int]` | No | `null` | No |
+| `running` | `Optional[int]` | No | `null` | No |
+| `sleeping` | `Optional[int]` | No | `null` | No |
+| `stopped` | `Optional[int]` | No | `null` | No |
+| `zombie` | `Optional[int]` | No | `null` | No |
+| `threads` | `Optional[int]` | No | `null` | No |
+| `pid_max` | `Optional[int]` | No | `null` | No |
+
+Synthetic representation:
+
+```json
+{
+  "pid_max": null,
+  "running": null,
+  "sleeping": null,
+  "stopped": null,
+  "threads": null,
+  "total": null,
+  "zombie": null
 }
 ```
 

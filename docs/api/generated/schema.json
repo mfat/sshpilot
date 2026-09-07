@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.53",
+  "api_implementation_version": "0.54",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -1403,7 +1403,8 @@
     ],
     "HostInfoProbe": [
       "full",
-      "network_counters"
+      "network_counters",
+      "live"
     ],
     "HostKeyDecision": [
       "accept",
@@ -3025,6 +3026,156 @@
       ],
       "status": "Schema only"
     },
+    "CpuTimes": {
+      "fields": [
+        {
+          "default": null,
+          "name": "name",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "user",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "nice",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "system",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "idle",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "iowait",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "irq",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "softirq",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "steal",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "guest",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "guest_nice",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "CpuUtilization": {
+      "fields": [
+        {
+          "default": null,
+          "name": "total",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "user",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "system",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "idle",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "iowait",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "irq",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "softirq",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "steal",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        },
+        {
+          "default": null,
+          "name": "nice",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[float]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "CreateConnectionRequest": {
       "fields": [
         {
@@ -3885,6 +4036,34 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        },
+        {
+          "default": "",
+          "name": "options",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": null,
+          "name": "inodes_total",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "inodes_used",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "inodes_free",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
       "status": "Schema only"
@@ -4406,13 +4585,20 @@
         },
         {
           "default": {
+            "active_bytes": null,
             "available_bytes": null,
             "buffers_bytes": 0,
             "cached_bytes": 0,
+            "dirty_bytes": null,
             "free_bytes": 0,
+            "inactive_bytes": null,
+            "shmem_bytes": null,
+            "slab_bytes": null,
+            "slab_reclaimable_bytes": null,
             "swap_free_bytes": 0,
             "swap_total_bytes": 0,
-            "total_bytes": 0
+            "total_bytes": 0,
+            "writeback_bytes": null
           },
           "name": "memory",
           "required": false,
@@ -4558,6 +4744,62 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[PressureStall]"
+        },
+        {
+          "default": null,
+          "name": "cpu_pressure_some",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[PressureStall]"
+        },
+        {
+          "default": null,
+          "name": "cpu_pressure_full",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[PressureStall]"
+        },
+        {
+          "default": null,
+          "name": "memory_pressure_some",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[PressureStall]"
+        },
+        {
+          "default": null,
+          "name": "memory_pressure_full",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[PressureStall]"
+        },
+        {
+          "default": [],
+          "name": "cpu_times",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[CpuTimes, ...]"
+        },
+        {
+          "default": null,
+          "name": "process_counts",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[ProcessCounts]"
+        },
+        {
+          "default": null,
+          "name": "context_switches",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "interrupts",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
       "status": "Schema only"
@@ -4598,6 +4840,13 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[ServiceFailure]"
+        },
+        {
+          "default": null,
+          "name": "live",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LiveSample]"
         }
       ],
       "status": "Implemented"
@@ -5300,6 +5549,39 @@
       ],
       "status": "Schema only"
     },
+    "LiveSample": {
+      "fields": [
+        {
+          "default": [],
+          "name": "counters",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[InterfaceCounters, ...]"
+        },
+        {
+          "default": [],
+          "name": "cpu_times",
+          "required": false,
+          "sensitive": false,
+          "type": "Tuple[CpuTimes, ...]"
+        },
+        {
+          "default": null,
+          "name": "memory",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[MemoryInfo]"
+        },
+        {
+          "default": null,
+          "name": "load_average",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[LoadAverage]"
+        }
+      ],
+      "status": "Schema only"
+    },
     "LoadAverage": {
       "fields": [
         {
@@ -5428,6 +5710,55 @@
           "required": false,
           "sensitive": false,
           "type": "int"
+        },
+        {
+          "default": null,
+          "name": "active_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "inactive_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "shmem_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "dirty_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "writeback_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "slab_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "slab_reclaimable_bytes",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
       "status": "Schema only"
@@ -6225,6 +6556,60 @@
           "required": true,
           "sensitive": false,
           "type": "float"
+        }
+      ],
+      "status": "Schema only"
+    },
+    "ProcessCounts": {
+      "fields": [
+        {
+          "default": null,
+          "name": "total",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "running",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "sleeping",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "stopped",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "zombie",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "threads",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
+        },
+        {
+          "default": null,
+          "name": "pid_max",
+          "required": false,
+          "sensitive": false,
+          "type": "Optional[int]"
         }
       ],
       "status": "Schema only"

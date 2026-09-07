@@ -324,3 +324,34 @@ def test_a_probe_that_never_starts_reports_no_operation_id():
 
     assert started == []
     assert errors
+
+
+def test_a_live_sample_runs_alongside_an_outstanding_gather():
+    """The dialog keeps sampling while the first gather is still going, so the
+    two probe kinds must not compete for one slot."""
+
+    client = FakeClient()
+    controller = HostInfoController(client)
+    _results, _errors, on_result, on_error = _collect()
+
+    controller.start(CONNECTION, HostInfoProbe.FULL, on_result, on_error)
+    controller.start(CONNECTION, HostInfoProbe.LIVE, on_result, on_error)
+    _drain(controller)
+
+    assert [request.probe for request in client.started] == [
+        HostInfoProbe.FULL,
+        HostInfoProbe.LIVE,
+    ]
+
+
+def test_a_second_live_sample_is_refused_while_one_is_outstanding():
+    """This is what stops a slow link building a queue of probes: the tick is
+    skipped rather than stacked."""
+
+    client = FakeClient()
+    controller = HostInfoController(client)
+    _results, _errors, on_result, on_error = _collect()
+
+    controller.start(CONNECTION, HostInfoProbe.LIVE, on_result, on_error)
+    with pytest.raises(HostInfoProbeBusy):
+        controller.start(CONNECTION, HostInfoProbe.LIVE, on_result, on_error)

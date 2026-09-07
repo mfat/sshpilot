@@ -23,13 +23,16 @@ import re
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from ...api.models.host_info import (
+    CPU_TIME_FIELDS,
     CpuInfo,
+    CpuTimes,
     FailedUnit,
     FilesystemUsage,
     HostInfoSnapshot,
     HostKeyFingerprint,
     InterfaceCounters,
     ListeningPort,
+    LiveSample,
     LoadAverage,
     LoginSession,
     MemoryInfo,
@@ -37,6 +40,7 @@ from ...api.models.host_info import (
     NetworkInterfaceKind,
     NetworkInterfaceState,
     PressureStall,
+    ProcessCounts,
     ProcessUsage,
     SocketConnection,
     SocketDirection,
@@ -195,7 +199,13 @@ def parse_cpu(lscpu_text: str, cpuinfo_text: str, nproc_text: str) -> CpuInfo:
 
 
 def parse_meminfo(text: str) -> MemoryInfo:
-    """Parse ``/proc/meminfo``; ``MemAvailable`` stays ``None`` when absent."""
+    """Parse ``/proc/meminfo``; a field the host omits stays ``None``.
+
+    Only the six fields the dialog cannot render without default to ``0``.
+    Everything added since -- ``MemAvailable`` and the breakdown below -- is
+    optional, because BusyBox and pre-3.14 kernels genuinely do not publish
+    them and a zero would read as "none in use" rather than "not reported".
+    """
 
     values: Dict[str, int] = {}
     for line in text.splitlines():
@@ -210,7 +220,71 @@ def parse_meminfo(text: str) -> MemoryInfo:
         buffers_bytes=values.get("Buffers", 0),
         swap_total_bytes=values.get("SwapTotal", 0),
         swap_free_bytes=values.get("SwapFree", 0),
+        active_bytes=values.get("Active"),
+        inactive_bytes=values.get("Inactive"),
+        shmem_bytes=values.get("Shmem"),
+        dirty_bytes=values.get("Dirty"),
+        writeback_bytes=values.get("Writeback"),
+        slab_bytes=values.get("Slab"),
+        slab_reclaimable_bytes=values.get("SReclaimable"),
     )
+
+
+# ---------------------------------------------------------------------------
+# CPU time counters
+# ---------------------------------------------------------------------------
+
+def parse_proc_stat(text: str) -> Tuple[CpuTimes, ...]:
+    """Parse the ``cpu``/``cpuN`` lines of ``/proc/stat`` into counters.
+
+    The aggregate line comes first, then one line per logical processor in the
+    kernel's own order.  Columns run out on older kernels -- 2.6.11 added
+    ``guest`` and 2.6.33 ``guest_nice``, and some architectures stop before
+    ``steal`` -- so a missing column stays ``None`` instead of becoming a zero
+    that would drag a computed share downwards.
+    """
+
+    readings: List[CpuTimes] = []
+    for line in text.splitlines():
+        fields = line.split()
+        if not fields or not re.fullmatch(r"cpu\d*", fields[0]):
+            continue
+        values: Dict[str, Optional[int]] = {}
+        for name, raw in zip(CPU_TIME_FIELDS, fields[1:]):
+            values[name] = _int_or_none(raw)
+        readings.append(CpuTimes(name=fields[0], **values))
+    return tuple(readings)
+
+
+def parse_proc_stat_counters(text: str) -> Dict[str, Optional[int]]:
+    """Read the scalar counters of ``/proc/stat``.
+
+    ``intr`` and ``softirq`` print a grand total followed by a per-source
+    breakdown; only the total is read.  ``procs_running`` and ``procs_blocked``
+    are instantaneous, not counters, and are what a host without a usable
+    ``ps`` can still say about its process table.
+    """
+
+    counters: Dict[str, Optional[int]] = {
+        "context_switches": None,
+        "interrupts": None,
+        "soft_interrupts": None,
+        "procs_running": None,
+        "procs_blocked": None,
+    }
+    keys = {
+        "ctxt": "context_switches",
+        "intr": "interrupts",
+        "softirq": "soft_interrupts",
+        "procs_running": "procs_running",
+        "procs_blocked": "procs_blocked",
+    }
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 2 or fields[0] not in keys:
+            continue
+        counters[keys[fields[0]]] = _int_or_none(fields[1])
+    return counters
 
 
 def parse_load_average(text: str) -> Optional[LoadAverage]:
@@ -227,24 +301,24 @@ def parse_load_average(text: str) -> Optional[LoadAverage]:
 # Storage
 # ---------------------------------------------------------------------------
 
-def parse_filesystems(text: str) -> Tuple[FilesystemUsage, ...]:
-    """Parse ``df`` output, normalising every size to bytes.
+def _df_rows(text: str):
+    """Yield ``(device, fstype, mount_point, values, percent)`` from ``df``.
 
-    coreutils ``df -T -B1`` reports bytes in seven columns; BusyBox ``df``
-    reports 1K blocks in six.  The header decides which, so the multiplier is
-    never guessed from the magnitude of the numbers.
+    Every ``df`` variant prints the same shape -- device, three numeric
+    columns, a percentage, then the mount point -- and coreutils ``-T`` inserts
+    a type column second.  The header decides whether that column is there, so
+    no caller has to count fields for itself, and pseudo-filesystems are
+    dropped once, here.  ``values`` are the raw numbers: what they *mean*
+    (bytes, 1K blocks, inodes) is the caller's business.
     """
 
     lines = text.strip().splitlines()
     if not lines:
-        return ()
-    header = lines[0].lower()
-    has_type = "type" in header
-    multiplier = 1024 if ("1k-block" in header or "1024-block" in header) else 1
-    rows: List[FilesystemUsage] = []
+        return
+    has_type = "type" in lines[0].lower()
+    offset = 1 if has_type else 0
     for line in lines[1:]:
         parts = line.split()
-        offset = 1 if has_type else 0
         if len(parts) < 6 + offset:
             continue
         device = parts[0]
@@ -254,11 +328,35 @@ def parse_filesystems(text: str) -> Tuple[FilesystemUsage, ...]:
             continue
         if mount_point.startswith(_PSEUDO_MOUNT_PREFIXES):
             continue
-        sizes = []
-        for raw in parts[1 + offset:4 + offset]:
-            value = _int_or_none(raw)
-            sizes.append(None if value is None else value * multiplier)
+        values = [_int_or_none(raw) for raw in parts[1 + offset:4 + offset]]
         percent = _int_or_none(parts[4 + offset].rstrip("%"))
+        yield device, fstype, mount_point, values, percent
+
+
+def parse_filesystems(
+    text: str,
+    inodes: Optional[Dict[str, Sequence[Optional[int]]]] = None,
+    options: Optional[Dict[str, str]] = None,
+) -> Tuple[FilesystemUsage, ...]:
+    """Parse ``df`` output, normalising every size to bytes.
+
+    coreutils ``df -T -B1`` reports bytes in seven columns; BusyBox ``df``
+    reports 1K blocks in six.  The header decides which, so the multiplier is
+    never guessed from the magnitude of the numbers.
+
+    ``inodes`` and ``options`` come from separate probe sections and are joined
+    on the mount point; a mount either side does not mention simply keeps the
+    absent-reading default.
+    """
+
+    header = text.strip().splitlines()[0].lower() if text.strip() else ""
+    multiplier = 1024 if ("1k-block" in header or "1024-block" in header) else 1
+    inodes = inodes or {}
+    options = options or {}
+    rows: List[FilesystemUsage] = []
+    for device, fstype, mount_point, values, percent in _df_rows(text):
+        sizes = [None if value is None else value * multiplier for value in values]
+        counts = inodes.get(mount_point) or (None, None, None)
         rows.append(
             FilesystemUsage(
                 device=device,
@@ -268,9 +366,55 @@ def parse_filesystems(text: str) -> Tuple[FilesystemUsage, ...]:
                 used_bytes=sizes[1],
                 available_bytes=sizes[2],
                 use_percent=None if percent is None or percent > 100 else percent,
+                options=options.get(mount_point, ""),
+                inodes_total=counts[0],
+                inodes_used=counts[1],
+                inodes_free=counts[2],
             )
         )
     return tuple(rows)
+
+
+def parse_inode_usage(text: str) -> Dict[str, Tuple[Optional[int], ...]]:
+    """Parse ``df -i`` into ``{mount point: (total, used, free)}``.
+
+    Counts, not bytes, so no multiplier applies whichever ``df`` answered.
+    Filesystems that have no fixed inode table (btrfs, zfs) print ``-`` in
+    these columns, which reads as unknown rather than as zero.
+    """
+
+    return {
+        mount_point: tuple(values)
+        for _device, _fstype, mount_point, values, _percent in _df_rows(text)
+    }
+
+
+#: ``/proc/self/mounts`` escapes these four characters in octal.
+_MOUNT_ESCAPES = (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\"))
+
+
+def _unescape_mount_field(value: str) -> str:
+    for escape, character in _MOUNT_ESCAPES:
+        value = value.replace(escape, character)
+    return value
+
+
+def parse_mount_options(text: str) -> Dict[str, str]:
+    """Parse ``/proc/self/mounts`` into ``{mount point: options}``.
+
+    A mount point containing a space is written with an octal escape, so the
+    fields are unescaped after splitting rather than before.  A later mount
+    over the same point shadows an earlier one, which is what the kernel means
+    by listing it twice, so the last entry wins.
+    """
+
+    options: Dict[str, str] = {}
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        options[_unescape_mount_field(fields[1])] = _unescape_mount_field(fields[3])
+    return options
 
 
 # ---------------------------------------------------------------------------
@@ -726,10 +870,15 @@ def parse_host_keys(text: str) -> Tuple[HostKeyFingerprint, ...]:
     return tuple(keys)
 
 
-def parse_io_pressure(
+def parse_pressure(
     text: str,
 ) -> Tuple[Optional[PressureStall], Optional[PressureStall]]:
-    """Parse ``/proc/pressure/io`` into its ``some`` and ``full`` readings."""
+    """Parse one ``/proc/pressure/*`` file into its ``some`` and ``full`` lines.
+
+    ``cpu`` publishes only ``some`` -- there is no such thing as every task
+    being stalled on a CPU while one of them runs -- so ``full`` is routinely
+    ``None`` here and that is not a parse failure.
+    """
 
     readings: Dict[str, PressureStall] = {}
     for line in text.splitlines():
@@ -746,6 +895,52 @@ def parse_io_pressure(
             continue
         readings[fields[0]] = PressureStall(*averages)
     return readings.get("some"), readings.get("full")
+
+
+#: The pressure files differ only in which stalls they count, so ``io`` keeps
+#: its original name for callers that predate ``cpu`` and ``memory``.
+parse_io_pressure = parse_pressure
+
+
+def parse_process_states(text: str) -> Dict[str, Optional[int]]:
+    """Count processes by state from ``ps -eo stat=,nlwp=``.
+
+    Only the first letter of ``STAT`` is a state; the flags after it (``s``
+    session leader, ``+`` foreground, ``<`` high priority) describe the process
+    rather than what it is doing.  A ``ps`` that answered without ``nlwp``
+    leaves the thread count unreported rather than equal to the process count,
+    because one is not an estimate of the other on a threaded host.
+    """
+
+    buckets: Dict[str, Optional[int]] = {
+        "total": None,
+        "running": None,
+        "sleeping": None,
+        "stopped": None,
+        "zombie": None,
+        "threads": None,
+    }
+    states = {"R": "running", "T": "stopped", "t": "stopped", "Z": "zombie"}
+    counted = {"total": 0, "running": 0, "sleeping": 0, "stopped": 0, "zombie": 0}
+    threads = 0
+    saw_threads = False
+    for line in text.splitlines():
+        fields = line.split()
+        if not fields or not fields[0][:1].isalpha():
+            continue
+        counted["total"] += 1
+        counted[states.get(fields[0][0], "sleeping")] += 1
+        if len(fields) > 1:
+            count = _positive_int_or_none(fields[1])
+            if count is not None:
+                threads += count
+                saw_threads = True
+    if not counted["total"]:
+        return buckets
+    buckets.update(counted)
+    if saw_threads:
+        buckets["threads"] = threads
+    return buckets
 
 
 def parse_architecture(uname_text: str) -> str:
@@ -765,6 +960,26 @@ def _boot_time(sections: Dict[str, str]) -> str:
         if len(parts) >= 3:
             return " ".join(parts[-2:])
     return sections.get("UPTIME_SINCE", "").strip()
+
+
+def _process_counts(sections: Dict[str, str]) -> Optional[ProcessCounts]:
+    """Assemble the process table summary from whichever section answered.
+
+    ``ps`` gives the full breakdown.  A host whose ``ps`` has no ``-o`` -- every
+    BusyBox one -- still publishes ``procs_running`` and ``procs_blocked`` in
+    ``/proc/stat``, so the running count survives even where the breakdown does
+    not.  A host that said nothing at all gets ``None``, not a row of zeros.
+    """
+
+    buckets = parse_process_states(sections.get("PROC_STATES", ""))
+    pid_max = _positive_int_or_none(sections.get("PID_MAX", ""))
+    if buckets["total"] is None:
+        counters = parse_proc_stat_counters(sections.get("STAT", ""))
+        running = counters["procs_running"]
+        if running is None and pid_max is None:
+            return None
+        return ProcessCounts(running=running, pid_max=pid_max)
+    return ProcessCounts(pid_max=pid_max, **buckets)
 
 
 def parse_host_info(raw: str) -> HostInfoSnapshot:
@@ -800,7 +1015,10 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
     processes = parse_process_table(sections.get("PROCESSES", ""))
     if not processes:
         processes = parse_process_table(sections.get("TOP", ""))
-    io_some, io_full = parse_io_pressure(sections.get("IO_PRESSURE", ""))
+    io_some, io_full = parse_pressure(sections.get("IO_PRESSURE", ""))
+    cpu_some, cpu_full = parse_pressure(sections.get("CPU_PRESSURE", ""))
+    memory_some, memory_full = parse_pressure(sections.get("MEM_PRESSURE", ""))
+    stat_counters = parse_proc_stat_counters(sections.get("STAT", ""))
     os_release = parse_os_release(sections.get("OS_RELEASE", ""))
     uname = sections.get("UNAME", "").strip()
 
@@ -823,7 +1041,11 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         ),
         memory=parse_meminfo(sections.get("MEMINFO", "")),
         load_average=parse_load_average(sections.get("LOADAVG", "")),
-        filesystems=parse_filesystems(sections.get("DF", "")),
+        filesystems=parse_filesystems(
+            sections.get("DF", ""),
+            parse_inode_usage(sections.get("DF_INODES", "")),
+            parse_mount_options(sections.get("MOUNTS", "")),
+        ),
         interfaces=parse_interfaces(
             sections.get("IP_LINK", ""),
             sections.get("IP_ADDR", ""),
@@ -852,6 +1074,14 @@ def parse_host_info(raw: str) -> HostInfoSnapshot:
         host_keys=parse_host_keys(sections.get("SSH_HOST_KEYS", "")),
         io_pressure_some=io_some,
         io_pressure_full=io_full,
+        cpu_pressure_some=cpu_some,
+        cpu_pressure_full=cpu_full,
+        memory_pressure_some=memory_some,
+        memory_pressure_full=memory_full,
+        cpu_times=parse_proc_stat(sections.get("STAT", "")),
+        process_counts=_process_counts(sections),
+        context_switches=stat_counters["context_switches"],
+        interrupts=stat_counters["interrupts"],
     )
 
 
@@ -859,3 +1089,19 @@ def parse_counters_probe(raw: str) -> Tuple[InterfaceCounters, ...]:
     """Parse the lightweight bandwidth probe."""
 
     return parse_network_counters(split_sections(raw).get("NET_DEV", ""))
+
+
+def parse_live_probe(raw: str) -> LiveSample:
+    """Parse one live sample.
+
+    Every section reuses the full gather's parser and marker name, so a reading
+    cannot mean one thing on open and another two seconds later.
+    """
+
+    sections = split_sections(raw)
+    return LiveSample(
+        counters=parse_network_counters(sections.get("NET_DEV", "")),
+        cpu_times=parse_proc_stat(sections.get("STAT", "")),
+        memory=parse_meminfo(sections["MEMINFO"]) if "MEMINFO" in sections else None,
+        load_average=parse_load_average(sections.get("LOADAVG", "")),
+    )

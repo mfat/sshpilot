@@ -8,15 +8,22 @@ from sshpilot.api.models.host_info import (
     SocketDirection,
 )
 from sshpilot.core.host_info import parse_counters_probe, parse_host_info
+from sshpilot.core.host_info import parse_live_probe
 from sshpilot.core.host_info.parser import (
     parse_architecture,
     parse_failed_units,
     parse_filesystems,
     parse_host_keys,
+    parse_inode_usage,
     parse_io_pressure,
     parse_listening_ports,
     parse_meminfo,
+    parse_mount_options,
     parse_network_counters,
+    parse_pressure,
+    parse_proc_stat,
+    parse_proc_stat_counters,
+    parse_process_states,
     parse_process_table,
     parse_sockets,
     parse_w,
@@ -492,3 +499,248 @@ def test_the_distro_identifier_and_version_survive_the_pretty_name():
     assert (snapshot.os_id, snapshot.os_version_id) == ("openwrt", "23.05.5")
     assert snapshot.architecture == "mips"
     assert snapshot.os_pretty_name == "OpenWrt 23.05.5"
+
+
+# ---------------------------------------------------------------------------
+# /proc/stat, pressure, inodes, mounts and the process table summary
+# ---------------------------------------------------------------------------
+
+PROC_STAT = """cpu  1000 20 300 90000 40 5 6 7 8 9
+cpu0 500 10 150 45000 20 2 3 3 4 4
+cpu1 500 10 150 45000 20 3 3 4 4 5
+intr 123456789 1 0 0 2
+ctxt 987654321
+btime 1749000000
+processes 55555
+procs_running 3
+procs_blocked 1
+softirq 55555 1 2 3
+"""
+
+
+def test_proc_stat_reports_the_aggregate_first_then_every_core():
+    readings = parse_proc_stat(PROC_STAT)
+    assert [item.name for item in readings] == ["cpu", "cpu0", "cpu1"]
+    assert readings[0].user == 1000
+    assert readings[0].idle == 90000
+    assert readings[0].steal == 7
+    assert readings[0].guest_nice == 9
+
+
+def test_proc_stat_ignores_the_scalar_lines_when_reading_cpu_times():
+    """``ctxt`` and ``btime`` are not CPUs; only ``cpu``/``cpuN`` lines are."""
+
+    assert all(
+        item.name.startswith("cpu") for item in parse_proc_stat(PROC_STAT)
+    )
+    assert len(parse_proc_stat(PROC_STAT)) == 3
+
+
+def test_an_older_kernel_stopping_before_steal_leaves_it_unreported():
+    """A missing column is unknown, not zero: counting it as zero would drag
+    every computed share downwards."""
+
+    readings = parse_proc_stat("cpu  100 2 30 400\n")
+    assert readings[0].idle == 400
+    assert readings[0].iowait is None
+    assert readings[0].steal is None
+    # The total counts only what the host actually published.
+    assert readings[0].total == 532
+
+
+def test_proc_stat_counters_read_only_the_grand_total_of_intr():
+    counters = parse_proc_stat_counters(PROC_STAT)
+    assert counters["context_switches"] == 987654321
+    assert counters["interrupts"] == 123456789
+    assert counters["soft_interrupts"] == 55555
+    assert counters["procs_running"] == 3
+    assert counters["procs_blocked"] == 1
+
+
+def test_a_host_without_proc_stat_reports_no_counters_rather_than_zeroes():
+    assert parse_proc_stat("") == ()
+    assert set(parse_proc_stat_counters("").values()) == {None}
+
+
+def test_cpu_pressure_has_no_full_line_and_that_is_not_a_failure():
+    """Every task cannot be waiting for a CPU while one of them is using it."""
+
+    some, full = parse_pressure("some avg10=2.20 avg60=1.50 avg300=0.90 total=1234")
+    assert (some.avg10, some.avg60, some.avg300) == (2.20, 1.50, 0.90)
+    assert full is None
+
+
+def test_io_pressure_keeps_its_original_name_for_the_same_parser():
+    assert parse_io_pressure is parse_pressure
+
+
+DF_INODES_COREUTILS = """Filesystem     Type    Inodes   IUsed    IFree IUse% Mounted on
+/dev/sda1      ext4   6553600  123456  6430144    2% /
+/dev/sdb1      btrfs        -       -        -     - /data
+"""
+
+DF_INODES_BUSYBOX = """Filesystem           Inodes      Used  Available Use% Mounted on
+/dev/root             65536      1234      64302   2% /
+"""
+
+
+def test_df_inodes_is_read_the_same_way_whether_or_not_a_type_column_is_there():
+    assert parse_inode_usage(DF_INODES_COREUTILS)["/"] == (6553600, 123456, 6430144)
+    assert parse_inode_usage(DF_INODES_BUSYBOX)["/"] == (65536, 1234, 64302)
+
+
+def test_a_filesystem_with_no_inode_table_reports_unknown_not_zero():
+    """btrfs and zfs allocate inodes dynamically and print dashes here. Zero
+    would render as "no inodes left"."""
+
+    assert parse_inode_usage(DF_INODES_COREUTILS)["/data"] == (None, None, None)
+
+
+def test_mount_options_unescape_the_octal_the_kernel_writes():
+    options = parse_mount_options(
+        "/dev/sda1 / ext4 rw,relatime 0 0\n"
+        "/dev/sdb1 /media/my\\040disk vfat ro,noatime 0 0\n"
+    )
+    assert options["/"] == "rw,relatime"
+    assert options["/media/my disk"] == "ro,noatime"
+
+
+def test_a_later_mount_over_the_same_point_shadows_the_earlier_one():
+    options = parse_mount_options(
+        "/dev/sda1 /mnt ext4 rw 0 0\n/dev/sdb1 /mnt ext4 ro 0 0\n"
+    )
+    assert options["/mnt"] == "ro"
+
+
+def test_filesystems_join_inodes_and_options_on_the_mount_point():
+    filesystems = parse_filesystems(
+        "Filesystem     Type  1B-blocks       Used  Available Use% Mounted on\n"
+        "/dev/sda1      ext4  100000000   50000000   45000000  53% /\n",
+        parse_inode_usage(DF_INODES_COREUTILS),
+        parse_mount_options("/dev/sda1 / ext4 ro,relatime 0 0\n"),
+    )
+    assert filesystems[0].options == "ro,relatime"
+    assert filesystems[0].read_only is True
+    assert filesystems[0].inodes_used == 123456
+    assert round(filesystems[0].inodes_used_fraction, 4) == 0.0188
+
+
+def test_a_filesystem_probe_without_the_extra_sections_still_parses():
+    """Both joins are optional; a host that answered only ``df`` is not an
+    error."""
+
+    filesystems = parse_filesystems(
+        "Filesystem     Type  1B-blocks       Used  Available Use% Mounted on\n"
+        "/dev/sda1      ext4  100000000   50000000   45000000  53% /\n"
+    )
+    assert filesystems[0].options == ""
+    assert filesystems[0].inodes_total is None
+    assert filesystems[0].inodes_used_fraction is None
+
+
+def test_process_states_count_by_the_first_letter_and_sum_the_threads():
+    """The flags after the state letter (``s`` leader, ``+`` foreground) say
+    what a process *is*, not what it is doing."""
+
+    buckets = parse_process_states("Ss    1\nS+    4\nR     2\nZ     1\nTl    3\nD     1\n")
+    assert buckets["total"] == 6
+    assert buckets["running"] == 1
+    assert buckets["stopped"] == 1
+    assert buckets["zombie"] == 1
+    # D is a sleep the host is blocked in, not a stopped or running process.
+    assert buckets["sleeping"] == 3
+    assert buckets["threads"] == 12
+
+
+def test_a_ps_without_nlwp_leaves_threads_unreported_not_equal_to_processes():
+    buckets = parse_process_states("S\nR\nS\n")
+    assert buckets["total"] == 3
+    assert buckets["threads"] is None
+
+
+def test_meminfo_extras_stay_absent_when_the_host_omits_them():
+    memory = parse_meminfo("MemTotal:  1024 kB\nMemFree:  512 kB\n")
+    assert memory.total_bytes == 1024 * 1024
+    for name in ("active_bytes", "inactive_bytes", "dirty_bytes", "slab_bytes"):
+        assert getattr(memory, name) is None
+
+
+def test_meminfo_reads_the_breakdown_when_the_host_publishes_it():
+    memory = parse_meminfo(
+        "MemTotal: 1024 kB\nActive: 400 kB\nInactive: 200 kB\nShmem: 8 kB\n"
+        "Dirty: 4 kB\nWriteback: 2 kB\nSlab: 64 kB\nSReclaimable: 32 kB\n"
+    )
+    assert memory.active_bytes == 400 * 1024
+    assert memory.inactive_bytes == 200 * 1024
+    assert memory.dirty_bytes == 4 * 1024
+    assert memory.slab_reclaimable_bytes == 32 * 1024
+
+
+def test_a_full_gather_carries_the_new_sections_through_to_the_snapshot():
+    snapshot = parse_host_info(
+        _probe(
+            STAT=PROC_STAT,
+            CPU_PRESSURE="some avg10=2.20 avg60=1.50 avg300=0.90 total=1",
+            MEM_PRESSURE=(
+                "some avg10=0.10 avg60=0.20 avg300=0.30 total=1\n"
+                "full avg10=0.05 avg60=0.06 avg300=0.07 total=1"
+            ),
+            PROC_STATES="S 4\nR 2\n",
+            PID_MAX="32768",
+        )
+    )
+    assert [item.name for item in snapshot.cpu_times] == ["cpu", "cpu0", "cpu1"]
+    assert snapshot.context_switches == 987654321
+    assert snapshot.interrupts == 123456789
+    assert snapshot.cpu_pressure_some.avg10 == 2.20
+    assert snapshot.cpu_pressure_full is None
+    assert snapshot.memory_pressure_full.avg10 == 0.05
+    assert snapshot.process_counts.total == 2
+    assert snapshot.process_counts.threads == 6
+    assert snapshot.process_counts.pid_max == 32768
+
+
+def test_a_busybox_host_still_reports_running_from_proc_stat():
+    """BusyBox ``ps`` has no ``-o``, so PROC_STATES is empty. procs_running is
+    the one thing every Linux still publishes."""
+
+    snapshot = parse_host_info(_probe(STAT=PROC_STAT, PROC_STATES="", PID_MAX=""))
+    assert snapshot.process_counts.running == 3
+    assert snapshot.process_counts.total is None
+    assert snapshot.process_counts.pid_max is None
+
+
+def test_a_host_that_said_nothing_about_processes_reports_no_counts():
+    assert parse_host_info(_probe(HOSTNAME="box")).process_counts is None
+
+
+def test_the_live_probe_reuses_the_full_gather_markers_and_parsers():
+    """A reading must not mean one thing on open and another two seconds later."""
+
+    sample = parse_live_probe(
+        _probe(
+            NET_DEV=(
+                "Inter-|   Receive                                | Transmit\n"
+                " face |bytes packets errs drop fifo frame compressed multicast|"
+                "bytes packets\n"
+                "  eth0: 1000 1 0 0 0 0 0 0 2000 2"
+            ),
+            STAT=PROC_STAT,
+            MEMINFO="MemTotal: 1024 kB\nMemAvailable: 256 kB\n",
+            LOADAVG="0.50 0.40 0.30 1/200 12345",
+        )
+    )
+    assert sample.counters == (parse_network_counters(
+        "  eth0: 1000 1 0 0 0 0 0 0 2000 2"
+    )[0],)
+    assert [item.name for item in sample.cpu_times] == ["cpu", "cpu0", "cpu1"]
+    assert sample.memory.used_bytes == (1024 - 256) * 1024
+    assert sample.load_average.one == 0.50
+
+
+def test_a_live_probe_that_answered_nothing_reports_absent_not_empty():
+    sample = parse_live_probe(_probe(NET_DEV="", STAT="", LOADAVG=""))
+    assert sample.counters == ()
+    assert sample.cpu_times == ()
+    assert sample.memory is None
+    assert sample.load_average is None

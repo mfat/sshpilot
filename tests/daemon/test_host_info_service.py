@@ -22,7 +22,11 @@ from sshpilot.api.models.operations import (
     OperationState,
     OperationSummary,
 )
-from sshpilot.core.host_info import FULL_PROBE_COMMAND, NETWORK_COUNTERS_COMMAND
+from sshpilot.core.host_info import (
+    FULL_PROBE_COMMAND,
+    LIVE_PROBE_COMMAND,
+    NETWORK_COUNTERS_COMMAND,
+)
 from sshpilot.daemon.host_info_service import HostInfoService
 
 CLIENT = ClientId("client-1")
@@ -181,3 +185,61 @@ def test_probe_retention_is_bounded_so_sampling_cannot_grow_it_forever():
     for index in range(3):
         service._remember(OperationId(f"op-{index}"), HostInfoProbe.NETWORK_COUNTERS)
     assert list(service._probes) == [OperationId("op-1"), OperationId("op-2")]
+
+
+def test_the_live_probe_is_cheap_and_never_raises_its_own_prompt():
+    """A prompt every two seconds on an established session would be unusable,
+    so only the first gather is interactive."""
+
+    broadcast = _succeeded(
+        "===NET_DEV===\n  eth0: 5 1 0 0 0 0 0 0 7 1\n"
+        "===STAT===\ncpu  100 2 30 400 5 0 0 0 0 0\ncpu0 100 2 30 400 5 0 0 0 0 0\n"
+        "===MEMINFO===\nMemTotal: 1024 kB\nMemAvailable: 256 kB\n"
+        "===LOADAVG===\n0.50 0.40 0.30 1/200 12345\n"
+        "===END===\n"
+    )
+    service = HostInfoService(broadcast)
+
+    summary = service.start(
+        HostInfoRequest(CONNECTION, HostInfoProbe.LIVE), owner_client_id=CLIENT
+    )
+
+    request = broadcast.requests[0]
+    assert request.command == LIVE_PROBE_COMMAND
+    assert request.policy.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY
+    assert request.policy.timeout_seconds == 15.0
+
+    assert summary.probe is HostInfoProbe.LIVE
+    # A live sample is not a gather: it carries no snapshot.
+    assert summary.snapshot is None
+    assert summary.live is not None
+    assert [item.name for item in summary.live.cpu_times] == ["cpu", "cpu0"]
+    assert summary.live.memory.used_bytes == (1024 - 256) * 1024
+    assert summary.live.load_average.one == 0.50
+    # counters is filled by every probe, so a caller that only wants bandwidth
+    # need not know which probe answered.
+    assert summary.counters == summary.live.counters
+    assert (summary.counters[0].rx_bytes, summary.counters[0].tx_bytes) == (5, 7)
+
+
+def test_the_full_gather_reads_the_counters_a_live_sample_differences_against():
+    """Without this baseline the first live sample would have nothing to
+    subtract from and would report a rate of zero."""
+
+    broadcast = _succeeded(
+        "===HOSTNAME===\nrouter\n"
+        "===STAT===\ncpu  100 2 30 400 5 0 0 0 0 0\n"
+        "===NET_DEV===\n  eth0: 100 1 0 0 0 0 0 0 200 2\n"
+        "===END===\n"
+    )
+    service = HostInfoService(broadcast)
+
+    summary = service.start(
+        HostInfoRequest(CONNECTION, HostInfoProbe.FULL), owner_client_id=CLIENT
+    )
+
+    assert broadcast.requests[0].command == FULL_PROBE_COMMAND
+    assert [item.name for item in summary.snapshot.cpu_times] == ["cpu"]
+    assert summary.counters[0].rx_bytes == 100
+    # The gather is not itself a live sample.
+    assert summary.live is None
