@@ -212,24 +212,26 @@ def test_memory_and_temperatures_are_stacked_not_side_by_side():
             headings[widget.get_text()] = widget
     assert set(headings) == {"Memory", "Temperatures"}
 
-    def _ancestors(widget):
-        found = []
-        parent = widget.get_parent()
-        while parent is not None:
-            found.append(parent)
-            parent = parent.get_parent()
-        return found
+    # Asserted on the ancestry itself rather than by intersecting id() sets:
+    # PyGObject hands out a fresh wrapper per access and frees it immediately,
+    # so those addresses get recycled and compare equal by accident.
+    def _row_ancestor(widget):
+        """The first horizontal box between a heading and the page, if any."""
 
-    shared = set(map(id, _ancestors(headings["Memory"]))) & set(
-        map(id, _ancestors(headings["Temperatures"]))
-    )
-    horizontal = [
-        widget for widget in _walk(page)
-        if id(widget) in shared
-        and isinstance(widget, Gtk.Box)
-        and widget.get_orientation() is Gtk.Orientation.HORIZONTAL
-    ]
-    assert not horizontal, "the two sections still share a horizontal container"
+        parent = widget.get_parent()
+        while parent is not None and parent is not page:
+            if (
+                isinstance(parent, Gtk.Box)
+                and parent.get_orientation() is Gtk.Orientation.HORIZONTAL
+            ):
+                return parent
+            parent = parent.get_parent()
+        return None
+
+    for name, heading in headings.items():
+        assert _row_ancestor(heading) is None, (
+            f"{name} sits inside a horizontal container, so it shares a row"
+        )
 
 
 def test_a_nearly_full_filesystem_is_marked_critical_not_healthy():
@@ -592,30 +594,73 @@ def test_pressure_covers_all_three_resources_not_only_storage():
         memory_pressure_some=PressureStall(3.3, 2.5, 1.9),
     )
     texts = _texts(_dialog(snapshot)._build_resources())
-    assert "Pressure stall" in texts
-    assert {"CPU", "Memory", "I/O"} <= set(texts)
-    assert "1.1%" in texts and "2.2%" in texts and "3.3%" in texts
-    assert "Some tasks" in texts and "All tasks" in texts
+    assert "Time spent waiting" in texts
+    # Plain words, not kernel vocabulary: no "pressure", no "I/O", no "tasks".
+    assert {"CPU", "Memory", "Disk"} <= set(texts)
+    assert not any("Pressure" in t or "stall" in t.lower() for t in texts)
+    assert "I/O" not in texts
 
-    # It is no longer on Storage, which now points at where it went.
-    assert "Pressure stall" not in _texts(_dialog(snapshot)._build_storage())
+    # One window, the 60 s one -- the second field of each reading.
+    assert "1.5%" in texts and "0.7%" in texts and "2.5%" in texts
+    # ...and only that one: 10 s and 300 s are neither drawn nor labelled.
+    assert "10 s" not in texts and "300 s" not in texts
+    assert "2.2%" not in texts and "0.9%" not in texts
+
+    # It is no longer on Storage.
+    assert "Time spent waiting" not in _texts(_dialog(snapshot)._build_storage())
 
 
-def test_a_cpu_without_a_full_pressure_line_omits_that_row():
-    """/proc/pressure/cpu publishes no "full" line: every task cannot be
-    waiting for a CPU while one of them is using it."""
+def test_a_host_where_everything_stalls_says_so_in_words():
+    """"full" is the pre-OOM signature and is zero on a healthy host, so it is
+    not a row of its own -- it is a phrase that appears when it is real."""
 
-    snapshot = _snapshot(cpu_pressure_some=PressureStall(2.2, 1.5, 0.9))
+    snapshot = _snapshot(
+        memory_pressure_some=PressureStall(20.0, 18.0, 9.0),
+        memory_pressure_full=PressureStall(9.0, 8.0, 4.0),
+    )
     texts = _texts(_dialog(snapshot)._build_resources())
-    assert "2.2%" in texts
-    # The one "All tasks" row present belongs to I/O or memory, never to CPU;
-    # with only CPU reporting there is no "All tasks" row at all.
-    assert "All tasks" not in texts
+    assert any("nothing could run" in t for t in texts)
+    assert any("8.0%" in t for t in texts)
+
+
+def test_a_resource_that_never_stalls_completely_stays_silent():
+    """/proc/pressure/cpu reports no "full" line on many kernels, and where it
+    does it is zero: either way there is nothing to say."""
+
+    snapshot = _snapshot(
+        cpu_pressure_some=PressureStall(2.2, 1.5, 0.9),
+        cpu_pressure_full=PressureStall(0.0, 0.0, 0.0),
+    )
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert "1.5%" in texts
+    assert not any("nothing could run" in t for t in texts)
+
+
+def test_waiting_has_its_own_scale_because_losing_half_your_time_is_critical():
+    """Utilization's 50/70/90 would call a host losing 40% of its time to
+    waiting "healthy"."""
+
+    from sshpilot.machine_info_dialog import (
+        _SEVERITY_CAREFUL,
+        _SEVERITY_CRITICAL,
+        _SEVERITY_OK,
+        _SEVERITY_WARN,
+        _usage_severity,
+        _wait_severity,
+    )
+
+    assert _wait_severity(0.05) is _SEVERITY_OK
+    assert _wait_severity(0.10) is _SEVERITY_CAREFUL
+    assert _wait_severity(0.25) is _SEVERITY_WARN
+    assert _wait_severity(0.50) is _SEVERITY_CRITICAL
+    # The same reading on the utilization scale would still read as healthy.
+    assert _wait_severity(0.40) is _SEVERITY_WARN
+    assert _usage_severity(0.40) is _SEVERITY_OK
 
 
 def test_a_kernel_without_psi_says_so_rather_than_showing_zeroes():
     texts = _texts(_dialog(_snapshot())._build_resources())
-    assert "This host does not report pressure stall" in texts
+    assert "This host does not report waiting times" in texts
     assert "0.0%" not in texts
 
 
@@ -731,14 +776,52 @@ def test_inode_usage_is_shown_because_a_disk_fills_up_two_ways():
         )
     )
     texts = _texts(_dialog(snapshot)._build_storage())
-    assert "Inodes" in texts
-    assert "97%" in texts
-    # Mount options sit next to the device: "ro" explains a filesystem that is
-    # full and cannot be cleaned up.
-    assert any("rw,noatime" in text for text in texts)
+    # 3% of the bytes, 97% of the inodes: the bar looks healthy and every
+    # write is about to fail, so the inode figure is stated beside it.
+    assert any("inodes" in text and "97%" in text for text in texts)
+    # It has no column of its own any more, because it is nearly always dull.
+    assert "Inodes" not in texts
+    # Mount options are not a column either: only "ro" ever mattered, and this
+    # filesystem is writable.
+    assert not any("noatime" in text for text in texts)
+    assert "read-only" not in texts
 
 
-def test_a_filesystem_without_inode_counts_says_na_rather_than_zero():
+def test_inodes_stay_quiet_when_the_bytes_run_out_first():
+    """The bar already says the filesystem is nearly full; repeating a lower
+    inode figure beside it adds nothing."""
+
+    snapshot = _snapshot(
+        filesystems=(
+            FilesystemUsage(
+                device="/dev/sda1", mount_point="/", fstype="ext4",
+                size_bytes=100, used_bytes=99, available_bytes=1,
+                inodes_total=1000, inodes_used=40, inodes_free=960,
+            ),
+        )
+    )
+    assert not any(
+        "inodes" in t for t in _texts(_dialog(snapshot)._build_storage())
+    )
+
+
+def test_a_read_only_mount_says_so_because_it_explains_a_full_disk():
+    snapshot = _snapshot(
+        filesystems=(
+            FilesystemUsage(
+                device="/dev/mtdblock6", mount_point="/", fstype="squashfs",
+                size_bytes=100, used_bytes=100, available_bytes=0,
+                options="ro,relatime",
+            ),
+        )
+    )
+    texts = _texts(_dialog(snapshot)._build_storage())
+    assert any("read-only" in text for text in texts)
+    # The rest of the option string still does not appear.
+    assert not any("relatime" in text for text in texts)
+
+
+def test_a_filesystem_without_inode_counts_mentions_them_not_at_all():
     snapshot = _snapshot(
         filesystems=(
             FilesystemUsage(
@@ -752,7 +835,7 @@ def test_a_filesystem_without_inode_counts_says_na_rather_than_zero():
         )
     )
     texts = _texts(_dialog(snapshot)._build_storage())
-    assert "N/A" in texts
+    assert not any("inodes" in t for t in texts)
     assert "0%" not in texts
 
 

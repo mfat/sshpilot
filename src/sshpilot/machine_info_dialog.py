@@ -68,6 +68,17 @@ _CAREFUL_CELSIUS = 60.0
 _WARN_CELSIUS = 70.0
 _CRITICAL_CELSIUS = 80.0
 
+#: Share of a window spent waiting.  Utilization's 50/70/90 would call a host
+#: that loses 40% of its time to waiting "healthy"; losing a tenth of it is
+#: already worth looking at, and half of it is a host in trouble.
+_CAREFUL_WAIT = 0.10
+_WARN_WAIT = 0.25
+_CRITICAL_WAIT = 0.50
+
+#: Inodes are worth mentioning only once they are the constraint that will
+#: actually bite, which is well before they are gone.
+_INODE_NOTICE_FRACTION = 0.90
+
 #: Load average per CPU.  Load is a run-queue length, not a utilization, and it
 #: needs its own scale: one runnable task per CPU is a busy host, not a dying
 #: one, and it stays meaningful well above 1.
@@ -275,6 +286,10 @@ def _usage_severity(fraction: Optional[float]) -> str:
 
 def _temperature_severity(celsius: Optional[float]) -> str:
     return _severity(celsius, _CAREFUL_CELSIUS, _WARN_CELSIUS, _CRITICAL_CELSIUS)
+
+
+def _wait_severity(fraction: Optional[float]) -> str:
+    return _severity(fraction, _CAREFUL_WAIT, _WARN_WAIT, _CRITICAL_WAIT)
 
 
 def _load_severity(load: Optional[float], processors: Optional[int]) -> str:
@@ -1435,69 +1450,78 @@ class MachineInfoDialog:
         return page
 
     def _pressure_section(self) -> Gtk.Box:
-        """Pressure stall information for all three resources.
+        """How much of the last minute was lost waiting, per resource.
 
-        This is the clearest single answer to "is this host struggling": not
-        how busy it is, but how much of the last window something spent waiting
-        to run, for memory, or on storage.
+        The kernel offers three windows and two depths; this draws one of each.
+        10 s is noise and 300 s is stale, and "is anything waiting" is a
+        one-minute question.  The deeper reading -- every task stalled at once,
+        not merely one of them -- is zero on a healthy host and so costs a row
+        to say nothing; it appears in words beside the bar when it is real,
+        which for memory is the signature of a machine about to start killing
+        processes.
+
+        The heading has to carry the meaning, because the dialog explains
+        nothing in captions: "Time spent waiting" is what the number is.
         """
 
         snapshot = self._snapshot
         rows = (
             (_("CPU"), snapshot.cpu_pressure_some, snapshot.cpu_pressure_full),
             (_("Memory"), snapshot.memory_pressure_some, snapshot.memory_pressure_full),
-            (_("I/O"), snapshot.io_pressure_some, snapshot.io_pressure_full),
+            (_("Disk"), snapshot.io_pressure_some, snapshot.io_pressure_full),
         )
         section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        section.append(_section_label(_("Pressure stall")))
-        if not any(some is not None or full is not None for _title, some, full in rows):
-            card = _card()
-            empty = Gtk.Label(label=_("This host does not report pressure stall"))
+        section.append(_section_label(_("Time spent waiting")))
+        card = _card()
+        if not all(some is None and full is None for _title, some, full in rows):
+            for index, (title, some, full) in enumerate(rows):
+                card.append(self._waiting_row(title, some, full))
+                if index < len(rows) - 1:
+                    card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+        else:
+            empty = Gtk.Label(label=_("This host does not report waiting times"))
             empty.add_css_class("dim-label")
             empty.set_margin_top(16)
             empty.set_margin_bottom(16)
             card.append(empty)
-            section.append(card)
-            return section
-
-        table = _Table(
-            (
-                ("", 0.0, True),
-                (_("Stalled"), 0.0, False),
-                (_("10 s"), 1.0, False),
-                (_("60 s"), 1.0, False),
-                (_("300 s"), 1.0, False),
-            )
-        )
-        for title, some, full in rows:
-            # "Some tasks"/"All tasks" rather than "Some"/"All": a bare "All"
-            # shares its msgid with an unrelated filter elsewhere in the app
-            # and is translated there as the mass "everything", which is the
-            # wrong word for a count of tasks.
-            for is_some, stall in ((True, some), (False, full)):
-                # /proc/pressure/cpu has no "full" line -- every task cannot be
-                # waiting for a CPU while one of them is using it -- so an
-                # absent row is skipped rather than shown as unknown.
-                if stall is None and not is_some:
-                    continue
-                name = _value_label(title if is_some else "")
-                name.add_css_class("caption")
-                kind = _value_label(_("Some tasks") if is_some else _("All tasks"))
-                kind.add_css_class("caption")
-                kind.set_opacity(0.6)
-                cells = [name, kind]
-                values = (
-                    (stall.avg10, stall.avg60, stall.avg300)
-                    if stall is not None
-                    else (None, None, None)
-                )
-                for value in values:
-                    reading = _value_label(_format_reported_percent(value), mono=True)
-                    reading.add_css_class("caption")
-                    cells.append(reading)
-                table.add_row(cells)
-        section.append(table.widget)
+        section.append(card)
         return section
+
+    @staticmethod
+    def _waiting_row(title: str, some, full) -> Gtk.Box:
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        row.set_margin_start(16)
+        row.set_margin_end(16)
+        row.set_margin_top(11)
+        row.set_margin_bottom(11)
+
+        name = Gtk.Label(label=title)
+        name.set_opacity(0.6)
+        name.set_xalign(0)
+        name.set_size_request(110, -1)
+        row.append(name)
+
+        percent = some.avg60 if some is not None else None
+        fraction = None if percent is None else min(max(percent / 100.0, 0.0), 1.0)
+        row.append(_usage_bar(fraction, height=6, severity=_wait_severity(fraction)))
+
+        reading = Gtk.Label(label=_format_reported_percent(percent))
+        reading.add_css_class("monospace")
+        reading.set_xalign(1)
+        reading.set_size_request(64, -1)
+        row.append(reading)
+
+        # The alarming case, said in words rather than left as a column
+        # heading the reader has to decode.
+        if full is not None and full.avg60 > 0:
+            note = Gtk.Label(
+                label=_("nothing could run %s")
+                % _format_reported_percent(full.avg60)
+            )
+            note.add_css_class("caption")
+            note.set_opacity(0.75)
+            row.append(note)
+        return row
 
     def _process_counts_section(self) -> Gtk.Box:
         counts = self._snapshot.process_counts
@@ -1708,6 +1732,24 @@ class MachineInfoDialog:
 
     # -- Storage --------------------------------------------------------
 
+    @staticmethod
+    def _inode_note(filesystem) -> Optional[Gtk.Label]:
+        """"inodes 97%", but only when inodes are what will run out first."""
+
+        fraction = filesystem.inodes_used_fraction
+        if fraction is None or fraction < _INODE_NOTICE_FRACTION:
+            return None
+        used = filesystem.used_fraction
+        if used is not None and fraction <= used:
+            # Bytes are the tighter constraint; the bar already says so.
+            return None
+        note = Gtk.Label(label=_("inodes %s") % _format_percent(fraction))
+        note.add_css_class("monospace")
+        note.add_css_class("caption")
+        note.add_css_class("host-info-gauge")
+        note.add_css_class(_usage_severity(fraction))
+        return note
+
     def _build_storage(self) -> Gtk.Box:
         page = _page()
         page.append(_section_label(_("Filesystems")))
@@ -1718,7 +1760,6 @@ class MachineInfoDialog:
                 (_("Usage"), 0.0, True),
                 (_("Used / Size"), 1.0, False),
                 (_("Available"), 1.0, False),
-                (_("Inodes"), 1.0, False),
             )
         )
         filesystems = self._snapshot.filesystems
@@ -1731,14 +1772,26 @@ class MachineInfoDialog:
             percent.add_css_class("caption")
             usage.append(percent)
 
-            # Mount options belong next to the device: "ro" explains a
-            # filesystem that is full and cannot be cleaned up, and "noatime"
-            # explains one whose timestamps look stale.
+            # Inodes get no column of their own. They read a couple of percent
+            # on nearly every host, and a column that is nearly always
+            # uninteresting takes its width from the bar. They appear here
+            # instead, at the point where they become the constraint that will
+            # actually bite -- a filesystem out of inodes fails every write
+            # while its usage bar still looks healthy.
+            inode_note = self._inode_note(filesystem)
+            if inode_note is not None:
+                usage.append(inode_note)
+
+            # Of a mount's options, only "ro" changes what the reader does
+            # next: it explains a filesystem that is full and cannot be cleaned
+            # up, and it is the normal state of a squashfs root. The rest --
+            # relatime, nodev, subvol=... -- is a wide cell nobody reads, and
+            # the full string is still in the snapshot for anyone who wants it.
             descriptors = [filesystem.device]
             if filesystem.fstype:
                 descriptors.append(filesystem.fstype)
-            if filesystem.options:
-                descriptors.append(filesystem.options)
+            if filesystem.read_only:
+                descriptors.append(_("read-only"))
             device = _value_label(_(" · ").join(descriptors), mono=True)
             device.set_opacity(0.7)
             device.add_css_class("caption")
@@ -1759,24 +1812,6 @@ class MachineInfoDialog:
             )
             available.add_css_class("caption")
 
-            # A filesystem can be 3% full of bytes and out of inodes, at which
-            # point every write fails while the usage bar still looks healthy.
-            inodes = _value_label(
-                _format_percent(filesystem.inodes_used_fraction)
-                if filesystem.inodes_used_fraction is not None
-                else _("N/A"),
-                mono=True,
-            )
-            inodes.add_css_class("caption")
-            for name in _SEVERITY_CLASSES:
-                inodes.remove_css_class(name)
-            if filesystem.inodes_used_fraction is not None:
-                inodes.set_opacity(
-                    1.0
-                    if _usage_severity(filesystem.inodes_used_fraction) != _SEVERITY_OK
-                    else 0.75
-                )
-
             table.add_row(
                 [
                     _value_label(filesystem.mount_point, mono=True),
@@ -1784,7 +1819,6 @@ class MachineInfoDialog:
                     usage,
                     size,
                     available,
-                    inodes,
                 ]
             )
         if not filesystems:

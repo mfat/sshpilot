@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-07 11:08+0330\n"
+"POT-Creation-Date: 2026-09-07 11:43+0330\n"
 "PO-Revision-Date: 2026-09-05 11:35+0330\n"
 "Last-Translator: Automatically generated\n"
 "Language-Team: none\n"
@@ -409,7 +409,7 @@ msgstr "安全密钥"
 #: src/sshpilot/askpass_utils.py:846
 #: src/sshpilot/daemon_interaction_dialogs.py:367
 #: src/sshpilot/daemon_sessions_dialog.py:35
-#: src/sshpilot/machine_info_dialog.py:837
+#: src/sshpilot/machine_info_dialog.py:852
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:444
 #: src/sshpilot/preferences.py:4875 src/sshpilot/sshcopyid_window.py:559
 #: src/sshpilot/terminal.py:1059 src/sshpilot/welcome_page.py:708
@@ -1773,7 +1773,7 @@ msgid "Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."
 msgstr "IdentityAgent、PKCS#11 和 FIDO 安全密钥的可选来源。"
 
 #: src/sshpilot/connection_dialog.py:3560
-#: src/sshpilot/machine_info_dialog.py:1998
+#: src/sshpilot/machine_info_dialog.py:2032
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:67
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:74
 #: src/sshpilot/shortcut_editor.py:442 src/sshpilot/shortcut_editor.py:456
@@ -1873,7 +1873,7 @@ msgstr "用户名"
 #: src/sshpilot/connection_dialog_port_forwarding.py:191
 #: src/sshpilot/connection_dialog_port_forwarding.py:558
 #: src/sshpilot/effective_config_dialog.py:34
-#: src/sshpilot/machine_info_dialog.py:2030
+#: src/sshpilot/machine_info_dialog.py:2064
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
 msgid "Port"
 msgstr "端口"
@@ -3926,7 +3926,7 @@ msgstr "守护进程"
 msgid "Crash"
 msgstr "崩溃"
 
-#: src/sshpilot/log_viewer.py:574 src/sshpilot/machine_info_dialog.py:841
+#: src/sshpilot/log_viewer.py:574 src/sshpilot/machine_info_dialog.py:856
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:620
 #: src/sshpilot/preferences.py:864
 msgid "Refresh"
@@ -4010,160 +4010,161 @@ msgid ""
 "sharing."
 msgstr "日志行可能包含主机名、用户名和文件路径。分享前请核对。"
 
-#: src/sshpilot/machine_info_dialog.py:156
-#: src/sshpilot/machine_info_dialog.py:172
-#: src/sshpilot/machine_info_dialog.py:200
-#: src/sshpilot/machine_info_dialog.py:218
-#: src/sshpilot/machine_info_dialog.py:235
-#: src/sshpilot/machine_info_dialog.py:250
-#: src/sshpilot/machine_info_dialog.py:1539
-#: src/sshpilot/machine_info_dialog.py:1665
-#: src/sshpilot/machine_info_dialog.py:1767
-#: src/sshpilot/machine_info_dialog.py:1863
-#: src/sshpilot/machine_info_dialog.py:2080
+#: src/sshpilot/machine_info_dialog.py:167
+#: src/sshpilot/machine_info_dialog.py:183
+#: src/sshpilot/machine_info_dialog.py:211
+#: src/sshpilot/machine_info_dialog.py:229
+#: src/sshpilot/machine_info_dialog.py:246
+#: src/sshpilot/machine_info_dialog.py:261
+#: src/sshpilot/machine_info_dialog.py:1563
+#: src/sshpilot/machine_info_dialog.py:1689
+#: src/sshpilot/machine_info_dialog.py:1897
+#: src/sshpilot/machine_info_dialog.py:2114
 msgid "N/A"
 msgstr "不可用"
 
-#: src/sshpilot/machine_info_dialog.py:158
-#: src/sshpilot/machine_info_dialog.py:174
+#: src/sshpilot/machine_info_dialog.py:169
+#: src/sshpilot/machine_info_dialog.py:185
 #, python-format
 msgid "%d B"
 msgstr "%d B"
 
-#: src/sshpilot/machine_info_dialog.py:188
+#: src/sshpilot/machine_info_dialog.py:199
 #, python-format
 msgid "%d B/s"
 msgstr "%d B/s"
 
-#: src/sshpilot/machine_info_dialog.py:206
+#: src/sshpilot/machine_info_dialog.py:217
 #, python-format
 msgid "%d day"
 msgid_plural "%d days"
 msgstr[0] "%d 天"
 
-#: src/sshpilot/machine_info_dialog.py:208
+#: src/sshpilot/machine_info_dialog.py:219
 #, python-format
 msgid "%d hour"
 msgid_plural "%d hours"
 msgstr[0] "%d 小时"
 
-#: src/sshpilot/machine_info_dialog.py:210
+#: src/sshpilot/machine_info_dialog.py:221
 #, python-format
 msgid "%d minute"
 msgid_plural "%d minutes"
 msgstr[0] "%d 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:212
+#: src/sshpilot/machine_info_dialog.py:223
 msgid "Less than a minute"
 msgstr "不到一分钟"
 
-#: src/sshpilot/machine_info_dialog.py:213
-#: src/sshpilot/machine_info_dialog.py:1877 src/sshpilot/window_dialogs.py:2171
+#: src/sshpilot/machine_info_dialog.py:224
+#: src/sshpilot/machine_info_dialog.py:1911 src/sshpilot/window_dialogs.py:2171
 msgid ", "
 msgstr ", "
 
-#: src/sshpilot/machine_info_dialog.py:220
+#: src/sshpilot/machine_info_dialog.py:231
 #, python-format
 msgid "%.2f GHz"
 msgstr "%.2f GHz"
 
-#: src/sshpilot/machine_info_dialog.py:221
+#: src/sshpilot/machine_info_dialog.py:232
 #, python-format
 msgid "%.0f MHz"
 msgstr "%.0f MHz"
 
-#: src/sshpilot/machine_info_dialog.py:225
+#: src/sshpilot/machine_info_dialog.py:236
 #, python-format
 msgid "%d%%"
 msgstr "%d%%"
 
-#: src/sshpilot/machine_info_dialog.py:235
 #: src/sshpilot/machine_info_dialog.py:246
+#: src/sshpilot/machine_info_dialog.py:257
 #, python-format
 msgid "%.1f%%"
 msgstr "%.1f%%"
 
-#: src/sshpilot/machine_info_dialog.py:302
+#: src/sshpilot/machine_info_dialog.py:317
 msgid "Loopback"
 msgstr "回环"
 
-#: src/sshpilot/machine_info_dialog.py:303
+#: src/sshpilot/machine_info_dialog.py:318
 msgid "Wi-Fi"
 msgstr "Wi-Fi"
 
-#: src/sshpilot/machine_info_dialog.py:304
+#: src/sshpilot/machine_info_dialog.py:319
 msgid "Ethernet"
 msgstr "以太网"
 
-#: src/sshpilot/machine_info_dialog.py:305
-#: src/sshpilot/machine_info_dialog.py:313
-#: src/sshpilot/machine_info_dialog.py:2115
+#: src/sshpilot/machine_info_dialog.py:320
+#: src/sshpilot/machine_info_dialog.py:328
+#: src/sshpilot/machine_info_dialog.py:2149
 msgid "Unknown"
 msgstr "未知"
 
-#: src/sshpilot/machine_info_dialog.py:310
+#: src/sshpilot/machine_info_dialog.py:325
 msgid "Up"
 msgstr "已启用"
 
-#: src/sshpilot/machine_info_dialog.py:311
+#: src/sshpilot/machine_info_dialog.py:326
 msgid "Down"
 msgstr "已停用"
 
-#: src/sshpilot/machine_info_dialog.py:312
+#: src/sshpilot/machine_info_dialog.py:327
 msgid "No carrier"
 msgstr "无载波"
 
-#: src/sshpilot/machine_info_dialog.py:635
+#: src/sshpilot/machine_info_dialog.py:650
 msgid "CPU utilization"
 msgstr "CPU 使用率"
 
-#: src/sshpilot/machine_info_dialog.py:645
-#: src/sshpilot/machine_info_dialog.py:1527
+#: src/sshpilot/machine_info_dialog.py:660
+#: src/sshpilot/machine_info_dialog.py:1551
 msgid "Total"
 msgstr "总计"
 
-#: src/sshpilot/machine_info_dialog.py:685
+#: src/sshpilot/machine_info_dialog.py:700
 #, python-format
 msgid "%d more core"
 msgid_plural "%d more cores"
 msgstr[0] "另有 %d 个核心"
 
-#: src/sshpilot/machine_info_dialog.py:730
+#: src/sshpilot/machine_info_dialog.py:745
 #, python-format
 msgid ""
 "user %(user)s · system %(system)s · iowait %(iowait)s · steal %(steal)s · "
 "idle %(idle)s"
-msgstr "用户 %(user)s · 系统 %(system)s · I/O 等待 %(iowait)s · 被窃取 %(steal)s · 空闲 %(idle)s"
+msgstr ""
+"用户 %(user)s · 系统 %(system)s · I/O 等待 %(iowait)s · 被窃取 %(steal)s · 空"
+"闲 %(idle)s"
 
-#: src/sshpilot/machine_info_dialog.py:804
-#: src/sshpilot/machine_info_dialog.py:960
+#: src/sshpilot/machine_info_dialog.py:819
+#: src/sshpilot/machine_info_dialog.py:975
 msgid "Gathering host information…"
 msgstr "正在收集主机信息…"
 
-#: src/sshpilot/machine_info_dialog.py:823
+#: src/sshpilot/machine_info_dialog.py:838
 msgid "Host Info"
 msgstr "主机信息"
 
-#: src/sshpilot/machine_info_dialog.py:843
+#: src/sshpilot/machine_info_dialog.py:858
 msgid "Refresh host information"
 msgstr "刷新主机信息"
 
-#: src/sshpilot/machine_info_dialog.py:858
+#: src/sshpilot/machine_info_dialog.py:873
 #, python-format
 msgid "%(nickname)s — %(user)s@%(host)s"
 msgstr "%(nickname)s — %(user)s@%(host)s"
 
-#: src/sshpilot/machine_info_dialog.py:862
+#: src/sshpilot/machine_info_dialog.py:877
 #, python-format
 msgid "%(nickname)s — %(host)s"
 msgstr "%(nickname)s — %(host)s"
 
-#: src/sshpilot/machine_info_dialog.py:954
+#: src/sshpilot/machine_info_dialog.py:969
 msgid "Daemon connection unavailable."
 msgstr "守护进程连接不可用。"
 
-#: src/sshpilot/machine_info_dialog.py:969
-#: src/sshpilot/machine_info_dialog.py:998
+#: src/sshpilot/machine_info_dialog.py:984
+#: src/sshpilot/machine_info_dialog.py:1013
 #, python-format
 msgid ""
 "Could not gather host information.\n"
@@ -4174,63 +4175,63 @@ msgstr ""
 "\n"
 "%s"
 
-#: src/sshpilot/machine_info_dialog.py:973
+#: src/sshpilot/machine_info_dialog.py:988
 msgid "The host returned no system information."
 msgstr "主机未返回系统信息。"
 
-#: src/sshpilot/machine_info_dialog.py:1050
+#: src/sshpilot/machine_info_dialog.py:1065
 #, python-format
 msgid "Updated %d second ago"
 msgid_plural "Updated %d seconds ago"
 msgstr[0] "%d 秒前更新"
 
-#: src/sshpilot/machine_info_dialog.py:1056
+#: src/sshpilot/machine_info_dialog.py:1071
 #, python-format
 msgid "Updated %d minute ago"
 msgid_plural "Updated %d minutes ago"
 msgstr[0] "%d 分钟前更新"
 
-#: src/sshpilot/machine_info_dialog.py:1177
-#: src/sshpilot/machine_info_dialog.py:1306
-#: src/sshpilot/machine_info_dialog.py:1316
-#: src/sshpilot/machine_info_dialog.py:1747
+#: src/sshpilot/machine_info_dialog.py:1192
+#: src/sshpilot/machine_info_dialog.py:1321
+#: src/sshpilot/machine_info_dialog.py:1331
+#: src/sshpilot/machine_info_dialog.py:1800
 #, python-format
 msgid "%(used)s / %(total)s"
 msgstr "%(used)s / %(total)s"
 
-#: src/sshpilot/machine_info_dialog.py:1190
+#: src/sshpilot/machine_info_dialog.py:1205
 #, python-format
 msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
 msgstr "负载 %(one).2f · %(five).2f · %(fifteen).2f"
 
-#: src/sshpilot/machine_info_dialog.py:1200
+#: src/sshpilot/machine_info_dialog.py:1215
 #, python-format
 msgid "swap %(used)s / %(total)s"
 msgstr "交换 %(used)s / %(total)s"
 
-#: src/sshpilot/machine_info_dialog.py:1236
+#: src/sshpilot/machine_info_dialog.py:1251
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:103
 msgid "Overview"
 msgstr "概览"
 
-#: src/sshpilot/machine_info_dialog.py:1237
+#: src/sshpilot/machine_info_dialog.py:1252
 msgid "Resources"
 msgstr "资源"
 
-#: src/sshpilot/machine_info_dialog.py:1238
+#: src/sshpilot/machine_info_dialog.py:1253
 msgid "Storage"
 msgstr "存储"
 
-#: src/sshpilot/machine_info_dialog.py:1239
+#: src/sshpilot/machine_info_dialog.py:1254
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:352
 msgid "Network"
 msgstr "网络"
 
-#: src/sshpilot/machine_info_dialog.py:1240
+#: src/sshpilot/machine_info_dialog.py:1255
 msgid "Traffic"
 msgstr "流量"
 
-#: src/sshpilot/machine_info_dialog.py:1241
+#: src/sshpilot/machine_info_dialog.py:1256
 msgid "System"
 msgstr "系统"
 
@@ -4239,386 +4240,372 @@ msgstr "系统"
 #. on the next live sample.  It deliberately does not fall back to the
 #. load average: load is a queue length, and showing it here under a
 #. "CPU" heading is what this replaced.
-#: src/sshpilot/machine_info_dialog.py:1294
-#: src/sshpilot/machine_info_dialog.py:1447
-#: src/sshpilot/machine_info_dialog.py:1558
+#: src/sshpilot/machine_info_dialog.py:1309
+#: src/sshpilot/machine_info_dialog.py:1469
+#: src/sshpilot/machine_info_dialog.py:1582
 msgid "CPU"
 msgstr "CPU"
 
-#: src/sshpilot/machine_info_dialog.py:1302
-#: src/sshpilot/machine_info_dialog.py:1346
-#: src/sshpilot/machine_info_dialog.py:1448
-#: src/sshpilot/machine_info_dialog.py:1559
-#: src/sshpilot/machine_info_dialog.py:1582
+#: src/sshpilot/machine_info_dialog.py:1317
+#: src/sshpilot/machine_info_dialog.py:1361
+#: src/sshpilot/machine_info_dialog.py:1470
+#: src/sshpilot/machine_info_dialog.py:1583
+#: src/sshpilot/machine_info_dialog.py:1606
 msgid "Memory"
 msgstr "内存"
 
-#: src/sshpilot/machine_info_dialog.py:1321
+#: src/sshpilot/machine_info_dialog.py:1336
 #, python-format
 msgid "%(fstype)s on %(device)s"
 msgstr "%(fstype)s 位于 %(device)s"
 
 #. Storage does not move between samples, so this gauge keeps no history.
-#: src/sshpilot/machine_info_dialog.py:1327
+#: src/sshpilot/machine_info_dialog.py:1342
 msgid "Root filesystem"
 msgstr "根文件系统"
 
-#: src/sshpilot/machine_info_dialog.py:1336
+#: src/sshpilot/machine_info_dialog.py:1351
 msgid "Hostname"
 msgstr "主机名"
 
-#: src/sshpilot/machine_info_dialog.py:1339
-#: src/sshpilot/machine_info_dialog.py:1717
+#: src/sshpilot/machine_info_dialog.py:1354
+#: src/sshpilot/machine_info_dialog.py:1759
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:62
 msgid "Device"
 msgstr "设备"
 
-#: src/sshpilot/machine_info_dialog.py:1342
+#: src/sshpilot/machine_info_dialog.py:1357
 msgid "Operating system"
 msgstr "操作系统"
 
-#: src/sshpilot/machine_info_dialog.py:1343
+#: src/sshpilot/machine_info_dialog.py:1358
 msgid "Kernel"
 msgstr "内核"
 
-#: src/sshpilot/machine_info_dialog.py:1344
+#: src/sshpilot/machine_info_dialog.py:1359
 msgid "Processor"
 msgstr "处理器"
 
-#: src/sshpilot/machine_info_dialog.py:1345
+#: src/sshpilot/machine_info_dialog.py:1360
 msgid "CPU frequency"
 msgstr "CPU 频率"
 
-#: src/sshpilot/machine_info_dialog.py:1347
+#: src/sshpilot/machine_info_dialog.py:1362
 msgid "Uptime"
 msgstr "运行时间"
 
-#: src/sshpilot/machine_info_dialog.py:1348
+#: src/sshpilot/machine_info_dialog.py:1363
 msgid "Booted"
 msgstr "启动时间"
 
-#: src/sshpilot/machine_info_dialog.py:1360
+#: src/sshpilot/machine_info_dialog.py:1375
 #, python-format
 msgid "%(cores)d cores · %(threads)d threads · %(sockets)d sockets"
 msgstr "%(cores)d 核心 · %(threads)d 线程 · %(sockets)d 插槽"
 
-#: src/sshpilot/machine_info_dialog.py:1366
+#: src/sshpilot/machine_info_dialog.py:1381
 #, python-format
 msgid "%d core"
 msgid_plural "%d cores"
 msgstr[0] "%d 核心"
 
-#: src/sshpilot/machine_info_dialog.py:1370
+#: src/sshpilot/machine_info_dialog.py:1385
 #, python-format
 msgid "%(model)s (%(topology)s)"
 msgstr "%(model)s (%(topology)s)"
 
-#: src/sshpilot/machine_info_dialog.py:1387
+#: src/sshpilot/machine_info_dialog.py:1402
 msgid "Load average"
 msgstr "平均负载"
 
-#: src/sshpilot/machine_info_dialog.py:1391
+#: src/sshpilot/machine_info_dialog.py:1406
 msgid "1 min"
 msgstr "1 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:1392
+#: src/sshpilot/machine_info_dialog.py:1407
 msgid "5 min"
 msgstr "5 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:1393
+#: src/sshpilot/machine_info_dialog.py:1408
 msgid "15 min"
 msgstr "15 分钟"
 
-#: src/sshpilot/machine_info_dialog.py:1449
-msgid "I/O"
-msgstr "I/O"
+#: src/sshpilot/machine_info_dialog.py:1471
+msgid "Disk"
+msgstr "磁盘"
 
-#: src/sshpilot/machine_info_dialog.py:1452
-msgid "Pressure stall"
-msgstr "资源压力"
+#: src/sshpilot/machine_info_dialog.py:1474
+msgid "Time spent waiting"
+msgstr "等待耗时"
 
-#: src/sshpilot/machine_info_dialog.py:1455
-msgid "This host does not report pressure stall"
-msgstr "此主机不报告资源压力"
+#: src/sshpilot/machine_info_dialog.py:1482
+msgid "This host does not report waiting times"
+msgstr "此主机不报告等待时间"
 
-#: src/sshpilot/machine_info_dialog.py:1466
-msgid "Stalled"
-msgstr "阻塞"
+#: src/sshpilot/machine_info_dialog.py:1518
+#, python-format
+msgid "nothing could run %s"
+msgstr "完全停滞 %s"
 
-#: src/sshpilot/machine_info_dialog.py:1467
-msgid "10 s"
-msgstr "10 秒"
-
-#: src/sshpilot/machine_info_dialog.py:1468
-msgid "60 s"
-msgstr "60 秒"
-
-#: src/sshpilot/machine_info_dialog.py:1469
-msgid "300 s"
-msgstr "300 秒"
-
-#: src/sshpilot/machine_info_dialog.py:1485
-msgid "Some tasks"
-msgstr "部分任务"
-
-#: src/sshpilot/machine_info_dialog.py:1485
-msgid "All tasks"
-msgstr "全部任务"
-
-#: src/sshpilot/machine_info_dialog.py:1505
+#: src/sshpilot/machine_info_dialog.py:1529
 msgid "Process table"
 msgstr "进程表"
 
-#: src/sshpilot/machine_info_dialog.py:1508
+#: src/sshpilot/machine_info_dialog.py:1532
 msgid "No process counts reported"
 msgstr "未报告进程计数"
 
-#: src/sshpilot/machine_info_dialog.py:1528
+#: src/sshpilot/machine_info_dialog.py:1552
 msgid "Running"
 msgstr "运行中"
 
-#: src/sshpilot/machine_info_dialog.py:1529
+#: src/sshpilot/machine_info_dialog.py:1553
 msgid "Sleeping"
 msgstr "睡眠"
 
-#: src/sshpilot/machine_info_dialog.py:1530
+#: src/sshpilot/machine_info_dialog.py:1554
 msgid "Stopped"
 msgstr "已停止"
 
-#: src/sshpilot/machine_info_dialog.py:1531
+#: src/sshpilot/machine_info_dialog.py:1555
 msgid "Zombie"
 msgstr "僵尸"
 
-#: src/sshpilot/machine_info_dialog.py:1532
+#: src/sshpilot/machine_info_dialog.py:1556
 msgid "Threads"
 msgstr "线程"
 
-#: src/sshpilot/machine_info_dialog.py:1533
+#: src/sshpilot/machine_info_dialog.py:1557
 msgid "PID limit"
 msgstr "PID 上限"
 
-#: src/sshpilot/machine_info_dialog.py:1554
+#: src/sshpilot/machine_info_dialog.py:1578
 msgid "Top processes"
 msgstr "占用最高的进程"
 
-#: src/sshpilot/machine_info_dialog.py:1557
+#: src/sshpilot/machine_info_dialog.py:1581
 msgid "Process"
 msgstr "进程"
 
-#: src/sshpilot/machine_info_dialog.py:1575
+#: src/sshpilot/machine_info_dialog.py:1599
 msgid "No process list reported"
 msgstr "未报告进程列表"
 
-#: src/sshpilot/machine_info_dialog.py:1637
+#: src/sshpilot/machine_info_dialog.py:1661
 msgid "Swap"
 msgstr "Swap"
 
-#: src/sshpilot/machine_info_dialog.py:1644
+#: src/sshpilot/machine_info_dialog.py:1668
 #, python-format
 msgid "%(used)s / %(total)s · %(percent)s"
 msgstr "%(used)s / %(total)s · %(percent)s"
 
-#: src/sshpilot/machine_info_dialog.py:1661
+#: src/sshpilot/machine_info_dialog.py:1685
 msgid "Temperatures"
 msgstr "温度"
 
-#: src/sshpilot/machine_info_dialog.py:1697
+#: src/sshpilot/machine_info_dialog.py:1721
 #, python-format
 msgid "%d °C"
 msgstr "%d °C"
 
-#: src/sshpilot/machine_info_dialog.py:1713
+#: src/sshpilot/machine_info_dialog.py:1746
+#, python-format
+msgid "inodes %s"
+msgstr "inode %s"
+
+#: src/sshpilot/machine_info_dialog.py:1755
 msgid "Filesystems"
 msgstr "文件系统"
 
-#: src/sshpilot/machine_info_dialog.py:1716
+#: src/sshpilot/machine_info_dialog.py:1758
 msgid "Mount point"
 msgstr "挂载点"
 
-#: src/sshpilot/machine_info_dialog.py:1718
+#: src/sshpilot/machine_info_dialog.py:1760
 msgid "Usage"
 msgstr "使用率"
 
-#: src/sshpilot/machine_info_dialog.py:1719
+#: src/sshpilot/machine_info_dialog.py:1761
 msgid "Used / Size"
 msgstr "已用 / 容量"
 
-#: src/sshpilot/machine_info_dialog.py:1720
+#: src/sshpilot/machine_info_dialog.py:1762
 msgid "Available"
 msgstr "可用"
 
-#: src/sshpilot/machine_info_dialog.py:1721
-msgid "Inodes"
-msgstr "Inode"
+#: src/sshpilot/machine_info_dialog.py:1794
+msgid "read-only"
+msgstr "只读"
 
-#: src/sshpilot/machine_info_dialog.py:1742
-#: src/sshpilot/machine_info_dialog.py:1840
-#: src/sshpilot/machine_info_dialog.py:2122
+#: src/sshpilot/machine_info_dialog.py:1795
+#: src/sshpilot/machine_info_dialog.py:1874
+#: src/sshpilot/machine_info_dialog.py:2156
 msgid " · "
 msgstr " · "
 
-#: src/sshpilot/machine_info_dialog.py:1791
+#: src/sshpilot/machine_info_dialog.py:1825
 msgid "No filesystems reported"
 msgstr "未报告文件系统"
 
-#: src/sshpilot/machine_info_dialog.py:1801
+#: src/sshpilot/machine_info_dialog.py:1835
 msgid "Interfaces"
 msgstr "网络接口"
 
-#: src/sshpilot/machine_info_dialog.py:1839
+#: src/sshpilot/machine_info_dialog.py:1873
 #, python-format
 msgid "MTU %d"
 msgstr "MTU %d"
 
-#: src/sshpilot/machine_info_dialog.py:1850
+#: src/sshpilot/machine_info_dialog.py:1884
 msgid "No interfaces reported"
 msgstr "未报告网络接口"
 
-#: src/sshpilot/machine_info_dialog.py:1857
+#: src/sshpilot/machine_info_dialog.py:1891
 msgid "Routing & resolution"
 msgstr "路由与解析"
 
-#: src/sshpilot/machine_info_dialog.py:1860
+#: src/sshpilot/machine_info_dialog.py:1894
 #, python-format
 msgid "%(gateway)s via %(interface)s"
 msgstr "%(gateway)s 经由 %(interface)s"
 
-#: src/sshpilot/machine_info_dialog.py:1866
+#: src/sshpilot/machine_info_dialog.py:1900
 #, python-format
 msgid "%(port)d/tcp (%(process)s)"
 msgstr "%(port)d/tcp (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:1870
-#: src/sshpilot/machine_info_dialog.py:2035
+#: src/sshpilot/machine_info_dialog.py:1904
+#: src/sshpilot/machine_info_dialog.py:2069
 #, python-format
 msgid "%d/tcp"
 msgstr "%d/tcp"
 
-#: src/sshpilot/machine_info_dialog.py:1876
+#: src/sshpilot/machine_info_dialog.py:1910
 msgid "Default gateway"
 msgstr "默认网关"
 
-#: src/sshpilot/machine_info_dialog.py:1877
+#: src/sshpilot/machine_info_dialog.py:1911
 msgid "DNS servers"
 msgstr "DNS 服务器"
 
-#: src/sshpilot/machine_info_dialog.py:1878
+#: src/sshpilot/machine_info_dialog.py:1912
 msgid "Listening SSH port"
 msgstr "监听的 SSH 端口"
 
-#: src/sshpilot/machine_info_dialog.py:1888
+#: src/sshpilot/machine_info_dialog.py:1922
 msgid "Bandwidth"
 msgstr "带宽"
 
-#: src/sshpilot/machine_info_dialog.py:1891
+#: src/sshpilot/machine_info_dialog.py:1925
 msgid "Network interface"
 msgstr "网络接口"
 
-#: src/sshpilot/machine_info_dialog.py:1892
+#: src/sshpilot/machine_info_dialog.py:1926
 msgid "Received"
 msgstr "已接收"
 
-#: src/sshpilot/machine_info_dialog.py:1893
+#: src/sshpilot/machine_info_dialog.py:1927
 msgid "Transmitted"
 msgstr "已发送"
 
-#: src/sshpilot/machine_info_dialog.py:1894
+#: src/sshpilot/machine_info_dialog.py:1928
 msgid "Rate ↓"
 msgstr "速率 ↓"
 
-#: src/sshpilot/machine_info_dialog.py:1895
+#: src/sshpilot/machine_info_dialog.py:1929
 msgid "Rate ↑"
 msgstr "速率 ↑"
 
-#: src/sshpilot/machine_info_dialog.py:1922
+#: src/sshpilot/machine_info_dialog.py:1956
 msgid "No interface counters reported"
 msgstr "未报告接口计数器"
 
-#: src/sshpilot/machine_info_dialog.py:1925
+#: src/sshpilot/machine_info_dialog.py:1959
 msgid "Remote sessions"
 msgstr "远程会话"
 
-#: src/sshpilot/machine_info_dialog.py:1939
+#: src/sshpilot/machine_info_dialog.py:1973
 #, python-format
 msgid "Incoming · %d established"
 msgid_plural "Incoming · %d established"
 msgstr[0] "入站 · 已建立 %d 个"
 
-#: src/sshpilot/machine_info_dialog.py:1941
+#: src/sshpilot/machine_info_dialog.py:1975
 #, python-format
 msgid "Outgoing · %d established"
 msgid_plural "Outgoing · %d established"
 msgstr[0] "出站 · 已建立 %d 个"
 
-#: src/sshpilot/machine_info_dialog.py:1991
+#: src/sshpilot/machine_info_dialog.py:2025
 #, python-format
 msgid "%d more"
 msgid_plural "%d more"
 msgstr[0] "另有 %d 个"
 
-#: src/sshpilot/machine_info_dialog.py:2021
+#: src/sshpilot/machine_info_dialog.py:2055
 msgid "Distribution"
 msgstr "发行版"
 
-#: src/sshpilot/machine_info_dialog.py:2022
+#: src/sshpilot/machine_info_dialog.py:2056
 msgid "Architecture"
 msgstr "架构"
 
-#: src/sshpilot/machine_info_dialog.py:2027
+#: src/sshpilot/machine_info_dialog.py:2061
 msgid "Listening services"
 msgstr "监听的服务"
 
-#: src/sshpilot/machine_info_dialog.py:2031
+#: src/sshpilot/machine_info_dialog.py:2065
 msgid "Service"
 msgstr "服务"
 
-#: src/sshpilot/machine_info_dialog.py:2042
+#: src/sshpilot/machine_info_dialog.py:2076
 msgid "No listening services reported"
 msgstr "未报告监听的服务"
 
-#: src/sshpilot/machine_info_dialog.py:2045
+#: src/sshpilot/machine_info_dialog.py:2079
 msgid "Failed units"
 msgstr "失败的单元"
 
 #. Also what a host without systemd looks like: neither has a
 #. failed unit to report.
-#: src/sshpilot/machine_info_dialog.py:2058
+#: src/sshpilot/machine_info_dialog.py:2092
 msgid "No failed units"
 msgstr "无失败的单元"
 
-#: src/sshpilot/machine_info_dialog.py:2065
+#: src/sshpilot/machine_info_dialog.py:2099
 msgid "SSH host keys"
 msgstr "SSH 主机密钥"
 
-#: src/sshpilot/machine_info_dialog.py:2068
+#: src/sshpilot/machine_info_dialog.py:2102
 msgid "Algorithm"
 msgstr "算法"
 
-#: src/sshpilot/machine_info_dialog.py:2069
+#: src/sshpilot/machine_info_dialog.py:2103
 msgid "Fingerprint"
 msgstr "指纹"
 
-#: src/sshpilot/machine_info_dialog.py:2070
+#: src/sshpilot/machine_info_dialog.py:2104
 msgid "Bits"
 msgstr "位数"
 
-#: src/sshpilot/machine_info_dialog.py:2085
+#: src/sshpilot/machine_info_dialog.py:2119
 msgid "No host keys reported"
 msgstr "未报告主机密钥"
 
-#: src/sshpilot/machine_info_dialog.py:2088
+#: src/sshpilot/machine_info_dialog.py:2122
 msgid "Logged-in users"
 msgstr "已登录用户"
 
-#: src/sshpilot/machine_info_dialog.py:2100
+#: src/sshpilot/machine_info_dialog.py:2134
 msgid "No remote sessions"
 msgstr "无远程会话"
 
-#: src/sshpilot/machine_info_dialog.py:2100
+#: src/sshpilot/machine_info_dialog.py:2134
 msgid "No logged-in users"
 msgstr "无已登录用户"
 
-#: src/sshpilot/machine_info_dialog.py:2121
+#: src/sshpilot/machine_info_dialog.py:2155
 msgid "local console"
 msgstr "本地控制台"
 
@@ -11334,6 +11321,30 @@ msgstr "直通"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "复制密钥到服务器"
+
+#~ msgid "I/O"
+#~ msgstr "I/O"
+
+#~ msgid "Pressure stall"
+#~ msgstr "资源压力"
+
+#~ msgid "Stalled"
+#~ msgstr "阻塞"
+
+#~ msgid "10 s"
+#~ msgstr "10 秒"
+
+#~ msgid "60 s"
+#~ msgstr "60 秒"
+
+#~ msgid "300 s"
+#~ msgstr "300 秒"
+
+#~ msgid "Some tasks"
+#~ msgstr "部分任务"
+
+#~ msgid "All tasks"
+#~ msgstr "全部任务"
 
 #~ msgid "MemTotal"
 #~ msgstr "MemTotal"
