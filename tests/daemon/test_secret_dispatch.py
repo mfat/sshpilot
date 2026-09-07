@@ -545,6 +545,29 @@ def test_interactive_secret_methods_use_a_dedicated_command_key():
         ),
         ("secrets.transfer.import", {"source": "/tmp/x.spbk", "options": {}}),
         ("secrets.transfer.preview", {"source": "/tmp/x.spbk"}),
+        # The SSH-server destination waits on interactions too: preview and
+        # import collect the backup passphrase for an encrypted archive, and
+        # all three open an SSH connection whose own auth prompts run through
+        # the broker. On the configuration key that wait head-of-line blocked
+        # secrets.state.get -- which the frontend issues while the passphrase
+        # dialog is open -- so the dialog never resolved and the import hung.
+        (
+            "secrets.transfer.list_ssh",
+            {"connection_id": "srv", "remote_dir": "~/bk"},
+        ),
+        (
+            "secrets.transfer.preview_ssh",
+            {"connection_id": "srv", "remote_dir": "~/bk", "entry_id": "e1"},
+        ),
+        (
+            "secrets.transfer.import_ssh",
+            {
+                "connection_id": "srv",
+                "remote_dir": "~/bk",
+                "entry_id": "e1",
+                "options": {},
+            },
+        ),
     ]
     for method, params in interactive:
         result = dispatcher.dispatch(_envelope(method, params), _state())

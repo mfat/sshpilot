@@ -4037,7 +4037,8 @@ class RequestDispatcher:
                     entry_id=entry_id,
                     owner_client_id=owner_client_id,
                 )
-            )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_list_bitwarden_backups(
@@ -4088,7 +4089,10 @@ class RequestDispatcher:
             raise ValueError("remote_dir must be a non-empty string")
         service = self._required_secrets_service()
         return self._defer(
-            lambda: service.list_ssh_backups(connection_id=connection_id, remote_dir=remote_dir)
+            lambda: service.list_ssh_backups(
+                connection_id=connection_id, remote_dir=remote_dir
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_import_ssh_backup(
@@ -4124,7 +4128,8 @@ class RequestDispatcher:
                     options=options,
                     owner_client_id=owner_client_id,
                 )
-            )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _defer(
