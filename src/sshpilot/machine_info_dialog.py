@@ -39,10 +39,6 @@ from .api.models.host_info import (
 )
 from .core.host_info.rates import cpu_utilization_by_name, interface_rates
 from .gtk.host_info_controller import HostInfoController, HostInfoProbeBusy
-from .gtk.host_info_failure_messages import (
-    format_host_info_error,
-    format_host_info_failure,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -985,8 +981,7 @@ class MachineInfoDialog:
         self._refresh_button.set_sensitive(True)
         if summary.failure is not None:
             self._show_status(
-                _("Could not gather host information.\n\n%s")
-                % format_host_info_failure(summary.failure)
+                _("Could not gather host information.\n\n%s") % summary.failure.message
             )
             return False
         if summary.snapshot is None:
@@ -1015,10 +1010,7 @@ class MachineInfoDialog:
         # able to try again.
         self._refresh_button.set_sensitive(True)
         logger.warning("Host info gather failed: %s", error)
-        self._show_status(
-            _("Could not gather host information.\n\n%s")
-            % format_host_info_error(error)
-        )
+        self._show_status(_("Could not gather host information.\n\n%s") % str(error))
         return False
 
     # -- status / age ---------------------------------------------------

@@ -7578,62 +7578,6 @@ def _live_sample_from_wire(value: Any) -> Any:
     )
 
 
-def _host_info_failure_to_wire(failure: Any) -> Optional[Dict[str, Any]]:
-    from ..models.host_info import HostInfoFailure
-
-    if failure is None:
-        return None
-    if type(failure) is not HostInfoFailure:
-        raise TypeError("host info failure must be a HostInfoFailure or None")
-    return {
-        "kind": "host_info",
-        "code": failure.code.value,
-        "error_code": failure.error_code.value,
-        "parameters": dict(failure.parameters),
-        "diagnostic": failure.diagnostic,
-    }
-
-
-def _host_info_failure_from_wire(value: Any) -> Any:
-    from ..models.host_info import HostInfoFailure, HostInfoFailureCode
-
-    if value is None:
-        return None
-    data = _strict_fields(
-        value,
-        required={"kind", "code", "error_code", "parameters", "diagnostic"},
-        context="host info failure",
-    )
-    if data["kind"] != "host_info":
-        raise ValueError("host info failure contains an unknown kind")
-    try:
-        code = HostInfoFailureCode(data["code"])
-    except (TypeError, ValueError):
-        raise ValueError("host info failure contains an unknown code") from None
-    try:
-        error_code = ErrorCode(data["error_code"])
-    except (TypeError, ValueError):
-        raise ValueError(
-            "host info failure contains an unknown error code"
-        ) from None
-    parameters = data["parameters"]
-    if type(parameters) is not dict:
-        raise ValueError("host info failure parameters must be an object")
-    return HostInfoFailure(
-        code=code,
-        error_code=error_code,
-        parameters={
-            _identifier(key, "host info failure parameter name"): _text(
-                parameter, "host info failure parameter"
-            )
-            for key, parameter in parameters.items()
-        },
-        diagnostic=_text(
-            data["diagnostic"], "host info failure diagnostic", allow_empty=True
-        ),
-    )
-
-
 def host_info_summary_to_wire(summary: Any) -> Dict[str, Any]:
     from ..models.host_info import HostInfoSummary
 
@@ -7644,7 +7588,7 @@ def host_info_summary_to_wire(summary: Any) -> Dict[str, Any]:
         "probe": summary.probe.value,
         "snapshot": host_info_snapshot_to_wire(summary.snapshot),
         "counters": [_interface_counters_to_wire(item) for item in summary.counters],
-        "failure": _host_info_failure_to_wire(summary.failure),
+        "failure": _service_failure_to_wire(summary.failure),
         "live": _live_sample_to_wire(summary.live),
     }
 
@@ -7668,6 +7612,6 @@ def host_info_summary_from_wire(value: Any) -> Any:
         probe,
         host_info_snapshot_from_wire(data["snapshot"]),
         tuple(_interface_counters_from_wire(item) for item in data["counters"]),
-        _host_info_failure_from_wire(data["failure"]),
+        _service_failure_from_wire(data["failure"]),
         _live_sample_from_wire(data["live"]),
     )

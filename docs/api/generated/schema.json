@@ -1401,14 +1401,6 @@
       "remote",
       "dynamic"
     ],
-    "HostInfoFailureCode": [
-      "probe_failed",
-      "probe_timed_out",
-      "probe_start_failed",
-      "connection_not_found",
-      "ssh_connection_required",
-      "unreadable_system_information"
-    ],
     "HostInfoProbe": [
       "full",
       "network_counters",
@@ -4513,39 +4505,6 @@
       ],
       "status": "Implemented"
     },
-    "HostInfoFailure": {
-      "fields": [
-        {
-          "default": null,
-          "name": "code",
-          "required": true,
-          "sensitive": false,
-          "type": "HostInfoFailureCode"
-        },
-        {
-          "default": null,
-          "name": "error_code",
-          "required": true,
-          "sensitive": false,
-          "type": "ErrorCode"
-        },
-        {
-          "default": {},
-          "name": "parameters",
-          "required": false,
-          "sensitive": false,
-          "type": "Mapping[str, str]"
-        },
-        {
-          "default": "",
-          "name": "diagnostic",
-          "required": false,
-          "sensitive": false,
-          "type": "str"
-        }
-      ],
-      "status": "Implemented"
-    },
     "HostInfoRequest": {
       "fields": [
         {
@@ -4880,7 +4839,7 @@
           "name": "failure",
           "required": false,
           "sensitive": false,
-          "type": "Optional[HostInfoFailure]"
+          "type": "Optional[ServiceFailure]"
         },
         {
           "default": null,

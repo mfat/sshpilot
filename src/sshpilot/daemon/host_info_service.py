@@ -30,8 +30,6 @@ from sshpilot.api.models.broadcast import (
 )
 from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.host_info import (
-    HostInfoFailure,
-    HostInfoFailureCode,
     HostInfoProbe,
     HostInfoRequest,
     HostInfoSnapshot,
@@ -40,7 +38,7 @@ from sshpilot.api.models.host_info import (
     LiveSample,
 )
 from sshpilot.api.models.interactions import ExecutionInteractionMode
-from sshpilot.api.models.operations import OperationId
+from sshpilot.api.models.operations import OperationId, ServiceFailure
 from sshpilot.core.host_info import (
     FULL_PROBE_COMMAND,
     LIVE_PROBE_COMMAND,
@@ -167,20 +165,7 @@ class HostInfoService:
                 summary.operation, probe, None, (), self._failure_for(target)
             )
 
-        try:
-            snapshot, counters, live = self._parse(probe, target.stdout or "")
-        except (TypeError, ValueError):
-            logger.debug("Host information parsing failed", exc_info=True)
-            return HostInfoSummary(
-                summary.operation,
-                probe,
-                None,
-                (),
-                HostInfoFailure(
-                    HostInfoFailureCode.UNREADABLE_SYSTEM_INFORMATION,
-                    ErrorCode.REMOTE_COMMAND_FAILED,
-                ),
-            )
+        snapshot, counters, live = self._parse(probe, target.stdout or "")
         return HostInfoSummary(summary.operation, probe, snapshot, counters, None, live)
 
     @staticmethod
@@ -197,72 +182,34 @@ class HostInfoService:
         bandwidth need not know which probe produced the answer.
         """
 
-        if probe is HostInfoProbe.NETWORK_COUNTERS:
-            return None, parse_counters_probe(stdout), None
-        if probe is HostInfoProbe.LIVE:
-            live = parse_live_probe(stdout)
-            return None, live.counters, live
-        snapshot = parse_host_info(stdout)
-        counters = parse_network_counters(split_sections(stdout).get("NET_DEV", ""))
-        return snapshot, counters, None
+        try:
+            if probe is HostInfoProbe.NETWORK_COUNTERS:
+                return None, parse_counters_probe(stdout), None
+            if probe is HostInfoProbe.LIVE:
+                live = parse_live_probe(stdout)
+                return None, live.counters, live
+            snapshot = parse_host_info(stdout)
+            counters = parse_network_counters(split_sections(stdout).get("NET_DEV", ""))
+            return snapshot, counters, None
+        except (TypeError, ValueError) as error:
+            # A host that answers with something unparseable is a failed
+            # probe, not a daemon fault; report it as such rather than
+            # letting a parse error escape as an internal error.
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "The remote host returned unreadable system information",
+            ) from error
 
     @staticmethod
-    def _failure_for(target) -> Optional[HostInfoFailure]:
+    def _failure_for(target) -> Optional[ServiceFailure]:
         if target is None:
             return None
-        if target.failure is None and target.state is not HostCommandState.FAILED:
-            return None
-
-        diagnostic = (target.stderr or "").strip()
-        failure = target.failure
-        if failure is None:
-            return HostInfoFailure(
-                HostInfoFailureCode.PROBE_FAILED,
-                ErrorCode.REMOTE_COMMAND_FAILED,
-                diagnostic=diagnostic,
+        if target.failure is not None:
+            return target.failure
+        if target.state is HostCommandState.FAILED:
+            detail = (target.stderr or "").strip()
+            return ServiceFailure(
+                code="host_info_probe_failed",
+                message=detail or "The host information probe failed",
             )
-
-        if failure.code == "broadcast_timeout":
-            return HostInfoFailure(
-                HostInfoFailureCode.PROBE_TIMED_OUT,
-                ErrorCode.OPERATION_TIMED_OUT,
-                diagnostic=diagnostic,
-            )
-        if failure.code == "broadcast_nonzero_exit":
-            return HostInfoFailure(
-                HostInfoFailureCode.PROBE_FAILED,
-                ErrorCode.REMOTE_COMMAND_FAILED,
-                diagnostic=diagnostic,
-            )
-        if failure.code == "broadcast_launch_failed":
-            return HostInfoFailure(
-                HostInfoFailureCode.PROBE_START_FAILED,
-                ErrorCode.SESSION_STARTUP_FAILED,
-                diagnostic=diagnostic,
-            )
-
-        try:
-            error_code = ErrorCode(failure.code)
-        except ValueError:
-            return HostInfoFailure(
-                HostInfoFailureCode.PROBE_FAILED,
-                ErrorCode.REMOTE_COMMAND_FAILED,
-                diagnostic=diagnostic or failure.message,
-            )
-
-        code = {
-            ErrorCode.CONNECTION_NOT_FOUND: HostInfoFailureCode.CONNECTION_NOT_FOUND,
-            ErrorCode.UNSUPPORTED_SESSION_PROTOCOL: (
-                HostInfoFailureCode.SSH_CONNECTION_REQUIRED
-            ),
-            ErrorCode.OPERATION_TIMED_OUT: HostInfoFailureCode.PROBE_TIMED_OUT,
-            ErrorCode.TRANSPORT_TIMEOUT: HostInfoFailureCode.PROBE_TIMED_OUT,
-            ErrorCode.SESSION_STARTUP_FAILED: HostInfoFailureCode.PROBE_START_FAILED,
-        }.get(error_code)
-        if code is not None:
-            return HostInfoFailure(code, error_code, diagnostic=diagnostic)
-        return HostInfoFailure(
-            HostInfoFailureCode.PROBE_FAILED,
-            error_code,
-            diagnostic=diagnostic or failure.message,
-        )
+        return None

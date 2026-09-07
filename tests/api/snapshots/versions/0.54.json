@@ -3255,8 +3255,6 @@
     "GroupSummary",
     "HostCommandResult",
     "HostCommandState",
-    "HostInfoFailure",
-    "HostInfoFailureCode",
     "HostInfoProbe",
     "HostInfoRequest",
     "HostInfoSnapshot",
@@ -3926,12 +3924,6 @@
       "daemon_started_at",
       "development_revision",
       "api_implementation_version"
-    ],
-    "HostInfoFailure": [
-      "code",
-      "error_code",
-      "parameters",
-      "diagnostic"
     ],
     "HostInfoRequest": [
       "connection_id",
@@ -4974,14 +4966,6 @@
       "local",
       "remote",
       "dynamic"
-    ],
-    "HostInfoFailureCode": [
-      "probe_failed",
-      "probe_timed_out",
-      "probe_start_failed",
-      "connection_not_found",
-      "ssh_connection_required",
-      "unreadable_system_information"
     ],
     "HostInfoProbe": [
       "full",

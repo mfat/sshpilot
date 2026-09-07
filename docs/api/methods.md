@@ -1563,12 +1563,9 @@ client.broadcast_terminal_input(
   whose `operation` is `pending`/`running`. `HostInfoProbe.FULL` gathers the
   complete snapshot; `HostInfoProbe.NETWORK_COUNTERS` reads only byte counters
   so bandwidth can be sampled cheaply.
-- **Failures/errors:** A probe that cannot start, times out, exits
-  unsuccessfully, or returns unreadable output completes with a strict
-  `HostInfoFailure`; remote SSH stderr remains an opaque diagnostic.
-  `unsupported_capability` and malformed requests remain RPC errors, alongside
-  operation-admission and transport errors that occur before a probe summary
-  can be produced.
+- **Errors:** `unsupported_capability` when broadcast execution is
+  unavailable, `invalid_request` for a malformed request or unreadable remote
+  output, plus connection, authentication, and transport errors.
 - **Ordering / threading:** Returns as soon as the operation is created.
   Completion is observed through `operation.state_changed`, which the daemon
   delivers to the owning client; the result is then read with `get_host_info`.
@@ -1593,8 +1590,7 @@ summary = client.start_host_info(
 - **Parameters / return:** `OperationId`; returns a `HostInfoSummary`. A
   succeeded `FULL` probe carries a `HostInfoSnapshot` in `snapshot` and byte
   counters in `counters`; a counters probe carries `counters` only. A probe
-  that failed carries a `HostInfoFailure` in `failure` and no snapshot. The
-  failure contains a stable presentation code and never a rendered UI message.
+  that failed carries a `ServiceFailure` in `failure` and no snapshot.
 - **Errors:** `operation_not_found` for an unknown or forgotten probe, plus
   transport errors. Finished probes stay readable for a bounded number of
   operations so a completion event can always be followed by a read.
