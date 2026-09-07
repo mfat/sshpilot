@@ -1099,6 +1099,25 @@ def test_unlock_prompts_and_unlocks(tmp_path):
     assert backends["bitwarden"]._unlocked is True
 
 
+def test_unlock_marks_a_rejected_master_password_with_its_own_message_code(tmp_path):
+    """A wrong master password and a backend that cannot run share the
+    ``backend_unavailable`` kind, so ``vault_unlock_failed`` is the only thing
+    telling them apart — the frontend notice picks between "the password was not
+    accepted" and "the vault is not available on this system" by this code alone
+    (issue #1245)."""
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+        expected_secrets=["wrong-password"],
+    )
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.kind == UnlockResultKind.BACKEND_UNAVAILABLE
+    assert result.message_code is SecretMessageCode.VAULT_UNLOCK_FAILED
+    assert result.backend == "keepassxc"      # names the vault it actually tried
+    assert backends["keepassxc"]._unlocked is False
+
+
 class _OwnerOnlyBroker:
     """Implements only request_client_secret_with_remember — no create()/
     wait_for_result(). If the service ever regresses to calling those
@@ -1161,6 +1180,63 @@ def test_unlock_uses_remembered_password_when_policy_on(tmp_path):
     assert result.kind == UnlockResultKind.UNLOCKED
     # No protected interaction was opened: the remembered password was used.
     assert manager._backends["bitwarden"]._unlocked is True
+
+
+def test_unlock_discards_a_remembered_password_the_vault_rejects(tmp_path):
+    """A stale keyring password must not survive its own rejection.
+
+    ``unlock()`` prefers the remembered password over prompting, so keeping one
+    the vault refuses would make every retry fail silently, never asking the user
+    for the corrected password. The ``remember_in_keyring`` policy stays on — the
+    entry is stale, not unwanted."""
+    keyring = FakeBackend("keyring", session_backed=False)
+    backends = {
+        "libsecret": FakeBackend("libsecret", session_backed=False),
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+        "rbw": FakeBackend("rbw", needs_login=True),
+        "keepassxc": FakeBackend("keepassxc"),
+        "agent": FakeBackend("agent", session_backed=False),
+    }
+    keyring.data["bitwarden-master:default"] = "wrong-password"
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={"backend": "bitwarden", "remember_in_keyring": True},
+        expected_secrets=[],
+    )
+
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.message_code is SecretMessageCode.VAULT_UNLOCK_FAILED
+    assert "bitwarden-master:default" not in keyring.data   # dropped, so a retry prompts
+    assert service.get_configuration().remember_in_keyring is True
+
+
+def test_unlock_keeps_a_prompted_password_out_of_the_keyring_on_failure(tmp_path):
+    """Only a *remembered* password is discarded on rejection; a typed one was
+    never stored, and the failure must not disturb any other keyring entry."""
+    keyring = FakeBackend("keyring", session_backed=False)
+    backends = {
+        "libsecret": FakeBackend("libsecret", session_backed=False),
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+        "rbw": FakeBackend("rbw", needs_login=True),
+        "keepassxc": FakeBackend("keepassxc"),
+        "agent": FakeBackend("agent", session_backed=False),
+    }
+    keyring.data["unrelated"] = "keep me"
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=["wrong-password"],
+    )
+
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.message_code is SecretMessageCode.VAULT_UNLOCK_FAILED
+    assert keyring.data == {"unrelated": "keep me"}
 
 
 # ---------------------------------------------------------------------------

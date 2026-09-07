@@ -350,6 +350,10 @@ class SecretBackendService:
                 )
             master = self._remembered_master_password()
 
+        # A remembered password that the vault rejects is stale (the master
+        # password was changed elsewhere). Without dropping it the unlock never
+        # prompts again and every retry fails the same silent way.
+        from_keyring = master is not None
         remember = False
         if master is None:
             # The master-password dialog runs without the service lock — see
@@ -377,6 +381,8 @@ class SecretBackendService:
         finally:
             master = ""  # drop the protected value after use
         if not ok:
+            if from_keyring:
+                self._discard_remembered_master_password()
             return SecretUnlockResult(
                 kind=UnlockResultKind.BACKEND_UNAVAILABLE,
                 backend=name,
@@ -1068,6 +1074,24 @@ class SecretBackendService:
             state=SecretOperationState.SUCCESS,
             backend=name,
         )
+
+    def _discard_remembered_master_password(self) -> None:
+        """Drop a keyring-stored master password the vault has just rejected.
+
+        Unlike :meth:`forget_master_password` this keeps the
+        ``remember_in_keyring`` policy on: the entry is stale, not unwanted, so
+        the next unlock prompts and can store the corrected password again.
+        Best-effort — a keyring that refuses the delete only costs another
+        prompt-less failure, never the unlock itself. Must not be called while
+        the service lock is held."""
+        with self._lock:
+            try:
+                from sshpilot.secret_storage import selected_master_spec
+
+                self._manager.delete_in_keyring(selected_master_spec(self._manager))
+            except Exception:
+                logger.debug("discarding the rejected master password failed",
+                             exc_info=True)
 
     def forget_master_password(self) -> SecretOperationResult:
         """Remove the selected vault's master password from the OS keyring and

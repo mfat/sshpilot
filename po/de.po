@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-07 11:43+0330\n"
+"POT-Creation-Date: 2026-09-07 16:32+0330\n"
 "PO-Revision-Date: 2026-07-20 00:00+0000\n"
 "Last-Translator: SSH Pilot contributors\n"
 "Language-Team: German\n"
@@ -176,8 +176,8 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311 src/sshpilot/preferences.py:3595
 #: src/sshpilot/preferences.py:3718 src/sshpilot/preferences.py:4120
 #: src/sshpilot/preferences.py:4767 src/sshpilot/rbw_setup.py:123
-#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:77
-#: src/sshpilot/secret_unlock_dialog.py:82 src/sshpilot/sshcopyid_window.py:548
+#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:83
+#: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:548
 #: src/sshpilot/terminal_manager.py:1014 src/sshpilot/terminal_manager.py:1179
 #: src/sshpilot/text_editor.py:1813 src/sshpilot/welcome_page.py:887
 #: src/sshpilot/window.py:1303 src/sshpilot/window.py:1377
@@ -918,7 +918,7 @@ msgstr ""
 msgid "Open terminal"
 msgstr "Terminal öffnen"
 
-#: src/sshpilot/bitwarden_setup.py:696
+#: src/sshpilot/bitwarden_setup.py:696 src/sshpilot/secret_unlock_dialog.py:229
 msgid "Try again"
 msgstr "Erneut versuchen"
 
@@ -1036,7 +1036,7 @@ msgid "Single sign-on (SSO)"
 msgstr "Single Sign-on (SSO)"
 
 #: src/sshpilot/bitwarden_setup.py:1025 src/sshpilot/bitwarden_setup.py:1048
-#: src/sshpilot/secret_unlock_dialog.py:208
+#: src/sshpilot/secret_unlock_dialog.py:258
 msgid "Sign in to Bitwarden"
 msgstr "Bei Bitwarden anmelden"
 
@@ -1177,7 +1177,7 @@ msgid "Unlock"
 msgstr "Entsperren"
 
 #: src/sshpilot/bitwarden_setup.py:1341
-#: src/sshpilot/secret_unlock_dialog.py:232
+#: src/sshpilot/secret_unlock_dialog.py:282
 msgid "Not signed in"
 msgstr "Nicht angemeldet"
 
@@ -1208,7 +1208,7 @@ msgid "Checking Bitwarden…"
 msgstr "Bitwarden wird geprüft…"
 
 #: src/sshpilot/bitwarden_setup.py:1499
-#: src/sshpilot/secret_unlock_dialog.py:163
+#: src/sshpilot/secret_unlock_dialog.py:169
 msgid "Bitwarden CLI not found"
 msgstr "Bitwarden-CLI nicht gefunden"
 
@@ -6879,7 +6879,7 @@ msgstr "CLI gefunden, aber Sie sind nicht angemeldet.{path}"
 msgid "CLI found but the vault is locked.{path}"
 msgstr "CLI gefunden, aber der Tresor ist gesperrt.{path}"
 
-#: src/sshpilot/preferences.py:3190 src/sshpilot/secret_unlock_dialog.py:218
+#: src/sshpilot/preferences.py:3190 src/sshpilot/secret_unlock_dialog.py:268
 msgid "Sign in…"
 msgstr "Anmelden…"
 
@@ -7733,12 +7733,12 @@ msgid "Transfer failed: {error}"
 msgstr "Übertragung fehlgeschlagen: {error}"
 
 #. usable directly with GLib.idle_add
-#: src/sshpilot/secret_unlock_dialog.py:67
-#: src/sshpilot/secret_unlock_dialog.py:471
+#: src/sshpilot/secret_unlock_dialog.py:72
+#: src/sshpilot/secret_unlock_dialog.py:530
 msgid "vault"
 msgstr "Tresor"
 
-#: src/sshpilot/secret_unlock_dialog.py:165
+#: src/sshpilot/secret_unlock_dialog.py:171
 msgid ""
 "Bitwarden is selected for secret storage, but the “bw” command was not "
 "found. Passwords and passphrases will not be stored or autofilled until the "
@@ -7754,20 +7754,21 @@ msgstr ""
 "Öffnen Sie Einstellungen ▸ Sicherheit & Zugangsdaten, um das Backend zu "
 "ändern, oder richten Sie Bitwarden jetzt ein."
 
-#: src/sshpilot/secret_unlock_dialog.py:172
-#: src/sshpilot/secret_unlock_dialog.py:217
+#: src/sshpilot/secret_unlock_dialog.py:178
+#: src/sshpilot/secret_unlock_dialog.py:228
+#: src/sshpilot/secret_unlock_dialog.py:267
 msgid "Not now"
 msgstr "Jetzt nicht"
 
-#: src/sshpilot/secret_unlock_dialog.py:173
+#: src/sshpilot/secret_unlock_dialog.py:179
 msgid "Set up Bitwarden…"
 msgstr "Bitwarden einrichten…"
 
-#: src/sshpilot/secret_unlock_dialog.py:187
+#: src/sshpilot/secret_unlock_dialog.py:193
 msgid "Secret backend unavailable"
 msgstr "Passwortspeicher-Backend nicht verfügbar"
 
-#: src/sshpilot/secret_unlock_dialog.py:189
+#: src/sshpilot/secret_unlock_dialog.py:195
 #, python-brace-format
 msgid ""
 "{name} is selected for secret storage but is not available on this system. "
@@ -7784,7 +7785,21 @@ msgstr ""
 "Öffnen Sie Einstellungen ▸ Sicherheit & Zugangsdaten, um die Einrichtung zu "
 "korrigieren oder ein anderes Backend zu wählen."
 
-#: src/sshpilot/secret_unlock_dialog.py:210
+#: src/sshpilot/secret_unlock_dialog.py:217
+#, python-brace-format
+msgid "Could not unlock {name}"
+msgstr "{name} konnte nicht entsperrt werden"
+
+#: src/sshpilot/secret_unlock_dialog.py:219
+msgid ""
+"The master password was not accepted. Passwords and passphrases will not be "
+"stored or autofilled until the vault is unlocked."
+msgstr ""
+"Das Master-Passwort wurde nicht akzeptiert. Passwörter und Passphrasen "
+"werden erst gespeichert oder automatisch ausgefüllt, wenn der Tresor "
+"entsperrt ist."
+
+#: src/sshpilot/secret_unlock_dialog.py:260
 msgid ""
 "Bitwarden is selected for secret storage, but you are not signed in. "
 "Passwords and passphrases will not be stored or autofilled until you sign in "
@@ -7799,7 +7814,7 @@ msgstr ""
 "Öffnen Sie Einstellungen ▸ Sicherheit & Zugangsdaten, um das Backend zu "
 "ändern, oder melden Sie sich jetzt an."
 
-#: src/sshpilot/secret_unlock_dialog.py:234
+#: src/sshpilot/secret_unlock_dialog.py:284
 #, python-brace-format
 msgid ""
 "{name} is selected for secret storage but you are not signed in. Passwords "
@@ -7814,12 +7829,12 @@ msgstr ""
 "Öffnen Sie Einstellungen ▸ Sicherheit & Zugangsdaten, um die Einrichtung zu "
 "korrigieren."
 
-#: src/sshpilot/secret_unlock_dialog.py:543
+#: src/sshpilot/secret_unlock_dialog.py:620
 #, python-brace-format
 msgid "Unlocking {backend}"
 msgstr "{backend} wird entsperrt"
 
-#: src/sshpilot/secret_unlock_dialog.py:544
+#: src/sshpilot/secret_unlock_dialog.py:621
 msgid "Unlocking your vault…"
 msgstr "Ihr Tresor wird entsperrt…"
 
