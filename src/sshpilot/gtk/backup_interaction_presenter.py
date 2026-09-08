@@ -50,7 +50,18 @@ class BackupServerInteractionPresenter(DaemonInteractionDialogs):
         super().__init__(client, bridge, parent)
         # A prompt raised between the backup call starting and this presenter
         # existing is still pending in the daemon; reconcile picks it up.
-        self._reconcile()
+        #
+        # Past the base constructor this object is subscribed to the event
+        # stream, so it cannot simply be abandoned: the caller wraps
+        # construction and treats a failure as "no presenter", which would
+        # leave a live one claiming and presenting every prompt for this
+        # connection for the rest of the session. Close it before the failure
+        # escapes.
+        try:
+            self._reconcile()
+        except BaseException:
+            self.close()
+            raise
 
     def _scope_is_bound(self) -> bool:
         """Bound at construction: the connection being backed up is the scope."""

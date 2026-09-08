@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import threading
 from gettext import gettext as _
-from typing import Optional
+from typing import Any, Dict, Optional
+from weakref import WeakKeyDictionary
 
 from gi.repository import Adw, GLib, Gtk
 
@@ -26,6 +28,25 @@ from .api.models import (
     SessionId,
 )
 from .daemon.secret_backend_service import is_secret_service_session
+
+#: Which presenter owns which interaction, per frontend client.
+#:
+#: The daemon's broker enforces exclusivity per *client*, not per presenter:
+#: ``InteractionBroker.claim`` rejects a claim only when a **different** client
+#: already owns the interaction, and a repeat claim by the same client is handed
+#: back the same nonce. Every presenter in one frontend shares that client, so
+#: the broker cannot arbitrate between them — the frontend has to.
+#:
+#: That was invisible while every presenter was scoped to a session id, because
+#: session scopes are disjoint by construction. ``BackupServerInteractionPresenter``
+#: is the first scoped to a *connection*, so it deliberately overlaps the session
+#: scope of a terminal or file-manager connect to the same host. Without this
+#: registry both presenters claim the one prompt and stack two modal dialogs, the
+#: second presented from inside the first's nested main loop.
+#:
+#: Keyed weakly so a disconnected client's entry disappears with it.
+_INTERACTION_OWNERS: "WeakKeyDictionary[Any, Dict[Any, Any]]" = WeakKeyDictionary()
+_INTERACTION_OWNERS_LOCK = threading.Lock()
 
 
 class DaemonInteractionDialogs:
@@ -95,6 +116,48 @@ class DaemonInteractionDialogs:
             return False
         return summary.session_id == self._session_id
 
+    def _take_ownership(self, interaction_id) -> bool:
+        """Reserve *interaction_id* for this presenter among its client's peers.
+
+        ``False`` means another presenter on the same frontend already owns it,
+        so this one must stay silent — see :data:`_INTERACTION_OWNERS` for why
+        the daemon cannot make that call for us. Registry trouble (an exotic
+        client object that cannot be weak-referenced) degrades to the old
+        first-come behaviour rather than dropping the prompt entirely.
+        """
+        try:
+            with _INTERACTION_OWNERS_LOCK:
+                owners = _INTERACTION_OWNERS.setdefault(self._client, {})
+                current = owners.get(interaction_id)
+                if current is not None and current is not self:
+                    return False
+                owners[interaction_id] = self
+                return True
+        except TypeError:
+            return True
+
+    def _dialog_handle_sink(self, interaction_id):
+        """``on_dialog`` callback registering a blocking dialog under its id.
+
+        The password/passphrase helper owns its widget inside a nested main
+        loop, so the only way to take one down from the outside is the handle
+        it hands back. Registering it (rather than the ``None`` these call
+        sites used to store) is what lets :meth:`_dismiss` and :meth:`close`
+        actually dismiss the prompt when its interaction is answered elsewhere,
+        expires, or its presenter is closed while the dialog is still up.
+        """
+        return lambda handle: self._dialogs.__setitem__(interaction_id, handle)
+
+    def _drop_ownership(self, interaction_id) -> None:
+        """Release *interaction_id* — only if this presenter still holds it."""
+        try:
+            with _INTERACTION_OWNERS_LOCK:
+                owners = _INTERACTION_OWNERS.get(self._client)
+                if owners is not None and owners.get(interaction_id) is self:
+                    owners.pop(interaction_id, None)
+        except TypeError:
+            pass
+
     def _reconcile(self) -> None:
         """Pull currently pending interactions for the bound scope."""
         if self._closed or not self._scope_is_bound():
@@ -145,6 +208,11 @@ class DaemonInteractionDialogs:
             return False
         if summary.id in self._dialogs or summary.id in self._claimed:
             return False
+        # Reserve against the other presenters on this frontend first: the
+        # daemon only rejects a claim from a *different* client, so two
+        # presenters here would both be told they own it.
+        if not self._take_ownership(summary.id):
+            return False
         # Reserve the interaction before the asynchronous claim starts.  The
         # event stream and set_session() reconciliation can report the same
         # pending interaction concurrently; waiting until claim completion to
@@ -164,9 +232,11 @@ class DaemonInteractionDialogs:
         """Release an in-flight claim reservation after submission failure."""
         self._claimed.discard(interaction_id)
         self._claims.pop(interaction_id, None)
+        self._drop_ownership(interaction_id)
 
     def _claimed_and_present(self, summary: InteractionSummary, claim) -> None:
         if self._closed or summary.id not in self._claimed:
+            self._drop_ownership(summary.id)
             try:
                 self._bridge.submit_interaction(
                     lambda: self._client.release_interaction(summary.id),
@@ -591,8 +661,15 @@ class DaemonInteractionDialogs:
         # prepare it for modal presentation because this call uses the shared
         # helper's parent_window escape hatch.
         present_for_modal_dialog(parent)
-        self._dialogs[summary.id] = None
         remember = [False]
+        # Register a real handle, not None: this dialog blocks in a nested main
+        # loop, and _dismiss()/close() skip None entries, so a None here left
+        # the prompt on screen after its interaction expired or its owner went
+        # away — with the presenter already closed and the claim released, the
+        # user's eventual answer landed on a dead interaction. Backup presenters
+        # are closed mid-flight (as soon as the backup call returns), which is
+        # what made that reachable.
+        self._dialogs[summary.id] = None
         try:
             value = show_ssh_password_dialog(
                 parent_window=parent,
@@ -602,6 +679,7 @@ class DaemonInteractionDialogs:
                 allow_store=bool(prompt.can_remember),
                 store_label=_("Remember password"),
                 on_store=lambda _password: remember.__setitem__(0, True),
+                on_dialog=self._dialog_handle_sink(summary.id),
             )
         finally:
             self._dialogs.pop(summary.id, None)
@@ -725,6 +803,7 @@ class DaemonInteractionDialogs:
     def _dismiss(self, interaction_id) -> None:
         self._claimed.discard(interaction_id)
         self._claims.pop(interaction_id, None)
+        self._drop_ownership(interaction_id)
         dialog = self._dialogs.pop(interaction_id, None)
         if dialog is not None:
             dialog.close()
@@ -738,6 +817,8 @@ class DaemonInteractionDialogs:
         self._closed = True
         self._subscription.close()
         claimed = tuple(self._claimed)
+        for interaction_id in claimed:
+            self._drop_ownership(interaction_id)
         self._claimed.clear()
         self._claims.clear()
         dialogs = tuple(self._dialogs.values())

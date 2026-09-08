@@ -283,6 +283,7 @@ def show_ssh_password_dialog(
     store_label: Optional[str] = None,
     on_store: Optional[Any] = None,
     allow_store: Optional[bool] = None,
+    on_dialog: Optional[Any] = None,
 ) -> Optional[str]:
     """Show the standard in-app SSH **password** dialog (blocking).
 
@@ -297,6 +298,12 @@ def show_ssh_password_dialog(
     The dialog is modal, parented on :class:`MainWindow` (via
     :func:`resolve_app_modal_parent`), and blocks until the user dismisses it
     (nested ``GLib.MainLoop``). **Must be called on the GTK main thread.**
+
+    ``on_dialog`` receives a handle with a ``close()`` that takes the dialog
+    down from the outside (as a cancel) and unwinds the nested loop. Pass it
+    when the prompt's owner can go away while it is up — a daemon interaction
+    that expires, say — otherwise the dialog outlives whatever it was asking
+    on behalf of and cannot be dismissed.
 
     See module docstring / ``docs/architecture.md`` for call examples. Also re-exported
     from :mod:`sshpilot.window` for historical imports.
@@ -342,7 +349,27 @@ def show_ssh_password_dialog(
         store_label=store_label,
         on_store=on_store,
         allow_store=allow_store,
+        on_dialog=on_dialog,
     )
+
+
+class _DialogHandle:
+    """A ``close()``-able stand-in for a dialog that blocks in a nested loop.
+
+    :func:`_show_password_passphrase_dialog` owns its ``Adw.Dialog`` inside a
+    nested ``GLib.MainLoop``, so a caller holding the widget could hide it but
+    would leave that loop spinning. This closes the dialog *and* unwinds the
+    loop, by running the same cancel path the Cancel button uses — so callers
+    that keep dialogs in a ``{id: dialog}`` map can treat it like any other.
+    """
+
+    __slots__ = ("_dismiss",)
+
+    def __init__(self, dismiss) -> None:
+        self._dismiss = dismiss
+
+    def close(self) -> None:
+        self._dismiss()
 
 
 def _show_password_passphrase_dialog(
@@ -360,6 +387,7 @@ def _show_password_passphrase_dialog(
     store_label: Optional[str] = None,
     on_store: Optional[Any] = None,
     allow_store: Optional[bool] = None,
+    on_dialog: Optional[Any] = None,
 ) -> Optional[str]:
     """Show a graphical password or passphrase dialog.
 
@@ -551,6 +579,16 @@ def _show_password_passphrase_dialog(
     # grab_focus() returns True — idle_add would re-run forever and steal
     # keystrokes after the first character unless we return SOURCE_REMOVE.
     GLib.idle_add(lambda: (password_row.grab_focus(), False)[1])
+
+    if on_dialog is not None:
+        # Hand the caller a way to take this dialog down again. It blocks in a
+        # nested main loop, so an owner that goes away mid-prompt (a daemon
+        # interaction that expired, a backup call that returned) can only get
+        # the dialog off screen from the inside — see _DialogHandle.
+        try:
+            on_dialog(_DialogHandle(lambda: _finish(False)))
+        except Exception:
+            logger.debug("on_dialog hook failed", exc_info=True)
 
     main_loop.run()
     return password_result[0]

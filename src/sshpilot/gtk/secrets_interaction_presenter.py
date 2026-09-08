@@ -139,6 +139,7 @@ class SecretsInteractionPresenter(DaemonInteractionDialogs):
                 heading=heading,
                 body=body,
                 allow_store=False,
+                on_dialog=self._dialog_handle_sink(summary.id),
             )
         finally:
             self._dialogs.pop(summary.id, None)
@@ -182,6 +183,7 @@ class SecretsInteractionPresenter(DaemonInteractionDialogs):
                 allow_store=bool(prompt.can_remember),
                 store_label=_("Remember master password"),
                 on_store=lambda _password: remember.__setitem__(0, True),
+                on_dialog=self._dialog_handle_sink(summary.id),
             )
         finally:
             self._dialogs.pop(summary.id, None)
