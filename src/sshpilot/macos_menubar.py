@@ -59,8 +59,8 @@ def build_macos_menubar(
     file_menu.append_section(None, file_sessions)
 
     file_transfer = menu_cls()
-    file_transfer.append(_("Import Configuration…"), "win.import-config")
-    file_transfer.append(_("Export Configuration…"), "win.export-config")
+    file_transfer.append(_("Backup…"), "win.export-config")
+    file_transfer.append(_("Restore…"), "win.import-config")
     file_menu.append_section(None, file_transfer)
     menubar.append_submenu(_("File"), file_menu)
 

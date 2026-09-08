@@ -3940,9 +3940,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         submenu_section.append_submenu(_('Sessions'), sessions_menu)
 
         import_export_menu = Gio.Menu()
-        import_export_menu.append(_('Export Configuration'), 'win.export-config')
-        import_export_menu.append(_('Import Configuration'), 'win.import-config')
-        submenu_section.append_submenu(_('Import/Export'), import_export_menu)
+        import_export_menu.append(_('Backup'), 'win.export-config')
+        import_export_menu.append(_('Restore'), 'win.import-config')
+        submenu_section.append_submenu(_('Backup/Restore'), import_export_menu)
 
         view_menu = Gio.Menu()
         view_menu.append(_('Toggle Full Screen'), f'win.{TOGGLE_FULLSCREEN_ACTION}')
