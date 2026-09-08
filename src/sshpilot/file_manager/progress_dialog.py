@@ -528,15 +528,63 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self._stop_render_timer()
         
         if success:
-            self._set_dialog_heading(_("Transfer Complete"))
-            self.status_label.set_text(_("Transfer completed successfully"))
-            self.file_label.set_text(
-                _("Successfully transferred {count} files").format(
-                    count=self.files_completed
-                )
+            headings = {
+                "download": _("Download Complete"),
+                "upload": _("Upload Complete"),
+                "copy": _("Copy Complete"),
+                "move": _("Move Complete"),
+            }
+            self._set_dialog_heading(
+                headings.get(self.operation_type, _("Transfer Complete"))
             )
+            count = self.files_completed or self.total_files
+            size_bytes = self._transferred_bytes
+            if count <= 0 and size_bytes <= 0:
+                self.status_label.set_text(_("Transfer completed successfully"))
+                self.file_label.set_text("—")
+            elif size_bytes > 0 and count > 1:
+                self.status_label.set_text(
+                    _("Successfully transferred {count} files ({size})").format(
+                        count=count,
+                        size=self._format_size(size_bytes),
+                    )
+                )
+                self.file_label.set_text(
+                    _("{done} of {total} files").format(
+                        done=self.files_completed or count,
+                        total=self.total_files or count,
+                    )
+                )
+            elif size_bytes > 0:
+                self.status_label.set_text(
+                    _("Transferred {size} successfully").format(
+                        size=self._format_size(size_bytes),
+                    )
+                )
+                if self.current_file:
+                    self.file_label.set_text(safe_display_text(self.current_file))
+                elif count == 1:
+                    self.file_label.set_text(_("1 file"))
+                else:
+                    self.file_label.set_text(
+                        _("Successfully transferred {count} files").format(count=count)
+                    )
+            else:
+                self.status_label.set_text(_("Transfer completed successfully"))
+                self.file_label.set_text(
+                    _("Successfully transferred {count} files").format(count=count)
+                )
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
+            self.speed_label.set_text("—")
+            self.time_label.set_text(_("Finished"))
+            if self.total_files:
+                self.counter_label.set_text(
+                    _("{done} of {total} files").format(
+                        done=self.files_completed or count,
+                        total=self.total_files,
+                    )
+                )
         else:
             self._set_dialog_heading(_("Transfer Failed"))
             self.status_label.set_text(_("Transfer failed"))
@@ -555,4 +603,3 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             pass
 
         return False
-

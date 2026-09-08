@@ -55,6 +55,57 @@ class _Client:
         return SimpleNamespace(unsubscribe=lambda: None)
 
 
+class _FakeLabel:
+    def __init__(self):
+        self.value = None
+        self.visible = True
+        self.tooltip = None
+
+    def set_wrap(self, _value):
+        return None
+
+    def set_halign(self, _value):
+        return None
+
+    def set_xalign(self, _value):
+        return None
+
+    def set_selectable(self, _value):
+        return None
+
+    def add_css_class(self, _name):
+        return None
+
+    def set_ellipsize(self, _mode):
+        return None
+
+    def set_text(self, value):
+        self.value = value
+
+    def set_tooltip_text(self, value):
+        self.tooltip = value
+
+    def set_visible(self, value):
+        self.visible = value
+
+
+class _FakeTransferDialog:
+    def __init__(self, title):
+        self.title = title
+        self.title_label = SimpleNamespace(set_label=lambda value: setattr(self, "heading", value))
+        self.content_box = SimpleNamespace(append=lambda _item: None)
+        self.cancel_btn = SimpleNamespace()
+
+    def set_title(self, title):
+        self.title = title
+
+    def connect(self, *_args):
+        return None
+
+    def present(self, *_args):
+        return None
+
+
 def _controller(client):
     controller = ScpWindowController.__new__(ScpWindowController)
     controller.window = SimpleNamespace(client=client, client_bridge=_Bridge())
@@ -63,29 +114,12 @@ def _controller(client):
 
 
 def test_scp_start_uses_typed_client_and_never_local_process(monkeypatch):
-    class Label:
-        def set_wrap(self, _value):
-            return None
-
-        def set_halign(self, _value):
-            return None
-
-        def set_text(self, _value):
-            return None
-
-    class Dialog:
-        def __init__(self, _title):
-            self.content_box = SimpleNamespace(append=lambda _item: None)
-            self.cancel_btn = SimpleNamespace()
-
-        def connect(self, *_args):
-            return None
-
-        def present(self, *_args):
-            return None
-
-    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", Dialog)
-    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", Label)
+    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", _FakeTransferDialog)
+    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", _FakeLabel)
+    monkeypatch.setattr(
+        "sshpilot.scp_window._pretty_path_for_display",
+        lambda path: path,
+    )
     client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
     controller = _controller(client)
     controller.start_scp_transfer(
@@ -107,32 +141,18 @@ def test_scp_start_uses_typed_client_and_never_local_process(monkeypatch):
 def test_scp_dialog_observes_terminal_transfer_state(monkeypatch):
     labels = []
 
-    class Label:
+    class TrackingLabel(_FakeLabel):
         def __init__(self):
+            super().__init__()
             labels.append(self)
 
-        def set_wrap(self, _value):
-            return None
-
-        def set_halign(self, _value):
-            return None
-
-        def set_text(self, value):
-            self.value = value
-
-    class Dialog:
-        def __init__(self, _title):
-            self.content_box = SimpleNamespace(append=lambda _item: None)
-
-        def connect(self, *_args):
-            return None
-
-        def present(self, *_args):
-            return None
-
-    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", Dialog)
-    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", Label)
+    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", _FakeTransferDialog)
+    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", TrackingLabel)
     monkeypatch.setattr("sshpilot.scp_window.GLib.idle_add", lambda callback: callback())
+    monkeypatch.setattr(
+        "sshpilot.scp_window._pretty_path_for_display",
+        lambda path: path,
+    )
     client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
     controller = _controller(client)
     controller.start_scp_transfer(
@@ -157,9 +177,83 @@ def test_scp_dialog_observes_terminal_transfer_state(monkeypatch):
             )
         )
     )
-    assert labels[-1].value == (
+    assert labels[0].value == (
         "Failed: The SCP transfer failed.\n\nscp: permission denied"
     )
+    assert labels[1].value == "From: /tmp/file"
+    assert labels[2].value == "To: /remote/drop"
+
+
+def test_scp_dialog_shows_completion_details(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    labels = []
+
+    class TrackingLabel(_FakeLabel):
+        def __init__(self):
+            super().__init__()
+            labels.append(self)
+
+    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", _FakeTransferDialog)
+    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", TrackingLabel)
+    monkeypatch.setattr("sshpilot.scp_window.GLib.idle_add", lambda callback: callback())
+    monkeypatch.setattr(
+        "sshpilot.scp_window._pretty_path_for_display",
+        lambda path: path,
+    )
+    client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
+    controller = _controller(client)
+    controller.start_scp_transfer(
+        SimpleNamespace(id="demo", nickname="demo"),
+        ["/tmp/a", "/tmp/b"],
+        "/remote/drop",
+        direction="download",
+    )
+    _operation, on_started, _on_error = controller.window.client_bridge.calls[0]
+    started = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    on_started(SimpleNamespace(id="transfer-1", state=TransferState.RUNNING))
+    client.events[-1](
+        SimpleNamespace(
+            payload=SimpleNamespace(
+                id="transfer-1",
+                state=TransferState.COMPLETED,
+                source_display="/tmp/a, /tmp/b",
+                destination_display="/remote/drop",
+                bytes_completed=1536,
+                bytes_total=1536,
+                started_at=started,
+                completed_at=started + timedelta(seconds=5),
+            )
+        )
+    )
+    assert labels[0].value == "Download complete"
+    assert labels[1].value == "From: /tmp/a, /tmp/b"
+    assert labels[2].value == "To: /remote/drop"
+    assert labels[3].value == "2 files · 1.5 KB · 5 seconds"
+    assert labels[3].visible is True
+
+
+def test_format_scp_completion_details_omits_empty_parts():
+    from datetime import datetime, timezone
+
+    summary = SimpleNamespace(
+        source_display="/tmp/one",
+        bytes_completed=0,
+        bytes_total=None,
+        started_at=None,
+        completed_at=None,
+    )
+    assert scp_window_mod._format_scp_completion_details(summary) == ""
+
+    started = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    summary = SimpleNamespace(
+        source_display="/tmp/one",
+        bytes_completed=2048,
+        bytes_total=2048,
+        started_at=started,
+        completed_at=started,
+    )
+    assert scp_window_mod._format_scp_completion_details(summary) == "2.0 KB · 0 seconds"
 
 
 def test_scp_start_rejects_missing_capability_without_fallback():
@@ -926,29 +1020,12 @@ def test_scp_transfer_gates_on_vault_unlock(monkeypatch):
     (TerminalManager._maybe_unlock_secrets_then)."""
     from unittest import mock
 
-    class Label:
-        def set_wrap(self, _value):
-            return None
-
-        def set_halign(self, _value):
-            return None
-
-        def set_text(self, _value):
-            return None
-
-    class Dialog:
-        def __init__(self, _title):
-            self.content_box = SimpleNamespace(append=lambda _item: None)
-            self.cancel_btn = SimpleNamespace()
-
-        def connect(self, *_args):
-            return None
-
-        def present(self, *_args):
-            return None
-
-    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", Dialog)
-    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", Label)
+    monkeypatch.setattr("sshpilot.scp_window.ScpTransferDialog", _FakeTransferDialog)
+    monkeypatch.setattr("sshpilot.scp_window.Gtk.Label", _FakeLabel)
+    monkeypatch.setattr(
+        "sshpilot.scp_window._pretty_path_for_display",
+        lambda path: path,
+    )
     client = _Client(SimpleNamespace(supports=lambda capability: capability is Capability.TRANSFERS_SCP))
     controller = _controller(client)
 
