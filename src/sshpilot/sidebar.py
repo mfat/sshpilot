@@ -5014,12 +5014,13 @@ def _build_sidebar_toolbar(window, sidebar_box):
 
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
-    # Sidebar header: title + window controls (GNOME split-view pattern)
+    # Sidebar header: the title only. The window controls live in the content
+    # title bar, and a copy here would ask for ~126px — twice the width of the
+    # minimal icon strip, holding the whole sidebar that wide.
     window.sidebar_header_bar = Adw.HeaderBar()
     window.sidebar_header_bar.add_css_class('flat')
-    if HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT:
-        window.sidebar_header_bar.set_show_start_title_buttons(True)
-        window.sidebar_header_bar.set_show_end_title_buttons(True)
+    window.sidebar_header_bar.set_show_start_title_buttons(False)
+    window.sidebar_header_bar.set_show_end_title_buttons(False)
 
     sidebar_title_label = Gtk.Label(label='SSH Pilot')
     sidebar_title_label.add_css_class('title')

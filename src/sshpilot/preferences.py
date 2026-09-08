@@ -1369,42 +1369,6 @@ class PreferencesWindow(Adw.NavigationPage):
         sidebar_mode_row.connect('notify::selected', self.on_sidebar_mode_changed)
         sidebar_group.add(sidebar_mode_row)
 
-        # Maximum width slider
-        max_width_row = Adw.ActionRow()
-        max_width_row.set_title(_("Maximum Width"))
-
-        # Load saved value or use default
-        saved_max_width = self.config.get_setting('ui.max-sidebar-width', 280)
-
-        # Create a scale/slider for max width (100-800 sp)
-        max_width_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 100, 800, 10)
-        max_width_scale.set_draw_value(True)
-        max_width_scale.set_value_pos(Gtk.PositionType.RIGHT)
-        max_width_scale.set_size_request(200, -1)
-        max_width_scale.set_valign(Gtk.Align.CENTER)
-        max_width_scale.set_value(float(saved_max_width))
-
-        # Update subtitle with current value
-        def update_subtitle(value):
-            max_width_row.set_subtitle(
-                _("Adjust the maximum width of the sidebar ({width} sp)").format(width=int(value)))
-
-        update_subtitle(saved_max_width)
-
-        # Connect change handler
-        def on_max_width_changed(scale):
-            value = int(scale.get_value())
-            update_subtitle(value)
-            self.config.set_setting('ui.max-sidebar-width', value)
-            # Update main window if available
-            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_max_width'):
-                self.parent_window.update_sidebar_max_width(value)
-
-        max_width_scale.connect('value-changed', on_max_width_changed)
-
-        max_width_row.add_suffix(max_width_scale)
-        sidebar_group.add(max_width_row)
-
         flat_rows_switch = Adw.SwitchRow()
         flat_rows_switch.set_title(_("Flat Sidebar Rows"))
         flat_rows_switch.set_subtitle(

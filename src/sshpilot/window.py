@@ -38,6 +38,7 @@ import threading
 # Feature detection for libadwaita versions across distros
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+HAS_TOOLBAR_VIEW = hasattr(Adw, 'ToolbarView')
 HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
@@ -81,6 +82,7 @@ from .sidebar import (
     install_sidebar_css,
     reset_connection_list_drag_session,
 )
+from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, SidebarPaned
 
 from .welcome_page import WelcomePage
 from .actions import (
@@ -253,21 +255,8 @@ _format_connection_host_display = format_connection_host_display
 # Width of the minimal (icon-only) sidebar strip.
 _MINIMAL_STRIP_WIDTH = 64
 
-
-def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
-    """Resolve the startup max sidebar width from a saved setting value.
-
-    Returns the saved width when it is a valid integer, otherwise ``default``.
-    Kept as a module-level pure function so the parsing/fallback logic is unit
-    testable without building the GTK window.
-    """
-    if saved_value is None:
-        return default
-    try:
-        return int(saved_value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid ui.max-sidebar-width %r; using default %d", saved_value, default)
-        return default
+# Resting minimum width of the full sidebar column.
+_SIDEBAR_MIN_WIDTH = 180
 
 
 def _accelerator_label(accel: str) -> str:
@@ -1114,14 +1103,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 self._update_sidebar_accelerators()
             except Exception:
                 pass
-            return
-
-        if key == 'ui.max-sidebar-width':
-            try:
-                max_width = int(value)
-                self.update_sidebar_max_width(max_width)
-            except (ValueError, TypeError) as e:
-                logger.error(f"Invalid max-sidebar-width value: {e}")
             return
 
         if key == 'app-theme':
@@ -2198,45 +2179,26 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Toggled by Preferences ▸ Interface ▸ Header Bar.
         self._headerbar_local_terminal_button = self.local_terminal_button
 
-        # Add the custom title bar directly for the legacy split fallback.
-        if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
+        # Add the custom title bar directly for the legacy content fallback
+        # (without Adw.ToolbarView there is nowhere else to put it).
+        if not HAS_TOOLBAR_VIEW:
             main_box.append(self.header_bar)
 
-        # Honor the saved max-sidebar-width on startup (previously it was read but
-        # ignored here, so the saved width only took effect after being changed
-        # mid-session); fall back to 400 when unset/invalid.
-        saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
-        effective_max_width = _effective_max_sidebar_width(saved_max_width)
-
-        # Try OverlaySplitView first as it's more reliable
-        if HAS_OVERLAY_SPLIT:
-            self.split_view = Adw.OverlaySplitView()
-            try:
-                self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(effective_max_width)
-            except Exception:
-                pass
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'overlay'
-            logger.debug("Using OverlaySplitView")
-        elif HAS_NAV_SPLIT:
-            self.split_view = Adw.NavigationSplitView()
-            try:
-                self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(effective_max_width)
-            except Exception:
-                pass
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'navigation'
-            logger.debug("Using NavigationSplitView")
-        else:
-            self.split_view = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
-            self.split_view.set_wide_handle(True)
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'paned'
-            logger.debug("Using Gtk.Paned fallback")
+        # The sidebar lives in a Gtk.Paned so its divider can be dragged; the
+        # split-view width API the sidebar machinery drives is implemented on
+        # top of the paned position (see sidebar_paned.SidebarPaned). The width
+        # itself is the user's: dragged, remembered, and restored here.
+        saved_width = self.config.get_setting('ui.sidebar_width', None)
+        self.split_view = SidebarPaned(
+            min_width=_SIDEBAR_MIN_WIDTH,
+            max_width=DEFAULT_SIDEBAR_MAX_WIDTH,
+            fraction=0.25,
+            user_width=saved_width,
+            on_user_resize=self._on_sidebar_width_dragged,
+        )
+        self.split_view.set_vexpand(True)
+        self._split_variant = 'paned'
+        logger.debug("Using resizable Gtk.Paned split view")
 
         # Initial sidebar visibility. Apply "hide on startup" HERE — before the
         # window is presented — so it never flashes visible then collapses.
@@ -2245,7 +2207,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             start_hidden = False
         sidebar_visible = not start_hidden
-        # Track sidebar visibility state for NavigationSplitView (which doesn't have get_show_sidebar)
+        # Tracked alongside the widget state so callers have a cheap answer.
         self._sidebar_visible = sidebar_visible
         # Keep the header toggle button in sync (active == hidden).
         if hasattr(self, 'sidebar_toggle_button'):
@@ -2254,18 +2216,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
 
-        # For OverlaySplitView, we need to explicitly set the sidebar state
-        if HAS_OVERLAY_SPLIT:
-            try:
-                self.split_view.set_show_sidebar(sidebar_visible)
-                logger.debug(f"Set OverlaySplitView sidebar visible={sidebar_visible}")
-            except Exception as e:
-                logger.error(f"Failed to set OverlaySplitView sidebar: {e}")
-        elif HAS_NAV_SPLIT and start_hidden:
-            try:
-                self._toggle_sidebar_visibility(False)
-            except Exception:
-                pass
+        # Recorded on the split view now; setup_sidebar() applies it to the
+        # sidebar widget as soon as that widget exists.
+        try:
+            self.split_view.set_show_sidebar(sidebar_visible)
+            logger.debug(f"Set sidebar visible={sidebar_visible}")
+        except Exception as e:
+            logger.error(f"Failed to set initial sidebar visibility: {e}")
 
         # Create sidebar
         self.setup_sidebar()
@@ -2382,57 +2339,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return False
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
-            try:
-                self.split_view.set_sidebar(widget)
-                return
-            except Exception:
-                pass
-        elif HAS_NAV_SPLIT:
-            try:
-                # NavigationSplitView requires the sidebar to be a NavigationPage
-                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
-                sidebar_page = Adw.NavigationPage.new(widget, _("Connections"))
-                self.split_view.set_sidebar(sidebar_page)
-                return
-            except Exception:
-                pass
-        # Fallback for Gtk.Paned
         try:
-            self.split_view.set_start_child(widget)
+            self.split_view.set_sidebar(widget)
         except Exception:
-            pass
+            logger.debug("Failed to attach sidebar widget", exc_info=True)
 
     def _set_content_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
-            try:
-                self.split_view.set_content(widget)
-                return
-            except Exception:
-                pass
-        elif HAS_NAV_SPLIT:
-            try:
-                # NavigationSplitView content should be a NavigationPage directly
-                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
-                # Both sidebar and content must be AdwNavigationPage objects
-                content_page = Adw.NavigationPage.new(widget, _("Terminal"))
-                self.split_view.set_content(content_page)
-                return
-            except Exception:
-                pass
-        # Fallback for Gtk.Paned
         try:
-            self.split_view.set_end_child(widget)
+            self.split_view.set_content(widget)
         except Exception:
-            pass
+            logger.debug("Failed to attach content widget", exc_info=True)
 
     def _get_sidebar_width(self) -> int:
+        """The sidebar's current width in pixels (the paned divider position)."""
         try:
-            if (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT) and hasattr(self.split_view, 'get_max_sidebar_width'):
-                return int(self.split_view.get_max_sidebar_width())
+            return int(self.split_view.get_sidebar_width())
         except Exception:
             pass
-        # Fallback: attempt to read allocation of the first child when using Paned
+        # Fallback: attempt to read the allocation of the sidebar child
         try:
             sidebar = self.split_view.get_start_child()
             if sidebar is not None:
@@ -2700,47 +2624,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to refresh sidebar forwarding rows", exc_info=True)
 
-    def update_sidebar_max_width(self, max_width: int):
-        """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
+    def _on_sidebar_width_dragged(self, width: int) -> None:
+        """Persist a sidebar width the user dragged the paned divider to."""
         try:
-            if HAS_NAV_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
-                self.split_view.set_max_sidebar_width(max_width)
-                logger.debug(f"Updated NavigationSplitView max-sidebar-width to {max_width} sp")
-            elif HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
-                self.split_view.set_max_sidebar_width(max_width)
-                logger.debug(f"Updated OverlaySplitView max-sidebar-width to {max_width} sp")
-        except Exception as e:
-            logger.error(f"Failed to update max-sidebar-width: {e}")
+            self.config.set_setting('ui.sidebar_width', int(width))
+        except Exception:
+            logger.debug("Failed to save dragged sidebar width", exc_info=True)
 
     # --- Minimal (icon-only) sidebar strip -----------------------------------
     def _apply_sidebar_width(self, width: int) -> None:
-        """Pin the split view sidebar to exactly ``width`` px (one animation tick).
-
-        Both min and max are driven to ``width``. They must be set in the order
-        that never leaves the pair transiently ``min > max`` — OverlaySplitView
-        mishandles that and the sidebar fails to follow (the width jump). The
-        safe order depends on the *current* constraints, not the logical
-        animation direction: if the target is at/above the current max, raise the
-        max ceiling first; otherwise lower the min floor first. (Deriving it from
-        direction breaks the collapse "lock" step in narrow windows, where the
-        current allocation can already be below the resting min.)
-        """
+        """Pin the sidebar to exactly ``width`` px (one animation tick)."""
         sv = getattr(self, 'split_view', None)
-        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+        if sv is None or not hasattr(sv, 'pin_width'):
             return
         try:
-            current_max = int(sv.get_max_sidebar_width())
+            sv.pin_width(width)
         except Exception:
-            current_max = width
-        try:
-            if width >= current_max:
-                sv.set_max_sidebar_width(width)
-                sv.set_min_sidebar_width(width)
-            else:
-                sv.set_min_sidebar_width(width)
-                sv.set_max_sidebar_width(width)
-        except Exception:
-            pass
+            logger.debug("Failed to pin sidebar width", exc_info=True)
 
     def _set_sidebar_clipping(self, enabled: bool) -> None:
         """Flip the sidebar's scrollers between clip (EXTERNAL) and fit (NEVER).
@@ -2886,13 +2786,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 logger.debug("show-for-minimal failed", exc_info=True)
 
-        saved_max = _effective_max_sidebar_width(
-            self.config.get_setting('ui.max-sidebar-width', None))
-        # A user-chosen max width can be below the nominal minimum; the resting
-        # min must never exceed the max (OverlaySplitView breaks on min > max,
-        # bringing the jump back at small max widths).
-        base_min = min(180 if HAS_OVERLAY_SPLIT else 200, saved_max)
-
         anim = getattr(self, '_sidebar_width_animation', None)
         if anim is not None:
             try:
@@ -2902,26 +2795,25 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._sidebar_width_animation = None
 
         sv = getattr(self, 'split_view', None)
-        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+        if sv is None or not hasattr(sv, 'pin_width'):
             # No width lever — just swap the content to the target state.
             self._apply_sidebar_minimal_chrome(minimal)
             self._apply_sidebar_minimal_rows(minimal)
             self._set_sidebar_clipping(False)  # apply the minimal-aware vpolicy
             return
 
-        def _fraction_width():
+        def _resting_width():
+            # The width the sidebar returns to once the pin is released: the one
+            # the user dragged to, else the automatic fraction of the window.
             try:
-                frac = sv.get_sidebar_width_fraction()
-                win_w = sv.get_width() or 0
-                if win_w > 0:
-                    return max(base_min, min(saved_max, int(frac * win_w)))
+                return max(_SIDEBAR_MIN_WIDTH, int(sv.get_resting_sidebar_width()))
             except Exception:
-                pass
-            return saved_max
+                logger.debug("resting sidebar width failed", exc_info=True)
+                return _SIDEBAR_MIN_WIDTH
 
         # Decide the full (expanded) width and prepare the content. The chrome's
-        # min width can push the resting width *above* saved_max, so the full
-        # endpoint must reflect that or the end of the animation snaps to it.
+        # min width can push the resting width above it, so the full endpoint
+        # must reflect that or the end of the animation snaps to it.
         if minimal:
             # Collapsing: lock the current (full) width before compacting so
             # releasing the chrome's min width doesn't drop the sidebar first.
@@ -2933,7 +2825,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     full_width = 0
             if full_width <= _MINIMAL_STRIP_WIDTH:
-                full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+                full_width = max(_resting_width(), self._measure_sidebar_content_min())
             self._apply_sidebar_width(full_width)
             self._apply_sidebar_minimal_chrome(True)
             self._apply_sidebar_minimal_rows(True)
@@ -2943,24 +2835,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._set_sidebar_clipping(True)
             self._apply_sidebar_minimal_chrome(False)
             self._apply_sidebar_minimal_rows(False)
-            full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+            full_width = max(_resting_width(), self._measure_sidebar_content_min())
 
         full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
 
-        def _pin_endpoints():
+        def _settle():
+            # Resting state: the strip stays pinned at its width, the full
+            # sidebar goes back to being freely resizable.
             try:
                 if minimal:
-                    sv.set_min_sidebar_width(_MINIMAL_STRIP_WIDTH)
-                    sv.set_max_sidebar_width(_MINIMAL_STRIP_WIDTH)
+                    sv.pin_width(_MINIMAL_STRIP_WIDTH)
                 else:
-                    sv.set_min_sidebar_width(base_min)
-                    sv.set_max_sidebar_width(saved_max)
+                    sv.release_width()
             except Exception:
-                pass
+                logger.debug("Failed to settle sidebar width", exc_info=True)
 
         if not animate or not HAS_TIMED_ANIMATION:
             self._set_sidebar_clipping(False)
-            _pin_endpoints()
+            _settle()
             return
 
         if minimal:
@@ -2980,7 +2872,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         def _on_done(*_a):
             self._set_sidebar_clipping(False)
-            _pin_endpoints()
+            _settle()
             self._sidebar_width_animation = None
 
         animation.connect('done', _on_done)
@@ -3711,11 +3603,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
         banner_box.add_controller(banner_controller)
 
-        # Only the Adw split variants build a ToolbarView; the legacy fallback
-        # below has none, and fullscreen degrades to plain hiding there.
+        # The content side is an Adw.ToolbarView carrying the custom title bar,
+        # which keeps the sidebar and the content edge to edge under their own
+        # headers. The legacy fallback below has none, and fullscreen degrades
+        # to plain hiding there.
         self._content_toolbar_view = None
 
-        if HAS_OVERLAY_SPLIT:
+        if HAS_TOOLBAR_VIEW:
             content_box = Adw.ToolbarView()
             # Kept on the window: terminal fullscreen drives this view's
             # reveal/extend properties to overlay the custom tab/title bar
@@ -3736,26 +3630,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
             self._set_content_widget(main_box)
-            logger.debug("Set content widget for OverlaySplitView")
-        elif HAS_NAV_SPLIT:
-            content_box = Adw.ToolbarView()
-            self._content_toolbar_view = content_box
-            self._add_content_top_bars(content_box)
-            # Create content wrapper with banners below the title bar.
-            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            content_wrapper.append(self.update_banner_container)
-            content_wrapper.append(self.tips_banner_container)
-            content_wrapper.append(self.broadcast_banner)
-            content_wrapper.append(self.tab_overview)
-            self._command_content_overlay = Gtk.Overlay()
-            self._command_content_overlay.set_hexpand(True)
-            self._command_content_overlay.set_vexpand(True)
-            self._command_content_overlay.set_child(content_wrapper)
-            content_box.set_content(self._command_content_overlay)
-            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(content_box)
-            self._set_content_widget(main_box)
-            logger.debug("Set content widget for NavigationSplitView")
+            logger.debug("Set content widget in toolbar view")
         else:
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -6000,9 +5875,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
           width underneath.
 
         This is a pure presentation switch — sidebar visibility is untouched, so
-        it composes with show/hide and with minimal mode. Only the
-        ``AdwOverlaySplitView`` backend supports a true overlay; other split
-        variants stay side-by-side.
+        it composes with show/hide and with minimal mode. A true overlay needs
+        the ``AdwOverlaySplitView`` backend; the resizable ``Gtk.Paned`` the
+        window now uses is always a side-by-side column, so the request is
+        recorded but the layout does not change. The floating sidebar popup
+        (``search_popup.SearchPopup``) is the over-the-content presentation.
         """
         overlay = bool(overlay)
         self._sidebar_overlay = overlay
@@ -6017,21 +5894,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     # --- Search popup owner callbacks (see search_popup.SearchPopup) ---------
     def _popup_target_width(self) -> int:
-        """Panel width for the search popup: the *actual* expanded-sidebar width
-        (fraction-based, clamped to [base_min, max]), not the raw max."""
-        saved_max = _effective_max_sidebar_width(
-            self.config.get_setting('ui.max-sidebar-width', None))
+        """Panel width for the search popup: the width the expanded sidebar
+        rests at, so the panel matches the sidebar the user sized."""
+        sv = getattr(self, 'split_view', None)
         try:
-            sv = getattr(self, 'split_view', None)
-            if sv is not None and hasattr(sv, 'get_sidebar_width_fraction'):
-                base_min = 180 if HAS_OVERLAY_SPLIT else 200
-                win_w = sv.get_width() or 0
-                if win_w > 0:
-                    frac = sv.get_sidebar_width_fraction()
-                    return max(base_min, min(saved_max, int(frac * win_w)))
+            if sv is not None and hasattr(sv, 'get_resting_sidebar_width'):
+                return max(_SIDEBAR_MIN_WIDTH, int(sv.get_resting_sidebar_width()))
         except Exception:
-            pass
-        return saved_max
+            logger.debug("popup target width failed", exc_info=True)
+        return DEFAULT_SIDEBAR_MAX_WIDTH
 
     def _on_search_popup_shown(self) -> None:
         """Detached: show the full sidebar even when the strip is minimal, and
@@ -6135,7 +6006,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Helper method to toggle sidebar visibility"""
         try:
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
-            if HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
+            if getattr(self, '_split_variant', '') == 'paned':
+                self._sidebar_visible = bool(is_visible)
+                self.split_view.set_show_sidebar(is_visible)
+                logger.debug(f"Set paned sidebar visibility to: {is_visible}")
+            elif HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
                 # For OverlaySplitView
                 self.split_view.set_show_sidebar(is_visible)
                 logger.debug(f"Set OverlaySplitView sidebar visibility to: {is_visible}")

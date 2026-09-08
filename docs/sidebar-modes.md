@@ -10,6 +10,46 @@ the header actions, search bar, connection list and bottom toolbar. It normally
 lives inside the split view's `Adw.ToolbarView` (`window._sidebar_toolbar_view`),
 which is the split view's sidebar widget.
 
+## 0. The split view itself — a resizable paned
+
+`window.split_view` is a `SidebarPaned` (`src/sshpilot/sidebar_paned.py`): a
+`Gtk.Paned` whose divider the user can drag, wearing the split-view API the
+modes below drive (`pin_width` / `release_width` / `set_show_sidebar` /
+`set_sidebar` / `set_content`). It replaced `AdwOverlaySplitView`, which
+computed the width itself and offered no handle. What changed for callers:
+
+- **The width is the user's.** Dragging the divider sets it; it is remembered,
+  persisted as `ui.sidebar_width`, restored at startup, and restored again when
+  the icon strip animates back open. Before the user has ever sized it the
+  sidebar picks a quarter of the window, bounded by `_SIDEBAR_MIN_WIDTH` (180)
+  and `sidebar_paned.DEFAULT_MAX_WIDTH` (400) — that cap applies only to the
+  width the sidebar chooses for itself, never to a dragged one. **There is no
+  maximum-width setting any more**: the slider in Settings ▸ Sidebar existed
+  because the Adw split views gave no other way to widen the sidebar, and it
+  was removed with them (a stale `ui.max-sidebar-width` in an old config is
+  simply ignored).
+- **`pin_width(w)` freezes the width, `release_width()` hands it back.** That
+  pair is what the icon strip and every tick of its animation use, and pinning
+  is the only state in which the sidebar may shrink below its own content
+  minimum, so the 64px strip is reachable. `get_resting_sidebar_width()`
+  answers "how wide once released?" even while pinned, which is what the
+  animation's endpoint and the search popup's panel width need.
+- **`get_sidebar_width()` is the live width**, not a configured bound.
+- The handle is thin (no wide handle) so it draws the same hairline the split
+  view did and the panes stay edge to edge; GTK keeps a wider input area than it
+  paints, so it is still easy to grab.
+- **Squeezing keeps the sidebar's leading edge.** `Gtk.Paned` shrinks a start
+  child by allocating its minimum flush against the divider, so the *left* of
+  the sidebar — its icons — is what falls off the screen; a split view clips the
+  other way. `sidebar_paned._ClipStart` wraps the sidebar and lays it out from
+  x=0 with the overflow hidden, which is what keeps the frames of the strip
+  animation (narrower than the sidebar's content minimum) readable.
+- **The sidebar header carries no window controls** (`sidebar.py`,
+  `_assemble_sidebar_shell`). They are in the content title bar, and a copy in
+  the sidebar header floors that header at ~126px — twice the strip's width,
+  which is what the whole sidebar then had to be. Without them the strip's
+  content minimum is 63px and the 64px strip needs no clipping at all.
+
 ## 1. Full vs. Minimal (icon strip)
 
 `set_sidebar_minimal(minimal: bool, animate: bool = True)`
@@ -31,11 +71,13 @@ side-by-side column, so the terminal is `window − strip_width`.
 - **Overlay** (`True`) — `AdwOverlaySplitView.collapsed = True`: the sidebar is
   drawn as an overlay *above* the content.
 
-This is a pure presentation switch and only affects the `OverlaySplitView`
-backend. Note the libadwaita semantics: collapsing **resizes the content by the
-sidebar width** (the column disappears) and auto-hides the sidebar. Because of
-that resize, overlay mode is **not** used for the search flow — the detachable
-popup below is used instead.
+**Overlay needs a backend that has no `Gtk.Paned` equivalent, so it is inert
+since the split view became a paned**: the call records the request and the
+sidebar stays a side-by-side column. It had no callers — the over-the-content
+presentation in use is the detachable popup below, which was already preferred
+because collapsing an `AdwOverlaySplitView` **resizes the content by the sidebar
+width** (the column disappears) and auto-hides the sidebar. Restoring a true
+overlay means bringing back an overlay-capable backend behind `split_view`.
 
 ## 3. Detachable sidebar popup (search, and reusable)
 
