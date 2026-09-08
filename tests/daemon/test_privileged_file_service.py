@@ -865,13 +865,11 @@ def test_wrong_context_password_is_cleared_and_reprompted():
 
 
 def test_remembered_sudo_password_is_committed_to_the_borrowed_scope():
-    """A sudo password remembered mid-session used to be discarded.
+    """A successful privileged run reports authentication on the borrowed scope.
 
-    The scope belongs to the SFTP session, and its only ``mark_authenticated``
-    happened when the session started -- long before any sudo prompt. Anything
-    the user ticked "remember" on at that prompt was still pending when the
-    session closed, so ``cancel_session`` dropped it with a warning and the
-    user was asked again next time.
+    Sudo passwords are stored by ``_remember_password`` themselves. The
+    ``authenticated`` call commits SSH askpass secrets prompted for the
+    privileged child, and must never cancel the SFTP session's scope.
     """
 
     def script(_argv, _data):

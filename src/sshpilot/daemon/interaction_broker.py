@@ -1082,12 +1082,29 @@ class InteractionBroker:
         return ErrorCode.SESSION_STARTUP_FAILED
 
     def mark_authenticated(self, session_id: SessionId) -> None:
-        """Commit credentials explicitly marked for storage after login."""
+        """Commit credentials explicitly marked for storage after login.
 
-        context = self._context_for_session(session_id)
-        if context is not None:
+        A session id can own more than one askpass context: privileged file
+        access borrows the SFTP session's id and opens a second context for
+        its own SSH child. Committing only the first match would leave the
+        borrower's pending secrets on the second context, where
+        ``cancel_session`` later discards them. Drain every open context for
+        the id; each context still has its own single commit point.
+        """
+
+        for context in self._contexts_for_session(session_id):
             self._store_authenticated_secrets(context.token)
             self._harden_known_hosts_permissions(context)
+
+    def _contexts_for_session(
+        self, session_id: SessionId
+    ) -> tuple[_AskpassContext, ...]:
+        with self._condition:
+            return tuple(
+                context
+                for context in self._askpass_contexts.values()
+                if context.session_id == session_id and not context.closed
+            )
 
     @staticmethod
     def _known_hosts_paths(effective: dict[str, str]) -> tuple[Path, ...]:
@@ -1883,7 +1900,10 @@ class InteractionBroker:
                 return
             pending = tuple(context.pending_remember)
             context.pending_remember.clear()
-            # This is the session's one and only commit point.
+            # This is this context's commit point. ``mark_authenticated`` may
+            # still run again for the same session id when a borrower opened a
+            # second context (privileged file access); that drains the other
+            # context, not this one a second time.
             context.commit_point_passed = True
             connection_id = context.connection_id
             hostname = context.hostname

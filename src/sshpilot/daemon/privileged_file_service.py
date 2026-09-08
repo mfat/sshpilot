@@ -212,7 +212,6 @@ def _sudo_unavailable_error(connection_id: ConnectionId) -> SshPilotError:
     )
 
 
-from .process_registry import KIND_HELPER
 from .ssh_launch import (
     IO_CAPTURE,
     IO_CAPTURE_WITH_STDIN,
@@ -630,7 +629,6 @@ class PrivilegedFileService:
         with self._launcher.open(
             scope_id=scope_id,
             connection_id=connection_id,
-            registry_kind=KIND_HELPER,
             owns_scope=False,
         ) as scope:
             prepared = scope.prepare(
@@ -644,10 +642,13 @@ class PrivilegedFileService:
                 process, connection_id, stdin_data, read_limit
             )
             if result.returncode == 0:
-                # Commit a sudo password the user asked to remember. Without
-                # this the only ``mark_authenticated`` for this scope happened
-                # when the session started, long before the sudo prompt, so
-                # the choice was discarded when the session finally closed.
+                # Commit SSH askpass secrets remembered on this borrowed
+                # operation context. The SFTP session already called
+                # ``mark_authenticated`` at handshake time; without a second
+                # commit here, credentials prompted for *this* child stay
+                # pending on a separate askpass context that shares the
+                # session id and would be dropped when the session closes.
+                # (Sudo passwords are stored separately via ``_remember_password``.)
                 scope.authenticated()
             return result
 

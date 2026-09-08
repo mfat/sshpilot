@@ -60,8 +60,9 @@ from sshpilot.authorized_keys_parser import (
 from sshpilot.core.identity_service import IdentityStateService
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.operation_runtime import OperationHandle, OperationRuntime
-from sshpilot.daemon.process_registry import KIND_HELPER
 from sshpilot.daemon.ssh_launch import (
+    IO_CAPTURE_TEXT,
+    IO_CAPTURE_TEXT_WITH_STDIN,
     IO_MERGED_TEXT,
     CopyIdLaunch,
     LaunchStartError,
@@ -318,7 +319,6 @@ class DaemonIdentityService:
         with self._launcher.open(
             scope_id=SessionId(str(handle.operation_id)),
             connection_id=connection_id,
-            registry_kind=KIND_HELPER,
         ) as scope:
             try:
                 prepared = scope.prepare(intent, connection_id=connection_id)
@@ -569,30 +569,58 @@ class DaemonIdentityService:
         with self._launcher.open(
             scope_id=scope_id,
             connection_id=connection_id,
-            registry_kind=KIND_HELPER,
         ) as scope:
             prepared = scope.prepare(
                 RemoteCommandLaunch(remote_command=remote_command),
                 connection_id=connection_id,
             )
-            returncode, stdout, stderr = self._run_capture(
-                prepared.argv,
-                prepared.environment,
-                input_text,
-                _REMOTE_COMMAND_TIMEOUT,
-                handle=handle,
+            io = (
+                IO_CAPTURE_TEXT_WITH_STDIN
+                if input_text is not None
+                else IO_CAPTURE_TEXT
             )
-        if returncode == 0:
-            return stdout
-        if returncode == _SSH_ERROR_EXIT:
+            try:
+                process = prepared.spawn(io)
+            except LaunchStartError as exc:
+                raise SshPilotError(
+                    ErrorCode.SESSION_STARTUP_FAILED,
+                    "The native command could not be started",
+                ) from exc
+            if handle is not None:
+                handle.set_process(process)
+            try:
+                try:
+                    stdout, stderr = process.communicate(
+                        input_text, timeout=_REMOTE_COMMAND_TIMEOUT
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                    process.wait()
+                    raise SshPilotError(
+                        ErrorCode.OPERATION_TIMED_OUT,
+                        "The remote command timed out",
+                    ) from exc
+                returncode = process.returncode
+                stdout_text = stdout or ""
+                stderr_text = stderr or ""
+            finally:
+                if handle is not None:
+                    handle.clear_process()
+            if returncode == 0:
+                scope.authenticated()
+                return stdout_text
+            if returncode == _SSH_ERROR_EXIT:
+                raise SshPilotError(
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                    "The SSH connection could not run the remote command",
+                )
             raise SshPilotError(
                 ErrorCode.REMOTE_COMMAND_FAILED,
-                "The SSH connection could not run the remote command",
+                _remote_failure_message(stderr_text),
             )
-        raise SshPilotError(
-            ErrorCode.REMOTE_COMMAND_FAILED,
-            _remote_failure_message(stderr),
-        )
 
     def _run_capture(
         self,

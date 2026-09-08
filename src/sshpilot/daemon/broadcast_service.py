@@ -31,7 +31,6 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
 )
 from sshpilot.daemon.operation_runtime import OperationCancelled, OperationHandle, OperationRuntime
-from sshpilot.daemon.process_registry import KIND_HELPER
 from sshpilot.daemon.ssh_launch import RemoteCommandLaunch, SshLauncher
 
 logger = logging.getLogger(__name__)
@@ -300,7 +299,7 @@ class BroadcastCommandService:
             # single interaction presenter to this operation id, and a prompt
             # from any target must reach it.
             with self._launcher.open(
-                scope_id=operation_id, registry_kind=KIND_HELPER
+                scope_id=operation_id
             ) as scope, ThreadPoolExecutor(
                 max_workers=request.policy.concurrency_limit,
                 thread_name_prefix="sshpilot-broadcast",

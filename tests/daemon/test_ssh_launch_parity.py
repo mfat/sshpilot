@@ -410,8 +410,13 @@ def test_spawn_flags_match_the_pre_migration_call(io, expected, monkeypatch):
         assert "errors" not in captured
 
 
-def test_every_kind_records_its_children_under_a_stable_registry_kind():
-    """Registry kinds are written to disk by one build and read by another."""
+def test_every_kind_records_its_children_under_a_stable_registry_kind(monkeypatch):
+    """Registry kinds are written to disk by one build and read by another.
+
+    ``open`` no longer takes a kind: prepare binds the policy row, and spawn
+    records under that kind. A wrong open() default was how helpers briefly
+    became sessions.
+    """
 
     assert {kind: policy.registry_kind for kind, policy in _POLICIES.items()} == {
         LaunchKind.TERMINAL: "session",
@@ -421,6 +426,35 @@ def test_every_kind_records_its_children_under_a_stable_registry_kind():
         LaunchKind.REMOTE_COMMAND: "helper",
         LaunchKind.COPY_ID: "helper",
     }
+
+    recorded = []
+    monkeypatch.setattr(
+        "sshpilot.daemon.ssh_launch.record_owned_process_or_abandon",
+        lambda process, **kwargs: recorded.append(kwargs["kind"]),
+    )
+
+    class FakeProcess:
+        pid = 1
+
+        def poll(self):
+            return 0
+
+    launcher = SshLauncher(
+        RecordingProvider(),
+        RecordingBroker(),
+        popen=lambda *a, **k: FakeProcess(),
+    )
+    cases = [
+        (ScpLaunch(), "transfer"),
+        (RemoteCommandLaunch(remote_command="id"), "helper"),
+        (CopyIdLaunch(public_key_path="/k.pub"), "helper"),
+    ]
+    for intent, expected in cases:
+        recorded.clear()
+        with launcher.open(scope_id=SessionId("s")) as scope:
+            scope.prepare(intent, connection_id=ConnectionId("demo")).spawn(IO_STDERR_ONLY)
+        assert recorded == [expected], intent
+
 
 
 # --- Intent/provider signature compatibility ---------------------------------

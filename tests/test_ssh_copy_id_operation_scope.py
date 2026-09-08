@@ -176,7 +176,12 @@ def test_deploy_interaction_scope_is_public_operation_id(tmp_path):
         service._operations.shutdown()
 
 
-def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path):
+def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path, monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        "sshpilot.daemon.ssh_launch.record_owned_process_or_abandon",
+        lambda process, **kwargs: recorded.append(kwargs),
+    )
     broker = _RecordingBroker()
     service = _service(
         tmp_path,
@@ -185,7 +190,7 @@ def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path):
         ),
         broker=broker,
     )
-    # A real OperationHandle so ``_run_capture`` can set/clear the process.
+    # A real OperationHandle so the remote spawn can set/clear the process.
     handle = OperationHandle(OperationRuntime(), OperationId("operation-42"))
     result = service._run_remote_text(
         ConnectionId("HostAlias"),
@@ -196,7 +201,9 @@ def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path):
     assert "ssh-ed25519" in result
     assert broker.calls[0][0] == "prepare"
     assert str(broker.calls[0][1]) == "operation-42"
-    assert broker.calls[-1][0] == "cancel_session"
+    kinds = [call[0] for call in broker.calls]
+    assert kinds.index("mark_authenticated") < kinds.index("cancel_session")
+    assert recorded and recorded[0]["kind"] == "helper"
 
 
 # ---------------------------------------------------------------------------

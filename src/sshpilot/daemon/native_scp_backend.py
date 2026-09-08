@@ -19,7 +19,7 @@ from sshpilot.transfer_scp import (
     insert_legacy_scp_flag,
     legacy_scp_flag_unsupported,
 )
-from .process_registry import KIND_TRANSFER, forget_owned_process
+from .process_registry import forget_owned_process
 from .ssh_launch import IO_STDERR_ONLY, LaunchStartError, ScpLaunch, SshLauncher
 
 _MAX_STDERR_BYTES = 64 * 1024
@@ -150,7 +150,6 @@ class NativeScpBackend:
         with self._launcher.open(
             scope_id=SessionId(str(transfer_id)),
             connection_id=connection_id,
-            registry_kind=KIND_TRANSFER,
         ) as scope:
             prepared = scope.prepare(
                 ScpLaunch(

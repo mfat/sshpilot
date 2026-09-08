@@ -337,6 +337,19 @@ IO_CAPTURE_WITH_STDIN = IoPolicy(
 )
 #: Capture both streams, no stdin.
 IO_CAPTURE = IoPolicy(stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+#: Like :data:`IO_CAPTURE`, but decode as text -- authorized-key reads return
+#: line-oriented content the caller parses as ``str``.
+IO_CAPTURE_TEXT = IoPolicy(
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace"
+)
+#: Like :data:`IO_CAPTURE_WITH_STDIN`, but decode as text.
+IO_CAPTURE_TEXT_WITH_STDIN = IoPolicy(
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    text=True,
+    errors="replace",
+)
 #: One interleaved text stream -- ``ssh-copy-id`` narrates to both pipes and
 #: the user is shown the transcript in order.
 IO_MERGED_TEXT = IoPolicy(
@@ -438,7 +451,6 @@ class LaunchScope:
         scope_id: ScopeId,
         connection_id: Optional[ConnectionId],
         popen: Callable[..., Any],
-        registry_kind: str,
         owns_scope: bool,
     ) -> None:
         self._launcher = launcher
@@ -446,7 +458,10 @@ class LaunchScope:
         self._scope_id = scope_id
         self._connection_id = connection_id
         self._popen = popen
-        self._registry_kind = registry_kind
+        # Filled by :meth:`prepare` from the intent's policy row. Callers no
+        # longer pass a kind into :meth:`SshLauncher.open`: a wrong open()
+        # default was how broadcast briefly labelled helpers as sessions.
+        self._registry_kind: Optional[str] = None
         self._owns_scope = owns_scope
         self._authenticated = False
         self._processes: list[Any] = []
@@ -478,6 +493,10 @@ class LaunchScope:
             raise RuntimeError("launch scope is closed")
         target_connection = connection_id or self._connection_id
         policy = _policy_for(intent)
+        # The policy table is the only place registry kind is decided. Setting
+        # it here (not on ``open``) keeps open/spawn/adopt from drifting from
+        # the intent that actually runs.
+        self._registry_kind = policy.registry_kind
         base_argv, base_env = self._launcher._compose(intent, target_connection, policy)
         # Only forward the credential options a caller actually asked for.
         # Sending the broker's own defaults back to it would widen the call
@@ -513,6 +532,8 @@ class LaunchScope:
 
         if process is None:
             return
+        if self._registry_kind is None:
+            raise RuntimeError("prepare a launch before adopting a child")
         record_owned_process_or_abandon(
             process,
             kind=self._registry_kind,
@@ -606,13 +627,11 @@ class SshLauncher:
         *,
         readiness_manager: Any = None,
         popen: Callable[..., Any] = subprocess.Popen,
-        registry_kind: Optional[str] = None,
     ) -> None:
         self._provider = launch_provider
         self._broker = interaction_broker
         self._readiness = readiness_manager
         self._popen = popen
-        self._registry_kind = registry_kind
 
     # -- one-shot operations -------------------------------------------------
 
@@ -622,14 +641,14 @@ class SshLauncher:
         *,
         scope_id: ScopeId,
         connection_id: Optional[ConnectionId] = None,
-        registry_kind: str = KIND_SESSION,
         owns_scope: bool = True,
     ) -> Iterator[LaunchScope]:
         """Open an interaction scope and always tear it down correctly.
 
         Remembered credentials are committed first whenever the caller
         reported success, and every child started or adopted inside the scope
-        reaches the process registry.
+        reaches the process registry. Registry kind comes from the intent
+        passed to :meth:`LaunchScope.prepare`, not from this call.
 
         ``owns_scope=False`` marks but does not cancel. A few operations run
         *inside* a scope someone else owns: privileged sudo commands borrow
@@ -651,7 +670,6 @@ class SshLauncher:
             scope_id=scope_id,
             connection_id=connection_id,
             popen=self._popen,
-            registry_kind=self._registry_kind or registry_kind,
             owns_scope=owns_scope,
         )
         try:
@@ -765,16 +783,18 @@ def _policy_for(intent: "LaunchIntent") -> _KindPolicy:
 
 
 __all__ = [
+    "IO_CAPTURE",
+    "IO_CAPTURE_TEXT",
+    "IO_CAPTURE_TEXT_WITH_STDIN",
+    "IO_CAPTURE_WITH_STDIN",
+    "IO_MERGED_TEXT",
+    "IO_STDERR_ONLY",
     "CopyIdLaunch",
     "ForwardLaunch",
-    "IO_CAPTURE",
-    "IO_MERGED_TEXT",
-    "IO_CAPTURE_WITH_STDIN",
-    "IO_STDERR_ONLY",
     "IoPolicy",
     "LaunchKind",
-    "LaunchStartError",
     "LaunchScope",
+    "LaunchStartError",
     "PreparedLaunch",
     "RemoteCommandLaunch",
     "ScopeId",

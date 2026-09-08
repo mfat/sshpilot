@@ -234,7 +234,9 @@ def test_interaction_mode_is_per_call_not_per_kind():
     assert broker.calls[0][2]["interaction_mode"] is ExecutionInteractionMode.AUTOFILL_ONLY
 
 
-def test_spawn_records_the_child_in_the_process_registry(monkeypatch):
+def test_spawn_records_the_policy_registry_kind(monkeypatch):
+    """Registry kind comes from the intent's policy row, not from ``open``."""
+
     recorded = []
     monkeypatch.setattr(
         "sshpilot.daemon.ssh_launch.record_owned_process_or_abandon",
@@ -256,9 +258,9 @@ def test_spawn_records_the_child_in_the_process_registry(monkeypatch):
 
     launcher = SshLauncher(Provider(), Broker(), popen=fake_popen)
     with launcher.open(
-        scope_id=SessionId("s1"), connection_id=ConnectionId("c"), registry_kind="transfer"
+        scope_id=SessionId("s1"), connection_id=ConnectionId("c")
     ) as scope:
-        prepared = scope.prepare(RemoteCommandLaunch(remote_command="id"))
+        prepared = scope.prepare(ScpLaunch())
         prepared.spawn(IO_CAPTURE)
 
     assert recorded and recorded[0][1]["kind"] == "transfer"
@@ -283,10 +285,17 @@ def test_adopted_children_reach_the_registry_too(monkeypatch):
             return None
 
     launcher = _launcher()
-    with launcher.open(scope_id=SessionId("s1"), registry_kind="session") as scope:
+    with launcher.open(scope_id=SessionId("s1")) as scope:
+        scope.prepare(RemoteCommandLaunch(remote_command="id"))
         scope.adopt(FakeProcess())
-    assert recorded and recorded[0][1]["kind"] == "session"
+    assert recorded and recorded[0][1]["kind"] == "helper"
 
+
+def test_adopt_before_prepare_is_refused():
+    launcher = _launcher()
+    with launcher.open(scope_id=SessionId("s1")) as scope:
+        with pytest.raises(RuntimeError, match="prepare"):
+            scope.adopt(object())
 
 def test_retry_argv_stays_inside_the_scope():
     launcher = _launcher()
