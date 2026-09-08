@@ -28,6 +28,7 @@ import shlex
 import threading
 from typing import Any, List, Optional
 
+from sshpilot.api.errors import ErrorCode
 from sshpilot.api.events import EventType
 from sshpilot.api.models.broadcast import (
     MAX_BROADCAST_OUTPUT_BYTES,
@@ -48,6 +49,7 @@ from sshpilot.api.models.operations import (
 )
 from sshpilot.api.models.secrets import SecretTransferMessageCode
 from sshpilot.api.models.transfers import (
+    CancelTransferRequest,
     StartTransferRequest,
     TransferConflictPolicy,
     TransferDirection,
@@ -100,6 +102,19 @@ def _q(path: str) -> str:
     if path.startswith("~/"):
         return "~/" + shlex.quote(path[2:])
     return shlex.quote(path)
+
+
+def _is_missing_path(exc: BaseException) -> bool:
+    """Whether *exc* from an SFTP stat means the path simply isn't there.
+
+    Anything else -- permission denied, a lost channel -- is a real failure and
+    must not be mistaken for "create it". A fake or future runtime that reports
+    a plain exception still reads as missing, which keeps the walk working.
+    """
+    code = getattr(exc, "code", None)
+    if code is None:
+        return True
+    return code is ErrorCode.REMOTE_PATH_NOT_FOUND
 
 
 def _parse_df_avail_kb(text: str) -> Optional[int]:
@@ -220,7 +235,17 @@ class SftpBackupStore:
                 break
             except BackupError:
                 raise
-            except Exception:
+            except Exception as exc:
+                # Only "it isn't there" means we should create it. Treating a
+                # permission-denied stat as missing walked the chain to the top
+                # and then tried to mkdir /home, reporting that failure instead
+                # of the real one.
+                if not _is_missing_path(exc):
+                    raise BackupError(
+                        SecretTransferMessageCode.SSH_SERVER_DIRECTORY_UNAVAILABLE,
+                        parameters={"directory": path},
+                        diagnostic=str(exc) or "the directory could not be read",
+                    ) from exc
                 missing.append(probe)
                 parent = posixpath.dirname(probe)
                 if parent == probe:
@@ -321,6 +346,15 @@ class SftpBackupStore:
         except Exception:
             logger.debug("Discarding a partial backup upload failed", exc_info=True)
 
+    def _cancel_transfer(self, transfer_id) -> None:
+        """Best-effort stop for a transfer we have stopped waiting on."""
+        try:
+            self._transfers.prepare_cancel_transfer(
+                CancelTransferRequest(transfer_id), client_id=self._client_id
+            )
+        except Exception:
+            logger.debug("Cancelling a timed-out backup transfer failed", exc_info=True)
+
     def _run_transfer(
         self,
         direction: TransferDirection,
@@ -369,6 +403,11 @@ class SftpBackupStore:
         if summary.state is TransferState.COMPLETED:
             return
         if summary.state not in _TERMINAL_TRANSFER_STATES:
+            # Ask the runtime to stop before giving up on it. Without this the
+            # copy kept running after we raised: close() then pulled the SFTP
+            # service out from under it, and upload()'s cleanup deleted the
+            # .part file the transfer was still writing to.
+            self._cancel_transfer(transfer_id)
             raise BackupError(failure_code, diagnostic="the transfer timed out")
         raise BackupError(
             failure_code,
@@ -553,6 +592,14 @@ class ExecBackupStore:
         code, out, err, truncated = self._run(
             f"base64 < {_q(remote_path)}", timeout=self._transfer_timeout
         )
+        if code is None:
+            # The command never ran: unreachable host, auth failure, cancelled.
+            # Reporting that as a read failure told the user their backup was
+            # unreadable when the truth was that we never got to the host.
+            raise BackupError(
+                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
+                diagnostic=err.strip() or "ssh failed",
+            )
         if code != 0:
             raise BackupError(
                 SecretTransferMessageCode.SSH_BACKUP_READ_FAILED,
