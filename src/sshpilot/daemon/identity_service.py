@@ -60,7 +60,7 @@ from sshpilot.authorized_keys_parser import (
 from sshpilot.core.identity_service import IdentityStateService
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.operation_runtime import OperationHandle, OperationRuntime
-from sshpilot.daemon.process_registry import KIND_HELPER, KIND_SESSION
+from sshpilot.daemon.process_registry import KIND_HELPER
 from sshpilot.daemon.ssh_launch import (
     IO_MERGED_TEXT,
     CopyIdLaunch,
@@ -569,7 +569,7 @@ class DaemonIdentityService:
         with self._launcher.open(
             scope_id=scope_id,
             connection_id=connection_id,
-            registry_kind=KIND_SESSION,
+            registry_kind=KIND_HELPER,
         ) as scope:
             prepared = scope.prepare(
                 RemoteCommandLaunch(remote_command=remote_command),

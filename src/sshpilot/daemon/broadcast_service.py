@@ -31,7 +31,7 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
 )
 from sshpilot.daemon.operation_runtime import OperationCancelled, OperationHandle, OperationRuntime
-from sshpilot.daemon.process_registry import KIND_SESSION
+from sshpilot.daemon.process_registry import KIND_HELPER
 from sshpilot.daemon.ssh_launch import RemoteCommandLaunch, SshLauncher
 
 logger = logging.getLogger(__name__)
@@ -300,7 +300,7 @@ class BroadcastCommandService:
             # single interaction presenter to this operation id, and a prompt
             # from any target must reach it.
             with self._launcher.open(
-                scope_id=operation_id, registry_kind=KIND_SESSION
+                scope_id=operation_id, registry_kind=KIND_HELPER
             ) as scope, ThreadPoolExecutor(
                 max_workers=request.policy.concurrency_limit,
                 thread_name_prefix="sshpilot-broadcast",
@@ -401,7 +401,7 @@ class BroadcastCommandService:
         return str(connection_id), "", 22
 
     def _run_target(
-        self, operation_id, connection_id, request, cancel, input_data=None, scope=None
+        self, operation_id, connection_id, request, cancel, input_data, scope
     ):
         try:
             # The connection id is a nickname, not an address, and this argv

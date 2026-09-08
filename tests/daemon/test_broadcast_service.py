@@ -510,5 +510,5 @@ def test_broadcast_children_reach_the_process_registry(monkeypatch):
         owner_client_id=owner,
     )
     wait_terminal(service, started, owner)
-    assert recorded == ["session"]
+    assert recorded == ["helper"]
     runtime.shutdown()

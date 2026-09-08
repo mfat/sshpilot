@@ -212,7 +212,7 @@ def _sudo_unavailable_error(connection_id: ConnectionId) -> SshPilotError:
     )
 
 
-from .process_registry import KIND_SESSION
+from .process_registry import KIND_HELPER
 from .ssh_launch import (
     IO_CAPTURE,
     IO_CAPTURE_WITH_STDIN,
@@ -630,7 +630,7 @@ class PrivilegedFileService:
         with self._launcher.open(
             scope_id=scope_id,
             connection_id=connection_id,
-            registry_kind=KIND_SESSION,
+            registry_kind=KIND_HELPER,
             owns_scope=False,
         ) as scope:
             prepared = scope.prepare(

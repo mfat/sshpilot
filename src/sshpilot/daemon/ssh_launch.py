@@ -143,7 +143,10 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
     LaunchKind.FORWARD: _KindPolicy(
         command_type="ssh",
         interaction_policy="normal",
-        headless=False,
+        # ``ssh -N -T -L ...`` is spawned with no TTY, so every prompt must
+        # reach the broker; ``prefer`` would let OpenSSH try a terminal that
+        # is not there and the forward would fail instead of asking.
+        headless=True,
         trailing_args=(),
         registry_kind=KIND_FORWARD,
         diagnostics=False,
@@ -163,7 +166,11 @@ _POLICIES: Mapping[LaunchKind, _KindPolicy] = {
         interaction_policy="broker",
         headless=True,
         trailing_args=(),
-        registry_kind=KIND_SESSION,
+        # One-shot commands (broadcast, Host Info probes, sudo file reads,
+        # authorized-key reads) are helpers, not sessions. The kind is shown
+        # to the user when a child outlives the daemon, so it must describe
+        # what the child actually is.
+        registry_kind=KIND_HELPER,
         diagnostics=False,
         provider_methods=("prepare_remote_command_launch",),
     ),
