@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 BACKUP_DIALOG_MIN_WIDTH = 520
 # Export uses a normal modal window (wider than the Adw.Dialog sheets).
 BACKUP_EXPORT_WINDOW_WIDTH = 800
-BACKUP_EXPORT_WINDOW_HEIGHT = 720
+# Cap the scrolled body so tall destinations (SSH + warning) scroll instead of
+# growing past the screen; the window itself sizes to content below this.
+BACKUP_EXPORT_CONTENT_MAX_HEIGHT = 640
 BACKUP_EXPORT_CLAMP_MAX = 700
 
 # Backup category keys (mirrors ``BackupManager.BACKUP_OPTION_KEYS``). The daemon owns
@@ -737,9 +739,11 @@ class WindowConfigDialogsMixin:
         option_defaults = _normalize_backup_options(option_defaults)
 
         # Modal window + Clamp (same scaffold as session manager / key chooser).
+        # Height follows the page so the default File destination is not padded
+        # with empty space under the footnote; taller destinations scroll.
         dialog = Adw.Window(transient_for=self, modal=True)
         dialog.set_title(_("Backup"))
-        dialog.set_default_size(BACKUP_EXPORT_WINDOW_WIDTH, BACKUP_EXPORT_WINDOW_HEIGHT)
+        dialog.set_default_size(BACKUP_EXPORT_WINDOW_WIDTH, -1)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
@@ -756,7 +760,8 @@ class WindowConfigDialogsMixin:
 
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_vexpand(True)
+        scroller.set_propagate_natural_height(True)
+        scroller.set_max_content_height(BACKUP_EXPORT_CONTENT_MAX_HEIGHT)
 
         clamp = Adw.Clamp()
         clamp.set_maximum_size(BACKUP_EXPORT_CLAMP_MAX)
