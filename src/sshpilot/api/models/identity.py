@@ -24,7 +24,7 @@ from sshpilot.core.settings.identity import (
 )
 
 from .common import ConnectionId, require_identifier
-from .keys import KeyId, KeyStoreScope
+from .keys import KeyId, KeyStoreScope, contains_private_key_material
 
 # Re-exported field-model contract (consumed by the daemon service).
 EDITABLE_FIELDS = EDITABLE_FIELDS
@@ -243,23 +243,54 @@ class AgentKeyMutationRequest:
 # ---------------------------------------------------------------------------
 
 
+def _normalize_deploy_public_key(value: object) -> str:
+    """Return one OpenSSH public-key line, or raise ``ValueError``/``TypeError``."""
+    text = _validate_safe_text(value, "public key", allow_empty=False)
+    if contains_private_key_material(text):
+        raise ValueError("public key must not contain private-key material")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise ValueError("public key must be a single OpenSSH public key line")
+    line = lines[0]
+    parts = line.split()
+    if len(parts) < 2:
+        raise ValueError("public key must be a single OpenSSH public key line")
+    return line
+
+
 @dataclass(frozen=True)
 class DeployKeyRequest:
-    """Deploy one daemon-known public key to a saved connection.
+    """Deploy a public key to a saved connection via native ``ssh-copy-id``.
+
+    Supply exactly one of:
+
+    * ``key_id`` — an opaque daemon key-store identity (resolved to its ``.pub``);
+    * ``public_key`` — a single pasted OpenSSH public-key line (written to a
+      daemon-owned temporary ``.pub`` for the deployment, then removed).
 
     The connection is identified by its SSH ``Host`` alias so OpenSSH
-    evaluates the user's normal configuration; the key is an opaque daemon
-    ``KeyId`` resolved by the daemon's key store.
+    evaluates the user's normal configuration. ``scope`` applies only when
+    resolving ``key_id``.
     """
 
     connection_id: ConnectionId
-    key_id: KeyId
+    key_id: Optional[KeyId] = None
     scope: KeyStoreScope = KeyStoreScope.DEFAULT
     force: bool = False
+    public_key: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         require_identifier(self.connection_id, "connection id")
-        require_identifier(self.key_id, "key id")
+        public_key = (
+            _normalize_deploy_public_key(self.public_key) if self.public_key else ""
+        )
+        object.__setattr__(self, "public_key", public_key)
+        has_key = self.key_id is not None
+        has_text = bool(public_key)
+        if has_key == has_text:
+            raise ValueError("exactly one of key_id or public_key is required")
+        if has_key:
+            require_identifier(self.key_id, "key id")
         if type(self.scope) is not KeyStoreScope:
             raise TypeError("key store scope must be a KeyStoreScope")
         if type(self.force) is not bool:

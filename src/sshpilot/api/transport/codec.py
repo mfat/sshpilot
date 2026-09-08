@@ -6449,12 +6449,18 @@ def deploy_key_request_to_wire(request: Any) -> Dict[str, Any]:
 
     if type(request) is not DeployKeyRequest:
         raise TypeError("DeployKeyRequest is required")
-    return {
+    wire: Dict[str, Any] = {
         "connection_id": request.connection_id,
-        "key_id": request.key_id,
         "scope": request.scope.value,
         "force": request.force,
     }
+    # Omit empty optional halves so key-id clients stay wire-compatible with
+    # older daemons that reject unknown fields / require key_id.
+    if request.key_id is not None:
+        wire["key_id"] = request.key_id
+    if request.public_key:
+        wire["public_key"] = request.public_key
+    return wire
 
 
 def deploy_key_request_from_wire(value: Any) -> Any:
@@ -6462,14 +6468,18 @@ def deploy_key_request_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"connection_id", "key_id", "scope", "force"},
+        required={"connection_id", "scope", "force"},
+        optional={"key_id", "public_key"},
         context="deploy key request",
     )
+    key_id = data.get("key_id")
+    public_key = data.get("public_key", "")
     return DeployKeyRequest(
         connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
-        key_id=_identifier(data["key_id"], "key id"),
+        key_id=(_identifier(key_id, "key id") if key_id is not None else None),
         scope=_key_store_scope(data["scope"], "key store scope"),
         force=_boolean(data["force"], "force"),
+        public_key=(_text(public_key, "public key") if public_key else ""),
     )
 
 

@@ -62,6 +62,9 @@ file of a daemon-discovered key.
   key actions show the daemon-recovery message.
 - `ssh-copy-id` existing-key loading and generation run off the GTK thread,
   with repeated clicks rejected and callbacks ignored after window close.
+  Paste mode sends a single OpenSSH public-key line through
+  `DeployKeyRequest.public_key`; the daemon writes a temporary `.pub` for
+  native `ssh-copy-id -i` and removes it afterward.
 - The authorized-keys local import lists keys through the daemon and reads the
   selected public key via `read_public_key()`; no direct `.pub` read for
   daemon-discovered inventory.

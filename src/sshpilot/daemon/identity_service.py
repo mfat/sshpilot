@@ -25,6 +25,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import tempfile
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -275,12 +276,14 @@ class DaemonIdentityService:
                 details={"code": SSH_COPY_ID_UNAVAILABLE},
             )
         self._require_launch_provider()
-        _private_path, public_path = self._resolve_key_paths(
-            request.key_id, request.scope
-        )
-        self._keys.read_public_key(
-            ReadPublicKeyRequest(key_id=request.key_id, scope=request.scope)
-        )
+        # Eagerly validate store-backed keys before the operation starts so a
+        # missing key fails the RPC instead of becoming an operation failure.
+        # Pasted public-key text is already normalized by DeployKeyRequest.
+        if not request.public_key:
+            self._resolve_key_paths(request.key_id, request.scope)
+            self._keys.read_public_key(
+                ReadPublicKeyRequest(key_id=request.key_id, scope=request.scope)
+            )
         connection_id = request.connection_id
 
         def _body(handle: OperationHandle) -> str:
@@ -291,11 +294,26 @@ class DaemonIdentityService:
                     IdentityFailureCode.LAUNCH_PREPARATION_UNAVAILABLE,
                     error.code,
                 ) from error
-            return self._run_deploy(
-                handle,
-                CopyIdLaunch(public_key_path=public_path, force=request.force),
-                connection_id,
-            )
+            temp_path: Optional[str] = None
+            try:
+                if request.public_key:
+                    public_path = self._write_deploy_public_key(request.public_key)
+                    temp_path = public_path
+                else:
+                    _private_path, public_path = self._resolve_key_paths(
+                        request.key_id, request.scope
+                    )
+                return self._run_deploy(
+                    handle,
+                    CopyIdLaunch(public_key_path=public_path, force=request.force),
+                    connection_id,
+                )
+            finally:
+                if temp_path is not None:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
 
         return self._operations.start_operation(
             OperationKind.KEY_DEPLOYMENT,
@@ -305,6 +323,26 @@ class DaemonIdentityService:
             message="Deploying the public key",
             failure_mapper=_identity_failure,
         )
+
+    @staticmethod
+    def _write_deploy_public_key(public_key: str) -> str:
+        """Write a pasted public key to a daemon-owned temporary ``.pub`` file.
+
+        ``ssh-copy-id -i`` requires a filesystem path. The file is removed by
+        the deployment body after the child exits (success or failure).
+        """
+        fd, path = tempfile.mkstemp(prefix="sshpilot-copyid-", suffix=".pub")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(public_key)
+                handle.write("\n")
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
 
     def _run_deploy(
         self,

@@ -91,6 +91,31 @@ def test_runner_requires_daemon_key_id():
     window.client.deploy_key.assert_not_called()
 
 
+def test_runner_submits_pasted_public_key_request():
+    window = _window()
+    runner = _runner(window)
+    pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyMaterialForUnitTest pasted@host"
+
+    runner.run(_connection(), None, force=True, public_key=pub)
+
+    window.client.deploy_key.assert_called_once()
+    request = window.client.deploy_key.call_args[0][0]
+    assert request.connection_id == "HostAlias"
+    assert request.key_id is None
+    assert request.public_key == pub
+    assert request.force is True
+
+
+def test_runner_rejects_empty_paste_without_key():
+    window = _window()
+    runner = _runner(window)
+
+    runner.run(_connection(), None, public_key="   ")
+
+    window._error_dialog.assert_called_once()
+    window.client.deploy_key.assert_not_called()
+
+
 def test_runner_submits_typed_deployment_request():
     window = _window()
     runner = _runner(window)

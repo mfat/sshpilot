@@ -6206,8 +6206,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"System terminal button click failed: {e}")
 
-    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key, force=False):
-        return self.sshcopyid_runner.run(connection, ssh_key, force)
+    def _show_ssh_copy_id_terminal_using_main_widget(
+        self, connection, ssh_key, force=False, public_key=None
+    ):
+        return self.sshcopyid_runner.run(
+            connection, ssh_key, force, public_key=public_key
+        )
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""

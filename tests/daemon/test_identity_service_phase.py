@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import io
-from types import SimpleNamespace
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -252,6 +253,36 @@ def test_ssh_copy_id_deployment_registers_operation(tmp_path):
     assert calls[0][0][0] == "ssh-copy-id"
     assert "-i" in calls[0][0]
     assert calls[0][1]["start_new_session"] is True
+    service._operations.shutdown()
+
+
+def test_ssh_copy_id_pasted_public_key_uses_temp_file(tmp_path):
+    calls = []
+    seen_paths = []
+
+    def popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        idx = argv.index("-i")
+        seen_paths.append(argv[idx + 1])
+        return _Completed(returncode=0, stdout="Number of key(s) added: 1\n")
+
+    pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyMaterialForUnitTest pasted@host"
+    service = _service(tmp_path, popen)
+    summary = service.deploy_key(
+        DeployKeyRequest("HostAlias", public_key=pub, force=False)
+    )
+    assert summary.operation_id
+    for _ in range(100):
+        if calls:
+            break
+        time.sleep(0.01)
+    assert calls
+    assert calls[0][0][0] == "ssh-copy-id"
+    assert seen_paths
+    temp_path = seen_paths[0]
+    assert temp_path.endswith(".pub")
+    # The daemon-owned temp file is removed after the child exits.
+    assert not Path(temp_path).exists()
     service._operations.shutdown()
 
 

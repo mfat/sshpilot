@@ -1860,8 +1860,9 @@ finally:
   separate identity phase review.
 - **Capability / purpose:** `identity.operate`; supervise native `ssh-copy-id`
   deployment and return an operation summary.
-- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`, with
-  `IdentityFailure` on terminal failure.
+- **Parameters / return:** `DeployKeyRequest` with exactly one of `key_id`
+  (daemon key store) or `public_key` (a single OpenSSH public-key line);
+  returns `OperationSummary`, with `IdentityFailure` on terminal failure.
 
 <!-- api-method: list_authorized_keys -->
 ## `list_authorized_keys`

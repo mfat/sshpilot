@@ -16,7 +16,18 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.55 (current)
+## API 0.56 (current)
+
+### API 0.56 deploy a pasted public key via ssh-copy-id
+
+- `DeployKeyRequest` now accepts exactly one of `key_id` (daemon key store) or
+  `public_key` (a single OpenSSH public-key line). Pasted text is validated on
+  the request, written to a daemon-owned temporary `.pub` for native
+  `ssh-copy-id -i`, then removed. The key-id wire shape is unchanged when
+  `public_key` is omitted, so existing deploy callers stay compatible.
+  Protocol stays v1.
+
+## API 0.55
 
 ### API 0.55 multiplexed Host Info probes
 
