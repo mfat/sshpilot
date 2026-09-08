@@ -166,6 +166,77 @@ def test_scp_uses_capital_p_port_and_user_option_not_bandwidth_limit():
     assert "-p" not in spec.argv
 
 
+def test_scp_preference_overrides_follow_extra_options_before_destination():
+    """Preference defaults trail extra_options (ssh first-wins); destination last.
+
+    Only scp *flags* belong in ``extra_options``. Path operands must be inserted
+    after this prepared argv (see NativeScpBackend.build_argv): a local path in
+    ``extra_options`` would land before ``-o``/``-v`` and OpenSSH would treat
+    those flags as more source filenames.
+    """
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="host:/dst",
+            executable="scp",
+            launch_mode=LaunchMode.SCP,
+            extra_options=["-r"],
+            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
+        )
+    )
+    assert spec.argv == (
+        "scp",
+        "-r",
+        "-o",
+        "ServerAliveInterval=25",
+        "-v",
+        "host:/dst",
+    )
+
+
+def test_scp_path_operand_in_extra_options_lands_before_preference_flags():
+    """Pin the footgun that made Preference ``-v``/``-o`` look like sources.
+
+    Production must not put transfer paths in ``extra_options``; this documents
+    why (overrides intentionally follow extra_options for ssh defaults).
+    """
+
+    broken = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="host:/dst",
+            executable="scp",
+            launch_mode=LaunchMode.SCP,
+            extra_options=["/tmp/payload"],
+            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
+        )
+    )
+    payload_i = broken.argv.index("/tmp/payload")
+    assert broken.argv.index("-v") > payload_i
+    assert broken.argv.index("ServerAliveInterval=25") > payload_i
+
+
+def test_scp_inserting_sources_before_destination_keeps_overrides_as_options():
+    """The transfer argv shape after NativeScpBackend.build_argv."""
+
+    prepared = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="alice@host:/remote/drop",
+            executable="scp",
+            launch_mode=LaunchMode.SCP,
+            extra_options=["-r"],
+            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
+        )
+    ).argv
+    sources = ("/tmp/payload", "/tmp/other")
+    argv = (*prepared[:-1], *sources, prepared[-1])
+    first_source = argv.index("/tmp/payload")
+    assert argv.index("-r") < first_source
+    assert argv.index("-v") < first_source
+    assert argv.index("ServerAliveInterval=25") < first_source
+    assert argv[-1] == "alice@host:/remote/drop"
+    assert argv[first_source : first_source + 2] == sources
+
+
 def test_gi_blocked_import():
     import subprocess
     import sys
