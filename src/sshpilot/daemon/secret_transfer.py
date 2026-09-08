@@ -267,6 +267,7 @@ def daemon_export_backup(
     passphrase: Optional[str] = None,
     settings_path: Optional[Path | str] = None,
     transport: Any = None,
+    client_id: Any = None,
     connection_store_snapshot: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Export the full backup (settings, SSH config, known_hosts, secrets,
@@ -301,7 +302,7 @@ def daemon_export_backup(
             manager, ssh_dest, views, options, passphrase=passphrase,
             connections_source=connections_source, settings_path=settings_path,
             connection_store_snapshot=connection_store_snapshot,
-            transport=transport,
+            transport=transport, client_id=client_id,
         )
 
     if _is_bitwarden_destination(destination):
@@ -494,6 +495,7 @@ def _daemon_export_to_ssh(
     settings_path: Optional[Path | str] = None,
     connection_store_snapshot: Optional[Any] = None,
     transport: Any = None,
+    client_id: Any = None,
 ) -> SecretTransferResult:
     """Export the backup to a ``.spbk`` file on one of the user's SSH servers.
 
@@ -511,7 +513,7 @@ def _daemon_export_to_ssh(
             settings_path or _settings_path(),
             connection_store_snapshot=connection_store_snapshot,
         )
-        with _backup_store(transport, connection_id) as store:
+        with _backup_store(transport, connection_id, client_id) as store:
             mgr.export_to_backend(
                 SSHServerBackupBackend(store, remote_dir, item_name=name),
                 connections=views,
@@ -911,6 +913,7 @@ def daemon_preview_ssh_backup(
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
     transport: Any = None,
+    client_id: Any = None,
     passphrase: Optional[str] = None,
 ) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]]]:
     """Preview one SSH-stored backup: included categories (metadata only).
@@ -936,7 +939,7 @@ def daemon_preview_ssh_backup(
         tmp_path = tmp.name
     try:
         try:
-            with _backup_store(transport, connection_id) as store:
+            with _backup_store(transport, connection_id, client_id) as store:
                 backend = SSHServerBackupBackend(store, remote_dir)
                 entries = backend.list_exports()
                 entry = next(
@@ -1153,12 +1156,17 @@ def daemon_import_bitwarden_backup(
     )
 
 
-def _backup_store(transport: Any, connection_id: str):
+def _backup_store(transport: Any, connection_id: str, client_id: Any):
     """Open the best remote store for *connection_id* as a context manager.
 
     ``transport`` is the daemon's :class:`~sshpilot.daemon.backup_transport.BackupTransportProvider`
     -- SFTP first, one-shot commands second. Backup code never constructs an ssh
     command; it asks the provider for somewhere to put bytes.
+
+    ``client_id`` is the frontend that asked for the backup. It owns whatever
+    the provider opens, which is what lets the connect's password, passphrase
+    and host-key prompts reach that frontend; without it the daemon would
+    authenticate on behalf of nobody and simply wait out the prompt.
     """
     from contextlib import contextmanager
 
@@ -1171,7 +1179,12 @@ def _backup_store(transport: Any, connection_id: str):
                 SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
                 diagnostic="no remote backup transport is configured",
             )
-        store = transport.open(connection_id)
+        if client_id is None:
+            raise BackupError(
+                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
+                diagnostic="no client owns this backup",
+            )
+        store = transport.open(connection_id, client_id=client_id)
         try:
             yield store
         finally:
@@ -1204,6 +1217,7 @@ def daemon_list_ssh_backups(
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
     transport: Any = None,
+    client_id: Any = None,
 ) -> List[Dict[str, str]]:
     """List the sshPilot backups stored in ``remote_dir`` on the given server.
 
@@ -1212,7 +1226,7 @@ def daemon_list_ssh_backups(
     from sshpilot.backup_backends import SSHServerBackupBackend
 
     try:
-        with _backup_store(transport, connection_id) as store:
+        with _backup_store(transport, connection_id, client_id) as store:
             entries = SSHServerBackupBackend(store, remote_dir).list_exports()
     except Exception:
         logger.debug("SSH backup listing failed", exc_info=True)
@@ -1234,6 +1248,7 @@ def daemon_import_ssh_backup(
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
     transport: Any = None,
+    client_id: Any = None,
     manifest: Optional[Dict[str, Any]] = None,
     connection_store_restore: Optional[Any] = None,
     passphrase: Optional[str] = None,
@@ -1253,7 +1268,7 @@ def daemon_import_ssh_backup(
     # archive is already in hand, so no remote transport is opened at all.
     if manifest is None:
         try:
-            with _backup_store(transport, connection_id) as store:
+            with _backup_store(transport, connection_id, client_id) as store:
                 backend = SSHServerBackupBackend(store, remote_dir)
                 entries = backend.list_exports()
                 entry = next(

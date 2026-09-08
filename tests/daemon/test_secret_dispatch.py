@@ -683,6 +683,27 @@ def test_preview_bitwarden_and_ssh_delegate_to_service():
         owner_client_id="client-1")
 
 
+def test_list_ssh_backups_delegates_with_the_requesting_client():
+    """Listing connects, so it can raise the server's own auth prompts.
+
+    Without the caller's id the daemon would authenticate on behalf of an
+    identity no frontend can see, and the prompt would expire unanswered.
+    """
+    dispatcher, service = _dispatcher()
+    service.list_ssh_backups.return_value = []
+
+    result = dispatcher.dispatch(
+        _envelope(
+            "secrets.transfer.list_ssh",
+            {"connection_id": "srv", "remote_dir": "~/bk"},
+        ),
+        _state(),
+    )
+    assert result.operation() == []
+    service.list_ssh_backups.assert_called_once_with(
+        connection_id="srv", remote_dir="~/bk", owner_client_id="client-1")
+
+
 def test_preview_params_are_validated():
     dispatcher, _ = _dispatcher()
     with pytest.raises(SshPilotError) as excinfo:

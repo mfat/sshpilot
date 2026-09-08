@@ -27,7 +27,6 @@ from sshpilot.core.ssh_overrides_service import SshOverridesService
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.events import CoreEvent, EventType, EventPublisher, Subscription
 from sshpilot.api.models.common import (
-    ClientId,
     ForwardId,
     InteractionId,
     RequestId,
@@ -133,12 +132,6 @@ DEFAULT_MAX_CLIENT_OUTBOUND_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_CLIENT_TERMINAL_BYTES = 3 * 1024 * 1024
 DEFAULT_SESSION_SHUTDOWN_SECONDS = 3.0
 
-#: Owner of the SFTP services and transfers a backup opens. Backups are started
-#: by the daemon itself rather than by a connected frontend, so they need a
-#: stable in-process identity to own (and be allowed to interact with) the
-#: runtimes they drive. It is never a real peer, so no client can adopt or
-#: cancel another's backup by guessing it.
-_BACKUP_TRANSPORT_CLIENT_ID = ClientId("sshpilotd-backup")
 _COMMAND_INPUT_METHODS = frozenset(
     {
         "connections.store_password",
@@ -805,7 +798,6 @@ class DaemonServer:
                         sftp_runtime=self._sftp_runtime,
                         transfer_runtime=self._transfer_runtime,
                         broadcast_service=self._broadcast_service,
-                        client_id=_BACKUP_TRANSPORT_CLIENT_ID,
                     )
                 )
             self._dispatcher = RequestDispatcher(

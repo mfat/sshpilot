@@ -79,12 +79,13 @@ def _prompt_for(interaction_type: InteractionType):
     raise AssertionError(f"no fixture prompt for {interaction_type}")
 
 
-def _summary(interaction_type, session_id, *, interaction_id=None):
+def _summary(interaction_type, session_id, *, interaction_id=None,
+             connection_id="conn-1"):
     now = datetime.now(timezone.utc)
     return InteractionSummary(
         id=interaction_id or new_interaction_id(),
         session_id=SessionId(session_id),
-        connection_id=ConnectionId("conn-1"),
+        connection_id=ConnectionId(connection_id),
         type=interaction_type,
         state=InteractionState.PENDING,
         created_at=now,
@@ -625,6 +626,101 @@ def test_concurrent_presenters_never_steal(immediate_idle):
     assert set(client.claims) == {fm_summary.id, ak_summary.id, deploy_summary.id}
     for dialogs in (fm, authorized, deploy):
         dialogs.close()
+
+
+def _backup_presenter(client, connection_ids=("server-1",)):
+    """A BackupServerInteractionPresenter that records instead of drawing."""
+    from sshpilot.gtk.backup_interaction_presenter import (
+        BackupServerInteractionPresenter,
+    )
+
+    class _Recording(BackupServerInteractionPresenter):
+        def __init__(self, *args, **kwargs):
+            self.presented = []
+            super().__init__(*args, **kwargs)
+
+        def _present(self, summary):
+            self.presented.append(summary)
+
+    return _Recording(
+        client, _SyncBridge(), None, connection_ids=connection_ids
+    )
+
+
+def test_backup_presenter_shows_prompts_for_the_server_being_backed_up(
+    immediate_idle,
+):
+    """An SSH-server backup connects inside the daemon, so the frontend never
+    learns the scope id its prompts are raised under — only the connection.
+
+    Without this the export just waited: the prompt was created, no presenter
+    owned it, and the call failed at the interaction timeout.
+    """
+    client = _FakeClient()
+    presenter = _backup_presenter(client)
+
+    # The daemon opened its own SFTP service; the frontend never saw "sftp-7".
+    summary = _summary(
+        InteractionType.PASSWORD, "sftp-7", connection_id="server-1"
+    )
+    client.emit(summary)
+
+    assert presenter.presented == [summary]
+    assert client.claims == [summary.id]
+    presenter.close()
+
+
+def test_backup_presenter_ignores_another_connection(immediate_idle):
+    """Its scope is one connection: a prompt for any other host is not the
+    backup's, however it was raised."""
+    client = _FakeClient()
+    presenter = _backup_presenter(client)
+
+    client.emit(
+        _summary(InteractionType.PASSWORD, "sftp-8", connection_id="other-host")
+    )
+
+    assert presenter.presented == []
+    assert client.claims == []
+    presenter.close()
+
+
+def test_backup_presenter_leaves_the_passphrase_prompt_to_the_secrets_presenter(
+    immediate_idle,
+):
+    """The archive's own encrypt/decrypt passphrase is raised by the secret
+    backend service in the reserved ``secret-session`` namespace, where
+    SecretsInteractionPresenter already owns it. Claiming it here would take
+    it away from the dialog that knows how to label it."""
+    client = _FakeClient()
+    presenter = _backup_presenter(client)
+
+    client.emit(
+        _summary(
+            InteractionType.PASSWORD, "secret-session-3", connection_id="server-1"
+        )
+    )
+
+    assert presenter.presented == []
+    assert client.claims == []
+    presenter.close()
+
+
+def test_backup_presenter_reconciles_a_prompt_raised_before_it_existed(
+    immediate_idle,
+):
+    """The backup call and the presenter start together, so the connect can
+    raise its prompt first; the daemon's pending list closes that gap."""
+    client = _FakeClient()
+    pending = _summary(
+        InteractionType.PASSWORD, "sftp-9", connection_id="server-1"
+    )
+    client.pending.append(pending)
+
+    presenter = _backup_presenter(client)
+
+    assert presenter.presented == [pending]
+    presenter.close()
 
 
 def test_transfer_scope_routes_only_to_its_presenter(immediate_idle):

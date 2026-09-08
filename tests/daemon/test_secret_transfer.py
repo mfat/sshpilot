@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
 import sshpilot.secret_storage as ss
+from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.secrets import (
     SecretOperationState,
     SecretTransferMessageCode,
@@ -44,8 +45,8 @@ class _StubTransport:
     def __init__(self):
         self.opened = []
 
-    def open(self, connection_id):
-        self.opened.append(connection_id)
+    def open(self, connection_id, *, client_id):
+        self.opened.append((connection_id, client_id))
         return SimpleNamespace(close=lambda: None)
 
 
@@ -1002,6 +1003,7 @@ def test_daemon_export_to_ssh_threads_connection_store_snapshot(monkeypatch, tmp
         settings_path=config_dir / "config.json",
         connection_store_snapshot=repo.snapshot_for_backup,
         transport=_StubTransport(),
+        client_id=ClientId("client:test"),
     )
     assert result.status == SecretOperationState.SUCCESS, result.message
     connection_ids = {c["id"] for c in captured["manifest"]["connection_store"]["connections"]}

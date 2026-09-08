@@ -49,7 +49,7 @@ class FakeSftpRuntime:
         self.removed = []
 
     def prepare_open_service(self, request, *, client_id):
-        self.opened.append(request.connection_id)
+        self.opened.append((request.connection_id, client_id))
         return SimpleNamespace(id="svc-1")
 
     def start_service(self, service_id):
@@ -353,11 +353,48 @@ def test_provider_prefers_sftp():
         sftp_runtime=sftp,
         transfer_runtime=FakeTransferRuntime(sftp),
         broadcast_service=FakeBroadcast(_exec_host()[0]),
-        client_id=CLIENT,
     )
-    store = provider.open("host")
+    store = provider.open("host", client_id=CLIENT)
     assert isinstance(store, SftpBackupStore)
     store.close()
+
+
+def test_provider_opens_the_store_as_the_requesting_client():
+    """The frontend that asked for the backup must own what the provider opens.
+
+    Interactions are visible only to the client that owns their scope, so a
+    store opened under any other identity raises the connect's password /
+    passphrase / host-key prompt where nobody can answer it: the backup then
+    just waits out the interaction timeout and reports a failed connection.
+    """
+    sftp = FakeSftpRuntime()
+    provider = BackupTransportProvider(
+        sftp_runtime=sftp,
+        transfer_runtime=FakeTransferRuntime(sftp),
+        broadcast_service=FakeBroadcast(_exec_host()[0]),
+    )
+    caller = ClientId("client:the-frontend")
+    store = provider.open("host", client_id=caller)
+    try:
+        assert sftp.opened == [("host", caller)]
+        assert store._client_id == caller
+    finally:
+        store.close()
+
+
+def test_exec_fallback_also_runs_as_the_requesting_client():
+    """A host without sftp authenticates too, so the fallback needs the owner
+    just as much as the SFTP transport does."""
+    sftp = FakeSftpRuntime(ready=False)
+    provider = BackupTransportProvider(
+        sftp_runtime=sftp,
+        transfer_runtime=FakeTransferRuntime(sftp),
+        broadcast_service=FakeBroadcast(_exec_host()[0]),
+    )
+    caller = ClientId("client:the-frontend")
+    store = provider.open("host", client_id=caller)
+    assert isinstance(store, ExecBackupStore)
+    assert store._client_id == caller
 
 
 def test_provider_falls_back_when_the_host_has_no_sftp():
@@ -366,15 +403,14 @@ def test_provider_falls_back_when_the_host_has_no_sftp():
         sftp_runtime=sftp,
         transfer_runtime=FakeTransferRuntime(sftp),
         broadcast_service=FakeBroadcast(_exec_host()[0]),
-        client_id=CLIENT,
     )
-    assert isinstance(provider.open("host"), ExecBackupStore)
+    assert isinstance(provider.open("host", client_id=CLIENT), ExecBackupStore)
 
 
 def test_provider_without_any_transport_fails_clearly():
-    provider = BackupTransportProvider(client_id=CLIENT)
+    provider = BackupTransportProvider()
     with pytest.raises(BackupError):
-        provider.open("host")
+        provider.open("host", client_id=CLIENT)
 
 
 # --- helpers ------------------------------------------------------------------
@@ -400,7 +436,7 @@ def test_parse_df_avail_kb():
 
 def _provider(sftp, transfers):
     return BackupTransportProvider(
-        sftp_runtime=sftp, transfer_runtime=transfers, client_id=CLIENT
+        sftp_runtime=sftp, transfer_runtime=transfers
     )
 
 
@@ -442,7 +478,7 @@ def test_export_list_preview_round_trip_over_the_provider(tmp_path, monkeypatch)
         options=options,
         connections_source=list,
         settings_path=config_dir / "config.json",
-        transport=provider,
+        transport=provider, client_id=CLIENT,
     )
     assert result.status.value == "success", result.message
 
@@ -454,7 +490,7 @@ def test_export_list_preview_round_trip_over_the_provider(tmp_path, monkeypatch)
     listed = daemon_list_ssh_backups(
         _Mgr(), connection_id="host", remote_dir="~/sshpilot-backups",
         connections_source=list, settings_path=config_dir / "config.json",
-        transport=provider,
+        transport=provider, client_id=CLIENT,
     )
     assert [e["name"] for e in listed] == [stored[0].rsplit("/", 1)[-1]]
 
@@ -462,6 +498,7 @@ def test_export_list_preview_round_trip_over_the_provider(tmp_path, monkeypatch)
         _Mgr(), connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=listed[0]["id"], connections_source=list,
         settings_path=config_dir / "config.json", transport=provider,
+        client_id=CLIENT,
     )
     assert preview.error is None
     assert isinstance(manifest, dict)
@@ -555,7 +592,7 @@ def _remote_with_encrypted_backup(tmp_path, passphrase, manifest=None):
     )
     transfers = FakeTransferRuntime(sftp)
     return sftp, BackupTransportProvider(
-        sftp_runtime=sftp, transfer_runtime=transfers, client_id=CLIENT
+        sftp_runtime=sftp, transfer_runtime=transfers
     )
 
 
@@ -573,7 +610,7 @@ def test_encrypted_preview_asks_for_a_passphrase_instead_of_failing(tmp_path):
     preview, manifest = daemon_preview_ssh_backup(
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), settings_path=tmp_path / "config.json",
-        transport=provider,
+        transport=provider, client_id=CLIENT,
     )
     assert preview.encrypted is True
     assert preview.error is None
@@ -587,7 +624,7 @@ def test_encrypted_preview_decrypts_with_the_right_passphrase(tmp_path):
     preview, manifest = daemon_preview_ssh_backup(
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), settings_path=tmp_path / "config.json",
-        transport=provider, passphrase="pw",
+        transport=provider, client_id=CLIENT, passphrase="pw",
     )
     assert preview.error is None
     assert preview.encrypted is True
@@ -603,7 +640,7 @@ def test_encrypted_preview_reports_a_wrong_passphrase_distinctly(tmp_path):
     preview, manifest = daemon_preview_ssh_backup(
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), settings_path=tmp_path / "config.json",
-        transport=provider, passphrase="wrong",
+        transport=provider, client_id=CLIENT, passphrase="wrong",
     )
     assert manifest is None
     assert (
@@ -629,6 +666,7 @@ def test_encrypted_import_accepts_a_passphrase(tmp_path, monkeypatch):
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), options={"mode": "merge"},
         settings_path=config_dir / "config.json", transport=provider,
+        client_id=CLIENT,
         passphrase="pw",
     )
     assert result.status.value == "success", result.message
@@ -649,6 +687,7 @@ def test_encrypted_import_without_a_passphrase_asks_rather_than_giving_up(tmp_pa
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), options={"mode": "merge"},
         settings_path=config_dir / "config.json", transport=provider,
+        client_id=CLIENT,
     )
     assert result.status.value == "failed"
     # This code is what makes the service prompt and retry.

@@ -4076,7 +4076,7 @@ class RequestDispatcher:
     def _handle_list_ssh_backups(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         params = request.params
         if set(params) != {"connection_id", "remote_dir"}:
@@ -4088,9 +4088,12 @@ class RequestDispatcher:
         if type(remote_dir) is not str or not remote_dir.strip():
             raise ValueError("remote_dir must be a non-empty string")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: service.list_ssh_backups(
-                connection_id=connection_id, remote_dir=remote_dir
+                connection_id=connection_id,
+                remote_dir=remote_dir,
+                owner_client_id=owner_client_id,
             ),
             command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )

@@ -14,7 +14,6 @@ from __future__ import annotations
 from gettext import gettext as _
 
 from ..api.models import (
-    InteractionState,
     InteractionSummary,
     PasswordPrompt,
     RememberPolicy,
@@ -82,39 +81,22 @@ class SecretsInteractionPresenter(DaemonInteractionDialogs):
     under ``secret-session`` and are filtered in from that namespace only.
     """
 
-    def _handle_event(self, summary: InteractionSummary) -> bool:
-        if self._closed:
-            return False
-        if not is_secret_service_session(summary.session_id):
-            return False
-        if summary.state in {
-            InteractionState.ANSWERED,
-            InteractionState.CANCELLED,
-            InteractionState.EXPIRED,
-            InteractionState.FAILED,
-        }:
-            self._dismiss(summary.id)
-            return False
-        if summary.id in self._dialogs or summary.id in self._claimed:
-            return False
-        # Reserve the interaction before the asynchronous claim starts (see
-        # the base class). Regression: this reservation was missing, so
-        # _claimed_and_present always found summary.id absent from
-        # self._claimed, took its "not ours" branch, and released the
-        # interaction right back — no dialog was ever presented for any
-        # secret-session interaction (master-password unlock, Bitwarden
-        # 2FA/API-key/SSO, backup passphrases), even though the claim RPC
-        # itself succeeded.
-        self._claimed.add(summary.id)
-        try:
-            self._bridge.submit_interaction(
-                lambda: self._client.claim_interaction(summary.id),
-                on_success=lambda claim: self._claimed_and_present(summary, claim),
-                on_error=lambda _error: self._claim_failed(summary.id),
-            )
-        except RuntimeError:
-            self._claim_failed(summary.id)
-        return False
+    def _scope_is_bound(self) -> bool:
+        """Always bound: the ``secret-session`` namespace is the scope."""
+        return True
+
+    def _is_ours(self, summary: InteractionSummary) -> bool:
+        """Every secret-session interaction, and nothing else.
+
+        The base class claims and presents from here on. Keeping only the
+        ownership test here is what stops the claim bookkeeping from drifting:
+        an earlier copy of that logic omitted the ``_claimed`` reservation, so
+        ``_claimed_and_present`` took its "not ours" branch and released every
+        interaction straight back — no dialog was ever presented for a
+        master-password unlock, a Bitwarden 2FA/API-key/SSO challenge or a
+        backup passphrase, even though the claim RPC itself succeeded.
+        """
+        return is_secret_service_session(summary.session_id)
 
     def _present_secret(self, summary, parent) -> None:
         prompt = summary.prompt

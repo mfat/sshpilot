@@ -59,9 +59,45 @@ class DaemonInteractionDialogs:
         self._session_id = session_id
         self._reconcile()
 
+    def _scope_is_bound(self) -> bool:
+        """Whether this presenter has a scope yet.
+
+        An unbound presenter owns nothing and must stay silent. Subclasses
+        whose scope is fixed at construction (rather than bound later by
+        :meth:`set_session`) override this.
+        """
+        return self._session_id is not None
+
+    @staticmethod
+    def _is_secret_backend_scope(summary: InteractionSummary) -> bool:
+        """Whether *summary* belongs to the secret backend service.
+
+        Those live in the reserved ``secret-session`` namespace and are owned
+        by :class:`~sshpilot.gtk.secrets_interaction_presenter.SecretsInteractionPresenter`
+        alone; every other presenter has to skip them.
+        """
+        return is_secret_service_session(summary.session_id)
+
+    def _is_ours(self, summary: InteractionSummary) -> bool:
+        """Whether *summary* belongs to this presenter's scope.
+
+        The one place a presenter decides what it owns; everything else about
+        claiming and presenting is shared. An unbound presenter must never
+        claim or display an unrelated prompt: with no scope set, no
+        interaction is ours — in particular the File Manager, Authorized Keys,
+        a terminal and ssh-copy-id can all operate concurrently under one
+        frontend client, and an unbound presenter must not act as a wildcard
+        for any of them.
+        """
+        if self._is_secret_backend_scope(summary):
+            return False
+        if not self._scope_is_bound():
+            return False
+        return summary.session_id == self._session_id
+
     def _reconcile(self) -> None:
         """Pull currently pending interactions for the bound scope."""
-        if self._closed or self._session_id is None:
+        if self._closed or not self._scope_is_bound():
             return
         try:
             self._bridge.submit_interaction(
@@ -75,10 +111,10 @@ class DaemonInteractionDialogs:
 
     def _reconcile_present(self, summaries) -> None:
         """Feed only our own scope's interactions through the normal path."""
-        if self._closed or self._session_id is None:
+        if self._closed or not self._scope_is_bound():
             return
         for summary in summaries or ():
-            if summary.session_id != self._session_id:
+            if not self._is_ours(summary):
                 continue
             self._handle_event(summary)
 
@@ -97,16 +133,7 @@ class DaemonInteractionDialogs:
     def _handle_event(self, summary: InteractionSummary) -> bool:
         if self._closed:
             return False
-        if is_secret_service_session(summary.session_id):
-            return False
-        # An unbound presenter must never claim or display an unrelated
-        # prompt. With no scope set, no interaction is ours — in particular
-        # the File Manager, Authorized Keys, a terminal and ssh-copy-id can
-        # all operate concurrently under one frontend client, and an unbound
-        # presenter must not act as a wildcard for any of them.
-        if self._session_id is None:
-            return False
-        if summary.session_id != self._session_id:
+        if not self._is_ours(summary):
             return False
         if summary.state in {
             InteractionState.ANSWERED,

@@ -429,6 +429,48 @@ def test_export_backup_encrypted_roundtrip_decrypts_with_correct_password(tmp_pa
         read_spbk(str(dest), "wrong-password")
 
 
+def test_ssh_backup_routes_run_as_the_requesting_client(tmp_path):
+    """Every SSH-server backup route must hand the transport the client that
+    asked for it.
+
+    The daemon opens the connection itself, and the interaction broker shows a
+    prompt only to the client owning the scope it was raised under. Opening the
+    transport as anyone else means the password, passphrase or host-key prompt
+    is created where no frontend can claim it: the backup then hangs until the
+    interaction expires and reports a failed connection.
+    """
+    service, _manager, _backends, _broker, _path = _make_service(tmp_path)
+
+    opened = []
+
+    class _RecordingTransport:
+        def open(self, connection_id, *, client_id):
+            opened.append((connection_id, client_id))
+            raise RuntimeError("no store needed; the ownership is the point")
+
+    service.attach_backup_transport(_RecordingTransport())
+    options = {"app_settings": True, "ssh_config": False, "known_hosts": False,
+               "secrets": False, "private_keys": False}
+
+    service.export_backup(
+        destination="ssh:srv:~/bk", options=options, owner_client_id="client-1")
+    service.list_ssh_backups(
+        connection_id="srv", remote_dir="~/bk", owner_client_id="client-2")
+    service.preview_ssh_backup(
+        connection_id="srv", remote_dir="~/bk", entry_id="e1",
+        owner_client_id="client-3")
+    service.import_ssh_backup(
+        connection_id="srv", remote_dir="~/bk", entry_id="e1",
+        owner_client_id="client-4")
+
+    assert opened == [
+        ("srv", "client-1"),
+        ("srv", "client-2"),
+        ("srv", "client-3"),
+        ("srv", "client-4"),
+    ]
+
+
 def test_export_backup_uses_shorter_backup_encryption_timeout(tmp_path):
     """The encryption-passphrase interaction must use the shorter, operation-
     specific backup-encryption timeout, not the general 120s secret timeout."""

@@ -1252,6 +1252,7 @@ class SecretBackendService:
                 settings_path=self._path,
                 connection_store_snapshot=self._connection_store_snapshot,
                 transport=self._backup_transport,
+                client_id=owner_client_id,
             )
 
     def preview_backup(
@@ -1363,6 +1364,7 @@ class SecretBackendService:
                     connections_source=self._connections_source,
                     settings_path=self._path,
                     transport=self._backup_transport,
+                    client_id=owner_client_id,
                     passphrase=passphrase,
                 )
 
@@ -1561,8 +1563,13 @@ class SecretBackendService:
         *,
         connection_id: str,
         remote_dir: str,
+        owner_client_id=None,
     ) -> List[Dict[str, str]]:
-        """List sshPilot backups stored on one of the user's SSH servers."""
+        """List sshPilot backups stored on one of the user's SSH servers.
+
+        Listing connects, so it can raise the connection's own auth prompts;
+        ``owner_client_id`` is the frontend that must be able to answer them.
+        """
         with self._lock:
             self._load_strict()
             from sshpilot.daemon.secret_transfer import daemon_list_ssh_backups
@@ -1574,6 +1581,7 @@ class SecretBackendService:
                 connections_source=self._connections_source,
                 settings_path=self._path,
                 transport=self._backup_transport,
+                client_id=owner_client_id,
             )
 
     def import_ssh_backup(
@@ -1634,6 +1642,7 @@ class SecretBackendService:
                     manifest=manifest,
                     connection_store_restore=self._connection_store_restore,
                     transport=self._backup_transport,
+                    client_id=owner_client_id,
                     passphrase=passphrase,
                 )
             last_attempt = attempt + 1 >= self._MAX_IMPORT_PASSPHRASE_ATTEMPTS

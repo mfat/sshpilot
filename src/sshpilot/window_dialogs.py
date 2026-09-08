@@ -59,9 +59,19 @@ def _normalize_backup_options(options=None):
 def _secrets_persist_for(parent):
     """Daemon-backed ``persists_secrets`` for a modal parent (default True).
 
-    Resolves the window's ``secrets_controller`` and reads the daemon's state; a
-    missing controller or a failed state query reports ``True`` (the store
-    checkbox is shown), matching the pre-daemon default."""
+    Resolves the window's ``secrets_controller`` and reads its cached state; a
+    missing controller or absent cache reports ``True`` (the store checkbox is
+    shown), matching the pre-daemon default.
+
+    Must never issue a blocking ``load_state()`` RPC: this runs on the GTK
+    thread while presenting a password dialog for an operation that may itself
+    hold the daemon's secret-service lock (an SSH-server backup holds it
+    across its connect, whose password/host-key prompts arrive here). A
+    synchronous state query then deadlocks against that very operation — no
+    prompt is shown until the export times out and releases the lock, which is
+    exactly the late-prompt failure. The pre-operation vault gate already
+    populates the cache via ``load_state()`` before the export starts, so the
+    cached value is fresh here."""
     controller = getattr(parent, "secrets_controller", None)
     if controller is None:
         try:
@@ -73,8 +83,11 @@ def _secrets_persist_for(parent):
     if controller is None:
         return True
     try:
-        state = controller.load_state()
-        return bool(getattr(state, "persists_secrets", True))
+        getter = getattr(controller, "state", None)
+        cached = getter() if callable(getter) else None
+        if cached is None:
+            return True
+        return bool(getattr(cached, "persists_secrets", True))
     except Exception:
         return True
 
@@ -1152,6 +1165,55 @@ class WindowConfigDialogsMixin:
                 _("Secret storage is managed by the SSH Pilot daemon, which is not connected."))
         return controller
 
+    def _present_ssh_backup_prompts(self, *targets):
+        """Present the daemon's SSH prompts for a backup against *targets*.
+
+        A backup to an SSH server connects inside the daemon, so its login
+        password, key passphrase and host-key prompts arrive with no scope id
+        the frontend could bind to — only the connection they belong to. This
+        opens a presenter for that connection; close it (``close()``) as soon
+        as the backup call returns. Returns ``None`` when no daemon client is
+        available, which callers treat as "no prompts to present".
+
+        Must be called on the GTK thread, and so must the ``close()``.
+        """
+        client = getattr(self, "client", None)
+        bridge = getattr(self, "client_bridge", None)
+        if client is None or bridge is None:
+            return None
+        ids = set()
+        for target in targets:
+            if isinstance(target, str):
+                ids.add(target)
+                continue
+            for attribute in ("id", "uuid", "nickname", "hostname"):
+                value = getattr(target, attribute, None)
+                if value:
+                    ids.add(str(value))
+        if not ids:
+            return None
+        try:
+            from .gtk.backup_interaction_presenter import (
+                BackupServerInteractionPresenter,
+            )
+
+            return BackupServerInteractionPresenter(
+                client, bridge, self, connection_ids=ids
+            )
+        except Exception:
+            logger.debug("Backup interaction presenter unavailable", exc_info=True)
+            return None
+
+    @staticmethod
+    def _close_ssh_backup_prompts(presenter):
+        """Close a presenter from :meth:`_present_ssh_backup_prompts`, if any."""
+        if presenter is None:
+            return
+        try:
+            presenter.close()
+        except Exception:
+            logger.debug("Closing the backup interaction presenter failed", exc_info=True)
+
     @staticmethod
     def _connection_ids_for(connections):
         """Map connection records to the id/nickname keys the daemon resolves."""
@@ -1182,6 +1244,8 @@ class WindowConfigDialogsMixin:
                 _("Backing up to {host} — this may take a while…").format(host=who),
                 on_cancel=lambda: cancelled.__setitem__('v', True))
 
+            prompts = self._present_ssh_backup_prompts(target)
+
             def worker():
                 try:
                     result = controller.export_backup(
@@ -1195,6 +1259,7 @@ class WindowConfigDialogsMixin:
                 GLib.idle_add(lambda: (_report(payload), False)[1])
 
             def _report(p):
+                self._close_ssh_backup_prompts(prompts)
                 if cancelled['v']:
                     return
                 close_spinner()
@@ -1690,6 +1755,8 @@ class WindowConfigDialogsMixin:
             self, _("Import from SSH Server"), _("Loading backups…"),
             on_cancel=lambda: cancelled.__setitem__('v', True))
 
+        prompts = self._present_ssh_backup_prompts(target, nick)
+
         def worker():
             try:
                 payload = ('ok', controller.list_ssh_backups(
@@ -1700,6 +1767,7 @@ class WindowConfigDialogsMixin:
             GLib.idle_add(lambda: (_after(payload), False)[1])
 
         def _after(p):
+            self._close_ssh_backup_prompts(prompts)
             if cancelled['v']:
                 return
             close_spinner()
@@ -1730,6 +1798,8 @@ class WindowConfigDialogsMixin:
             self, _("Import from SSH Server"), _("Reading backup…"),
             on_cancel=lambda: cancelled.__setitem__('v', True))
 
+        prompts = self._present_ssh_backup_prompts(target, nick)
+
         def worker():
             try:
                 payload = ('ok', controller.preview_ssh_backup(
@@ -1740,6 +1810,7 @@ class WindowConfigDialogsMixin:
             GLib.idle_add(lambda: (_after(payload), False)[1])
 
         def _after(p):
+            self._close_ssh_backup_prompts(prompts)
             if cancelled['v']:
                 return
             close_spinner()
@@ -2105,18 +2176,29 @@ class WindowConfigDialogsMixin:
                     connection_id=connection_id, remote_dir=remote_dir,
                     entry_id=entry_id, options=opts),
                 needed=bool((included or {}).get('secrets')),
-                cancelled_heading=_("Import Cancelled"))
+                cancelled_heading=_("Import Cancelled"),
+                ssh_target=connection_id)
         return apply
 
-    def _run_daemon_import(self, run, *, needed: bool, cancelled_heading: str):
+    def _run_daemon_import(self, run, *, needed: bool, cancelled_heading: str,
+                           ssh_target=None):
         """Run a daemon-owned import via ``run()`` (zero-arg callable returning a
         ``SecretTransferResult``), gated on the vault unlock when the backup carries
-        credentials, with a spinner. The frontend never holds the manifest."""
+        credentials, with a spinner. The frontend never holds the manifest.
+
+        ``ssh_target`` names the server when the archive is being read off one,
+        so the connect's own prompts can be presented for the length of the
+        call; a local or Bitwarden import connects to nothing and passes none."""
         def do_apply(*_args):
             from .bitwarden_backup_setup import progress_dialog
             _set_status, close_spinner = progress_dialog(
                 self, _("Import Configuration"),
                 _("Applying backup — this may take a while…"))
+            prompts = (
+                self._present_ssh_backup_prompts(ssh_target)
+                if ssh_target is not None
+                else None
+            )
 
             def worker():
                 try:
@@ -2127,6 +2209,7 @@ class WindowConfigDialogsMixin:
                 GLib.idle_add(lambda: (_report(payload), False)[1])
 
             def _report(payload):
+                self._close_ssh_backup_prompts(prompts)
                 close_spinner()
                 if payload[0] == 'error':
                     self._simple_dialog(_("Import Failed"), payload[1])

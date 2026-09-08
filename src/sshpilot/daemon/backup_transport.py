@@ -596,21 +596,28 @@ class BackupTransportProvider:
         sftp_runtime: Any = None,
         transfer_runtime: Any = None,
         broadcast_service: Any = None,
-        client_id: ClientId,
     ) -> None:
         self._sftp_runtime = sftp_runtime
         self._transfer_runtime = transfer_runtime
         self._broadcast_service = broadcast_service
-        self._client_id = client_id
 
-    def open(self, connection_id: str):
-        """A ready store for *connection_id*; close it when the operation ends."""
+    def open(self, connection_id: str, *, client_id: ClientId):
+        """A ready store for *connection_id*; close it when the operation ends.
+
+        *client_id* is the frontend that asked for the backup, and it owns the
+        SFTP service (or the one-shot command operation) this opens. Ownership
+        is what makes the connect's own prompts -- a login password, a key
+        passphrase, an unknown host key -- visible to that frontend through the
+        interaction broker, exactly as the file manager's own service is. A
+        store opened under any other identity authenticates against a client
+        that cannot answer, so the connect can only wait for its timeout.
+        """
         if self._sftp_runtime is not None and self._transfer_runtime is not None:
             store = SftpBackupStore(
                 self._sftp_runtime,
                 self._transfer_runtime,
                 connection_id,
-                client_id=self._client_id,
+                client_id=client_id,
             )
             try:
                 return store.__enter__()
@@ -631,5 +638,5 @@ class BackupTransportProvider:
                 diagnostic="no remote transport is available",
             )
         return ExecBackupStore(
-            self._broadcast_service, connection_id, client_id=self._client_id
+            self._broadcast_service, connection_id, client_id=client_id
         )
