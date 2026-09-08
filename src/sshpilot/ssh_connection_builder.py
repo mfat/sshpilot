@@ -1342,7 +1342,12 @@ def build_ssh_connection(
             launch_mode = LaunchMode.SFTP
         elif ctx.command_type == 'ssh-copy-id':
             launch_mode = LaunchMode.COPY_ID
-        if ctx.interaction_policy == "none":
+        if ctx.interaction_policy == "none" and launch_mode is LaunchMode.INTERACTIVE:
+            # BatchMode / StrictHostKeyChecking come from batch_mode and
+            # host_key_mode above. Do not overwrite SCP/SFTP/COPY_ID modes:
+            # those pair with the binary for scp-safe flags (-P, -o User=)
+            # and LocalCommand validation. Overwriting them with BATCH while
+            # executable stays scp would revive the -p/-l misparse.
             launch_mode = LaunchMode.BATCH
 
         # LaunchMode only tunes validation/options; it never picks the binary.

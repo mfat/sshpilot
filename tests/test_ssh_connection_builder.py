@@ -698,6 +698,32 @@ def test_scp_preference_overrides_stay_options_when_path_operands_follow():
     assert argv[-1] == "alice@host.example.com:/remote/drop"
 
 
+def test_scp_none_policy_keeps_scp_safe_port_and_user_flags():
+    """interaction_policy none must not revive ssh-shaped -p/-l on scp."""
+
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="host.example.com",
+                username="alice",
+                port=2200,
+                authored=("hostname", "user", "port"),
+            ),
+            command_type="scp",
+            extra_args=["-r"],
+            target_override="alice@host.example.com:/remote/drop",
+            interaction_policy="none",
+        )
+    ).command
+
+    assert argv[0] == "scp"
+    assert "BatchMode=yes" in argv
+    assert "-P" in argv and argv[argv.index("-P") + 1] == "2200"
+    assert "User=alice" in argv
+    assert "-l" not in argv
+    assert "-p" not in argv
+
+
 def test_ssh_copy_id_installs_to_the_account_the_editor_shows():
     """Key deployment must not resolve the account from a global block.
 

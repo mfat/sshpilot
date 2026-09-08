@@ -107,11 +107,10 @@ class NativeScpBackend:
 
     def build_argv(
         self,
-        request: StartScpTransferRequest,
-        connection_target: str,
         base_argv: Sequence[str],
+        sources: Sequence[str],
     ) -> tuple[str, ...]:
-        sources, _destination = self.build_operands(request, connection_target)
+        """Insert path operands after every builder option, before destination."""
         if not base_argv:
             raise ValueError("SCP launch argv is empty")
         return tuple((*base_argv[:-1], *sources, base_argv[-1]))
@@ -162,7 +161,7 @@ class NativeScpBackend:
                 hostname=connection_target,
             )
             prepared = prepared.with_argv(
-                self.build_argv(request, connection_target, prepared.argv)
+                self.build_argv(prepared.argv, sources)
             )
             result = self._run_attempt(
                 prepared,

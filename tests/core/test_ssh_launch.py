@@ -166,6 +166,31 @@ def test_scp_uses_capital_p_port_and_user_option_not_bandwidth_limit():
     assert "-p" not in spec.argv
 
 
+def test_scp_binary_keeps_safe_flags_when_launch_mode_is_batch():
+    """Flag semantics follow the scp binary, not LaunchMode alone.
+
+    interaction_policy ``none`` used to overwrite LaunchMode.SCP with BATCH
+    while executable stayed scp, which revived ``-p``/``-l`` misparse.
+    """
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="alice@host:/tmp",
+            executable="/usr/bin/scp",
+            username="alice",
+            port=2222,
+            launch_mode=LaunchMode.BATCH,
+            batch_mode=True,
+        )
+    )
+    assert spec.argv[0] == "/usr/bin/scp"
+    assert "-P" in spec.argv and spec.argv[spec.argv.index("-P") + 1] == "2222"
+    assert "User=alice" in spec.argv
+    assert "-l" not in spec.argv
+    assert "-p" not in spec.argv
+    assert "BatchMode=yes" in spec.argv
+
+
 def test_scp_preference_overrides_follow_extra_options_before_destination():
     """Preference defaults trail extra_options (ssh first-wins); destination last.
 

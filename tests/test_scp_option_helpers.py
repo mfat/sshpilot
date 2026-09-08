@@ -25,9 +25,8 @@ def test_backend_build_operands_preserves_literal_paths():
 def test_backend_build_argv_keeps_sources_before_builder_destination():
     backend = NativeScpBackend.__new__(NativeScpBackend)
     argv = backend.build_argv(
-        _request(sources=("/tmp/source",)),
-        "alice@example.test",
         ("/usr/bin/scp", "-F", "/tmp/ssh config", "alice@example.test:/remote/drop"),
+        ("/tmp/source",),
     )
     assert argv == (
         "/usr/bin/scp",
