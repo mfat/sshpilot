@@ -198,12 +198,20 @@ def test_ssh_server_download_raises_on_missing():
                      passphrase="x")
 
 
-def test_ssh_server_export_leaves_no_local_temp_behind(tmp_path):
+def test_ssh_server_export_leaves_no_local_temp_behind(tmp_path, monkeypatch):
+    """The staging archive an export writes must not survive the call.
+
+    Scoped to its own temp directory: reading the shared one made this observe
+    every other test's temp files too, so anything legitimately holding a
+    ``.spbk`` in parallel (the preview retains one across its passphrase
+    prompt) failed it at random under xdist.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     store = FakeStore()
     backend = SSHServerBackupBackend(store, item_name="b.spbk")
-    before = set(os.listdir(tempfile.gettempdir()))
+    before = set(os.listdir(tmp_path))
     backend.export({"version": 1, "credentials": []})
-    leaked = {n for n in set(os.listdir(tempfile.gettempdir())) - before
+    leaked = {n for n in set(os.listdir(tmp_path)) - before
               if n.endswith(".spbk")}
     assert not leaked
 

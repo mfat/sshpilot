@@ -494,7 +494,7 @@ def test_export_list_preview_round_trip_over_the_provider(tmp_path, monkeypatch)
     )
     assert [e["name"] for e in listed] == [stored[0].rsplit("/", 1)[-1]]
 
-    preview, manifest = daemon_preview_ssh_backup(
+    preview, manifest, _staged = daemon_preview_ssh_backup(
         _Mgr(), connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=listed[0]["id"], connections_source=list,
         settings_path=config_dir / "config.json", transport=provider,
@@ -607,7 +607,7 @@ def test_encrypted_preview_asks_for_a_passphrase_instead_of_failing(tmp_path):
     from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
 
     _sftp, provider = _remote_with_encrypted_backup(tmp_path, "pw")
-    preview, manifest = daemon_preview_ssh_backup(
+    preview, manifest, _staged = daemon_preview_ssh_backup(
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), settings_path=tmp_path / "config.json",
         transport=provider, client_id=CLIENT,
@@ -621,7 +621,7 @@ def test_encrypted_preview_decrypts_with_the_right_passphrase(tmp_path):
     from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
 
     _sftp, provider = _remote_with_encrypted_backup(tmp_path, "pw")
-    preview, manifest = daemon_preview_ssh_backup(
+    preview, manifest, _staged = daemon_preview_ssh_backup(
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), settings_path=tmp_path / "config.json",
         transport=provider, client_id=CLIENT, passphrase="pw",
@@ -637,7 +637,7 @@ def test_encrypted_preview_reports_a_wrong_passphrase_distinctly(tmp_path):
     from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
 
     _sftp, provider = _remote_with_encrypted_backup(tmp_path, "pw")
-    preview, manifest = daemon_preview_ssh_backup(
+    preview, manifest, _staged = daemon_preview_ssh_backup(
         None, connection_id="host", remote_dir="~/sshpilot-backups",
         entry_id=_entry_id(), settings_path=tmp_path / "config.json",
         transport=provider, client_id=CLIENT, passphrase="wrong",
@@ -695,3 +695,57 @@ def test_encrypted_import_without_a_passphrase_asks_rather_than_giving_up(tmp_pa
         result.message.code
         is SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
     )
+
+
+def test_encrypted_preview_reuses_the_archive_it_already_downloaded(tmp_path):
+    """The passphrase round trip must not re-fetch the archive.
+
+    The first pass downloads, discovers the archive is encrypted, and hands the
+    file back; the service prompts and then decrypts *that* file. Downloading
+    twice doubled the cost of every encrypted remote preview -- and over the
+    exec fallback, where a download is bounded at roughly 12 MB, it doubled the
+    traffic for the archives closest to that ceiling.
+    """
+    import os
+
+    from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
+
+    _sftp, provider = _remote_with_encrypted_backup(tmp_path, "pw")
+    preview, manifest, staged = daemon_preview_ssh_backup(
+        None, connection_id="host", remote_dir="~/sshpilot-backups",
+        entry_id=_entry_id(), settings_path=tmp_path / "config.json",
+        transport=provider, client_id=CLIENT,
+    )
+    assert preview.encrypted is True and manifest is None
+    assert staged and os.path.exists(staged), "the fetched archive was thrown away"
+
+    # transport=None proves the retry touches no remote at all: opening a store
+    # without one raises SSH_SERVER_CONNECTION_FAILED.
+    preview, manifest, again = daemon_preview_ssh_backup(
+        None, connection_id="host", remote_dir="~/sshpilot-backups",
+        entry_id=_entry_id(), settings_path=tmp_path / "config.json",
+        transport=None, client_id=CLIENT, passphrase="pw",
+        archive_path=staged,
+    )
+    assert preview.error is None
+    assert isinstance(manifest, dict)
+    assert again is None
+    # A caller-supplied archive stays the caller's to delete.
+    assert os.path.exists(staged)
+    os.unlink(staged)
+
+
+def test_preview_deletes_the_archive_it_downloads_on_the_happy_path(tmp_path):
+    """Only the encrypted-without-a-passphrase case retains a file."""
+    import os
+
+    from sshpilot.daemon.secret_transfer import daemon_preview_ssh_backup
+
+    _sftp, provider = _remote_with_encrypted_backup(tmp_path, "pw")
+    preview, manifest, staged = daemon_preview_ssh_backup(
+        None, connection_id="host", remote_dir="~/sshpilot-backups",
+        entry_id=_entry_id(), settings_path=tmp_path / "config.json",
+        transport=provider, client_id=CLIENT, passphrase="pw",
+    )
+    assert preview.error is None and isinstance(manifest, dict)
+    assert staged is None

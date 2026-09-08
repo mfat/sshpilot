@@ -1832,7 +1832,8 @@ class WindowConfigDialogsMixin:
             self._show_import_mode_dialog(
                 preview.included,
                 self._make_ssh_import_apply(
-                    nick, remote_dir, entry_id, preview.included),
+                    nick, remote_dir, entry_id, preview.included,
+                    encrypted=bool(getattr(preview, 'encrypted', False))),
                 source_kind='ssh')
 
         threading.Thread(target=worker, daemon=True).start()
@@ -2169,11 +2170,17 @@ class WindowConfigDialogsMixin:
                 cancelled_heading=_("Import Cancelled"))
         return apply
 
-    def _make_ssh_import_apply(self, connection_id, remote_dir, entry_id, included):
-        """Daemon-owned import apply for an SSH-stored backup."""
+    def _make_ssh_import_apply(self, connection_id, remote_dir, entry_id, included,
+                               encrypted=False):
+        """Daemon-owned import apply for an SSH-stored backup.
+
+        ``encrypted`` comes from the preview the user just confirmed. The daemon
+        cannot probe a remote archive the way it probes a local ``.spbk``, so
+        without this it would spend its first attempt (a connect and a full
+        download) discovering that a passphrase is needed."""
         def apply(mode, restore_options):
             controller = self._secrets_controller()
-            opts = {'mode': mode}
+            opts = {'mode': mode, 'encrypted': bool(encrypted)}
             if restore_options:
                 opts.update(restore_options)
             self._run_daemon_import(

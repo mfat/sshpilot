@@ -915,14 +915,24 @@ def daemon_preview_ssh_backup(
     transport: Any = None,
     client_id: Any = None,
     passphrase: Optional[str] = None,
-) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]]]:
+    archive_path: Optional[str] = None,
+) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]], Optional[str]]:
     """Preview one SSH-stored backup: included categories (metadata only).
 
-    Mirrors :func:`daemon_preview_backup` for a remote archive: the file is
-    downloaded once, and an encrypted one reports ``encrypted=True`` without an
-    error so the service can collect a passphrase and ask again. The decrypted
-    manifest is cached by the caller, so the import that follows never
-    re-prompts and never downloads the archive a second time.
+    Mirrors :func:`daemon_preview_backup` for a remote archive. An encrypted one
+    reports ``encrypted=True`` without an error so the service can collect a
+    passphrase and ask again. The decrypted manifest is cached by the caller, so
+    the import that follows never re-prompts and never downloads the archive a
+    second time.
+
+    Returns ``(preview, manifest, staged_path)``. ``staged_path`` is the archive
+    this call downloaded and deliberately kept, and it is non-``None`` in exactly
+    one case: an encrypted archive reached without a passphrase. Pass it back as
+    ``archive_path`` on the retry so the passphrase round trip costs no second
+    connect and no second download -- an archive that only just fitted under the
+    exec transport's capture cap would otherwise be pulled across twice. The
+    caller owns that file and must delete it; a path it supplies is never
+    deleted here.
     """
     import tempfile
 
@@ -933,28 +943,39 @@ def daemon_preview_ssh_backup(
         return (
             SecretTransferPreview(kind="ssh", encrypted=encrypted, error=_message(code)),
             None,
+            None,
         )
 
-    with tempfile.NamedTemporaryFile(suffix=".spbk", delete=False) as tmp:
-        tmp_path = tmp.name
+    staged = archive_path if archive_path and os.path.exists(archive_path) else None
+    tmp_path = staged
+    if tmp_path is None:
+        with tempfile.NamedTemporaryFile(suffix=".spbk", delete=False) as tmp:
+            tmp_path = tmp.name
+    # Only a file this call created is ours to remove.
+    owned = staged is None
+    keep = False
     try:
-        try:
-            with _backup_store(transport, connection_id, client_id) as store:
-                backend = SSHServerBackupBackend(store, remote_dir)
-                entries = backend.list_exports()
-                entry = next(
-                    (e for e in entries if str(getattr(e, "id", "")) == entry_id), None
-                )
-                if entry is None:
-                    return _failed(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND)
-                try:
-                    backend.download(entry, tmp_path)
-                except Exception as exc:
-                    logger.error("SSH backup read failed: %s", exc)
-                    return _failed(SecretTransferMessageCode.SSH_BACKUP_READ_FAILED)
-        except Exception as exc:
-            logger.error("SSH backup listing failed: %s", exc)
-            return _failed(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED)
+        if owned:
+            try:
+                with _backup_store(transport, connection_id, client_id) as store:
+                    backend = SSHServerBackupBackend(store, remote_dir)
+                    entries = backend.list_exports()
+                    entry = next(
+                        (e for e in entries if str(getattr(e, "id", "")) == entry_id),
+                        None,
+                    )
+                    if entry is None:
+                        return _failed(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND)
+                    try:
+                        backend.download(entry, tmp_path)
+                    except Exception as exc:
+                        logger.error("SSH backup read failed: %s", exc)
+                        return _failed(
+                            SecretTransferMessageCode.SSH_BACKUP_READ_FAILED
+                        )
+            except Exception as exc:
+                logger.error("SSH backup listing failed: %s", exc)
+                return _failed(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED)
 
         try:
             encrypted = bool(spbk_is_encrypted(tmp_path))
@@ -962,14 +983,21 @@ def daemon_preview_ssh_backup(
             encrypted = False
         if encrypted and not passphrase:
             # No error: the frontend reads this as "ask for the passphrase".
-            return SecretTransferPreview(kind="ssh", encrypted=True), None
+            # Hand the downloaded archive back so the retry can skip the fetch.
+            keep = owned
+            return (
+                SecretTransferPreview(kind="ssh", encrypted=True),
+                None,
+                tmp_path if owned else archive_path,
+            )
 
         manifest = _read_manifest(tmp_path, passphrase)
     finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        if owned and not keep:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     if manifest is None:
         return _failed(
@@ -986,6 +1014,7 @@ def daemon_preview_ssh_backup(
             included=_included_categories(settings_path, manifest),
         ),
         manifest,
+        None,
     )
 
 

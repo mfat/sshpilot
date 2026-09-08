@@ -1353,7 +1353,7 @@ class SecretBackendService:
 
         key = self._manifest_key("ssh", f"{connection_id}:{entry_id}")
 
-        def _preview(passphrase):
+        def _preview(passphrase, archive_path=None):
             with self._lock:
                 self._apply_environment(self._load_strict())
                 return daemon_preview_ssh_backup(
@@ -1366,38 +1366,49 @@ class SecretBackendService:
                     transport=self._backup_transport,
                     client_id=owner_client_id,
                     passphrase=passphrase,
+                    archive_path=archive_path,
                 )
 
-        public, manifest = _preview(None)
-        if manifest is not None:
-            self._cache_manifest(key, manifest)
-            return public
-        if not public.encrypted or public.error is not None:
-            return public
+        public, manifest, staged = _preview(None)
+        try:
+            if manifest is not None:
+                self._cache_manifest(key, manifest)
+                return public
+            if not public.encrypted or public.error is not None:
+                return public
 
-        # The passphrase interaction runs without the service lock, for the same
-        # reason as preview_backup: a concurrent secrets.state.get would block on
-        # its five-second timeout and cancel this very interaction.
-        prompt = self._prompt_for_secret(
-            SecretPromptKind.BACKUP_DECRYPT,
-            owner_client_id=owner_client_id,
-        )
-        if prompt is None:
-            return SecretTransferPreview(
-                kind=public.kind,
-                encrypted=public.encrypted,
-                included=public.included,
-                error=SecretTransferMessage(
-                    SecretTransferMessageCode.DECRYPTION_CANCELLED
-                ),
+            # The passphrase interaction runs without the service lock, for the
+            # same reason as preview_backup: a concurrent secrets.state.get
+            # would block on its five-second timeout and cancel this very
+            # interaction.
+            prompt = self._prompt_for_secret(
+                SecretPromptKind.BACKUP_DECRYPT,
+                owner_client_id=owner_client_id,
             )
-        passphrase = prompt.decode("utf-8", "replace")
-        _clear_secret(prompt)
+            if prompt is None:
+                return SecretTransferPreview(
+                    kind=public.kind,
+                    encrypted=public.encrypted,
+                    included=public.included,
+                    error=SecretTransferMessage(
+                        SecretTransferMessageCode.DECRYPTION_CANCELLED
+                    ),
+                )
+            passphrase = prompt.decode("utf-8", "replace")
+            _clear_secret(prompt)
 
-        public, manifest = _preview(passphrase)
-        if manifest is not None:
-            self._cache_manifest(key, manifest)
-        return public
+            # Decrypt the archive the first pass already fetched: the retry
+            # costs neither a second connect nor a second download.
+            public, manifest, _ = _preview(passphrase, staged)
+            if manifest is not None:
+                self._cache_manifest(key, manifest)
+            return public
+        finally:
+            if staged:
+                try:
+                    os.unlink(staged)
+                except OSError:
+                    pass
 
 
     def import_backup(
@@ -1612,16 +1623,24 @@ class SecretBackendService:
         """
         from sshpilot.daemon.secret_transfer import daemon_import_ssh_backup
 
+        opts = dict(options or {})
         with self._lock:
             self._apply_environment(self._load_strict())
             manifest = self._pop_cached_manifest(
                 self._manifest_key("ssh", f"{connection_id}:{entry_id}")
             )
 
+        # Ask on the *first* attempt for an archive already known to be
+        # encrypted, exactly as import_backup does with its own local probe.
+        # The preview told the frontend `encrypted`, and it passes that back
+        # here. Without it the first attempt ran with no passphrase and could
+        # only fail, costing a connect and a full download of the archive
+        # before the first prompt and leaving the user two tries out of three.
+        needs_prompt = bool(opts.get("encrypted"))
         passphrase = None
         result = None
         for attempt in range(self._MAX_IMPORT_PASSPHRASE_ATTEMPTS):
-            if manifest is None and attempt > 0:
+            if manifest is None and (needs_prompt or attempt > 0):
                 prompt = self._prompt_for_secret(
                     SecretPromptKind.BACKUP_DECRYPT,
                     owner_client_id=owner_client_id,
@@ -1646,7 +1665,7 @@ class SecretBackendService:
                     connection_id=connection_id,
                     remote_dir=remote_dir,
                     entry_id=entry_id,
-                    options=options,
+                    options=opts,
                     connections_source=self._connections_source,
                     settings_path=self._path,
                     manifest=manifest,
@@ -1663,6 +1682,8 @@ class SecretBackendService:
                 is SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
                 and not last_attempt
             ):
+                passphrase = None
+                needs_prompt = True
                 continue
             return result
         return result
