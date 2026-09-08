@@ -796,7 +796,30 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return None
         from .gtk.secret_backends_controller import SecretBackendsController
 
-        return SecretBackendsController(client)
+        controller = SecretBackendsController(client)
+        self._prime_secret_state(controller)
+        return controller
+
+    @staticmethod
+    def _prime_secret_state(controller) -> None:
+        """Populate the controller's cached secret-backend state, off-thread.
+
+        Password dialogs read that cache to decide whether to offer "Store
+        password" (``window_dialogs._secrets_persist_for``). They must not query
+        it synchronously — an operation holding the daemon's secret-service lock
+        would deadlock against its own prompt — so a cold cache falls back to
+        "storage works", which on an SSH-Agent-Only backend offers a checkbox
+        that silently stores nothing. Filling it once here means a prompt has an
+        answer to read; ``load_state`` releases its lock across the RPC, so this
+        never blocks the GTK thread.
+        """
+        def _warm():
+            try:
+                controller.load_state()
+            except Exception:
+                logger.debug("Priming secret backend state failed", exc_info=True)
+
+        threading.Thread(target=_warm, name="secret-state-prime", daemon=True).start()
 
     def _attach_secrets_interaction_presenter(self) -> None:
         """Present daemon-owned secret-backend interactions app-wide.

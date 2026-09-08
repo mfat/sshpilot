@@ -70,9 +70,14 @@ def _secrets_persist_for(parent):
     across its connect, whose password/host-key prompts arrive here). A
     synchronous state query then deadlocks against that very operation — no
     prompt is shown until the export times out and releases the lock, which is
-    exactly the late-prompt failure. The pre-operation vault gate already
-    populates the cache via ``load_state()`` before the export starts, so the
-    cached value is fresh here."""
+    exactly the late-prompt failure.
+
+    The cache is primed when the controller is built
+    (``MainWindow._prime_secret_state``) and refreshed by the vault gate and the
+    per-connection unlock check, so it is normally warm. A cold one still falls
+    back to ``True``, which on an SSH-Agent-Only backend offers a checkbox that
+    stores nothing — so a cold read also kicks an off-thread refresh, and the
+    next prompt is right."""
     controller = getattr(parent, "secrets_controller", None)
     if controller is None:
         try:
@@ -87,10 +92,29 @@ def _secrets_persist_for(parent):
         getter = getattr(controller, "state", None)
         cached = getter() if callable(getter) else None
         if cached is None:
+            _refresh_secret_state_async(controller)
             return True
         return bool(getattr(cached, "persists_secrets", True))
     except Exception:
         return True
+
+
+def _refresh_secret_state_async(controller) -> None:
+    """Fill a cold secret-state cache in the background.
+
+    Never blocks: the caller is on the GTK thread, possibly inside a nested
+    dialog loop for an operation that holds the daemon's secret-service lock.
+    """
+    def _warm():
+        try:
+            controller.load_state()
+        except Exception:
+            logger.debug("Refreshing secret backend state failed", exc_info=True)
+
+    try:
+        threading.Thread(target=_warm, name="secret-state-refresh", daemon=True).start()
+    except Exception:
+        logger.debug("Could not start the secret state refresh", exc_info=True)
 
 
 def parent_window(parent):

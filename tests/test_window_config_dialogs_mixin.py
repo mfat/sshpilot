@@ -197,7 +197,13 @@ def test_secrets_persist_check_never_blocks_on_daemon_rpc():
     ``load_state()`` query then deadlocks against that very operation — no
     prompt is shown until the export times out and releases the lock, so the
     password dialog only appears after the failure.
+
+    A cold cache is allowed to refresh itself, but only off this thread: the
+    answer it falls back to ("storage works") is wrong on an SSH-Agent-Only
+    backend, so the next prompt needs a real one.
     """
+    import threading
+
     from sshpilot import window_dialogs
 
     calls = []
@@ -214,14 +220,21 @@ def test_secrets_persist_check_never_blocks_on_daemon_rpc():
     assert window_dialogs._secrets_persist_for(parent) is False
     assert calls == []
 
+    refreshed = threading.Event()
+    refresh_threads = []
+    here = threading.current_thread()
+
     class _NoCache:
         def state(self):
             return None
 
         def load_state(self):
-            calls.append(1)
-            raise AssertionError("blocking RPC during interaction presentation")
+            refresh_threads.append(threading.current_thread())
+            refreshed.set()
 
     assert window_dialogs._secrets_persist_for(
         types.SimpleNamespace(secrets_controller=_NoCache())) is True
     assert calls == []
+    assert refreshed.wait(5), "a cold cache was never refreshed"
+    assert refresh_threads and here not in refresh_threads, (
+        "the cold-cache refresh ran on the calling thread")
