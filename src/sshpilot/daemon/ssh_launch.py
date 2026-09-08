@@ -244,9 +244,14 @@ class ForwardLaunch:
 class ScpLaunch:
     """SCP is the one intent with caller-supplied operands.
 
-    ``extra_args`` here is not an escape hatch for ssh flags: it is the
-    transfer's own source list (plus ``-r``), assembled by the SCP backend
-    from a validated request.
+    ``extra_args`` here is not an escape hatch for ssh flags: it carries
+    only scp flags (currently ``-r``) assembled by the SCP backend from a
+    validated request. Path operands never travel here: the builder emits
+    ``extra_args`` before preference ``ssh_overrides``, so a path landing
+    first would turn those overrides into fake source filenames. Sources
+    are spliced after every builder option via
+    ``NativeScpBackend.build_argv``; the destination travels as
+    ``target_override``.
     """
 
     extra_args: Tuple[str, ...] = ()
