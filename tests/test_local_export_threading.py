@@ -22,9 +22,16 @@ from sshpilot.window_dialogs import WindowConfigDialogsMixin
 class _ExportWin(WindowConfigDialogsMixin):
     def __init__(self):
         self.dialogs = []
+        self.results = []
 
     def _simple_dialog(self, heading, body):
         self.dialogs.append((heading, body))
+
+    def _backup_progress_dialog(self, **_kwargs):
+        return (lambda _t: None, lambda: None)
+
+    def _show_export_result(self, **kwargs):
+        self.results.append(kwargs)
 
 
 class _MainLoopSimulator:
@@ -58,9 +65,6 @@ def test_local_export_does_not_deadlock_encryption_interaction(monkeypatch):
     win = _ExportWin()
     loop = _MainLoopSimulator()
     monkeypatch.setattr("sshpilot.window_dialogs.GLib.idle_add", loop.idle_add)
-    monkeypatch.setattr(
-        "sshpilot.bitwarden_backup_setup.progress_dialog",
-        lambda *a, **kw: (lambda _t: None, lambda: None))
 
     interaction_answered = threading.Event()
     export_thread_ident = {}
@@ -79,7 +83,7 @@ def test_local_export_does_not_deadlock_encryption_interaction(monkeypatch):
                     "caller's thread is blocked inside export_backup "
                     "(issue #1200 deadlock)")
             return SimpleNamespace(
-                status=SimpleNamespace(value="success"),
+                status=SimpleNamespace(value="success"), path="/tmp/x.spbk",
                 counts={"credentials": 0, "private_keys": 0}, warnings=())
 
     win.secrets_controller = Controller()
@@ -107,14 +111,13 @@ def test_local_export_does_not_deadlock_encryption_interaction(monkeypatch):
 
     # Drain the worker's completion callback too (also delivered via idle_add).
     deadline = time.monotonic() + 2.0
-    while not win.dialogs and time.monotonic() < deadline:
+    while not win.results and time.monotonic() < deadline:
         loop.drain()
         time.sleep(0.01)
 
-    assert win.dialogs, "export completion was never reported to the UI"
-    assert win.dialogs[0] == ("Export Successful", (
-        "Backup saved to:\n/tmp/x.spbk\n\n0 credential(s) and 0 private "
-        "key(s) included; encryption: on."))
+    assert win.results, "export completion was never reported to the UI"
+    assert win.results[0]["path"] == "/tmp/x.spbk"
+    assert win.results[0]["encrypt"] is True
 
 
 def test_local_export_surfaces_worker_exception(monkeypatch):
@@ -133,9 +136,6 @@ def test_local_export_surfaces_worker_exception(monkeypatch):
     monkeypatch.setattr("sshpilot.window_dialogs.threading.Thread", Thread)
     monkeypatch.setattr(
         "sshpilot.window_dialogs.GLib.idle_add", lambda cb: (cb(), False)[1])
-    monkeypatch.setattr(
-        "sshpilot.bitwarden_backup_setup.progress_dialog",
-        lambda *a, **kw: (lambda _t: None, lambda: None))
 
     class Controller:
         def export_backup(self, **kwargs):
@@ -168,15 +168,12 @@ def test_local_export_unencrypted_success(monkeypatch):
         def export_backup(self, **kwargs):
             calls.append(kwargs)
             return SimpleNamespace(
-                status=SimpleNamespace(value="success"),
+                status=SimpleNamespace(value="success"), path="/tmp/plain.spbk",
                 counts={"credentials": 3, "private_keys": 1}, warnings=())
 
     monkeypatch.setattr("sshpilot.window_dialogs.threading.Thread", Thread)
     monkeypatch.setattr(
         "sshpilot.window_dialogs.GLib.idle_add", lambda cb: (cb(), False)[1])
-    monkeypatch.setattr(
-        "sshpilot.bitwarden_backup_setup.progress_dialog",
-        lambda *a, **kw: (lambda _t: None, lambda: None))
 
     win.secrets_controller = Controller()
     win._run_local_export(
@@ -185,9 +182,11 @@ def test_local_export_unencrypted_success(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0]["options"]["encrypted"] is False
-    assert len(win.dialogs) == 1
-    assert win.dialogs[0][0] == "Export Successful"
-    assert "encryption: off" in win.dialogs[0][1]
+    assert not win.dialogs
+    assert len(win.results) == 1
+    assert win.results[0]["path"] == "/tmp/plain.spbk"
+    assert win.results[0]["encrypt"] is False
+    assert win.results[0]["counts"] == {"credentials": 3, "private_keys": 1}
 
 
 def test_local_export_reports_encryption_timeout_message(monkeypatch):
@@ -214,9 +213,6 @@ def test_local_export_reports_encryption_timeout_message(monkeypatch):
     monkeypatch.setattr("sshpilot.window_dialogs.threading.Thread", Thread)
     monkeypatch.setattr(
         "sshpilot.window_dialogs.GLib.idle_add", lambda cb: (cb(), False)[1])
-    monkeypatch.setattr(
-        "sshpilot.bitwarden_backup_setup.progress_dialog",
-        lambda *a, **kw: (lambda _t: None, lambda: None))
 
     win.secrets_controller = Controller()
     win._run_local_export(
@@ -225,3 +221,104 @@ def test_local_export_reports_encryption_timeout_message(monkeypatch):
     assert win.dialogs == [
         ("Export Failed", "Encryption password request timed out"),
     ]
+
+
+def test_local_export_passphrase_cancel_reopens_options(monkeypatch):
+    """Dismissing the encryption passphrase returns to the Export Backup window."""
+    win = _ExportWin()
+    reopened = []
+
+    class Thread:
+        def __init__(self, target, daemon):
+            self.target = target
+
+        def start(self):
+            self.target()
+
+    class Controller:
+        def export_backup(self, **kwargs):
+            return SimpleNamespace(
+                status=SimpleNamespace(value="interaction_required"),
+                message=SecretTransferMessage(
+                    code=SecretTransferMessageCode.ENCRYPTION_CANCELLED,
+                ),
+                counts={}, warnings=())
+
+    monkeypatch.setattr("sshpilot.window_dialogs.threading.Thread", Thread)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.GLib.idle_add", lambda cb: (cb(), False)[1])
+    monkeypatch.setattr(
+        win, "_reopen_export_options",
+        lambda **kwargs: reopened.append(kwargs))
+
+    win.secrets_controller = Controller()
+    reopen = {
+        "encrypt_default": True,
+        "option_defaults": {"private_keys": False},
+        "destination": "file",
+    }
+    win._run_local_export(
+        export_path="/tmp/x.spbk", connections=[], options={}, encrypt=True,
+        reopen=reopen)
+
+    assert not win.dialogs
+    assert not win.results
+    assert reopened == [reopen]
+
+
+def test_choose_export_path_cancel_reopens_options(monkeypatch):
+    """Cancelling the save dialog restores the options window with prior choices."""
+    win = _ExportWin()
+    reopened = []
+    captured = {}
+
+    class FileDialog:
+        def set_title(self, *_a):
+            return None
+
+        def set_initial_name(self, *_a):
+            return None
+
+        def set_filters(self, *_a):
+            return None
+
+        def set_default_filter(self, *_a):
+            return None
+
+        def set_initial_folder(self, *_a):
+            return None
+
+        def save(self, _parent, _cancellable, callback):
+            captured["callback"] = callback
+
+    class FileFilter:
+        def set_name(self, *_a):
+            return None
+
+        def add_pattern(self, *_a):
+            return None
+
+    class ListStore:
+        @staticmethod
+        def new(*_a):
+            return SimpleNamespace(append=lambda *_a: None)
+
+    monkeypatch.setattr("sshpilot.window_dialogs.Gtk.FileDialog", FileDialog)
+    monkeypatch.setattr("sshpilot.window_dialogs.Gtk.FileFilter", FileFilter)
+    monkeypatch.setattr("sshpilot.window_dialogs.Gio.ListStore", ListStore)
+    monkeypatch.setattr(
+        win, "_reopen_export_options",
+        lambda **kwargs: reopened.append(kwargs))
+
+    reopen = {"destination": "file", "encrypt_default": True, "option_defaults": {}}
+    win._choose_export_path([], True, {}, reopen=reopen)
+
+    class Dialog:
+        def save_finish(self, _result):
+            # GTK_DIALOG_ERROR_DISMISSED == 2
+            err = Exception("Dismissed")
+            err.code = 2
+            raise err
+
+    captured["callback"](Dialog(), object())
+    assert reopened == [reopen]

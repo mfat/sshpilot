@@ -92,6 +92,28 @@ def test_vault_unlock_gate_aborts_when_unlock_cancelled(monkeypatch):
     assert win.dialogs[0][0] == "Export Cancelled"
 
 
+def test_vault_unlock_gate_on_cancelled_skips_dead_end_dialog(monkeypatch):
+    """Export flows restore the options dialog instead of a cancel alert."""
+    win = _Win()
+    win.secrets_controller = _Controller(needs_unlock=True)
+    cancelled = []
+
+    def fake_prompt_unlock(_parent, on_done=None, **_kw):
+        on_done(False)
+        return True
+
+    monkeypatch.setattr(
+        "sshpilot.secret_unlock_dialog.prompt_unlock", fake_prompt_unlock)
+    win._run_after_vault_unlock_for_secrets(
+        lambda: None,
+        needed=True,
+        cancelled_heading="Export Cancelled",
+        on_cancelled=lambda: cancelled.append(1),
+    )
+    assert cancelled == [1]
+    assert win.dialogs == []
+
+
 def test_vault_unlock_gate_proceeds_after_successful_unlock(monkeypatch):
     win = _Win()
     win.secrets_controller = _Controller(needs_unlock=True)

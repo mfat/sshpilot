@@ -17,7 +17,7 @@ import threading
 from datetime import datetime
 from typing import Any, Optional
 
-from gi.repository import Adw, Gdk, Gio, GLib, Gtk
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 from gettext import gettext as _
 
 from .accessibility import set_accessible_name, set_accessible_selected
@@ -32,9 +32,9 @@ logger = logging.getLogger(__name__)
 # Minimum content width for export/import backup dialogs.
 BACKUP_DIALOG_MIN_WIDTH = 520
 # Export uses a normal modal window (wider than the Adw.Dialog sheets).
-BACKUP_EXPORT_WINDOW_WIDTH = 640
+BACKUP_EXPORT_WINDOW_WIDTH = 800
 BACKUP_EXPORT_WINDOW_HEIGHT = 720
-BACKUP_EXPORT_CLAMP_MAX = 560
+BACKUP_EXPORT_CLAMP_MAX = 700
 
 # Backup category keys (mirrors ``BackupManager.BACKUP_OPTION_KEYS``). The daemon owns
 # the backup engine; the frontend only renders these as option rows.
@@ -689,10 +689,45 @@ class WindowConfigDialogsMixin:
         except Exception as e:
             logger.error(f"Failed to show export dialog: {e}")
 
+    # Destination cards, in the order the dialog lays them out.
+    _BACKUP_DESTINATIONS = ('file', 'bitwarden', 'ssh')
+
+    def _reopen_export_options(self, **kwargs):
+        """Bring the Export Backup options window back after a follow-up cancel.
+
+        Start Backup closes this window before the file picker / Bitwarden setup /
+        vault unlock / passphrase prompt. Cancelling any of those must restore
+        the options (and the user's choices) rather than dropping the flow.
+        """
+        GLib.idle_add(lambda: (self._show_export_options_dialog(**kwargs), False)[1])
+
+    @staticmethod
+    def _export_was_user_cancelled(result) -> bool:
+        """True when the daemon stopped because the user dismissed a prompt."""
+        status = getattr(result, "status", None)
+        if getattr(status, "value", status) == "interaction_required":
+            message = getattr(result, "message", None)
+            code = getattr(message, "code", None)
+            code_value = getattr(code, "value", code)
+            # Timeout is not a cancel — leave that as a failure dialog.
+            return code_value != "encryption_request_timed_out"
+        return False
+
     def _show_export_options_dialog(self, prefill_ids=None, encrypt_default=True,
                                     option_defaults=None, error=None,
-                                    destination='file', target_nick=None, remote_dir=None):
-        """Select backup categories, scoped connections, destination, and encryption."""
+                                    destination='file', target_nick=None, remote_dir=None,
+                                    mirror_logins_default=False):
+        """Choose where the backup goes and how it is protected.
+
+        A backup always carries the whole configuration — app settings, groups,
+        the SSH config, known hosts and every saved secret — so the only
+        choices here are the ones that change what actually leaves the machine:
+        the destination, the passphrase, and whether the private key files
+        themselves are copied out of ``~/.ssh``.
+
+        ``prefill_ids`` is still accepted because the reopen paths pass it, but
+        the export is no longer scoped to a subset of connections.
+        """
         try:
             connections = list(self.connection_manager.get_connections()) \
                 if self.connection_manager else []
@@ -714,9 +749,9 @@ class WindowConfigDialogsMixin:
         cancel_btn.connect('clicked', lambda _b: dialog.close())
         header.pack_start(cancel_btn)
 
-        continue_btn = Gtk.Button(label=_("Continue"))
-        continue_btn.add_css_class('suggested-action')
-        header.pack_end(continue_btn)
+        start_btn = Gtk.Button(label=_("Start Backup"))
+        start_btn.add_css_class('suggested-action')
+        header.pack_end(start_btn)
         toolbar.add_top_bar(header)
 
         scroller = Gtk.ScrolledWindow()
@@ -749,193 +784,89 @@ class WindowConfigDialogsMixin:
             err_group.add(err_row)
             page.append(err_group)
 
-        include_group = Adw.PreferencesGroup()
-        include_group.set_title(_("Include"))
-        include_group.set_description(_("Choose what this backup should contain."))
-        include_group.add_css_class('boxed-list')
+        intro = Gtk.Label(
+            label=_("A backup lets you move everything to a new system, or restore it after "
+                    "a reinstall. It includes your connections, groups, app settings, known "
+                    "hosts and saved passwords."))
+        intro.set_wrap(True)
+        intro.set_xalign(0)
+        intro.add_css_class('dim-label')
+        page.append(intro)
 
-        def make_switch_row(title, active=False, subtitle=None):
-            row = Adw.SwitchRow(title=title)
-            if subtitle:
-                row.set_subtitle(subtitle)
-            row.set_active(bool(active))
-            return row
+        def _section(title):
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+            label = Gtk.Label(label=title)
+            label.set_xalign(0)
+            label.set_margin_start(2)
+            label.add_css_class('heading')
+            box.append(label)
+            page.append(box)
+            return box
 
-        app_settings_row = make_switch_row(
-            _("App settings and groups"), option_defaults.get('app_settings', False))
-        ssh_config_row = make_switch_row(
-            _("Connection profiles (SSH config)"), option_defaults.get('ssh_config', False))
-        known_hosts_row = make_switch_row(
-            _("Known hosts"), option_defaults.get('known_hosts', False))
-
-        private_keys_row = make_switch_row(
-            _("Private key files"), option_defaults.get('private_keys', False),
-            subtitle=_("Not recommended — protect the backup with a passphrase if you include keys."))
-        try:
-            private_keys_row.add_css_class('error')
-        except Exception:
-            pass
-        warn_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
-        private_keys_row.add_prefix(warn_icon)
-
-        secrets_row = Adw.ExpanderRow(
-            title=_("Saved secrets (passwords and passphrases)"),
-            subtitle=_("Save passwords and passphrases for these connections"),
-        )
-        secrets_row.set_show_enable_switch(True)
-        secrets_row.set_enable_expansion(bool(option_defaults.get('secrets', False)))
-        secrets_row.set_expanded(False)
-
-        select_all_row = Adw.ActionRow(title=_("Select all"))
-        select_all_cb = Gtk.CheckButton()
-        select_all_cb.set_valign(Gtk.Align.CENTER)
-        select_all_cb.add_css_class('selection-mode')
-        select_all_row.add_suffix(select_all_cb)
-        select_all_row.set_activatable(True)
-        select_all_row.connect(
-            'activated',
-            lambda _r: select_all_cb.set_active(not select_all_cb.get_active()),
-        )
-        secrets_row.add_row(select_all_row)
-
-        # (cb, conn, key, action_row) — action_row is reparented when only private keys are on.
-        checks = []
-        prefill = set(prefill_ids or [])
-        select_all_by_default = not prefill
-        for conn in connections:
+        def _wrap_subtitle(row):
+            # Adw >= 1.3; older runtimes ellipsize instead, which is only cosmetic.
             try:
-                label = getattr(conn, 'nickname', '') or conn.get_effective_host() or '?'
-                key = getattr(conn, 'nickname', '') or label
+                row.set_subtitle_lines(0)
             except Exception:
-                label, key = '?', '?'
-            conn_row = Adw.ActionRow(title=label)
-            cb = Gtk.CheckButton()
-            cb.set_active(True if select_all_by_default else key in prefill)
-            cb.set_valign(Gtk.Align.CENTER)
-            cb.add_css_class('selection-mode')
-            conn_row.add_suffix(cb)
-            conn_row.set_activatable(True)
-            conn_row.connect(
-                'activated',
-                lambda _r, button=cb: button.set_active(not button.get_active()),
-            )
-            secrets_row.add_row(conn_row)
-            checks.append((cb, conn, key, conn_row))
+                pass
 
-        # When only private keys are on, the secrets expander stays collapsed — show the same
-        # connection picks in a sibling group (widgets are reparented, not duplicated).
-        keys_conn_group = Adw.PreferencesGroup(
-            title=_("Connections"),
-            description=_("Select which connections' private key files to include."),
-        )
-        keys_conn_group.add_css_class('boxed-list')
+        # -- destination -------------------------------------------------
+        dest_section = _section(_("Where should it go?"))
+        cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        dest_section.append(cards_box)
 
-        include_group.add(app_settings_row)
-        include_group.add(ssh_config_row)
-        include_group.add(known_hosts_row)
-        include_group.add(private_keys_row)
-        include_group.add(secrets_row)
-        page.append(include_group)
-        page.append(keys_conn_group)
+        selected_dest = [destination if destination in self._BACKUP_DESTINATIONS else 'file']
+        cards = {}
 
-        option_rows = {
-            'app_settings': app_settings_row,
-            'ssh_config': ssh_config_row,
-            'known_hosts': known_hosts_row,
-            'private_keys': private_keys_row,
-        }
+        def _add_destination_card(key, icon_name, title, subtitle):
+            """One boxed-list row that reads as a card; the accent ring marks the pick."""
+            row = Adw.ActionRow(title=title, subtitle=subtitle)
+            row.set_activatable(True)
+            try:
+                row.set_title_lines(0)
+            except Exception:
+                pass
+            _wrap_subtitle(row)
+            icon = icon_utils.new_image_from_icon_name(icon_name, 24)
+            icon.set_valign(Gtk.Align.CENTER)
+            row.add_prefix(icon)
+            check = icon_utils.new_image_from_icon_name('object-select-symbolic')
+            check.set_valign(Gtk.Align.CENTER)
+            check.add_css_class('accent')
+            row.add_suffix(check)
 
-        def on_select_all(*_a):
-            active = select_all_cb.get_active()
-            for cb, _c, _k, _r in checks:
-                cb.set_active(active)
-        select_all_cb.connect('notify::active', on_select_all)
-        select_all_cb.set_active(
-            bool(checks) and all(cb.get_active() for cb, _c, _k, _r in checks)
-        )
+            listbox = Gtk.ListBox()
+            listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+            listbox.add_css_class('boxed-list')
+            listbox.add_css_class('backup-destination')
+            listbox.append(row)
+            cards_box.append(listbox)
+            row.connect('activated', lambda _r, k=key: _select_destination(k))
+            cards[key] = (listbox, check, icon)
 
-        def _secrets_enabled():
-            return bool(secrets_row.get_enable_expansion())
+        _add_destination_card(
+            'file', 'document-save-symbolic',
+            _("Backup file on this computer"),
+            _("One .spbk file you choose the folder for. Good for a USB stick or your own "
+              "cloud drive."))
+        _add_destination_card(
+            'bitwarden', 'bitwarden',
+            _("Bitwarden vault"),
+            _("Saved as a secure note in your vault. Your Bitwarden account already encrypts "
+              "it, so there is no extra passphrase to remember."))
+        _add_destination_card(
+            'ssh', 'network-server-symbolic',
+            _("One of your servers"),
+            _("Uploaded over SFTP to a host from your inventory. Always protected with a "
+              "passphrase."))
 
-        def _reparent_connection_rows(to_expander):
-            """Move select-all + connection rows between the expander and keys_conn_group."""
-            rows = [select_all_row] + [r for _cb, _c, _k, r in checks]
-            for row in rows:
-                parent = row.get_parent()
-                if parent is not None:
-                    parent.remove(row)
-                if to_expander:
-                    secrets_row.add_row(row)
-                else:
-                    keys_conn_group.add(row)
-
-        def sync_connection_controls(*_a):
-            secrets_on = _secrets_enabled()
-            keys_on = private_keys_row.get_active()
-            if secrets_on:
-                _reparent_connection_rows(True)
-                keys_conn_group.set_visible(False)
-            elif keys_on:
-                _reparent_connection_rows(False)
-                keys_conn_group.set_visible(True)
-            else:
-                _reparent_connection_rows(True)
-                keys_conn_group.set_visible(False)
-                secrets_row.set_expanded(False)
-
-        def on_private_keys_toggled(row, _pspec):
-            if not private_keys_alert_guard[0] and row.get_active():
-                def decline():
-                    private_keys_alert_guard[0] = True
-                    try:
-                        row.set_active(False)
-                    finally:
-                        private_keys_alert_guard[0] = False
-
-                self._alert_private_keys_export_risk(dialog, on_decline=decline)
-            sync_connection_controls()
-
-        private_keys_alert_guard = [False]
-        secrets_row.connect('notify::enable-expansion', sync_connection_controls)
-        private_keys_row.connect('notify::active', on_private_keys_toggled)
-        sync_connection_controls()
-
-        dest_group = Adw.PreferencesGroup(title=_("Destination"))
-        dest_group.add_css_class('boxed-list')
-        dest_labels = [
-            _("File (.spbk)"),
-            _("Bitwarden"),
-            _("SSH server"),
-        ]
-        dest_keys = ['file', 'bitwarden', 'ssh']
-        dest_row = Adw.ComboRow(title=_("Save to"))
-        dest_row.set_model(Gtk.StringList.new(dest_labels))
-        try:
-            dest_row.set_selected(dest_keys.index(destination))
-        except ValueError:
-            dest_row.set_selected(0)
-        dest_group.add(dest_row)
-
-        mirror_logins_row = Adw.SwitchRow(
-            title=_("Also copy saved secrets as Bitwarden login items"),
-            subtitle=_("Creates normal login entries in your vault in addition to the backup note."),
-        )
-        # Indent under the Bitwarden destination so it reads as a dependent option.
-        mirror_indent = Gtk.Box()
-        mirror_indent.set_size_request(20, 1)
-        mirror_logins_row.add_prefix(mirror_indent)
-        dest_group.add(mirror_logins_row)
-
-        # SSH target: searchable inventory host picker (same popover as jump-host / Docker).
+        # -- SSH target (only shown for the server destination) ----------
         from .host_picker import show_host_picker
         selected_ssh_target = [None]
 
-        def _ssh_target_label(conn):
-            if conn is None:
-                return ''
-            return (getattr(conn, 'nickname', '')
-                    or (conn.get_effective_host() if hasattr(conn, 'get_effective_host') else '')
-                    or '?')
+        ssh_list = Gtk.ListBox()
+        ssh_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        ssh_list.add_css_class('boxed-list')
 
         def _ssh_target_subtitle(conn):
             if conn is None:
@@ -958,15 +889,23 @@ class WindowConfigDialogsMixin:
         pick_btn.add_css_class('flat')
         pick_btn.set_valign(Gtk.Align.CENTER)
         server_row.add_suffix(pick_btn)
+        ssh_list.append(server_row)
+
+        ssh_dir_row = Adw.EntryRow(title=_("Folder"))
+        ssh_dir_row.set_text(remote_dir or "~/sshpilot-backups/")
+        ssh_list.append(ssh_dir_row)
+        page.append(ssh_list)
 
         def _set_ssh_target(conn):
             selected_ssh_target[0] = conn
-            nick = _ssh_target_label(conn)
             if conn is None:
                 chosen_label.set_label('')
                 chosen_label.set_visible(False)
                 server_row.set_subtitle(_("Choose a server…"))
             else:
+                nick = (getattr(conn, 'nickname', '')
+                        or (conn.get_effective_host() if hasattr(conn, 'get_effective_host') else '')
+                        or '?')
                 chosen_label.set_label(nick)
                 chosen_label.set_visible(True)
                 server_row.set_subtitle(_ssh_target_subtitle(conn))
@@ -981,8 +920,7 @@ class WindowConfigDialogsMixin:
         pick_btn.connect('clicked', _open_ssh_host_picker)
         server_row.connect('activated', lambda _r: _open_ssh_host_picker())
 
-        # Prefill: explicit nickname from a prior reopen, else first inventory host
-        # (matches the old DropDown defaulting to index 0).
+        # Prefill: explicit nickname from a prior reopen, else the first inventory host.
         prefill_conn = None
         if target_nick:
             for c in connections:
@@ -992,155 +930,469 @@ class WindowConfigDialogsMixin:
         if prefill_conn is None and connections:
             prefill_conn = connections[0]
         _set_ssh_target(prefill_conn)
-        dest_group.add(server_row)
 
-        ssh_dir_row = Adw.EntryRow(title=_("Remote directory"))
-        ssh_dir_row.set_text(remote_dir or "~/sshpilot-backups/")
-        dest_group.add(ssh_dir_row)
-        page.append(dest_group)
+        # -- safety ------------------------------------------------------
+        safety_section = _section(_("Safety"))
+        safety_list = Gtk.ListBox()
+        safety_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        safety_list.add_css_class('boxed-list')
+        safety_section.append(safety_list)
 
-        enc_group = Adw.PreferencesGroup(title=_("Encryption"))
-        enc_group.add_css_class('boxed-list')
-        enc_row = Adw.SwitchRow(
-            title=_("Encrypt with a passphrase"),
-            subtitle=_("Without a passphrase, secrets are written in plain text."),
-        )
+        enc_row = Adw.SwitchRow(title=_("Protect the backup with a passphrase"))
         enc_row.set_active(bool(encrypt_default))
-        enc_group.add(enc_row)
-        page.append(enc_group)
+        enc_row.add_prefix(icon_utils.new_image_from_icon_name('channel-secure-symbolic'))
+        _wrap_subtitle(enc_row)
+        safety_list.append(enc_row)
 
-        def _dest_key():
-            idx = dest_row.get_selected()
-            if 0 <= idx < len(dest_keys):
-                return dest_keys[idx]
-            return 'file'
+        bw_info_row = Adw.ActionRow(
+            title=_("Bitwarden encrypts the backup with your vault credentials, so no "
+                    "separate passphrase is needed."))
+        try:
+            bw_info_row.set_title_lines(0)
+        except Exception:
+            pass
+        bw_info_row.add_css_class('dim-label')
+        bw_info_row.add_prefix(
+            icon_utils.new_image_from_icon_name('dialog-information-symbolic'))
+        safety_list.append(bw_info_row)
 
-        def sync_pw(*_a):
-            # Bitwarden uses the vault's own encryption — passphrase UI is for file/SSH only.
-            key = _dest_key()
-            to_bw = key == 'bitwarden'
-            to_ssh = key == 'ssh'
-            server_row.set_visible(to_ssh)
-            ssh_dir_row.set_visible(to_ssh)
-            enc_group.set_visible(not to_bw)
-            on = enc_row.get_active() and not to_bw
-            if on:
-                enc_row.set_subtitle(
-                    _("You will be asked to enter the passphrase when the backup is saved."))
-            elif to_bw:
-                enc_row.set_subtitle(
-                    _("Bitwarden encrypts the backup with your vault credentials."))
-            else:
-                enc_row.set_subtitle(
-                    _("Without a passphrase, secrets are written in plain text."))
-            mirror_logins_row.set_visible(to_bw and _secrets_enabled())
+        mirror_logins_row = Adw.SwitchRow(
+            title=_("Also copy saved secrets as Bitwarden login items"),
+            subtitle=_("Creates normal login entries in your vault in addition to the "
+                       "backup note."),
+        )
+        mirror_logins_row.set_active(bool(mirror_logins_default))
+        _wrap_subtitle(mirror_logins_row)
+        safety_list.append(mirror_logins_row)
 
-        def on_dest_changed(*_a):
-            if _dest_key() == 'ssh':
-                enc_row.set_active(True)
-            sync_pw()
+        keys_row = Adw.SwitchRow(
+            title=_("Include your private key files"),
+            subtitle=_("Copies the keys themselves out of ~/.ssh. Leave this off unless the "
+                       "new machine needs them."),
+        )
+        keys_row.set_active(bool(option_defaults.get('private_keys', False)))
+        keys_icon = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
+        keys_row.add_prefix(keys_icon)
+        _wrap_subtitle(keys_row)
+        safety_list.append(keys_row)
 
-        enc_row.connect('notify::active', sync_pw)
-        dest_row.connect('notify::selected', on_dest_changed)
-        secrets_row.connect('notify::enable-expansion', sync_pw)
-        sync_pw()
+        # Plain-text risk is called out where the switches are, not in a follow-up alert.
+        warn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        warn_box.add_css_class('backup-warning')
+        warn_icon = icon_utils.new_image_from_icon_name('dialog-warning-symbolic')
+        warn_icon.set_valign(Gtk.Align.START)
+        warn_icon.add_css_class('error')
+        warn_box.append(warn_icon)
+        warn_label = Gtk.Label(
+            label=_("Without a passphrase your keys and saved passwords are written in plain "
+                    "text — anyone who opens the file can read them."))
+        warn_label.set_wrap(True)
+        warn_label.set_xalign(0)
+        warn_label.set_hexpand(True)
+        warn_label.add_css_class('error')
+        warn_box.append(warn_label)
+        safety_section.append(warn_box)
+
+        footnote = Gtk.Label()
+        footnote.set_wrap(True)
+        footnote.set_xalign(0)
+        footnote.set_margin_start(2)
+        footnote.add_css_class('dim-label')
+        footnote.add_css_class('caption')
+        page.append(footnote)
+
+        # -- state sync --------------------------------------------------
+        syncing = [False]
+
+        def _sync(*_a):
+            if syncing[0]:
+                return
+            syncing[0] = True
+            try:
+                dest = selected_dest[0]
+                for key, (listbox, check, _icon) in cards.items():
+                    on = key == dest
+                    check.set_visible(on)
+                    if on:
+                        listbox.add_css_class('selected')
+                    else:
+                        listbox.remove_css_class('selected')
+
+                ssh_list.set_visible(dest == 'ssh')
+                bw_info_row.set_visible(dest == 'bitwarden')
+                mirror_logins_row.set_visible(dest == 'bitwarden')
+                enc_row.set_visible(dest != 'bitwarden')
+                # A server upload is always encrypted; the vault does its own encryption.
+                if dest == 'ssh':
+                    enc_row.set_active(True)
+                enc_row.set_sensitive(dest == 'file')
+
+                encrypt_on = dest != 'bitwarden' and enc_row.get_active()
+                if dest == 'ssh':
+                    enc_row.set_subtitle(
+                        _("Required for a server upload. You will be asked for the "
+                          "passphrase when the export starts."))
+                elif encrypt_on:
+                    enc_row.set_subtitle(
+                        _("You will be asked for a passphrase when the export starts. Keep "
+                          "it somewhere safe — it cannot be recovered."))
+                else:
+                    enc_row.set_subtitle(
+                        _("Off: saved passwords are written in plain text and readable by "
+                          "anyone with the file."))
+
+                keys_on = keys_row.get_active()
+                if keys_on:
+                    keys_icon.add_css_class('error')
+                else:
+                    keys_icon.remove_css_class('error')
+                warn_box.set_visible(keys_on and not encrypt_on)
+
+                if dest == 'bitwarden':
+                    footnote.set_label(
+                        _("The backup is stored as a secure note named after today's date. "
+                          "Importing it later asks for your vault, not a passphrase."))
+                elif dest == 'ssh':
+                    footnote.set_label(
+                        _("The file is uploaded over your existing SSH connection. Nothing "
+                          "is left behind on this computer."))
+                else:
+                    footnote.set_label(_("You will pick the folder and file name next."))
+            finally:
+                syncing[0] = False
+
+        def _select_destination(key):
+            selected_dest[0] = key
+            _sync()
+
+        enc_row.connect('notify::active', _sync)
+        keys_row.connect('notify::active', _sync)
+        _sync()
 
         def reopen(**kwargs):
             dialog.close()
-            GLib.idle_add(lambda: (self._show_export_options_dialog(**kwargs), False)[1])
+            self._reopen_export_options(**kwargs)
 
-        def on_continue(_btn):
-            selected = [conn for cb, conn, _k, _r in checks if cb.get_active()]
-            sel_ids = [k for cb, _c, k, _r in checks if cb.get_active()]
-            options = {key: row.get_active() for key, row in option_rows.items()}
-            options['secrets'] = _secrets_enabled()
-            dest = _dest_key()
-            encrypt_on = enc_row.get_active()
+        def on_start(_btn):
+            dest = selected_dest[0]
+            # Everything but the private keys always travels with the backup.
+            options = {
+                'app_settings': True,
+                'ssh_config': True,
+                'known_hosts': True,
+                'secrets': True,
+                'private_keys': keys_row.get_active(),
+            }
+            encrypt_on = dest != 'bitwarden' and enc_row.get_active()
             remote_text = ssh_dir_row.get_text()
-            ssh_nick = getattr(selected_ssh_target[0], 'nickname', None) if selected_ssh_target[0] else None
-            if not any(options.values()):
-                reopen(
-                    prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
-                    destination=dest, target_nick=ssh_nick, remote_dir=remote_text,
-                    error=_("Choose at least one item to include in the backup."))
-                return
-            if (options.get('secrets') or options.get('private_keys')) and not selected:
-                reopen(
-                    prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
-                    destination=dest, target_nick=ssh_nick, remote_dir=remote_text,
-                    error=_("Select at least one connection to include its saved passwords "
-                            "or private keys."))
-                return
+            ssh_nick = (
+                getattr(selected_ssh_target[0], 'nickname', None)
+                if selected_ssh_target[0] is not None else None
+            )
+            # Preserve every choice so a cancel in a follow-up dialog can restore
+            # this screen instead of abandoning the export flow.
+            reopen_state = {
+                'encrypt_default': encrypt_on if dest != 'bitwarden' else True,
+                'option_defaults': options,
+                'destination': dest,
+                'target_nick': ssh_nick,
+                'remote_dir': remote_text,
+                'mirror_logins_default': mirror_logins_row.get_active(),
+            }
+
             if dest == 'bitwarden':
                 dialog.close()
-                mirror = mirror_logins_row.get_active() and bool(options.get('secrets'))
-                self._export_to_bitwarden(selected, options, mirror_logins=mirror)
+                self._export_to_bitwarden(
+                    connections, options,
+                    mirror_logins=mirror_logins_row.get_active(),
+                    reopen=reopen_state)
                 return
+
             if dest == 'ssh':
                 target = selected_ssh_target[0]
                 if target is None:
-                    reopen(
-                        prefill_ids=sel_ids, encrypt_default=encrypt_on, option_defaults=options,
-                        destination='ssh', remote_dir=remote_text,
-                        error=_("Choose a server to back up to."))
+                    reopen(error=_("Choose a server to back up to."), **reopen_state)
                     return
-                remote = remote_text.strip() or "~/sshpilot-backups"
-                nick = getattr(target, 'nickname', None)
-                if encrypt_on:
-                    dialog.close()
-                    self._export_to_ssh_server(selected, options, True, target, remote)
-                elif options.get('secrets') or options.get('private_keys'):
-                    dialog.close()
-                    self._confirm_plaintext_then_export(
-                        selected, sel_ids, options,
-                        on_confirm=lambda: self._export_to_ssh_server(
-                            selected, options, None, target, remote),
-                        destination='ssh', target_nick=nick, remote_dir=remote)
-                else:
-                    dialog.close()
-                    self._export_to_ssh_server(selected, options, None, target, remote)
+                dialog.close()
+                self._export_to_ssh_server(
+                    connections, options, True, target,
+                    remote_text.strip() or "~/sshpilot-backups",
+                    reopen=reopen_state)
                 return
-            if encrypt_on:
-                dialog.close()
-                self._choose_export_path(selected, True, options)
-            else:
-                dialog.close()
-                if options.get('secrets') or options.get('private_keys'):
-                    self._confirm_plaintext_then_export(selected, sel_ids, options)
-                else:
-                    self._choose_export_path(selected, None, options)
 
-        continue_btn.connect('clicked', on_continue)
+            dialog.close()
+            if encrypt_on:
+                self._choose_export_path(
+                    connections, True, options, reopen=reopen_state)
+            elif options['private_keys']:
+                # Copying the keys themselves out of ~/.ssh unprotected still gets a
+                # confirmation; the plain-text cost of the rest is stated on the switch.
+                self._confirm_plaintext_then_export(
+                    connections, None, options, reopen=reopen_state)
+            else:
+                self._choose_export_path(
+                    connections, None, options, reopen=reopen_state)
+
+        start_btn.connect('clicked', on_start)
         dialog.present()
 
-    def _alert_private_keys_export_risk(self, parent, *, on_decline=None):
-        """Warn before including private key files in a backup."""
-        heading = _("Private Key Files")
-        body = _("It is not recommended to move your private keys to another machine. "
-                 "If you still want to do this, make sure to protect the backup "
-                 "with a passphrase.")
-        if hasattr(Adw, 'AlertDialog'):
-            alert = Adw.AlertDialog(heading=heading, body=body)
+    # Labels for the "what is in this backup" list, in reading order.
+    _BACKUP_CATEGORY_LABELS = (
+        ('app_settings', "App settings and groups"),
+        ('ssh_config', "Connections and SSH config"),
+        ('known_hosts', "Known hosts"),
+        ('secrets', "Saved passwords and passphrases"),
+        ('private_keys', "Private key files"),
+    )
+
+    def _backup_progress_dialog(self, *, title, status, destination_label,
+                                path=None, options=None):
+        """The export progress sheet; returns ``(set_status, close)``.
+
+        Same contract as :func:`bitwarden_setup.progress_dialog`, and an
+        ``Adw.Dialog`` for the same reason: the daemon prompts this waits on
+        (the backup passphrase, a vault unlock) are dialogs themselves, and
+        libadwaita only stacks them above this one when both are hosted by the
+        same window.
+
+        Dismissing it does **not** cancel anything.  The daemon owns the export
+        and exposes no way to stop it once started, so a "cancel" here only
+        ever hid the outcome of work that kept running.  Closing the sheet now
+        means "run it in the background" and the result is still reported.
+        """
+        if not hasattr(Adw, "Dialog"):
+            from .bitwarden_setup import progress_dialog
+            return progress_dialog(self, title, status)
+
+        from sshpilot import icon_utils
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        body.set_margin_top(20)
+        body.set_margin_bottom(22)
+        body.set_margin_start(22)
+        body.set_margin_end(22)
+
+        where = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        dest_label = Gtk.Label(label=destination_label)
+        dest_label.set_wrap(True)
+        dest_label.set_xalign(0)
+        where.append(dest_label)
+        if path:
+            path_label = Gtk.Label(label=path)
+            path_label.set_wrap(True)
+            path_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            path_label.set_xalign(0)
+            path_label.set_selectable(True)
+            path_label.add_css_class('backup-path')
+            path_label.add_css_class('caption')
+            path_label.add_css_class('dim-label')
+            where.append(path_label)
+        body.append(where)
+
+        # The daemon runs the export as one atomic call and reports no
+        # intermediate phases, so this is a single live status line over a
+        # static list of what the backup carries — not a fake step counter.
+        running = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        spinner = Gtk.Spinner()
+        spinner.set_size_request(18, 18)
+        spinner.set_valign(Gtk.Align.CENTER)
+        spinner.start()
+        running.append(spinner)
+        status_label = Gtk.Label(label=status)
+        status_label.set_wrap(True)
+        status_label.set_xalign(0)
+        status_label.set_hexpand(True)
+        running.append(status_label)
+        body.append(running)
+
+        opts = _normalize_backup_options(options)
+        included = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        for key, label in self._BACKUP_CATEGORY_LABELS:
+            if not opts.get(key):
+                continue
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            row.set_margin_top(4)
+            row.set_margin_bottom(4)
+            tick = icon_utils.new_image_from_icon_name('object-select-symbolic')
+            tick.set_valign(Gtk.Align.CENTER)
+            tick.add_css_class('dim-label')
+            row.append(tick)
+            text = Gtk.Label(label=_(label))
+            text.set_wrap(True)
+            text.set_xalign(0)
+            text.set_hexpand(True)
+            text.add_css_class('dim-label')
+            row.append(text)
+            included.append(row)
+        body.append(included)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(Adw.HeaderBar())
+        toolbar.set_content(body)
+
+        dialog = Adw.Dialog()
+        dialog.set_title(title)
+        dialog.set_content_width(480)
+        dialog.set_child(toolbar)
+
+        background_btn = Gtk.Button(label=_("Run in Background"))
+        background_btn.connect('clicked', lambda _b: dialog.close())
+        body.append(background_btn)
+
+        note = Gtk.Label(
+            label=_("Closing this window does not cancel the export — it keeps running and "
+                    "you will be told when it finishes. Passphrase prompts open on top of it."))
+        note.set_wrap(True)
+        note.set_xalign(0)
+        note.add_css_class('dim-label')
+        note.add_css_class('caption')
+        body.append(note)
+
+        state = {"closed": False}
+
+        def _on_closed(*_args):
+            state["closed"] = True
+            spinner.stop()
+
+        dialog.connect("closed", _on_closed)
+        dialog.present(self)
+
+        def close():
+            if state["closed"]:
+                return
+            state["closed"] = True
+            spinner.stop()
+            try:
+                dialog.force_close()
+            except Exception:
+                logger.debug("Could not close the export progress dialog", exc_info=True)
+
+        return status_label.set_text, close
+
+    def _show_export_result(self, *, path, options, encrypt, counts,
+                            warnings=(), connection_count=0):
+        """The "Backup Saved" sheet: where it went and what went with it.
+
+        ``encrypt`` is ``'vault'`` for Bitwarden (the vault does its own
+        encryption), otherwise truthy/falsy for the passphrase.
+        """
+        from sshpilot import icon_utils
+
+        counts = counts or {}
+        opts = _normalize_backup_options(options)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        body.set_margin_top(20)
+        body.set_margin_bottom(22)
+        body.set_margin_start(22)
+        body.set_margin_end(22)
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        check = icon_utils.new_image_from_icon_name('check-round-outline2-symbolic', 26)
+        check.set_valign(Gtk.Align.START)
+        check.add_css_class('success')
+        head.append(check)
+        head_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        head_text.set_hexpand(True)
+        title_label = Gtk.Label(label=_("Your backup is saved."))
+        title_label.set_wrap(True)
+        title_label.set_xalign(0)
+        title_label.add_css_class('title-4')
+        head_text.append(title_label)
+        if path:
+            path_label = Gtk.Label(label=path)
+            path_label.set_wrap(True)
+            path_label.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            path_label.set_xalign(0)
+            path_label.set_selectable(True)
+            path_label.add_css_class('backup-path')
+            path_label.add_css_class('caption')
+            path_label.add_css_class('dim-label')
+            head_text.append(path_label)
+        head.append(head_text)
+        body.append(head)
+
+        summary = Gtk.ListBox()
+        summary.set_selection_mode(Gtk.SelectionMode.NONE)
+        summary.add_css_class('boxed-list')
+
+        def _summary_row(title, value, css=None):
+            row = Adw.ActionRow(title=title)
+            label = Gtk.Label(label=value)
+            label.set_valign(Gtk.Align.CENTER)
+            label.add_css_class(css or 'dim-label')
+            row.add_suffix(label)
+            summary.append(row)
+
+        _summary_row(_("Connections"), str(connection_count))
+        _summary_row(_("Saved passwords"), str(counts.get('credentials', 0)))
+        _summary_row(
+            _("Private keys"),
+            str(counts.get('private_keys', 0)) if opts.get('private_keys')
+            else _("Not included"))
+        if counts.get('mirrored'):
+            _summary_row(_("Bitwarden login items"), str(counts.get('mirrored')))
+        if encrypt == 'vault':
+            _summary_row(_("Protection"), _("Vault encryption"), css='success')
         else:
-            alert = Adw.MessageDialog(
-                transient_for=parent, modal=True, heading=heading, body=body,
-            )
-        alert.add_response('cancel', _('Cancel'))
-        alert.add_response('ok', _('OK'))
-        alert.set_default_response('ok')
-        alert.set_close_response('cancel')
+            _summary_row(_("Passphrase protection"),
+                         _("On") if encrypt else _("Off"),
+                         css='success' if encrypt else 'warning')
+        body.append(summary)
 
-        def on_response(_dlg, resp):
-            if resp != 'ok' and on_decline:
-                on_decline()
+        if warnings:
+            warn_label = Gtk.Label(
+                label="\n\n".join(format_secret_transfer_messages(warnings)))
+            warn_label.set_wrap(True)
+            warn_label.set_xalign(0)
+            warn_label.add_css_class('warning')
+            body.append(warn_label)
 
-        alert.connect('response', on_response)
-        if hasattr(Adw, 'AlertDialog'):
-            alert.present(parent)
-        else:
-            alert.present()
+        buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        buttons.set_halign(Gtk.Align.END)
+        if path:
+            copy_btn = Gtk.Button(label=_("Copy Path"))
 
-    def _export_to_bitwarden(self, connections, options, mirror_logins=False):
+            def on_copy(btn):
+                try:
+                    self.get_clipboard().set(path)
+                    btn.set_label(_("Copied"))
+                except Exception:
+                    logger.debug("Could not copy the backup path", exc_info=True)
+
+            copy_btn.connect('clicked', on_copy)
+            buttons.append(copy_btn)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(Adw.HeaderBar())
+        toolbar.set_content(body)
+
+        if hasattr(Adw, "Dialog"):
+            dialog = Adw.Dialog()
+            dialog.set_title(_("Backup Saved"))
+            dialog.set_content_width(480)
+            dialog.set_child(toolbar)
+            done_btn = Gtk.Button(label=_("Done"))
+            done_btn.add_css_class('suggested-action')
+            done_btn.connect('clicked', lambda _b: dialog.force_close())
+            buttons.append(done_btn)
+            body.append(buttons)
+            dialog.present(self)
+            return
+
+        window = Adw.Window(transient_for=self, modal=True)
+        window.set_title(_("Backup Saved"))
+        window.set_default_size(BACKUP_DIALOG_MIN_WIDTH, -1)
+        window.set_content(toolbar)
+        done_btn = Gtk.Button(label=_("Done"))
+        done_btn.add_css_class('suggested-action')
+        done_btn.connect('clicked', lambda _b: window.close())
+        buttons.append(done_btn)
+        body.append(buttons)
+        window.present()
+
+    def _export_to_bitwarden(self, connections, options, mirror_logins=False,
+                             reopen=None):
         """Get Bitwarden ready, then store the backup manifest in a secure note (optionally also
         mirroring saved secrets as Bitwarden login items). The manifest is built and written
         entirely inside the daemon — the frontend only shows progress and the outcome counts."""
@@ -1148,17 +1400,18 @@ class WindowConfigDialogsMixin:
 
         def after_ready(ready):
             if not ready:
+                if reopen is not None:
+                    self._reopen_export_options(**reopen)
                 return
 
             def do_export(*_a):
-                from .bitwarden_backup_setup import progress_dialog
                 controller = self._secrets_controller()
 
-                cancelled = {'v': False}
-                _set_status, close_spinner = progress_dialog(
-                    self, _("Export to Bitwarden"),
-                    _("Exporting to Bitwarden — this may take a while…"),
-                    on_cancel=lambda: cancelled.__setitem__('v', True))
+                _set_status, close_spinner = self._backup_progress_dialog(
+                    title=_("Exporting Backup"),
+                    status=_("Exporting to Bitwarden — this may take a while…"),
+                    destination_label=_("Writing to your Bitwarden vault"),
+                    options=options)
 
                 def worker():
                     try:
@@ -1173,13 +1426,15 @@ class WindowConfigDialogsMixin:
                     GLib.idle_add(lambda: (_report(payload), False)[1])
 
                 def _report(p):
-                    if cancelled['v']:
-                        return   # user cancelled the wait
                     close_spinner()
                     if p[0] != 'ok':
                         self._simple_dialog(_("Export Failed"), p[1])
                         return
                     result = p[1]
+                    if self._export_was_user_cancelled(result):
+                        if reopen is not None:
+                            self._reopen_export_options(**reopen)
+                        return
                     if result.status.value != 'success':
                         # A refused export is reported like any other failure:
                         # only raised exceptions used to reach the log, so a
@@ -1198,22 +1453,22 @@ class WindowConfigDialogsMixin:
                             )
                         self._simple_dialog(_("Export Failed"), msg)
                         return
-                    counts = result.counts or {}
-                    msg = _("Backup saved to Bitwarden.\n\n{} credential(s) and {} "
-                            "private key(s) included.").format(
-                                counts.get('credentials', 0),
-                                counts.get('private_keys', 0))
-                    if counts.get('mirrored'):
-                        msg += "\n\n" + _("{} secret(s) also copied as Bitwarden login "
-                                          "items.").format(counts.get('mirrored'))
-                    self._simple_dialog(_("Export Successful"), msg)
+                    self._show_export_result(
+                        path=result.path or _("Secure note in your Bitwarden vault"),
+                        options=options, encrypt='vault',
+                        counts=result.counts or {}, warnings=result.warnings,
+                        connection_count=len(connections or []))
 
                 threading.Thread(target=worker, daemon=True).start()
 
             # Reading saved secrets for the manifest may need the CURRENT secrets backend unlocked.
             self._run_after_vault_unlock_for_secrets(
                 do_export, needed=bool(options.get('secrets')),
-                cancelled_heading=_("Export Cancelled"))
+                cancelled_heading=_("Export Cancelled"),
+                on_cancelled=(
+                    (lambda: self._reopen_export_options(**reopen))
+                    if reopen is not None else None
+                ))
 
         ensure_bitwarden_ready(self, after_ready)
 
@@ -1287,13 +1542,13 @@ class WindowConfigDialogsMixin:
                 out.append(str(key))
         return out
 
-    def _export_to_ssh_server(self, connections, options, encrypt, target, remote_dir):
+    def _export_to_ssh_server(self, connections, options, encrypt, target, remote_dir,
+                              reopen=None):
         """Store the backup manifest as a ``.spbk`` file in ``remote_dir`` on ``target``.
 
         The manifest is built, encrypted (when ``encrypt``) and uploaded entirely inside the
         daemon; the daemon also resolves the connection password from its own secret manager.
         The passphrase is collected by a protected interaction, never by this window."""
-        from .bitwarden_backup_setup import progress_dialog
         controller = self._secrets_controller()
 
         def do_export(*_a):
@@ -1301,11 +1556,11 @@ class WindowConfigDialogsMixin:
             dest = "ssh:{}:{}".format(
                 getattr(target, 'nickname', '') or getattr(target, 'hostname', '') or '',
                 remote_dir)
-            cancelled = {'v': False}
-            _set_status, close_spinner = progress_dialog(
-                self, _("Export to SSH Server"),
-                _("Backing up to {host} — this may take a while…").format(host=who),
-                on_cancel=lambda: cancelled.__setitem__('v', True))
+            _set_status, close_spinner = self._backup_progress_dialog(
+                title=_("Exporting Backup"),
+                status=_("Backing up to {host} — this may take a while…").format(host=who),
+                destination_label=_("Writing to {host}").format(host=who),
+                path=remote_dir, options=options)
 
             prompts = self._present_ssh_backup_prompts(target)
 
@@ -1323,13 +1578,15 @@ class WindowConfigDialogsMixin:
 
             def _report(p):
                 self._close_ssh_backup_prompts(prompts)
-                if cancelled['v']:
-                    return
                 close_spinner()
                 if p[0] != 'ok':
                     self._simple_dialog(_("Export Failed"), p[1])
                     return
                 result = p[1]
+                if self._export_was_user_cancelled(result):
+                    if reopen is not None:
+                        self._reopen_export_options(**reopen)
+                    return
                 if result.status.value != 'success':
                     logger.error(
                         "SSH server export failed: %s", result.message or "no detail"
@@ -1341,24 +1598,24 @@ class WindowConfigDialogsMixin:
                     )
                     self._simple_dialog(_("Export Failed"), msg)
                     return
-                counts = result.counts or {}
-                self._simple_dialog(
-                    _("Export Successful"),
-                    _("Backup saved to {}:{}\n\n{} credential(s) and {} private key(s) "
-                      "included; encryption: {}.").format(
-                        who, remote_dir, counts.get('credentials', 0),
-                        counts.get('private_keys', 0),
-                        _("on") if encrypt else _("off")))
+                self._show_export_result(
+                    path=result.path or "{}:{}".format(who, remote_dir),
+                    options=options, encrypt=bool(encrypt),
+                    counts=result.counts or {}, warnings=result.warnings,
+                    connection_count=len(connections or []))
 
             threading.Thread(target=worker, daemon=True).start()
 
         self._run_after_vault_unlock_for_secrets(
             do_export, needed=bool(options.get('secrets')),
-            cancelled_heading=_("Export Cancelled"))
+            cancelled_heading=_("Export Cancelled"),
+            on_cancelled=(
+                (lambda: self._reopen_export_options(**reopen))
+                if reopen is not None else None
+            ))
 
     def _confirm_plaintext_then_export(self, connections, sel_ids, options,
-                                       on_confirm=None, destination='file',
-                                       target_nick=None, remote_dir=None):
+                                       on_confirm=None, reopen=None):
         sensitive_items = []
         if options.get('secrets'):
             sensitive_items.append(_("saved passwords and passphrases"))
@@ -1379,15 +1636,20 @@ class WindowConfigDialogsMixin:
                 if on_confirm is not None:
                     on_confirm()
                 else:
-                    self._choose_export_path(connections, None, options)
+                    self._choose_export_path(
+                        connections, None, options, reopen=reopen)
+            elif reopen is not None:
+                self._reopen_export_options(**reopen)
             else:
-                GLib.idle_add(lambda: (self._show_export_options_dialog(
-                    sel_ids, False, options, destination=destination,
-                    target_nick=target_nick, remote_dir=remote_dir), False)[1])
+                # Legacy callers without a reopen snapshot still get the options window.
+                self._reopen_export_options(
+                    prefill_ids=sel_ids, encrypt_default=False,
+                    option_defaults=options)
         warn.connect('response', on_warn)
         warn.present()
 
-    def _run_local_export(self, *, export_path, connections, options, encrypt):
+    def _run_local_export(self, *, export_path, connections, options, encrypt,
+                          reopen=None):
         """Run the daemon-owned ``.spbk`` export off the GTK main thread.
 
         The daemon RPC below blocks on the encryption passphrase interaction
@@ -1398,12 +1660,11 @@ class WindowConfigDialogsMixin:
         caller used to deadlock the export until the interaction expired
         (issue #1200)."""
         controller = self._secrets_controller()
-        from .bitwarden_backup_setup import progress_dialog
-        cancelled = {'v': False}
-        _set_status, close_spinner = progress_dialog(
-            self, _("Export Backup"),
-            _("Exporting backup — this may take a while…"),
-            on_cancel=lambda: cancelled.__setitem__('v', True))
+        _set_status, close_spinner = self._backup_progress_dialog(
+            title=_("Exporting Backup"),
+            status=_("Exporting backup — this may take a while…"),
+            destination_label=_("Writing to this computer"),
+            path=export_path, options=options)
 
         def worker():
             try:
@@ -1418,13 +1679,15 @@ class WindowConfigDialogsMixin:
             GLib.idle_add(lambda: (_report(payload), False)[1])
 
         def _report(p):
-            if cancelled['v']:
-                return   # user cancelled the wait
             close_spinner()
             if p[0] != 'ok':
                 self._simple_dialog(_("Export Failed"), p[1])
                 return
             result = p[1]
+            if self._export_was_user_cancelled(result):
+                if reopen is not None:
+                    self._reopen_export_options(**reopen)
+                return
             if result.status.value != 'success':
                 logger.error("Export failed: %s", result.message or "no detail")
                 msg = (
@@ -1434,21 +1697,15 @@ class WindowConfigDialogsMixin:
                 )
                 self._simple_dialog(_("Export Failed"), msg)
                 return
-            counts = result.counts or {}
-            msg = _("Backup saved to:\n{}\n\n{} credential(s) and {} private key(s) "
-                    "included; encryption: {}.").format(
-                export_path, counts.get('credentials', 0),
-                counts.get('private_keys', 0),
-                _("on") if encrypt else _("off"))
-            if result.warnings:
-                msg += "\n\n" + "\n\n".join(
-                    format_secret_transfer_messages(result.warnings)
-                )
-            self._simple_dialog(_("Export Successful"), msg)
+            self._show_export_result(
+                path=result.path or export_path, options=options,
+                encrypt=bool(encrypt), counts=result.counts or {},
+                warnings=result.warnings,
+                connection_count=len(connections or []))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _choose_export_path(self, connections, encrypt, options):
+    def _choose_export_path(self, connections, encrypt, options, reopen=None):
         """Pick a ``.spbk`` path (GTK file picker), then run the daemon-owned export.
 
         ``encrypt`` is a flag: the passphrase itself is collected by a protected
@@ -1474,14 +1731,22 @@ class WindowConfigDialogsMixin:
         def on_save_response(dialog, result):
             try:
                 file = dialog.save_finish(result)
-            except GLib.Error as e:
+            except Exception as e:
+                # Gtk.FileDialog reports dismiss as GLib.Error with
+                # GTK_DIALOG_ERROR_DISMISSED (2).
                 if getattr(e, 'code', None) == 2:
                     logger.info("Export cancelled by user")
-                else:
-                    logger.error(f"Export failed: {e}")
-                    self._simple_dialog(_("Export Failed"), str(e))
+                    if reopen is not None:
+                        self._reopen_export_options(**reopen)
+                    return
+                if not isinstance(e, GLib.Error):
+                    raise
+                logger.error(f"Export failed: {e}")
+                self._simple_dialog(_("Export Failed"), str(e))
                 return
             if not file:
+                if reopen is not None:
+                    self._reopen_export_options(**reopen)
                 return
             export_path = file.get_path()
             if not export_path.endswith('.spbk'):
@@ -1490,12 +1755,16 @@ class WindowConfigDialogsMixin:
             def do_export(*_args):
                 self._run_local_export(
                     export_path=export_path, connections=connections,
-                    options=options, encrypt=encrypt)
+                    options=options, encrypt=encrypt, reopen=reopen)
 
             self._run_after_vault_unlock_for_secrets(
                 do_export,
                 needed=bool(options.get('secrets')),
                 cancelled_heading=_("Export Cancelled"),
+                on_cancelled=(
+                    (lambda: self._reopen_export_options(**reopen))
+                    if reopen is not None else None
+                ),
             )
 
         file_dialog.save(self, None, on_save_response)
@@ -2150,13 +2419,18 @@ class WindowConfigDialogsMixin:
         )
 
     def _run_after_vault_unlock_for_secrets(self, proceed, *, needed: bool,
-                                            cancelled_heading: str):
+                                            cancelled_heading: str,
+                                            on_cancelled=None):
         """Run ``proceed()`` once the session vault is unlocked when secrets are involved.
 
         The lock state comes from the daemon (the controller's ``load_state``). If the
         vault is locked, prompt to unlock through the daemon. When unlock fails or the
         user cancels, show ``cancelled_heading`` and do **not** call ``proceed()`` —
-        export/import must not silently continue with zero credentials restored or included."""
+        export/import must not silently continue with zero credentials restored or included.
+
+        ``on_cancelled`` (export flows) restores the options dialog instead of a
+        dead-end cancel alert when the user dismisses the unlock prompt.
+        """
         if not needed:
             proceed()
             return
@@ -2186,6 +2460,9 @@ class WindowConfigDialogsMixin:
         def _on_done(unlocked):
             if unlocked:
                 proceed()
+                return
+            if on_cancelled is not None:
+                on_cancelled()
                 return
             self._simple_dialog(
                 cancelled_heading,

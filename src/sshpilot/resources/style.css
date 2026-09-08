@@ -128,3 +128,26 @@
     background: transparent;
     box-shadow: none;
 }
+
+/* Export Backup dialog (window_dialogs.py). Each destination is its own
+   single-row .boxed-list so the three read as separate cards; the accent ring
+   marks the pick, since a boxed list has no selected state of its own. */
+.backup-destination.selected {
+    box-shadow:
+        0 0 0 2px @accent_bg_color,
+        0 0 0 6px alpha(@accent_bg_color, 0.16);
+}
+
+/* Inline plain-text warning under the Safety group — replaces the follow-up
+   alert that used to fire when the private-key switch was turned on. */
+.backup-warning {
+    padding: 12px 14px;
+    border-radius: 12px;
+    background-color: alpha(@error_bg_color, 0.10);
+    border: 1px solid alpha(@error_bg_color, 0.28);
+}
+
+/* Monospace path lines in the export progress / result sheets. */
+.backup-path {
+    font-family: monospace;
+}

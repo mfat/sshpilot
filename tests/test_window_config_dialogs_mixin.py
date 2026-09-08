@@ -92,9 +92,16 @@ def _ssh_backup_window(controller):
             self.client_bridge = _SyncBridge()
             self.secrets_controller = controller
             self.dialogs = []
+            self.results = []
 
         def _simple_dialog(self, heading, body):
             self.dialogs.append((heading, body))
+
+        def _backup_progress_dialog(self, **_kwargs):
+            return (lambda *_a: None, lambda *_a: None)
+
+        def _show_export_result(self, **kwargs):
+            self.results.append(kwargs)
 
         def _run_after_vault_unlock_for_secrets(self, run, **_kwargs):
             run()
@@ -111,6 +118,8 @@ def _patch_backup_flow(monkeypatch):
     """Run the flow's spinner, thread and idle callback inline."""
     from sshpilot import bitwarden_backup_setup, window_dialogs
 
+    # The import flows still use the shared spinner; the export flows now build
+    # their own progress sheet, stubbed on the window itself.
     monkeypatch.setattr(
         bitwarden_backup_setup,
         "progress_dialog",
@@ -150,7 +159,9 @@ def test_ssh_export_presents_the_servers_prompts_and_closes_them(monkeypatch):
             seen["destination"] = kwargs["destination"]
             return types.SimpleNamespace(
                 status=types.SimpleNamespace(value="success"),
+                path="backup-server:~/sshpilot-backups",
                 counts={},
+                warnings=(),
                 message=None,
             )
 
