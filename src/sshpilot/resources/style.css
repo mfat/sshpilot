@@ -138,7 +138,7 @@
         0 0 0 6px alpha(@accent_bg_color, 0.16);
 }
 
-/* Inline plain-text warning under the Safety group — replaces the follow-up
+/* Inline plain-text warning under the Security group — replaces the follow-up
    alert that used to fire when the private-key switch was turned on. */
 .backup-warning {
     padding: 12px 14px;

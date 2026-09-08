@@ -931,18 +931,18 @@ class WindowConfigDialogsMixin:
             prefill_conn = connections[0]
         _set_ssh_target(prefill_conn)
 
-        # -- safety ------------------------------------------------------
-        safety_section = _section(_("Safety"))
-        safety_list = Gtk.ListBox()
-        safety_list.set_selection_mode(Gtk.SelectionMode.NONE)
-        safety_list.add_css_class('boxed-list')
-        safety_section.append(safety_list)
+        # -- security ----------------------------------------------------
+        security_section = _section(_("Security"))
+        security_list = Gtk.ListBox()
+        security_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        security_list.add_css_class('boxed-list')
+        security_section.append(security_list)
 
         enc_row = Adw.SwitchRow(title=_("Protect the backup with a passphrase"))
         enc_row.set_active(bool(encrypt_default))
         enc_row.add_prefix(icon_utils.new_image_from_icon_name('channel-secure-symbolic'))
         _wrap_subtitle(enc_row)
-        safety_list.append(enc_row)
+        security_list.append(enc_row)
 
         bw_info_row = Adw.ActionRow(
             title=_("Bitwarden encrypts the backup with your vault credentials, so no "
@@ -954,7 +954,7 @@ class WindowConfigDialogsMixin:
         bw_info_row.add_css_class('dim-label')
         bw_info_row.add_prefix(
             icon_utils.new_image_from_icon_name('dialog-information-symbolic'))
-        safety_list.append(bw_info_row)
+        security_list.append(bw_info_row)
 
         mirror_logins_row = Adw.SwitchRow(
             title=_("Also copy saved secrets as Bitwarden login items"),
@@ -963,7 +963,7 @@ class WindowConfigDialogsMixin:
         )
         mirror_logins_row.set_active(bool(mirror_logins_default))
         _wrap_subtitle(mirror_logins_row)
-        safety_list.append(mirror_logins_row)
+        security_list.append(mirror_logins_row)
 
         keys_row = Adw.SwitchRow(
             title=_("Include your private key files"),
@@ -974,7 +974,7 @@ class WindowConfigDialogsMixin:
         keys_icon = icon_utils.new_image_from_icon_name('dialog-password-symbolic')
         keys_row.add_prefix(keys_icon)
         _wrap_subtitle(keys_row)
-        safety_list.append(keys_row)
+        security_list.append(keys_row)
 
         # Plain-text risk is called out where the switches are, not in a follow-up alert.
         warn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -991,7 +991,7 @@ class WindowConfigDialogsMixin:
         warn_label.set_hexpand(True)
         warn_label.add_css_class('error')
         warn_box.append(warn_label)
-        safety_section.append(warn_box)
+        security_section.append(warn_box)
 
         footnote = Gtk.Label()
         footnote.set_wrap(True)
