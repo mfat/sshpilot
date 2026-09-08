@@ -874,6 +874,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     "Failed to attach SSH overrides controller to Preferences",
                     exc_info=True,
                 )
+            # Preferences is preloaded on a low-priority idle, which can win
+            # the race against this first attach. Built without a client, it
+            # greys out the operation-mode radios and returns; nothing else
+            # would ever tell it the daemon arrived, so the modes stayed
+            # unswitchable until a restart happened to lose the race. The
+            # rebind path already re-asks here -- the first attach must too.
+            try:
+                reset = getattr(
+                    preferences, "reset_operation_mode_confirmation", None
+                )
+                if callable(reset):
+                    reset()
+            except Exception:
+                logger.debug(
+                    "Failed to resync the Preferences operation mode",
+                    exc_info=True,
+                )
         self._api_client_selection_pending = False
         self._api_client_selection_request = None
         app = self.get_application()
