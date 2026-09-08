@@ -61,6 +61,16 @@
 
 
 
+    <release version="6.0.7" date="2026-09-08">
+      <description>
+        <p>Redesigned backup dialog</p>
+        <p>Improved Host Info dialog</p>
+        <p>Added option to paste public key to ssh-copy-id dialog</p>
+        <p>Fixed bug that prevented deleting multiple groups at once</p>
+        <p>Added option to reveal scp-downloaded files in file manager</p>
+        <p>Fixed backup decryption bug during restore</p>
+      </description>
+    </release>
     <release version="6.0.6" date="2026-09-06">
       <description>
         <p>Bug fixes</p>
