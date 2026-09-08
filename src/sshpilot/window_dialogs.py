@@ -738,12 +738,12 @@ class WindowConfigDialogsMixin:
 
         # Modal window + Clamp (same scaffold as session manager / key chooser).
         dialog = Adw.Window(transient_for=self, modal=True)
-        dialog.set_title(_("Export Backup"))
+        dialog.set_title(_("Backup"))
         dialog.set_default_size(BACKUP_EXPORT_WINDOW_WIDTH, BACKUP_EXPORT_WINDOW_HEIGHT)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(title=_("Export Backup")))
+        header.set_title_widget(Adw.WindowTitle(title=_("Backup")))
 
         cancel_btn = Gtk.Button(label=_("Cancel"))
         cancel_btn.connect('clicked', lambda _b: dialog.close())
@@ -845,8 +845,8 @@ class WindowConfigDialogsMixin:
             cards[key] = (listbox, check, icon)
 
         _add_destination_card(
-            'file', 'document-save-symbolic',
-            _("Backup file on this computer"),
+            'file', 'archive-symbolic',
+            _("Backup to file"),
             _("One .spbk file you choose the folder for. Good for a USB stick or your own "
               "cloud drive."))
         _add_destination_card(

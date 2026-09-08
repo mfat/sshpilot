@@ -125,6 +125,7 @@ _ICON_RESOURCE_MAP = {
     'edit-paste-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/edit-paste-symbolic.svg',
     'document-save-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/document-save-symbolic.svg',
     # Export Backup dialog: destination cards, the pick marker and the result sheet.
+    'archive-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/archive-symbolic.svg',
     'object-select-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/object-select-symbolic.svg',
     'channel-secure-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/channel-secure-symbolic.svg',
     'check-round-outline2-symbolic': '/io/github/mfat/sshpilot/icons/scalable/actions/check-round-outline2-symbolic.svg',
