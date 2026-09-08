@@ -94,6 +94,13 @@ Driven by the `ui.sidebar_mode` setting (`full` / `minimal`, applied at startup)
 and optionally by the "When a Terminal Opens" behaviour. Minimal mode is a
 side-by-side column, so the terminal is `window − strip_width`.
 
+The strip's header bar shows the **app icon** in place of the title: the "SSH
+Pilot" label is hidden there (its natural width alone would floor the strip) and
+the title moves to the content header, which would otherwise leave the strip
+topped by a blank bar. The icon is built hidden in `_assemble_sidebar_shell` and
+swapped with the label by `_apply_sidebar_minimal_chrome`; at 24px it leaves the
+strip's header minimum at 36px, well inside the 64px strip.
+
 **By mouse, the divider is the way in and out** (section 0): drag it past the
 sidebar's minimum to collapse, drag the strip open to restore. There is no
 minimize button in the bottom toolbar any more — it sat at the start of that

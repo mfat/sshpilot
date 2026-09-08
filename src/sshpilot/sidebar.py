@@ -5002,6 +5002,8 @@ def _build_sidebar_toolbar(window, sidebar_box):
 
 def _assemble_sidebar_shell(window, sidebar_box):
     """Wrap the sidebar content in HeaderBar + ToolbarView and attach it."""
+    from sshpilot import icon_utils
+
     # Sidebar header: the title only. The window controls live in the content
     # title bar, and a copy here would ask for ~126px — twice the width of the
     # minimal icon strip, holding the whole sidebar that wide.
@@ -5014,7 +5016,25 @@ def _assemble_sidebar_shell(window, sidebar_box):
     sidebar_title_label.add_css_class('title')
     sidebar_title_label.set_xalign(0.0)
     window._sidebar_title_label = sidebar_title_label
-    window.sidebar_header_bar.set_title_widget(sidebar_title_label)
+
+    # In the minimal strip the title label is hidden (its natural width alone
+    # would floor the strip) and the title moves to the content header, leaving
+    # this bar empty. The app icon is what stands in its place: it is narrow
+    # enough for the 64px strip and keeps the strip's top from reading as a
+    # blank bar. Only one of the two is ever visible; the swap lives in
+    # window._apply_sidebar_minimal_chrome.
+    sidebar_app_icon = icon_utils.new_image_from_icon_name('io.github.mfat.sshpilot')
+    sidebar_app_icon.set_pixel_size(24)
+    sidebar_app_icon.set_halign(Gtk.Align.CENTER)
+    sidebar_app_icon.set_valign(Gtk.Align.CENTER)
+    sidebar_app_icon.set_tooltip_text('SSH Pilot')
+    sidebar_app_icon.set_visible(False)
+    window._sidebar_app_icon = sidebar_app_icon
+
+    title_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+    title_box.append(sidebar_app_icon)
+    title_box.append(sidebar_title_label)
+    window.sidebar_header_bar.set_title_widget(title_box)
 
     sidebar_toolbar_view = Adw.ToolbarView()
     sidebar_toolbar_view.add_css_class('sidebar')

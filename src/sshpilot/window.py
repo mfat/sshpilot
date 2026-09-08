@@ -2706,6 +2706,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 title.set_visible(show)
             except Exception:
                 pass
+        # The app icon takes the title's place in the strip (see sidebar.py,
+        # _assemble_sidebar_shell), so the strip's header is not a blank bar.
+        app_icon = getattr(self, '_sidebar_app_icon', None)
+        if app_icon is not None:
+            try:
+                app_icon.set_visible(minimal)
+            except Exception:
+                pass
         self._move_title_to_content_header(minimal)
         for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
             widget = getattr(self, attr, None)
