@@ -142,6 +142,30 @@ def test_force_tty_adds_dash_t_before_destination():
     assert plain.argv == ("ssh", "demo", "docker exec -it web sh")
 
 
+def test_scp_uses_capital_p_port_and_user_option_not_bandwidth_limit():
+    """scp(1): ``-P`` is port, ``-p`` preserves times, ``-l`` is Kbit/s."""
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="alice@host:/tmp",
+            executable="scp",
+            username="alice",
+            port=2222,
+            launch_mode=LaunchMode.SCP,
+        )
+    )
+    assert spec.argv == (
+        "scp",
+        "-P",
+        "2222",
+        "-o",
+        "User=alice",
+        "alice@host:/tmp",
+    )
+    assert "-l" not in spec.argv
+    assert "-p" not in spec.argv
+
+
 def test_gi_blocked_import():
     import subprocess
     import sys

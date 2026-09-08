@@ -139,9 +139,11 @@ class NativeScpBackend:
                 },
             )
         sources, destination = self.build_operands(request, connection_target)
-        extra_args = list(sources)
-        if request.recursive:
-            extra_args.insert(0, "-r")
+        # Only scp flags belong in extra_args. Path operands must be inserted
+        # after every builder option (including preference ssh_overrides): if a
+        # local path lands before ``-o``/``-v``, OpenSSH treats those flags as
+        # more source filenames (``stat local "-o"``) after auth.
+        flag_args: tuple[str, ...] = ("-r",) if request.recursive else ()
         # One public scope per daemon resource: the interaction scope of an
         # SCP transfer IS its public TransferId. The frontend learns that ID
         # from TransferSummary and binds its interaction presenter to it; a
@@ -153,11 +155,14 @@ class NativeScpBackend:
         ) as scope:
             prepared = scope.prepare(
                 ScpLaunch(
-                    extra_args=tuple(extra_args),
+                    extra_args=flag_args,
                     target_override=destination,
                 ),
                 connection_id=connection_id,
                 hostname=connection_target,
+            )
+            prepared = prepared.with_argv(
+                self.build_argv(request, connection_target, prepared.argv)
             )
             result = self._run_attempt(
                 prepared,

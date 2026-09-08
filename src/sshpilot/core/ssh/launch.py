@@ -158,10 +158,16 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
         argv.append("-C")
 
     if req.port is not None:
-        argv.extend(["-p", str(int(req.port))])
+        # scp(1): ``-P`` is the remote port; ``-p`` preserves times/modes.
+        port_flag = "-P" if req.launch_mode is LaunchMode.SCP else "-p"
+        argv.extend([port_flag, str(int(req.port))])
 
     if req.username:
-        argv.extend(["-l", str(req.username)])
+        # scp(1): ``-l`` is a bandwidth limit (Kbit/s), not a login name.
+        if req.launch_mode is LaunchMode.SCP:
+            argv.extend(["-o", f"User={req.username}"])
+        else:
+            argv.extend(["-l", str(req.username)])
 
     for identity in req.identity_files or []:
         if identity:
