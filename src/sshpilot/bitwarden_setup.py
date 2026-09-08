@@ -995,7 +995,17 @@ def _login_wizard(window, controller, on_done: Callable[[bool], None]):
 
     def _finish_ok():
         invalidate_bitwarden_status_cache()
-        _ensure_unlocked_then_ready(parent, controller, on_done)
+        # bw status/unlock after sign-in is slow; keep a spinner so the main
+        # window does not look idle between the last login page and on_done.
+        _set_status, close = progress_dialog(
+            parent, _("Bitwarden"), _("Unlocking Bitwarden…"),
+        )
+
+        def _done(ok: bool):
+            close()
+            on_done(ok)
+
+        _ensure_unlocked_then_ready(parent, controller, _done)
 
     def _spinner(message=None):
         return progress_dialog(parent, _("Bitwarden"), message or _("Signing in…"))
@@ -1387,11 +1397,19 @@ def ensure_bitwarden_ready(
         status = probe_bitwarden_status(controller)
         GLib.idle_add(lambda: (_after_probe(status), False)[1])
 
-    def _after_probe(status):
+    def _finish(ok: bool):
+        """Drop the spinner, then hand off — never leave a silent gap after close."""
         if cancelled["v"]:
             return
         _close_spinner()
+        on_ready(ok)
+
+    def _after_probe(status):
+        if cancelled["v"]:
+            return
         if not status.cli_installed:
+            # Install / “not found” dialogs replace the spinner.
+            _close_spinner()
             if not install_if_missing:
                 _no_cli_dialog(window).present()
                 on_ready(False)
@@ -1403,20 +1421,33 @@ def ensure_bitwarden_ready(
                 return
             _offer_install(window, plan, lambda ok: _after_install(ok))
             return
-        _continue_signin(status.needs_login)
+        _continue_signin(status)
 
     def _after_install(installed):
         if not installed:
             on_ready(False)
             return
+        # Re-show progress for the post-install probe + unlock (install closed it).
+        nonlocal _set_status, _close_spinner
+        _set_status, _close_spinner = progress_dialog(
+            window, _("Bitwarden"), _("Connecting to Bitwarden…"), on_cancel=_cancel,
+        )
         status = probe_bitwarden_status(controller, force_refresh=True)
-        _continue_signin(status.needs_login)
+        _continue_signin(status)
 
-    def _continue_signin(needs_login):
-        if not needs_login:
-            _unlock_then_ready(window, controller, on_ready)
+    def _continue_signin(status):
+        if status.needs_login:
+            # Login wizard / prompts own the UI from here.
+            _close_spinner()
+            _prompt_gui_login(window, controller, on_ready)
             return
-        _prompt_gui_login(window, controller, on_ready)
+        if status.unlocked:
+            # Probe already confirmed a ready vault — don't re-hit the slow CLI
+            # with the spinner dismissed (that left the main window looking idle).
+            _finish(True)
+            return
+        _set_status(_("Unlocking Bitwarden…"))
+        _unlock_then_ready(window, controller, _finish)
 
     threading.Thread(target=probe, daemon=True).start()
 

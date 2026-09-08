@@ -375,3 +375,93 @@ def test_modal_parent_falls_back_when_initiator_hidden(monkeypatch):
     )
     assert bs._modal_parent(prefs) is main
     assert presented == [main]
+
+
+def test_ensure_bitwarden_ready_keeps_spinner_until_ready(monkeypatch):
+    """Already-unlocked probe must not dismiss the spinner before on_ready.
+
+    Closing early left the main window looking idle while the next Bitwarden
+    CLI round-trip (or the export sheet hand-off) had not started yet.
+    """
+    events = []
+    results = []
+
+    def progress_dialog(_parent, heading, message, *, on_cancel=None):
+        events.append(("open", heading, message))
+
+        def set_status(text):
+            events.append(("status", text))
+
+        def close():
+            events.append("close")
+
+        return set_status, close
+
+    class Controller(FakeController):
+        pass
+
+    monkeypatch.setattr(bs, "_resolve_controller", lambda _w: Controller(
+        needs_login=False, unlocked=True))
+    monkeypatch.setattr(bs, "is_bw_installed", lambda **kw: True)
+    monkeypatch.setattr(bs, "progress_dialog", progress_dialog)
+    monkeypatch.setattr(
+        bs.threading, "Thread",
+        lambda *, target, daemon: SimpleNamespace(start=target),
+    )
+    monkeypatch.setattr(bs.GLib, "idle_add", lambda callback: callback())
+    # A second unlock probe must never run when the first already said ready.
+    monkeypatch.setattr(
+        bs, "_unlock_then_ready",
+        lambda *_a, **_k: events.append("unexpected-unlock"),
+    )
+
+    bs.ensure_bitwarden_ready(object(), results.append)
+
+    assert results == [True]
+    assert events[0][0] == "open"
+    assert events[-1] == "close"
+    assert "unexpected-unlock" not in events
+    # Spinner stays up until the hand-off — close is the last event.
+    assert events.count("close") == 1
+
+
+def test_ensure_bitwarden_ready_keeps_spinner_while_unlocking(monkeypatch):
+    """Locked-but-signed-in: spinner stays (status updated) across unlock."""
+    events = []
+    results = []
+
+    def progress_dialog(_parent, heading, message, *, on_cancel=None):
+        events.append(("open", message))
+
+        def set_status(text):
+            events.append(("status", text))
+
+        def close():
+            events.append("close")
+
+        return set_status, close
+
+    monkeypatch.setattr(bs, "_resolve_controller", lambda _w: FakeController(
+        needs_login=False, unlocked=False))
+    monkeypatch.setattr(bs, "is_bw_installed", lambda **kw: True)
+    monkeypatch.setattr(bs, "progress_dialog", progress_dialog)
+    monkeypatch.setattr(
+        bs.threading, "Thread",
+        lambda *, target, daemon: SimpleNamespace(start=target),
+    )
+    monkeypatch.setattr(bs.GLib, "idle_add", lambda callback: callback())
+
+    def unlock(_window, _controller, on_ready):
+        events.append("unlock-start")
+        # Spinner must still be open while unlock runs.
+        assert "close" not in events
+        on_ready(True)
+
+    monkeypatch.setattr(bs, "_unlock_then_ready", unlock)
+
+    bs.ensure_bitwarden_ready(object(), results.append)
+
+    assert results == [True]
+    assert ("status", "Unlocking Bitwarden…") in events
+    assert events.index("unlock-start") < events.index("close")
+    assert events[-1] == "close"

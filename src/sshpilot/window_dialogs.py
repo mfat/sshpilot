@@ -1404,14 +1404,19 @@ class WindowConfigDialogsMixin:
                     self._reopen_export_options(**reopen)
                 return
 
+            # Show progress *before* the vault-unlock gate. Bitwarden (and the
+            # current secrets backend check) can sit idle for a long time; without
+            # this sheet the options window is already gone and the main window
+            # looks like nothing is happening. Unlock prompts stack above it.
+            _set_status, close_spinner = self._backup_progress_dialog(
+                title=_("Exporting Backup"),
+                status=_("Preparing Bitwarden backup…"),
+                destination_label=_("Writing to your Bitwarden vault"),
+                options=options)
+
             def do_export(*_a):
                 controller = self._secrets_controller()
-
-                _set_status, close_spinner = self._backup_progress_dialog(
-                    title=_("Exporting Backup"),
-                    status=_("Exporting to Bitwarden — this may take a while…"),
-                    destination_label=_("Writing to your Bitwarden vault"),
-                    options=options)
+                _set_status(_("Exporting to Bitwarden — this may take a while…"))
 
                 def worker():
                     try:
@@ -1461,14 +1466,16 @@ class WindowConfigDialogsMixin:
 
                 threading.Thread(target=worker, daemon=True).start()
 
+            def _on_vault_cancelled():
+                close_spinner()
+                if reopen is not None:
+                    self._reopen_export_options(**reopen)
+
             # Reading saved secrets for the manifest may need the CURRENT secrets backend unlocked.
             self._run_after_vault_unlock_for_secrets(
                 do_export, needed=bool(options.get('secrets')),
                 cancelled_heading=_("Export Cancelled"),
-                on_cancelled=(
-                    (lambda: self._reopen_export_options(**reopen))
-                    if reopen is not None else None
-                ))
+                on_cancelled=_on_vault_cancelled)
 
         ensure_bitwarden_ready(self, after_ready)
 

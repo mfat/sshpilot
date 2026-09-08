@@ -198,6 +198,67 @@ def test_daemon_import_gates_on_vault_unlock(monkeypatch):
     assert win.dialogs[0][0] == "Import Cancelled"
 
 
+def test_bitwarden_export_shows_progress_before_vault_unlock(monkeypatch):
+    """Progress sheet must appear before the vault gate — Bitwarden is slow and
+    the options window is already closed, so a silent gap looks like a no-op.
+    """
+    win = _Win()
+    events = []
+    statuses = []
+
+    class Controller:
+        def export_backup(self, **_kwargs):
+            events.append("export")
+            result = _ok_result()
+            result.path = "SSH Pilot backup"
+            return result
+
+        def load_state(self):
+            events.append("load_state")
+            return SimpleNamespace(needs_unlock=False)
+
+    win.secrets_controller = Controller()
+
+    def progress(**kwargs):
+        events.append(("progress", kwargs.get("status")))
+        return statuses.append, lambda: events.append("close")
+
+    win._backup_progress_dialog = progress
+    win._show_export_result = lambda **kw: events.append("result")
+
+    def ensure(_window, on_ready):
+        events.append("ensure")
+        on_ready(True)
+
+    class Thread:
+        def __init__(self, target, daemon):
+            self.target = target
+
+        def start(self):
+            events.append("thread")
+            self.target()
+
+    monkeypatch.setattr(
+        "sshpilot.bitwarden_backup_setup.ensure_bitwarden_ready", ensure)
+    monkeypatch.setattr("sshpilot.window_dialogs.threading.Thread", Thread)
+    monkeypatch.setattr(
+        "sshpilot.window_dialogs.GLib.idle_add", lambda cb: cb())
+
+    win._export_to_bitwarden(
+        [], {"secrets": True, "private_keys": False, "app_settings": True,
+             "ssh_config": True, "known_hosts": True})
+
+    # Progress opens before the secrets-backend unlock check / export call.
+    assert events[0] == "ensure"
+    assert events[1][0] == "progress"
+    assert "Preparing" in events[1][1]
+    assert events.index(("progress", events[1][1])) < events.index("load_state")
+    assert "export" in events
+    assert "close" in events
+    assert "result" in events
+    assert events.index("close") < events.index("result")
+
+
 def test_make_spbk_import_apply_routes_through_controller(monkeypatch):
     win = _Win()
     calls = []
