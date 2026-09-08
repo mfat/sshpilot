@@ -415,6 +415,123 @@ def test_daemon_import_restores_credentials_and_skips_existing(monkeypatch, tmp_
     assert fake.data[password_spec("other.example", "bob").keyring_account] == "pw-other"
 
 
+class _VaultBackend(ss.SecretBackend):
+    """Unlocked session vault used to prove restore targets selection only."""
+
+    session_backed = True
+
+    def __init__(self, name: str):
+        self.name = name
+        self.data: dict = {}
+
+    def is_available(self):
+        return True
+
+    def is_unlocked(self):
+        return True
+
+    def unlock(self, secret):
+        return True
+
+    def lock(self):
+        return None
+
+    def store(self, spec, secret):
+        self.data[spec.keyring_account] = secret
+        return True
+
+    def lookup(self, spec):
+        return self.data.get(spec.keyring_account)
+
+    def delete(self, spec):
+        return self.data.pop(spec.keyring_account, None) is not None
+
+
+def test_daemon_import_restores_secrets_into_selected_vault_only(monkeypatch, tmp_path):
+    """End-to-end: ``.spbk`` credential restore writes into the currently
+    selected vault via the real ``SecretManager`` routing — never into a
+    sibling vault that is registered but not selected.
+
+    Also: a secret that already lives only in the *other* vault must not
+    suppress restore into the selected vault (lookup is selection-scoped).
+    """
+    config_dir, _ = _isolate_paths(monkeypatch, tmp_path)
+    config_file = config_dir / "config.json"
+    config_file.write_text(
+        json.dumps({"config_version": CONFIG_VERSION, "ssh": {}}), encoding="utf-8"
+    )
+
+    vault_a = _VaultBackend("vault_a")
+    vault_b = _VaultBackend("vault_b")
+    local = _VaultBackend("libsecret")
+    mgr = ss.SecretManager()
+    mgr._backends = {"libsecret": local, "vault_a": vault_a, "vault_b": vault_b}
+    mgr.set_selected("vault_a")
+
+    alice = password_spec("h.example", "alice")
+    bob = password_spec("other.example", "bob")
+    # Sibling vault already holds alice — must NOT block restore into vault_a.
+    vault_b.data[alice.keyring_account] = "ONLY-IN-B"
+
+    monkeypatch.setattr(ss, "get_secret_manager", lambda: mgr)
+
+    manifest = {
+        "version": 1,
+        "format": "spbk",
+        "app_config": {},
+        "ssh_config": "",
+        "known_hosts": None,
+        "credentials": [
+            {"id": "alice@h.example", "type": "password",
+             "host": "h.example", "username": "alice",
+             "secret": "pw-alice", "metadata": {}},
+            {"id": "bob@other.example", "type": "password",
+             "host": "other.example", "username": "bob",
+             "secret": "pw-bob", "metadata": {}},
+        ],
+        "private_keys": [],
+        "backup_options": {"app_settings": True, "ssh_config": True,
+                           "known_hosts": False, "secrets": True,
+                           "private_keys": False},
+    }
+    source = tmp_path / "selected-vault.spbk"
+    write_spbk(str(source), manifest, "secret")
+
+    result = daemon_import_backup(
+        mgr,
+        source=str(source),
+        passphrase="secret",
+        options={"secrets": True},
+        settings_path=config_file,
+    )
+    assert result.status.value == "success", result.message
+    assert result.counts["restored"] == 2
+    assert result.counts["skipped"] == 0
+
+    assert vault_a.data[alice.keyring_account] == "pw-alice"
+    assert vault_a.data[bob.keyring_account] == "pw-bob"
+    assert vault_b.data == {alice.keyring_account: "ONLY-IN-B"}
+    assert local.data == {}
+
+    # Switch selection and import again: new secrets land only in vault_b.
+    vault_a.data.clear()
+    vault_b.data.clear()
+    mgr.set_selected("vault_b")
+    result2 = daemon_import_backup(
+        mgr,
+        source=str(source),
+        passphrase="secret",
+        options={"secrets": True},
+        settings_path=config_file,
+    )
+    assert result2.status.value == "success", result2.message
+    assert result2.counts["restored"] == 2
+    assert vault_b.data[alice.keyring_account] == "pw-alice"
+    assert vault_b.data[bob.keyring_account] == "pw-bob"
+    assert vault_a.data == {}
+    assert local.data == {}
+
+
 def test_daemon_import_wrong_passphrase_is_a_clean_failure(monkeypatch, tmp_path):
     config_dir, _ = _isolate_paths(monkeypatch, tmp_path)
     config_file = config_dir / "config.json"
