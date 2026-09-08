@@ -114,7 +114,10 @@ class HostInfoService:
                     timeout_seconds=_PROBE_TIMEOUTS[probe],
                     # A first gather may need a passphrase, password or MFA
                     # answer; repeated live samples must never raise a prompt
-                    # of their own on top of an established session.
+                    # of their own. The "established session" they ride is the
+                    # OpenSSH multiplex master created by require_master below
+                    # -- a ControlMaster on the shared ControlPath, not a PTY
+                    # and not a long-lived Host Info channel.
                     interaction_mode=(
                         ExecutionInteractionMode.INTERACTIVE
                         if probe is HostInfoProbe.FULL
