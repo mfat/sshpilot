@@ -2628,6 +2628,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to save dragged sidebar width", exc_info=True)
 
+    def _persist_sidebar_mode(self, minimal: bool) -> None:
+        """Remember the user's resting sidebar mode for the next startup."""
+        try:
+            self.config.set_setting(
+                'ui.sidebar_mode', 'minimal' if minimal else 'full')
+        except Exception:
+            logger.debug("Failed to save sidebar mode", exc_info=True)
+
     def _on_sidebar_drag_mode_switch(self, minimal: bool) -> None:
         """The divider was dragged past what a width change could mean.
 
@@ -2637,15 +2645,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         bottom toolbar's minimize button was removed, since its own width was
         part of what held the sidebar wide.
 
-        Like that button, this does not write ``ui.sidebar_mode``: a dragged
-        strip is transient, and the configured resting mode stays the one in
-        Settings > Sidebar.
+        Persists ``ui.sidebar_mode`` so a dragged strip (or a drag back to
+        full) is the resting mode after restart. Transient collapses from
+        "When a Terminal Opens" do not go through this path and stay
+        non-persisted.
 
         Never animated: the pointer is still on the divider, and a 200ms
         animation to a width chosen by the animation is exactly the "it keeps
         resizing after I stop" the drag is not supposed to produce. The paned
         has already put the divider where the drag asked for it.
         """
+        self._persist_sidebar_mode(bool(minimal))
         if bool(getattr(self, '_sidebar_minimal', False)) == bool(minimal):
             return
         try:

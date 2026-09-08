@@ -52,9 +52,11 @@ computed the width itself and offered no handle. What changed for callers:
   dragging a pinned strip out to `_expand_threshold()` — the width the full
   sidebar actually needs — asks for the full sidebar back. The paned reports
   both through `on_mode_switch` and leaves the divider alone when the owner
-  takes it (`window._on_sidebar_drag_mode_switch` → `set_sidebar_minimal`,
-  never animated). Like the minimize button it replaces, a dragged strip is
-  **transient** — it does not write `ui.sidebar_mode`.
+  takes it (`window._on_sidebar_drag_mode_switch` → persist `ui.sidebar_mode`
+  + `set_sidebar_minimal`, never animated). A dragged strip (or a drag back
+  to full) is the resting mode and is restored at startup. Transient
+  collapses from "When a Terminal Opens" do not use this path and stay
+  non-persisted.
 - **A mode-switching drag never moves the divider on its own**, which takes two
   rules that are easy to break. The strip does not expand *early*: below the
   full sidebar's floor there is no width it could take, so it would have to
@@ -90,9 +92,12 @@ computed the width itself and offered no handle. What changed for callers:
   avatar (initials) or icon, groups to a folder avatar. The width animates
   between the two states.
 
-Driven by the `ui.sidebar_mode` setting (`full` / `minimal`, applied at startup)
-and optionally by the "When a Terminal Opens" behaviour. Minimal mode is a
-side-by-side column, so the terminal is `window − strip_width`.
+Driven by the `ui.sidebar_mode` setting (`full` / `minimal`), written when the
+user switches mode with the divider (or the strip's expand button) and applied
+at startup. Optionally also entered transiently by the "When a Terminal Opens"
+behaviour. There is no Preferences toggle for the resting mode — the divider
+is the control. Minimal mode is a side-by-side column, so the terminal is
+`window − strip_width`.
 
 The strip's header bar shows the **app icon** in place of the title: the "SSH
 Pilot" label is hidden there (its natural width alone would floor the strip) and

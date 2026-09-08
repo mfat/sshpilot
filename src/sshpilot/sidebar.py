@@ -4937,9 +4937,10 @@ def _build_sidebar_toolbar(window, sidebar_box):
     
     # No minimize-to-strip button here any more: it sat at the start of this
     # row and its ~40px was part of what held the whole sidebar at the row's
-    # minimum width. Minimal mode is still entered from Settings > Sidebar >
-    # Mode and from "minimize on connect"; the strip's own expand button
-    # (below) is what leaves it.
+    # minimum width. Minimal mode is entered by dragging the divider past the
+    # content floor (persisted as ``ui.sidebar_mode``) or transiently by
+    # "minimize on connect"; the strip's own expand button (below) is what
+    # leaves it.
 
     # Keep every selection state in one homogeneous stack. If the connection
     # and group toolbars are visibility-swapped as sibling boxes, their very
@@ -4984,7 +4985,14 @@ def _build_sidebar_toolbar(window, sidebar_box):
     icon_utils.set_button_icon(expand_button, 'box-right-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
     expand_button.add_css_class('flat')
-    expand_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(False))
+    def _expand_sidebar(*_a):
+        # Same resting-mode write as a drag open: the expand button is the
+        # strip's keyboard-/click-friendly way out, and must survive restart.
+        if hasattr(window, '_persist_sidebar_mode'):
+            window._persist_sidebar_mode(False)
+        window.set_sidebar_minimal(False)
+
+    expand_button.connect('clicked', _expand_sidebar)
     # Wrap in a .toolbar bar so the button gets the same compact Adwaita metrics
     # as the collapse button (which lives in the bottom .toolbar box); a bare
     # flat button uses larger default padding and looks a different size. Centre
