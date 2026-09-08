@@ -26,6 +26,8 @@ from .file_manager.format_utils import safe_display_text
 from .file_manager.portal_docs import (
     _is_valid_destination,
     _pretty_path_for_display,
+    open_in_file_manager,
+    resolve_download_locate_path,
     resolve_granted_folder,
     restore_granted_folder,
 )
@@ -1225,6 +1227,28 @@ class ScpWindowController:
         content_box.append(to_label)
         content_box.append(details_label)
 
+        locate_btn = Gtk.Button(label=_("Show in Files"))
+        locate_btn.set_halign(Gtk.Align.START)
+        locate_btn.add_css_class("pill")
+        locate_btn.set_visible(False)
+        locate_btn.set_sensitive(False)
+        content_box.append(locate_btn)
+        locate_target = {"value": None}
+
+        def _on_locate_clicked(_button):
+            target = locate_target["value"]
+            if not target:
+                return
+            if not open_in_file_manager(target, parent=self.window):
+                try:
+                    self.window.show_toast(
+                        _("Could not open the download location in the file manager.")
+                    )
+                except Exception:
+                    pass
+
+        locate_btn.connect("clicked", _on_locate_clicked)
+
         initial_source = _display_scp_path_list(tuple(str(s) for s in sources))
         initial_destination = _display_scp_path(str(destination))
         from_label.set_text(_("From: {path}").format(path=initial_source))
@@ -1284,9 +1308,31 @@ class ScpWindowController:
                         details_label.set_visible(True)
                     else:
                         details_label.set_visible(False)
+                    # Downloads only: reveal the local (portal-aware) path in
+                    # the desktop file manager. Uploads land on the remote host.
+                    if direction == "download":
+                        dest_path = (
+                            getattr(summary, "destination_display", None)
+                            or str(destination)
+                        )
+                        source_paths = [
+                            part.strip()
+                            for part in (
+                                getattr(summary, "source_display", "") or ""
+                            ).split(", ")
+                            if part.strip()
+                        ] or [str(item) for item in sources]
+                        target = resolve_download_locate_path(dest_path, source_paths)
+                        locate_target["value"] = target
+                        locate_btn.set_visible(target is not None)
+                        locate_btn.set_sensitive(target is not None)
+                    else:
+                        locate_target["value"] = None
+                        locate_btn.set_visible(False)
                 elif state is TransferState.CANCELLED:
                     status.set_text(_("Cancelled"))
                     details_label.set_visible(False)
+                    locate_btn.set_visible(False)
                 else:
                     try:
                         failure = format_scp_failure(summary.failure)
@@ -1295,6 +1341,7 @@ class ScpWindowController:
                         failure = _("The SCP transfer failed.")
                     status.set_text(_("Failed: {failure}").format(failure=failure))
                     details_label.set_visible(False)
+                    locate_btn.set_visible(False)
             elif state is TransferState.STARTING:
                 status.set_text(_("Starting…"))
                 details_label.set_visible(False)

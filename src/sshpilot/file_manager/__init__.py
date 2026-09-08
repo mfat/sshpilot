@@ -47,6 +47,8 @@ from .portal_docs import (
     _portal_doc_path,
     _pretty_path_for_display,
     _save_doc,
+    open_in_file_manager,
+    resolve_download_locate_path,
 )
 from .progress_dialog import (
     _HAS_ALERT_DIALOG,
@@ -151,6 +153,8 @@ __all__ = [
     "_save_doc",
     "_sftp_path_exists",
     "create_file_manager_backend",
+    "open_in_file_manager",
+    "resolve_download_locate_path",
     "safe_display_text",
     "stat_isdir",
     "walk_remote",

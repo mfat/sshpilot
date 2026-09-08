@@ -1456,6 +1456,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _open_containing_folder(self, path):
         try:
+            from .file_manager.portal_docs import open_in_file_manager
+
+            if open_in_file_manager(path, parent=self):
+                return
             folder = os.path.dirname(path) or '.'
             uri = Gio.File.new_for_path(folder).get_uri()
             Gio.AppInfo.launch_default_for_uri(uri, None)

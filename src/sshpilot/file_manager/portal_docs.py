@@ -575,3 +575,110 @@ def _pretty_path_for_display(path: str) -> str:
     except Exception:
         # Fallback to original path if GFile operations fail
         return path
+
+
+def resolve_download_locate_path(
+    destination: str,
+    sources: Optional[List[str]] = None,
+) -> Optional[str]:
+    """Return the best local path to reveal after a download completes.
+
+    Prefers a single downloaded file under a destination directory when it
+    exists (SCP-style folder targets). If ``destination`` already points at an
+    existing file (file-manager downloads), that path is returned as-is.
+
+    The returned path is the sandbox-accessible path (document-portal mount
+    under Flatpak) — never a host path — so callers can hand it straight to
+    :func:`open_in_file_manager`.
+    """
+    if not destination:
+        return None
+    dest = os.path.expanduser(str(destination))
+    source_list = [str(item) for item in (sources or []) if str(item).strip()]
+
+    def _joined_source() -> Optional[str]:
+        if len(source_list) != 1:
+            return None
+        name = os.path.basename(source_list[0].rstrip("/"))
+        if not name or name in {".", ".."}:
+            return None
+        candidate = os.path.join(dest, name)
+        return candidate if os.path.exists(candidate) else None
+
+    if os.path.isdir(dest):
+        joined = _joined_source()
+        return joined or dest
+    if os.path.isfile(dest) or os.path.exists(dest):
+        return dest
+    joined = _joined_source()
+    if joined:
+        return joined
+    parent = os.path.dirname(dest)
+    if parent and os.path.isdir(parent):
+        return parent
+    return None
+
+
+def open_in_file_manager(path: str, *, parent=None) -> bool:
+    """Reveal ``path`` in the desktop file manager via a portal-aware launcher.
+
+    Pass the path the app can actually access. Under Flatpak that is the
+    document-portal mount (or another sandbox-writable grant), **not** the
+    resolved host path from :func:`_portal_path_to_host` — host paths are not
+    reachable inside the sandbox, and ``Gtk.FileLauncher`` / the OpenURI
+    portal expect the sandboxed file.
+
+    When ``path`` is a file, prefers ``FileLauncher.open_containing_folder``
+    so the item is highlighted. Directories are opened with ``launch``.
+    Falls back to ``Gio.AppInfo.launch_default_for_uri`` when FileLauncher
+    is unavailable.
+
+    ``parent`` is the transient parent window for the portal request.
+    """
+    if not path:
+        return False
+    target = os.path.expanduser(str(path))
+    select_item = os.path.isfile(target)
+    open_path = target
+    if not select_item and not os.path.isdir(target):
+        parent_dir = os.path.dirname(target)
+        open_path = parent_dir if parent_dir else target
+        select_item = False
+    if not open_path:
+        return False
+
+    local_file = Gio.File.new_for_path(open_path)
+    launcher = _new_file_launcher(local_file)
+    if launcher is not None:
+        try:
+            if select_item and hasattr(launcher, "open_containing_folder"):
+                launcher.open_containing_folder(parent, None, None, None)
+            else:
+                launcher.launch(parent, None, None, None)
+            return True
+        except Exception as exc:
+            logger.debug("FileLauncher failed for %s: %s", open_path, exc)
+
+    try:
+        folder = open_path if os.path.isdir(open_path) else (os.path.dirname(open_path) or ".")
+        uri = Gio.File.new_for_path(folder).get_uri()
+        Gio.AppInfo.launch_default_for_uri(uri, None)
+        return True
+    except Exception as exc:
+        logger.debug("Could not open file manager for %s: %s", path, exc)
+        return False
+
+
+def _new_file_launcher(gfile):
+    """Build a ``Gtk.FileLauncher`` when GTK is available."""
+    try:
+        from gi.repository import Gtk
+    except Exception:
+        return None
+    if not hasattr(Gtk, "FileLauncher"):
+        return None
+    try:
+        return Gtk.FileLauncher.new(gfile)
+    except Exception as exc:
+        logger.debug("Could not create FileLauncher: %s", exc)
+        return None
