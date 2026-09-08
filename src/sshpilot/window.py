@@ -255,9 +255,6 @@ _format_connection_host_display = format_connection_host_display
 # Width of the minimal (icon-only) sidebar strip.
 _MINIMAL_STRIP_WIDTH = 64
 
-# Resting minimum width of the full sidebar column.
-_SIDEBAR_MIN_WIDTH = 180
-
 
 def _accelerator_label(accel: str) -> str:
     """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
@@ -2190,11 +2187,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # itself is the user's: dragged, remembered, and restored here.
         saved_width = self.config.get_setting('ui.sidebar_width', None)
         self.split_view = SidebarPaned(
-            min_width=_SIDEBAR_MIN_WIDTH,
             max_width=DEFAULT_SIDEBAR_MAX_WIDTH,
             fraction=0.25,
             user_width=saved_width,
             on_user_resize=self._on_sidebar_width_dragged,
+            on_mode_switch=self._on_sidebar_drag_mode_switch,
         )
         self.split_view.set_vexpand(True)
         self._split_variant = 'paned'
@@ -2631,6 +2628,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to save dragged sidebar width", exc_info=True)
 
+    def _on_sidebar_drag_mode_switch(self, minimal: bool) -> None:
+        """The divider was dragged past what a width change could mean.
+
+        Pushing it below the narrowest the full sidebar can be laid out in
+        collapses to the icon strip; pulling the strip open restores the full
+        sidebar. This is the only way in and out of the strip by mouse — the
+        bottom toolbar's minimize button was removed, since its own width was
+        part of what held the sidebar wide.
+
+        Like that button, this does not write ``ui.sidebar_mode``: a dragged
+        strip is transient, and the configured resting mode stays the one in
+        Settings > Sidebar.
+
+        Never animated: the pointer is still on the divider, and a 200ms
+        animation to a width chosen by the animation is exactly the "it keeps
+        resizing after I stop" the drag is not supposed to produce. The paned
+        has already put the divider where the drag asked for it.
+        """
+        if bool(getattr(self, '_sidebar_minimal', False)) == bool(minimal):
+            return
+        try:
+            self.set_sidebar_minimal(bool(minimal), animate=False)
+        except Exception:
+            logger.debug("sidebar drag mode switch failed", exc_info=True)
+
     # --- Minimal (icon-only) sidebar strip -----------------------------------
     def _apply_sidebar_width(self, width: int) -> None:
         """Pin the sidebar to exactly ``width`` px (one animation tick)."""
@@ -2752,7 +2774,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         The header/toolbar button rows and the connection rows each request a
         minimum width; the widest is the floor the sidebar rests at once fit
-        (unclipped), which can exceed the user's max-width setting.
+        (unclipped), and it is the sidebar's only minimum — it can exceed the
+        width the sidebar would otherwise pick for itself.
         """
         widest = 0
         for attr in ('_sidebar_header_handle', '_sidebar_toolbar_box', 'connection_list'):
@@ -2806,10 +2829,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             # The width the sidebar returns to once the pin is released: the one
             # the user dragged to, else the automatic fraction of the window.
             try:
-                return max(_SIDEBAR_MIN_WIDTH, int(sv.get_resting_sidebar_width()))
+                return int(sv.get_resting_sidebar_width())
             except Exception:
                 logger.debug("resting sidebar width failed", exc_info=True)
-                return _SIDEBAR_MIN_WIDTH
+                return self._measure_sidebar_content_min()
 
         # Decide the full (expanded) width and prepare the content. The chrome's
         # min width can push the resting width above it, so the full endpoint
@@ -5899,7 +5922,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sv = getattr(self, 'split_view', None)
         try:
             if sv is not None and hasattr(sv, 'get_resting_sidebar_width'):
-                return max(_SIDEBAR_MIN_WIDTH, int(sv.get_resting_sidebar_width()))
+                return max(self._measure_sidebar_content_min(),
+                           int(sv.get_resting_sidebar_width()))
         except Exception:
             logger.debug("popup target width failed", exc_info=True)
         return DEFAULT_SIDEBAR_MAX_WIDTH

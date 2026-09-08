@@ -19,7 +19,6 @@ pytestmark = pytest.mark.gui
 def _paned(**kwargs):
     from sshpilot.sidebar_paned import SidebarPaned
 
-    kwargs.setdefault('min_width', 180)
     kwargs.setdefault('max_width', 400)
     paned = SidebarPaned(**kwargs)
     paned.set_sidebar(Gtk.Box())
@@ -138,6 +137,115 @@ def test_a_squeezed_sidebar_keeps_its_leading_edge():
         assert wide.get_width() == 200          # laid out at its own minimum
         found, bounds = wide.compute_bounds(paned)
         assert found and bounds.get_x() == 0    # anchored at the leading edge
+    finally:
+        window.destroy()
+
+
+def _mode_switching_paned(sidebar_min=200):
+    """A paned whose owner answers on_mode_switch the way the window does:
+    minimal pins the strip, full releases it."""
+    from sshpilot.sidebar_paned import SidebarPaned
+
+    seen = []
+
+    def owner(minimal):
+        seen.append(minimal)
+        if minimal:
+            paned.pin_width(64)
+        else:
+            paned.release_width()
+
+    paned = SidebarPaned(max_width=400, on_mode_switch=owner)
+    sidebar = Gtk.Box()
+    sidebar.set_size_request(sidebar_min, -1)   # stands in for the real content
+    paned.set_sidebar(sidebar)
+    paned.set_content(Gtk.Box())
+    return paned, seen
+
+
+def test_a_drag_into_the_wall_resizes_but_does_not_collapse():
+    paned, seen = _mode_switching_paned()
+    window = _shown(paned)
+    try:
+        paned.set_position(190)          # 10px under the 200px content minimum
+        assert paned.get_position() == 200
+        assert seen == []
+    finally:
+        window.destroy()
+
+
+def test_a_drag_well_past_the_wall_asks_for_the_icon_strip():
+    paned, seen = _mode_switching_paned()
+    window = _shown(paned)
+    try:
+        paned.set_position(120)          # past the 40px slack under 200
+        assert seen == [True]
+        assert paned.get_position() == 64
+    finally:
+        window.destroy()
+
+
+def test_the_strip_stays_put_until_the_full_sidebar_would_fit():
+    """Dragging a strip open cannot expand early: the sidebar would have to be
+    laid out at a width it does not have, so it would jump away from the
+    pointer. Below its floor the strip does not move at all."""
+    paned, seen = _mode_switching_paned()
+    window = _shown(paned)
+    try:
+        paned.pin_width(64)
+        for x in (84, 120, 154, 199):    # all short of the 200px content floor
+            paned.set_position(x)
+            assert seen == []
+            assert paned.get_position() == 64, f'strip moved for a drag to {x}'
+    finally:
+        window.destroy()
+
+
+def test_pulling_the_strip_to_where_it_fits_asks_for_the_full_sidebar():
+    paned, seen = _mode_switching_paned()
+    window = _shown(paned)
+    try:
+        paned.pin_width(64)
+        paned.set_position(240)
+        assert seen == [False]
+        assert paned.get_position() == 240
+    finally:
+        window.destroy()
+
+
+def test_expanding_by_drag_lands_on_the_pointer_not_the_old_width():
+    """Regression: a drag out of the strip used to settle at the width the
+    sidebar had before it was collapsed, so the divider kept travelling after
+    the user had stopped moving."""
+    paned, seen = _mode_switching_paned()
+    window = _shown(paned)
+    try:
+        paned.set_position(520)          # the width to come back to, before
+        assert paned.user_width == 520
+        paned.pin_width(64)
+        paned.set_position(260)          # dragged open only this far
+        assert seen == [False]
+        assert paned.get_position() == 260
+        _pump()
+        assert paned.get_position() == 260, 'divider moved on its own'
+        assert paned.user_width == 260
+    finally:
+        window.destroy()
+
+
+def test_a_mode_switching_drag_does_not_become_the_remembered_width():
+    """Collapsing must not persist 64px as the width to come back to."""
+    persisted = []
+    paned, seen = _mode_switching_paned()
+    paned._on_user_resize = persisted.append
+    window = _shown(paned)
+    try:
+        paned.set_position(300)          # a real resize, remembered
+        paned.set_position(120)          # a collapse, not a width
+        assert seen == [True]
+        assert paned.user_width == 300
+        paned._persist()
+        assert persisted == [300]
     finally:
         window.destroy()
 

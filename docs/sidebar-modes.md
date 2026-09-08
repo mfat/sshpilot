@@ -21,19 +21,50 @@ computed the width itself and offered no handle. What changed for callers:
 - **The width is the user's.** Dragging the divider sets it; it is remembered,
   persisted as `ui.sidebar_width`, restored at startup, and restored again when
   the icon strip animates back open. Before the user has ever sized it the
-  sidebar picks a quarter of the window, bounded by `_SIDEBAR_MIN_WIDTH` (180)
-  and `sidebar_paned.DEFAULT_MAX_WIDTH` (400) — that cap applies only to the
-  width the sidebar chooses for itself, never to a dragged one. **There is no
+  sidebar picks a quarter of the window, capped at
+  `sidebar_paned.DEFAULT_MAX_WIDTH` (400) — that cap applies only to the width
+  the sidebar chooses for itself, never to a dragged one. **There is no
   maximum-width setting any more**: the slider in Settings ▸ Sidebar existed
   because the Adw split views gave no other way to widen the sidebar, and it
   was removed with them (a stale `ui.max-sidebar-width` in an old config is
   simply ignored).
+- **The minimum is measured, not configured.** `SidebarPaned._floor()` is the
+  sidebar's own content minimum — `sidebar.measure(HORIZONTAL, -1)`, i.e. the
+  widest of what the header, the bottom toolbar row and the connection rows
+  ask for. A drag stops there, and the automatic width is lifted to it (a
+  content minimum above the 400 cap wins over the cap). There is **no
+  `_SIDEBAR_MIN_WIDTH` constant** any more: the old 180 was
+  `AdwOverlaySplitView`'s default `min-sidebar-width` carried over, and on top
+  of the measured minimum it only held the divider back from widths the content
+  was perfectly happy with. The one remaining number is
+  `_ABSOLUTE_MIN_WIDTH` (44), which applies when the window is too narrow to
+  give both the sidebar its content minimum and the content side the 320px of
+  `_CONTENT_MIN_WIDTH`.
 - **`pin_width(w)` freezes the width, `release_width()` hands it back.** That
-  pair is what the icon strip and every tick of its animation use, and pinning
-  is the only state in which the sidebar may shrink below its own content
-  minimum, so the 64px strip is reachable. `get_resting_sidebar_width()`
+  pair is what the icon strip and every tick of its animation use, and a pin
+  (`_pinned_width`) overrides the measured floor — the only state in which the
+  sidebar may shrink below its own content minimum, which is what makes the
+  64px strip reachable. `get_resting_sidebar_width()`
   answers "how wide once released?" even while pinned, which is what the
   animation's endpoint and the search popup's panel width need.
+- **The divider switches mode, too.** Dragging it more than
+  `_MODE_SWITCH_SLACK` (40px) below the measured floor asks for the icon strip;
+  dragging a pinned strip out to `_expand_threshold()` — the width the full
+  sidebar actually needs — asks for the full sidebar back. The paned reports
+  both through `on_mode_switch` and leaves the divider alone when the owner
+  takes it (`window._on_sidebar_drag_mode_switch` → `set_sidebar_minimal`,
+  never animated). Like the minimize button it replaces, a dragged strip is
+  **transient** — it does not write `ui.sidebar_mode`.
+- **A mode-switching drag never moves the divider on its own**, which takes two
+  rules that are easy to break. The strip does not expand *early*: below the
+  full sidebar's floor there is no width it could take, so it would have to
+  jump or animate away from the pointer — instead the strip sits still until
+  the pointer reaches that floor, where the switch is exactly continuous. And
+  the drag position becomes the remembered width *before* the switch, because
+  `release_width()` otherwise restores the width the sidebar had before it was
+  collapsed and the divider travels there after the user has stopped moving.
+  Collapsing does neither: it leaves `user_width` alone, so the strip is never
+  remembered as a width.
 - **`get_sidebar_width()` is the live width**, not a configured bound.
 - The handle is thin (no wide handle) so it draws the same hairline the split
   view did and the panes stay edge to edge; GTK keeps a wider input area than it
@@ -62,6 +93,13 @@ computed the width itself and offered no handle. What changed for callers:
 Driven by the `ui.sidebar_mode` setting (`full` / `minimal`, applied at startup)
 and optionally by the "When a Terminal Opens" behaviour. Minimal mode is a
 side-by-side column, so the terminal is `window − strip_width`.
+
+**By mouse, the divider is the way in and out** (section 0): drag it past the
+sidebar's minimum to collapse, drag the strip open to restore. There is no
+minimize button in the bottom toolbar any more — it sat at the start of that
+button row, and the row's minimum width is what held the whole sidebar wide, so
+the control that collapsed the sidebar was itself part of why it could not get
+narrow.
 
 ## 2. Default vs. Overlay presentation
 

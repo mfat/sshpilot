@@ -8,9 +8,9 @@ split-view API the rest of the window already drives:
 
 ``pin_width`` / ``release_width``
     Freeze the sidebar at one width and let it go again — what the minimal icon
-    strip and every tick of its animation need. Pinning drives the width bounds
-    together; releasing restores the range they had before, so the sidebar comes
-    back to the width it was resting at.
+    strip and every tick of its animation need. A pin overrides the resting
+    geometry without disturbing it, so releasing brings the sidebar back to the
+    width it was resting at.
 ``get_sidebar_width`` / ``get_resting_sidebar_width``
     The live width, and the width it would rest at if released right now (which
     the strip animation and the search popup need while it is pinned).
@@ -23,6 +23,12 @@ A width the user drags to is remembered (``user_width``) and wins over the
 fraction-derived width from then on, including after the icon strip animates
 back open. The owner is told about it through ``on_user_resize`` so it can be
 persisted; the callback is debounced so a drag writes the setting once.
+
+The divider is also how the sidebar changes mode. Dragging it well past the
+width the sidebar can actually be laid out in is a request for the minimal icon
+strip, and dragging a pinned strip open again is a request for the full
+sidebar; both are reported through ``on_mode_switch``, which the window answers
+with ``set_sidebar_minimal``. Nothing else in this widget knows what a mode is.
 
 Overlay presentation (``AdwOverlaySplitView.collapsed``) has no ``Gtk.Paned``
 equivalent — see ``docs/sidebar-modes.md``.
@@ -43,11 +49,16 @@ logger = logging.getLogger(__name__)
 #: Space the content side keeps when the user drags the divider right.
 _CONTENT_MIN_WIDTH = 320
 
-#: Hard floor for a dragged sidebar, whatever the configured minimum is.
+#: Hard floor for the divider, for the case where the window is too narrow to
+#: give both the sidebar its content minimum and the content side its own.
 _ABSOLUTE_MIN_WIDTH = 44
 
 #: Quiet period after the last divider move before the width is persisted.
 _PERSIST_DELAY_MS = 400
+
+#: How far past the wall a drag must go before it counts as a mode switch
+#: rather than the user simply running the divider into the end of its travel.
+_MODE_SWITCH_SLACK = 40
 
 #: Widest the sidebar makes itself before the user has ever sized it. Only the
 #: automatic (fraction-of-window) width is capped — a dragged width is not.
@@ -75,11 +86,11 @@ def resolve_position(
 ) -> int:
     """Divider position for one set of constraints.
 
-    ``min_width >= max_width`` means the width levers are pinned together (the
-    minimal icon strip and the animation into and out of it), so the position is
-    exactly that width. Otherwise a width the user dragged to wins over the
-    fraction-of-window default, and only the drag ceiling bounds it — the
-    configured maximum caps the automatic width, not the user's own choice.
+    ``min_width`` is what the sidebar's own content needs; a sidebar whose
+    content asks for more than ``max_width`` gets what it asks for, because the
+    maximum only caps the width the sidebar picks *for itself*. Otherwise a
+    width the user dragged to wins over the fraction-of-window default, and only
+    the drag ceiling bounds it — again, the maximum does not.
 
     Kept as a module-level pure function so the geometry is unit testable
     without building a GTK widget.
@@ -170,11 +181,11 @@ class SidebarPaned(Gtk.Paned):
     def __init__(
         self,
         *,
-        min_width: int = 180,
         max_width: int = DEFAULT_MAX_WIDTH,
         fraction: float = 0.25,
         user_width: Optional[int] = None,
         on_user_resize: Optional[Callable[[int], None]] = None,
+        on_mode_switch: Optional[Callable[[bool], None]] = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.add_css_class('sidebar-paned')
@@ -188,25 +199,29 @@ class SidebarPaned(Gtk.Paned):
         self.set_resize_start_child(False)
         # The sidebar is wrapped in a _ClipStart bin with no minimum of its own,
         # so the paned never has to squeeze the child itself; the floor a drag
-        # stops at is enforced in _target_position / _on_position_notify.
+        # stops at is measured off the sidebar's content and enforced in
+        # _target_position / _on_position_notify.
         self.set_shrink_start_child(True)
         self.set_resize_end_child(True)
         self.set_shrink_end_child(True)
 
-        self._min_width = int(min_width)
         self._max_width = int(max_width)
-        # The range the sidebar is free to rest in. pin_width() drives the pair
-        # together to freeze the width, so the free range is kept aside to
-        # answer "how wide would the sidebar be if released?" while pinned.
-        self._free_min = self._min_width
-        self._free_max = self._max_width
+        # Set while pin_width() holds the sidebar at one width (the minimal icon
+        # strip and every tick of its animation). The resting geometry is left
+        # untouched by a pin, so "how wide would the sidebar be if released?"
+        # can still be answered while it is pinned.
+        self._pinned_width: Optional[int] = None
+        # Last floor measured with the full sidebar laid out (see _floor).
+        self._full_floor = 0
         self._fraction = float(fraction)
         self._user_width = int(user_width) if user_width else None
         self._on_user_resize = on_user_resize
+        self._on_mode_switch = on_mode_switch
         self._show_sidebar = True
 
         self._applying = False      # position is being set by us, not dragged
         self._allocating = False    # inside size-allocate: reflow, not a drag
+        self._switching_mode = False  # inside on_mode_switch: ignore its moves
         self._last_alloc_width = 0
         self._persist_source = 0
 
@@ -217,12 +232,12 @@ class SidebarPaned(Gtk.Paned):
     # --- geometry -----------------------------------------------------------
 
     def _pinned(self) -> bool:
-        """True while the width levers are clamped shut (minimal strip)."""
-        return self._max_width <= self._min_width
+        """True while pin_width() is holding the width (minimal strip)."""
+        return self._pinned_width is not None
 
     def _drag_ceiling(self, width: int) -> int:
         """Widest the user may drag the sidebar in a ``width``-wide split."""
-        return drag_ceiling(width, max(self._free_max, self._max_width))
+        return drag_ceiling(width, self._max_width)
 
     def _content_min_width(self) -> int:
         """The narrowest the sidebar's own content can be laid out."""
@@ -238,33 +253,52 @@ class SidebarPaned(Gtk.Paned):
             return 0
 
     def _floor(self) -> int:
-        """Narrowest a *drag* may leave the sidebar: never so narrow that its
-        own content would have to be clipped."""
-        return max(self._min_width, self._content_min_width())
+        """Narrowest a *drag* may leave the sidebar: what its own content needs,
+        so nothing inside it ever has to be clipped.
+
+        There is no configured minimum behind this. The sidebar used to carry
+        one (180px, inherited from ``AdwOverlaySplitView``'s default
+        ``min-sidebar-width``) on top of the measured minimum, which only ever
+        held the divider back from a width the content was fine with.
+        """
+        floor = self._content_min_width()
+        # Remembered for the pinned case: a strip measures its own (much
+        # smaller) chrome, so while pinned this is the only way to know how
+        # wide the full sidebar needs to be to come back.
+        if floor > 0 and not self._pinned():
+            self._full_floor = floor
+        return floor
+
+    def _expand_threshold(self, width: int) -> int:
+        """How far a pinned strip must be dragged open to become the full
+        sidebar: exactly the width the full sidebar needs.
+
+        Switching any earlier would mean expanding to a width the sidebar
+        cannot be laid out in, so it would have to jump — or animate — away
+        from the pointer. Switching here lets the divider stay under the
+        pointer the whole way.
+        """
+        if self._full_floor:
+            return self._full_floor
+        # Never measured (the app started in the strip): the width it would
+        # rest at is the best guess available.
+        return max(self._pinned_width or 0, self._free_position(width))
 
     def _free_position(self, width: int) -> int:
-        """Divider position for a ``width``-wide split with the levers released."""
-        floor = max(self._free_min, self._content_min_width())
+        """Divider position for a ``width``-wide split with no pin in effect."""
         return resolve_position(
             width,
-            min_width=floor,
-            max_width=max(self._free_max, floor + 1),
+            min_width=self._floor(),
+            max_width=self._max_width,
             fraction=self._fraction,
             user_width=self._user_width,
         )
 
     def _target_position(self, width: int) -> int:
         """Resting divider position for a ``width``-wide split (pinned included)."""
-        if self._pinned():
-            return max(_ABSOLUTE_MIN_WIDTH, self._min_width)
-        floor = self._floor()
-        return resolve_position(
-            width,
-            min_width=floor,
-            max_width=max(self._max_width, floor + 1),
-            fraction=self._fraction,
-            user_width=self._user_width,
-        )
+        if self._pinned_width is not None:
+            return self._pinned_width
+        return self._free_position(width)
 
     def _sync_position(self, width: Optional[int] = None) -> None:
         if width is None:
@@ -289,16 +323,41 @@ class SidebarPaned(Gtk.Paned):
             self._allocating = False
 
     def _on_position_notify(self, *_args) -> None:
-        """Clamp the divider and remember a width the user dragged to."""
-        if self._applying:
+        """Clamp the divider, switch mode, and remember a dragged width."""
+        if self._applying or self._switching_mode:
             return
         width = self.get_width()
         position = self.get_position()
-        if self._pinned() or not self._show_sidebar:
+        dragging = not self._allocating and width > 0
+        if self._pinned():
+            # Pulling a pinned strip open is the only thing a drag can mean
+            # here, but not before the full sidebar actually fits: until then
+            # the strip stays put rather than being dragged to a width it
+            # cannot be laid out in. Adopting the drag position as the
+            # remembered width is what keeps the divider under the pointer
+            # when the sidebar comes back — releasing otherwise restores the
+            # width the sidebar had *before* the strip, and the divider would
+            # travel there on its own after the user stopped moving.
+            if dragging and position >= self._expand_threshold(width):
+                previous = self._user_width
+                self._user_width = position
+                if self._request_mode(False):
+                    self._schedule_persist()
+                    return
+                self._user_width = previous
+            self._sync_position(width)
+            return
+        if not self._show_sidebar:
             self._sync_position(width)
             return
         ceiling = self._drag_ceiling(width)
         floor = max(_ABSOLUTE_MIN_WIDTH, min(self._floor(), ceiling))
+        # Shoving the divider well past the narrowest the sidebar can be laid
+        # out in asks for the icon strip rather than for an impossible width.
+        if (dragging
+                and position < floor - _MODE_SWITCH_SLACK
+                and self._request_mode(True)):
+            return
         clamped = max(floor, min(position, ceiling))
         if clamped != position:
             self._applying = True
@@ -308,11 +367,30 @@ class SidebarPaned(Gtk.Paned):
                 self._applying = False
         # A move during allocation is the layout reflowing, not the user; only a
         # drag redefines the remembered width.
-        if self._allocating or width <= 0:
+        if not dragging:
             return
         if clamped != self._user_width:
             self._user_width = clamped
             self._schedule_persist()
+
+    def _request_mode(self, minimal: bool) -> bool:
+        """Ask the owner for the minimal strip (or the full sidebar).
+
+        Returns True when the owner handled it, in which case the caller leaves
+        the divider alone — the mode change moves it. The flag keeps the moves
+        the owner makes from being read back as more drags.
+        """
+        if self._on_mode_switch is None:
+            return False
+        self._switching_mode = True
+        try:
+            self._on_mode_switch(minimal)
+        except Exception:
+            logger.debug('sidebar mode switch failed', exc_info=True)
+            return False
+        finally:
+            self._switching_mode = False
+        return True
 
     # --- persistence --------------------------------------------------------
 
@@ -387,15 +465,12 @@ class SidebarPaned(Gtk.Paned):
         out of it. Pinning does not disturb the width the sidebar rests at once
         :meth:`release_width` is called.
         """
-        width = max(_ABSOLUTE_MIN_WIDTH, int(width))
-        self._min_width = width
-        self._max_width = width
+        self._pinned_width = max(_ABSOLUTE_MIN_WIDTH, int(width))
         self._sync_position()
 
     def release_width(self) -> None:
         """Let the sidebar rest at its own width again after :meth:`pin_width`."""
-        self._min_width = self._free_min
-        self._max_width = self._free_max
+        self._pinned_width = None
         self._sync_position()
 
     def get_sidebar_width(self) -> int:
@@ -403,10 +478,10 @@ class SidebarPaned(Gtk.Paned):
         return int(self.get_position())
 
     def get_resting_sidebar_width(self) -> int:
-        """Width the sidebar returns to when the width levers are released.
+        """Width the sidebar returns to when the pin is released.
 
-        Answered from the free range even while the width is pinned, so the
-        minimal strip can animate straight to the width it will rest at.
+        Answered from the resting geometry even while the width is pinned, so
+        the minimal strip can animate straight to the width it will rest at.
         """
         return int(self._free_position(self.get_width()))
 

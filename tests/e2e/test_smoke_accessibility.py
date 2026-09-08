@@ -56,7 +56,6 @@ EXPECTED_CONTROLS = [
     ("button", "Settings"),
     ("button", "Main menu"),
     ("button", "New Local Terminal"),
-    ("button", "Minimize sidebar to icons"),
 ]
 
 

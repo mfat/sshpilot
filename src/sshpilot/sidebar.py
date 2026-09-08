@@ -4935,22 +4935,11 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window.delete_group_button.connect('clicked', window.on_delete_group_clicked)
     window.group_toolbar.append(window.delete_group_button)
     
-    # Minimize-to-strip button: lives at the start of the bottom toolbar (full
-    # mode only; the whole toolbar is hidden in the strip). Collapses to icons.
-    # box-left/box-right (bundled) show the panel the button acts on, which
-    # reads as "collapse this sidebar" far better than a bare chevron did.
-    minimize_button = icon_utils.new_button_from_icon_name('box-left-symbolic')
-    minimize_button.add_css_class('flat')
-    # Natural (unstretched) height so it matches the lone expand button rather
-    # than growing to the taller action-button row height.
-    minimize_button.set_valign(Gtk.Align.CENTER)
-    minimize_button.set_tooltip_text(_('Minimize sidebar to icons'))
-    minimize_button.connect('clicked', lambda *_a: window.set_sidebar_minimal(True))
-    try:
-        minimize_button.set_can_focus(False)
-    except Exception:
-        pass
-    window._sidebar_minimize_button = minimize_button
+    # No minimize-to-strip button here any more: it sat at the start of this
+    # row and its ~40px was part of what held the whole sidebar at the row's
+    # minimum width. Minimal mode is still entered from Settings > Sidebar >
+    # Mode and from "minimize on connect"; the strip's own expand button
+    # (below) is what leaves it.
 
     # Keep every selection state in one homogeneous stack. If the connection
     # and group toolbars are visibility-swapped as sibling boxes, their very
@@ -4980,7 +4969,6 @@ def _build_sidebar_toolbar(window, sidebar_box):
     window._sidebar_selection_toolbar.set_visible_child_name('empty')
 
     # Add the stable toolbar slot to the main toolbar.
-    toolbar.append(minimize_button)
     toolbar.append(window._sidebar_selection_toolbar)
 
     window._sidebar_toolbar_box = toolbar
