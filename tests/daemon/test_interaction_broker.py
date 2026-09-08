@@ -2004,3 +2004,107 @@ def test_remember_after_authentication_is_logged_immediately(
         assert stored == []
     finally:
         instance.close()
+
+
+def test_mark_authenticated_commits_every_context_sharing_a_session_id(
+    monkeypatch,
+) -> None:
+    """Privileged file access borrows the SFTP session id for a second context.
+
+    The session already called ``mark_authenticated`` at handshake. A later
+    call with the same id must still drain the borrower's pending secrets;
+    committing only the first matching context left those secrets pending
+    until ``cancel_session`` discarded them.
+    """
+
+    stored: list[tuple[str, str]] = []
+    instance = InteractionBroker(
+        secret_timeout=1,
+        host_key_timeout=1,
+        password_store=lambda connection_id, value: (
+            stored.append((connection_id, value)) or True
+        ),
+    )
+    monkeypatch.setattr(
+        instance, "_effective_ssh_config", lambda _argv, _environment=None: {}
+    )
+    try:
+        _argv, session_env = instance.prepare_launch(
+            SessionLaunchSpec(
+                session_id=SESSION_ID,
+                connection_id=CONNECTION_ID,
+                protocol="ssh",
+                hostname="example.test",
+                username="alice",
+                port=22,
+            ),
+            lambda _connection_id, **_kwargs: (
+                ("/usr/bin/ssh", "example"),
+                {
+                    "PATH": os.environ.get("PATH", ""),
+                    "SSHPILOT_DAEMON_ASKPASS_ACTIVE": "1",
+                },
+            ),
+        )
+        # Handshake commit -- same moment SFTP reports READY.
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == []
+
+        _argv, operation_env = instance.prepare_operation_launch(
+            ("/usr/bin/ssh", "example", "sudo", "cat", "/etc/hosts"),
+            {"PATH": os.environ.get("PATH", "")},
+            scope_id=SESSION_ID,
+            connection_id=CONNECTION_ID,
+            hostname="example.test",
+            username="alice",
+            port=22,
+        )
+        token = operation_env["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+        assert token != session_env["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
+
+        resolved = []
+
+        def resolve() -> None:
+            resolved.append(
+                instance._resolve_askpass_secret(
+                    token,
+                    "alice@example.test's password:",
+                )
+            )
+
+        waiter = threading.Thread(target=resolve)
+        waiter.start()
+        deadline = time.monotonic() + 1
+        interactions: list = []
+        while time.monotonic() < deadline and not interactions:
+            interactions = instance.list(CLIENT_A)
+            time.sleep(0.005)
+        interaction = interactions[0]
+        claim = instance.claim(interaction.id, CLIENT_A)
+        instance.respond(
+            InteractionDecisionRequest(
+                interaction_id=interaction.id,
+                secret_decision=SecretDecision.SUBMIT,
+                remember_policy=RememberPolicy.STORE_AFTER_SUCCESS,
+            ),
+            CLIENT_A,
+        )
+        instance.submit_secret(
+            SecretFrame(
+                kind=SecretFrameKind.RESPONSE,
+                interaction_id=interaction.id,
+                nonce=bytes.fromhex(claim.nonce),
+                secret=bytearray(b"borrowed-secret"),
+            ),
+            CLIENT_A,
+        )
+        waiter.join(1)
+        assert not waiter.is_alive()
+        resolved[0][:] = b"\0" * len(resolved[0])
+        resolved[0].clear()
+
+        # Second commit, as PrivilegedFileService does after a successful run.
+        instance.mark_authenticated(SESSION_ID)
+        assert stored == [(CONNECTION_ID, "borrowed-secret")]
+    finally:
+        instance.close()

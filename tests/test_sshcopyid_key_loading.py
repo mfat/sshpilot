@@ -56,6 +56,8 @@ def _make_window():
     window.dropdown_existing = MagicMock()
     window.radio_existing = MagicMock()
     window.radio_existing.get_active.return_value = True
+    window.radio_paste = MagicMock()
+    window.radio_paste.get_active.return_value = False
     window.radio_generate = MagicMock()
     window.radio_generate.get_active.return_value = False
     window.btn_ok = MagicMock()
@@ -66,6 +68,11 @@ def _make_window():
     window.pass2 = MagicMock()
     window.pass_box = MagicMock()
     window.force_toggle = MagicMock()
+    window.paste_view = MagicMock()
+    window.paste_row = MagicMock()
+    window._paste_placeholder = MagicMock()
+    window._programmatic_paste_expand = False
+    window.generate_revealer = MagicMock()
     window._server_label = MagicMock()
     window._server_row = MagicMock()
     window._error = MagicMock()
@@ -192,6 +199,69 @@ def test_browse_does_not_create_a_local_key_fallback():
     assert window._existing_keys_cache == []
     window._error.assert_called_once()
     window._rebuild_existing_dropdown.assert_not_called()
+
+
+def test_paste_mode_ok_deploys_public_key_text():
+    window = _make_window()
+    window.radio_existing.get_active.return_value = False
+    window.radio_paste.get_active.return_value = True
+    window.radio_generate.get_active.return_value = False
+    pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyMaterialForUnitTest pasted@host"
+    buffer = MagicMock()
+    buffer.get_bounds.return_value = (0, 1)
+    buffer.get_text.return_value = pub
+    window.paste_view.get_buffer.return_value = buffer
+    window.force_toggle.get_active.return_value = True
+    window._parent._show_ssh_copy_id_terminal_using_main_widget = MagicMock()
+
+    window._do_copy_pasted()
+
+    window._parent._show_ssh_copy_id_terminal_using_main_widget.assert_called_once_with(
+        window._conn,
+        None,
+        True,
+        public_key=pub,
+    )
+    window.close.assert_called_once()
+
+
+def test_paste_mode_ok_rejects_empty_text():
+    window = _make_window()
+    buffer = MagicMock()
+    buffer.get_bounds.return_value = (0, 1)
+    buffer.get_text.return_value = "  \n"
+    window.paste_view.get_buffer.return_value = buffer
+    window._parent._show_ssh_copy_id_terminal_using_main_widget = MagicMock()
+
+    window._do_copy_pasted()
+
+    window._error.assert_called_once()
+    window._parent._show_ssh_copy_id_terminal_using_main_widget.assert_not_called()
+    window.close.assert_not_called()
+
+
+def test_paste_mode_expands_the_row():
+    window = _make_window()
+    window.radio_paste.get_active.return_value = True
+    window.radio_generate.get_active.return_value = False
+    window.radio_existing.get_active.return_value = False
+
+    window._on_mode_toggled()
+
+    window.paste_row.set_expanded.assert_called_with(True)
+    window.generate_revealer.set_reveal_child.assert_called_with(False)
+
+
+def test_paste_placeholder_hides_when_text_present():
+    window = _make_window()
+    buffer = MagicMock()
+    buffer.get_bounds.return_value = (0, 1)
+    buffer.get_text.return_value = "ssh-ed25519 AAAA x"
+    window.paste_view.get_buffer.return_value = buffer
+
+    window._update_paste_placeholder()
+
+    window._paste_placeholder.set_visible.assert_called_with(False)
 
 
 # ---------------------------------------------------------------------------

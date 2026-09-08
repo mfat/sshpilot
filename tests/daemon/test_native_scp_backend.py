@@ -134,11 +134,61 @@ def test_native_backend_builds_literal_multi_source_argv_without_shell():
         "/tmp/b;literal",
         "alice@[2001:db8::1]:/remote/drop",
     )
+    # Path operands are not builder extra_args: those would land before
+    # preference ssh_overrides and be misparsed as more sources.
+    assert provider.calls[0][1].get("extra_args") == []
     assert kwargs["shell"] is False
     assert kwargs["env"]["SENTINEL"] == "not-secret"
     assert "secret-token" in kwargs["env"]["SSHPILOT_DAEMON_ASKPASS_TOKEN"]
     assert broker.cancelled
     assert "secret-token" not in repr(_request())
+
+
+def test_native_backend_places_sources_after_builder_options():
+    """Preference overrides must stay options, not fake source paths."""
+
+    class _OverrideProvider(_Provider):
+        def prepare_daemon_scp_launch(self, connection_id, **kwargs):
+            self.calls.append((connection_id, kwargs))
+            return (
+                (
+                    "/usr/bin/scp",
+                    "-o",
+                    "NumberOfPasswordPrompts=1",
+                    *kwargs.get("extra_args", ()),
+                    "-o",
+                    "ServerAliveInterval=25",
+                    "-v",
+                    kwargs["target_override"],
+                ),
+                {"PATH": "/usr/bin"},
+            )
+
+    provider = _OverrideProvider()
+    popen = _Popen([_Process()])
+    backend = NativeScpBackend(
+        provider, _Broker(), popen=popen, wait_timeout=_UNIT_WAIT_TIMEOUT
+    )
+    backend.run(
+        _request(sources=("/tmp/payload",), recursive=True),
+        connection_target="alice@host",
+        connection_id=ConnectionId("demo"),
+        transfer_id=TransferId("transfer-2"),
+        cancel_event=threading.Event(),
+    )
+    argv, _kwargs = popen.calls[0]
+    assert argv == (
+        "/usr/bin/scp",
+        "-o",
+        "NumberOfPasswordPrompts=1",
+        "-r",
+        "-o",
+        "ServerAliveInterval=25",
+        "-v",
+        "/tmp/payload",
+        "alice@host:/remote/drop",
+    )
+    assert provider.calls[0][1].get("extra_args") == ["-r"]
 
 
 class _RealProcessProvider:

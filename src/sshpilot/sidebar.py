@@ -4372,6 +4372,7 @@ def _attach_connection_list_context_menu(window):
             # Build a Gtk.PopoverMenu from the shared sidebar context menu helper.
             # Reset any batch-target snapshot from a previous menu.
             window._context_menu_connections = None
+            window._context_menu_group_rows = None
             menu = IconContextMenu()
 
             def _on_popover_closed(popover, *_):
@@ -4383,6 +4384,7 @@ def _attach_connection_list_context_menu(window):
                     window._context_menu_row = None
                     window._context_menu_connection = None
                     window._context_menu_connections = None
+                    window._context_menu_group_rows = None
                 try:
                     popover.unparent()
                 except Exception:
@@ -4400,13 +4402,35 @@ def _attach_connection_list_context_menu(window):
             elif hasattr(row, 'group_id'):
                 group_info = window.group_manager.groups.get(row.group_id, {})
                 is_nested = bool(group_info.get('parent_id'))
-                menu.add_section(
-                    menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: window.on_edit_group_action(None, None)),
-                    menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_group_in_split_view_action(None, None)),
-                    menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: window.on_run_command_action()),
-                    menu.add_item('edit-undo-symbolic', _('Ungroup'), lambda: window.on_move_group_to_root_action(None, None)) if is_nested else None,
-                    menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: window.on_delete_group_action(None, None)),
+                # Right-clicking inside a multi-selection keeps it, so the menu
+                # must say what it will act on. Only delete is a batch action;
+                # the rest target one group and are hidden, mirroring the
+                # multi-connection menu below.
+                try:
+                    selected_group_rows = [
+                        r for r in window._get_selected_group_rows()
+                        if not getattr(r, 'is_tag_group', False)
+                    ]
+                except Exception:
+                    selected_group_rows = []
+                multi_groups = len(selected_group_rows) > 1 and row in selected_group_rows
+                # Snapshot the targets for the lifetime of this menu so the
+                # delete acts on what was selected when the menu opened.
+                window._context_menu_group_rows = (
+                    list(selected_group_rows) if multi_groups else None
                 )
+                if multi_groups:
+                    menu.add_section(
+                        menu.add_item('user-trash-symbolic', _('Delete Groups'), lambda: window.on_delete_group_action(None, None)),
+                    )
+                else:
+                    menu.add_section(
+                        menu.add_item('document-edit-symbolic', _('Edit Group'), lambda: window.on_edit_group_action(None, None)),
+                        menu.add_item('view-grid-symbolic', _('Open in Split View'), lambda: window.on_open_group_in_split_view_action(None, None)),
+                        menu.add_item('utilities-terminal-symbolic', _('Run Command…'), lambda: window.on_run_command_action()),
+                        menu.add_item('edit-undo-symbolic', _('Ungroup'), lambda: window.on_move_group_to_root_action(None, None)) if is_nested else None,
+                        menu.add_item('user-trash-symbolic', _('Delete Group'), lambda: window.on_delete_group_action(None, None)),
+                    )
             else:
                 conn = getattr(row, 'connection', None)
                 # The right-click gesture has already collapsed the

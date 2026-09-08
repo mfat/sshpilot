@@ -444,3 +444,86 @@ def test_membership_mutations_emit_group_events(service):
     service.remove_connection_from_group(a.id, g1.id)
     assert MutationKind.GROUP_ASSIGNED in events
     assert MutationKind.GROUP_REMOVED in events
+
+
+# ---------------------------------------------------------------------------
+# Group delete plans replayed against the real service
+# ---------------------------------------------------------------------------
+
+
+def _projection(service):
+    """The GroupManager-shaped view the delete planner consumes."""
+    return {
+        group.id: {
+            "id": group.id,
+            "name": group.name,
+            "parent_id": group.parent_id,
+            "connections": list(group.connection_ids),
+        }
+        for group in service.list_groups()
+    }
+
+
+def _nested_tree(service):
+    """``Parent > Child > Grandchild``, one connection each, plus a bystander."""
+    parent = service.create_group("Parent")
+    child = service.create_group("Child", parent_id=parent.id)
+    grandchild = service.create_group("Grandchild", parent_id=child.id)
+    bystander = service.create_group("Bystander")
+    for group, name in (
+        (parent, "P"), (child, "C"), (grandchild, "G"), (bystander, "B"),
+    ):
+        service.copy_connection_to_group(_conn(service, name).id, group.id)
+    return parent, child, grandchild, bystander
+
+
+def test_delete_group_only_lifts_the_whole_subtree_one_level(service):
+    """"Delete group only" must not take anything down with the group."""
+    from sshpilot.actions import plan_group_delete
+
+    parent, child, _grandchild, _bystander = _nested_tree(service)
+    plan = plan_group_delete(_projection(service), [parent.id])
+
+    for group_id in plan.selected:
+        service.delete_group(group_id)
+
+    surviving = {g.name: g for g in service.list_groups()}
+    assert set(surviving) == {"Child", "Grandchild", "Bystander"}
+    assert surviving["Child"].parent_id is None
+    assert surviving["Grandchild"].parent_id == surviving["Child"].id
+    # The parent's own connection kept its data and fell back to the root.
+    assert service.get(ConnectionId("P")) is not None
+    assert service.get(ConnectionId("P")).group_id is None
+
+
+def test_cascade_plan_replayed_on_the_service_empties_the_subtree(service):
+    """The step order the dialog emits leaves no orphaned group or connection."""
+    from sshpilot.actions import plan_group_delete
+
+    parent, _child, _grandchild, _bystander = _nested_tree(service)
+    plan = plan_group_delete(_projection(service), [parent.id])
+
+    # Exactly what "Delete Group and Contents" submits: connections first
+    # (they own ssh config blocks), then the groups deepest-first.
+    for connection_id in plan.connections:
+        service.delete(ConnectionId(connection_id))
+    for group_id in plan.subtree:
+        service.delete_group(group_id)
+
+    assert [g.name for g in service.list_groups()] == ["Bystander"]
+    assert [c.nickname for c in service.list_connections()] == ["B"]
+
+
+def test_cascade_plan_covers_a_selection_of_a_group_and_its_own_subgroup(service):
+    """A nested pick must not delete the same group twice mid-sequence."""
+    from sshpilot.actions import plan_group_delete
+
+    parent, child, _grandchild, _bystander = _nested_tree(service)
+    plan = plan_group_delete(_projection(service), [parent.id, child.id])
+
+    for connection_id in plan.connections:
+        service.delete(ConnectionId(connection_id))
+    for group_id in plan.subtree:
+        service.delete_group(group_id)
+
+    assert [g.name for g in service.list_groups()] == ["Bystander"]

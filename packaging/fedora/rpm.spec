@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.0.6}
+Version:        %{?version}%{!?version:6.0.7}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -144,6 +144,14 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Tue Sep 08 2026 mFat <newmfat@gmail.com> - 6.0.7-1
+- Redesigned backup dialog
+- Improved Host Info dialog
+- Added option to paste public key to ssh-copy-id dialog
+- Fixed bug that prevented deleting multiple groups at once
+- Added option to reveal scp-downloaded files in file manager
+- Fixed backup decryption bug during restore
+
 * Sun Sep 06 2026 mFat <newmfat@gmail.com> - 6.0.6-1
 - Bug fixes
 

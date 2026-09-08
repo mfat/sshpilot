@@ -11,12 +11,14 @@ from gi.repository import Gtk
 
 from sshpilot.api.models.host_info import (
     CpuInfo,
+    CpuTimes,
     FailedUnit,
     FilesystemUsage,
     HostInfoSnapshot,
     HostKeyFingerprint,
     InterfaceCounters,
     ListeningPort,
+    LiveSample,
     LoadAverage,
     LoginSession,
     MemoryInfo,
@@ -24,6 +26,7 @@ from sshpilot.api.models.host_info import (
     NetworkInterfaceKind,
     NetworkInterfaceState,
     PressureStall,
+    ProcessCounts,
     ProcessUsage,
     SocketConnection,
     SocketDirection,
@@ -120,14 +123,27 @@ def _snapshot(**overrides):
 
 
 def _dialog(snapshot, counters=()):
-    """Build a dialog shell without a daemon and hand it a snapshot."""
+    """Build a dialog shell without a daemon and hand it a snapshot.
+
+    The baseline live sample is seeded exactly as ``_on_snapshot`` seeds it, so
+    the tabs see the same state they would after a real gather.
+    """
 
     from sshpilot.machine_info_dialog import MachineInfoDialog
 
     dialog = object.__new__(MachineInfoDialog)
     dialog._snapshot = snapshot
     dialog._rate_labels = {}
-    dialog._previous_counters = counters
+    dialog._cpu_gauge = None
+    dialog._memory_gauge = None
+    dialog._cpu_section = None
+    dialog._previous_live = LiveSample(
+        counters=counters,
+        cpu_times=snapshot.cpu_times,
+        memory=snapshot.memory,
+        load_average=snapshot.load_average,
+    )
+    dialog._previous_live_time = 0.0
     return dialog
 
 
@@ -164,11 +180,26 @@ def test_an_unreported_memory_availability_reads_as_na_everywhere():
 
 
 def test_a_missing_cpu_count_does_not_break_the_load_gauges():
+    """Load is only readable per CPU, so without a count the bars must render
+    as unknown rather than picking a severity out of an unscaled number."""
+
+    from sshpilot.machine_info_dialog import _SEVERITY_UNKNOWN
+
     snapshot = _snapshot(cpu=CpuInfo(model="Unknown"))
     dialog = _dialog(snapshot)
     assert isinstance(dialog._build_overview(), Gtk.Box)
-    texts = _texts(dialog._build_resources())
-    assert any("CPU count unavailable" in text for text in texts)
+
+    page = dialog._build_resources()
+    assert isinstance(page, Gtk.Box)
+    # The load figures are still reported; only their severity is withheld.
+    assert "1.00" in _texts(page)
+    load_bars = [
+        widget
+        for widget in _walk(page)
+        if isinstance(widget, Gtk.LevelBar)
+        and _SEVERITY_UNKNOWN in widget.get_css_classes()
+    ]
+    assert load_bars
 
 
 def test_memory_and_temperatures_are_stacked_not_side_by_side():
@@ -181,24 +212,26 @@ def test_memory_and_temperatures_are_stacked_not_side_by_side():
             headings[widget.get_text()] = widget
     assert set(headings) == {"Memory", "Temperatures"}
 
-    def _ancestors(widget):
-        found = []
-        parent = widget.get_parent()
-        while parent is not None:
-            found.append(parent)
-            parent = parent.get_parent()
-        return found
+    # Asserted on the ancestry itself rather than by intersecting id() sets:
+    # PyGObject hands out a fresh wrapper per access and frees it immediately,
+    # so those addresses get recycled and compare equal by accident.
+    def _row_ancestor(widget):
+        """The first horizontal box between a heading and the page, if any."""
 
-    shared = set(map(id, _ancestors(headings["Memory"]))) & set(
-        map(id, _ancestors(headings["Temperatures"]))
-    )
-    horizontal = [
-        widget for widget in _walk(page)
-        if id(widget) in shared
-        and isinstance(widget, Gtk.Box)
-        and widget.get_orientation() is Gtk.Orientation.HORIZONTAL
-    ]
-    assert not horizontal, "the two sections still share a horizontal container"
+        parent = widget.get_parent()
+        while parent is not None and parent is not page:
+            if (
+                isinstance(parent, Gtk.Box)
+                and parent.get_orientation() is Gtk.Orientation.HORIZONTAL
+            ):
+                return parent
+            parent = parent.get_parent()
+        return None
+
+    for name, heading in headings.items():
+        assert _row_ancestor(heading) is None, (
+            f"{name} sits inside a horizontal container, so it shares a row"
+        )
 
 
 def test_a_nearly_full_filesystem_is_marked_critical_not_healthy():
@@ -210,8 +243,9 @@ def test_a_nearly_full_filesystem_is_marked_critical_not_healthy():
     assert _SEVERITY_CRITICAL in bars[0].get_css_classes()
 
 
-def test_severity_runs_green_amber_red_as_a_value_fills_up():
+def test_severity_runs_green_blue_amber_red_as_a_value_fills_up():
     from sshpilot.machine_info_dialog import (
+        _SEVERITY_CAREFUL,
         _SEVERITY_CRITICAL,
         _SEVERITY_OK,
         _SEVERITY_UNKNOWN,
@@ -221,17 +255,50 @@ def test_severity_runs_green_amber_red_as_a_value_fills_up():
     )
 
     assert _usage_severity(0.0) is _SEVERITY_OK
-    assert _usage_severity(0.74) is _SEVERITY_OK
-    assert _usage_severity(0.75) is _SEVERITY_WARN
+    assert _usage_severity(0.49) is _SEVERITY_OK
+    assert _usage_severity(0.50) is _SEVERITY_CAREFUL
+    assert _usage_severity(0.69) is _SEVERITY_CAREFUL
+    assert _usage_severity(0.70) is _SEVERITY_WARN
     assert _usage_severity(0.89) is _SEVERITY_WARN
     assert _usage_severity(0.90) is _SEVERITY_CRITICAL
     assert _usage_severity(1.0) is _SEVERITY_CRITICAL
     assert _temperature_severity(59.9) is _SEVERITY_OK
-    assert _temperature_severity(60.0) is _SEVERITY_WARN
+    assert _temperature_severity(60.0) is _SEVERITY_CAREFUL
+    assert _temperature_severity(70.0) is _SEVERITY_WARN
     assert _temperature_severity(80.0) is _SEVERITY_CRITICAL
 
     # An unknown reading is neither healthy nor alarming.
     assert _usage_severity(None) is _SEVERITY_UNKNOWN
+
+
+def test_load_is_scaled_by_core_count_and_not_the_usage_scale():
+    """Load is a run-queue length, so it cannot share utilization's thresholds.
+
+    One runnable task per CPU is a busy host, not a dying one: on the usage
+    scale that reads critical, which is what this separation prevents.
+    """
+
+    from sshpilot.machine_info_dialog import (
+        _SEVERITY_CAREFUL,
+        _SEVERITY_CRITICAL,
+        _SEVERITY_OK,
+        _SEVERITY_UNKNOWN,
+        _SEVERITY_WARN,
+        _load_severity,
+        _usage_severity,
+    )
+
+    # Four runnable tasks on four CPUs: fully committed, but healthy.
+    assert _load_severity(4.0, 4) is _SEVERITY_WARN
+    assert _usage_severity(4.0 / 4) is _SEVERITY_CRITICAL
+
+    assert _load_severity(1.0, 4) is _SEVERITY_OK
+    assert _load_severity(2.8, 4) is _SEVERITY_CAREFUL
+    assert _load_severity(20.0, 4) is _SEVERITY_CRITICAL
+    # Load 8 is idle on a 64-core host and a crisis on a single-core router,
+    # so without a CPU count it is unreadable rather than alarming.
+    assert _load_severity(8.0, None) is _SEVERITY_UNKNOWN
+    assert _load_severity(None, 4) is _SEVERITY_UNKNOWN
 
 
 def test_an_unknown_reading_is_not_painted_as_healthy():
@@ -516,17 +583,322 @@ def test_a_process_without_a_memory_reading_shows_na_not_zero():
     assert any("N/A" in text for text in texts)
 
 
-def test_io_pressure_is_shown_when_the_kernel_publishes_it():
+def test_pressure_covers_all_three_resources_not_only_storage():
+    """PSI is the clearest "is this host struggling" reading, so it is not
+    filed under disks: CPU and memory stall too, and they live on Resources."""
+
     snapshot = _snapshot(
         io_pressure_some=PressureStall(1.1, 0.73, 0.38),
         io_pressure_full=PressureStall(0.33, 0.46, 0.29),
+        cpu_pressure_some=PressureStall(2.2, 1.5, 0.9),
+        memory_pressure_some=PressureStall(3.3, 2.5, 1.9),
     )
-    texts = _texts(_dialog(snapshot)._build_storage())
-    assert "1.1%" in texts and "0.4%" in texts
-    assert "Some tasks stalled" in texts and "All tasks stalled" in texts
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert "Time spent waiting" in texts
+    # Plain words, not kernel vocabulary: no "pressure", no "I/O", no "tasks".
+    assert {"CPU", "Memory", "Disk"} <= set(texts)
+    assert not any("Pressure" in t or "stall" in t.lower() for t in texts)
+    assert "I/O" not in texts
+
+    # One window, the 60 s one -- the second field of each reading.
+    assert "1.5%" in texts and "0.7%" in texts and "2.5%" in texts
+    # ...and only that one: 10 s and 300 s are neither drawn nor labelled.
+    assert "10 s" not in texts and "300 s" not in texts
+    assert "2.2%" not in texts and "0.9%" not in texts
+
+    # It is no longer on Storage.
+    assert "Time spent waiting" not in _texts(_dialog(snapshot)._build_storage())
+
+
+def test_a_host_where_everything_stalls_says_so_in_words():
+    """"full" is the pre-OOM signature and is zero on a healthy host, so it is
+    not a row of its own -- it is a phrase that appears when it is real."""
+
+    snapshot = _snapshot(
+        memory_pressure_some=PressureStall(20.0, 18.0, 9.0),
+        memory_pressure_full=PressureStall(9.0, 8.0, 4.0),
+    )
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert any("nothing could run" in t for t in texts)
+    assert any("8.0%" in t for t in texts)
+
+
+def test_a_resource_that_never_stalls_completely_stays_silent():
+    """/proc/pressure/cpu reports no "full" line on many kernels, and where it
+    does it is zero: either way there is nothing to say."""
+
+    snapshot = _snapshot(
+        cpu_pressure_some=PressureStall(2.2, 1.5, 0.9),
+        cpu_pressure_full=PressureStall(0.0, 0.0, 0.0),
+    )
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert "1.5%" in texts
+    assert not any("nothing could run" in t for t in texts)
+
+
+def test_waiting_has_its_own_scale_because_losing_half_your_time_is_critical():
+    """Utilization's 50/70/90 would call a host losing 40% of its time to
+    waiting "healthy"."""
+
+    from sshpilot.machine_info_dialog import (
+        _SEVERITY_CAREFUL,
+        _SEVERITY_CRITICAL,
+        _SEVERITY_OK,
+        _SEVERITY_WARN,
+        _usage_severity,
+        _wait_severity,
+    )
+
+    assert _wait_severity(0.05) is _SEVERITY_OK
+    assert _wait_severity(0.10) is _SEVERITY_CAREFUL
+    assert _wait_severity(0.25) is _SEVERITY_WARN
+    assert _wait_severity(0.50) is _SEVERITY_CRITICAL
+    # The same reading on the utilization scale would still read as healthy.
+    assert _wait_severity(0.40) is _SEVERITY_WARN
+    assert _usage_severity(0.40) is _SEVERITY_OK
 
 
 def test_a_kernel_without_psi_says_so_rather_than_showing_zeroes():
-    texts = _texts(_dialog(_snapshot())._build_storage())
-    assert "This host does not report I/O pressure" in texts
+    texts = _texts(_dialog(_snapshot())._build_resources())
+    assert "This host does not report waiting times" in texts
     assert "0.0%" not in texts
+
+
+# ---------------------------------------------------------------------------
+# CPU utilization: the gauge means CPU, not load
+# ---------------------------------------------------------------------------
+
+def _times(name, **fields):
+    base = dict(user=0, nice=0, system=0, idle=0, iowait=0, irq=0, softirq=0, steal=0)
+    base.update(fields)
+    return CpuTimes(name=name, **base)
+
+
+def _cpu_snapshot(**overrides):
+    return _snapshot(
+        cpu=CpuInfo(model="Atheros AR9344", logical_processors=2, frequency_mhz=650.0),
+        load_average=LoadAverage(1.9, 1.5, 1.2),
+        cpu_times=(
+            _times("cpu", user=100, system=50, idle=1000),
+            _times("cpu0", user=50, system=25, idle=500),
+            _times("cpu1", user=50, system=25, idle=500),
+        ),
+        **overrides,
+    )
+
+
+def test_the_cpu_gauge_waits_for_a_second_sample_instead_of_showing_load():
+    """The gauge used to plot load1/nproc under a "CPU" heading. Load is a
+    run-queue length; with load 1.9 on 2 CPUs that read as 95% CPU while the
+    host could have been almost entirely idle."""
+
+    dialog = _dialog(_cpu_snapshot())
+    dialog._build_overview()
+    texts = _texts(dialog._cpu_gauge.widget)
+
+    assert "CPU" in texts
+    # 1.9 / 2 CPUs would have rendered as 95%.
+    assert "95%" not in texts
+    assert "—" in texts
+    # The load average is still reported, as load.
+    assert any("load 1.90" in text for text in texts)
+
+
+def test_a_live_sample_fills_in_the_cpu_gauge_and_the_per_core_bars():
+    from sshpilot.machine_info_dialog import _SEVERITY_CAREFUL
+
+    snapshot = _cpu_snapshot()
+    dialog = _dialog(snapshot)
+    dialog._build_overview()
+    dialog._build_resources()
+
+    # A second reading 1000 jiffies later: 60% busy overall, cpu0 at 40% and
+    # cpu1 at 80%.
+    sample = LiveSample(
+        counters=(),
+        cpu_times=(
+            _times("cpu", user=700, system=650, idle=1800),
+            _times("cpu0", user=250, system=225, idle=1100),
+            _times("cpu1", user=450, system=425, idle=700),
+        ),
+        memory=snapshot.memory,
+        load_average=snapshot.load_average,
+    )
+    dialog._apply_rates(dialog._previous_live, sample, 2.0)
+
+    texts = _texts(dialog._cpu_gauge.widget) + _texts(dialog._cpu_section.widget)
+    assert "60%" in texts
+    assert "40%" in texts and "80%" in texts
+    assert any("iowait" in text for text in texts)
+    # 60% is past careful (50%) but not yet warning (70%).
+    assert _SEVERITY_CAREFUL in dialog._cpu_gauge._area.get_css_classes()
+
+
+def test_per_core_bars_stay_in_kernel_order_so_a_hot_core_stays_put():
+    """Sorting by load would make the busiest core jump between rows every two
+    seconds, hiding the thing worth seeing: that it is always the same core."""
+
+    dialog = _dialog(_cpu_snapshot())
+    dialog._build_resources()
+    assert list(dialog._cpu_section._core_bars) == ["cpu0", "cpu1"]
+
+
+def test_a_host_that_reported_no_cpu_times_still_builds_the_section():
+    dialog = _dialog(_snapshot(cpu_times=()))
+    page = dialog._build_resources()
+    assert isinstance(page, Gtk.Box)
+    assert dialog._cpu_section._core_bars == {}
+    assert "CPU utilization" in _texts(page)
+
+
+# ---------------------------------------------------------------------------
+# Storage
+# ---------------------------------------------------------------------------
+
+def test_inode_usage_is_shown_because_a_disk_fills_up_two_ways():
+    """A filesystem can be 3% full of bytes and out of inodes, at which point
+    every write fails while the usage bar still looks healthy."""
+
+    snapshot = _snapshot(
+        filesystems=(
+            FilesystemUsage(
+                device="/dev/sda1",
+                mount_point="/",
+                fstype="ext4",
+                size_bytes=100_000_000,
+                used_bytes=3_000_000,
+                available_bytes=97_000_000,
+                options="rw,noatime",
+                inodes_total=1000,
+                inodes_used=970,
+                inodes_free=30,
+            ),
+        )
+    )
+    texts = _texts(_dialog(snapshot)._build_storage())
+    # 3% of the bytes, 97% of the inodes: the bar looks healthy and every
+    # write is about to fail, so the inode figure is stated beside it.
+    assert any("inodes" in text and "97%" in text for text in texts)
+    # It has no column of its own any more, because it is nearly always dull.
+    assert "Inodes" not in texts
+    # Mount options are not a column either: only "ro" ever mattered, and this
+    # filesystem is writable.
+    assert not any("noatime" in text for text in texts)
+    assert "read-only" not in texts
+
+
+def test_inodes_stay_quiet_when_the_bytes_run_out_first():
+    """The bar already says the filesystem is nearly full; repeating a lower
+    inode figure beside it adds nothing."""
+
+    snapshot = _snapshot(
+        filesystems=(
+            FilesystemUsage(
+                device="/dev/sda1", mount_point="/", fstype="ext4",
+                size_bytes=100, used_bytes=99, available_bytes=1,
+                inodes_total=1000, inodes_used=40, inodes_free=960,
+            ),
+        )
+    )
+    assert not any(
+        "inodes" in t for t in _texts(_dialog(snapshot)._build_storage())
+    )
+
+
+def test_a_read_only_mount_says_so_because_it_explains_a_full_disk():
+    snapshot = _snapshot(
+        filesystems=(
+            FilesystemUsage(
+                device="/dev/mtdblock6", mount_point="/", fstype="squashfs",
+                size_bytes=100, used_bytes=100, available_bytes=0,
+                options="ro,relatime",
+            ),
+        )
+    )
+    texts = _texts(_dialog(snapshot)._build_storage())
+    assert any("read-only" in text for text in texts)
+    # The rest of the option string still does not appear.
+    assert not any("relatime" in text for text in texts)
+
+
+def test_a_filesystem_without_inode_counts_mentions_them_not_at_all():
+    snapshot = _snapshot(
+        filesystems=(
+            FilesystemUsage(
+                device="/dev/sdb1",
+                mount_point="/data",
+                fstype="btrfs",
+                size_bytes=100,
+                used_bytes=50,
+                available_bytes=50,
+            ),
+        )
+    )
+    texts = _texts(_dialog(snapshot)._build_storage())
+    assert not any("inodes" in t for t in texts)
+    assert "0%" not in texts
+
+
+# ---------------------------------------------------------------------------
+# Process table
+# ---------------------------------------------------------------------------
+
+def test_process_counts_are_shown_against_the_kernel_pid_limit():
+    snapshot = _snapshot(
+        process_counts=ProcessCounts(
+            total=180, running=2, sleeping=176, stopped=0, zombie=2,
+            threads=612, pid_max=32768,
+        )
+    )
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert "Process table" in texts
+    assert "180" in texts and "612" in texts
+    assert any("32768" in text for text in texts)
+
+
+def test_a_busybox_host_shows_the_counts_it_has_and_na_for_the_rest():
+    """BusyBox ps has no -o, so only procs_running survives."""
+
+    snapshot = _snapshot(process_counts=ProcessCounts(running=3))
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert "3" in texts
+    assert "N/A" in texts
+
+
+def test_a_host_that_reported_no_process_counts_says_so():
+    texts = _texts(_dialog(_snapshot())._build_resources())
+    assert "No process counts reported" in texts
+
+
+# ---------------------------------------------------------------------------
+# Memory
+# ---------------------------------------------------------------------------
+
+def test_the_memory_breakdown_uses_the_kernels_own_field_names():
+    """So a reading here can be matched against /proc/meminfo on the host
+    without a translation table."""
+
+    snapshot = _snapshot(
+        memory=MemoryInfo(
+            total_bytes=1024 * 1024,
+            free_bytes=1024,
+            available_bytes=512 * 1024,
+            active_bytes=400 * 1024,
+            dirty_bytes=4096,
+            slab_bytes=64 * 1024,
+        )
+    )
+    texts = _texts(_dialog(snapshot)._build_resources())
+    assert {"MemTotal", "MemAvailable", "Active", "Dirty", "Slab"} <= set(texts)
+
+
+def test_a_live_sample_updates_the_memory_gauge_in_place():
+    dialog = _dialog(_snapshot())
+    dialog._build_overview()
+    sample = LiveSample(
+        memory=MemoryInfo(
+            total_bytes=1000, free_bytes=100, available_bytes=250
+        )
+    )
+    dialog._apply_readings(sample)
+    assert "75%" in _texts(dialog._memory_gauge.widget)

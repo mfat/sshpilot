@@ -196,6 +196,13 @@ def _service_config():
 
 
 def test_ssh_and_scp_argv_carry_identical_override_fragment():
+    """SSH and SCP share the same Preference option fragment before the host.
+
+    That fragment is option tokens only. SCP transfer *path operands* are not
+    part of ``build_native_command``: NativeScpBackend inserts them after the
+    prepared argv (after these overrides, before destination). Treating paths
+    like ssh ``extra_args`` would put them before Preferences and break scp.
+    """
     connection = _Connection()
     ssh_cmd = build_native_command(connection, _service_config(), command_type="ssh")
     scp_cmd = build_native_command(connection, _service_config(), command_type="scp")
@@ -205,6 +212,10 @@ def test_ssh_and_scp_argv_carry_identical_override_fragment():
     assert scp_cmd[0] == "scp"
     assert ssh_cmd[1:-1] == scp_cmd[1:-1]
     assert ssh_cmd[-1] == scp_cmd[-1] == "example"
+    # Option boundary: every Preference token precedes the host token.
+    host_i = scp_cmd.index("example")
+    assert scp_cmd.index("-v") < host_i
+    assert scp_cmd.index("ServerAliveInterval=45") < host_i
 
     joined = " ".join(ssh_cmd)
     for fragment in (

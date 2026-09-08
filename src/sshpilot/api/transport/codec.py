@@ -6449,12 +6449,18 @@ def deploy_key_request_to_wire(request: Any) -> Dict[str, Any]:
 
     if type(request) is not DeployKeyRequest:
         raise TypeError("DeployKeyRequest is required")
-    return {
+    wire: Dict[str, Any] = {
         "connection_id": request.connection_id,
-        "key_id": request.key_id,
         "scope": request.scope.value,
         "force": request.force,
     }
+    # Omit empty optional halves so key-id clients stay wire-compatible with
+    # older daemons that reject unknown fields / require key_id.
+    if request.key_id is not None:
+        wire["key_id"] = request.key_id
+    if request.public_key:
+        wire["public_key"] = request.public_key
+    return wire
 
 
 def deploy_key_request_from_wire(value: Any) -> Any:
@@ -6462,14 +6468,18 @@ def deploy_key_request_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"connection_id", "key_id", "scope", "force"},
+        required={"connection_id", "scope", "force"},
+        optional={"key_id", "public_key"},
         context="deploy key request",
     )
+    key_id = data.get("key_id")
+    public_key = data.get("public_key", "")
     return DeployKeyRequest(
         connection_id=ConnectionId(_identifier(data["connection_id"], "connection id")),
-        key_id=_identifier(data["key_id"], "key id"),
+        key_id=(_identifier(key_id, "key id") if key_id is not None else None),
         scope=_key_store_scope(data["scope"], "key store scope"),
         force=_boolean(data["force"], "force"),
+        public_key=(_text(public_key, "public key") if public_key else ""),
     )
 
 
@@ -6574,6 +6584,8 @@ def broadcast_command_request_to_wire(request: Any) -> Dict[str, Any]:
     }
     if policy.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY:
         policy_wire["interaction_mode"] = ExecutionInteractionMode.AUTOFILL_ONLY.value
+    if policy.require_master:
+        policy_wire["require_master"] = True
     return {
         "connection_ids": list(request.connection_ids),
         "command": request.command,
@@ -6609,7 +6621,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
             "capture_stderr",
             "output_limit_bytes",
         },
-        optional={"interaction_mode"},
+        optional={"interaction_mode", "require_master"},
         context="broadcast execution policy",
     )
     try:
@@ -6627,6 +6639,9 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
     timeout = policy_data["timeout_seconds"]
     if timeout is not None and (type(timeout) not in (int, float) or isinstance(timeout, bool)):
         raise ValueError("broadcast timeout must be a number or null")
+    require_master = policy_data.get("require_master", False)
+    if type(require_master) is not bool:
+        raise ValueError("broadcast require_master must be a boolean")
     return BroadcastCommandRequest(
         tuple(ConnectionId(_identifier(item, "connection id")) for item in data["connection_ids"]),
         _text(data["command"], "broadcast command"),
@@ -6642,6 +6657,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
                 policy_data["output_limit_bytes"], "broadcast output limit"
             ),
             interaction_mode=interaction_mode,
+            require_master=require_master,
         ),
     )
 
@@ -6952,6 +6968,13 @@ def _memory_info_to_wire(memory: Any) -> Dict[str, Any]:
         "buffers_bytes": memory.buffers_bytes,
         "swap_total_bytes": memory.swap_total_bytes,
         "swap_free_bytes": memory.swap_free_bytes,
+        "active_bytes": memory.active_bytes,
+        "inactive_bytes": memory.inactive_bytes,
+        "shmem_bytes": memory.shmem_bytes,
+        "dirty_bytes": memory.dirty_bytes,
+        "writeback_bytes": memory.writeback_bytes,
+        "slab_bytes": memory.slab_bytes,
+        "slab_reclaimable_bytes": memory.slab_reclaimable_bytes,
     }
 
 
@@ -6968,6 +6991,13 @@ def _memory_info_from_wire(value: Any) -> Any:
             "buffers_bytes",
             "swap_total_bytes",
             "swap_free_bytes",
+            "active_bytes",
+            "inactive_bytes",
+            "shmem_bytes",
+            "dirty_bytes",
+            "writeback_bytes",
+            "slab_bytes",
+            "slab_reclaimable_bytes",
         },
         context="host info memory",
     )
@@ -6979,6 +7009,13 @@ def _memory_info_from_wire(value: Any) -> Any:
         buffers_bytes=_integer(data["buffers_bytes"], "memory buffers"),
         swap_total_bytes=_integer(data["swap_total_bytes"], "swap total"),
         swap_free_bytes=_integer(data["swap_free_bytes"], "swap free"),
+        active_bytes=_host_info_optional_int(data["active_bytes"], "memory active_bytes"),
+        inactive_bytes=_host_info_optional_int(data["inactive_bytes"], "memory inactive_bytes"),
+        shmem_bytes=_host_info_optional_int(data["shmem_bytes"], "memory shmem_bytes"),
+        dirty_bytes=_host_info_optional_int(data["dirty_bytes"], "memory dirty_bytes"),
+        writeback_bytes=_host_info_optional_int(data["writeback_bytes"], "memory writeback_bytes"),
+        slab_bytes=_host_info_optional_int(data["slab_bytes"], "memory slab_bytes"),
+        slab_reclaimable_bytes=_host_info_optional_int(data["slab_reclaimable_bytes"], "memory slab_reclaimable_bytes"),
     )
 
 
@@ -7012,6 +7049,10 @@ def _filesystem_usage_to_wire(item: Any) -> Dict[str, Any]:
         "used_bytes": item.used_bytes,
         "available_bytes": item.available_bytes,
         "use_percent": item.use_percent,
+        "options": item.options,
+        "inodes_total": item.inodes_total,
+        "inodes_used": item.inodes_used,
+        "inodes_free": item.inodes_free,
     }
 
 
@@ -7028,6 +7069,10 @@ def _filesystem_usage_from_wire(value: Any) -> Any:
             "used_bytes",
             "available_bytes",
             "use_percent",
+            "options",
+            "inodes_total",
+            "inodes_used",
+            "inodes_free",
         },
         context="host info filesystem",
     )
@@ -7041,6 +7086,73 @@ def _filesystem_usage_from_wire(value: Any) -> Any:
             data["available_bytes"], "filesystem available"
         ),
         use_percent=_host_info_optional_int(data["use_percent"], "filesystem use percent"),
+        options=_text(data["options"], "filesystem options", allow_empty=True),
+        inodes_total=_host_info_optional_int(data["inodes_total"], "filesystem inodes total"),
+        inodes_used=_host_info_optional_int(data["inodes_used"], "filesystem inodes used"),
+        inodes_free=_host_info_optional_int(data["inodes_free"], "filesystem inodes free"),
+    )
+
+
+def _cpu_times_to_wire(item: Any) -> Dict[str, Any]:
+    from ..models.host_info import CPU_TIME_FIELDS
+
+    wire: Dict[str, Any] = {"name": item.name}
+    for field_name in CPU_TIME_FIELDS:
+        wire[field_name] = getattr(item, field_name)
+    return wire
+
+
+def _cpu_times_from_wire(value: Any) -> Any:
+    from ..models.host_info import CPU_TIME_FIELDS, CpuTimes
+
+    data = _strict_fields(
+        value,
+        required={"name", *CPU_TIME_FIELDS},
+        context="host info cpu times",
+    )
+    return CpuTimes(
+        name=_text(data["name"], "cpu times name"),
+        **{
+            field_name: _host_info_optional_int(
+                data[field_name], f"cpu times {field_name}"
+            )
+            for field_name in CPU_TIME_FIELDS
+        },
+    )
+
+
+_PROCESS_COUNT_FIELDS = (
+    "total",
+    "running",
+    "sleeping",
+    "stopped",
+    "zombie",
+    "threads",
+    "pid_max",
+)
+
+
+def _process_counts_to_wire(counts: Any) -> Optional[Dict[str, Any]]:
+    if counts is None:
+        return None
+    return {name: getattr(counts, name) for name in _PROCESS_COUNT_FIELDS}
+
+
+def _process_counts_from_wire(value: Any) -> Any:
+    from ..models.host_info import ProcessCounts
+
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required=set(_PROCESS_COUNT_FIELDS),
+        context="host info process counts",
+    )
+    return ProcessCounts(
+        **{
+            name: _host_info_optional_int(data[name], f"process counts {name}")
+            for name in _PROCESS_COUNT_FIELDS
+        }
     )
 
 
@@ -7332,6 +7444,14 @@ def host_info_snapshot_to_wire(snapshot: Any) -> Optional[Dict[str, Any]]:
         "host_keys": [_host_key_to_wire(item) for item in snapshot.host_keys],
         "io_pressure_some": _pressure_stall_to_wire(snapshot.io_pressure_some),
         "io_pressure_full": _pressure_stall_to_wire(snapshot.io_pressure_full),
+        "cpu_pressure_some": _pressure_stall_to_wire(snapshot.cpu_pressure_some),
+        "cpu_pressure_full": _pressure_stall_to_wire(snapshot.cpu_pressure_full),
+        "memory_pressure_some": _pressure_stall_to_wire(snapshot.memory_pressure_some),
+        "memory_pressure_full": _pressure_stall_to_wire(snapshot.memory_pressure_full),
+        "cpu_times": [_cpu_times_to_wire(item) for item in snapshot.cpu_times],
+        "process_counts": _process_counts_to_wire(snapshot.process_counts),
+        "context_switches": snapshot.context_switches,
+        "interrupts": snapshot.interrupts,
     }
 
 
@@ -7371,6 +7491,14 @@ def host_info_snapshot_from_wire(value: Any) -> Any:
             "host_keys",
             "io_pressure_some",
             "io_pressure_full",
+            "cpu_pressure_some",
+            "cpu_pressure_full",
+            "memory_pressure_some",
+            "memory_pressure_full",
+            "cpu_times",
+            "process_counts",
+            "context_switches",
+            "interrupts",
         },
         context="host info snapshot",
     )
@@ -7384,6 +7512,7 @@ def host_info_snapshot_from_wire(value: Any) -> Any:
         "processes",
         "failed_units",
         "host_keys",
+        "cpu_times",
     ):
         if type(data[name]) is not list:
             raise ValueError(f"host info {name} must be an array")
@@ -7420,6 +7549,48 @@ def host_info_snapshot_from_wire(value: Any) -> Any:
         host_keys=tuple(_host_key_from_wire(item) for item in data["host_keys"]),
         io_pressure_some=_pressure_stall_from_wire(data["io_pressure_some"]),
         io_pressure_full=_pressure_stall_from_wire(data["io_pressure_full"]),
+        cpu_pressure_some=_pressure_stall_from_wire(data["cpu_pressure_some"]),
+        cpu_pressure_full=_pressure_stall_from_wire(data["cpu_pressure_full"]),
+        memory_pressure_some=_pressure_stall_from_wire(data["memory_pressure_some"]),
+        memory_pressure_full=_pressure_stall_from_wire(data["memory_pressure_full"]),
+        cpu_times=tuple(_cpu_times_from_wire(item) for item in data["cpu_times"]),
+        process_counts=_process_counts_from_wire(data["process_counts"]),
+        context_switches=_host_info_optional_int(
+            data["context_switches"], "context switches"
+        ),
+        interrupts=_host_info_optional_int(data["interrupts"], "interrupts"),
+    )
+
+
+def _live_sample_to_wire(live: Any) -> Optional[Dict[str, Any]]:
+    if live is None:
+        return None
+    return {
+        "counters": [_interface_counters_to_wire(item) for item in live.counters],
+        "cpu_times": [_cpu_times_to_wire(item) for item in live.cpu_times],
+        "memory": None if live.memory is None else _memory_info_to_wire(live.memory),
+        "load_average": _load_average_to_wire(live.load_average),
+    }
+
+
+def _live_sample_from_wire(value: Any) -> Any:
+    from ..models.host_info import LiveSample
+
+    if value is None:
+        return None
+    data = _strict_fields(
+        value,
+        required={"counters", "cpu_times", "memory", "load_average"},
+        context="host info live sample",
+    )
+    for name in ("counters", "cpu_times"):
+        if type(data[name]) is not list:
+            raise ValueError(f"host info live sample {name} must be an array")
+    return LiveSample(
+        counters=tuple(_interface_counters_from_wire(item) for item in data["counters"]),
+        cpu_times=tuple(_cpu_times_from_wire(item) for item in data["cpu_times"]),
+        memory=None if data["memory"] is None else _memory_info_from_wire(data["memory"]),
+        load_average=_load_average_from_wire(data["load_average"]),
     )
 
 
@@ -7434,6 +7605,7 @@ def host_info_summary_to_wire(summary: Any) -> Dict[str, Any]:
         "snapshot": host_info_snapshot_to_wire(summary.snapshot),
         "counters": [_interface_counters_to_wire(item) for item in summary.counters],
         "failure": _service_failure_to_wire(summary.failure),
+        "live": _live_sample_to_wire(summary.live),
     }
 
 
@@ -7442,7 +7614,7 @@ def host_info_summary_from_wire(value: Any) -> Any:
 
     data = _strict_fields(
         value,
-        required={"operation", "probe", "snapshot", "counters", "failure"},
+        required={"operation", "probe", "snapshot", "counters", "failure", "live"},
         context="host info summary",
     )
     try:
@@ -7457,4 +7629,5 @@ def host_info_summary_from_wire(value: Any) -> Any:
         host_info_snapshot_from_wire(data["snapshot"]),
         tuple(_interface_counters_from_wire(item) for item in data["counters"]),
         _service_failure_from_wire(data["failure"]),
+        _live_sample_from_wire(data["live"]),
     )

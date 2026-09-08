@@ -25,6 +25,7 @@ import hashlib
 import logging
 import os
 import subprocess
+import tempfile
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
@@ -60,6 +61,15 @@ from sshpilot.authorized_keys_parser import (
 from sshpilot.core.identity_service import IdentityStateService
 from sshpilot.daemon.key_service import DaemonKeyService
 from sshpilot.daemon.operation_runtime import OperationHandle, OperationRuntime
+from sshpilot.daemon.ssh_launch import (
+    IO_CAPTURE_TEXT,
+    IO_CAPTURE_TEXT_WITH_STDIN,
+    IO_MERGED_TEXT,
+    CopyIdLaunch,
+    LaunchStartError,
+    RemoteCommandLaunch,
+    SshLauncher,
+)
 from sshpilot.runtime_identity import new_operation_id
 
 logger = logging.getLogger(__name__)
@@ -266,32 +276,44 @@ class DaemonIdentityService:
                 details={"code": SSH_COPY_ID_UNAVAILABLE},
             )
         self._require_launch_provider()
-        _private_path, public_path = self._resolve_key_paths(
-            request.key_id, request.scope
-        )
-        self._keys.read_public_key(
-            ReadPublicKeyRequest(key_id=request.key_id, scope=request.scope)
-        )
+        # Eagerly validate store-backed keys before the operation starts so a
+        # missing key fails the RPC instead of becoming an operation failure.
+        # Pasted public-key text is already normalized by DeployKeyRequest.
+        if not request.public_key:
+            self._resolve_key_paths(request.key_id, request.scope)
+            self._keys.read_public_key(
+                ReadPublicKeyRequest(key_id=request.key_id, scope=request.scope)
+            )
         connection_id = request.connection_id
 
         def _body(handle: OperationHandle) -> str:
             try:
-                provider = self._require_launch_provider()
+                self._require_launch_provider()
             except SshPilotError as error:
                 raise _identity_error(
                     IdentityFailureCode.LAUNCH_PREPARATION_UNAVAILABLE,
                     error.code,
                 ) from error
+            temp_path: Optional[str] = None
             try:
-                argv, env = provider.prepare_copy_id_launch(
-                    request.connection_id, public_path, force=request.force
+                if request.public_key:
+                    public_path = self._write_deploy_public_key(request.public_key)
+                    temp_path = public_path
+                else:
+                    _private_path, public_path = self._resolve_key_paths(
+                        request.key_id, request.scope
+                    )
+                return self._run_deploy(
+                    handle,
+                    CopyIdLaunch(public_key_path=public_path, force=request.force),
+                    connection_id,
                 )
-            except SshPilotError as error:
-                raise _identity_error(
-                    _identity_launch_failure_code(error.code),
-                    error.code,
-                ) from error
-            return self._run_deploy(handle, argv, env, connection_id)
+            finally:
+                if temp_path is not None:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
 
         return self._operations.start_operation(
             OperationKind.KEY_DEPLOYMENT,
@@ -302,49 +324,56 @@ class DaemonIdentityService:
             failure_mapper=_identity_failure,
         )
 
+    @staticmethod
+    def _write_deploy_public_key(public_key: str) -> str:
+        """Write a pasted public key to a daemon-owned temporary ``.pub`` file.
+
+        ``ssh-copy-id -i`` requires a filesystem path. The file is removed by
+        the deployment body after the child exits (success or failure).
+        """
+        fd, path = tempfile.mkstemp(prefix="sshpilot-copyid-", suffix=".pub")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(public_key)
+                handle.write("\n")
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
+
     def _run_deploy(
         self,
         handle: OperationHandle,
-        argv: Sequence[str],
-        env: Dict[str, str],
+        intent: CopyIdLaunch,
         connection_id: ConnectionId,
     ) -> str:
-        scope_id: Optional[SessionId] = None
-        final_env = dict(env)
-        final_argv = tuple(argv)
-        if self._broker is not None:
-            # One public scope per daemon resource: the interaction scope of a
-            # key-deployment operation IS its public OperationId. The frontend
-            # learns that ID from OperationSummary and binds its interaction
-            # presenter to it; a private random scope would be unknowable.
-            scope_id = SessionId(str(handle.operation_id))
-            final_argv, final_env = self._broker.prepare_operation_launch(
-                final_argv,
-                final_env,
-                scope_id=scope_id,
-                connection_id=connection_id,
-            )
-        try:
+        # One public scope per daemon resource: the interaction scope of a
+        # key-deployment operation IS its public OperationId. The frontend
+        # learns that ID from OperationSummary and binds its interaction
+        # presenter to it; a private random scope would be unknowable.
+        with self._launcher.open(
+            scope_id=SessionId(str(handle.operation_id)),
+            connection_id=connection_id,
+        ) as scope:
             try:
-                process = self._popen(
-                    list(final_argv),
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    env=final_env,
-                    text=True,
-                    errors="replace",
-                    start_new_session=True,
-                )
-                try:
-                    process._sshpilot_process_group = True
-                except Exception:
-                    pass
-            except OSError as exc:
+                prepared = scope.prepare(intent, connection_id=connection_id)
+            except LaunchStartError:
+                raise
+            except SshPilotError as error:
+                raise _identity_error(
+                    _identity_launch_failure_code(error.code),
+                    error.code,
+                ) from error
+            try:
+                process = prepared.spawn(IO_MERGED_TEXT)
+            except LaunchStartError as exc:
                 raise _identity_error(
                     IdentityFailureCode.PROCESS_START_FAILED,
                     ErrorCode.SESSION_STARTUP_FAILED,
-                    diagnostic=str(exc),
+                    diagnostic=str(exc.os_error),
                 ) from exc
             handle.set_process(process)
             last_line = ""
@@ -365,18 +394,9 @@ class DaemonIdentityService:
                     ErrorCode.REMOTE_COMMAND_FAILED,
                     diagnostic=last_line,
                 )
-            if scope_id is not None and self._broker is not None:
-                # Commit secrets the user chose to remember after a successful
-                # run — BEFORE the interaction scope is torn down.
-                # ``cancel_session`` destroys the askpass context and clears its
-                # pending remembered secrets, so ``mark_authenticated`` must
-                # come first. On failure/cancellation the raise below skips it
-                # and the ``finally`` still cleans the scope up.
-                self._broker.mark_authenticated(scope_id)
+            # The scope commits remembered secrets before tearing down.
+            scope.authenticated()
             return "The public key was installed on the server"
-        finally:
-            if scope_id is not None and self._broker is not None:
-                self._broker.cancel_session(scope_id)
 
     # ------------------------------------------------------------------
     # Remote authorized-keys management (ordinary ssh transport)
@@ -574,46 +594,71 @@ class DaemonIdentityService:
         *,
         handle: Optional[OperationHandle] = None,
     ) -> str:
-        provider = self._require_launch_provider()
-        argv, env = provider.prepare_remote_command_launch(
-            connection_id, remote_command
-        )
-        scope_id: Optional[SessionId] = None
-        if self._broker is not None:
-            if handle is not None:
-                # Long-running authorized-key operations scope their prompts to
-                # their public OperationId — the same one the frontend learns
-                # from OperationSummary (one public scope per resource).
-                scope_id = SessionId(str(handle.operation_id))
-            else:
-                # Direct RPC (list_authorized_keys): no public resource ID is
-                # visible to the frontend, so there is still no presenter to
-                # bind; keep a private scope rather than inventing one.
-                scope_id = SessionId(new_operation_id())
-            argv, env = self._broker.prepare_operation_launch(
-                argv,
-                env,
-                scope_id=scope_id,
+        if handle is not None:
+            # Long-running authorized-key operations scope their prompts to
+            # their public OperationId — the same one the frontend learns
+            # from OperationSummary (one public scope per resource).
+            scope_id = SessionId(str(handle.operation_id))
+        else:
+            # Direct RPC (list_authorized_keys): no public resource ID is
+            # visible to the frontend, so there is still no presenter to
+            # bind; keep a private scope rather than inventing one.
+            scope_id = SessionId(new_operation_id())
+        with self._launcher.open(
+            scope_id=scope_id,
+            connection_id=connection_id,
+        ) as scope:
+            prepared = scope.prepare(
+                RemoteCommandLaunch(remote_command=remote_command),
                 connection_id=connection_id,
             )
-        try:
-            returncode, stdout, stderr = self._run_capture(
-                argv, env, input_text, _REMOTE_COMMAND_TIMEOUT, handle=handle
+            io = (
+                IO_CAPTURE_TEXT_WITH_STDIN
+                if input_text is not None
+                else IO_CAPTURE_TEXT
             )
-        finally:
-            if scope_id is not None and self._broker is not None:
-                self._broker.cancel_session(scope_id)
-        if returncode == 0:
-            return stdout
-        if returncode == _SSH_ERROR_EXIT:
+            try:
+                process = prepared.spawn(io)
+            except LaunchStartError as exc:
+                raise SshPilotError(
+                    ErrorCode.SESSION_STARTUP_FAILED,
+                    "The native command could not be started",
+                ) from exc
+            if handle is not None:
+                handle.set_process(process)
+            try:
+                try:
+                    stdout, stderr = process.communicate(
+                        input_text, timeout=_REMOTE_COMMAND_TIMEOUT
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
+                    process.wait()
+                    raise SshPilotError(
+                        ErrorCode.OPERATION_TIMED_OUT,
+                        "The remote command timed out",
+                    ) from exc
+                returncode = process.returncode
+                stdout_text = stdout or ""
+                stderr_text = stderr or ""
+            finally:
+                if handle is not None:
+                    handle.clear_process()
+            if returncode == 0:
+                scope.authenticated()
+                return stdout_text
+            if returncode == _SSH_ERROR_EXIT:
+                raise SshPilotError(
+                    ErrorCode.REMOTE_COMMAND_FAILED,
+                    "The SSH connection could not run the remote command",
+                )
             raise SshPilotError(
                 ErrorCode.REMOTE_COMMAND_FAILED,
-                "The SSH connection could not run the remote command",
+                _remote_failure_message(stderr_text),
             )
-        raise SshPilotError(
-            ErrorCode.REMOTE_COMMAND_FAILED,
-            _remote_failure_message(stderr),
-        )
 
     def _run_capture(
         self,
@@ -667,6 +712,16 @@ class DaemonIdentityService:
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
+    @property
+    def _launcher(self) -> SshLauncher:
+        """Built on demand: the broker is attached after construction."""
+
+        return SshLauncher(
+            self._require_launch_provider(),
+            self._broker,
+            popen=lambda *args, **kwargs: self._popen(*args, **kwargs),
+        )
 
     def _require_launch_provider(self):
         if self._launch_provider is None:

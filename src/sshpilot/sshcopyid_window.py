@@ -49,14 +49,17 @@ class SshCopyIdWindow(Adw.Window):
     Full Adwaita-styled window for installing a public key on a server.
     - Server row with searchable inventory picker (``connection`` may be
       ``None``; OK stays disabled until a server is chosen)
-    - Two modes:
+    - Three modes:
         1) Use existing key (DropDown)
-        2) Generate new key (embedded key-generator form)
+        2) Paste a public key (TextView)
+        3) Generate new key (embedded key-generator form)
     - Pressing OK triggers:
-        - Either copy selected existing key
+        - Copy selected existing key
+        - Deploy pasted public-key text
         - Or generate a new key, then copy it
     - Uses your existing terminal flow:
         parent._show_ssh_copy_id_terminal_using_main_widget(connection, ssh_key)
+        (or the pasted-text variant of the same runner)
     """
 
     __gtype_name__ = "SshPilotSshCopyIdWindow"
@@ -145,10 +148,16 @@ class SshCopyIdWindow(Adw.Window):
             # Radio option 1: Use existing key (using CheckButton with group for radio behavior)
             self.radio_existing = Gtk.CheckButton(label=_("Copy existing key"))
             self.radio_existing.set_can_focus(True)  # Make it focusable for tab navigation
+            # Unlabeled: the ExpanderRow title is the visible label (same pattern
+            # as the operation-mode expanders in preferences).
+            self.radio_paste = Gtk.CheckButton()
+            self.radio_paste.set_can_focus(True)
+            self.radio_paste.set_valign(Gtk.Align.CENTER)
             self.radio_generate = Gtk.CheckButton(label=_("Generate new key"))
             self.radio_generate.set_can_focus(True)  # Make it focusable for tab navigation
 
             # Make them behave like radio buttons (GTK4)
+            self.radio_paste.set_group(self.radio_existing)
             self.radio_generate.set_group(self.radio_existing)
             self.radio_existing.set_active(True)
             logger.info("SshCopyIdWindow: Radio buttons created successfully")
@@ -217,6 +226,69 @@ class SshCopyIdWindow(Adw.Window):
             logger.error(f"SshCopyIdWindow: Failed to create key generation form: {e}")
             raise
 
+        # Paste form — expandable row with a rounded card TextView inside.
+        logger.info("SshCopyIdWindow: Creating paste public key form")
+        try:
+            self._programmatic_paste_expand = False
+            self.paste_row = Adw.ExpanderRow()
+            self.paste_row.set_title(_("Paste public key"))
+            self.paste_row.set_expanded(False)
+            self.paste_row.add_prefix(self.radio_paste)
+            self.paste_row.connect("notify::expanded", self._on_paste_expanded)
+
+            paste_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            paste_box.set_margin_start(12)
+            paste_box.set_margin_end(12)
+            paste_box.set_margin_top(6)
+            paste_box.set_margin_bottom(12)
+
+            self.paste_view = Gtk.TextView()
+            self.paste_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+            self.paste_view.set_monospace(True)
+            self.paste_view.set_can_focus(True)
+            self.paste_view.set_top_margin(10)
+            self.paste_view.set_bottom_margin(10)
+            self.paste_view.set_left_margin(12)
+            self.paste_view.set_right_margin(12)
+            self.paste_view.set_size_request(-1, 100)
+
+            self._paste_placeholder = Gtk.Label(
+                label=_("ssh-ed25519 AAAA… comment"),
+                xalign=0,
+                yalign=0,
+            )
+            self._paste_placeholder.add_css_class("dim-label")
+            self._paste_placeholder.set_margin_start(12)
+            self._paste_placeholder.set_margin_top(10)
+            self._paste_placeholder.set_can_target(False)
+
+            paste_overlay = Gtk.Overlay()
+            paste_overlay.set_child(self.paste_view)
+            paste_overlay.add_overlay(self._paste_placeholder)
+
+            scrolled = Gtk.ScrolledWindow()
+            scrolled.set_child(paste_overlay)
+            scrolled.set_size_request(-1, 100)
+            scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            # Adwaita's ``card`` class gives the rounded corner frame.
+            scrolled.add_css_class("card")
+            paste_box.append(scrolled)
+
+            self.paste_view.get_buffer().connect(
+                "changed", self._update_paste_placeholder
+            )
+            self._update_paste_placeholder()
+
+            paste_content_row = Gtk.ListBoxRow()
+            paste_content_row.set_activatable(False)
+            paste_content_row.set_selectable(False)
+            paste_content_row.set_child(paste_box)
+            self.paste_row.add_row(paste_content_row)
+            logger.info("SshCopyIdWindow: Paste public key form created successfully")
+        except Exception as e:
+            logger.error(f"SshCopyIdWindow: Failed to create paste form: {e}")
+            raise
+
         # Pack into PreferencesGroup
         logger.info("SshCopyIdWindow: Packing UI elements")
         try:
@@ -226,11 +298,14 @@ class SshCopyIdWindow(Adw.Window):
             existing_row.add_suffix(existing_box)
             group.add(existing_row)
 
-            # Row 2: Generate
+            # Row 2: Paste (expandable)
+            group.add(self.paste_row)
+
+            # Row 3: Generate
             generate_row = Adw.ActionRow()
             generate_row.add_prefix(self.radio_generate)
             group.add(generate_row)
-            # Embedded generator UI under row 2
+            # Embedded generator UI under row 3
             group.add(self.generate_revealer)
 
             content.append(group)
@@ -277,6 +352,7 @@ class SshCopyIdWindow(Adw.Window):
 
             # Radio change behavior
             self.radio_existing.connect("toggled", self._on_mode_toggled)
+            self.radio_paste.connect("toggled", self._on_mode_toggled)
             self.radio_generate.connect("toggled", self._on_mode_toggled)
             
             # Set initial state (since "Copy existing key" is selected by default)
@@ -321,20 +397,46 @@ class SshCopyIdWindow(Adw.Window):
         self._update_ok_sensitivity()
 
     def _on_mode_toggled(self, *_):
-        # Reveal generator only when "Generate new key" is selected
+        # Reveal generator / expand paste editor only for the matching mode
         generate_active = self.radio_generate.get_active()
-        logger.info(f"SshCopyIdWindow: Mode toggled, generate active: {generate_active}")
+        paste_active = self.radio_paste.get_active()
+        logger.info(
+            "SshCopyIdWindow: Mode toggled, generate=%s paste=%s",
+            generate_active,
+            paste_active,
+        )
         self.generate_revealer.set_reveal_child(generate_active)
-        
+        self._programmatic_paste_expand = True
+        try:
+            self.paste_row.set_expanded(paste_active)
+        finally:
+            self._programmatic_paste_expand = False
+
         # Enable/disable passphrase section based on mode
         self.row_pass_toggle.set_sensitive(generate_active)
         self.pass_box.set_sensitive(generate_active)
-        
-        # If switching to "Copy existing key", turn off passphrase and hide fields
+
+        # If switching away from generate, turn off passphrase and hide fields
         if not generate_active:
             self.row_pass_toggle.set_active(False)
             self.pass_box.set_visible(False)
         self._update_ok_sensitivity()
+
+    def _on_paste_expanded(self, row, *_):
+        """Selecting the expander also selects the paste radio mode."""
+        if self._programmatic_paste_expand:
+            return
+        if row.get_expanded() and not self.radio_paste.get_active():
+            self.radio_paste.set_active(True)
+
+    def _update_paste_placeholder(self, *_):
+        try:
+            buf = self.paste_view.get_buffer()
+            start, end = buf.get_bounds()
+            empty = not buf.get_text(start, end, False).strip()
+            self._paste_placeholder.set_visible(empty)
+        except Exception:
+            pass
     
     def _on_key_type_changed(self, *_):
         # Update key name placeholder when key type changes
@@ -417,8 +519,8 @@ class SshCopyIdWindow(Adw.Window):
 
         OK is enabled only when a server is selected, no key operation is
         running, and the active mode has a usable selection: existing-key mode
-        needs at least one real key in the cache; generation mode needs the
-        form (its validity is checked on click).
+        needs at least one real key in the cache; paste and generation modes
+        need the form (validity is checked on click).
         """
         try:
             if self._conn is None or self._loading_keys or self._generating:
@@ -588,14 +690,23 @@ class SshCopyIdWindow(Adw.Window):
         
         # Log current UI state
         existing_active = self.radio_existing.get_active()
+        paste_active = self.radio_paste.get_active()
         generate_active = self.radio_generate.get_active()
-        logger.debug(f"SshCopyIdWindow: UI state - existing_active={existing_active}, generate_active={generate_active}")
+        logger.debug(
+            "SshCopyIdWindow: UI state - existing=%s paste=%s generate=%s",
+            existing_active,
+            paste_active,
+            generate_active,
+        )
         
         try:
             if self.radio_existing.get_active():
                 logger.info("SshCopyIdWindow: Copying existing key")
                 logger.debug("SshCopyIdWindow: Calling _do_copy_existing()")
                 self._do_copy_existing()
+            elif self.radio_paste.get_active():
+                logger.info("SshCopyIdWindow: Copying pasted public key")
+                self._do_copy_pasted()
             else:
                 logger.info("SshCopyIdWindow: Generating new key and copying")
                 logger.debug("SshCopyIdWindow: Calling _do_generate_and_copy()")
@@ -640,6 +751,35 @@ class SshCopyIdWindow(Adw.Window):
         except Exception as e:
             logger.error("SshCopyIdWindow: Copy existing failed: %s", type(e).__name__)
             self._error("Copy failed", "Could not copy the selected key to the server.", str(e))
+
+    # ---------- Mode: paste ----------
+    def _do_copy_pasted(self):
+        """Deploy a pasted OpenSSH public-key line through the daemon."""
+        try:
+            buf = self.paste_view.get_buffer()
+            start, end = buf.get_bounds()
+            text = buf.get_text(start, end, False).strip()
+            if not text:
+                self._error(
+                    _("Paste Public Key"),
+                    _("Paste a single OpenSSH public key line."),
+                )
+                return
+            force_enabled = self.force_toggle.get_active()
+            self._parent._show_ssh_copy_id_terminal_using_main_widget(
+                self._conn,
+                None,
+                force_enabled,
+                public_key=text,
+            )
+            self.close()
+        except Exception as e:
+            logger.error("SshCopyIdWindow: Paste copy failed: %s", type(e).__name__)
+            self._error(
+                _("Copy failed"),
+                _("Could not copy the pasted key to the server."),
+                str(e),
+            )
 
     # ---------- Mode: generate ----------
     def _do_generate_and_copy(self):
@@ -822,7 +962,10 @@ class SshCopyIdWindow(Adw.Window):
             self.force_toggle.set_sensitive(not generating)
             # Mode switches and server re-selection are frozen mid-generation.
             self.radio_existing.set_sensitive(not generating)
+            self.radio_paste.set_sensitive(not generating)
             self.radio_generate.set_sensitive(not generating)
+            self.paste_row.set_sensitive(not generating)
+            self.paste_view.set_sensitive(not generating)
             self._server_row.set_sensitive(not generating)
             self._update_ok_sensitivity()
         except Exception:
@@ -839,8 +982,18 @@ class SshCopyIdRunner:
         self._poll_id = None
         self._interaction_dialogs = None
 
-    def run(self, connection, ssh_key, force=False, _secret_unlock_attempted=False):
+    def run(
+        self,
+        connection,
+        ssh_key,
+        force=False,
+        public_key=None,
+        _secret_unlock_attempted=False,
+    ):
         """Deploy the given key to the connection's authorized_keys.
+
+        Supply either a daemon-known ``ssh_key`` (with ``key_id``) or a pasted
+        ``public_key`` OpenSSH line — not both.
 
         A locked session-backed vault has no stored credential for the
         daemon to hand off, so unlock it first the same way a terminal
@@ -852,7 +1005,10 @@ class SshCopyIdRunner:
             if terminal_manager is not None:
                 def _retry():
                     self.run(
-                        connection, ssh_key, force=force,
+                        connection,
+                        ssh_key,
+                        force=force,
+                        public_key=public_key,
                         _secret_unlock_attempted=True,
                     )
 
@@ -860,8 +1016,9 @@ class SshCopyIdRunner:
                     return
 
         client = getattr(self.window, "client", None)
-        key_id = getattr(ssh_key, "key_id", None)
-        if client is None or not key_id:
+        key_id = getattr(ssh_key, "key_id", None) if ssh_key is not None else None
+        pasted = (public_key or "").strip()
+        if client is None or (not key_id and not pasted):
             self.window._error_dialog(
                 _("SSH Key Copy Error"),
                 _("The background service is required to deploy a key."),
@@ -883,33 +1040,43 @@ class SshCopyIdRunner:
             from .api.connection_identity import connection_id_for
             from .api.models.identity import DeployKeyRequest
             from .api.models.keys import KeyStoreScope
-            # The key id is resolved inside one store's root, and in Isolated
-            # Mode the picker offers keys from both, so the scope has to come
-            # from the selected key rather than from the window. Hardcoding
-            # DEFAULT looked for an isolated key under ~/.ssh; using the
-            # window's scope would look for the user's ~/.ssh key under the
-            # app directory.
-            scope = None
-            key_manager = getattr(self.window, "key_manager", None)
-            scope_for = getattr(key_manager, "scope_for", None)
-            if callable(scope_for):
-                try:
-                    scope = scope_for(ssh_key)
-                except Exception:
-                    logger.debug("Could not resolve the key's store", exc_info=True)
-                    scope = None
-            if not isinstance(scope, KeyStoreScope):
-                scope = getattr(self.window, "_key_scope", None)
-            if not isinstance(scope, KeyStoreScope):
-                scope = KeyStoreScope.DEFAULT
-            summary = client.deploy_key(
-                DeployKeyRequest(
-                    connection_id=connection_id_for(connection),
-                    key_id=key_id,
-                    scope=scope,
-                    force=bool(force),
+            connection_id = connection_id_for(connection)
+            if pasted:
+                summary = client.deploy_key(
+                    DeployKeyRequest(
+                        connection_id=connection_id,
+                        public_key=pasted,
+                        force=bool(force),
+                    )
                 )
-            )
+            else:
+                # The key id is resolved inside one store's root, and in Isolated
+                # Mode the picker offers keys from both, so the scope has to come
+                # from the selected key rather than from the window. Hardcoding
+                # DEFAULT looked for an isolated key under ~/.ssh; using the
+                # window's scope would look for the user's ~/.ssh key under the
+                # app directory.
+                scope = None
+                key_manager = getattr(self.window, "key_manager", None)
+                scope_for = getattr(key_manager, "scope_for", None)
+                if callable(scope_for):
+                    try:
+                        scope = scope_for(ssh_key)
+                    except Exception:
+                        logger.debug("Could not resolve the key's store", exc_info=True)
+                        scope = None
+                if not isinstance(scope, KeyStoreScope):
+                    scope = getattr(self.window, "_key_scope", None)
+                if not isinstance(scope, KeyStoreScope):
+                    scope = KeyStoreScope.DEFAULT
+                summary = client.deploy_key(
+                    DeployKeyRequest(
+                        connection_id=connection_id,
+                        key_id=key_id,
+                        scope=scope,
+                        force=bool(force),
+                    )
+                )
         except SshPilotError as exc:
             if dialogs is not None:
                 dialogs.close()
@@ -917,6 +1084,15 @@ class SshCopyIdRunner:
                 _("SSH Key Copy Error"),
                 _("Could not start public-key deployment."),
                 _format_deployment_start_error(exc),
+            )
+            return
+        except ValueError as exc:
+            if dialogs is not None:
+                dialogs.close()
+            self.window._error_dialog(
+                _("SSH Key Copy Error"),
+                _("Could not start public-key deployment."),
+                str(exc),
             )
             return
         except Exception:

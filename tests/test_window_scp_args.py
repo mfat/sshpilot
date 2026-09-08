@@ -42,14 +42,14 @@ def test_native_backend_places_recursive_flag_in_daemon_launch_args():
     )
     backend = NativeScpBackend(_Provider(), object())
     argv = backend.build_argv(
-        request,
-        "alice@testbox",
         (
             "/usr/bin/scp",
             "-r",
-            "/tmp/folder",
             "alice@testbox:/remote/path",
         ),
+        ("/tmp/folder",),
     )
     assert "-r" in argv
     assert argv[-1] == "alice@testbox:/remote/path"
+    assert "/tmp/folder" in argv
+    assert argv.index("-r") < argv.index("/tmp/folder")

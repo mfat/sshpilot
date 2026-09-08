@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import io
-from types import SimpleNamespace
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -27,6 +28,9 @@ class _Completed:
         self.returncode = returncode
         self.stdout = io.StringIO(stdout)
         self.stderr = stderr
+        # Key deployment is daemon-owned and now reaches the process registry,
+        # which identifies a child by pid and creation time.
+        self.pid = 4244
 
     def communicate(self, *_args, **_kwargs):
         return self.stdout.getvalue(), self.stderr
@@ -108,11 +112,34 @@ class _Provider:
         self.calls.append((connection_id, public_path, force))
         return ["ssh-copy-id", "-i", public_path, "HostAlias"], {"PATH": "/usr/bin"}
 
-    def prepare_remote_command_launch(self, connection_id, command):
+    def prepare_remote_command_launch(self, connection_id, command, *, interaction_policy="broker"):
         return ["ssh", connection_id, command], {"PATH": "/usr/bin"}
 
 
-def _service(tmp_path, popen, *, state_environ=None, base_environ=None):
+class _Broker:
+    """Minimal broker double.
+
+    Daemon-owned OpenSSH children must always have one: the daemon has no
+    terminal, so an unbrokered child's password/host-key prompt would have
+    nowhere to go.
+    """
+
+    def __init__(self):
+        self.authenticated = []
+        self.cancelled = []
+
+    def prepare_operation_launch(self, argv, environment, **kwargs):
+        return tuple(argv), {**environment, "SSH_ASKPASS": "/helper"}
+
+    def mark_authenticated(self, scope_id):
+        assert scope_id not in self.cancelled
+        self.authenticated.append(scope_id)
+
+    def cancel_session(self, scope_id):
+        self.cancelled.append(scope_id)
+
+
+def _service(tmp_path, popen, *, state_environ=None, base_environ=None, broker=None):
     state = IdentityStateService(
         tmp_path / "identity.json",
         environ={"PATH": "/usr/bin", **(state_environ or {})},
@@ -125,6 +152,7 @@ def _service(tmp_path, popen, *, state_environ=None, base_environ=None):
         launch_provider=_Provider(),
         popen=popen,
         environ={"PATH": "/usr/bin", **(base_environ or {})},
+        interaction_broker=broker or _Broker(),
     )
 
 
@@ -225,6 +253,36 @@ def test_ssh_copy_id_deployment_registers_operation(tmp_path):
     assert calls[0][0][0] == "ssh-copy-id"
     assert "-i" in calls[0][0]
     assert calls[0][1]["start_new_session"] is True
+    service._operations.shutdown()
+
+
+def test_ssh_copy_id_pasted_public_key_uses_temp_file(tmp_path):
+    calls = []
+    seen_paths = []
+
+    def popen(argv, **kwargs):
+        calls.append((argv, kwargs))
+        idx = argv.index("-i")
+        seen_paths.append(argv[idx + 1])
+        return _Completed(returncode=0, stdout="Number of key(s) added: 1\n")
+
+    pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyMaterialForUnitTest pasted@host"
+    service = _service(tmp_path, popen)
+    summary = service.deploy_key(
+        DeployKeyRequest("HostAlias", public_key=pub, force=False)
+    )
+    assert summary.operation_id
+    for _ in range(100):
+        if calls:
+            break
+        time.sleep(0.01)
+    assert calls
+    assert calls[0][0][0] == "ssh-copy-id"
+    assert seen_paths
+    temp_path = seen_paths[0]
+    assert temp_path.endswith(".pub")
+    # The daemon-owned temp file is removed after the child exits.
+    assert not Path(temp_path).exists()
     service._operations.shutdown()
 
 

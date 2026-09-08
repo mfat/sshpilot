@@ -13,7 +13,7 @@ a deferred startup unlock) resolves still-locked.
 
 import pytest
 
-from sshpilot.api.models.secrets import UnlockResultKind
+from sshpilot.api.models.secrets import SecretMessageCode, UnlockResultKind
 from sshpilot import secret_unlock_dialog as d
 
 
@@ -36,9 +36,12 @@ class _FakeState:
 
 
 class _FakeController:
-    def __init__(self, state=None, result=None):
+    def __init__(self, state=None, result=None, results=None):
         self.state = state
         self.result = result
+        # ``results`` scripts one result per unlock() call, so a retry can answer
+        # differently from the first attempt.
+        self.results = list(results) if results is not None else None
         self.unlock_calls = []
         self.lock_calls = []
 
@@ -47,6 +50,8 @@ class _FakeController:
 
     def unlock(self):
         self.unlock_calls.append(True)
+        if self.results is not None:
+            return self.results.pop(0) if self.results else self.result
         return self.result
 
     def lock(self):
@@ -55,8 +60,10 @@ class _FakeController:
 
 
 class _FakeUnlockResult:
-    def __init__(self, kind):
+    def __init__(self, kind, *, backend="bitwarden", message_code=None):
         self.kind = kind
+        self.backend = backend
+        self.message_code = message_code
 
 
 class _FakeParent:
@@ -65,7 +72,10 @@ class _FakeParent:
 
 
 class _FakeSpinner:
-    """Mimics the spinner dialog: 'closed' fires when close() is called."""
+    """Mimics the spinner dialog: 'closed' fires when close() is called.
+
+    Like the real dialog it emits 'closed' once — the callbacks are dropped as they
+    run, so a retry that opens a second spinner cannot re-fire the first one's."""
 
     def __init__(self):
         self.callbacks = []
@@ -74,17 +84,24 @@ class _FakeSpinner:
         self.callbacks.append(callback)
 
     def close(self):
-        for cb in list(self.callbacks):
+        callbacks, self.callbacks = self.callbacks, []
+        for cb in callbacks:
             cb()
 
 
 def _install_unlock_harness(monkeypatch):
-    """Run the unlock worker and its GLib sequencing synchronously."""
-    spinner = _FakeSpinner()
-    monkeypatch.setattr(
-        d, "_spinner_dialog",
-        lambda parent, heading, body: (lambda _text: None, spinner.close, spinner),
-    )
+    """Run the unlock worker and its GLib sequencing synchronously.
+
+    Each call gets its own spinner, as the real one does, so a retry's spinner is
+    independent of the attempt before it. Returns the list of spinners created."""
+    spinners = []
+
+    def _fake_spinner_dialog(parent, heading, body):
+        spinner = _FakeSpinner()
+        spinners.append(spinner)
+        return (lambda _text: None, spinner.close, spinner)
+
+    monkeypatch.setattr(d, "_spinner_dialog", _fake_spinner_dialog)
     monkeypatch.setattr(
         d.GLib, "idle_add",
         lambda callback, *args: (callback(*args), False)[1], raising=False,
@@ -101,7 +118,7 @@ def _install_unlock_harness(monkeypatch):
             self.target(*self.args, **self.kwargs)
 
     monkeypatch.setattr(d.threading, "Thread", SyncThread)
-    return spinner
+    return spinners
 
 
 def test_prompt_unlock_no_controller_reports_false():
@@ -165,6 +182,142 @@ def test_prompt_unlock_cancelled_interaction_reports_failure(monkeypatch):
     assert owned is True
     assert controller.unlock_calls == [True]
     assert calls == [False]                    # user cancelled the daemon prompt
+
+
+def test_prompt_unlock_rejected_master_password_is_not_reported_as_unavailable(monkeypatch):
+    """A wrong master password must not claim the vault is missing (issue #1245).
+
+    The daemon answers both with ``backend_unavailable``; only the
+    ``vault_unlock_failed`` message code separates a rejected password from a
+    backend that cannot run at all."""
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True, selected_backend="keepassxc"),
+        result=_FakeUnlockResult(
+            UnlockResultKind.BACKEND_UNAVAILABLE,
+            backend="keepassxc",
+            message_code=SecretMessageCode.VAULT_UNLOCK_FAILED,
+        ),
+    )
+    _install_unlock_harness(monkeypatch)
+    wrong_password = []
+    unavailable = []
+    monkeypatch.setattr(d, "_prompt_wrong_master_password",
+                        lambda parent, backend, on_response: (
+                            wrong_password.append(backend), on_response(False))[1])
+    monkeypatch.setattr(d, "_prompt_unavailable_backend",
+                        lambda parent, backend: unavailable.append(backend))
+    calls = []
+
+    owned = d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert owned is True
+    assert unavailable == []
+    assert wrong_password == ["keepassxc"]     # named by the daemon, not a generic "vault"
+    assert calls == [False]
+
+
+def test_prompt_unlock_retries_after_a_rejected_master_password(monkeypatch):
+    """“Try again” re-runs the unlock on the same in-flight interaction: the caller
+    hears one outcome, once, after the second attempt succeeds."""
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True, selected_backend="keepassxc"),
+        results=[
+            _FakeUnlockResult(
+                UnlockResultKind.BACKEND_UNAVAILABLE,
+                backend="keepassxc",
+                message_code=SecretMessageCode.VAULT_UNLOCK_FAILED,
+            ),
+            _FakeUnlockResult(UnlockResultKind.UNLOCKED, backend="keepassxc"),
+        ],
+    )
+    _install_unlock_harness(monkeypatch)
+    answers = iter([True])          # retry once, then the vault opens
+    monkeypatch.setattr(d, "_prompt_wrong_master_password",
+                        lambda parent, backend, on_response: on_response(next(answers)))
+    calls = []
+
+    owned = d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert owned is True
+    assert controller.unlock_calls == [True, True]   # the retry really re-unlocks
+    assert calls == [True]                           # resolved once, after the retry
+    assert d._unlock_in_progress is False
+
+
+def test_prompt_unlock_keeps_the_interaction_open_while_the_retry_is_offered(monkeypatch):
+    """The caller must not be told the unlock failed while the user is still
+    deciding — otherwise the connect flow opens its terminal behind the dialog."""
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True, selected_backend="keepassxc"),
+        result=_FakeUnlockResult(
+            UnlockResultKind.BACKEND_UNAVAILABLE,
+            backend="keepassxc",
+            message_code=SecretMessageCode.VAULT_UNLOCK_FAILED,
+        ),
+    )
+    _install_unlock_harness(monkeypatch)
+    calls = []
+    pending = []
+    monkeypatch.setattr(d, "_prompt_wrong_master_password",
+                        lambda parent, backend, on_response: pending.append(on_response))
+
+    d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert calls == []                  # still undecided — nothing reported yet
+    assert d._unlock_in_progress is True
+    pending[0](False)                   # "Not now"
+    assert calls == [False]
+    assert d._unlock_in_progress is False
+
+
+def test_prompt_unlock_unavailable_backend_keeps_the_unavailable_notice(monkeypatch):
+    controller = _FakeController(
+        state=_FakeState(needs_unlock=True, selected_backend="keepassxc"),
+        result=_FakeUnlockResult(
+            UnlockResultKind.BACKEND_UNAVAILABLE,
+            backend="keepassxc",
+            message_code=SecretMessageCode.SECRET_BACKEND_UNAVAILABLE,
+        ),
+    )
+    _install_unlock_harness(monkeypatch)
+    wrong_password = []
+    unavailable = []
+    monkeypatch.setattr(d, "_prompt_wrong_master_password",
+                        lambda parent, backend: wrong_password.append(backend))
+    monkeypatch.setattr(d, "_prompt_unavailable_backend",
+                        lambda parent, backend: unavailable.append(backend))
+    calls = []
+
+    owned = d.prompt_unlock(_FakeParent(controller), on_done=lambda ok: calls.append(ok))
+
+    assert owned is True
+    assert wrong_password == []
+    assert unavailable == ["keepassxc"]
+    assert calls == [False]
+
+
+def test_unlock_result_outcome_separates_a_rejected_password():
+    rejected = _FakeUnlockResult(
+        UnlockResultKind.BACKEND_UNAVAILABLE,
+        backend="keepassxc",
+        message_code=SecretMessageCode.VAULT_UNLOCK_FAILED,
+    )
+    assert d._unlock_result_outcome(rejected) == (False, "wrong_password", "keepassxc")
+
+    missing = _FakeUnlockResult(
+        UnlockResultKind.BACKEND_UNAVAILABLE,
+        backend="rbw",
+        message_code=SecretMessageCode.SECRET_BACKEND_UNAVAILABLE,
+    )
+    assert d._unlock_result_outcome(missing) == (False, "unavailable", "rbw")
+
+    unlocked = _FakeUnlockResult(UnlockResultKind.UNLOCKED, backend="keepassxc")
+    assert d._unlock_result_outcome(unlocked) == (True, None, "keepassxc")
+
+
+def test_friendly_backend_name_falls_back_for_the_none_placeholder():
+    # The daemon calls an absent backend "none"; that is not a name to show.
+    assert d._friendly_backend_name("none") == d._friendly_backend_name("")
 
 
 def test_prompt_unlock_already_unlocked_backend_object_reports_success():

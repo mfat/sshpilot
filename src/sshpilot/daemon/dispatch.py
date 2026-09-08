@@ -4011,7 +4011,7 @@ class RequestDispatcher:
     def _handle_preview_ssh_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         params = request.params
         if set(params) != {"connection_id", "remote_dir", "entry_id"}:
@@ -4026,6 +4026,7 @@ class RequestDispatcher:
         if type(entry_id) is not str or not entry_id.strip():
             raise ValueError("entry_id must be a non-empty string")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         from sshpilot.api.transport.codec import secret_transfer_preview_to_wire
 
         return self._defer(
@@ -4034,8 +4035,10 @@ class RequestDispatcher:
                     connection_id=connection_id,
                     remote_dir=remote_dir,
                     entry_id=entry_id,
+                    owner_client_id=owner_client_id,
                 )
-            )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_list_bitwarden_backups(
@@ -4073,7 +4076,7 @@ class RequestDispatcher:
     def _handle_list_ssh_backups(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         params = request.params
         if set(params) != {"connection_id", "remote_dir"}:
@@ -4085,14 +4088,20 @@ class RequestDispatcher:
         if type(remote_dir) is not str or not remote_dir.strip():
             raise ValueError("remote_dir must be a non-empty string")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
-            lambda: service.list_ssh_backups(connection_id=connection_id, remote_dir=remote_dir)
+            lambda: service.list_ssh_backups(
+                connection_id=connection_id,
+                remote_dir=remote_dir,
+                owner_client_id=owner_client_id,
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _handle_import_ssh_backup(
         self,
         request: RequestEnvelope,
-        _state: ClientProtocolState,
+        state: ClientProtocolState,
     ) -> DeferredResult:
         from sshpilot.api.transport.codec import secret_transfer_result_to_wire
 
@@ -4112,6 +4121,7 @@ class RequestDispatcher:
         if not isinstance(options, dict):
             raise ValueError("options must be an object")
         service = self._required_secrets_service()
+        owner_client_id = self._required_client_id(state)
         return self._defer(
             lambda: secret_transfer_result_to_wire(
                 service.import_ssh_backup(
@@ -4119,8 +4129,10 @@ class RequestDispatcher:
                     remote_dir=remote_dir,
                     entry_id=entry_id,
                     options=options,
+                    owner_client_id=owner_client_id,
                 )
-            )
+            ),
+            command_key=SECRET_INTERACTIVE_COMMAND_KEY,
         )
 
     def _defer(

@@ -32,7 +32,7 @@ class _LaunchProvider:
         self.sftp_calls.append((connection_id, interaction_policy))
         return ("ssh", "-s", "sftp", "--", str(connection_id)), {"PATH": "/usr/bin"}
 
-    def prepare_remote_command_launch(self, connection_id, remote_command):
+    def prepare_remote_command_launch(self, connection_id, remote_command, *, interaction_policy="broker"):
         self.remote_calls.append((str(connection_id), remote_command))
         return ("ssh", str(connection_id), remote_command), {"PATH": "/usr/bin"}
 
@@ -104,6 +104,9 @@ def test_privileged_read_flows_through_broker_prepared_launch(wired_server):
             self.stdin = io.BytesIO()
             self._out = io.BytesIO(b"root-secret\n")
             self._err = io.BytesIO(b"")
+            # Daemon-owned children are recorded in the process registry,
+            # which identifies them by pid.
+            self.pid = 4243
             self.returncode = 0
 
         @property

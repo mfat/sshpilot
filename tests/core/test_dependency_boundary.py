@@ -71,13 +71,13 @@ DAEMON_DEBT: dict[tuple[str, str], str] = {
     # importer-specific debt until the engine is made daemon-native.
     ("daemon/secret_transfer.py", "sshpilot.backup_manager"): "M6",
     ("backup_manager.py", "sshpilot.config"): "M6",
-    # The daemon SSH-server backup destination reuses the same headless native-
-    # auth composition as the launch provider (ssh_connection_builder, M7) and
-    # resolves connection passwords from the daemon's own secret manager
-    # (credential_model/secret_storage, M5). No secret crosses into a frontend.
-    ("daemon/secret_transfer.py", "sshpilot.ssh_connection_builder"): "M7",
-    ("daemon/secret_transfer.py", "sshpilot.credential_model"): "M5",
-    ("daemon/secret_transfer.py", "sshpilot.secret_storage"): "M5",
+    # The SSH-server backup destination no longer composes an ssh command or
+    # resolves a credential of its own: it delegates to the SFTP/transfer
+    # runtimes the file manager uses, falling back to the one-shot command
+    # service behind Host Info, so the ssh_connection_builder (M7) and
+    # credential_model/secret_storage (M5) edges it used to carry are gone.
+    # backup_transport only needs the backup vocabulary itself.
+    ("daemon/backup_transport.py", "sshpilot.backup_backends"): "M6",
     # get_state_dir is used for the daemon log. platform_utils imports GI, so the
     # daemon runtime depends on GI for its log path; switch to the GI-free
     # sshpilot.platform.paths.get_state_dir helper when the log lands behind it.

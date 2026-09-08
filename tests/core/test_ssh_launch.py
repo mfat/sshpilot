@@ -142,6 +142,126 @@ def test_force_tty_adds_dash_t_before_destination():
     assert plain.argv == ("ssh", "demo", "docker exec -it web sh")
 
 
+def test_scp_uses_capital_p_port_and_user_option_not_bandwidth_limit():
+    """scp(1): ``-P`` is port, ``-p`` preserves times, ``-l`` is Kbit/s."""
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="alice@host:/tmp",
+            executable="scp",
+            username="alice",
+            port=2222,
+            launch_mode=LaunchMode.SCP,
+        )
+    )
+    assert spec.argv == (
+        "scp",
+        "-P",
+        "2222",
+        "-o",
+        "User=alice",
+        "alice@host:/tmp",
+    )
+    assert "-l" not in spec.argv
+    assert "-p" not in spec.argv
+
+
+def test_scp_binary_keeps_safe_flags_when_launch_mode_is_batch():
+    """Flag semantics follow the scp binary, not LaunchMode alone.
+
+    interaction_policy ``none`` used to overwrite LaunchMode.SCP with BATCH
+    while executable stayed scp, which revived ``-p``/``-l`` misparse.
+    """
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="alice@host:/tmp",
+            executable="/usr/bin/scp",
+            username="alice",
+            port=2222,
+            launch_mode=LaunchMode.BATCH,
+            batch_mode=True,
+        )
+    )
+    assert spec.argv[0] == "/usr/bin/scp"
+    assert "-P" in spec.argv and spec.argv[spec.argv.index("-P") + 1] == "2222"
+    assert "User=alice" in spec.argv
+    assert "-l" not in spec.argv
+    assert "-p" not in spec.argv
+    assert "BatchMode=yes" in spec.argv
+
+
+def test_scp_preference_overrides_follow_extra_options_before_destination():
+    """Preference defaults trail extra_options (ssh first-wins); destination last.
+
+    Only scp *flags* belong in ``extra_options``. Path operands must be inserted
+    after this prepared argv (see NativeScpBackend.build_argv): a local path in
+    ``extra_options`` would land before ``-o``/``-v`` and OpenSSH would treat
+    those flags as more source filenames.
+    """
+
+    spec = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="host:/dst",
+            executable="scp",
+            launch_mode=LaunchMode.SCP,
+            extra_options=["-r"],
+            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
+        )
+    )
+    assert spec.argv == (
+        "scp",
+        "-r",
+        "-o",
+        "ServerAliveInterval=25",
+        "-v",
+        "host:/dst",
+    )
+
+
+def test_scp_path_operand_in_extra_options_lands_before_preference_flags():
+    """Pin the footgun that made Preference ``-v``/``-o`` look like sources.
+
+    Production must not put transfer paths in ``extra_options``; this documents
+    why (overrides intentionally follow extra_options for ssh defaults).
+    """
+
+    broken = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="host:/dst",
+            executable="scp",
+            launch_mode=LaunchMode.SCP,
+            extra_options=["/tmp/payload"],
+            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
+        )
+    )
+    payload_i = broken.argv.index("/tmp/payload")
+    assert broken.argv.index("-v") > payload_i
+    assert broken.argv.index("ServerAliveInterval=25") > payload_i
+
+
+def test_scp_inserting_sources_before_destination_keeps_overrides_as_options():
+    """The transfer argv shape after NativeScpBackend.build_argv."""
+
+    prepared = build_ssh_process_spec(
+        SSHLaunchRequest(
+            destination="alice@host:/remote/drop",
+            executable="scp",
+            launch_mode=LaunchMode.SCP,
+            extra_options=["-r"],
+            ssh_overrides=["-o", "ServerAliveInterval=25", "-v"],
+        )
+    ).argv
+    sources = ("/tmp/payload", "/tmp/other")
+    argv = (*prepared[:-1], *sources, prepared[-1])
+    first_source = argv.index("/tmp/payload")
+    assert argv.index("-r") < first_source
+    assert argv.index("-v") < first_source
+    assert argv.index("ServerAliveInterval=25") < first_source
+    assert argv[-1] == "alice@host:/remote/drop"
+    assert argv[first_source : first_source + 2] == sources
+
+
 def test_gi_blocked_import():
     import subprocess
     import sys

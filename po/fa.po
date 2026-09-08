@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sshpilot\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-06 22:52+0330\n"
+"POT-Creation-Date: 2026-09-07 16:32+0330\n"
 "PO-Revision-Date: 2026-09-06 00:57+0330\n"
 "Last-Translator: mFat <newmfat@gmail.com>\n"
 "Language-Team: Persian\n"
@@ -50,7 +50,7 @@ msgstr "دکمه ترمینال محلی"
 #: src/sshpilot/window_help.py:213 src/sshpilot/window_session.py:150
 #: src/sshpilot/window_tabs.py:1227 src/sshpilot/window_tabs.py:1361
 #: src/sshpilot/window_tabs.py:1539
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:734
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:745
 msgid "Split View"
 msgstr "نمای تفکیک‌شده"
 
@@ -179,8 +179,8 @@ msgstr ""
 #: src/sshpilot/known_hosts_editor.py:311 src/sshpilot/preferences.py:3595
 #: src/sshpilot/preferences.py:3718 src/sshpilot/preferences.py:4120
 #: src/sshpilot/preferences.py:4767 src/sshpilot/rbw_setup.py:123
-#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:77
-#: src/sshpilot/secret_unlock_dialog.py:82 src/sshpilot/sshcopyid_window.py:548
+#: src/sshpilot/rbw_setup.py:129 src/sshpilot/secret_unlock_dialog.py:83
+#: src/sshpilot/secret_unlock_dialog.py:88 src/sshpilot/sshcopyid_window.py:548
 #: src/sshpilot/terminal_manager.py:1014 src/sshpilot/terminal_manager.py:1179
 #: src/sshpilot/text_editor.py:1813 src/sshpilot/welcome_page.py:887
 #: src/sshpilot/window.py:1303 src/sshpilot/window.py:1377
@@ -258,7 +258,7 @@ msgstr "آیا مطمئن هستید که می‌خواهید گروه خالی 
 
 #: src/sshpilot/actions.py:579 src/sshpilot/actions.py:906
 #: src/sshpilot/actions.py:961 src/sshpilot/authorized_keys_window.py:390
-#: src/sshpilot/command_blocks.py:2336 src/sshpilot/file_manager_window.py:1703
+#: src/sshpilot/command_blocks.py:2389 src/sshpilot/file_manager_window.py:1703
 #: src/sshpilot/sidebar.py:4534 src/sshpilot/window.py:1869
 msgid "Delete"
 msgstr "حذف کنید"
@@ -414,7 +414,7 @@ msgstr "کلید امنیتی"
 #: src/sshpilot/askpass_utils.py:846
 #: src/sshpilot/daemon_interaction_dialogs.py:367
 #: src/sshpilot/daemon_sessions_dialog.py:35
-#: src/sshpilot/machine_info_dialog.py:532
+#: src/sshpilot/machine_info_dialog.py:852
 #: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:444
 #: src/sshpilot/preferences.py:4875 src/sshpilot/sshcopyid_window.py:559
 #: src/sshpilot/terminal.py:1059 src/sshpilot/welcome_page.py:708
@@ -909,7 +909,7 @@ msgstr ""
 msgid "Open terminal"
 msgstr "ترمینال را باز کنید"
 
-#: src/sshpilot/bitwarden_setup.py:696
+#: src/sshpilot/bitwarden_setup.py:696 src/sshpilot/secret_unlock_dialog.py:229
 msgid "Try again"
 msgstr "دوباره امتحان کنید"
 
@@ -1025,7 +1025,7 @@ msgid "Single sign-on (SSO)"
 msgstr "ورود به سیستم (SSO)"
 
 #: src/sshpilot/bitwarden_setup.py:1025 src/sshpilot/bitwarden_setup.py:1048
-#: src/sshpilot/secret_unlock_dialog.py:208
+#: src/sshpilot/secret_unlock_dialog.py:258
 msgid "Sign in to Bitwarden"
 msgstr "وارد Bitwarden شوید"
 
@@ -1163,7 +1163,7 @@ msgid "Unlock"
 msgstr "باز کردن قفل"
 
 #: src/sshpilot/bitwarden_setup.py:1341
-#: src/sshpilot/secret_unlock_dialog.py:232
+#: src/sshpilot/secret_unlock_dialog.py:282
 msgid "Not signed in"
 msgstr "وارد نشده است"
 
@@ -1194,7 +1194,7 @@ msgid "Checking Bitwarden…"
 msgstr "در حال بررسی Bitwarden…"
 
 #: src/sshpilot/bitwarden_setup.py:1499
-#: src/sshpilot/secret_unlock_dialog.py:163
+#: src/sshpilot/secret_unlock_dialog.py:169
 msgid "Bitwarden CLI not found"
 msgstr "Bitwarden CLI یافت نشد"
 
@@ -1393,66 +1393,66 @@ msgstr "یک دستور شل را برای اجرا وارد کنید:"
 msgid "Run"
 msgstr "اجرا کنید"
 
-#: src/sshpilot/command_blocks.py:2087
+#: src/sshpilot/command_blocks.py:2094
 msgid "Interactive Command"
 msgstr "فرمان تعاملی"
 
-#: src/sshpilot/command_blocks.py:2177
+#: src/sshpilot/command_blocks.py:2230
 msgid "No groups with connections"
 msgstr "هیچ گروهی با ارتباط وجود ندارد"
 
-#: src/sshpilot/command_blocks.py:2194
+#: src/sshpilot/command_blocks.py:2247
 msgid "Filter groups…"
 msgstr "فیلتر گروه‌ها…"
 
-#: src/sshpilot/command_blocks.py:2227
+#: src/sshpilot/command_blocks.py:2280
 #, python-format
 msgid "%d connections"
 msgstr "اتصالات%d"
 
-#: src/sshpilot/command_blocks.py:2227
+#: src/sshpilot/command_blocks.py:2280
 msgid "1 connection"
 msgstr "1 اتصال"
 
-#: src/sshpilot/command_blocks.py:2286
+#: src/sshpilot/command_blocks.py:2339
 msgid "No connections in group"
 msgstr "بدون اتصال در گروه"
 
-#: src/sshpilot/command_blocks.py:2300 src/sshpilot/macos_menubar.py:77
+#: src/sshpilot/command_blocks.py:2353 src/sshpilot/macos_menubar.py:77
 msgid "Edit"
 msgstr "ویرایش کنید"
 
-#: src/sshpilot/command_blocks.py:2302 src/sshpilot/window_tabs.py:248
+#: src/sshpilot/command_blocks.py:2355 src/sshpilot/window_tabs.py:248
 msgid "Duplicate"
 msgstr "تکراری"
 
 #. Banner title
 #. The banner title is a sibling label, and GTK/PyGObject cannot publish
 #. a labelled-by relation, so name the entry directly.
-#: src/sshpilot/command_blocks.py:2306 src/sshpilot/macos_menubar.py:91
+#: src/sshpilot/command_blocks.py:2359 src/sshpilot/macos_menubar.py:91
 #: src/sshpilot/shortcut_editor.py:63 src/sshpilot/window.py:3584
 #: src/sshpilot/window.py:3609 src/sshpilot/window.py:3851
 #: src/sshpilot/window_help.py:169
 msgid "Broadcast Command"
 msgstr "پخش فرمان"
 
-#: src/sshpilot/command_blocks.py:2311
+#: src/sshpilot/command_blocks.py:2364
 msgid "Run on host…"
 msgstr "اجرا بر روی میزبان…"
 
-#: src/sshpilot/command_blocks.py:2316
+#: src/sshpilot/command_blocks.py:2369
 msgid "Run for group…"
 msgstr "اجرا برای گروه…"
 
-#: src/sshpilot/command_blocks.py:2324
+#: src/sshpilot/command_blocks.py:2377
 msgid "Remove from Favorites"
 msgstr "حذف از موارد دلخواه"
 
-#: src/sshpilot/command_blocks.py:2330
+#: src/sshpilot/command_blocks.py:2383
 msgid "Add to Favorites"
 msgstr "به موارد دلخواه اضافه کنید"
 
-#: src/sshpilot/command_blocks.py:2357
+#: src/sshpilot/command_blocks.py:2410
 msgid "Command deleted"
 msgstr "دستور حذف شد"
 
@@ -1812,7 +1812,7 @@ msgid "Optional sources for IdentityAgent, PKCS#11, and FIDO security keys."
 msgstr "منابع اختیاری برای کلیدهای امنیتی IdentityAgent، PKCS#11 و FIDO."
 
 #: src/sshpilot/connection_dialog.py:3560
-#: src/sshpilot/machine_info_dialog.py:1522
+#: src/sshpilot/machine_info_dialog.py:2032
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:67
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:74
 #: src/sshpilot/shortcut_editor.py:442 src/sshpilot/shortcut_editor.py:456
@@ -1912,7 +1912,7 @@ msgstr "نام کاربری"
 #: src/sshpilot/connection_dialog_port_forwarding.py:191
 #: src/sshpilot/connection_dialog_port_forwarding.py:558
 #: src/sshpilot/effective_config_dialog.py:34
-#: src/sshpilot/machine_info_dialog.py:1555
+#: src/sshpilot/machine_info_dialog.py:2064
 #: src/sshpilot/plugins/builtin/telnet_protocol/__init__.py:39
 msgid "Port"
 msgstr "پورت"
@@ -4005,7 +4005,7 @@ msgstr "دیمون"
 msgid "Crash"
 msgstr "سقوط"
 
-#: src/sshpilot/log_viewer.py:574 src/sshpilot/machine_info_dialog.py:536
+#: src/sshpilot/log_viewer.py:574 src/sshpilot/machine_info_dialog.py:856
 #: src/sshpilot/plugins/builtin/docker_manager/page.py:620
 #: src/sshpilot/preferences.py:864
 msgid "Refresh"
@@ -4094,138 +4094,165 @@ msgstr ""
 "خطوط گزارش ممکن است شامل نام میزبان، نام کاربری و مسیرهای فایل باشد. قبل از "
 "اشتراک گذاری مرور کنید"
 
-#: src/sshpilot/machine_info_dialog.py:125
-#: src/sshpilot/machine_info_dialog.py:141
-#: src/sshpilot/machine_info_dialog.py:169
-#: src/sshpilot/machine_info_dialog.py:187
-#: src/sshpilot/machine_info_dialog.py:204
-#: src/sshpilot/machine_info_dialog.py:208
-#: src/sshpilot/machine_info_dialog.py:1155
-#: src/sshpilot/machine_info_dialog.py:1377
-#: src/sshpilot/machine_info_dialog.py:1606
+#: src/sshpilot/machine_info_dialog.py:167
+#: src/sshpilot/machine_info_dialog.py:183
+#: src/sshpilot/machine_info_dialog.py:211
+#: src/sshpilot/machine_info_dialog.py:229
+#: src/sshpilot/machine_info_dialog.py:246
+#: src/sshpilot/machine_info_dialog.py:261
+#: src/sshpilot/machine_info_dialog.py:1563
+#: src/sshpilot/machine_info_dialog.py:1689
+#: src/sshpilot/machine_info_dialog.py:1897
+#: src/sshpilot/machine_info_dialog.py:2114
 msgid "N/A"
 msgstr "موجود نیست"
 
-#: src/sshpilot/machine_info_dialog.py:127
-#: src/sshpilot/machine_info_dialog.py:143
+#: src/sshpilot/machine_info_dialog.py:169
+#: src/sshpilot/machine_info_dialog.py:185
 #, python-format
 msgid "%d B"
 msgstr "%d B"
 
-#: src/sshpilot/machine_info_dialog.py:157
+#: src/sshpilot/machine_info_dialog.py:199
 #, python-format
 msgid "%d B/s"
 msgstr "%d B/s"
 
-#: src/sshpilot/machine_info_dialog.py:175
+#: src/sshpilot/machine_info_dialog.py:217
 #, python-format
 msgid "%d day"
 msgid_plural "%d days"
 msgstr[0] "%d روز"
 msgstr[1] "%d روز"
 
-#: src/sshpilot/machine_info_dialog.py:177
+#: src/sshpilot/machine_info_dialog.py:219
 #, python-format
 msgid "%d hour"
 msgid_plural "%d hours"
 msgstr[0] "%d ساعت"
 msgstr[1] "%d ساعت"
 
-#: src/sshpilot/machine_info_dialog.py:179
+#: src/sshpilot/machine_info_dialog.py:221
 #, python-format
 msgid "%d minute"
 msgid_plural "%d minutes"
 msgstr[0] "%d دقیقه"
 msgstr[1] "%d دقیقه"
 
-#: src/sshpilot/machine_info_dialog.py:181
+#: src/sshpilot/machine_info_dialog.py:223
 msgid "Less than a minute"
 msgstr "کمتر از یک دقیقه"
 
-#: src/sshpilot/machine_info_dialog.py:182
-#: src/sshpilot/machine_info_dialog.py:1391 src/sshpilot/window_dialogs.py:2171
+#: src/sshpilot/machine_info_dialog.py:224
+#: src/sshpilot/machine_info_dialog.py:1911 src/sshpilot/window_dialogs.py:2171
 msgid ", "
 msgstr ", "
 
-#: src/sshpilot/machine_info_dialog.py:189
+#: src/sshpilot/machine_info_dialog.py:231
 #, python-format
 msgid "%.2f GHz"
 msgstr "%.2f GHz"
 
-#: src/sshpilot/machine_info_dialog.py:190
+#: src/sshpilot/machine_info_dialog.py:232
 #, python-format
 msgid "%.0f MHz"
 msgstr "%.0f MHz"
 
-#: src/sshpilot/machine_info_dialog.py:194
+#: src/sshpilot/machine_info_dialog.py:236
 #, python-format
 msgid "%d%%"
 msgstr "%d%%"
 
-#: src/sshpilot/machine_info_dialog.py:204
+#: src/sshpilot/machine_info_dialog.py:246
+#: src/sshpilot/machine_info_dialog.py:257
 #, python-format
 msgid "%.1f%%"
 msgstr "%.1f%%"
 
-#: src/sshpilot/machine_info_dialog.py:235
+#: src/sshpilot/machine_info_dialog.py:317
 msgid "Loopback"
 msgstr "لوپ‌بک"
 
-#: src/sshpilot/machine_info_dialog.py:236
+#: src/sshpilot/machine_info_dialog.py:318
 msgid "Wi-Fi"
 msgstr "Wi-Fi"
 
-#: src/sshpilot/machine_info_dialog.py:237
+#: src/sshpilot/machine_info_dialog.py:319
 msgid "Ethernet"
 msgstr "اترنت"
 
-#: src/sshpilot/machine_info_dialog.py:238
-#: src/sshpilot/machine_info_dialog.py:246
-#: src/sshpilot/machine_info_dialog.py:1641
+#: src/sshpilot/machine_info_dialog.py:320
+#: src/sshpilot/machine_info_dialog.py:328
+#: src/sshpilot/machine_info_dialog.py:2149
 msgid "Unknown"
 msgstr "ناشناخته"
 
-#: src/sshpilot/machine_info_dialog.py:243
+#: src/sshpilot/machine_info_dialog.py:325
 msgid "Up"
 msgstr "فعال"
 
-#: src/sshpilot/machine_info_dialog.py:244
+#: src/sshpilot/machine_info_dialog.py:326
 msgid "Down"
 msgstr "غیرفعال"
 
-#: src/sshpilot/machine_info_dialog.py:245
+#: src/sshpilot/machine_info_dialog.py:327
 msgid "No carrier"
 msgstr "بدون سیگنال"
 
-#: src/sshpilot/machine_info_dialog.py:500
-#: src/sshpilot/machine_info_dialog.py:655
+#: src/sshpilot/machine_info_dialog.py:650
+msgid "CPU utilization"
+msgstr "میزان استفاده از پردازنده"
+
+#: src/sshpilot/machine_info_dialog.py:660
+#: src/sshpilot/machine_info_dialog.py:1551
+msgid "Total"
+msgstr "کل"
+
+#: src/sshpilot/machine_info_dialog.py:700
+#, python-format
+msgid "%d more core"
+msgid_plural "%d more cores"
+msgstr[0] "%d هستهٔ دیگر"
+msgstr[1] "%d هستهٔ دیگر"
+
+#: src/sshpilot/machine_info_dialog.py:745
+#, python-format
+msgid ""
+"user %(user)s · system %(system)s · iowait %(iowait)s · steal %(steal)s · "
+"idle %(idle)s"
+msgstr ""
+"کاربر %(user)s · سیستم %(system)s · انتظار ورودی/خروجی %(iowait)s · ربوده "
+"%(steal)s · بیکار %(idle)s"
+
+#: src/sshpilot/machine_info_dialog.py:819
+#: src/sshpilot/machine_info_dialog.py:975
 msgid "Gathering host information…"
 msgstr "در حال گردآوری اطلاعات میزبان…"
 
-#: src/sshpilot/machine_info_dialog.py:518
+#: src/sshpilot/machine_info_dialog.py:838
 msgid "Host Info"
 msgstr "اطلاعات میزبان"
 
-#: src/sshpilot/machine_info_dialog.py:538
+#: src/sshpilot/machine_info_dialog.py:858
 msgid "Refresh host information"
 msgstr "تازه‌سازی اطلاعات میزبان"
 
-#: src/sshpilot/machine_info_dialog.py:553
+#: src/sshpilot/machine_info_dialog.py:873
 #, python-format
 msgid "%(nickname)s — %(user)s@%(host)s"
 msgstr "%(nickname)s — %(user)s@%(host)s"
 
-#: src/sshpilot/machine_info_dialog.py:557
+#: src/sshpilot/machine_info_dialog.py:877
 #, python-format
 msgid "%(nickname)s — %(host)s"
 msgstr "%(nickname)s — %(host)s"
 
-#: src/sshpilot/machine_info_dialog.py:649
+#: src/sshpilot/machine_info_dialog.py:969
 msgid "Daemon connection unavailable."
 msgstr "اتصال به دیمون در دسترس نیست."
 
-#: src/sshpilot/machine_info_dialog.py:664
-#: src/sshpilot/machine_info_dialog.py:685
+#: src/sshpilot/machine_info_dialog.py:984
+#: src/sshpilot/machine_info_dialog.py:1013
 #, python-format
 msgid ""
 "Could not gather host information.\n"
@@ -4236,466 +4263,443 @@ msgstr ""
 "\n"
 "%s"
 
-#: src/sshpilot/machine_info_dialog.py:668
+#: src/sshpilot/machine_info_dialog.py:988
 msgid "The host returned no system information."
 msgstr "میزبان هیچ اطلاعات سیستمی برنگرداند."
 
-#: src/sshpilot/machine_info_dialog.py:737
+#: src/sshpilot/machine_info_dialog.py:1065
 #, python-format
 msgid "Updated %d second ago"
 msgid_plural "Updated %d seconds ago"
 msgstr[0] "%d ثانیه پیش به‌روز شد"
 msgstr[1] "%d ثانیه پیش به‌روز شد"
 
-#: src/sshpilot/machine_info_dialog.py:743
+#: src/sshpilot/machine_info_dialog.py:1071
 #, python-format
 msgid "Updated %d minute ago"
 msgid_plural "Updated %d minutes ago"
 msgstr[0] "%d دقیقه پیش به‌روز شد"
 msgstr[1] "%d دقیقه پیش به‌روز شد"
 
-#: src/sshpilot/machine_info_dialog.py:829
-#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:103
-msgid "Overview"
-msgstr "نمای کلی"
-
-#: src/sshpilot/machine_info_dialog.py:830
-msgid "Resources"
-msgstr "منابع"
-
-#: src/sshpilot/machine_info_dialog.py:831
-msgid "Storage"
-msgstr "ذخیره‌سازی"
-
-#: src/sshpilot/machine_info_dialog.py:832
-#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:352
-msgid "Network"
-msgstr "شبکه"
-
-#: src/sshpilot/machine_info_dialog.py:833
-msgid "Traffic"
-msgstr "ترافیک"
-
-#: src/sshpilot/machine_info_dialog.py:834
-msgid "System"
-msgstr "سیستم"
-
-#: src/sshpilot/machine_info_dialog.py:891
-#, python-format
-msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
-msgstr "بار %(one).2f · %(five).2f · %(fifteen).2f"
-
-#: src/sshpilot/machine_info_dialog.py:904
-#: src/sshpilot/machine_info_dialog.py:1057
-msgid "CPU"
-msgstr "پردازنده"
-
-#: src/sshpilot/machine_info_dialog.py:914
-#, python-format
-msgid "swap %(used)s / %(total)s"
-msgstr "مبادله %(used)s / %(total)s"
-
-#: src/sshpilot/machine_info_dialog.py:921
-#: src/sshpilot/machine_info_dialog.py:965
-#: src/sshpilot/machine_info_dialog.py:1058
-#: src/sshpilot/machine_info_dialog.py:1084
-msgid "Memory"
-msgstr "حافظه"
-
-#: src/sshpilot/machine_info_dialog.py:922
-#: src/sshpilot/machine_info_dialog.py:933
-#: src/sshpilot/machine_info_dialog.py:1235
+#: src/sshpilot/machine_info_dialog.py:1192
+#: src/sshpilot/machine_info_dialog.py:1321
+#: src/sshpilot/machine_info_dialog.py:1331
+#: src/sshpilot/machine_info_dialog.py:1800
 #, python-format
 msgid "%(used)s / %(total)s"
 msgstr "%(used)s / %(total)s"
 
-#: src/sshpilot/machine_info_dialog.py:938
+#: src/sshpilot/machine_info_dialog.py:1205
+#, python-format
+msgid "load %(one).2f · %(five).2f · %(fifteen).2f"
+msgstr "بار %(one).2f · %(five).2f · %(fifteen).2f"
+
+#: src/sshpilot/machine_info_dialog.py:1215
+#, python-format
+msgid "swap %(used)s / %(total)s"
+msgstr "مبادله %(used)s / %(total)s"
+
+#: src/sshpilot/machine_info_dialog.py:1251
+#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:103
+msgid "Overview"
+msgstr "نمای کلی"
+
+#: src/sshpilot/machine_info_dialog.py:1252
+msgid "Resources"
+msgstr "منابع"
+
+#: src/sshpilot/machine_info_dialog.py:1253
+msgid "Storage"
+msgstr "ذخیره‌سازی"
+
+#: src/sshpilot/machine_info_dialog.py:1254
+#: src/sshpilot/plugins/builtin/docker_manager/dialogs.py:352
+msgid "Network"
+msgstr "شبکه"
+
+#: src/sshpilot/machine_info_dialog.py:1255
+msgid "Traffic"
+msgstr "ترافیک"
+
+#: src/sshpilot/machine_info_dialog.py:1256
+msgid "System"
+msgstr "سیستم"
+
+#. CPU utilization is a difference between two /proc/stat readings, and
+#. the gather only took the first, so this starts unknown and fills in
+#. on the next live sample.  It deliberately does not fall back to the
+#. load average: load is a queue length, and showing it here under a
+#. "CPU" heading is what this replaced.
+#: src/sshpilot/machine_info_dialog.py:1309
+#: src/sshpilot/machine_info_dialog.py:1469
+#: src/sshpilot/machine_info_dialog.py:1582
+msgid "CPU"
+msgstr "پردازنده"
+
+#: src/sshpilot/machine_info_dialog.py:1317
+#: src/sshpilot/machine_info_dialog.py:1361
+#: src/sshpilot/machine_info_dialog.py:1470
+#: src/sshpilot/machine_info_dialog.py:1583
+#: src/sshpilot/machine_info_dialog.py:1606
+msgid "Memory"
+msgstr "حافظه"
+
+#: src/sshpilot/machine_info_dialog.py:1336
 #, python-format
 msgid "%(fstype)s on %(device)s"
 msgstr "%(fstype)s روی %(device)s"
 
-#: src/sshpilot/machine_info_dialog.py:946
+#. Storage does not move between samples, so this gauge keeps no history.
+#: src/sshpilot/machine_info_dialog.py:1342
 msgid "Root filesystem"
 msgstr "سیستم فایل ریشه"
 
-#: src/sshpilot/machine_info_dialog.py:955
+#: src/sshpilot/machine_info_dialog.py:1351
 msgid "Hostname"
 msgstr "نام میزبان"
 
-#: src/sshpilot/machine_info_dialog.py:958
-#: src/sshpilot/machine_info_dialog.py:1207
+#: src/sshpilot/machine_info_dialog.py:1354
+#: src/sshpilot/machine_info_dialog.py:1759
 #: src/sshpilot/plugins/builtin/serial_protocol/__init__.py:62
 msgid "Device"
 msgstr "دستگاه"
 
-#: src/sshpilot/machine_info_dialog.py:961
+#: src/sshpilot/machine_info_dialog.py:1357
 msgid "Operating system"
 msgstr "سیستم‌عامل"
 
-#: src/sshpilot/machine_info_dialog.py:962
+#: src/sshpilot/machine_info_dialog.py:1358
 msgid "Kernel"
 msgstr "هسته"
 
-#: src/sshpilot/machine_info_dialog.py:963
+#: src/sshpilot/machine_info_dialog.py:1359
 msgid "Processor"
 msgstr "پردازنده"
 
-#: src/sshpilot/machine_info_dialog.py:964
+#: src/sshpilot/machine_info_dialog.py:1360
 msgid "CPU frequency"
 msgstr "فرکانس پردازنده"
 
-#: src/sshpilot/machine_info_dialog.py:966
+#: src/sshpilot/machine_info_dialog.py:1362
 msgid "Uptime"
 msgstr "زمان کارکرد"
 
-#: src/sshpilot/machine_info_dialog.py:967
+#: src/sshpilot/machine_info_dialog.py:1363
 msgid "Booted"
 msgstr "زمان راه‌اندازی"
 
-#: src/sshpilot/machine_info_dialog.py:979
+#: src/sshpilot/machine_info_dialog.py:1375
 #, python-format
 msgid "%(cores)d cores · %(threads)d threads · %(sockets)d sockets"
 msgstr "%(cores)d هسته · %(threads)d رشته · %(sockets)d سوکت"
 
-#: src/sshpilot/machine_info_dialog.py:985
+#: src/sshpilot/machine_info_dialog.py:1381
 #, python-format
 msgid "%d core"
 msgid_plural "%d cores"
 msgstr[0] "%d هسته"
 msgstr[1] "%d هسته"
 
-#: src/sshpilot/machine_info_dialog.py:989
+#: src/sshpilot/machine_info_dialog.py:1385
 #, python-format
 msgid "%(model)s (%(topology)s)"
 msgstr "%(model)s (%(topology)s)"
 
-#: src/sshpilot/machine_info_dialog.py:1001
+#: src/sshpilot/machine_info_dialog.py:1402
 msgid "Load average"
 msgstr "میانگین بار"
 
-#: src/sshpilot/machine_info_dialog.py:1005
+#: src/sshpilot/machine_info_dialog.py:1406
 msgid "1 min"
 msgstr "1 دقیقه"
 
-#: src/sshpilot/machine_info_dialog.py:1006
+#: src/sshpilot/machine_info_dialog.py:1407
 msgid "5 min"
 msgstr "5 دقیقه"
 
-#: src/sshpilot/machine_info_dialog.py:1007
+#: src/sshpilot/machine_info_dialog.py:1408
 msgid "15 min"
 msgstr "15 دقیقه"
 
-#: src/sshpilot/machine_info_dialog.py:1036
+#: src/sshpilot/machine_info_dialog.py:1471
+msgid "Disk"
+msgstr "دیسک"
+
+#: src/sshpilot/machine_info_dialog.py:1474
+msgid "Time spent waiting"
+msgstr "زمان انتظار"
+
+#: src/sshpilot/machine_info_dialog.py:1482
+msgid "This host does not report waiting times"
+msgstr "این میزبان زمان انتظار را گزارش نمی‌کند"
+
+#: src/sshpilot/machine_info_dialog.py:1518
 #, python-format
-msgid "Based on %d CPU"
-msgid_plural "Based on %d CPUs"
-msgstr[0] "بر پایهٔ %d پردازنده"
-msgstr[1] "بر پایهٔ %d پردازنده"
+msgid "nothing could run %s"
+msgstr "هیچ‌چیز اجرا نشد %s"
 
-#: src/sshpilot/machine_info_dialog.py:1039
-msgid "CPU count unavailable."
-msgstr "تعداد پردازنده‌ها در دسترس نیست."
+#: src/sshpilot/machine_info_dialog.py:1529
+msgid "Process table"
+msgstr "جدول فرایندها"
 
-#: src/sshpilot/machine_info_dialog.py:1053
+#: src/sshpilot/machine_info_dialog.py:1532
+msgid "No process counts reported"
+msgstr "شمار فرایندها گزارش نشد"
+
+#: src/sshpilot/machine_info_dialog.py:1552
+msgid "Running"
+msgstr "در حال اجرا"
+
+#: src/sshpilot/machine_info_dialog.py:1553
+msgid "Sleeping"
+msgstr "در خواب"
+
+#: src/sshpilot/machine_info_dialog.py:1554
+msgid "Stopped"
+msgstr "متوقف"
+
+#: src/sshpilot/machine_info_dialog.py:1555
+msgid "Zombie"
+msgstr "زامبی"
+
+#: src/sshpilot/machine_info_dialog.py:1556
+msgid "Threads"
+msgstr "نخ‌ها"
+
+#: src/sshpilot/machine_info_dialog.py:1557
+msgid "PID limit"
+msgstr "حد PID"
+
+#: src/sshpilot/machine_info_dialog.py:1578
 msgid "Top processes"
 msgstr "پرمصرف‌ترین فرایندها"
 
-#: src/sshpilot/machine_info_dialog.py:1056
+#: src/sshpilot/machine_info_dialog.py:1581
 msgid "Process"
 msgstr "فرایند"
 
-#: src/sshpilot/machine_info_dialog.py:1074
+#: src/sshpilot/machine_info_dialog.py:1599
 msgid "No process list reported"
 msgstr "هیچ فهرست فرایندی گزارش نشد"
 
-#. Above 100% is a real reading, not an overflow: the host measures a
-#. share of one CPU, and a threaded process uses several.
-#: src/sshpilot/machine_info_dialog.py:1078
-msgid "A share of one CPU, ranked by the host."
-msgstr "سهمی از یک پردازنده، مرتب‌شده به دست میزبان."
-
-#: src/sshpilot/machine_info_dialog.py:1102
-msgid "MemTotal"
-msgstr "MemTotal"
-
-#: src/sshpilot/machine_info_dialog.py:1103
-msgid "MemFree"
-msgstr "MemFree"
-
-#: src/sshpilot/machine_info_dialog.py:1104
-msgid "Buffers"
-msgstr "Buffers"
-
-#: src/sshpilot/machine_info_dialog.py:1105
-msgid "Cached"
-msgstr "Cached"
-
-#: src/sshpilot/machine_info_dialog.py:1106
-msgid "MemAvailable"
-msgstr "MemAvailable"
-
-#: src/sshpilot/machine_info_dialog.py:1127
+#: src/sshpilot/machine_info_dialog.py:1661
 msgid "Swap"
 msgstr "Swap"
 
-#: src/sshpilot/machine_info_dialog.py:1134
+#: src/sshpilot/machine_info_dialog.py:1668
 #, python-format
 msgid "%(used)s / %(total)s · %(percent)s"
 msgstr "%(used)s / %(total)s · %(percent)s"
 
-#: src/sshpilot/machine_info_dialog.py:1151
+#: src/sshpilot/machine_info_dialog.py:1685
 msgid "Temperatures"
 msgstr "دماها"
 
-#: src/sshpilot/machine_info_dialog.py:1187
+#: src/sshpilot/machine_info_dialog.py:1721
 #, python-format
 msgid "%d °C"
 msgstr "%d °C"
 
-#: src/sshpilot/machine_info_dialog.py:1203
+#: src/sshpilot/machine_info_dialog.py:1746
+#, python-format
+msgid "inodes %s"
+msgstr "آی‌نود %s"
+
+#: src/sshpilot/machine_info_dialog.py:1755
 msgid "Filesystems"
 msgstr "سیستم‌های فایل"
 
-#: src/sshpilot/machine_info_dialog.py:1206
+#: src/sshpilot/machine_info_dialog.py:1758
 msgid "Mount point"
 msgstr "نقطهٔ اتصال"
 
-#: src/sshpilot/machine_info_dialog.py:1208
+#: src/sshpilot/machine_info_dialog.py:1760
 msgid "Usage"
 msgstr "مصرف"
 
-#: src/sshpilot/machine_info_dialog.py:1209
+#: src/sshpilot/machine_info_dialog.py:1761
 msgid "Used / Size"
 msgstr "استفاده‌شده / اندازه"
 
-#: src/sshpilot/machine_info_dialog.py:1210
+#: src/sshpilot/machine_info_dialog.py:1762
 msgid "Available"
 msgstr "در دسترس"
 
-#: src/sshpilot/machine_info_dialog.py:1224
-#, python-format
-msgid "%(device)s · %(fstype)s"
-msgstr "%(device)s · %(fstype)s"
+#: src/sshpilot/machine_info_dialog.py:1794
+msgid "read-only"
+msgstr "فقط‌خواندنی"
 
-#: src/sshpilot/machine_info_dialog.py:1260
+#: src/sshpilot/machine_info_dialog.py:1795
+#: src/sshpilot/machine_info_dialog.py:1874
+#: src/sshpilot/machine_info_dialog.py:2156
+msgid " · "
+msgstr " · "
+
+#: src/sshpilot/machine_info_dialog.py:1825
 msgid "No filesystems reported"
 msgstr "هیچ سیستم فایلی گزارش نشد"
 
-#: src/sshpilot/machine_info_dialog.py:1262
-msgid "Only physical disks are shown."
-msgstr "تنها دیسک‌های فیزیکی نشان داده می‌شوند."
-
-#: src/sshpilot/machine_info_dialog.py:1268
-msgid "I/O pressure"
-msgstr "فشار ورودی/خروجی"
-
-#: src/sshpilot/machine_info_dialog.py:1272
-msgid "This host does not report I/O pressure"
-msgstr "این میزبان فشار ورودی/خروجی را گزارش نمی‌کند"
-
-#: src/sshpilot/machine_info_dialog.py:1283
-msgid "10 s"
-msgstr "10 ثانیه"
-
-#: src/sshpilot/machine_info_dialog.py:1284
-msgid "60 s"
-msgstr "60 ثانیه"
-
-#: src/sshpilot/machine_info_dialog.py:1285
-msgid "300 s"
-msgstr "300 ثانیه"
-
-#: src/sshpilot/machine_info_dialog.py:1289
-msgid "Some tasks stalled"
-msgstr "برخی وظیفه‌ها منتظرند"
-
-#: src/sshpilot/machine_info_dialog.py:1290
-msgid "All tasks stalled"
-msgstr "همهٔ وظیفه‌ها منتظرند"
-
-#: src/sshpilot/machine_info_dialog.py:1305
-msgid "Share of each window spent waiting on storage."
-msgstr "سهمی از هر بازه که صرف انتظار برای ذخیره‌سازی شده است."
-
-#: src/sshpilot/machine_info_dialog.py:1315
+#: src/sshpilot/machine_info_dialog.py:1835
 msgid "Interfaces"
 msgstr "رابط‌ها"
 
-#: src/sshpilot/machine_info_dialog.py:1353
+#: src/sshpilot/machine_info_dialog.py:1873
 #, python-format
 msgid "MTU %d"
 msgstr "MTU %d"
 
-#: src/sshpilot/machine_info_dialog.py:1354
-#: src/sshpilot/machine_info_dialog.py:1648
-msgid " · "
-msgstr " · "
-
-#: src/sshpilot/machine_info_dialog.py:1364
+#: src/sshpilot/machine_info_dialog.py:1884
 msgid "No interfaces reported"
 msgstr "هیچ رابطی گزارش نشد"
 
-#: src/sshpilot/machine_info_dialog.py:1371
+#: src/sshpilot/machine_info_dialog.py:1891
 msgid "Routing & resolution"
 msgstr "مسیریابی و نام‌گشایی"
 
-#: src/sshpilot/machine_info_dialog.py:1374
+#: src/sshpilot/machine_info_dialog.py:1894
 #, python-format
 msgid "%(gateway)s via %(interface)s"
 msgstr "%(gateway)s از طریق %(interface)s"
 
-#: src/sshpilot/machine_info_dialog.py:1380
+#: src/sshpilot/machine_info_dialog.py:1900
 #, python-format
 msgid "%(port)d/tcp (%(process)s)"
 msgstr "%(port)d/tcp (%(process)s)"
 
-#: src/sshpilot/machine_info_dialog.py:1384
-#: src/sshpilot/machine_info_dialog.py:1560
+#: src/sshpilot/machine_info_dialog.py:1904
+#: src/sshpilot/machine_info_dialog.py:2069
 #, python-format
 msgid "%d/tcp"
 msgstr "%d/tcp"
 
-#: src/sshpilot/machine_info_dialog.py:1390
+#: src/sshpilot/machine_info_dialog.py:1910
 msgid "Default gateway"
 msgstr "دروازهٔ پیش‌فرض"
 
-#: src/sshpilot/machine_info_dialog.py:1391
+#: src/sshpilot/machine_info_dialog.py:1911
 msgid "DNS servers"
 msgstr "سرورهای DNS"
 
-#: src/sshpilot/machine_info_dialog.py:1392
+#: src/sshpilot/machine_info_dialog.py:1912
 msgid "Listening SSH port"
 msgstr "پورت شنوندهٔ SSH"
 
-#: src/sshpilot/machine_info_dialog.py:1404
-msgid "Live — sampled every 2 s."
-msgstr "زنده — نمونه‌برداری هر ۲ ثانیه."
-
-#: src/sshpilot/machine_info_dialog.py:1409
+#: src/sshpilot/machine_info_dialog.py:1922
 msgid "Bandwidth"
 msgstr "پهنای باند"
 
-#: src/sshpilot/machine_info_dialog.py:1412
+#: src/sshpilot/machine_info_dialog.py:1925
 msgid "Network interface"
 msgstr "رابط شبکه"
 
-#: src/sshpilot/machine_info_dialog.py:1413
+#: src/sshpilot/machine_info_dialog.py:1926
 msgid "Received"
 msgstr "دریافت‌شده"
 
-#: src/sshpilot/machine_info_dialog.py:1414
+#: src/sshpilot/machine_info_dialog.py:1927
 msgid "Transmitted"
 msgstr "ارسال‌شده"
 
-#: src/sshpilot/machine_info_dialog.py:1415
+#: src/sshpilot/machine_info_dialog.py:1928
 msgid "Rate ↓"
 msgstr "نرخ ↓"
 
-#: src/sshpilot/machine_info_dialog.py:1416
+#: src/sshpilot/machine_info_dialog.py:1929
 msgid "Rate ↑"
 msgstr "نرخ ↑"
 
-#: src/sshpilot/machine_info_dialog.py:1445
+#: src/sshpilot/machine_info_dialog.py:1956
 msgid "No interface counters reported"
 msgstr "هیچ شمارنده‌ای برای رابط‌ها گزارش نشد"
 
-#: src/sshpilot/machine_info_dialog.py:1447
-msgid "Totals since boot."
-msgstr "مجموع از زمان راه‌اندازی."
-
-#: src/sshpilot/machine_info_dialog.py:1449
+#: src/sshpilot/machine_info_dialog.py:1959
 msgid "Remote sessions"
 msgstr "نشست‌های راه دور"
 
-#: src/sshpilot/machine_info_dialog.py:1463
+#: src/sshpilot/machine_info_dialog.py:1973
 #, python-format
 msgid "Incoming · %d established"
 msgid_plural "Incoming · %d established"
 msgstr[0] "ورودی · %d برقرار"
 msgstr[1] "ورودی · %d برقرار"
 
-#: src/sshpilot/machine_info_dialog.py:1465
+#: src/sshpilot/machine_info_dialog.py:1975
 #, python-format
 msgid "Outgoing · %d established"
 msgid_plural "Outgoing · %d established"
 msgstr[0] "خروجی · %d برقرار"
 msgstr[1] "خروجی · %d برقرار"
 
-#: src/sshpilot/machine_info_dialog.py:1515
+#: src/sshpilot/machine_info_dialog.py:2025
 #, python-format
 msgid "%d more"
 msgid_plural "%d more"
 msgstr[0] "%d مورد دیگر"
 msgstr[1] "%d مورد دیگر"
 
-#: src/sshpilot/machine_info_dialog.py:1530
-#: src/sshpilot/machine_info_dialog.py:1569
-msgid "Some process names need root."
-msgstr "برخی نام‌های فرایند به دسترسی ریشه نیاز دارند."
-
-#: src/sshpilot/machine_info_dialog.py:1546
+#: src/sshpilot/machine_info_dialog.py:2055
 msgid "Distribution"
 msgstr "توزیع"
 
-#: src/sshpilot/machine_info_dialog.py:1547
+#: src/sshpilot/machine_info_dialog.py:2056
 msgid "Architecture"
 msgstr "معماری"
 
-#: src/sshpilot/machine_info_dialog.py:1552
+#: src/sshpilot/machine_info_dialog.py:2061
 msgid "Listening services"
 msgstr "سرویس‌های شنونده"
 
-#: src/sshpilot/machine_info_dialog.py:1556
+#: src/sshpilot/machine_info_dialog.py:2065
 msgid "Service"
 msgstr "سرویس"
 
-#: src/sshpilot/machine_info_dialog.py:1567
+#: src/sshpilot/machine_info_dialog.py:2076
 msgid "No listening services reported"
 msgstr "هیچ سرویس شنونده‌ای گزارش نشد"
 
-#: src/sshpilot/machine_info_dialog.py:1571
+#: src/sshpilot/machine_info_dialog.py:2079
 msgid "Failed units"
 msgstr "یونیت‌های ناموفق"
 
 #. Also what a host without systemd looks like: neither has a
 #. failed unit to report.
-#: src/sshpilot/machine_info_dialog.py:1584
+#: src/sshpilot/machine_info_dialog.py:2092
 msgid "No failed units"
 msgstr "بدون یونیت ناموفق"
 
-#: src/sshpilot/machine_info_dialog.py:1591
+#: src/sshpilot/machine_info_dialog.py:2099
 msgid "SSH host keys"
 msgstr "کلیدهای میزبان SSH"
 
-#: src/sshpilot/machine_info_dialog.py:1594
+#: src/sshpilot/machine_info_dialog.py:2102
 msgid "Algorithm"
 msgstr "الگوریتم"
 
-#: src/sshpilot/machine_info_dialog.py:1595
+#: src/sshpilot/machine_info_dialog.py:2103
 msgid "Fingerprint"
 msgstr "اثر انگشت"
 
-#: src/sshpilot/machine_info_dialog.py:1596
+#: src/sshpilot/machine_info_dialog.py:2104
 msgid "Bits"
 msgstr "بیت"
 
-#: src/sshpilot/machine_info_dialog.py:1611
+#: src/sshpilot/machine_info_dialog.py:2119
 msgid "No host keys reported"
 msgstr "هیچ کلید میزبانی گزارش نشد"
 
-#: src/sshpilot/machine_info_dialog.py:1614
+#: src/sshpilot/machine_info_dialog.py:2122
 msgid "Logged-in users"
 msgstr "کاربران واردشده"
 
-#: src/sshpilot/machine_info_dialog.py:1626
+#: src/sshpilot/machine_info_dialog.py:2134
 msgid "No remote sessions"
 msgstr "بدون نشست راه دور"
 
-#: src/sshpilot/machine_info_dialog.py:1626
+#: src/sshpilot/machine_info_dialog.py:2134
 msgid "No logged-in users"
 msgstr "هیچ کاربر واردشده‌ای نیست"
 
-#: src/sshpilot/machine_info_dialog.py:1647
+#: src/sshpilot/machine_info_dialog.py:2155
 msgid "local console"
 msgstr "کنسول محلی"
 
@@ -4856,7 +4860,7 @@ msgid "Help"
 msgstr "راهنما"
 
 #: src/sshpilot/omni_search.py:58 src/sshpilot/welcome_page.py:107
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:730
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:741
 msgid "SFTP File Manager"
 msgstr "مدیریت فایل SFTP"
 
@@ -5817,7 +5821,7 @@ msgstr "راه‌اندازی مجدد"
 #: src/sshpilot/terminal_manager.py:951 src/sshpilot/terminal_manager.py:1459
 #: src/sshpilot/window.py:2346 src/sshpilot/window_tabs.py:1262
 #: src/sshpilot/window_tabs.py:1348
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:726
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:737
 msgid "Terminal"
 msgstr "ترمینال"
 
@@ -6775,7 +6779,7 @@ msgstr "CLI پیدا شد اما شما وارد نشده اید.{path}"
 msgid "CLI found but the vault is locked.{path}"
 msgstr "CLI پیدا شد اما طاق قفل است.{path}"
 
-#: src/sshpilot/preferences.py:3190 src/sshpilot/secret_unlock_dialog.py:218
+#: src/sshpilot/preferences.py:3190 src/sshpilot/secret_unlock_dialog.py:268
 msgid "Sign in…"
 msgstr "ورود به سیستم…"
 
@@ -7299,23 +7303,23 @@ msgstr "3 اتصال"
 msgid "Using system accent color"
 msgstr "استفاده از رنگ تاکیدی سیستم"
 
-#: src/sshpilot/preferences.py:6074
+#: src/sshpilot/preferences.py:6144
 msgid "Encoding"
 msgstr "رمزگذاری"
 
-#: src/sshpilot/preferences.py:6075
+#: src/sshpilot/preferences.py:6145
 msgid "Character encoding for the integrated terminal"
 msgstr "رمزگذاری کاراکتر برای ترمینال یکپارچه"
 
-#: src/sshpilot/preferences.py:6212
+#: src/sshpilot/preferences.py:6282
 msgid "Could not save SSH settings. Please check the values and try again."
 msgstr "تنظیمات SSH ذخیره نشد. لطفاً مقادیر را بررسی کنید و دوباره امتحان کنید."
 
-#: src/sshpilot/preferences.py:6416
+#: src/sshpilot/preferences.py:6486
 msgid "Terminal Backend Change"
 msgstr "تغییر پسانهٔ ترمینال"
 
-#: src/sshpilot/preferences.py:6419
+#: src/sshpilot/preferences.py:6489
 msgid "This change will only apply to new terminal tabs.\n"
 msgstr "این تغییر فقط برای برگه‌های ترمینال جدید اعمال می‌شود.\n"
 
@@ -7609,12 +7613,12 @@ msgid "Transfer failed: {error}"
 msgstr "انتقال ناموفق بود: {error}"
 
 #. usable directly with GLib.idle_add
-#: src/sshpilot/secret_unlock_dialog.py:67
-#: src/sshpilot/secret_unlock_dialog.py:471
+#: src/sshpilot/secret_unlock_dialog.py:72
+#: src/sshpilot/secret_unlock_dialog.py:530
 msgid "vault"
 msgstr "طاق"
 
-#: src/sshpilot/secret_unlock_dialog.py:165
+#: src/sshpilot/secret_unlock_dialog.py:171
 msgid ""
 "Bitwarden is selected for secret storage, but the “bw” command was not "
 "found. Passwords and passphrases will not be stored or autofilled until the "
@@ -7629,20 +7633,21 @@ msgstr ""
 "تنظیمات ▸ امنیت و اعتبارنامه را باز کنید تا پسانه را تغییر دهید، یا اکنون "
 "Bitwarden را راه‌اندازی کنید."
 
-#: src/sshpilot/secret_unlock_dialog.py:172
-#: src/sshpilot/secret_unlock_dialog.py:217
+#: src/sshpilot/secret_unlock_dialog.py:178
+#: src/sshpilot/secret_unlock_dialog.py:228
+#: src/sshpilot/secret_unlock_dialog.py:267
 msgid "Not now"
 msgstr "الان نه"
 
-#: src/sshpilot/secret_unlock_dialog.py:173
+#: src/sshpilot/secret_unlock_dialog.py:179
 msgid "Set up Bitwarden…"
 msgstr "راه‌اندازی Bitwarden…"
 
-#: src/sshpilot/secret_unlock_dialog.py:187
+#: src/sshpilot/secret_unlock_dialog.py:193
 msgid "Secret backend unavailable"
 msgstr "پسانهٔ رمزها در دسترس نیست"
 
-#: src/sshpilot/secret_unlock_dialog.py:189
+#: src/sshpilot/secret_unlock_dialog.py:195
 #, python-brace-format
 msgid ""
 "{name} is selected for secret storage but is not available on this system. "
@@ -7659,7 +7664,20 @@ msgstr ""
 "تنظیمات ▸ امنیت و اعتبار را باز کنید تا تنظیمات را برطرف کنید یا پسانه دیگری "
 "را انتخاب کنید."
 
-#: src/sshpilot/secret_unlock_dialog.py:210
+#: src/sshpilot/secret_unlock_dialog.py:217
+#, python-brace-format
+msgid "Could not unlock {name}"
+msgstr "باز کردن قفل {name} ممکن نشد"
+
+#: src/sshpilot/secret_unlock_dialog.py:219
+msgid ""
+"The master password was not accepted. Passwords and passphrases will not be "
+"stored or autofilled until the vault is unlocked."
+msgstr ""
+"گذرواژه اصلی پذیرفته نشد. تا زمانی که قفل خزانه باز نشود، گذرواژه‌ها و "
+"عبارت‌های عبور ذخیره یا تکمیل خودکار نمی‌شوند."
+
+#: src/sshpilot/secret_unlock_dialog.py:260
 msgid ""
 "Bitwarden is selected for secret storage, but you are not signed in. "
 "Passwords and passphrases will not be stored or autofilled until you sign in "
@@ -7674,7 +7692,7 @@ msgstr ""
 "تنظیمات ▸ امنیت و اعتبارنامه‌ها را باز کنید تا قسمت پشتیبان را تغییر دهید، یا "
 "اکنون وارد شوید."
 
-#: src/sshpilot/secret_unlock_dialog.py:234
+#: src/sshpilot/secret_unlock_dialog.py:284
 #, python-brace-format
 msgid ""
 "{name} is selected for secret storage but you are not signed in. Passwords "
@@ -7687,12 +7705,12 @@ msgstr ""
 "\n"
 "برای اصلاح پیکربندی، تنظیمات ▸ امنیت و اعتبارنامه‌ها را باز کنید."
 
-#: src/sshpilot/secret_unlock_dialog.py:543
+#: src/sshpilot/secret_unlock_dialog.py:620
 #, python-brace-format
 msgid "Unlocking {backend}"
 msgstr "باز کردن قفل {backend}"
 
-#: src/sshpilot/secret_unlock_dialog.py:544
+#: src/sshpilot/secret_unlock_dialog.py:621
 msgid "Unlocking your vault…"
 msgstr "در حال باز کردن قفل خزانه شما…"
 
@@ -10536,155 +10554,168 @@ msgid "mFat"
 msgstr "mFat"
 
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:66
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:176
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:188
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:264
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:269
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:274
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:317
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:323
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:82
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:187
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:199
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:270
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:275
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:280
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:285
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:328
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:336
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:364
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:369
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:376
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:410
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:422
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:428
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:334
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:339
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:347
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:375
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:380
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:387
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:421
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:433
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:448
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:453
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:480
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:500
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:439
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:444
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:459
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:464
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:491
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:511
 msgid "Bug fixes"
 msgstr "رفع اشکالات"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:76
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:82
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:71
+msgid ""
+"Introducing \"Host Info\" - detailed info about any host, available from the "
+"context menu"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:72
+msgid ""
+"New languages: Spanish, Portuguese, Brazilian Portuguese, Chinese, Russian "
+"and Persian"
+msgstr ""
+
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:87
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:93
 msgid "Improvements to isolated workspace mode"
 msgstr "بهبودهای حالت فضای کاری ایزوله‌شده"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:77
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:83
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:94
 msgid "Middle-click a group to open all connections in splitview"
 msgstr "برای باز کردن همهٔ اتصال‌ها در نمای تفکیک‌شده، روی یک گروه کلیک وسط کنید"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:88
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:99
 msgid "Improvements to non-SSH protocol plugins"
 msgstr "بهبودهای افزایه‌های پروتکل‌های غیر SSH"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:89
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:100
 msgid "Fixes text selection when using remote apps such as tmux and htop"
 msgstr ""
 "رفع مشکل انتخاب متن هنگام استفاده از برنامه‌های دوردست مانند tmux و htop"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:90
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:101
 msgid "Fixes SFTP File Manager retry/reconnect flow"
 msgstr "رفع جریان تلاش مجدد/اتصال مجدد مدیر فایل SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:95
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:106
 msgid "New \"Copy SSH Command\" context-menu action"
 msgstr "کنش جدید منوی متنی «رونوشت دستور SSH»"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:96
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
 msgid "Fixes rbw secret backend"
 msgstr "رفع مشکل پسانهٔ راز rbw"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:97
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
 msgid "Other bug fixes and improvements"
 msgstr "سایر رفع اشکالات و بهبودها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:102
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:113
 msgid "Fixed Bitwarden login issue"
 msgstr "رفع مشکل ورود به Bitwarden"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:107
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:118
 msgid "Faster startup"
 msgstr "راه‌اندازی سریع‌تر"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:108
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:119
 msgid "Vault unlock prompt now displayed on startup"
 msgstr "اعلان قفل‌گشایی خزنه اکنون هنگام راه‌اندازی نمایش داده می‌شود"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:109
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:120
 msgid "Privacy toggle hides hostnames and IP addresses in start page too"
 msgstr ""
 "ضامن حریم خصوصی نام‌های میزبان و نشانی‌های IP را در صفحهٔ آغازین نیز پنهان می‌کند"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:114
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:125
 msgid "Fixed subgroups not inheriting parent group color"
 msgstr "رفع مشکل به ارث نبردن رنگ گروه والد توسط زیرگروه‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:115
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:126
 msgid "Added option to remember passwords to password prompts"
 msgstr "افزودن گزینهٔ به خاطر سپردن گذرواژه‌ها به اعلان‌های گذرواژه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:116
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:127
 msgid "Minor fixes to DnD in sidebar"
 msgstr "اصلاحات جزئی در کشیدن و رها کردن در نوار کناری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:121
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:132
 msgid ""
 "Added new terminal theme selector, added option to access it from tab bar"
 msgstr "افزودن انتخاب‌گر جدید پوستهٔ پایانه و گزینهٔ دسترسی به آن از نوار زبانه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:122
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:133
 msgid "Fixed vault unlock issue"
 msgstr "رفع مشکل قفل‌گشایی خزنه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:123
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:134
 msgid "Fixed backup encryption issue"
 msgstr "رفع مشکل رمزنگاری پشتیبان"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:124
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:707
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:135
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:718
 msgid "Minor UI fixes"
 msgstr "اصلاحات جزئی رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:129
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:140
 msgid "Improved drag & drop for connections across groups"
 msgstr "بهبود کشیدن و رها کردن برای اتصال‌ها بین گروه‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:130
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
 msgid "Improved connection status reporting"
 msgstr "بهبود گزارش‌دهی وضعیت اتصال"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:131
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
 msgid "Minor bug fixes"
 msgstr "رفع اشکالات جزئی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:136
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:249
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:438
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:147
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:260
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:265
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:449
 msgid "Bug fixes and UI improvements"
 msgstr "رفع اشکالات و بهبودهای رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:141
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:152
 msgid "Fixes drag and drop reordering not working"
 msgstr "رفع مشکل کار نکردن مرتب‌سازی مجدد با کشیدن و رها کردن"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:142
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:153
 msgid "Adds manual sorting option"
 msgstr "افزودن گزینهٔ مرتب‌سازی دستی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:147
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:158
 msgid "Added French translation"
 msgstr "افزودن ترجمهٔ فرانسوی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:148
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:157
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:159
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:168
 msgid "Minor UI improvements"
 msgstr "بهبودهای جزئی رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:153
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:164
 msgid ""
 "Integrated tab bar into header for a cleaner, more minimal user interface"
 msgstr "ادغام نوار زبانه در سربرگ برای یک رابط کاربری تمیزتر و مینیمال‌تر"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:154
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:165
 msgid ""
 "Revamped Command Snippets panel - the snippets are now displayed in a "
 "floating panel"
@@ -10692,7 +10723,7 @@ msgstr ""
 "بازطراحی پانل قطعه‌کدهای دستور - قطعه‌کدها اکنون در یک پانل شناور نمایش داده "
 "می‌شوند"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:155
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:166
 msgid ""
 "Added keyboard support to Snippets - you can assign your desired shortcut "
 "for the popup"
@@ -10700,58 +10731,58 @@ msgstr ""
 "افزودن پشتیبانی صفحه‌کلید به قطعه‌کدها - می‌توانید میان‌بر دلخواه خود را برای "
 "پنجرهٔ بازشو اختصاص دهید"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:156
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:167
 msgid "Added theme selector to main menu, inspired by Ptyxis"
 msgstr "افزودن انتخاب‌گر پوسته به منوی اصلی با الهام از Ptyxis"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:162
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:171
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:181
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:193
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:198
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:203
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:208
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:173
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:182
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:192
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:204
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:209
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:214
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:484
 msgid "Bug fixes and improvements"
 msgstr "رفع اشکالات و بهبودها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:167
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:178
 msgid ""
 "Improved full-screen experience (activated with F11 on linux, Cmd+Ctrl+F on "
 "macOS)"
 msgstr ""
 "تجربهٔ تمام‌صفحهٔ بهبودیافته (فعال‌سازی با F11 در لینوکس، Cmd+Ctrl+F در macOS)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:168
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:179
 msgid "Improved app menu on macOS"
 msgstr "منوی برنامهٔ بهبودیافته در macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:169
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:180
 msgid "Added animated effect to omnisearch"
 msgstr "افزودن جلوهٔ متحرک به جست‌وجوی همه‌منظوره (omnisearch)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:170
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:181
 msgid "Added workaround for French keyboard layout on macOS"
 msgstr "افزودن راهکار جایگزین برای چیدمان صفحه‌کلید فرانسوی در macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:186
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:197
 msgid "Improved effective config diff tool"
 msgstr "ابزار تفاضل پیکربندی مؤثر بهبودیافته"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:187
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:198
 msgid "Improved experience when switching operation mode"
 msgstr "بهبود تجربه هنگام تعویض حالت عملیات"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:213
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:224
 msgid "Migrated the code base to a new daemon-based system"
 msgstr "مهاجرت پایهٔ کد به سامانهٔ جدید مبتنی بر دیمن"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:214
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
 msgid "Introducing SSH Pilot API"
 msgstr "معرفی رابط برنامه‌نویسی (API) برنامهٔ SSH Pilot"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:219
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:230
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
 msgid ""
 "Introducing Omnisearch—a powerful, versatile pop-up search box accessible "
 "from anywhere by double-pressing the Shift key"
@@ -10759,8 +10790,8 @@ msgstr ""
 "معرفی Omnisearch — جعبهٔ جست‌وجوی بازشوی قدرتمند و همه‌کاره، قابل دسترسی از "
 "هرجا با فشردن دوبار کلید Shift"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:220
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:231
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
 msgid ""
 "Added a minimal sidebar mode that uses a narrow, icon-only strip to free up "
 "horizontal screen space"
@@ -10768,8 +10799,8 @@ msgstr ""
 "افزودن حالت نوار کناری مینیمال با استفاده از نواری باریک و فقط دارای نقشک "
 "برای آزادسازی فضای افقی صفحه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:221
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:232
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:243
 msgid ""
 "Added an option to open the file manager in SSH terminal panes from the tab "
 "context menu"
@@ -10777,18 +10808,18 @@ msgstr ""
 "افزودن گزینه‌ای برای باز کردن مدیر فایل در قاب‌های پایانهٔ SSH از منوی زمینه‌ای "
 "زبانه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:222
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:233
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:244
 msgid "Added an option to open a terminal in file manager tabs"
 msgstr "افزودن گزینه‌ای برای باز کردن یک پایانه در زبانه‌های مدیر فایل"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:223
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:234
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:245
 msgid "Improved the appearance and overall experience of the SFTP file manager"
 msgstr "بهبود ظاهر و تجربهٔ کلی مدیر فایل SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:224
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:235
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:246
 msgid ""
 "Fixed an issue that delayed application shutdown when local terminal tabs "
 "were open"
@@ -10796,13 +10827,13 @@ msgstr ""
 "رفع مشکلی که هنگام باز بودن زبانه‌های پایانهٔ محلی، خروج از برنامه را به تأخیر "
 "می‌انداخت"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:225
 #: data/io.github.mfat.sshpilot.metainfo.xml.in:236
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:247
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:501
 msgid "Various bug fixes and UI improvements"
 msgstr "انواع رفع اشکال و بهبودهای رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:241
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:252
 msgid ""
 "Introducing Omnisearch - a powerful, versatile pop-up search box you can "
 "activate from anywhere by double-pressing the Shift key"
@@ -10810,7 +10841,7 @@ msgstr ""
 "معرفی Omnisearch - جعبهٔ جست‌وجوی بازشوی قدرتمند و همه‌کاره که با فشردن دوبار "
 "کلید Shift از هرجا می‌توانید فعالش کنید"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:242
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:253
 msgid ""
 "Introducing a minimal mode for the sidebar - use a narrow, icon-only strip "
 "instead of the default full sidebar to reclaim more horizontal screen space"
@@ -10818,12 +10849,12 @@ msgstr ""
 "معرفی حالت مینیمال برای نوار کناری - استفاده از نواری باریک و فقط دارای نقشک "
 "به جای نوار کناری کامل برای بازپس‌گیری فضای افقی بیشتر"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:243
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:280
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:254
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:291
 msgid "Various bug fixes and improvements"
 msgstr "انواع رفع اشکال و بهبودها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:248
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:259
 msgid ""
 "Enhanced CLI interface - start sshpilot from commandline like \"sshpilot "
 "user@host\", use --sftp to open the file manager"
@@ -10831,69 +10862,69 @@ msgstr ""
 "رابط خط فرمان بهبودیافته - شروع sshpilot از خط فرمان مانند «sshpilot "
 "user@host»، استفاده از --sftp برای باز کردن مدیر فایل"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:279
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:290
 msgid "German translation"
 msgstr "ترجمهٔ آلمانی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:285
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
 msgid "Meson build system"
 msgstr "سامانهٔ ساخت Meson"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:286
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
 msgid "Migrated to GNOME rcommended project structure"
 msgstr "مهاجرت به ساختار پروژهٔ توصیه‌شدهٔ گنوم"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:291
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:302
 msgid "Migrated to meson build system"
 msgstr "مهاجرت به سامانهٔ ساخت Meson"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:296
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:307
 msgid "Enhanced support for multi-step authentication challenges"
 msgstr "پشتیبانی پیشرفته از چالش‌های اصالت‌سنجی چندمرحله‌ای"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:297
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:305
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:308
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:316
 msgid "Better support for FIDO hardware keys"
 msgstr "پشتیبانی بهتر از کلیدهای سخت‌افزاری FIDO"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:298
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:306
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:309
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:317
 msgid "More robust password autofill flow"
 msgstr "جریان تکمیل خودکار پایدارتر برای گذرواژه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:299
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:310
 msgid "Redesigned SCP dialog"
 msgstr "بازطراحی گفت‌وگوی SCP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:304
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:315
 msgid "Enhanced suppot for multi-sttep authentication challenges"
 msgstr "پشتیبانی پیشرفته از چالش‌های اصالت‌سنجی چندمرحله‌ای"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:307
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:318
 msgid "Revamped SCP dialogs"
 msgstr "بازطراحی گفت‌وگوهای SCP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:312
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:323
 msgid "Bug fixes and minor UI improvements"
 msgstr "رفع اشکالات و بهبودهای جزئی رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:322
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:333
 msgid "Improvements for Xterm.js terminal backend"
 msgstr "بهبودها برای پسانهٔ پایانهٔ Xterm.js"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:333
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:344
 msgid "Docker Console UI improvements"
 msgstr "بهبودهای رابط کاربری کنسول Docker"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:334
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:345
 msgid "File manager UI improvements"
 msgstr "بهبودهای رابط کاربری مدیر فایل"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:335
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:346
 msgid "Reorganized main menu"
 msgstr "بازچینش منوی اصلی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:341
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:352
 msgid ""
 "Backup settings and credentials to Bitwarden/Vaultwarden right from SSH "
 "Pilot and restore on other devices"
@@ -10901,138 +10932,138 @@ msgstr ""
 "پشتیبان‌گیری از تنظیمات و اطلاعات اعتبار در Bitwarden/Vaultwarden مستقیماً از "
 "SSH Pilot و بازیابی در دستگاه‌های دیگر"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:342
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:353
 msgid "More credential storage backends including Keepass, Bitwarden and rbw"
 msgstr "پسانه‌های ذخیره‌سازی اعتبار بیشتر از جمله Keepass، Bitwarden و rbw"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:343
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:354
 msgid "Improvements to Pyxtermjs terminal backend"
 msgstr "بهبودها برای پسانهٔ پایانهٔ Pyxtermjs"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:344
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:355
 msgid "Various bug fixes and performance improvements"
 msgstr "انواع رفع اشکال و بهبودهای کارایی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:349
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:360
 msgid "Fixes SCP bug in Flatpak"
 msgstr "رفع مشکل SCP در فلت‌پک (Flatpak)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:350
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:361
 msgid ""
 "Adds \"Edit as Root\" button to text editor. Edit eny remote files with sudo"
 msgstr ""
 "افزودن دکمهٔ «ویرایش با ریشه» به ویرایشگر متن. ویرایش هر پروندهٔ دوردست با sudo"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:351
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:362
 msgid "Better logging and diagnostics suite"
 msgstr "مجموعهٔ گزارش‌گیری و عیب‌یابی بهتر"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:356
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:367
 msgid "Improved drag and drop and group nesting experience"
 msgstr "تجربهٔ کشیدن و رها کردن و گروه‌بندی تودرتوی بهبودیافته"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:361
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:372
 msgid "Added support for nested groups"
 msgstr "افزودن پشتیبانی از گروه‌های تودرتو"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:362
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:373
 msgid "Improvements to Drag & Drop experience in connection list"
 msgstr "بهبود تجربهٔ کشیدن و رها کردن در فهرست اتصال‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:363
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:374
 msgid "Fixed scp failing to download directories"
 msgstr "رفع مشکل scp در بارگیری شاخه‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:370
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:381
 msgid "Performance improvements for SFTP file manager"
 msgstr "بهبودهای کارایی برای مدیر فایل SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:371
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:382
 msgid "Added option to copy text on select"
 msgstr "افزودن گزینهٔ رونوشت متن هنگام انتخاب"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:381
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:392
 msgid "New Docker/Podman management console"
 msgstr "کنسول جدید مدیریت Docker/Podman"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:382
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:393
 msgid "New plugin feature + plugin SDk with a bunch of experimental plugins"
 msgstr "قابلیت جدید افزایه + SDK افزایه با مجموعه‌ای از افزایه‌های آزمایشی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:383
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:394
 msgid "Support for additional protocols (mosh, serial, etc.)"
 msgstr "پشتیبانی از پروتکل‌های اضافی (mosh، سریال و غیره)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:384
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:393
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:395
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:404
 msgid "UI fixes and improvements"
 msgstr "رفع اشکالات و بهبودهای رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:389
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:400
 msgid "Docker/Podman container management console"
 msgstr "کنسول مدیریت کانتینرهای Docker/Podman"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:390
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
 msgid "New plugin framework and SDK"
 msgstr "چارچوب و SDK جدید افزایه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:391
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:402
 msgid "New plugin settings to install and manage plugins"
 msgstr "تنظیمات جدید افزایه برای نصب و مدیریت افزایه‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:392
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:403
 msgid "Improved SSH config editor"
 msgstr "ویرایشگر پیکربندی SSH بهبودیافته"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:394
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
 msgid "Additional protocols"
 msgstr "پروتکل‌های اضافی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:399
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:410
 msgid "New \"Tags\" feature: add tags to connections"
 msgstr "ویژگی جدید «برچسب‌ها»: افزودن برچسب‌ها به اتصال‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:400
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:411
 msgid "Search now supports tags"
 msgstr "جست‌وجو اکنون از برچسب‌ها پشتیبانی می‌کند"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:401
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:412
 msgid "New tags view for the connection list"
 msgstr "نمای جدید برچسب‌ها برای فهرست اتصال‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:402
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:413
 msgid "Drag and drop a connection on a tag group to apply tag"
 msgstr "کشیدن و رها کردن یک اتصال روی یک گروه برچسب برای اعمال برچسب"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:403
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:414
 msgid "Added inline autocompletion for tags"
 msgstr "افزودن تکمیل خودکار درون‌خطی برای برچسب‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:404
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
 msgid "Added inline autocompletion for jump hosts"
 msgstr "افزودن تکمیل خودکار درون‌خطی برای میزبان‌های پرش"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:405
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
 msgid "Added support for selecting connections with space key"
 msgstr "افزودن پشتیبانی از انتخاب اتصال‌ها با کلید فاصله (Space)"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:415
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:426
 msgid "Updated ssh-copy-id dialog"
 msgstr "گفت‌وگوی به‌روزرسانی‌شدهٔ ssh-copy-id"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:416
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:427
 msgid "Fixes macOS keychain prompting repeatedly"
 msgstr "رفع درخواست‌های مکرر زنجیرهٔ کلید در macOS"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:417
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:428
 msgid "Minor UI improvements and bug fixes"
 msgstr "بهبودهای جزئی رابط کاربری و رفع اشکالات"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:427
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:438
 msgid "Improved connection editor"
 msgstr "ویرایشگر اتصال بهبودیافته"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:443
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:454
 msgid ""
 "Added fallback for older libadwaita versions failing to load connection "
 "editor"
@@ -11040,52 +11071,52 @@ msgstr ""
 "افزودن راهکار جایگزین برای نگارش‌های قدیمی‌تر libadwaita که در بارگیری "
 "ویرایشگر اتصال ناموفق بودند"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:458
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:469
 msgid ""
 "Drag and drop a connection on an existing terminal to create a split view"
 msgstr "کشیدن و رها کردن یک اتصال روی پایانهٔ موجود برای ایجاد نمای تفکیک‌شده"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:459
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:470
 msgid "New first-run dialog and option to back up .ssh/config"
 msgstr "گفت‌وگوی جدید نخستین اجرا و گزینهٔ پشتیبان‌گیری از ‎.ssh/config"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:460
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:471
 msgid "Updated connection status indicators"
 msgstr "نشانگرهای به‌روزرسانی‌شدهٔ وضعیت اتصال"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:461
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:472
 msgid "Updated port forwarding indicators"
 msgstr "نشانگرهای به‌روزرسانی‌شدهٔ هدایت درگاه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:462
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:473
 msgid "New sidebar behavior options — configure autohide from Settings"
 msgstr "گزینه‌های جدید رفتار نوار کناری — پیکربندی پنهان‌سازی خودکار از تنظیمات"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:463
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:474
 msgid "Improvements to Split View"
 msgstr "بهبودهای نمای تفکیک‌شده"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:464
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:475
 msgid "Added local terminal button to the headerbar"
 msgstr "افزودن دکمهٔ پایانهٔ محلی به نوار عنوان"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:465
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:476
 msgid "New toggles for headerbar buttons"
 msgstr "ضامن‌های جدید برای دکمه‌های نوار عنوان"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:466
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:477
 msgid "More improvements for the command sidebar"
 msgstr "بهبودهای بیشتر برای نوار کناری دستورها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:467
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:478
 msgid "New option to add multiple private keys and certificates"
 msgstr "گزینهٔ جدید برای افزودن چندین کلید خصوصی و گواهینامه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:468
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:479
 msgid "Improved .ssh/config parsing logic"
 msgstr "منطق تجزیهٔ ‎.ssh/config بهبودیافته"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:478
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
 msgid ""
 "Added type-ahead search - open the app, start typing and press enter. The "
 "first matching host will be connected"
@@ -11093,34 +11124,34 @@ msgstr ""
 "افزودن جست‌وجوی همگام با تایپ - برنامه را باز کنید، شروع به تایپ نمایید و "
 "کلید Enter را فشار دهید تا اتصال با اولین میزبان منطبق برقرار شود"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:479
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:490
 msgid ""
 "Made it easier to switch between the terminal and connection list with "
 "Ctrl+Shift+L"
 msgstr "جابه‌جایی آسان‌تر میان پایانه و فهرست اتصال‌ها با Ctrl+Shift+L"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:485
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:495
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:496
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:506
 msgid "Better look and feel for built-in file manager"
 msgstr "ظاهر و حس بهتر برای مدیر فایل داخلی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:486
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:497
 msgid "Zoom control for file manager"
 msgstr "مهار بزرگ‌نمایی برای مدیر فایل"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:487
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:498
 msgid "New option to always show Commands sidebar"
 msgstr "گزینهٔ جدید برای نمایش همیشگی نوار کناری دستورها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:488
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:499
 msgid "More reliable SFTP file transfers"
 msgstr "انتقال‌های پروندهٔ مطمئن‌تر از طریق SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:489
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:500
 msgid "Changed default connection list shortcut to Ctrl+Shift+L"
 msgstr "میان‌بر پیش‌فرض فهرست اتصال‌ها به Ctrl+Shift+L تغییر یافت"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:505
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:516
 msgid ""
 "Introducing Command Blocks - Organize your favorite commands in folders, "
 "insert them into terminal with a simple double-click"
@@ -11128,7 +11159,7 @@ msgstr ""
 "معرفی بلوک‌های دستور - دستورهای برگزیدهٔ خود را در پوشه‌ها سازمان‌دهی کرده و با "
 "یک دوبار کلیک ساده در پایانه درج کنید"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:506
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:517
 msgid ""
 "Choose a command from your command snippet intventory to run on a single "
 "host or a group of machines"
@@ -11136,11 +11167,11 @@ msgstr ""
 "دستوری را از فهرست موجودی قطعه‌کدهای دستورتان برای اجرا روی یک میزبان یا "
 "گروهی از دستگاه‌ها انتخاب کنید"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:507
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:518
 msgid "More improvements to Split View"
 msgstr "بهبودهای بیشتر در نمای تفکیک‌شده"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:512
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:523
 msgid ""
 "New \"Sessions\" feature — Save, open, rename, and delete snapshots of your "
 "open tabs and restore them automatically"
@@ -11148,11 +11179,11 @@ msgstr ""
 "قابلیت جدید «نشست‌ها» — ذخیره، باز کردن، تغییر نام و حذف عکس‌های فوری از "
 "زبانه‌های بازتان و بازیابی خودکار آن‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:513
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:524
 msgid "Pin saved sessions to the start page for one-click restore"
 msgstr "سنجاق کردن نشست‌های ذخیره‌شده به صفحهٔ آغازین برای بازیابی با یک کلیک"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:514
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:525
 msgid ""
 "Copy to group — Add a connection to another group without removing it from "
 "its current group(s). Same connection can appear in multiple groups."
@@ -11160,7 +11191,7 @@ msgstr ""
 "رونوشت به گروه — افزودن یک اتصال به گروهی دیگر بدون حذف آن از گروه(های) "
 "فعلی‌اش. همان اتصال می‌تواند در چندین گروه نمایش یابد."
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:515
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:526
 msgid ""
 "Jump host picker — Pick jump hosts from your saved connections when editing "
 "a connection."
@@ -11168,7 +11199,7 @@ msgstr ""
 "انتخاب‌گر میزبان پرش — هنگام ویرایش یک اتصال، میزبان‌های پرش را از میان "
 "اتصال‌های ذخیره‌شده‌تان برگزینید."
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:516
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:527
 msgid ""
 "Better Split View - Resize terminal panes freely, drag and drop an entire "
 "group onto a Split View"
@@ -11176,195 +11207,195 @@ msgstr ""
 "نمای تفکیک‌شدهٔ بهتر - تغییر اندازهٔ آزادانهٔ قاب‌های پایانه، کشیدن و رها کردن یک "
 "گروه کامل در یک نمای تفکیک‌شده"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:517
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:528
 msgid "Minor UI fixes and improvements"
 msgstr "رفع اشکالات و بهبودهای جزئی رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:523
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:543
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:549
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:571
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:592
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:612
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:635
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:687
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:534
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:554
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:560
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:582
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:603
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:623
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:646
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:698
 msgid "- Bug fixes"
 msgstr "- رفع اشکالات"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:529
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:540
 msgid ""
 "- New \"Splt View\" feature - view terminals side by side inside any "
 "terminal tab"
 msgstr ""
 "- ویژگی جدید «نمای تفکیک‌شده» - مشاهدهٔ پایانه‌ها کنار هم درون هر زبانهٔ پایانه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:530
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:541
 msgid "- New context menu item to copy host address"
 msgstr "- مورد جدید منوی زمینه‌ای برای رونوشت نشانی میزبان"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:536
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:547
 msgid "- Updated flatpak to GNOME Platform 50"
 msgstr "- به‌روزرسانی فلت‌پک به پلتفرم گنوم ۵۰"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:542
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:553
 msgid "- Added URL support to terminal"
 msgstr "- افزودن پشتیبانی از URL به پایانه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:555
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:566
 msgid "- Fixes for Quick Connect function"
 msgstr "- اصلاحاتی برای قابلیت اتصال سریع"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:556
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:567
 msgid "- Add option to save Quick Connect host"
 msgstr "- افزودن گزینهٔ ذخیرهٔ میزبان اتصال سریع"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:557
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:568
 msgid ""
 "- Added option to rename a tab - Double-click any terminal tab to rename"
 msgstr ""
 "- افزودن گزینه برای تغییر نام زبانه - دوبار کلیک روی هر زبانهٔ پایانه برای "
 "تغییر نام"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:558
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:569
 msgid "- Added support for Wake on Lan"
 msgstr "- افزودن پشتیبانی از Wake on Lan"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:559
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:570
 msgid "- Added pre-connection command support"
 msgstr "- افزودن پشتیبانی از دستور پیش از اتصال"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:565
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:576
 msgid "- Minor bug fixes"
 msgstr "- رفع اشکالات جزئی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:577
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:588
 msgid "- Fixed saved secrets not used for login"
 msgstr "- رفع مشکل استفاده نشدن از رازهای ذخیره‌شده برای ورود"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:583
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:594
 msgid "- Support for sidebar resizing"
 msgstr "- پشتیبانی از تغییر اندازهٔ نوار کناری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:584
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:595
 msgid "- Toggles for info labels in sidebar"
 msgstr "- کلیدهای تغییر وضعیت برای برچسب‌های اطلاعات در نوار کناری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:585
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:596
 msgid "- Updated color badges"
 msgstr "- نشان‌های رنگی به‌روزرسانی‌شده"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:586
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:597
 msgid "- Various bug fixes and UI improvements"
 msgstr "- انواع رفع اشکال و بهبودهای رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:598
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:609
 msgid "- Added option to resize sidebar"
 msgstr "- افزودن گزینه برای تغییر اندازهٔ نوار کناری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:599
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:610
 msgid "- Fixed long host values making sidebar too wide"
 msgstr ""
 "- رفع مشکل مقادیر طولانی میزبان که نوار کناری را بیش از حد عریض می‌کردند"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:600
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:611
 msgid "- Bug fixes and UI improvements"
 msgstr "- رفع اشکالات و بهبودهای رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:606
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:617
 msgid "- Drag and drop files and folders on terminal to upload via SCP"
 msgstr ""
 "- کشیدن و رها کردن پرونده‌ها و پوشه‌ها روی پایانه برای بارگذاری از طریق SCP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:618
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:627
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:638
 msgid "- Make terminal fullscreen with F11"
 msgstr "- تمام‌صفحه کردن پایانه با F11"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:619
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:630
 msgid "- Improvements for SCP file transfers"
 msgstr "- بهبودها برای انتقال پرونده با SCP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:620
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:631
 msgid "- Drag and drop files and folders directly on terminal widget"
 msgstr "- کشیدن و رها کردن پرونده‌ها و پوشه‌ها مستقیماً روی ابزارک پایانه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:621
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:632
 msgid "- Updated password/passphrase prompts with option to store secrets"
 msgstr "- به‌روزرسانی اعلان‌های گذرواژه/عبارت عبور همراه با گزینهٔ ذخیرهٔ رازها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:628
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:639
 msgid "- Added xterm.js as an alternative terminal backend"
 msgstr "- افزودن xterm.js به عنوان پسانهٔ جایگزین پایانه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:629
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:640
 msgid "- Added graphical prompts for passwords/passphrases"
 msgstr "- افزودن اعلان‌های گرافیکی برای گذرواژه‌ها/عبارت‌های عبور"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:641
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:652
 msgid "- Fixed black toolbar in file manager"
 msgstr "- رفع مشکل نوار ابزار سیاه در مدیر فایل"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:642
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:653
 msgid "- Fixed nano editor issue when run under KDE Plasma desktop"
 msgstr "- رفع مشکل ویرایشگر nano هنگام اجرا در میزکار KDE Plasma"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:648
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:659
 msgid "- Enhanced text editor for built-in file manager"
 msgstr "- ویرایشگر متن بهبودیافته برای مدیر فایل داخلی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:654
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:665
 msgid "- Bug fixes for SFTP file manager"
 msgstr "- رفع اشکالات مدیر فایل SFTP"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:660
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:671
 msgid "- Improvements to built-in file manager, new text editor"
 msgstr "- بهبودهای مدیر فایل داخلی، ویرایشگر متن جدید"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:661
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:672
 msgid "- Added file mmanager button to connection rows"
 msgstr "- افزودن دکمهٔ مدیر فایل به سطر‌های اتصال"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:662
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:673
 msgid "- Sort button now sorts groups too"
 msgstr "- دکمهٔ مرتب‌سازی اکنون گروه‌ها را نیز مرتب می‌کند"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:668
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:679
 msgid "- Fixed file manager bug when password authentication is selected"
 msgstr "- رفع اشکال مدیر فایل هنگام انتخاب اصالت‌سنجی با گذرواژه"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:674
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:685
 msgid "- Redesigned start page, with card and list layouts"
 msgstr "- بازطراحی صفحهٔ آغازین، با چیدمان‌های کارتی و فهرستی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:675
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:686
 msgid "- Minor UI fixes"
 msgstr "- اصلاحات جزئی رابط کاربری"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:681
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:692
 msgid "- Update notifier fixes"
 msgstr "- اصلاحات اطلاع‌رسان به‌روزرسانی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:693
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:704
 msgid "- Added update notifier"
 msgstr "- افزودن اطلاع‌رسان به‌روزرسانی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:699
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:710
 msgid "- New feature: Import/Export configuration"
 msgstr "- ویژگی جدید: درون‌ریزی/برون‌ریزی پیکربندی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:700
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:711
 msgid "- Better log output"
 msgstr "- خروجی گزارش بهتر"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:706
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:717
 msgid "Added sorting to connection list"
 msgstr "افزودن مرتب‌سازی به فهرست اتصال‌ها"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:722
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:733
 msgid "Main Window"
 msgstr "پنجرهٔ اصلی"
 
-#: data/io.github.mfat.sshpilot.metainfo.xml.in:738
+#: data/io.github.mfat.sshpilot.metainfo.xml.in:749
 msgid "Transfer SSH Keys"
 msgstr "انتقال کلیدهای SSH"
 
@@ -11556,6 +11587,79 @@ msgstr "عبور مستقیم"
 #: src/sshpilot/resources/ui/sshcopyid_window.ui:21
 msgid "Copy key to Server"
 msgstr "رونوشت کلید به سرور"
+
+#~ msgid "I/O"
+#~ msgstr "ورودی/خروجی"
+
+#~ msgid "Pressure stall"
+#~ msgstr "فشار منابع"
+
+#~ msgid "Stalled"
+#~ msgstr "معطل"
+
+#~ msgid "10 s"
+#~ msgstr "10 ثانیه"
+
+#~ msgid "60 s"
+#~ msgstr "60 ثانیه"
+
+#~ msgid "300 s"
+#~ msgstr "300 ثانیه"
+
+#~ msgid "Some tasks"
+#~ msgstr "برخی وظیفه‌ها"
+
+#~ msgid "All tasks"
+#~ msgstr "همهٔ وظیفه‌ها"
+
+#~ msgid "MemTotal"
+#~ msgstr "MemTotal"
+
+#~ msgid "MemFree"
+#~ msgstr "MemFree"
+
+#~ msgid "Buffers"
+#~ msgstr "Buffers"
+
+#~ msgid "Cached"
+#~ msgstr "Cached"
+
+#~ msgid "MemAvailable"
+#~ msgstr "MemAvailable"
+
+#, python-format
+#~ msgid "Based on %d CPU"
+#~ msgid_plural "Based on %d CPUs"
+#~ msgstr[0] "بر پایهٔ %d پردازنده"
+#~ msgstr[1] "بر پایهٔ %d پردازنده"
+
+#~ msgid "CPU count unavailable."
+#~ msgstr "تعداد پردازنده‌ها در دسترس نیست."
+
+#~ msgid "A share of one CPU, ranked by the host."
+#~ msgstr "سهمی از یک پردازنده، مرتب‌شده به دست میزبان."
+
+#, python-format
+#~ msgid "%(device)s · %(fstype)s"
+#~ msgstr "%(device)s · %(fstype)s"
+
+#~ msgid "Only physical disks are shown."
+#~ msgstr "تنها دیسک‌های فیزیکی نشان داده می‌شوند."
+
+#~ msgid "I/O pressure"
+#~ msgstr "فشار ورودی/خروجی"
+
+#~ msgid "Share of each window spent waiting on storage."
+#~ msgstr "سهمی از هر بازه که صرف انتظار برای ذخیره‌سازی شده است."
+
+#~ msgid "Live — sampled every 2 s."
+#~ msgstr "زنده — نمونه‌برداری هر ۲ ثانیه."
+
+#~ msgid "Totals since boot."
+#~ msgstr "مجموع از زمان راه‌اندازی."
+
+#~ msgid "Some process names need root."
+#~ msgstr "برخی نام‌های فرایند به دسترسی ریشه نیاز دارند."
 
 #~ msgid "Verify Configuration"
 #~ msgstr "تأیید پیکربندی"

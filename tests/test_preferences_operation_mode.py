@@ -10,6 +10,7 @@ from sshpilot.preferences import PreferencesWindow
 class _Radio:
     def __init__(self, active):
         self._active = active
+        self.sensitive = None
 
     def get_active(self):
         return self._active
@@ -17,8 +18,8 @@ class _Radio:
     def set_active(self, active):
         self._active = bool(active)
 
-    def set_sensitive(self, _sensitive):
-        pass
+    def set_sensitive(self, sensitive):
+        self.sensitive = bool(sensitive)
 
 
 class _CallbackRadio(_Radio):
@@ -640,3 +641,118 @@ def test_a_rejected_mode_change_does_not_offer_a_restart():
     PreferencesWindow.on_operation_mode_toggled(prefs, _Button())
 
     assert prefs.restart_prompts == []
+
+
+# ---------------------------------------------------------------------------
+# The preload-vs-daemon-attach race
+#
+# Preferences is preloaded on a low-priority idle while the daemon client
+# attaches asynchronously. Built first, it finds no client, greys out both
+# operation-mode radios and returns -- so the modes cannot be switched at all
+# until something tells it the client arrived. Losing that race left the app
+# stuck in whichever mode it started in, and only a restart that happened to
+# win the race (a daemon already running) appeared to "fix" it.
+# ---------------------------------------------------------------------------
+
+
+def _prefs_without_a_client(result=None):
+    """Preferences built before the daemon client attached."""
+    prefs, _recorded = _make_prefs(result)
+    prefs.parent_window.client = None
+    prefs.parent_window.client_bridge = None
+    prefs.parent_window._daemon_client_generation = 0
+    return prefs
+
+
+def test_preferences_built_before_the_daemon_greys_the_mode_radios():
+    prefs = _prefs_without_a_client()
+
+    PreferencesWindow._request_confirmed_operation_mode(prefs)
+
+    assert prefs.default_mode_radio.sensitive is False
+    assert prefs.isolated_mode_radio.sensitive is False
+
+
+def test_resetting_after_the_client_arrives_reenables_the_mode_radios():
+    """The repair path: re-asking the daemon must revive the greyed radios."""
+    result = SimpleNamespace(
+        accepted=True, active_mode=OperationMode.ISOLATED, message="",
+    )
+    prefs = _prefs_without_a_client(result)
+    PreferencesWindow._request_confirmed_operation_mode(prefs)
+    assert prefs.isolated_mode_radio.sensitive is False
+
+    # The daemon client lands.
+    prefs.parent_window.client = _ModeClient(result)
+    prefs.parent_window.client_bridge = _Bridge(result)
+
+    prefs.reset_operation_mode_confirmation()
+
+    assert prefs.default_mode_radio.sensitive is True
+    assert prefs.isolated_mode_radio.sensitive is True
+    assert prefs._confirmed_operation_mode is OperationMode.ISOLATED
+    assert prefs.isolated_mode_radio.get_active() is True
+
+
+def _window_with_preferences(preferences):
+    """A MainWindow double carrying only what the first attach touches."""
+    from sshpilot.window import MainWindow
+
+    window = SimpleNamespace(
+        _is_quitting=False,
+        client=None,
+        _preferences_window=preferences,
+        _api_client_selection_pending=True,
+        _api_client_selection_request=object(),
+        _attach_client_backed_services=lambda: None,
+        _build_ssh_overrides_controller=lambda: None,
+        _maybe_restore_daemon_sessions=lambda: None,
+        get_application=lambda: None,
+    )
+    return MainWindow, window
+
+
+def test_the_first_client_attach_resyncs_the_preferences_mode_radios():
+    """Regression: only the rebind path used to do this, so a cold start stuck."""
+    reset_calls = []
+    preferences = SimpleNamespace(
+        set_ssh_overrides_controller=lambda _controller: None,
+        reset_operation_mode_confirmation=lambda: reset_calls.append(True),
+    )
+    MainWindow, window = _window_with_preferences(preferences)
+
+    MainWindow._apply_client_selection(window, SimpleNamespace(client=object()))
+
+    assert reset_calls == [True]
+    assert window.client is not None
+
+
+def test_the_first_attach_survives_preferences_without_the_mode_page():
+    """A preloaded page may not have built its radios yet; that is not an error."""
+    preferences = SimpleNamespace(
+        set_ssh_overrides_controller=lambda _controller: None,
+    )
+    MainWindow, window = _window_with_preferences(preferences)
+
+    MainWindow._apply_client_selection(window, SimpleNamespace(client=object()))
+
+    assert window.client is not None
+
+
+def test_the_first_attach_ignores_a_failing_mode_resync():
+    """A broken resync must not abort the rest of the client attach."""
+    def _boom():
+        raise RuntimeError("daemon went away mid-attach")
+
+    preferences = SimpleNamespace(
+        set_ssh_overrides_controller=lambda _controller: None,
+        reset_operation_mode_confirmation=_boom,
+    )
+    MainWindow, window = _window_with_preferences(preferences)
+    restored = []
+    window._maybe_restore_daemon_sessions = lambda: restored.append(True)
+
+    MainWindow._apply_client_selection(window, SimpleNamespace(client=object()))
+
+    assert restored == [True]
+    assert window._api_client_selection_pending is False

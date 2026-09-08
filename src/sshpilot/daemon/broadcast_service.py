@@ -31,6 +31,7 @@ from sshpilot.api.models.operations import (
     ServiceFailure,
 )
 from sshpilot.daemon.operation_runtime import OperationCancelled, OperationHandle, OperationRuntime
+from sshpilot.daemon.ssh_launch import RemoteCommandLaunch, SshLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,10 @@ class BroadcastCommandService:
         self._operations = operation_runtime
         self._launch_provider = launch_provider
         self._interaction_broker = interaction_broker
+        # Every OpenSSH child this service starts -- and therefore every Host
+        # Info probe and every exec-mode backup transfer, which delegate here
+        # -- goes through the one choke point.
+        self._launcher = SshLauncher(launch_provider, interaction_broker)
         self._runner = runner or NativeSshCommandRunner()
         self._output_publisher = output_publisher
         self._lock = threading.RLock()
@@ -290,7 +295,12 @@ class BroadcastCommandService:
         pending = iter(enumerate(request.connection_ids))
         futures = {}
         try:
-            with ThreadPoolExecutor(
+            # One scope per operation, not per host: the frontend binds a
+            # single interaction presenter to this operation id, and a prompt
+            # from any target must reach it.
+            with self._launcher.open(
+                scope_id=operation_id
+            ) as scope, ThreadPoolExecutor(
                 max_workers=request.policy.concurrency_limit,
                 thread_name_prefix="sshpilot-broadcast",
             ) as pool:
@@ -313,6 +323,7 @@ class BroadcastCommandService:
                                 request,
                                 cancel,
                                 input_data,
+                                scope,
                             )
                         ] = index
                     if not futures:
@@ -353,21 +364,16 @@ class BroadcastCommandService:
                                     item, state=HostCommandState.CANCELLED
                                 )
                     raise OperationCancelled()
-            with self._lock:
-                results = tuple(self._targets[operation_id])
-                authenticated = any(
-                    item.state is HostCommandState.SUCCEEDED for item in results
-                )
+                with self._lock:
+                    results = tuple(self._targets[operation_id])
+                    authenticated = any(
+                        item.state is HostCommandState.SUCCEEDED for item in results
+                    )
+                if authenticated:
+                    # The scope commits remembered credentials before tearing
+                    # down; getting that order wrong discards them.
+                    scope.authenticated()
         finally:
-            # Commit credentials the user chose to remember AFTER a target
-            # authenticated, and BEFORE the scope is torn down:
-            # ``cancel_session`` destroys the askpass context and clears its
-            # pending remembered secrets. Without this a "remember" choice made
-            # at a broadcast or host-info prompt was silently discarded and the
-            # user was asked again on the next run.
-            if authenticated:
-                self._interaction_broker.mark_authenticated(operation_id)
-            self._interaction_broker.cancel_session(operation_id)
             self._remember_terminal(operation_id)
             if isinstance(input_data, bytearray):
                 input_data[:] = b"\0" * len(input_data)
@@ -393,11 +399,10 @@ class BroadcastCommandService:
                 )
         return str(connection_id), "", 22
 
-    def _run_target(self, operation_id, connection_id, request, cancel, input_data=None):
+    def _run_target(
+        self, operation_id, connection_id, request, cancel, input_data, scope
+    ):
         try:
-            argv, environment = self._launch_provider.prepare_remote_command_launch(
-                connection_id, request.command, interaction_policy="broker"
-            )
             # The connection id is a nickname, not an address, and this argv
             # ends with the remote command rather than the target, so neither
             # the caller's id nor the broker's argv fallback yields a usable
@@ -406,16 +411,18 @@ class BroadcastCommandService:
             # stored-secret lookup miss, so the user is asked for a password
             # the keyring already holds.
             hostname, username, port = self._remote_identity(connection_id)
-            argv, environment = self._interaction_broker.prepare_operation_launch(
-                argv,
-                environment,
-                scope_id=operation_id,
+            prepared = scope.prepare(
+                RemoteCommandLaunch(
+                    remote_command=request.command,
+                    require_master=request.policy.require_master,
+                ),
                 connection_id=connection_id,
                 hostname=hostname,
                 username=username,
                 port=port,
                 interaction_mode=request.policy.interaction_mode,
             )
+            argv, environment = prepared.argv, prepared.environment
             owned_process = [None]
 
             def process_changed(process):
@@ -427,6 +434,11 @@ class BroadcastCommandService:
                     else:
                         owned_process[0] = process
                         bucket.add(process)
+                # The runner owns the select loop and therefore the Popen, but
+                # ownership of the child belongs to the scope: this is the
+                # record that survives a daemon that had to be killed.
+                if process is not None:
+                    scope.adopt(process)
 
             def output(stream, text):
                 if self._output_publisher:

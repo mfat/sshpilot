@@ -2,10 +2,11 @@
 
 import base64
 import os
-import shlex
+import tempfile
 
 import pytest
 
+from sshpilot.api.models.secrets import SecretTransferMessageCode
 from sshpilot.backup_backends import (
     BW_NOTE_MAX_CHARS,
     BackupEntry,
@@ -14,6 +15,7 @@ from sshpilot.backup_backends import (
     BitwardenBackupBackend,
     SSHServerBackupBackend,
     SpbkFileBackend,
+    backup_entry_for,
     decode_manifest_note,
     encode_manifest_note,
 )
@@ -96,53 +98,62 @@ def test_bitwarden_read_foreign_item_raises():
         backend.read(BackupEntry(id=iid, name="someone's note"))
 
 
-class FakeRunner:
-    """In-memory stand-in for OpenSSHSFTPManager.run_command, modelling the remote host as a
-    dict of path -> bytes and parsing the exact commands SSHServerBackupBackend issues.
+class FakeStore:
+    """In-memory stand-in for a RemoteBackupStore, modelling the remote host as a
+    dict of path -> bytes.
 
-    ``avail_kb=None`` simulates an unavailable ``df`` (empty output). ``list_rc`` forces the
-    ``ls`` exit code (e.g. 255 = ssh error, -1 = launch failure)."""
-    def __init__(self, avail_kb=99000, rc_preflight=0, list_rc=None):
+    ``free_kb=None`` simulates a transport that cannot answer the free-space
+    question (SFTP has no statvfs); ``list_error`` makes listing raise, as a
+    broken connection does."""
+
+    def __init__(self, free_kb=99000, ensure_error=False, list_error=None):
         self.files = {}
-        self.avail_kb = avail_kb
-        self.rc_preflight = rc_preflight
-        self.list_rc = list_rc
-        self.calls = []
+        self.free_kb = free_kb
+        self.ensure_error = ensure_error
+        self.list_error = list_error
+        self.closed = False
 
-    def run_command(self, cmd, *, input=None, timeout=30):
-        self.calls.append(cmd)
-        if cmd.startswith("mkdir -p"):   # preflight: create/write check + (best-effort) df line
-            if self.rc_preflight != 0:
-                return self.rc_preflight, b"", "permission denied"
-            df = (b"" if self.avail_kb is None
-                  else f"/dev/sda1 1000000 1 {self.avail_kb} 1% /home".encode())
-            return 0, df, ""
-        if cmd.startswith("cat > "):      # upload: cat > part && mv part final
-            self.files[shlex.split(cmd)[-1]] = input
-            return 0, b"", ""
-        if cmd.startswith("rm -f "):      # best-effort .part cleanup
-            self.files.pop(shlex.split(cmd)[-1], None)
-            return 0, b"", ""
-        if cmd.startswith("ls "):         # list: ls -1 <dir>/*.spbk 2>/dev/null
-            if self.list_rc is not None:
-                return self.list_rc, b"", "ssh: connect to host failed"
-            prefix = shlex.split(cmd)[2][:-len("*.spbk")]
-            hits = sorted(k for k in self.files
-                          if k.startswith(prefix) and k.endswith(".spbk"))
-            return (0, "\n".join(hits).encode(), "") if hits else (1, b"", "")
-        if cmd.startswith("cat "):        # download
-            data = self.files.get(shlex.split(cmd)[1])
-            return (0, data, "") if data is not None else (1, b"", "No such file")
-        return 0, b"", ""
+    def ensure_directory(self, path):
+        if self.ensure_error:
+            raise BackupError(
+                SecretTransferMessageCode.SSH_SERVER_DIRECTORY_UNAVAILABLE,
+                parameters={"directory": path},
+            )
+
+    def free_space_bytes(self, path):
+        return None if self.free_kb is None else self.free_kb * 1024
+
+    def list_backups(self, path):
+        if self.list_error is not None:
+            raise self.list_error
+        prefix = path.rstrip("/") + "/"
+        return [
+            backup_entry_for(key)
+            for key in sorted(self.files)
+            if key.startswith(prefix) and key.endswith(".spbk")
+        ]
+
+    def upload(self, local_path, remote_path):
+        with open(local_path, "rb") as handle:
+            self.files[remote_path] = handle.read()
+
+    def download(self, remote_path, local_path):
+        data = self.files.get(remote_path)
+        if data is None:
+            raise BackupError(SecretTransferMessageCode.SSH_BACKUP_READ_FAILED)
+        with open(local_path, "wb") as handle:
+            handle.write(data)
+
+    def close(self):
+        self.closed = True
 
 
 def test_ssh_server_backend_roundtrip():
-    runner = FakeRunner()
+    store = FakeStore()
     manifest = {"version": 1, "ssh_config": "Host a\n", "credentials": [{"id": "u@h"}]}
-    backend = SSHServerBackupBackend(runner, item_name="sshpilot_backup_20260711_1830.spbk")
+    backend = SSHServerBackupBackend(store, item_name="sshpilot_backup_20260711_1830.spbk")
     entry = backend.export(manifest, passphrase="pw")
     assert entry.id == "~/sshpilot-backups/sshpilot_backup_20260711_1830.spbk"
-    assert any(c.startswith("mkdir -p") for c in runner.calls)   # preflight ran
     listed = backend.list_exports()
     assert [e.name for e in listed] == ["sshpilot_backup_20260711_1830.spbk"]
     assert listed[0].date == "2026-07-11"
@@ -150,53 +161,59 @@ def test_ssh_server_backend_roundtrip():
 
 
 def test_ssh_server_preflight_rejects_unwritable_dir():
-    backend = SSHServerBackupBackend(FakeRunner(rc_preflight=1))
+    backend = SSHServerBackupBackend(FakeStore(ensure_error=True))
     with pytest.raises(BackupError):
         backend.export({"version": 1, "credentials": []})
 
 
 def test_ssh_server_preflight_rejects_insufficient_space():
-    backend = SSHServerBackupBackend(FakeRunner(avail_kb=0))
+    backend = SSHServerBackupBackend(FakeStore(free_kb=0))
     with pytest.raises(BackupError):
         backend.export({"version": 1, "credentials": []})
 
 
-def test_ssh_server_export_succeeds_when_df_unavailable():
-    # A broken/absent df must not fail the backup — the space check is soft.
-    runner = FakeRunner(avail_kb=None)
-    backend = SSHServerBackupBackend(runner, item_name="sshpilot_backup_x.spbk")
+def test_ssh_server_export_succeeds_when_free_space_is_unknown():
+    # SFTP cannot answer the free-space question; the check is soft, not fatal.
+    backend = SSHServerBackupBackend(FakeStore(free_kb=None),
+                                     item_name="sshpilot_backup_x.spbk")
     entry = backend.export({"version": 1, "credentials": []})
     assert entry.name == "sshpilot_backup_x.spbk"
 
 
-@pytest.mark.parametrize("rc", [255, -1])
-def test_ssh_server_list_raises_on_connect_failure(rc):
-    backend = SSHServerBackupBackend(FakeRunner(list_rc=rc))
+def test_ssh_server_list_propagates_connect_failure():
+    error = BackupError(SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED)
+    backend = SSHServerBackupBackend(FakeStore(list_error=error))
     with pytest.raises(BackupError):
         backend.list_exports()
 
 
 def test_ssh_server_list_empty_when_no_files():
-    # A missing dir / no matches (rc 1) is a genuine empty, not an error.
-    backend = SSHServerBackupBackend(FakeRunner(list_rc=1))
-    assert backend.list_exports() == []
+    assert SSHServerBackupBackend(FakeStore()).list_exports() == []
 
 
 def test_ssh_server_download_raises_on_missing():
-    backend = SSHServerBackupBackend(FakeRunner())
+    backend = SSHServerBackupBackend(FakeStore())
     with pytest.raises(BackupError):
         backend.read(BackupEntry(id="~/sshpilot-backups/nope.spbk", name="nope.spbk"),
                      passphrase="x")
 
 
-def test_q_quotes_metacharacters_but_expands_tilde():
-    from sshpilot.backup_backends import _q
-    assert _q("~/sshpilot-backups") == "~/sshpilot-backups"
-    q = _q("~/my backups; rm -rf x")
-    assert q.startswith("~/")               # tilde stays bare so the remote shell expands it
-    assert q != "~/my backups; rm -rf x"    # the rest is quoted, not bare
-    assert "rm -rf x" in q                  # preserved as literal, inside quotes
-    assert _q("/tmp/abs dir") == "'/tmp/abs dir'"
+def test_ssh_server_export_leaves_no_local_temp_behind(tmp_path, monkeypatch):
+    """The staging archive an export writes must not survive the call.
+
+    Scoped to its own temp directory: reading the shared one made this observe
+    every other test's temp files too, so anything legitimately holding a
+    ``.spbk`` in parallel (the preview retains one across its passphrase
+    prompt) failed it at random under xdist.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    store = FakeStore()
+    backend = SSHServerBackupBackend(store, item_name="b.spbk")
+    before = set(os.listdir(tmp_path))
+    backend.export({"version": 1, "credentials": []})
+    leaked = {n for n in set(os.listdir(tmp_path)) - before
+              if n.endswith(".spbk")}
+    assert not leaked
 
 
 def test_prompt_unlock_targets_given_backend():

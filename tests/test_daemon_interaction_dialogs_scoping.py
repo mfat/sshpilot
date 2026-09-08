@@ -79,12 +79,13 @@ def _prompt_for(interaction_type: InteractionType):
     raise AssertionError(f"no fixture prompt for {interaction_type}")
 
 
-def _summary(interaction_type, session_id, *, interaction_id=None):
+def _summary(interaction_type, session_id, *, interaction_id=None,
+             connection_id="conn-1"):
     now = datetime.now(timezone.utc)
     return InteractionSummary(
         id=interaction_id or new_interaction_id(),
         session_id=SessionId(session_id),
-        connection_id=ConnectionId("conn-1"),
+        connection_id=ConnectionId(connection_id),
         type=interaction_type,
         state=InteractionState.PENDING,
         created_at=now,
@@ -124,14 +125,24 @@ class _FakeClient:
         return list(self.pending)
 
     def claim_interaction(self, interaction_id):
+        """Model ``InteractionBroker.claim`` — which is per *client*, not per
+        presenter.
+
+        The real broker rejects a claim only when a **different** client owns
+        the interaction (``interaction_broker.py``: ``existing is not None and
+        existing != client_id``); a repeat claim from the same client falls
+        through and is handed back the same nonce. One frontend is one client,
+        so every presenter here shares it. Raising a conflict on any second
+        claim -- as this fake used to -- modelled a stricter daemon than the
+        real one and hid the fact that two presenters with overlapping scopes
+        both succeed.
+        """
         if interaction_id in self._claimed_by:
-            raise SshPilotError(
-                ErrorCode.INTERACTION_CLAIM_CONFLICT,
-                "Another client owns this interaction",
-            )
-        self._claimed_by[interaction_id] = True
+            self.claims.append(interaction_id)
+            return SimpleNamespace(nonce=self._claimed_by[interaction_id])
+        self._claimed_by[interaction_id] = "ab" * 16
         self.claims.append(interaction_id)
-        return SimpleNamespace(nonce="ab" * 16)
+        return SimpleNamespace(nonce=self._claimed_by[interaction_id])
 
     def respond_to_interaction(self, request):
         self.responded.append(request)
@@ -625,6 +636,167 @@ def test_concurrent_presenters_never_steal(immediate_idle):
     assert set(client.claims) == {fm_summary.id, ak_summary.id, deploy_summary.id}
     for dialogs in (fm, authorized, deploy):
         dialogs.close()
+
+
+def _backup_presenter(client, connection_ids=("server-1",)):
+    """A BackupServerInteractionPresenter that records instead of drawing."""
+    from sshpilot.gtk.backup_interaction_presenter import (
+        BackupServerInteractionPresenter,
+    )
+
+    class _Recording(BackupServerInteractionPresenter):
+        def __init__(self, *args, **kwargs):
+            self.presented = []
+            super().__init__(*args, **kwargs)
+
+        def _present(self, summary):
+            self.presented.append(summary)
+
+    return _Recording(
+        client, _SyncBridge(), None, connection_ids=connection_ids
+    )
+
+
+def test_backup_presenter_shows_prompts_for_the_server_being_backed_up(
+    immediate_idle,
+):
+    """An SSH-server backup connects inside the daemon, so the frontend never
+    learns the scope id its prompts are raised under — only the connection.
+
+    Without this the export just waited: the prompt was created, no presenter
+    owned it, and the call failed at the interaction timeout.
+    """
+    client = _FakeClient()
+    presenter = _backup_presenter(client)
+
+    # The daemon opened its own SFTP service; the frontend never saw "sftp-7".
+    summary = _summary(
+        InteractionType.PASSWORD, "sftp-7", connection_id="server-1"
+    )
+    client.emit(summary)
+
+    assert presenter.presented == [summary]
+    assert client.claims == [summary.id]
+    presenter.close()
+
+
+def test_backup_presenter_ignores_another_connection(immediate_idle):
+    """Its scope is one connection: a prompt for any other host is not the
+    backup's, however it was raised."""
+    client = _FakeClient()
+    presenter = _backup_presenter(client)
+
+    client.emit(
+        _summary(InteractionType.PASSWORD, "sftp-8", connection_id="other-host")
+    )
+
+    assert presenter.presented == []
+    assert client.claims == []
+    presenter.close()
+
+
+def test_backup_presenter_leaves_the_passphrase_prompt_to_the_secrets_presenter(
+    immediate_idle,
+):
+    """The archive's own encrypt/decrypt passphrase is raised by the secret
+    backend service in the reserved ``secret-session`` namespace, where
+    SecretsInteractionPresenter already owns it. Claiming it here would take
+    it away from the dialog that knows how to label it."""
+    client = _FakeClient()
+    presenter = _backup_presenter(client)
+
+    client.emit(
+        _summary(
+            InteractionType.PASSWORD, "secret-session-3", connection_id="server-1"
+        )
+    )
+
+    assert presenter.presented == []
+    assert client.claims == []
+    presenter.close()
+
+
+def test_backup_presenter_reconciles_a_prompt_raised_before_it_existed(
+    immediate_idle,
+):
+    """The backup call and the presenter start together, so the connect can
+    raise its prompt first; the daemon's pending list closes that gap."""
+    client = _FakeClient()
+    pending = _summary(
+        InteractionType.PASSWORD, "sftp-9", connection_id="server-1"
+    )
+    client.pending.append(pending)
+
+    presenter = _backup_presenter(client)
+
+    assert presenter.presented == [pending]
+    presenter.close()
+
+
+def test_overlapping_presenters_present_one_prompt_once(immediate_idle):
+    """A connection-scoped and a session-scoped presenter must not both
+    present the same prompt.
+
+    The daemon cannot arbitrate this: ``InteractionBroker.claim`` rejects a
+    claim only when a *different* client owns the interaction, and every
+    presenter in one frontend shares that client — a second claim is simply
+    handed the same nonce back. Every presenter was session-scoped (and so
+    disjoint) until the backup presenter, which is scoped to a connection and
+    therefore overlaps a terminal or file-manager connect to that same host.
+
+    Concretely: an export to ``server-1`` is running when the user opens a
+    terminal to ``server-1``. That connect's password prompt matches the
+    terminal presenter by session id *and* the backup presenter by connection
+    id. Without frontend-side ownership both claim it and two modal password
+    dialogs stack, the second drawn from inside the first's nested main loop.
+    """
+    client = _FakeClient()
+    backup = _backup_presenter(client)  # scoped to connection "server-1"
+    terminal = _RecordingDialogs(client, _SyncBridge())
+    terminal.set_session(SessionId("terminal-4"))
+
+    summary = _summary(
+        InteractionType.PASSWORD, "terminal-4", connection_id="server-1"
+    )
+    client.emit(summary)
+
+    presented = backup.presented + terminal.presented
+    assert presented == [summary], (
+        "exactly one presenter must present the prompt, got "
+        f"backup={backup.presented} terminal={terminal.presented}"
+    )
+    assert client.claims == [summary.id], (
+        "the prompt was claimed more than once by the same client"
+    )
+
+    # Whichever one took it releases on close, so the other could take a later
+    # prompt for the same host.
+    backup.close()
+    terminal.close()
+
+
+def test_ownership_is_released_when_the_owning_presenter_closes(immediate_idle):
+    """Closing the presenter that owns a prompt frees it for the next one.
+
+    The backup presenter is opened and closed around a single backup call, so
+    a stale reservation would silently mute every later prompt for that host.
+    """
+    client = _FakeClient()
+    first = _backup_presenter(client)
+    summary = _summary(
+        InteractionType.PASSWORD, "sftp-11", connection_id="server-1"
+    )
+    client.emit(summary)
+    assert first.presented == [summary]
+    first.close()
+
+    later = _summary(
+        InteractionType.PASSWORD, "sftp-12", connection_id="server-1"
+    )
+    second = _backup_presenter(client)
+    client.emit(later)
+    assert second.presented == [later]
+    second.close()
 
 
 def test_transfer_scope_routes_only_to_its_presenter(immediate_idle):

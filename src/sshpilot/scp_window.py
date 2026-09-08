@@ -6,11 +6,12 @@ terminal widget.
 
 import os
 import logging
-from gettext import gettext as _
+from datetime import datetime
+from gettext import gettext as _, ngettext
 from typing import List, Optional, Tuple
 from pathlib import Path
 
-from gi.repository import Gtk, Adw, GLib, Gio
+from gi.repository import Gtk, Adw, GLib, Gio, Pango
 
 from .api.errors import ErrorCode, SshPilotError
 from .connection_display import (
@@ -21,9 +22,12 @@ from .platform_utils import is_flatpak
 from .shortcut_utils import install_esc_to_close
 from .gtk.sftp_error_messages import format_direct_sftp_error
 from .gtk.scp_failure_messages import format_scp_failure
+from .file_manager.format_utils import safe_display_text
 from .file_manager.portal_docs import (
     _is_valid_destination,
     _pretty_path_for_display,
+    open_in_file_manager,
+    resolve_download_locate_path,
     resolve_granted_folder,
     restore_granted_folder,
 )
@@ -50,6 +54,112 @@ def _format_scp_start_error(error: BaseException) -> str:
         if template is not None:
             return _(template)
     return str(error)
+
+
+def _display_scp_path(path: str) -> str:
+    """Return a UI-safe, human-friendly path for SCP status labels."""
+    return safe_display_text(_pretty_path_for_display(str(path)))
+
+
+def _display_scp_path_list(paths: Tuple[str, ...] | List[str] | str) -> str:
+    """Format one or more SCP source paths for display."""
+    if isinstance(paths, str):
+        items = [part.strip() for part in paths.split(", ") if part.strip()]
+        if not items:
+            items = [paths]
+    else:
+        items = [str(path) for path in paths if str(path).strip()]
+    if not items:
+        return ""
+    if len(items) == 1:
+        return _display_scp_path(items[0])
+    return ", ".join(_display_scp_path(item) for item in items)
+
+
+def _format_scp_byte_count(size_bytes: int) -> str:
+    """Format a byte count for SCP completion details."""
+    value = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024.0 or unit == "TB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024.0
+    return f"{int(size_bytes)} B"
+
+
+def _format_scp_duration(
+    started_at: Optional[datetime],
+    completed_at: Optional[datetime],
+) -> Optional[str]:
+    """Return a short duration string when both timestamps are available."""
+    if started_at is None or completed_at is None:
+        return None
+    try:
+        seconds = max(0, int((completed_at - started_at).total_seconds()))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if seconds < 60:
+        return ngettext("{count} second", "{count} seconds", seconds).format(
+            count=seconds
+        )
+    minutes, rem = divmod(seconds, 60)
+    if minutes < 60:
+        if rem == 0:
+            return ngettext("{count} minute", "{count} minutes", minutes).format(
+                count=minutes
+            )
+        return _("{minutes}m {seconds}s").format(minutes=minutes, seconds=rem)
+    hours, rem_m = divmod(minutes, 60)
+    if rem_m == 0:
+        return ngettext("{count} hour", "{count} hours", hours).format(count=hours)
+    return _("{hours}h {minutes}m").format(hours=hours, minutes=rem_m)
+
+
+def _format_scp_completion_details(summary) -> str:
+    """Build a secondary details line for a completed SCP transfer."""
+    parts: List[str] = []
+    source_display = getattr(summary, "source_display", "") or ""
+    source_parts = [part.strip() for part in source_display.split(", ") if part.strip()]
+    if len(source_parts) > 1:
+        parts.append(
+            ngettext("{count} file", "{count} files", len(source_parts)).format(
+                count=len(source_parts)
+            )
+        )
+    bytes_completed = getattr(summary, "bytes_completed", 0) or 0
+    bytes_total = getattr(summary, "bytes_total", None)
+    size = bytes_completed if bytes_completed > 0 else (
+        bytes_total if isinstance(bytes_total, int) and bytes_total > 0 else 0
+    )
+    if size > 0:
+        parts.append(_format_scp_byte_count(size))
+    duration = _format_scp_duration(
+        getattr(summary, "started_at", None),
+        getattr(summary, "completed_at", None),
+    )
+    if duration:
+        parts.append(duration)
+    return " · ".join(parts)
+
+
+def _scp_completion_heading(direction: str) -> str:
+    if direction == "upload":
+        return _("Upload complete")
+    return _("Download complete")
+
+
+def _configure_scp_status_label(label: Gtk.Label, *, primary: bool = False) -> None:
+    label.set_wrap(True)
+    label.set_halign(Gtk.Align.START)
+    label.set_xalign(0.0)
+    label.set_selectable(True)
+    if primary:
+        label.add_css_class("heading")
+    else:
+        label.add_css_class("caption")
+        label.add_css_class("dim-label")
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
 
 
 @Gtk.Template(resource_path="/io/github/mfat/sshpilot/ui/scp_download_window.ui")
@@ -1103,9 +1213,49 @@ class ScpWindowController:
         )
         content_box = dlg.content_box
         status = Gtk.Label()
-        status.set_wrap(True)
-        status.set_halign(Gtk.Align.START)
+        _configure_scp_status_label(status, primary=True)
         content_box.append(status)
+
+        from_label = Gtk.Label()
+        _configure_scp_status_label(from_label)
+        to_label = Gtk.Label()
+        _configure_scp_status_label(to_label)
+        details_label = Gtk.Label()
+        _configure_scp_status_label(details_label)
+        details_label.set_visible(False)
+        content_box.append(from_label)
+        content_box.append(to_label)
+        content_box.append(details_label)
+
+        locate_btn = Gtk.Button(label=_("Show in Files"))
+        locate_btn.set_halign(Gtk.Align.START)
+        locate_btn.add_css_class("pill")
+        locate_btn.set_visible(False)
+        locate_btn.set_sensitive(False)
+        content_box.append(locate_btn)
+        locate_target = {"value": None}
+
+        def _on_locate_clicked(_button):
+            target = locate_target["value"]
+            if not target:
+                return
+            if not open_in_file_manager(target, parent=self.window):
+                try:
+                    self.window.show_toast(
+                        _("Could not open the download location in the file manager.")
+                    )
+                except Exception:
+                    pass
+
+        locate_btn.connect("clicked", _on_locate_clicked)
+
+        initial_source = _display_scp_path_list(tuple(str(s) for s in sources))
+        initial_destination = _display_scp_path(str(destination))
+        from_label.set_text(_("From: {path}").format(path=initial_source))
+        from_label.set_tooltip_text(initial_source)
+        to_label.set_text(_("To: {path}").format(path=initial_destination))
+        to_label.set_tooltip_text(initial_destination)
+
         transfer_id = {"value": None}
         closed = {"value": False}
         cancel_requested = {"value": False}
@@ -1120,19 +1270,69 @@ class ScpWindowController:
                 except Exception:
                     pass
 
+        def _update_path_labels(summary) -> None:
+            source = _display_scp_path_list(
+                getattr(summary, "source_display", "") or initial_source
+            )
+            dest = _display_scp_path(
+                getattr(summary, "destination_display", "") or initial_destination
+            )
+            if source:
+                from_label.set_text(_("From: {path}").format(path=source))
+                from_label.set_tooltip_text(source)
+            if dest:
+                to_label.set_text(_("To: {path}").format(path=dest))
+                to_label.set_tooltip_text(dest)
+
         def on_transfer_summary(summary):
             if summary.id != transfer_id["value"]:
                 return
             state = summary.state
+            _update_path_labels(summary)
             if state in {TransferState.COMPLETED, TransferState.FAILED, TransferState.CANCELLED}:
                 stop_observing()
                 # The transfer's interaction scope is done: release the
                 # presenter so it never claims unrelated interactions again.
                 dispose_dialogs()
                 if state is TransferState.COMPLETED:
-                    status.set_text(_("Completed"))
+                    heading = _scp_completion_heading(direction)
+                    status.set_text(heading)
+                    try:
+                        dlg.title_label.set_label(heading)
+                        dlg.set_title(heading)
+                    except Exception:
+                        pass
+                    details = _format_scp_completion_details(summary)
+                    if details:
+                        details_label.set_text(details)
+                        details_label.set_visible(True)
+                    else:
+                        details_label.set_visible(False)
+                    # Downloads only: reveal the local (portal-aware) path in
+                    # the desktop file manager. Uploads land on the remote host.
+                    if direction == "download":
+                        dest_path = (
+                            getattr(summary, "destination_display", None)
+                            or str(destination)
+                        )
+                        source_paths = [
+                            part.strip()
+                            for part in (
+                                getattr(summary, "source_display", "") or ""
+                            ).split(", ")
+                            if part.strip()
+                        ] or [str(item) for item in sources]
+                        target = resolve_download_locate_path(dest_path, source_paths)
+                        locate_target["value"] = target
+                        locate_btn.set_visible(target is not None)
+                        locate_btn.set_sensitive(target is not None)
+                    else:
+                        locate_target["value"] = None
+                        locate_btn.set_visible(False)
                 elif state is TransferState.CANCELLED:
                     status.set_text(_("Cancelled"))
+                    details_label.set_visible(False)
+                    locate_btn.set_visible(False)
                 else:
                     try:
                         failure = format_scp_failure(summary.failure)
@@ -1140,16 +1340,21 @@ class ScpWindowController:
                         logger.error("Invalid native SCP failure payload", exc_info=True)
                         failure = _("The SCP transfer failed.")
                     status.set_text(_("Failed: {failure}").format(failure=failure))
+                    details_label.set_visible(False)
+                    locate_btn.set_visible(False)
             elif state is TransferState.STARTING:
                 status.set_text(_("Starting…"))
+                details_label.set_visible(False)
             elif state is TransferState.CANCELLING:
                 status.set_text(_("Cancelling…"))
+                details_label.set_visible(False)
             else:
                 status.set_text(
                     _("Uploading…")
                     if direction == "upload"
                     else _("Downloading…")
                 )
+                details_label.set_visible(False)
 
         def ensure_observing():
             if event_subscription["value"] is not None:

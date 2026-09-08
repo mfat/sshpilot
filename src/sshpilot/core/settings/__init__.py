@@ -25,6 +25,7 @@ from .ssh_overrides import (
     compose_ssh_overrides,
     compute_ssh_overrides_revision,
     normalize_ssh_overrides,
+    ssh_config_from_settings,
     ssh_settings_from_values,
 )
 from .store import (
@@ -63,6 +64,7 @@ __all__ = [
     "normalize_provider",
     "normalize_ssh_overrides",
     "save_settings",
+    "ssh_config_from_settings",
     "set_nested",
     "settings_transaction_lock",
     "ssh_settings_from_values",

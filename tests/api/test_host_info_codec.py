@@ -9,6 +9,7 @@ import pytest
 from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.host_info import (
     CpuInfo,
+    CpuTimes,
     FailedUnit,
     FilesystemUsage,
     HostInfoProbe,
@@ -18,6 +19,7 @@ from sshpilot.api.models.host_info import (
     HostKeyFingerprint,
     InterfaceCounters,
     ListeningPort,
+    LiveSample,
     LoadAverage,
     LoginSession,
     MemoryInfo,
@@ -25,6 +27,7 @@ from sshpilot.api.models.host_info import (
     NetworkInterfaceKind,
     NetworkInterfaceState,
     PressureStall,
+    ProcessCounts,
     ProcessUsage,
     SocketConnection,
     SocketDirection,
@@ -65,7 +68,18 @@ def _snapshot() -> HostInfoSnapshot:
         uptime_seconds=1234.5,
         boot_time="2026-09-01 18:00",
         cpu=CpuInfo(model="Atheros AR9344", logical_processors=1, bogomips=361.05),
-        memory=MemoryInfo(total_bytes=131072, free_bytes=65536, available_bytes=98304),
+        memory=MemoryInfo(
+            total_bytes=131072,
+            free_bytes=65536,
+            available_bytes=98304,
+            active_bytes=40960,
+            inactive_bytes=20480,
+            shmem_bytes=8192,
+            dirty_bytes=4096,
+            writeback_bytes=0,
+            slab_bytes=16384,
+            slab_reclaimable_bytes=8192,
+        ),
         load_average=LoadAverage(0.1, 0.2, 0.3),
         filesystems=(
             FilesystemUsage(
@@ -76,6 +90,10 @@ def _snapshot() -> HostInfoSnapshot:
                 used_bytes=512,
                 available_bytes=1536,
                 use_percent=25,
+                options="rw,noatime",
+                inodes_total=1024,
+                inodes_used=256,
+                inodes_free=768,
             ),
         ),
         interfaces=(
@@ -123,6 +141,32 @@ def _snapshot() -> HostInfoSnapshot:
         ),
         io_pressure_some=PressureStall(1.5, 0.75, 0.25),
         io_pressure_full=PressureStall(0.5, 0.25, 0.0),
+        cpu_pressure_some=PressureStall(2.5, 1.75, 1.25),
+        cpu_pressure_full=None,
+        memory_pressure_some=PressureStall(0.2, 0.1, 0.05),
+        memory_pressure_full=PressureStall(0.1, 0.05, 0.0),
+        cpu_times=(
+            CpuTimes(
+                name="cpu",
+                user=1000,
+                nice=20,
+                system=300,
+                idle=90000,
+                iowait=40,
+                irq=5,
+                softirq=6,
+                steal=7,
+                guest=8,
+                guest_nice=9,
+            ),
+            CpuTimes(name="cpu0", user=500, system=150, idle=45000),
+        ),
+        process_counts=ProcessCounts(
+            total=61, running=1, sleeping=59, stopped=0, zombie=1,
+            threads=140, pid_max=32768,
+        ),
+        context_switches=987654321,
+        interrupts=123456789,
     )
 
 
@@ -224,3 +268,78 @@ def test_models_reject_impossible_host_information():
         PressureStall(-1.0, 0.0, 0.0)
     with pytest.raises(TypeError):
         HostInfoSnapshot(io_pressure_some=(1.0, 2.0, 3.0))
+
+
+def _live() -> LiveSample:
+    return LiveSample(
+        counters=(InterfaceCounters("wlan0", 1024, 2048),),
+        cpu_times=(CpuTimes(name="cpu", user=1, nice=2, system=3, idle=4),),
+        memory=MemoryInfo(total_bytes=131072, free_bytes=1024, available_bytes=2048),
+        load_average=LoadAverage(0.5, 0.4, 0.3),
+    )
+
+
+def test_the_live_probe_is_a_wire_value_like_the_others():
+    request = HostInfoRequest(ConnectionId("conn-1"), HostInfoProbe.LIVE)
+    assert host_info_request_to_wire(request)["probe"] == "live"
+    assert host_info_request_from_wire(host_info_request_to_wire(request)) == request
+
+
+def test_the_bandwidth_only_probe_still_round_trips():
+    """Removing a wire value narrows the protocol for no gain, so the probe the
+    live one superseded keeps working."""
+
+    request = HostInfoRequest(ConnectionId("conn-1"), HostInfoProbe.NETWORK_COUNTERS)
+    assert host_info_request_to_wire(request)["probe"] == "network_counters"
+    assert host_info_request_from_wire(host_info_request_to_wire(request)) == request
+
+
+def test_a_live_summary_round_trips_with_its_sample():
+    summary = HostInfoSummary(
+        _operation(), HostInfoProbe.LIVE, None, _live().counters, None, _live()
+    )
+    assert host_info_summary_from_wire(host_info_summary_to_wire(summary)) == summary
+
+
+def test_a_summary_without_a_live_sample_carries_an_explicit_null():
+    summary = HostInfoSummary(_operation(), HostInfoProbe.FULL, _snapshot())
+    wire = host_info_summary_to_wire(summary)
+    assert wire["live"] is None
+    assert host_info_summary_from_wire(wire) == summary
+
+
+def test_cpu_times_round_trip_every_column_including_the_absent_ones():
+    wire = host_info_snapshot_to_wire(_snapshot())
+    assert [item["name"] for item in wire["cpu_times"]] == ["cpu", "cpu0"]
+    assert wire["cpu_times"][1]["steal"] is None
+    restored = host_info_snapshot_from_wire(wire)
+    assert restored.cpu_times == _snapshot().cpu_times
+
+
+def test_the_new_snapshot_fields_survive_the_wire():
+    restored = host_info_snapshot_from_wire(host_info_snapshot_to_wire(_snapshot()))
+    assert restored == _snapshot()
+    assert restored.cpu_pressure_full is None
+    assert restored.process_counts.pid_max == 32768
+    assert restored.filesystems[0].options == "rw,noatime"
+    assert restored.filesystems[0].inodes_used == 256
+    assert restored.memory.slab_reclaimable_bytes == 8192
+
+
+def test_a_live_sample_with_an_unknown_field_is_rejected():
+    summary = HostInfoSummary(
+        _operation(), HostInfoProbe.LIVE, None, _live().counters, None, _live()
+    )
+    wire = host_info_summary_to_wire(summary)
+    wire["live"]["surprise"] = 1
+    with pytest.raises(ValueError):
+        host_info_summary_from_wire(wire)
+
+
+def test_a_snapshot_missing_a_new_field_is_rejected_rather_than_defaulted():
+    """A peer that does not send cpu_times is not a host with no CPUs."""
+
+    wire = host_info_snapshot_to_wire(_snapshot())
+    del wire["cpu_times"]
+    with pytest.raises(ValueError):
+        host_info_snapshot_from_wire(wire)

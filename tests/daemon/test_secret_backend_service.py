@@ -429,6 +429,51 @@ def test_export_backup_encrypted_roundtrip_decrypts_with_correct_password(tmp_pa
         read_spbk(str(dest), "wrong-password")
 
 
+def test_ssh_backup_routes_run_as_the_requesting_client(tmp_path):
+    """Every SSH-server backup route must hand the transport the client that
+    asked for it.
+
+    The daemon opens the connection itself, and the interaction broker shows a
+    prompt only to the client owning the scope it was raised under. Opening the
+    transport as anyone else means the password, passphrase or host-key prompt
+    is created where no frontend can claim it: the backup then hangs until the
+    interaction expires and reports a failed connection.
+    """
+    service, _manager, _backends, _broker, _path = _make_service(tmp_path)
+
+    opened = []
+
+    class _RecordingTransport:
+        def open(self, connection_id, *, client_id):
+            opened.append((connection_id, client_id))
+            raise RuntimeError("no store needed; the ownership is the point")
+
+    service.attach_backup_transport(_RecordingTransport())
+    options = {"app_settings": True, "ssh_config": False, "known_hosts": False,
+               "secrets": False, "private_keys": False}
+
+    service.export_backup(
+        destination="ssh:srv:~/bk", options=options, owner_client_id="client-1")
+    # Listing raises rather than returning [] now: an unreachable server must
+    # not read as "this directory holds no backups".
+    with pytest.raises(SshPilotError):
+        service.list_ssh_backups(
+            connection_id="srv", remote_dir="~/bk", owner_client_id="client-2")
+    service.preview_ssh_backup(
+        connection_id="srv", remote_dir="~/bk", entry_id="e1",
+        owner_client_id="client-3")
+    service.import_ssh_backup(
+        connection_id="srv", remote_dir="~/bk", entry_id="e1",
+        owner_client_id="client-4")
+
+    assert opened == [
+        ("srv", "client-1"),
+        ("srv", "client-2"),
+        ("srv", "client-3"),
+        ("srv", "client-4"),
+    ]
+
+
 def test_export_backup_uses_shorter_backup_encryption_timeout(tmp_path):
     """The encryption-passphrase interaction must use the shorter, operation-
     specific backup-encryption timeout, not the general 120s secret timeout."""
@@ -1099,6 +1144,25 @@ def test_unlock_prompts_and_unlocks(tmp_path):
     assert backends["bitwarden"]._unlocked is True
 
 
+def test_unlock_marks_a_rejected_master_password_with_its_own_message_code(tmp_path):
+    """A wrong master password and a backend that cannot run share the
+    ``backend_unavailable`` kind, so ``vault_unlock_failed`` is the only thing
+    telling them apart — the frontend notice picks between "the password was not
+    accepted" and "the vault is not available on this system" by this code alone
+    (issue #1245)."""
+    service, _manager, backends, _broker, _path = _make_service(
+        tmp_path,
+        secrets={"backend": "keepassxc", "session_timeout": 0},
+        expected_secrets=["wrong-password"],
+    )
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.kind == UnlockResultKind.BACKEND_UNAVAILABLE
+    assert result.message_code is SecretMessageCode.VAULT_UNLOCK_FAILED
+    assert result.backend == "keepassxc"      # names the vault it actually tried
+    assert backends["keepassxc"]._unlocked is False
+
+
 class _OwnerOnlyBroker:
     """Implements only request_client_secret_with_remember — no create()/
     wait_for_result(). If the service ever regresses to calling those
@@ -1161,6 +1225,63 @@ def test_unlock_uses_remembered_password_when_policy_on(tmp_path):
     assert result.kind == UnlockResultKind.UNLOCKED
     # No protected interaction was opened: the remembered password was used.
     assert manager._backends["bitwarden"]._unlocked is True
+
+
+def test_unlock_discards_a_remembered_password_the_vault_rejects(tmp_path):
+    """A stale keyring password must not survive its own rejection.
+
+    ``unlock()`` prefers the remembered password over prompting, so keeping one
+    the vault refuses would make every retry fail silently, never asking the user
+    for the corrected password. The ``remember_in_keyring`` policy stays on — the
+    entry is stale, not unwanted."""
+    keyring = FakeBackend("keyring", session_backed=False)
+    backends = {
+        "libsecret": FakeBackend("libsecret", session_backed=False),
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+        "rbw": FakeBackend("rbw", needs_login=True),
+        "keepassxc": FakeBackend("keepassxc"),
+        "agent": FakeBackend("agent", session_backed=False),
+    }
+    keyring.data["bitwarden-master:default"] = "wrong-password"
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={"backend": "bitwarden", "remember_in_keyring": True},
+        expected_secrets=[],
+    )
+
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.message_code is SecretMessageCode.VAULT_UNLOCK_FAILED
+    assert "bitwarden-master:default" not in keyring.data   # dropped, so a retry prompts
+    assert service.get_configuration().remember_in_keyring is True
+
+
+def test_unlock_keeps_a_prompted_password_out_of_the_keyring_on_failure(tmp_path):
+    """Only a *remembered* password is discarded on rejection; a typed one was
+    never stored, and the failure must not disturb any other keyring entry."""
+    keyring = FakeBackend("keyring", session_backed=False)
+    backends = {
+        "libsecret": FakeBackend("libsecret", session_backed=False),
+        "keyring": keyring,
+        "bitwarden": FakeBackend("bitwarden", needs_login=False),
+        "rbw": FakeBackend("rbw", needs_login=True),
+        "keepassxc": FakeBackend("keepassxc"),
+        "agent": FakeBackend("agent", session_backed=False),
+    }
+    keyring.data["unrelated"] = "keep me"
+    service, _manager, _backends, _broker, _path = _make_service(
+        tmp_path,
+        backends=backends,
+        secrets={"backend": "bitwarden", "session_timeout": 0},
+        expected_secrets=["wrong-password"],
+    )
+
+    result = service.unlock(owner_client_id="client-1")
+
+    assert result.message_code is SecretMessageCode.VAULT_UNLOCK_FAILED
+    assert keyring.data == {"unrelated": "keep me"}
 
 
 # ---------------------------------------------------------------------------

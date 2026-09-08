@@ -31,6 +31,12 @@ def test_old_style_broadcast_policy_defaults_to_interactive():
     assert request.policy.interaction_mode is ExecutionInteractionMode.INTERACTIVE
 
 
+def test_old_style_broadcast_policy_defaults_to_no_master():
+    request = broadcast_command_request_from_wire(_old_style_request_wire())
+
+    assert request.policy.require_master is False
+
+
 def test_interactive_broadcast_serialization_omits_interaction_mode():
     request = BroadcastCommandRequest(
         (ConnectionId("conn-1"),),
@@ -62,3 +68,43 @@ def test_autofill_only_broadcast_serialization_round_trips_mode():
         restored.policy.interaction_mode
         is ExecutionInteractionMode.AUTOFILL_ONLY
     )
+
+
+def test_default_broadcast_serialization_omits_require_master():
+    request = BroadcastCommandRequest(
+        (ConnectionId("conn-1"),),
+        "hostname",
+        BroadcastExecutionPolicy(),
+    )
+
+    wire = broadcast_command_request_to_wire(request)
+
+    assert "require_master" not in wire["policy"]
+
+
+def test_require_master_broadcast_serialization_round_trips():
+    request = BroadcastCommandRequest(
+        (ConnectionId("conn-1"),),
+        "cat /proc/stat",
+        BroadcastExecutionPolicy(
+            interaction_mode=ExecutionInteractionMode.AUTOFILL_ONLY,
+            require_master=True,
+        ),
+    )
+
+    wire = broadcast_command_request_to_wire(request)
+    restored = broadcast_command_request_from_wire(wire)
+
+    assert wire["policy"]["require_master"] is True
+    assert restored.policy.require_master is True
+
+
+def test_non_boolean_require_master_is_rejected():
+    wire = _old_style_request_wire()
+    wire["policy"]["require_master"] = "yes"
+
+    try:
+        broadcast_command_request_from_wire(wire)
+    except ValueError:
+        return
+    raise AssertionError("non-boolean require_master was accepted")

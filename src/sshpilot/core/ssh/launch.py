@@ -85,6 +85,20 @@ class SSHLaunchRequest:
     cwd: Optional[Path] = None
 
 
+def _executable_basename(req: SSHLaunchRequest) -> str:
+    return (req.executable or "ssh").rsplit("/", 1)[-1]
+
+
+def _is_scp_executable(req: SSHLaunchRequest) -> bool:
+    """scp(1) flag semantics follow the binary, not LaunchMode alone.
+
+    ``LaunchMode.SCP`` is the normal pairing, but a caller can set
+    ``executable="scp"`` with ``LaunchMode.BATCH`` (e.g. interaction_policy
+    ``none`` overwriting the mode). Port/user flags must still be scp-safe.
+    """
+    return _executable_basename(req) == "scp"
+
+
 def _validate_request(req: SSHLaunchRequest) -> None:
     if not (req.destination or "").strip():
         raise CoreError(ErrorCode.VALIDATION_ERROR, "SSH destination is required")
@@ -100,7 +114,10 @@ def _validate_request(req: SSHLaunchRequest) -> None:
             ErrorCode.VALIDATION_ERROR,
             "BatchMode cannot be combined with askpass interaction",
         )
-    if req.local_command and req.launch_mode in {LaunchMode.SCP, LaunchMode.SFTP}:
+    if req.local_command and (
+        req.launch_mode in {LaunchMode.SCP, LaunchMode.SFTP}
+        or _executable_basename(req) in {"scp", "sftp"}
+    ):
         raise CoreError(
             ErrorCode.VALIDATION_ERROR,
             "LocalCommand is not valid for SCP/SFTP launch modes",
@@ -158,10 +175,16 @@ def build_ssh_process_spec(req: SSHLaunchRequest) -> ProcessSpec:
         argv.append("-C")
 
     if req.port is not None:
-        argv.extend(["-p", str(int(req.port))])
+        # scp(1): ``-P`` is the remote port; ``-p`` preserves times/modes.
+        port_flag = "-P" if _is_scp_executable(req) else "-p"
+        argv.extend([port_flag, str(int(req.port))])
 
     if req.username:
-        argv.extend(["-l", str(req.username)])
+        # scp(1): ``-l`` is a bandwidth limit (Kbit/s), not a login name.
+        if _is_scp_executable(req):
+            argv.extend(["-o", f"User={req.username}"])
+        else:
+            argv.extend(["-l", str(req.username)])
 
     for identity in req.identity_files or []:
         if identity:

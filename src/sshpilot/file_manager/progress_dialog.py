@@ -17,6 +17,7 @@ from typing import Optional
 from gi.repository import Adw, GLib, Gtk, Pango
 
 from .format_utils import safe_display_text
+from .portal_docs import open_in_file_manager, resolve_download_locate_path
 
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,9 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self._latest_fraction: Optional[float] = None
         self._latest_message: Optional[str] = None
         self._latest_file: Optional[str] = None
+        self._source_path: Optional[str] = None
+        self._destination_path: Optional[str] = None
+        self._locate_path: Optional[str] = None
 
         self._build_ui()
 
@@ -234,10 +238,19 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         # Cancel / Done action button. Placed in the body (not as an Adw
         # response) so it doesn't get the full-width single-response styling.
         action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        action_row.set_halign(Gtk.Align.END)
+        action_row.set_halign(Gtk.Align.FILL)
         action_row.set_margin_top(6)
+        self.locate_button = Gtk.Button(label=_("Show in Files"))
+        self.locate_button.add_css_class("pill")
+        self.locate_button.set_halign(Gtk.Align.START)
+        self.locate_button.set_hexpand(True)
+        self.locate_button.set_visible(False)
+        self.locate_button.set_sensitive(False)
+        self.locate_button.connect("clicked", self._on_locate_clicked)
+        action_row.append(self.locate_button)
         self.action_button = Gtk.Button(label=_("Cancel"))
         self.action_button.add_css_class("pill")
+        self.action_button.set_halign(Gtk.Align.END)
         self.action_button.connect("clicked", self._on_action_button_clicked)
         action_row.append(self.action_button)
         progress_box.append(action_row)
@@ -277,15 +290,29 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         full untruncated path is exposed as a tooltip on hover.
         """
         if source:
+            self._source_path = source
             source = safe_display_text(source)
             self.source_label.set_text(_("From: {path}").format(path=source))
             self.source_label.set_tooltip_text(source)
             self.source_label.set_visible(True)
         if destination:
+            self._destination_path = destination
             destination = safe_display_text(destination)
             self.dest_label.set_text(_("To: {path}").format(path=destination))
             self.dest_label.set_tooltip_text(destination)
             self.dest_label.set_visible(True)
+
+    def _on_locate_clicked(self, _button: Gtk.Button) -> None:
+        """Open the completed download location in the desktop file manager."""
+        target = self._locate_path
+        if not target:
+            return
+        parent = None
+        try:
+            parent = self.get_root()
+        except Exception:
+            parent = None
+        open_in_file_manager(target, parent=parent)
     
     def _on_action_button_clicked(self, _button: Gtk.Button) -> None:
         """Single click handler for the Cancel/Done button.
@@ -528,15 +555,82 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
         self._stop_render_timer()
         
         if success:
-            self._set_dialog_heading(_("Transfer Complete"))
-            self.status_label.set_text(_("Transfer completed successfully"))
-            self.file_label.set_text(
-                _("Successfully transferred {count} files").format(
-                    count=self.files_completed
-                )
+            headings = {
+                "download": _("Download Complete"),
+                "upload": _("Upload Complete"),
+                "copy": _("Copy Complete"),
+                "move": _("Move Complete"),
+            }
+            self._set_dialog_heading(
+                headings.get(self.operation_type, _("Transfer Complete"))
             )
+            count = self.files_completed or self.total_files
+            size_bytes = self._transferred_bytes
+            if count <= 0 and size_bytes <= 0:
+                self.status_label.set_text(_("Transfer completed successfully"))
+                self.file_label.set_text("—")
+            elif size_bytes > 0 and count > 1:
+                self.status_label.set_text(
+                    _("Successfully transferred {count} files ({size})").format(
+                        count=count,
+                        size=self._format_size(size_bytes),
+                    )
+                )
+                self.file_label.set_text(
+                    _("{done} of {total} files").format(
+                        done=self.files_completed or count,
+                        total=self.total_files or count,
+                    )
+                )
+            elif size_bytes > 0:
+                self.status_label.set_text(
+                    _("Transferred {size} successfully").format(
+                        size=self._format_size(size_bytes),
+                    )
+                )
+                if self.current_file:
+                    self.file_label.set_text(safe_display_text(self.current_file))
+                elif count == 1:
+                    self.file_label.set_text(_("1 file"))
+                else:
+                    self.file_label.set_text(
+                        _("Successfully transferred {count} files").format(count=count)
+                    )
+            else:
+                self.status_label.set_text(_("Transfer completed successfully"))
+                self.file_label.set_text(
+                    _("Successfully transferred {count} files").format(count=count)
+                )
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("100%")
+            self.speed_label.set_text("—")
+            self.time_label.set_text(_("Finished"))
+            if self.total_files:
+                self.counter_label.set_text(
+                    _("{done} of {total} files").format(
+                        done=self.files_completed or count,
+                        total=self.total_files,
+                    )
+                )
+            # Downloads only: portal-aware reveal of the local destination.
+            if self.operation_type == "download" and self._destination_path:
+                sources = [self._source_path] if self._source_path else None
+                locate = resolve_download_locate_path(
+                    self._destination_path, sources
+                )
+                self._locate_path = locate
+                try:
+                    self.locate_button.set_visible(locate is not None)
+                    self.locate_button.set_sensitive(locate is not None)
+                except (AttributeError, RuntimeError, GLib.Error):
+                    pass
+            else:
+                self._locate_path = None
+                try:
+                    self.locate_button.set_visible(False)
+                    self.locate_button.set_sensitive(False)
+                except (AttributeError, RuntimeError, GLib.Error):
+                    pass
         else:
             self._set_dialog_heading(_("Transfer Failed"))
             self.status_label.set_text(_("Transfer failed"))
@@ -544,6 +638,12 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
                 self.file_label.set_text(_("Error: {message}").format(message=error_message))
             else:
                 self.file_label.set_text(_("An error occurred during transfer"))
+            self._locate_path = None
+            try:
+                self.locate_button.set_visible(False)
+                self.locate_button.set_sensitive(False)
+            except (AttributeError, RuntimeError, GLib.Error):
+                pass
         
         # Swap the body button's label from Cancel → Done. _on_action_button_clicked
         # reads _completion_shown (set above) and takes the "just close" path.
@@ -555,4 +655,3 @@ class SFTPProgressDialog(_PROGRESS_DIALOG_BASE):
             pass
 
         return False
-

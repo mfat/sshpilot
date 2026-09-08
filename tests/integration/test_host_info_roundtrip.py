@@ -28,6 +28,7 @@ from sshpilot.api.models.common import ConnectionId
 from sshpilot.api.models.host_info import HostInfoProbe, HostInfoRequest
 from sshpilot.api.models.operations import OperationState
 from sshpilot.core.connection_application_service import ConnectionApplicationService
+from sshpilot.core.host_info.rates import cpu_utilization
 from sshpilot.daemon import DaemonServer
 from tests.daemon.conftest import (
     TestConnection as _Connection,
@@ -260,6 +261,122 @@ def test_bandwidth_sampling_returns_counters_without_a_snapshot(tmp_path, local_
         assert summary.snapshot is None
         assert summary.counters
         assert all(item.rx_bytes >= 0 for item in summary.counters)
+    finally:
+        subscription.close()
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
+
+
+def test_a_live_sample_reads_real_proc_files_over_a_real_session(tmp_path, local_sshd):
+    """The live probe against actual /proc output, not a fixture.
+
+    Two samples are taken so the second has a baseline to difference against,
+    which is the only way a CPU utilization exists at all.
+    """
+
+    port, identity = local_sshd.port, local_sshd.identity
+    server = _daemon(tmp_path, port, identity, "live")
+
+    client = DaemonClient(socket_path=server.socket_path, client_id="client:live")
+    finished = threading.Event()
+
+    def _on_event(event):
+        if (
+            event.type is EventType.OPERATION_STATE_CHANGED
+            and event.payload.state in _TERMINAL
+        ):
+            finished.set()
+
+    try:
+        subscription = client.subscribe_events(_on_event)
+        connection_id = ConnectionId(client.list_connections()[0].id)
+
+        samples = []
+        for _attempt in range(2):
+            finished.clear()
+            started = client.start_host_info(
+                HostInfoRequest(connection_id, HostInfoProbe.LIVE)
+            )
+            assert finished.wait(60)
+            summary = client.get_host_info(started.operation.operation_id)
+            assert summary.failure is None, summary.failure
+            assert summary.snapshot is None
+            assert summary.live is not None
+            samples.append(summary.live)
+
+        first, second = samples
+        # /proc/stat always has an aggregate line and one per logical CPU.
+        assert first.cpu_times and first.cpu_times[0].name == "cpu"
+        assert len(first.cpu_times) == 1 + os.cpu_count()
+        assert first.memory is not None and first.memory.total_bytes > 0
+        assert first.load_average is not None
+        assert first.counters
+
+        # counters is filled by every probe, so bandwidth needs no full gather.
+        assert second.counters and all(item.rx_bytes >= 0 for item in second.counters)
+
+        # A real host accrues idle jiffies between two samples, so this is a
+        # genuine utilization rather than a computation over a fixture.
+        utilization = cpu_utilization(first.cpu_times[0], second.cpu_times[0])
+        assert utilization is not None
+        assert 0.0 <= utilization.total <= 100.0
+        assert utilization.idle is not None
+    finally:
+        subscription.close()
+        client.close()
+        server.shutdown()
+        server.wait_stopped()
+
+
+def test_a_full_gather_reads_the_new_sections_from_a_real_host(tmp_path, local_sshd):
+    """The sections added for CPU, pressure, inodes and mounts, against real
+    /proc and real df output rather than captured text."""
+
+    port, identity = local_sshd.port, local_sshd.identity
+    server = _daemon(tmp_path, port, identity, "sections")
+
+    client = DaemonClient(socket_path=server.socket_path, client_id="client:sections")
+    finished = threading.Event()
+
+    def _on_event(event):
+        if (
+            event.type is EventType.OPERATION_STATE_CHANGED
+            and event.payload.state in _TERMINAL
+        ):
+            finished.set()
+
+    try:
+        subscription = client.subscribe_events(_on_event)
+        connection_id = ConnectionId(client.list_connections()[0].id)
+        started = client.start_host_info(
+            HostInfoRequest(connection_id, HostInfoProbe.FULL)
+        )
+        assert finished.wait(120)
+
+        summary = client.get_host_info(started.operation.operation_id)
+        assert summary.failure is None, summary.failure
+        snapshot = summary.snapshot
+        assert snapshot is not None
+
+        assert len(snapshot.cpu_times) == 1 + os.cpu_count()
+        assert snapshot.context_switches and snapshot.context_switches > 0
+        assert snapshot.interrupts and snapshot.interrupts > 0
+
+        # ps is present on any host running sshd, so the breakdown is real.
+        assert snapshot.process_counts is not None
+        assert snapshot.process_counts.total and snapshot.process_counts.total > 0
+        assert snapshot.process_counts.pid_max and snapshot.process_counts.pid_max > 0
+
+        # Every Linux mounts a root filesystem with options.
+        root = snapshot.root_filesystem
+        assert root is not None
+        assert root.options
+        assert "rw" in root.options.split(",") or "ro" in root.options.split(",")
+
+        # The extra meminfo fields exist on any kernel new enough to run this.
+        assert snapshot.memory.active_bytes is not None
+        assert snapshot.memory.slab_bytes is not None
     finally:
         subscription.close()
         client.close()

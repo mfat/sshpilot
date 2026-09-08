@@ -212,6 +212,14 @@ def _sudo_unavailable_error(connection_id: ConnectionId) -> SshPilotError:
     )
 
 
+from .ssh_launch import (
+    IO_CAPTURE,
+    IO_CAPTURE_WITH_STDIN,
+    RemoteCommandLaunch,
+    SshLauncher,
+)
+
+
 class PrivilegedFileService:
     """Run sudo file reads/writes over the canonical native SSH launch.
 
@@ -249,6 +257,13 @@ class PrivilegedFileService:
         self._launch_provider = launch_provider
         self._broker = broker
         self._popen = popen
+        # Resolve ``self._popen`` at spawn time, not construction time: tests
+        # (and the wiring harness) replace it on a live service.
+        self._launcher = SshLauncher(
+            launch_provider,
+            broker,
+            popen=lambda *args, **kwargs: self._popen(*args, **kwargs),
+        )
         self._environ = dict(environ if environ is not None else os.environ)
         self._command_timeout = float(command_timeout)
         self._max_password_attempts = max_password_attempts
@@ -607,34 +622,43 @@ class PrivilegedFileService:
         stdin_data: Optional[bytes],
         read_limit: Optional[int] = None,
     ) -> _CommandResult:
-        argv, environment = self._launch_provider.prepare_remote_command_launch(
-            connection_id, remote_command
-        )
-        argv, environment = self._broker.prepare_operation_launch(
-            argv,
-            environment,
+        # The scope belongs to the SFTP session, not to this command: a sudo
+        # prompt raised while editing a file must reach the presenter already
+        # bound to that session, and the session -- not this service -- is
+        # what cancels it. ``owns_scope=False`` says exactly that.
+        with self._launcher.open(
             scope_id=scope_id,
             connection_id=connection_id,
-        )
-        try:
-            process = self._popen(
-                list(argv),
-                stdin=(
-                    subprocess.PIPE
-                    if stdin_data is not None
-                    else subprocess.DEVNULL
-                ),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=dict(environment),
-                start_new_session=True,
-            )
-        except OSError as exc:
-            raise SshPilotError(
-                ErrorCode.SESSION_STARTUP_FAILED,
-                "The SSH command could not be started",
+            owns_scope=False,
+        ) as scope:
+            prepared = scope.prepare(
+                RemoteCommandLaunch(remote_command=remote_command),
                 connection_id=connection_id,
-            ) from exc
+            )
+            process = prepared.spawn(
+                IO_CAPTURE_WITH_STDIN if stdin_data is not None else IO_CAPTURE
+            )
+            result = self._communicate(
+                process, connection_id, stdin_data, read_limit
+            )
+            if result.returncode == 0:
+                # Commit SSH askpass secrets remembered on this borrowed
+                # operation context. The SFTP session already called
+                # ``mark_authenticated`` at handshake time; without a second
+                # commit here, credentials prompted for *this* child stay
+                # pending on a separate askpass context that shares the
+                # session id and would be dropped when the session closes.
+                # (Sudo passwords are stored separately via ``_remember_password``.)
+                scope.authenticated()
+            return result
+
+    def _communicate(
+        self,
+        process: Any,
+        connection_id: ConnectionId,
+        stdin_data: Optional[bytes],
+        read_limit: Optional[int],
+    ) -> _CommandResult:
         try:
             if read_limit is not None:
                 stdout, stderr = self._read_bounded(

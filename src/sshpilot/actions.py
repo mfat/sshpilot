@@ -3,6 +3,7 @@
 import logging
 import os
 import random
+from typing import Iterable, Mapping, NamedTuple, Optional, Sequence, Tuple
 from gi.repository import Gio, Gtk, Adw, GLib, Gdk
 from gettext import gettext as _
 
@@ -69,6 +70,122 @@ def _register_headerbar_visibility_actions(window):
         action.connect('change-state', _on_change_state)
         window.add_action(action)
         window._headerbar_visibility_actions[setting_key] = action
+
+
+class GroupDeletePlan(NamedTuple):
+    """What one group-delete selection resolves to, before any dialog.
+
+    Every tuple is ordered deepest-first so a caller can delete straight
+    through it: a group is always gone before its parent is touched.
+    """
+
+    selected: Tuple[str, ...]
+    """The groups the user picked, minus ids that no longer exist."""
+
+    subtree: Tuple[str, ...]
+    """``selected`` plus every descendant — the cascade delete set."""
+
+    subgroups: Tuple[str, ...]
+    """Descendants the user did not pick explicitly (what a cascade adds)."""
+
+    connections: Tuple[str, ...]
+    """Connections living anywhere in ``subtree``, in list order, deduped."""
+
+
+def _group_depth(groups: Mapping[str, Mapping], group_id: str) -> int:
+    """Nesting depth of ``group_id`` (0 at the top level).
+
+    Guarded against a cycle in ``parent_id``: the projection is daemon-owned
+    and acyclic, but a delete must not hang on a corrupt snapshot.
+    """
+    depth = 0
+    seen = {group_id}
+    parent = (groups.get(group_id) or {}).get('parent_id')
+    while parent and parent in groups and parent not in seen:
+        seen.add(parent)
+        depth += 1
+        parent = (groups.get(parent) or {}).get('parent_id')
+    return depth
+
+
+def plan_group_delete(
+    groups: Mapping[str, Mapping],
+    selected_ids: Sequence[str],
+    known_connection_ids: Optional[Iterable[str]] = None,
+) -> GroupDeletePlan:
+    """Resolve selected group ids into the two delete sets the dialog offers.
+
+    ``groups`` is the :class:`~sshpilot.groups.GroupManager` projection, so a
+    group is a mapping with ``parent_id`` and ``connections``. Selecting both
+    a group and one of its own subgroups is normal (a marquee selection does
+    it); the subtree is a set, so the nested pick is absorbed rather than
+    queued for deletion twice. When ``known_connection_ids`` is given, stale
+    membership entries for connections that no longer exist are dropped, so
+    the counts shown to the user match what will actually be deleted.
+    """
+    known = None if known_connection_ids is None else set(known_connection_ids)
+
+    chosen = []
+    for group_id in selected_ids:
+        if group_id in groups and group_id not in chosen:
+            chosen.append(group_id)
+    chosen_set = set(chosen)
+
+    children: dict = {}
+    for group_id, info in groups.items():
+        parent = (info or {}).get('parent_id')
+        if parent:
+            children.setdefault(parent, []).append(group_id)
+
+    subtree = set()
+    pending = list(chosen)
+    while pending:
+        group_id = pending.pop()
+        if group_id in subtree:
+            continue
+        subtree.add(group_id)
+        pending.extend(
+            child for child in children.get(group_id, ()) if child not in subtree
+        )
+
+    def _deepest_first(ids: Iterable[str]) -> Tuple[str, ...]:
+        # Depth descending, then id, so the order is stable across runs.
+        return tuple(sorted(ids, key=lambda gid: (-_group_depth(groups, gid), gid)))
+
+    ordered = _deepest_first(subtree)
+
+    connections: list = []
+    seen_connections = set()
+    for group_id in ordered:
+        for connection_id in (groups.get(group_id) or {}).get('connections', ()):
+            key = str(connection_id)
+            if key in seen_connections:
+                continue
+            if known is not None and key not in known:
+                continue
+            seen_connections.add(key)
+            connections.append(key)
+
+    return GroupDeletePlan(
+        selected=_deepest_first(chosen_set),
+        subtree=ordered,
+        subgroups=tuple(gid for gid in ordered if gid not in chosen_set),
+        connections=tuple(connections),
+    )
+
+
+def _describe_group_contents(connection_count: int, subgroup_count: int) -> str:
+    """Phrase naming what a group holds, for the delete prompt's body."""
+    parts = []
+    if connection_count:
+        parts.append(_("{count} connection(s)").format(count=connection_count))
+    if subgroup_count:
+        parts.append(_("{count} subgroup(s)").format(count=subgroup_count))
+    if len(parts) == 2:
+        return _("{connections} and {subgroups}").format(
+            connections=parts[0], subgroups=parts[1],
+        )
+    return parts[0] if parts else ""
 
 
 class WindowActions:
@@ -473,28 +590,47 @@ class WindowActions:
             logger.error(f"Failed to open known hosts editor: {e}")
 
     def on_delete_group_action(self, action, param=None):
-        """Handle delete group action."""
+        """Delete the selected group(s), optionally with everything inside.
+
+        Subgroups make "delete this group" ambiguous, so any group that is
+        not empty is confirmed with a choice: delete the group alone and let
+        its contents move up to the parent (what deleting a group has always
+        done), or delete the whole subtree — descendant groups and the
+        connections in them.
+        """
         try:
-            selected_row = getattr(self, '_context_menu_group_row', None)
-            if not selected_row:
-                selected_row = self.connection_list.get_selected_row()
-            if not selected_row or not hasattr(selected_row, 'group_id'):
+            rows = self._get_target_group_rows(prefer_context=True)
+            if not rows:
                 return
 
-            group_id = selected_row.group_id
-            group_info = self.group_manager.groups.get(group_id)
-            if not group_info:
+            groups = self.group_manager.groups
+            selected_ids = []
+            for row in rows:
+                group_id = getattr(row, 'group_id', None)
+                if group_id and group_id in groups and group_id not in selected_ids:
+                    selected_ids.append(group_id)
+            if not selected_ids:
                 return
 
-            all_connections = self.connection_manager.get_connections()
-            connections_dict = {conn.nickname: conn for conn in all_connections}
+            # Membership is recorded by nickname or by id depending on how the
+            # connection was created; both must resolve to the nickname the
+            # delete RPC takes, and anything that resolves to neither is a
+            # stale entry that must not be counted or deleted.
+            nickname_by_key = {}
+            for connection in self.connection_manager.get_connections():
+                nickname = getattr(connection, 'nickname', None)
+                if nickname:
+                    nickname_by_key[str(nickname)] = nickname
+                connection_id = getattr(connection, 'id', None)
+                if connection_id and nickname:
+                    nickname_by_key.setdefault(str(connection_id), nickname)
 
-            actual_connections = [
-                c
-                for c in group_info.get('connections', [])
-                if c in connections_dict
-            ]
-            connection_count = len(actual_connections)
+            plan = plan_group_delete(groups, selected_ids, nickname_by_key)
+            nicknames = [nickname_by_key[key] for key in plan.connections]
+
+            group_count = len(plan.selected)
+            subgroup_count = len(plan.subgroups)
+            connection_count = len(nicknames)
 
             controller = getattr(self.group_manager, 'controller', None)
             if controller is None:
@@ -517,64 +653,34 @@ class WindowActions:
                     ),
                 )
 
-            if connection_count > 0:
+            def _group_steps(group_ids):
+                # Deepest-first, so no step ever deletes a group that a later
+                # step still expects to be somebody's parent.
+                return [
+                    lambda _prev, gid=group_id: controller.client.delete_group(gid)
+                    for group_id in group_ids
+                ]
+
+            heading = _("Delete Group") if group_count == 1 else _("Delete Groups")
+            first_name = (groups.get(plan.selected[0]) or {}).get('name', '')
+
+            if not subgroup_count and not connection_count:
+                if group_count == 1:
+                    body = _(
+                        "Are you sure you want to delete the empty group '{name}'?"
+                    ).format(name=first_name)
+                else:
+                    body = _(
+                        "Are you sure you want to delete the {count} selected "
+                        "empty groups?"
+                    ).format(count=group_count)
+
                 dialog = Adw.MessageDialog(
                     transient_for=self,
                     modal=True,
-                    heading=_("Delete Group"),
-                    body=_(
-                        "The group '{name}' contains {count} connection(s).\n\n"
-                        "What would you like to do with the connections?"
-                    ).format(name=group_info['name'], count=connection_count),
+                    heading=heading,
+                    body=body,
                 )
-
-                dialog.add_response('cancel', _('Cancel'))
-                dialog.add_response('move', _('Move to Parent/Ungrouped'))
-                dialog.add_response('delete_all', _('Delete All Connections'))
-                dialog.set_response_appearance(
-                    'delete_all', Adw.ResponseAppearance.DESTRUCTIVE,
-                )
-                dialog.set_default_response('move')
-
-                def on_response_with_connections(_dialog, response):
-                    if response == 'move':
-                        _run_delete([
-                            lambda _prev: controller.client.delete_group(group_id),
-                        ])
-                    elif response == 'delete_all':
-                        # Delete each connection, then delete the group.
-                        from sshpilot.api.models.connections import (
-                            ConnectionId, DeleteConnectionRequest,
-                        )
-                        steps = []
-                        for nickname in actual_connections:
-                            steps.append(
-                                lambda _prev, nick=nickname: (
-                                    controller.client.delete_connection(
-                                        DeleteConnectionRequest(
-                                            connection_id=ConnectionId(nick),
-                                        )
-                                    )
-                                )
-                            )
-                        steps.append(
-                            lambda _prev: controller.client.delete_group(group_id),
-                        )
-                        _run_delete(steps)
-                    _dialog.destroy()
-
-                dialog.connect('response', on_response_with_connections)
-                dialog.present()
-            else:
-                dialog = Adw.MessageDialog(
-                    transient_for=self,
-                    modal=True,
-                    heading=_("Delete Group"),
-                    body=_("Are you sure you want to delete the empty group '{name}'?").format(
-                        name=group_info['name'],
-                    ),
-                )
-
                 dialog.add_response('cancel', _('Cancel'))
                 dialog.add_response('delete', _('Delete'))
                 dialog.set_response_appearance(
@@ -584,13 +690,77 @@ class WindowActions:
 
                 def on_response_empty_group(_dialog, response):
                     if response == 'delete':
-                        _run_delete([
-                            lambda _prev: controller.client.delete_group(group_id),
-                        ])
+                        _run_delete(_group_steps(plan.selected))
                     _dialog.destroy()
 
                 dialog.connect('response', on_response_empty_group)
                 dialog.present()
+                mark_default_response_visible(dialog)
+                return
+
+            contents = _describe_group_contents(connection_count, subgroup_count)
+            if group_count == 1:
+                body = _(
+                    "The group '{name}' contains {contents}.\n\n"
+                    "Delete the group on its own, moving what it holds to the "
+                    "parent group, or delete everything inside it?"
+                ).format(name=first_name, contents=contents)
+            else:
+                body = _(
+                    "The {count} selected groups contain {contents}.\n\n"
+                    "Delete the groups on their own, moving what they hold to "
+                    "the parent group, or delete everything inside them?"
+                ).format(count=group_count, contents=contents)
+
+            dialog = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=heading,
+                body=body,
+            )
+            dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response(
+                'move',
+                _('Delete Group Only') if group_count == 1
+                else _('Delete Groups Only'),
+            )
+            dialog.add_response(
+                'delete_all',
+                _('Delete Group and Contents') if group_count == 1
+                else _('Delete Groups and Contents'),
+            )
+            dialog.set_response_appearance(
+                'delete_all', Adw.ResponseAppearance.DESTRUCTIVE,
+            )
+            dialog.set_default_response('move')
+
+            def on_response_with_contents(_dialog, response):
+                if response == 'move':
+                    _run_delete(_group_steps(plan.selected))
+                elif response == 'delete_all':
+                    # A connection owns an ssh config block, so the cascade
+                    # deletes connections through the connection API first and
+                    # only then removes the emptied groups.
+                    from sshpilot.api.models.connections import (
+                        ConnectionId, DeleteConnectionRequest,
+                    )
+                    steps = [
+                        lambda _prev, nick=nickname: (
+                            controller.client.delete_connection(
+                                DeleteConnectionRequest(
+                                    connection_id=ConnectionId(nick),
+                                )
+                            )
+                        )
+                        for nickname in nicknames
+                    ]
+                    steps.extend(_group_steps(plan.subtree))
+                    _run_delete(steps)
+                _dialog.destroy()
+
+            dialog.connect('response', on_response_with_contents)
+            dialog.present()
+            mark_default_response_visible(dialog)
 
         except Exception as e:
             logger.error(f"Failed to show delete group dialog: {e}")

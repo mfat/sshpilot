@@ -1561,19 +1561,29 @@ client.broadcast_terminal_input(
   command.
 - **Parameters / return:** `HostInfoRequest`; returns a `HostInfoSummary`
   whose `operation` is `pending`/`running`. `HostInfoProbe.FULL` gathers the
-  complete snapshot; `HostInfoProbe.NETWORK_COUNTERS` reads only byte counters
-  so bandwidth can be sampled cheaply.
+  complete snapshot (and the counter baselines a rate needs).
+  `HostInfoProbe.LIVE` is the cheap repeating sample: network counters, CPU
+  jiffies, memory, and load in one round trip, returned as `live`.
+  `HostInfoProbe.NETWORK_COUNTERS` remains a wire value for bandwidth-only
+  reads; new callers should use `LIVE`.
 - **Errors:** `unsupported_capability` when broadcast execution is
   unavailable, `invalid_request` for a malformed request or unreadable remote
   output, plus connection, authentication, and transport errors.
 - **Ordering / threading:** Returns as soon as the operation is created.
   Completion is observed through `operation.state_changed`, which the daemon
   delivers to the owning client; the result is then read with `get_host_info`.
-  A `FULL` probe may raise an interaction (passphrase, password, MFA); a
-  counters probe is autofill-only and never prompts.
-- **Side effects / security:** The probe only reads. Process names in the
-  returned sockets are visible only to a privileged remote user, and no
-  credential or secret value is included.
+  A `FULL` probe may raise an interaction (passphrase, password, MFA);
+  `LIVE` and `NETWORK_COUNTERS` are autofill-only and never prompt.
+- **Side effects / security:** The probe only reads. Every probe sets
+  `BroadcastExecutionPolicy.require_master` so the daemon holds an OpenSSH
+  multiplex master (`ControlMaster=auto` on the shared ControlPath), even when
+  the `ssh.controlmaster` preference is off or the Host block authored
+  `ControlMaster no`. The interactive `FULL` gather becomes that master;
+  later autofill-only samples ride it instead of re-authenticating — which is
+  how live CPU utilization works when a password was typed but not stored.
+  This is a short-lived ControlMaster, not a PTY or a long-lived Host Info
+  channel. Process names in the returned sockets are visible only to a
+  privileged remote user, and no credential or secret value is included.
 
 ```python
 summary = client.start_host_info(
@@ -1589,8 +1599,10 @@ summary = client.start_host_info(
   the probe has succeeded, the parsed result.
 - **Parameters / return:** `OperationId`; returns a `HostInfoSummary`. A
   succeeded `FULL` probe carries a `HostInfoSnapshot` in `snapshot` and byte
-  counters in `counters`; a counters probe carries `counters` only. A probe
-  that failed carries a `ServiceFailure` in `failure` and no snapshot.
+  counters in `counters`; a `LIVE` probe carries a `LiveSample` in `live`
+  (and the same counters on `counters`); a `NETWORK_COUNTERS` probe carries
+  `counters` only. A probe that failed carries a `ServiceFailure` in
+  `failure` and no snapshot.
 - **Errors:** `operation_not_found` for an unknown or forgotten probe, plus
   transport errors. Finished probes stay readable for a bounded number of
   operations so a completion event can always be followed by a read.
@@ -1848,8 +1860,9 @@ finally:
   separate identity phase review.
 - **Capability / purpose:** `identity.operate`; supervise native `ssh-copy-id`
   deployment and return an operation summary.
-- **Parameters / return:** `DeployKeyRequest`; returns `OperationSummary`, with
-  `IdentityFailure` on terminal failure.
+- **Parameters / return:** `DeployKeyRequest` with exactly one of `key_id`
+  (daemon key store) or `public_key` (a single OpenSSH public-key line);
+  returns `OperationSummary`, with `IdentityFailure` on terminal failure.
 
 <!-- api-method: list_authorized_keys -->
 ## `list_authorized_keys`

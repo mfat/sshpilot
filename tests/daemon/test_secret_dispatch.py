@@ -545,6 +545,29 @@ def test_interactive_secret_methods_use_a_dedicated_command_key():
         ),
         ("secrets.transfer.import", {"source": "/tmp/x.spbk", "options": {}}),
         ("secrets.transfer.preview", {"source": "/tmp/x.spbk"}),
+        # The SSH-server destination waits on interactions too: preview and
+        # import collect the backup passphrase for an encrypted archive, and
+        # all three open an SSH connection whose own auth prompts run through
+        # the broker. On the configuration key that wait head-of-line blocked
+        # secrets.state.get -- which the frontend issues while the passphrase
+        # dialog is open -- so the dialog never resolved and the import hung.
+        (
+            "secrets.transfer.list_ssh",
+            {"connection_id": "srv", "remote_dir": "~/bk"},
+        ),
+        (
+            "secrets.transfer.preview_ssh",
+            {"connection_id": "srv", "remote_dir": "~/bk", "entry_id": "e1"},
+        ),
+        (
+            "secrets.transfer.import_ssh",
+            {
+                "connection_id": "srv",
+                "remote_dir": "~/bk",
+                "entry_id": "e1",
+                "options": {},
+            },
+        ),
     ]
     for method, params in interactive:
         result = dispatcher.dispatch(_envelope(method, params), _state())
@@ -653,8 +676,32 @@ def test_preview_bitwarden_and_ssh_delegate_to_service():
         _state(),
     )
     assert r2.operation()["kind"] == "ssh"
+    # The client id rides along so an encrypted archive's passphrase prompt has
+    # somewhere to go.
     service.preview_ssh_backup.assert_called_once_with(
-        connection_id="srv", remote_dir="~/bk", entry_id="e2")
+        connection_id="srv", remote_dir="~/bk", entry_id="e2",
+        owner_client_id="client-1")
+
+
+def test_list_ssh_backups_delegates_with_the_requesting_client():
+    """Listing connects, so it can raise the server's own auth prompts.
+
+    Without the caller's id the daemon would authenticate on behalf of an
+    identity no frontend can see, and the prompt would expire unanswered.
+    """
+    dispatcher, service = _dispatcher()
+    service.list_ssh_backups.return_value = []
+
+    result = dispatcher.dispatch(
+        _envelope(
+            "secrets.transfer.list_ssh",
+            {"connection_id": "srv", "remote_dir": "~/bk"},
+        ),
+        _state(),
+    )
+    assert result.operation() == []
+    service.list_ssh_backups.assert_called_once_with(
+        connection_id="srv", remote_dir="~/bk", owner_client_id="client-1")
 
 
 def test_preview_params_are_validated():

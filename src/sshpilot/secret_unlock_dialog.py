@@ -11,7 +11,10 @@ password in a dialog.
 It owns the user-facing messaging for the unlock interaction:
 - if the backend has no authenticated account, the daemon reports ``login_required``
   and this module opens the Bitwarden sign-in wizard instead of a doomed prompt;
-- on an unavailable backend it shows the unavailable notice.
+- on an unavailable backend it shows the unavailable notice;
+- when the vault rejects the master password it says so, rather than reusing the
+  unavailable notice (the daemon reports both as ``backend_unavailable``), and
+  offers another attempt without resolving the in-flight unlock.
 
 ``on_done(success: bool)`` is purely for flow control (success only when actually
 unlocked). The controller call runs off the main thread (it blocks while the daemon
@@ -64,7 +67,10 @@ def _friendly_backend_name(backend):
                 "keepassxc": "KeePassXC", "rbw": "rbw"}.get(name)
     if friendly:
         return friendly
-    return name.replace("-", " ").title() if name else _("vault")
+    # "none" is the daemon's placeholder for "no backend selected", not a name.
+    if not name or name == "none":
+        return _("vault")
+    return name.replace("-", " ").title()
 
 
 def _message(parent, heading, body, on_closed=None):
@@ -195,6 +201,50 @@ def _prompt_unavailable_backend(parent, backend):
     )
 
 
+def _prompt_wrong_master_password(parent, backend, on_response):
+    """Tell the user the master password was rejected, and offer another try.
+
+    The daemon answers a failed unlock with the same ``backend_unavailable`` kind it
+    uses for a backend that cannot run at all, so a mistyped master password used to
+    surface as “… is not available on this system” (issue #1245). Only the result's
+    ``vault_unlock_failed`` message code tells the two apart.
+
+    A typo deserves a second attempt, so this asks rather than merely informs:
+    ``on_response(True)`` re-runs the unlock (the caller keeps the interaction open
+    meanwhile, so the connection does not start unlocked behind the dialog), and
+    ``on_response(False)`` gives up. It fires exactly once — including when the
+    dialog is dismissed with Escape, which resolves to the close response."""
+    heading = _("Could not unlock {name}").format(name=_friendly_backend_name(backend))
+    body = _(
+        "The master password was not accepted. Passwords and passphrases will not "
+        "be stored or autofilled until the vault is unlocked."
+    )
+    if hasattr(Adw, 'AlertDialog'):
+        dialog = Adw.AlertDialog(heading=heading, body=body)
+    else:
+        dialog = Adw.MessageDialog(
+            transient_for=parent_window(parent), modal=True, heading=heading, body=body,
+        )
+    dialog.add_response('dismiss', _("Not now"))
+    dialog.add_response('retry', _("Try again"))
+    dialog.set_default_response('retry')
+    dialog.set_close_response('dismiss')
+
+    answered = [False]
+
+    def _respond(_dlg, response):
+        if answered[0]:
+            return
+        answered[0] = True
+        on_response(response == 'retry')
+
+    dialog.connect('response', _respond)
+    if hasattr(Adw, 'AlertDialog'):
+        dialog.present(parent)
+    else:
+        dialog.present()
+
+
 def _prompt_not_signed_in(parent, backend):
     """Tell the user the selected vault is installed but not signed in, and offer sign-in."""
     name = (_backend_name(backend) or "").strip().lower()
@@ -301,19 +351,28 @@ def _unlock_with_controller(controller, state):
 
 
 def _unlock_result_outcome(result):
-    """Map a daemon ``SecretUnlockResult`` to ``(ok, notice)``.
+    """Map a daemon ``SecretUnlockResult`` to ``(ok, notice, backend)``.
 
-    ``notice`` is ``"login"`` (sign-in needed), ``"unavailable"`` (backend cannot
-    run), or ``None``. An ``interaction_required`` outcome is a user cancel and maps
-    to a plain failure."""
+    ``notice`` is ``"login"`` (sign-in needed), ``"wrong_password"`` (the vault
+    rejected the master password), ``"unavailable"`` (backend cannot run), or
+    ``None``. A rejected password arrives as ``backend_unavailable`` too and is
+    told apart only by its ``vault_unlock_failed`` message code. An
+    ``interaction_required`` outcome is a user cancel and maps to a plain failure.
+
+    ``backend`` is the daemon's own name for the backend it tried, so the notice can
+    name it (and route to its remedy) instead of falling back to a generic "vault"."""
     kind = getattr(getattr(result, "kind", None), "value", None)
+    backend = getattr(result, "backend", "") or ""
     if kind == "unlocked":
-        return True, None
+        return True, None, backend
     if kind == "login_required":
-        return False, "login"
+        return False, "login", backend
     if kind == "backend_unavailable":
-        return False, "unavailable"
-    return False, None
+        code = getattr(getattr(result, "message_code", None), "value", None)
+        if code == "vault_unlock_failed":
+            return False, "wrong_password", backend
+        return False, "unavailable", backend
+    return False, None, backend
 
 
 # Bound/interval for riding out a busy controller, matching the connect gate in
@@ -480,6 +539,7 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
         def _worker(set_status):
             ok = False
             notice = None
+            result_backend = ""
             state = None
             if target is None:
                 # The daemon owns the decision; when it says no unlock is needed the
@@ -494,28 +554,45 @@ def prompt_unlock(parent, *, backend=None, on_done=None):
                     ok = True
             if not ok:
                 try:
-                    ok, notice = _unlock_result_outcome(
+                    ok, notice, result_backend = _unlock_result_outcome(
                         _unlock_with_controller(controller, state)
                     )
                 except Exception as exc:
                     logger.error("Secret backend unlock failed: %s", exc)
-            GLib.idle_add(_after_unlock, ok, notice)
+            GLib.idle_add(_after_unlock, ok, notice, result_backend)
 
-        def _after_unlock(ok, notice):
+        def _after_unlock(ok, notice, result_backend):
             # Sequence everything off the spinner's close so the terminal the caller opens
             # (via on_done -> retry()) never appears behind a closing dialog.
             close, spin = _spinner[0] if _spinner[0] is not None else (lambda: None, None)
+
+            # The daemon names the backend it actually tried; the shim's name is only
+            # the fallback (on the selected-backend path there is no shim at all).
+            notice_backend = result_backend or backend_name
 
             if ok:
                 on_spinner_closed = lambda *_a: _finish(True)
             elif notice == "login":
                 def _show_login_notice(*_a):
-                    _prompt_not_signed_in(parent, backend_name)
+                    _prompt_not_signed_in(parent, notice_backend)
                     return _finish(False)
                 on_spinner_closed = _show_login_notice
+            elif notice == "wrong_password":
+                def _show_wrong_password_notice(*_a):
+                    # Retrying re-enters _run_unlock without finishing: the unlock
+                    # stays in flight (riders keep riding it) and the caller's retry()
+                    # doesn't open a terminal behind the second password prompt.
+                    def _respond(retry):
+                        if retry:
+                            _run_unlock()
+                        else:
+                            _finish(False)
+                    _prompt_wrong_master_password(parent, notice_backend, _respond)
+                    return False
+                on_spinner_closed = _show_wrong_password_notice
             elif notice == "unavailable":
                 def _show_unavailable_notice(*_a):
-                    _prompt_unavailable_backend(parent, backend_name)
+                    _prompt_unavailable_backend(parent, notice_backend)
                     return _finish(False)
                 on_spinner_closed = _show_unavailable_notice
             else:

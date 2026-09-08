@@ -9,6 +9,12 @@ leaves its section empty instead of aborting the script.
 Sections are delimited by ``===NAME===`` markers.  BusyBox and OpenWrt hosts
 lack ``lscpu``, ``ss``, ``who`` and coreutils ``df``, so each section names a
 fallback that the parser normalises to the same DTO shape.
+
+Two sections are read by both probes on purpose.  ``STAT`` and ``NET_DEV`` are
+cumulative counters, and a rate is a difference between two readings of them:
+the full gather takes the baseline so the *first* live sample already has
+something to subtract from, instead of showing "since boot" as if it were a
+current rate.
 """
 
 from __future__ import annotations
@@ -29,15 +35,28 @@ FULL_PROBE_COMMAND = (
     'echo "===BOOT_TIME==="; who -b 2>/dev/null;'
     'echo "===UPTIME_SINCE==="; uptime -s 2>/dev/null;'
     'echo "===LOADAVG==="; cat /proc/loadavg 2>/dev/null;'
+    # Cumulative CPU jiffies, per core and in aggregate, plus the context
+    # switch and interrupt counters.  A single reading is not a utilization:
+    # it is the baseline the first live sample differences against.
+    'echo "===STAT==="; cat /proc/stat 2>/dev/null;'
     'echo "===NPROC==="; nproc 2>/dev/null;'
     'echo "===LSCPU==="; lscpu 2>/dev/null;'
     'echo "===CPUINFO==="; cat /proc/cpuinfo 2>/dev/null;'
     'echo "===MEMINFO==="; cat /proc/meminfo 2>/dev/null;'
     'echo "===DF==="; df -T -B1 2>/dev/null || df 2>/dev/null;'
+    # Inodes are a second way to fill a filesystem: a host can be at 3% of its
+    # bytes and out of inodes, at which point writes fail with ENOSPC and the
+    # usage bar looks fine.
+    'echo "===DF_INODES==="; df -i -T 2>/dev/null || df -i 2>/dev/null;'
+    # Mount options, so a read-only or noatime mount says so.
+    'echo "===MOUNTS==="; cat /proc/self/mounts 2>/dev/null;'
     # Pressure stall information: the share of the last 10/60/300 seconds
-    # spent waiting on I/O.  Absent before Linux 4.20 and on builds without
-    # CONFIG_PSI, which is why an absent reading stays absent.
+    # spent waiting on I/O, on CPU, or on memory.  Absent before Linux 4.20
+    # and on builds without CONFIG_PSI, which is why an absent reading stays
+    # absent.  /proc/pressure/cpu publishes only a "some" line.
     'echo "===IO_PRESSURE==="; cat /proc/pressure/io 2>/dev/null;'
+    'echo "===CPU_PRESSURE==="; cat /proc/pressure/cpu 2>/dev/null;'
+    'echo "===MEM_PRESSURE==="; cat /proc/pressure/memory 2>/dev/null;'
     'echo "===NET_DEV==="; cat /proc/net/dev 2>/dev/null;'
     'echo "===IP_ADDR==="; ip -o addr show 2>/dev/null;'
     'echo "===IP_LINK==="; ip -o link show 2>/dev/null;'
@@ -57,6 +76,11 @@ FULL_PROBE_COMMAND = (
     # second on every gather.
     'echo "===TOP==="; ps -eo pcpu,pmem,comm --sort=-pcpu >/dev/null 2>&1'
     ' || top -bn1 2>/dev/null | head -n 16;'
+    # One state letter and one thread count per process.  procps prints both;
+    # a ps without -o leaves the section empty and the counts fall back to
+    # procs_running/procs_blocked from STAT, which every Linux publishes.
+    'echo "===PROC_STATES==="; ps -eo stat=,nlwp= 2>/dev/null || ps -eo stat= 2>/dev/null;'
+    'echo "===PID_MAX==="; cat /proc/sys/kernel/pid_max 2>/dev/null;'
     # systemd only.  A host running procd, OpenRC or sysvinit reports nothing
     # here, which reads as "no failed units" -- the same as a healthy host,
     # because neither has any to report.
@@ -78,8 +102,20 @@ FULL_PROBE_COMMAND = (
     'echo "===END===";'
 )
 
-#: The bandwidth-sampling probe.  Deliberately a single ``cat`` so repeated
-#: sampling costs one small read rather than a full gather.
+#: The live-sampling probe.  Four small reads in one round trip, cheap enough
+#: to repeat every couple of seconds: the counters a rate needs, plus the two
+#: instantaneous readings (memory, load) the dialog keeps on screen.
+LIVE_PROBE_COMMAND = (
+    'echo "===NET_DEV==="; cat /proc/net/dev 2>/dev/null;'
+    'echo "===STAT==="; cat /proc/stat 2>/dev/null;'
+    'echo "===MEMINFO==="; cat /proc/meminfo 2>/dev/null;'
+    'echo "===LOADAVG==="; cat /proc/loadavg 2>/dev/null;'
+    'echo "===END===";'
+)
+
+#: The original bandwidth-only probe.  Superseded by :data:`LIVE_PROBE_COMMAND`
+#: and kept because ``HostInfoProbe.NETWORK_COUNTERS`` is a wire value: removing
+#: it would narrow the protocol for no gain.
 NETWORK_COUNTERS_COMMAND = (
     'echo "===NET_DEV==="; cat /proc/net/dev 2>/dev/null;'
     'echo "===END===";'

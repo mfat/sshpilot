@@ -55,6 +55,9 @@ class _Completed:
         self.returncode = returncode
         self.stdout = io.StringIO(stdout)
         self.stderr = stderr
+        # Key deployment is daemon-owned and now reaches the process registry,
+        # which identifies a child by pid and creation time.
+        self.pid = 4244
 
     def communicate(self, *_args, **_kwargs):
         if isinstance(self.stdout, io.StringIO):
@@ -96,7 +99,7 @@ class _Provider:
     def prepare_copy_id_launch(self, connection_id, public_path, *, force=False):
         return ["ssh-copy-id", "-i", public_path, "alice@example.test"], {"PATH": "/usr/bin"}
 
-    def prepare_remote_command_launch(self, connection_id, command):
+    def prepare_remote_command_launch(self, connection_id, command, *, interaction_policy="broker"):
         return ["ssh", "alice@example.test", command], {"PATH": "/usr/bin"}
 
 
@@ -173,7 +176,12 @@ def test_deploy_interaction_scope_is_public_operation_id(tmp_path):
         service._operations.shutdown()
 
 
-def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path):
+def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path, monkeypatch):
+    recorded = []
+    monkeypatch.setattr(
+        "sshpilot.daemon.ssh_launch.record_owned_process_or_abandon",
+        lambda process, **kwargs: recorded.append(kwargs),
+    )
     broker = _RecordingBroker()
     service = _service(
         tmp_path,
@@ -182,7 +190,7 @@ def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path):
         ),
         broker=broker,
     )
-    # A real OperationHandle so ``_run_capture`` can set/clear the process.
+    # A real OperationHandle so the remote spawn can set/clear the process.
     handle = OperationHandle(OperationRuntime(), OperationId("operation-42"))
     result = service._run_remote_text(
         ConnectionId("HostAlias"),
@@ -193,7 +201,9 @@ def test_authorized_key_removal_scopes_prompts_to_operation_id(tmp_path):
     assert "ssh-ed25519" in result
     assert broker.calls[0][0] == "prepare"
     assert str(broker.calls[0][1]) == "operation-42"
-    assert broker.calls[-1][0] == "cancel_session"
+    kinds = [call[0] for call in broker.calls]
+    assert kinds.index("mark_authenticated") < kinds.index("cancel_session")
+    assert recorded and recorded[0]["kind"] == "helper"
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +332,8 @@ def test_real_broker_password_flow_reaches_deploy_operation(tmp_path):
         def __init__(self):
             self.returncode = None
             self.stdout = self._lines()
+            # Recorded in the process registry like every daemon-owned child.
+            self.pid = 4245
 
         def _lines(self):
             yield "Trying to install the key...\n"
@@ -433,6 +445,8 @@ def test_full_server_password_interaction_visible_to_owner_client(tmp_path):
         def __init__(self):
             self.returncode = None
             self.stdout = self._lines()
+            # Recorded in the process registry like every daemon-owned child.
+            self.pid = 4245
 
         def _lines(self):
             yield "Trying to install the key...\n"

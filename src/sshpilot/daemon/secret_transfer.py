@@ -15,12 +15,15 @@ path rebasing, merge/non-destructive import and destination handling are all
   driven here through a small GTK-free ``Config``-compatible shim;
 * :mod:`sshpilot.backup_archive` — the ``.spbk`` container and its
   scrypt + AES-256-GCM encryption;
-* :mod:`sshpilot.backup_backends` — the Bitwarden backup-note destination;
-* :mod:`sshpilot.credential_manager` / :mod:`sshpilot.credential_model` — the
-  normalized, eager credential enumeration and the ``credential_to_spec`` save
-  path used by every normal credential write;
-* :mod:`sshpilot.secret_storage` — the authoritative ``SecretManager``
-  (the daemon shares the process-wide singleton).
+* :mod:`sshpilot.backup_backends` — the backup destinations themselves;
+* :mod:`sshpilot.credential_manager` — the normalized, eager credential
+  enumeration and the save path used by every normal credential write.
+
+The SSH-server destination stores nothing itself: it asks
+:mod:`sshpilot.daemon.backup_transport` for somewhere to put bytes, which
+delegates to the SFTP and transfer runtimes the file manager uses and falls
+back to the one-shot command service behind Host Info. No ssh command line or
+credential lookup is composed here.
 
 Restore is **non-destructive exactly like the GUI path** (``merge``): a secret
 already present in the selected backend is left untouched, an existing
@@ -33,7 +36,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -149,8 +151,17 @@ class _HeadlessBackupConfig:
     def config_data(self, value: Dict[str, Any]) -> None:
         self._data = dict(value) if isinstance(value, dict) else {}
 
-    def get_ssh_config(self) -> Optional[str]:
-        return None
+    def get_ssh_config(self) -> Dict[str, Any]:
+        """The effective app-level ``ssh.*`` preferences, same shape as ``Config``.
+
+        Part of the ``Config`` surface this shim stands in for. Remote transports
+        no longer read it -- they delegate to the launch provider, which has the
+        daemon's own settings view -- but a ``Config`` stand-in that answered
+        ``None`` here once broke every SSH-server backup, so it stays correct.
+        """
+        from sshpilot.core.settings import ssh_config_from_settings
+
+        return ssh_config_from_settings(self.get_setting)
 
 
 class _CallableConnectionStore:
@@ -255,6 +266,8 @@ def daemon_export_backup(
     connections_source: Optional[Any] = None,
     passphrase: Optional[str] = None,
     settings_path: Optional[Path | str] = None,
+    transport: Any = None,
+    client_id: Any = None,
     connection_store_snapshot: Optional[Any] = None,
 ) -> SecretTransferResult:
     """Export the full backup (settings, SSH config, known_hosts, secrets,
@@ -289,6 +302,7 @@ def daemon_export_backup(
             manager, ssh_dest, views, options, passphrase=passphrase,
             connections_source=connections_source, settings_path=settings_path,
             connection_store_snapshot=connection_store_snapshot,
+            transport=transport, client_id=client_id,
         )
 
     if _is_bitwarden_destination(destination):
@@ -480,6 +494,8 @@ def _daemon_export_to_ssh(
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
     connection_store_snapshot: Optional[Any] = None,
+    transport: Any = None,
+    client_id: Any = None,
 ) -> SecretTransferResult:
     """Export the backup to a ``.spbk`` file on one of the user's SSH servers.
 
@@ -489,9 +505,6 @@ def _daemon_export_to_ssh(
     connection_id, remote_dir = ssh_dest
     from sshpilot.backup_backends import BackupError, SSHServerBackupBackend
 
-    runner = _DaemonSshRunner(
-        manager, connections_source, connection_id, settings_path or _settings_path()
-    )
     name = "sshpilot_backup_{}.spbk".format(
         datetime.now().strftime("%Y%m%d_%H%M%S")
     )
@@ -500,12 +513,13 @@ def _daemon_export_to_ssh(
             settings_path or _settings_path(),
             connection_store_snapshot=connection_store_snapshot,
         )
-        mgr.export_to_backend(
-            SSHServerBackupBackend(runner, remote_dir, item_name=name),
-            connections=views,
-            passphrase=passphrase,
-            options=options,
-        )
+        with _backup_store(transport, connection_id, client_id) as store:
+            mgr.export_to_backend(
+                SSHServerBackupBackend(store, remote_dir, item_name=name),
+                connections=views,
+                passphrase=passphrase,
+                options=options,
+            )
     except BackupError as exc:
         logger.error("SSH server backup export failed: %s", exc)
         return SecretTransferResult(
@@ -879,6 +893,17 @@ def daemon_preview_bitwarden_backup(
     )
 
 
+def _looks_like_passphrase_failure(exc: BaseException) -> bool:
+    """Whether *exc* from ``read_spbk`` means "needs (a different) passphrase".
+
+    ``backup_archive`` signals both a missing and a wrong passphrase with a
+    plain error; the caller uses this to re-prompt instead of reporting an
+    unreadable backup.
+    """
+    text = str(exc).lower()
+    return "passphrase" in text or "encrypted" in text or "decrypt" in text
+
+
 def daemon_preview_ssh_backup(
     manager: Any,
     *,
@@ -887,60 +912,111 @@ def daemon_preview_ssh_backup(
     entry_id: str,
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
-) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]]]:
-    """Preview one SSH-stored backup: included categories (metadata only)."""
+    transport: Any = None,
+    client_id: Any = None,
+    passphrase: Optional[str] = None,
+    archive_path: Optional[str] = None,
+) -> Tuple[SecretTransferPreview, Optional[Dict[str, Any]], Optional[str]]:
+    """Preview one SSH-stored backup: included categories (metadata only).
+
+    Mirrors :func:`daemon_preview_backup` for a remote archive. An encrypted one
+    reports ``encrypted=True`` without an error so the service can collect a
+    passphrase and ask again. The decrypted manifest is cached by the caller, so
+    the import that follows never re-prompts and never downloads the archive a
+    second time.
+
+    Returns ``(preview, manifest, staged_path)``. ``staged_path`` is the archive
+    this call downloaded and deliberately kept, and it is non-``None`` in exactly
+    one case: an encrypted archive reached without a passphrase. Pass it back as
+    ``archive_path`` on the retry so the passphrase round trip costs no second
+    connect and no second download -- an archive that only just fitted under the
+    exec transport's capture cap would otherwise be pulled across twice. The
+    caller owns that file and must delete it; a path it supplies is never
+    deleted here.
+    """
+    import tempfile
+
+    from sshpilot.backup_archive import spbk_is_encrypted
     from sshpilot.backup_backends import SSHServerBackupBackend
 
-    runner = _DaemonSshRunner(
-        manager, connections_source, connection_id, settings_path or _settings_path()
-    )
-    backend = SSHServerBackupBackend(runner, remote_dir)
+    def _failed(code: SecretTransferMessageCode, *, encrypted: bool = False):
+        return (
+            SecretTransferPreview(kind="ssh", encrypted=encrypted, error=_message(code)),
+            None,
+            None,
+        )
+
+    staged = archive_path if archive_path and os.path.exists(archive_path) else None
+    tmp_path = staged
+    if tmp_path is None:
+        with tempfile.NamedTemporaryFile(suffix=".spbk", delete=False) as tmp:
+            tmp_path = tmp.name
+    # Only a file this call created is ours to remove.
+    owned = staged is None
+    keep = False
     try:
-        entries = backend.list_exports()
-    except Exception as exc:
-        logger.error("SSH backup listing failed: %s", exc)
-        return (
-            SecretTransferPreview(
-                kind="ssh",
-                error=_message(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED),
-            ),
-            None,
-        )
-    entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
-    if entry is None:
-        return (
-            SecretTransferPreview(
-                kind="ssh",
-                error=_message(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND),
-            ),
-            None,
-        )
-    try:
-        manifest = backend.read(entry)
-    except Exception as exc:
-        logger.error("SSH backup read failed: %s", exc)
-        return (
-            SecretTransferPreview(
-                kind="ssh",
-                error=_message(SecretTransferMessageCode.SSH_BACKUP_READ_FAILED),
-            ),
-            None,
-        )
-    if not isinstance(manifest, dict):
-        return (
-            SecretTransferPreview(
-                kind="ssh",
-                error=_message(SecretTransferMessageCode.INVALID_SSHPILOT_BACKUP),
-            ),
-            None,
+        if owned:
+            try:
+                with _backup_store(transport, connection_id, client_id) as store:
+                    backend = SSHServerBackupBackend(store, remote_dir)
+                    entries = backend.list_exports()
+                    entry = next(
+                        (e for e in entries if str(getattr(e, "id", "")) == entry_id),
+                        None,
+                    )
+                    if entry is None:
+                        return _failed(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND)
+                    try:
+                        backend.download(entry, tmp_path)
+                    except Exception as exc:
+                        logger.error("SSH backup read failed: %s", exc)
+                        return _failed(
+                            SecretTransferMessageCode.SSH_BACKUP_READ_FAILED
+                        )
+            except Exception as exc:
+                logger.error("SSH backup listing failed: %s", exc)
+                return _failed(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED)
+
+        try:
+            encrypted = bool(spbk_is_encrypted(tmp_path))
+        except Exception:
+            encrypted = False
+        if encrypted and not passphrase:
+            # No error: the frontend reads this as "ask for the passphrase".
+            # Hand the downloaded archive back so the retry can skip the fetch.
+            keep = owned
+            return (
+                SecretTransferPreview(kind="ssh", encrypted=True),
+                None,
+                tmp_path if owned else archive_path,
+            )
+
+        manifest = _read_manifest(tmp_path, passphrase)
+    finally:
+        if owned and not keep:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    if manifest is None:
+        return _failed(
+            SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+            if encrypted
+            else SecretTransferMessageCode.INVALID_SSHPILOT_BACKUP,
+            encrypted=encrypted,
         )
     settings_path = settings_path or _settings_path()
     return (
         SecretTransferPreview(
-            kind="ssh", included=_included_categories(settings_path, manifest)
+            kind="ssh",
+            encrypted=encrypted,
+            included=_included_categories(settings_path, manifest),
         ),
         manifest,
+        None,
     )
+
 
 
 def daemon_list_bitwarden_backups(manager: Any) -> List[Dict[str, str]]:
@@ -1109,163 +1185,44 @@ def daemon_import_bitwarden_backup(
     )
 
 
-class _DaemonSshRunner:
-    """One-shot ``ssh <host> <command>`` runner for the SSH-server backup
-    destination, driven entirely inside the daemon.
+def _backup_store(transport: Any, connection_id: str, client_id: Any):
+    """Open the best remote store for *connection_id* as a context manager.
 
-    Reuses the same native-auth argv composition as the file manager
-    (``ssh_connection_builder.build_ssh_connection`` + headless askpass env) so
-    connection passwords/passphrases are resolved from the daemon's own secret
-    manager and never cross into the frontend. The connection record is resolved
-    by id/nickname from ``connections_source`` (the daemon repository).
+    ``transport`` is the daemon's :class:`~sshpilot.daemon.backup_transport.BackupTransportProvider`
+    -- SFTP first, one-shot commands second. Backup code never constructs an ssh
+    command; it asks the provider for somewhere to put bytes.
+
+    ``client_id`` is the frontend that asked for the backup. It owns whatever
+    the provider opens, which is what lets the connect's password, passphrase
+    and host-key prompts reach that frontend; without it the daemon would
+    authenticate on behalf of nobody and simply wait out the prompt.
     """
+    from contextlib import contextmanager
 
-    def __init__(
-        self,
-        manager: Any,
-        connections_source: Any,
-        connection_id: str,
-        settings_path: Path | str,
-    ) -> None:
-        self._manager = manager
-        self._connections_source = connections_source
-        self._connection_id = connection_id
-        self._settings_path = settings_path
+    from sshpilot.backup_backends import BackupError
 
-    def _resolve_record(self):
-        records: Iterable[Any] = ()
-        if callable(self._connections_source):
-            try:
-                records = list(self._connections_source())
-            except Exception:
-                records = []
-        elif self._connections_source is not None:
-            try:
-                records = list(self._connections_source)
-            except Exception:
-                records = []
-        wanted = str(self._connection_id)
-        for record in records:
-            rid = str(getattr(record, "id", "") or "")
-            nickname = str(getattr(record, "nickname", "") or "")
-            if rid == wanted or nickname == wanted:
-                return record
-        return None
-
-    def _manager_shim(self, view):
-        """Duck-typed ``connection_manager`` surface for the SSH builder's
-        password/passphrase lookups, backed by the daemon's secret manager."""
-        manager = self._manager
-
-        class _Shim:
-            # Production daemon launches must never stage secrets into the
-            # compatibility askpass environment; the interaction broker owns
-            # the child credential channel.
-            secret_lookup_authoritative = True
-
-            def get_connection_password(self, _conn):
-                try:
-                    from sshpilot.credential_model import (
-                        canonical_password_host,
-                        password_host_candidates,
-                    )
-                    from sshpilot.secret_storage import password_spec
-
-                    user = (getattr(view, "username", "") or "").strip()
-                    if not user:
-                        return None
-                    candidates = list(password_host_candidates(view) or [])
-                    canonical = canonical_password_host(view)
-                    if canonical and canonical not in candidates:
-                        candidates.append(canonical)
-                    for host in candidates:
-                        if not host:
-                            continue
-                        value = manager.lookup(password_spec(host, user))
-                        if value:
-                            return value
-                except Exception:
-                    pass
-                return None
-
-            def get_key_passphrase(self, key_path):
-                try:
-                    from sshpilot.secret_storage import key_passphrase_spec
-
-                    value = manager.lookup_in_keyring(key_passphrase_spec(key_path))
-                    return value
-                except Exception:
-                    return None
-
-            def prepare_key_for_connection(self, key_path, *, force=True, lifetime=0):
-                try:
-                    from sshpilot.askpass_utils import ensure_key_in_agent
-
-                    return bool(ensure_key_in_agent(
-                        key_path, force=force, lifetime=lifetime))
-                except Exception:
-                    return False
-
-        return _Shim()
-
-    def _argv_env(self, command: str):
-        from sshpilot.daemon.connection_launch_provider import HeadlessConnectionView
-        from sshpilot.ssh_connection_builder import (
-            ConnectionContext,
-            apply_headless_askpass_env,
-            build_ssh_connection,
-        )
-
-        record = self._resolve_record()
-        if record is None:
-            raise LookupError(f"The SSH server connection {self._connection_id!r} was not found")
-        view = HeadlessConnectionView(record)
-        app_config = _settings_shim(self._settings_path)
-        ctx = ConnectionContext(
-            connection=view,
-            connection_manager=self._manager_shim(view),
-            config=app_config,
-            command_type="ssh",
-            native_mode=True,
-            extra_args=[],
-            remote_command=command,
-        )
-        prepared = build_ssh_connection(ctx)
-        argv = list(prepared.command or ())
-        env = apply_headless_askpass_env(
-            prepared.env,
-            view,
-            session_password=getattr(prepared, "password", None) or None,
-        )
-        return argv, env
-
-    def run_command(
-        self,
-        command: str,
-        *,
-        input: Optional[bytes] = None,
-        timeout: float = 60,
-    ):
-        try:
-            argv, env = self._argv_env(command)
-        except Exception as exc:
-            logger.debug("SSH backup runner argv failed: %s", exc)
-            return -1, b"", str(exc)
-        try:
-            proc = subprocess.run(
-                argv, env=env, input=input, capture_output=True, timeout=timeout,
+    @contextmanager
+    def _opened():
+        if transport is None:
+            raise BackupError(
+                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
+                diagnostic="no remote backup transport is configured",
             )
-            stderr = (proc.stderr or b"").decode("utf-8", "replace")
-            return proc.returncode, (proc.stdout or b""), stderr
-        except subprocess.TimeoutExpired:
-            return -1, b"", "Command timed out"
-        except Exception as exc:
-            return -1, b"", str(exc)
+        if client_id is None:
+            raise BackupError(
+                SecretTransferMessageCode.SSH_SERVER_CONNECTION_FAILED,
+                diagnostic="no client owns this backup",
+            )
+        store = transport.open(connection_id, client_id=client_id)
+        try:
+            yield store
+        finally:
+            try:
+                store.close()
+            except Exception:  # pragma: no cover - best effort teardown
+                logger.debug("Closing the backup store failed", exc_info=True)
 
-
-def _settings_shim(settings_path: Path | str):
-    """A minimal ``get_setting`` surface for the SSH builder (read-only)."""
-    return _HeadlessBackupConfig(settings_path)
+    return _opened()
 
 
 def _ssh_server_destination(destination: str) -> Optional[Tuple[str, str]]:
@@ -1288,21 +1245,32 @@ def daemon_list_ssh_backups(
     remote_dir: str,
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
+    transport: Any = None,
+    client_id: Any = None,
 ) -> List[Dict[str, str]]:
     """List the sshPilot backups stored in ``remote_dir`` on the given server.
 
     Metadata only (id/name/date) — the archive bytes never leave the daemon.
-    """
-    from sshpilot.backup_backends import SSHServerBackupBackend
 
-    runner = _DaemonSshRunner(
-        manager, connections_source, connection_id, settings_path or _settings_path()
-    )
+    Raises :class:`BackupError` when the server could not be reached or the
+    listing was refused. An *empty* directory is not a failure and comes back as
+    ``[]`` — the stores already draw that line. Swallowing everything into ``[]``
+    told a user who had just cancelled the login prompt (or whose host key was
+    rejected) that the server holds no backups.
+    """
+    from sshpilot.backup_backends import BackupError, SSHServerBackupBackend
+
     try:
-        entries = SSHServerBackupBackend(runner, remote_dir).list_exports()
-    except Exception:
-        logger.debug("SSH backup listing failed", exc_info=True)
-        return []
+        with _backup_store(transport, connection_id, client_id) as store:
+            entries = SSHServerBackupBackend(store, remote_dir).list_exports()
+    except BackupError:
+        raise
+    except Exception as exc:
+        logger.error("SSH backup listing failed: %s", exc)
+        raise BackupError(
+            SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED,
+            diagnostic=str(exc),
+        ) from exc
     return [
         {"id": getattr(e, "id", ""), "name": getattr(e, "name", ""),
          "date": getattr(e, "date", "") or ""}
@@ -1319,8 +1287,11 @@ def daemon_import_ssh_backup(
     options: Optional[Dict[str, Any]] = None,
     connections_source: Any = None,
     settings_path: Optional[Path | str] = None,
+    transport: Any = None,
+    client_id: Any = None,
     manifest: Optional[Dict[str, Any]] = None,
     connection_store_restore: Optional[Any] = None,
+    passphrase: Optional[str] = None,
 ) -> SecretTransferResult:
     """Download one SSH-stored backup and restore it (merge by default, non-destructive).
 
@@ -1333,35 +1304,45 @@ def daemon_import_ssh_backup(
         mode = "merge"
     from sshpilot.backup_backends import SSHServerBackupBackend
 
-    runner = _DaemonSshRunner(
-        manager, connections_source, connection_id, settings_path or _settings_path()
-    )
-    backend = SSHServerBackupBackend(runner, remote_dir)
-    try:
-        entries = backend.list_exports()
-    except Exception as exc:
-        logger.error("SSH backup listing failed: %s", exc)
-        return SecretTransferResult(
-            operation="import", path="ssh", counts={}, warnings=(),
-            status=SecretOperationState.FAILED,
-            message=_message(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED),
-        )
-    entry = next((e for e in entries if str(getattr(e, "id", "")) == entry_id), None)
-    if entry is None:
-        return SecretTransferResult(
-            operation="import", path="ssh", counts={}, warnings=(),
-            status=SecretOperationState.FAILED,
-            message=_message(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND),
-        )
+    # A cached manifest (from the preview the user just confirmed) means the
+    # archive is already in hand, so no remote transport is opened at all.
     if manifest is None:
         try:
-            manifest = backend.read(entry)
+            with _backup_store(transport, connection_id, client_id) as store:
+                backend = SSHServerBackupBackend(store, remote_dir)
+                entries = backend.list_exports()
+                entry = next(
+                    (e for e in entries if str(getattr(e, "id", "")) == entry_id), None
+                )
+                if entry is None:
+                    return SecretTransferResult(
+                        operation="import", path="ssh", counts={}, warnings=(),
+                        status=SecretOperationState.FAILED,
+                        message=_message(SecretTransferMessageCode.SSH_BACKUP_NOT_FOUND),
+                    )
+                try:
+                    manifest = backend.read(entry, passphrase=passphrase)
+                except Exception as exc:
+                    logger.error("SSH backup read failed: %s", exc)
+                    # An encrypted archive reached without a passphrase (the
+                    # preview's cached manifest expired) must ask for one rather
+                    # than read as an unreadable backup.
+                    code = (
+                        SecretTransferMessageCode.WRONG_PASSPHRASE_OR_CORRUPT_BACKUP
+                        if _looks_like_passphrase_failure(exc)
+                        else SecretTransferMessageCode.SSH_BACKUP_READ_FAILED
+                    )
+                    return SecretTransferResult(
+                        operation="import", path="ssh", counts={}, warnings=(),
+                        status=SecretOperationState.FAILED,
+                        message=_message(code),
+                    )
         except Exception as exc:
-            logger.error("SSH backup read failed: %s", exc)
+            logger.error("SSH backup listing failed: %s", exc)
             return SecretTransferResult(
                 operation="import", path="ssh", counts={}, warnings=(),
                 status=SecretOperationState.FAILED,
-                message=_message(SecretTransferMessageCode.SSH_BACKUP_READ_FAILED),
+                message=_message(SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED),
             )
     if not isinstance(manifest, dict):
         return SecretTransferResult(

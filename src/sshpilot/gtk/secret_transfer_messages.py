@@ -249,3 +249,38 @@ def format_secret_transfer_messages(messages: Any) -> tuple[str, ...]:
     """Render an ordered sequence of structured transfer warnings."""
 
     return tuple(format_secret_transfer_message(message) for message in messages)
+
+
+def format_secret_transfer_error(error: Any) -> str | None:
+    """Render a structured transfer message carried on a daemon error.
+
+    RPCs that return a plain value have no ``SecretTransferResult`` to put a
+    failure in, so the daemon attaches the message to ``SshPilotError.details``
+    (see ``secret_backend_service._backup_error_to_wire``). ``None`` means this
+    error carries no such message and the caller should fall back to ``str()``.
+    """
+    details = getattr(error, "details", None)
+    if not isinstance(details, Mapping):
+        return None
+    payload = details.get("transfer_message")
+    if not isinstance(payload, Mapping):
+        return None
+    try:
+        code = SecretTransferMessageCode(payload["code"])
+    except (KeyError, ValueError):
+        return None
+    parameters = payload.get("parameters") or {}
+    if not isinstance(parameters, Mapping):
+        parameters = {}
+    try:
+        return format_secret_transfer_message(
+            SecretTransferMessage(
+                code=code,
+                parameters=dict(parameters),
+                diagnostic=str(payload.get("diagnostic") or ""),
+            )
+        )
+    except ValueError:
+        # A code this frontend has no wording for: better the raw error than
+        # a traceback in the middle of an import.
+        return None

@@ -438,6 +438,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
         self._sidebar_width_animation = None
         self._context_menu_row = None
+        self._context_menu_group_rows = None
         self._context_menu_popover = None
         # Hide hosts toggle state
         try:
@@ -796,7 +797,30 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return None
         from .gtk.secret_backends_controller import SecretBackendsController
 
-        return SecretBackendsController(client)
+        controller = SecretBackendsController(client)
+        self._prime_secret_state(controller)
+        return controller
+
+    @staticmethod
+    def _prime_secret_state(controller) -> None:
+        """Populate the controller's cached secret-backend state, off-thread.
+
+        Password dialogs read that cache to decide whether to offer "Store
+        password" (``window_dialogs._secrets_persist_for``). They must not query
+        it synchronously — an operation holding the daemon's secret-service lock
+        would deadlock against its own prompt — so a cold cache falls back to
+        "storage works", which on an SSH-Agent-Only backend offers a checkbox
+        that silently stores nothing. Filling it once here means a prompt has an
+        answer to read; ``load_state`` releases its lock across the RPC, so this
+        never blocks the GTK thread.
+        """
+        def _warm():
+            try:
+                controller.load_state()
+            except Exception:
+                logger.debug("Priming secret backend state failed", exc_info=True)
+
+        threading.Thread(target=_warm, name="secret-state-prime", daemon=True).start()
 
     def _attach_secrets_interaction_presenter(self) -> None:
         """Present daemon-owned secret-backend interactions app-wide.
@@ -848,6 +872,23 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 logger.debug(
                     "Failed to attach SSH overrides controller to Preferences",
+                    exc_info=True,
+                )
+            # Preferences is preloaded on a low-priority idle, which can win
+            # the race against this first attach. Built without a client, it
+            # greys out the operation-mode radios and returns; nothing else
+            # would ever tell it the daemon arrived, so the modes stayed
+            # unswitchable until a restart happened to lose the race. The
+            # rebind path already re-asks here -- the first attach must too.
+            try:
+                reset = getattr(
+                    preferences, "reset_operation_mode_confirmation", None
+                )
+                if callable(reset):
+                    reset()
+            except Exception:
+                logger.debug(
+                    "Failed to resync the Preferences operation mode",
                     exc_info=True,
                 )
         self._api_client_selection_pending = False
@@ -1433,6 +1474,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def _open_containing_folder(self, path):
         try:
+            from .file_manager.portal_docs import open_in_file_manager
+
+            if open_in_file_manager(path, parent=self):
+                return
             folder = os.path.dirname(path) or '.'
             uri = Gio.File.new_for_path(folder).get_uri()
             Gio.AppInfo.launch_default_for_uri(uri, None)
@@ -1698,6 +1743,33 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         context_row = getattr(self, '_context_menu_row', None)
 
         if context_row and hasattr(context_row, 'connection'):
+            if rows and context_row in rows:
+                return rows
+            if prefer_context or not rows:
+                return [context_row]
+
+        return rows
+
+    def _get_target_group_rows(self, prefer_context: bool = False) -> List[Gtk.ListBoxRow]:
+        """Return real group rows targeted by the current action.
+
+        Tag rows carry a synthetic ``group_id`` and nothing to mutate, so they
+        never target a group action. A context menu opened on a row inside an
+        existing multi-selection keeps that selection; opened elsewhere it
+        narrows to the row the user actually clicked.
+        """
+        snapshot = getattr(self, '_context_menu_group_rows', None)
+        if snapshot:
+            return list(snapshot)
+
+        rows = [
+            row for row in self._get_selected_group_rows()
+            if not getattr(row, 'is_tag_group', False)
+        ]
+        context_row = getattr(self, '_context_menu_group_row', None)
+        if (context_row is not None
+                and hasattr(context_row, 'group_id')
+                and not getattr(context_row, 'is_tag_group', False)):
             if rows and context_row in rows:
                 return rows
             if prefer_context or not rows:
@@ -3868,9 +3940,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         submenu_section.append_submenu(_('Sessions'), sessions_menu)
 
         import_export_menu = Gio.Menu()
-        import_export_menu.append(_('Export Configuration'), 'win.export-config')
-        import_export_menu.append(_('Import Configuration'), 'win.import-config')
-        submenu_section.append_submenu(_('Import/Export'), import_export_menu)
+        import_export_menu.append(_('Backup'), 'win.export-config')
+        import_export_menu.append(_('Restore'), 'win.import-config')
+        submenu_section.append_submenu(_('Backup/Restore'), import_export_menu)
 
         view_menu = Gio.Menu()
         view_menu.append(_('Toggle Full Screen'), f'win.{TOGGLE_FULLSCREEN_ACTION}')
@@ -5830,11 +5902,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         elif has_groups and not has_connections:
             self._set_sidebar_selection_toolbar('group')
 
-            # Rename works for tag groups too (renames the tag); delete does not.
+            # Rename works for tag groups too (renames the tag) but takes one
+            # row; delete takes any number of real groups. A tag row mixed into
+            # the selection disables delete rather than being silently skipped.
             allow_single_group = len(group_rows) == 1
-            allow_group_delete = (
-                allow_single_group
-                and not getattr(group_rows[0], 'is_tag_group', False)
+            allow_group_delete = not any(
+                getattr(row, 'is_tag_group', False) for row in group_rows
             )
             self.delete_button.set_sensitive(False)
             if hasattr(self, 'copy_key_button'):
@@ -6133,8 +6206,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception as e:
             logger.error(f"System terminal button click failed: {e}")
 
-    def _show_ssh_copy_id_terminal_using_main_widget(self, connection, ssh_key, force=False):
-        return self.sshcopyid_runner.run(connection, ssh_key, force)
+    def _show_ssh_copy_id_terminal_using_main_widget(
+        self, connection, ssh_key, force=False, public_key=None
+    ):
+        return self.sshcopyid_runner.run(
+            connection, ssh_key, force, public_key=public_key
+        )
 
     def on_delete_connection_clicked(self, button):
         """Handle delete connection button click"""
@@ -6161,13 +6238,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     def on_delete_group_clicked(self, button):
         """Handle delete group button click"""
-        selected_row = self.connection_list.get_selected_row()
-        if (selected_row and hasattr(selected_row, 'group_id')
-                and not getattr(selected_row, 'is_tag_group', False)):
-            # Pin the context row to the selection so a stale context-menu
-            # row (possibly a tag row) can't divert the action.
-            self._context_menu_group_row = selected_row
-            self.on_delete_group_action(None, None)
+        rows = [
+            row for row in self._get_selected_group_rows()
+            if not getattr(row, 'is_tag_group', False)
+        ]
+        if not rows:
+            return
+        # Drop any leftover context-menu target (possibly a tag row, possibly
+        # a stale multi-selection snapshot) so the button acts on exactly what
+        # is selected now.
+        self._context_menu_group_row = None
+        self._context_menu_group_rows = None
+        self.on_delete_group_action(None, None)
 
     def on_delete_connection_response(self, dialog, response, payload):
         """Handle delete connection dialog response"""

@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import sshpilot.backup_manager as bm
 import sshpilot.credential_manager as cmod
 import sshpilot.secret_storage as ss
+from sshpilot.api.models.common import ClientId
 from sshpilot.api.models.secrets import (
     SecretOperationState,
     SecretTransferMessageCode,
@@ -25,11 +26,28 @@ from sshpilot.core.connections.models import ConnectionRecord
 from sshpilot.core.settings import CONFIG_VERSION
 from sshpilot.daemon.secret_backend_service import SecretBackendService
 from sshpilot.daemon.secret_transfer import (
+    _HeadlessBackupConfig,
     daemon_export_backup,
     daemon_import_backup,
     daemon_preview_backup,
 )
 from sshpilot.secret_storage import password_spec, sudo_password_spec
+
+
+class _StubTransport:
+    """Stands in for the daemon's backup transport provider.
+
+    The store it hands out is never exercised here -- these tests replace the
+    backend that would use it; what matters is that the export path asks the
+    provider for one instead of building an ssh command.
+    """
+
+    def __init__(self):
+        self.opened = []
+
+    def open(self, connection_id, *, client_id):
+        self.opened.append((connection_id, client_id))
+        return SimpleNamespace(close=lambda: None)
 
 
 class FakeMgr:
@@ -984,6 +1002,8 @@ def test_daemon_export_to_ssh_threads_connection_store_snapshot(monkeypatch, tmp
         connections_source=repo.list_records,
         settings_path=config_dir / "config.json",
         connection_store_snapshot=repo.snapshot_for_backup,
+        transport=_StubTransport(),
+        client_id=ClientId("client:test"),
     )
     assert result.status == SecretOperationState.SUCCESS, result.message
     connection_ids = {c["id"] for c in captured["manifest"]["connection_store"]["connections"]}
@@ -1258,3 +1278,41 @@ def test_bitwarden_export_refusal_is_logged_and_explains_itself(
         SecretTransferMessageCode.BITWARDEN_BACKUP_TOO_LARGE,
         SecretTransferMessageCode.BITWARDEN_NOTE_REDUCE,
     ]
+
+
+def test_headless_config_ssh_settings_can_build_an_ssh_command(tmp_path):
+    """The SSH-server backup destination builds its argv through
+    ``build_ssh_connection``, which indexes ``get_ssh_config()`` directly. A
+    shim that returned ``None`` there took down every export to an SSH server
+    with ``'NoneType' object has no attribute 'get'`` before it could connect.
+    """
+    from sshpilot.ssh_connection_builder import ConnectionContext, build_ssh_connection
+
+    config_file = tmp_path / "config.json"
+    config_file.write_text(json.dumps({
+        "config_version": CONFIG_VERSION,
+        "ssh": {"ssh_overrides": ["-o", "ServerAliveInterval=25"], "verbosity": 2},
+    }))
+    config = _HeadlessBackupConfig(config_file)
+
+    # Same shape the GTK Config hands the builder, carrying the user's settings.
+    values = config.get_ssh_config()
+    assert values["ssh_overrides"] == ["-o", "ServerAliveInterval=25"]
+    assert values["verbosity"] == 2
+
+    prepared = build_ssh_connection(ConnectionContext(
+        connection=SimpleNamespace(
+            nickname="backup-host",
+            resolve_host_identifier=lambda: "backup-host",
+        ),
+        connection_manager=None,
+        config=config,
+        command_type="ssh",
+        native_mode=True,
+        extra_args=[],
+        remote_command="cat > backup.spbk",
+    ))
+    argv = list(prepared.command)
+    assert "backup-host" in argv
+    # The app-level preference actually reaches the command line.
+    assert "ServerAliveInterval=25" in argv

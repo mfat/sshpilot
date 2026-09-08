@@ -41,6 +41,9 @@ class _Process:
         self.argv = list(argv)
         self.kwargs = kwargs
         self.script = script
+        # Privileged children are daemon-owned and now reach the process
+        # registry, which identifies them by pid and creation time.
+        self.pid = 4242
         self.returncode = 1
         self.stdin = _StdinBuffer()
         self._stdout = None
@@ -85,7 +88,7 @@ class _Provider:
     def __init__(self):
         self.calls = []
 
-    def prepare_remote_command_launch(self, connection_id, remote_command):
+    def prepare_remote_command_launch(self, connection_id, remote_command, *, interaction_policy="broker"):
         self.calls.append((connection_id, remote_command))
         return ("ssh", connection_id, remote_command), {"PATH": "/usr/bin"}
 
@@ -107,7 +110,17 @@ class _Broker:
         self.responses = list(responses or [])
         self.prepared = []
         self.created = []
+        self.authenticated = []
+        self.cancelled = []
         self._counter = 0
+
+    def mark_authenticated(self, scope_id):
+        # The scope is the SFTP session's; committing remembered secrets is
+        # this service's job, cancelling is not.
+        self.authenticated.append(scope_id)
+
+    def cancel_session(self, scope_id):
+        self.cancelled.append(scope_id)
 
     def prepare_operation_launch(self, argv, environment, **kwargs):
         self.prepared.append((tuple(argv), dict(environment), kwargs))
@@ -849,3 +862,22 @@ def test_wrong_context_password_is_cleared_and_reprompted():
     assert result.revision == hashlib.sha256(b"new\n").hexdigest()
     assert len(broker_used.created) == 2
     assert backup_passwordless["hit"] is True
+
+
+def test_remembered_sudo_password_is_committed_to_the_borrowed_scope():
+    """A successful privileged run reports authentication on the borrowed scope.
+
+    Sudo passwords are stored by ``_remember_password`` themselves. The
+    ``authenticated`` call commits SSH askpass secrets prompted for the
+    privileged child, and must never cancel the SFTP session's scope.
+    """
+
+    def script(_argv, _data):
+        return 0, b"root content\n", b""
+
+    service, _calls, broker = _service(script)
+    _read(service)
+
+    assert broker.authenticated == [SCOPE_ID]
+    # The session owns this scope; a privileged read must never tear it down.
+    assert broker.cancelled == []

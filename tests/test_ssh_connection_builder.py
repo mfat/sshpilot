@@ -648,6 +648,82 @@ def test_preferences_still_apply_when_the_connection_sets_nothing():
     assert "ConnectTimeout=15" in argv
 
 
+def test_scp_preference_overrides_stay_options_when_path_operands_follow():
+    """SCP path sources must not ride ``extra_args`` ahead of Preferences.
+
+    After Preferences were moved behind ``extra_options`` (so they lose to
+    connection options for ssh), putting transfer paths in ``extra_args`` made
+    argv ``scp [sources…] -o … -v dest``. OpenSSH then treated ``-o``/``-v`` as
+    more source names. Production only passes scp flags as ``extra_args`` and
+    inserts path operands after the prepared command (before destination).
+    """
+    import types
+
+    from sshpilot.core.settings.ssh_overrides import compose_ssh_overrides
+
+    prefs = {
+        "verbosity": 1,
+        "keepalive_interval": 25,
+    }
+    app_config = types.SimpleNamespace(
+        get_ssh_config=lambda: {**prefs, "ssh_overrides": compose_ssh_overrides(prefs)}
+    )
+    prepared = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="host.example.com",
+                authored=("hostname",),
+            ),
+            config=app_config,
+            command_type="scp",
+            extra_args=["-r"],
+            target_override="alice@host.example.com:/remote/drop",
+            interaction_policy="broker",
+        )
+    ).command
+
+    assert prepared[0] == "scp"
+    assert prepared[-1] == "alice@host.example.com:/remote/drop"
+    assert "-r" in prepared
+    assert "-v" in prepared
+    assert "ServerAliveInterval=25" in prepared
+    # Flags and Preference overrides only — no path operands yet.
+    assert "/tmp/payload" not in prepared
+
+    argv = prepared[:-1] + ["/tmp/payload"] + [prepared[-1]]
+    payload_i = argv.index("/tmp/payload")
+    assert argv.index("-r") < payload_i
+    assert argv.index("-v") < payload_i
+    assert argv.index("ServerAliveInterval=25") < payload_i
+    assert argv[-1] == "alice@host.example.com:/remote/drop"
+
+
+def test_scp_none_policy_keeps_scp_safe_port_and_user_flags():
+    """interaction_policy none must not revive ssh-shaped -p/-l on scp."""
+
+    argv = build_ssh_connection(
+        ConnectionContext(
+            connection=_config_connection(
+                hostname="host.example.com",
+                username="alice",
+                port=2200,
+                authored=("hostname", "user", "port"),
+            ),
+            command_type="scp",
+            extra_args=["-r"],
+            target_override="alice@host.example.com:/remote/drop",
+            interaction_policy="none",
+        )
+    ).command
+
+    assert argv[0] == "scp"
+    assert "BatchMode=yes" in argv
+    assert "-P" in argv and argv[argv.index("-P") + 1] == "2200"
+    assert "User=alice" in argv
+    assert "-l" not in argv
+    assert "-p" not in argv
+
+
 def test_ssh_copy_id_installs_to_the_account_the_editor_shows():
     """Key deployment must not resolve the account from a global block.
 

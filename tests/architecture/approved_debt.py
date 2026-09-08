@@ -20,6 +20,7 @@ APPROVED_PENDING = frozenset(
         (("config.py", "settings", "CONFIG_VERSION"), "M4"),
         (("config.py", "settings", "ensure_config_defaults"), "M4"),
         (("config.py", "settings", "get_default_config"), "M4"),
+        (("config.py", "settings", "ssh_config_from_settings"), "M4"),
         (("secret_storage.py", "secrets", "SecretDecisionKind"), "M5"),
         (("secret_storage.py", "secrets", "decide_unlock"), "M5"),
         (("secret_storage.py", "secrets", "normalize_backend_name"), "M5"),
@@ -65,10 +66,8 @@ APPROVED_DAEMON_DEBT = frozenset(
         (("daemon/connection_secret_provider.py", "sshpilot.secret_storage"), "M5"),
         (("daemon/launcher.py", "sshpilot.platform_utils"), "M4"),
         (("daemon/secret_backend_service.py", "sshpilot.secret_storage"), "M5"),
+        (("daemon/backup_transport.py", "sshpilot.backup_backends"), "M6"),
         (("daemon/secret_transfer.py", "sshpilot.backup_manager"), "M6"),
-        (("daemon/secret_transfer.py", "sshpilot.credential_model"), "M5"),
-        (("daemon/secret_transfer.py", "sshpilot.secret_storage"), "M5"),
-        (("daemon/secret_transfer.py", "sshpilot.ssh_connection_builder"), "M7"),
         (("plugins/api.py", "sshpilot.plugins.host"), "M8"),
     }
 )

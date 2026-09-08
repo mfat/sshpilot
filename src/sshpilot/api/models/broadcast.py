@@ -39,6 +39,15 @@ class BroadcastExecutionPolicy:
     capture_stderr: bool = True
     output_limit_bytes: int = DEFAULT_BROADCAST_OUTPUT_BYTES
     interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
+    #: Hold an OpenSSH multiplex master for the command's connection even
+    #: when multiplexing is otherwise off (preference or authored Host
+    #: ``ControlMaster``). A master lets later commands to the same host ride
+    #: the first authentication instead of re-authenticating: Host Info's
+    #: autofill-only live samples stay working on connections whose password
+    #: was typed but not stored. Off by default; one-shot commands that can
+    #: prompt (or autofill from the store) need no lingering authenticated
+    #: transport.
+    require_master: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.failure_policy, BroadcastFailurePolicy):
@@ -58,6 +67,8 @@ class BroadcastExecutionPolicy:
             raise ValueError("timeout_seconds is outside the supported range")
         if type(self.capture_stdout) is not bool or type(self.capture_stderr) is not bool:
             raise TypeError("capture flags must be booleans")
+        if type(self.require_master) is not bool:
+            raise TypeError("require_master must be a boolean")
         if (
             type(self.output_limit_bytes) is not int
             or not 1 <= self.output_limit_bytes <= MAX_BROADCAST_OUTPUT_BYTES

@@ -105,6 +105,11 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         ("key_utils.py", "keys", "looks_like_private_key"),
         # -- terminal-output evidence classification --------------------
         ("terminal.py", "connection_evidence", "classify_connection_evidence"),
+        # -- counter differencing for the host-info dialog (pure arithmetic) --
+        # The daemon is stateless across probes, so the difference between two
+        # readings has to be taken by whoever holds both. No I/O, no clock.
+        ("machine_info_dialog.py", "host_info.rates", "cpu_utilization_by_name"),
+        ("machine_info_dialog.py", "host_info.rates", "interface_rates"),
         # -- plugin contracts (shared language, NOT authoritative I/O) --
         ("plugins/api.py", "plugins", "API_VERSION"),
         ("plugins/api.py", "plugins", "Capability"),
@@ -130,6 +135,7 @@ PENDING: dict[tuple[str, str, str], tuple[str, str]] = {
     ("config.py", "settings", "CONFIG_VERSION"): ("M4", "config version -> daemon"),
     ("config.py", "settings", "ensure_config_defaults"): ("M4", "defaults write -> daemon"),
     ("config.py", "settings", "get_default_config"): ("M4", "defaults -> daemon"),
+    ("config.py", "settings", "ssh_config_from_settings"): ("M4", "effective ssh settings -> daemon"),
     # === M5 — secrets backend selection / vault state ===================
     ("secret_storage.py", "secrets", "normalize_backend_name"): ("M5", "backend selection -> daemon"),
     ("secret_storage.py", "secrets", "platform_default_order"): ("M5", "backend order -> daemon"),
@@ -414,7 +420,7 @@ def test_frontend_core_imports_are_categorised():
 
 # Baseline diag for macros below.
 _PENDING_EXPECTED = {
-    "M4": 3,
+    "M4": 4,
     "M5": 4,
     "M6": 4,
     "M7": 6,

@@ -35,14 +35,17 @@ from sshpilot.api.models.host_info import (
     HostInfoSnapshot,
     HostInfoSummary,
     InterfaceCounters,
+    LiveSample,
 )
 from sshpilot.api.models.interactions import ExecutionInteractionMode
 from sshpilot.api.models.operations import OperationId, ServiceFailure
 from sshpilot.core.host_info import (
     FULL_PROBE_COMMAND,
+    LIVE_PROBE_COMMAND,
     NETWORK_COUNTERS_COMMAND,
     parse_counters_probe,
     parse_host_info,
+    parse_live_probe,
     parse_network_counters,
 )
 from sshpilot.core.host_info.parser import split_sections
@@ -53,18 +56,23 @@ logger = logging.getLogger(__name__)
 #: answers well inside this, and the operation is cancellable throughout.
 FULL_PROBE_TIMEOUT_SECONDS = 60.0
 
-#: Bandwidth sampling is a single ``cat`` and must never outlive its sampling
+#: A live sample is a handful of ``cat``s and must never outlive its sampling
 #: interval, or repeated samples would queue behind each other.
-COUNTERS_PROBE_TIMEOUT_SECONDS = 15.0
+SAMPLE_PROBE_TIMEOUT_SECONDS = 15.0
+
+#: The name this bound had while bandwidth was the only thing sampled.
+COUNTERS_PROBE_TIMEOUT_SECONDS = SAMPLE_PROBE_TIMEOUT_SECONDS
 
 _PROBE_COMMANDS = {
     HostInfoProbe.FULL: FULL_PROBE_COMMAND,
     HostInfoProbe.NETWORK_COUNTERS: NETWORK_COUNTERS_COMMAND,
+    HostInfoProbe.LIVE: LIVE_PROBE_COMMAND,
 }
 
 _PROBE_TIMEOUTS = {
     HostInfoProbe.FULL: FULL_PROBE_TIMEOUT_SECONDS,
-    HostInfoProbe.NETWORK_COUNTERS: COUNTERS_PROBE_TIMEOUT_SECONDS,
+    HostInfoProbe.NETWORK_COUNTERS: SAMPLE_PROBE_TIMEOUT_SECONDS,
+    HostInfoProbe.LIVE: SAMPLE_PROBE_TIMEOUT_SECONDS,
 }
 
 #: How many probe operations stay readable after they finish.  A client that
@@ -105,13 +113,24 @@ class HostInfoService:
                     concurrency_limit=1,
                     timeout_seconds=_PROBE_TIMEOUTS[probe],
                     # A first gather may need a passphrase, password or MFA
-                    # answer; repeated bandwidth samples must never raise a
-                    # prompt of their own on top of an established session.
+                    # answer; repeated live samples must never raise a prompt
+                    # of their own. The "established session" they ride is the
+                    # OpenSSH multiplex master created by require_master below
+                    # -- a ControlMaster on the shared ControlPath, not a PTY
+                    # and not a long-lived Host Info channel.
                     interaction_mode=(
                         ExecutionInteractionMode.INTERACTIVE
                         if probe is HostInfoProbe.FULL
                         else ExecutionInteractionMode.AUTOFILL_ONLY
                     ),
+                    # Every probe holds the multiplex master, preference or
+                    # not: the FULL gather authenticates once and becomes the
+                    # master, and the autofill-only samples ride it instead
+                    # of re-authenticating. Without this a connection whose
+                    # password was typed but not stored gathers fine and
+                    # then never produces a live sample (and so never a CPU
+                    # utilization, which exists only between two readings).
+                    require_master=True,
                 ),
             ),
             owner_client_id=owner_client_id,
@@ -157,19 +176,32 @@ class HostInfoService:
                 summary.operation, probe, None, (), self._failure_for(target)
             )
 
-        snapshot, counters = self._parse(probe, target.stdout or "")
-        return HostInfoSummary(summary.operation, probe, snapshot, counters, None)
+        snapshot, counters, live = self._parse(probe, target.stdout or "")
+        return HostInfoSummary(summary.operation, probe, snapshot, counters, None, live)
 
     @staticmethod
     def _parse(
         probe: HostInfoProbe, stdout: str
-    ) -> Tuple[Optional[HostInfoSnapshot], Tuple[InterfaceCounters, ...]]:
+    ) -> Tuple[
+        Optional[HostInfoSnapshot],
+        Tuple[InterfaceCounters, ...],
+        Optional[LiveSample],
+    ]:
+        """Read one probe's output.
+
+        ``counters`` is filled by every probe so a caller that only wants
+        bandwidth need not know which probe produced the answer.
+        """
+
         try:
             if probe is HostInfoProbe.NETWORK_COUNTERS:
-                return None, parse_counters_probe(stdout)
+                return None, parse_counters_probe(stdout), None
+            if probe is HostInfoProbe.LIVE:
+                live = parse_live_probe(stdout)
+                return None, live.counters, live
             snapshot = parse_host_info(stdout)
             counters = parse_network_counters(split_sections(stdout).get("NET_DEV", ""))
-            return snapshot, counters
+            return snapshot, counters, None
         except (TypeError, ValueError) as error:
             # A host that answers with something unparseable is a failed
             # probe, not a daemon fault; report it as such rather than

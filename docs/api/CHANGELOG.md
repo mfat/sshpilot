@@ -16,7 +16,77 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.53 (current)
+## API 0.56 (current)
+
+### API 0.56 deploy a pasted public key via ssh-copy-id
+
+- `DeployKeyRequest` now accepts exactly one of `key_id` (daemon key store) or
+  `public_key` (a single OpenSSH public-key line). Pasted text is validated on
+  the request, written to a daemon-owned temporary `.pub` for native
+  `ssh-copy-id -i`, then removed. The key-id wire shape is unchanged when
+  `public_key` is omitted, so existing deploy callers stay compatible.
+  Protocol stays v1.
+
+## API 0.55
+
+### API 0.55 multiplexed Host Info probes
+
+- `BroadcastExecutionPolicy` gained `require_master` (default `False`, omitted
+  from the wire unless `True`, so old clients and servers interoperate
+  unchanged). When set, the daemon injects its shared multiplex fragment
+  (`ControlMaster=auto` + `ControlPath` + `ControlPersist`) into the command's
+  SSH option argv (before the destination) so OpenSSH treats it as options.
+  That forced fragment is first among ControlMaster values, so it wins over
+  both a disabled `ssh.controlmaster` preference and an authored per-host
+  `ControlMaster` / `ControlPath` — Host Info must hold a master even when
+  multiplexing is otherwise off.
+- Every Host Info probe (`FULL`, `LIVE`, `NETWORK_COUNTERS`) now sets
+  `require_master`. The interactive gather authenticates once and becomes the
+  master; the autofill-only samples ride it instead of re-authenticating. This
+  fixes live CPU utilization (which exists only between two readings) on
+  connections whose password was typed but not stored, where every sample used
+  to fail authentication silently. Ordinary broadcasts default to `False` and
+  are unchanged: commands that can prompt or autofill from the store need no
+  lingering authenticated transport. Protocol stays v1.
+
+## API 0.54
+
+### API 0.54 CPU utilization, live sampling and the rest of what /proc says
+
+- `HostInfoSnapshot` gained `cpu_times`: the cumulative jiffy counters of
+  `/proc/stat`, the aggregate line first and then one entry per logical
+  processor. These are counters, not percentages -- a utilization exists only
+  between two readings -- and `sshpilot.core.host_info.rates` turns a pair of
+  them into a `CpuUtilization`. The snapshot previously carried no CPU
+  utilization at all, so frontends were dividing the one-minute load average by
+  the CPU count and labelling the result "CPU", which reports something else
+  entirely on a host stalled on I/O.
+- `HostInfoProbe` gained `LIVE`, a probe that reads `/proc/net/dev`,
+  `/proc/stat`, `/proc/meminfo` and `/proc/loadavg` in one round trip, and
+  `HostInfoSummary` gained `live`, carrying its `LiveSample`. It supersedes
+  `NETWORK_COUNTERS`, which still works and still means exactly what it did:
+  removing a wire value narrows the protocol for no gain. Like
+  `NETWORK_COUNTERS`, a `LIVE` probe is autofill-only and never raises an
+  interaction of its own.
+- `HostInfoSnapshot` gained `cpu_pressure_some`/`cpu_pressure_full` and
+  `memory_pressure_some`/`memory_pressure_full` alongside the I/O pressure it
+  already reported. `/proc/pressure/cpu` publishes no `full` line, so that
+  field is routinely `null` there rather than absent through a parse failure.
+- `HostInfoSnapshot` gained `process_counts` (`ProcessCounts`), plus
+  `context_switches` and `interrupts` from `/proc/stat`. A host whose `ps` has
+  no `-o` -- every BusyBox one -- still reports `running` from
+  `procs_running`, with the rest of the breakdown `null`.
+- `FilesystemUsage` gained `options` from `/proc/self/mounts` and
+  `inodes_total`/`inodes_used`/`inodes_free` from `df -i`. Inodes are the other
+  way a filesystem fills: a host can sit at 3% of its bytes and still fail
+  every write with ENOSPC. Filesystems with no fixed inode table report `null`
+  rather than zero.
+- `MemoryInfo` gained `active_bytes`, `inactive_bytes`, `shmem_bytes`,
+  `dirty_bytes`, `writeback_bytes`, `slab_bytes` and `slab_reclaimable_bytes`.
+  All are optional, because BusyBox and older kernels genuinely omit them and a
+  zero would read as "none in use" rather than "not reported".
+
+## API 0.53
 
 ### API 0.53 host information beyond what one session can see
 

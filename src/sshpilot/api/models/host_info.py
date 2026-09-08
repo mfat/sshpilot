@@ -32,6 +32,10 @@ MAX_HOST_INFO_LISTENING_PORTS = 1024
 MAX_HOST_INFO_PROCESSES = 64
 MAX_HOST_INFO_FAILED_UNITS = 256
 MAX_HOST_INFO_HOST_KEYS = 16
+#: One aggregate line plus one per logical CPU. Large enough for the biggest
+#: machines anyone drives over SSH without letting a hostile host allocate
+#: without bound.
+MAX_HOST_INFO_CPU_TIMES = 1025
 
 
 def _require_text(value: object, field_name: str) -> str:
@@ -77,6 +81,9 @@ class HostInfoProbe(str, Enum):
 
     FULL = "full"
     NETWORK_COUNTERS = "network_counters"
+    #: The repeated lightweight sample: cumulative counters plus the readings
+    #: that change between gathers.
+    LIVE = "live"
 
 
 class NetworkInterfaceKind(str, Enum):
@@ -131,6 +138,133 @@ class CpuInfo:
         return self.cores_per_socket * self.threads_per_core * self.sockets
 
 
+#: The ``/proc/stat`` CPU columns, in the order the kernel prints them.
+CPU_TIME_FIELDS = (
+    "user",
+    "nice",
+    "system",
+    "idle",
+    "iowait",
+    "irq",
+    "softirq",
+    "steal",
+    "guest",
+    "guest_nice",
+)
+
+
+@dataclass(frozen=True)
+class CpuTimes:
+    """Cumulative CPU jiffies for one line of ``/proc/stat``.
+
+    ``name`` is ``"cpu"`` for the aggregate and ``"cpuN"`` for a single logical
+    processor.  These are counters since boot, not a utilization: a percentage
+    only exists between two readings, which is why nothing here is a percent.
+    Kernels that stop early (no ``guest_nice``, or no ``steal`` at all) leave
+    the trailing fields ``None`` rather than reporting a zero the host never
+    published.
+    """
+
+    name: str
+    user: Optional[int] = None
+    nice: Optional[int] = None
+    system: Optional[int] = None
+    idle: Optional[int] = None
+    iowait: Optional[int] = None
+    irq: Optional[int] = None
+    softirq: Optional[int] = None
+    steal: Optional[int] = None
+    guest: Optional[int] = None
+    guest_nice: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        _require_text(self.name, "cpu times name")
+        if not self.name:
+            raise ValueError("cpu times name must not be empty")
+        for field_name in CPU_TIME_FIELDS:
+            _require_optional_count(getattr(self, field_name), f"cpu times {field_name}")
+
+    @property
+    def total(self) -> Optional[int]:
+        """Every reported jiffy, or ``None`` when the host reported none.
+
+        ``guest`` and ``guest_nice`` are deliberately excluded: the kernel
+        already counts guest time inside ``user`` and ``nice``, so adding them
+        again would inflate the denominator and understate every share.
+        """
+
+        values = [
+            getattr(self, name)
+            for name in CPU_TIME_FIELDS[:8]
+            if getattr(self, name) is not None
+        ]
+        return sum(values) if values else None
+
+
+@dataclass(frozen=True)
+class CpuUtilization:
+    """A share of CPU time between two :class:`CpuTimes` readings, in percent.
+
+    Every field is a percentage of that window, so they sum to roughly 100 for
+    the aggregate and for each core alike.  ``total`` is ``100 - idle`` and
+    therefore *includes* ``iowait``, which is also reported separately: a host
+    stalled on storage is not idle, but it is not computing either.
+    """
+
+    total: Optional[float] = None
+    user: Optional[float] = None
+    system: Optional[float] = None
+    idle: Optional[float] = None
+    iowait: Optional[float] = None
+    irq: Optional[float] = None
+    softirq: Optional[float] = None
+    steal: Optional[float] = None
+    nice: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "total",
+            "user",
+            "system",
+            "idle",
+            "iowait",
+            "irq",
+            "softirq",
+            "steal",
+            "nice",
+        ):
+            _require_optional_number(getattr(self, name), f"cpu utilization {name}")
+
+
+@dataclass(frozen=True)
+class ProcessCounts:
+    """How many processes the host is running, and how it classifies them.
+
+    ``pid_max`` is the kernel's ceiling, so ``total`` can be shown against a
+    real denominator instead of against nothing.
+    """
+
+    total: Optional[int] = None
+    running: Optional[int] = None
+    sleeping: Optional[int] = None
+    stopped: Optional[int] = None
+    zombie: Optional[int] = None
+    threads: Optional[int] = None
+    pid_max: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "total",
+            "running",
+            "sleeping",
+            "stopped",
+            "zombie",
+            "threads",
+            "pid_max",
+        ):
+            _require_optional_count(getattr(self, name), f"process counts {name}")
+
+
 @dataclass(frozen=True)
 class MemoryInfo:
     """``/proc/meminfo`` values in bytes.
@@ -147,6 +281,15 @@ class MemoryInfo:
     buffers_bytes: int = 0
     swap_total_bytes: int = 0
     swap_free_bytes: int = 0
+    #: Optional because a host that does not publish the field is not a host
+    #: reporting zero of it. BusyBox and older kernels omit several.
+    active_bytes: Optional[int] = None
+    inactive_bytes: Optional[int] = None
+    shmem_bytes: Optional[int] = None
+    dirty_bytes: Optional[int] = None
+    writeback_bytes: Optional[int] = None
+    slab_bytes: Optional[int] = None
+    slab_reclaimable_bytes: Optional[int] = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -160,7 +303,17 @@ class MemoryInfo:
             value = getattr(self, name)
             if type(value) is not int or isinstance(value, bool) or value < 0:
                 raise ValueError(f"memory {name} must be a non-negative integer")
-        _require_optional_count(self.available_bytes, "memory available_bytes")
+        for name in (
+            "available_bytes",
+            "active_bytes",
+            "inactive_bytes",
+            "shmem_bytes",
+            "dirty_bytes",
+            "writeback_bytes",
+            "slab_bytes",
+            "slab_reclaimable_bytes",
+        ):
+            _require_optional_count(getattr(self, name), f"memory {name}")
 
     @property
     def used_bytes(self) -> Optional[int]:
@@ -199,12 +352,27 @@ class FilesystemUsage:
     used_bytes: Optional[int] = None
     available_bytes: Optional[int] = None
     use_percent: Optional[int] = None
+    #: Mount options as the kernel lists them, comma separated ("ro,noatime").
+    options: str = ""
+    #: Inodes are the other way a filesystem fills up: a host can sit at 3% of
+    #: its bytes and still fail every write with ENOSPC.
+    inodes_total: Optional[int] = None
+    inodes_used: Optional[int] = None
+    inodes_free: Optional[int] = None
 
     def __post_init__(self) -> None:
         _require_text(self.device, "filesystem device")
         _require_text(self.mount_point, "filesystem mount point")
         _require_text(self.fstype, "filesystem type")
-        for name in ("size_bytes", "used_bytes", "available_bytes"):
+        _require_text(self.options, "filesystem options")
+        for name in (
+            "size_bytes",
+            "used_bytes",
+            "available_bytes",
+            "inodes_total",
+            "inodes_used",
+            "inodes_free",
+        ):
             _require_optional_count(getattr(self, name), f"filesystem {name}")
         if self.use_percent is not None and (
             type(self.use_percent) is not int
@@ -220,6 +388,16 @@ class FilesystemUsage:
         if self.use_percent is not None:
             return self.use_percent / 100.0
         return None
+
+    @property
+    def inodes_used_fraction(self) -> Optional[float]:
+        if self.inodes_total and self.inodes_used is not None:
+            return self.inodes_used / self.inodes_total
+        return None
+
+    @property
+    def read_only(self) -> bool:
+        return "ro" in self.options.split(",")
 
 
 @dataclass(frozen=True)
@@ -436,6 +614,16 @@ class HostInfoSnapshot:
     host_keys: Tuple[HostKeyFingerprint, ...] = ()
     io_pressure_some: Optional[PressureStall] = None
     io_pressure_full: Optional[PressureStall] = None
+    cpu_pressure_some: Optional[PressureStall] = None
+    cpu_pressure_full: Optional[PressureStall] = None
+    memory_pressure_some: Optional[PressureStall] = None
+    memory_pressure_full: Optional[PressureStall] = None
+    #: The aggregate line first, then one per logical processor. Counters, not
+    #: percentages: this is the baseline a live sample differences against.
+    cpu_times: Tuple[CpuTimes, ...] = ()
+    process_counts: Optional[ProcessCounts] = None
+    context_switches: Optional[int] = None
+    interrupts: Optional[int] = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -474,6 +662,7 @@ class HostInfoSnapshot:
             ("processes", ProcessUsage, MAX_HOST_INFO_PROCESSES),
             ("failed_units", FailedUnit, MAX_HOST_INFO_FAILED_UNITS),
             ("host_keys", HostKeyFingerprint, MAX_HOST_INFO_HOST_KEYS),
+            ("cpu_times", CpuTimes, MAX_HOST_INFO_CPU_TIMES),
         ):
             value = getattr(self, name)
             if type(value) is not tuple:
@@ -485,10 +674,21 @@ class HostInfoSnapshot:
                     raise TypeError(f"host info {name} entries are the wrong type")
         _require_text_tuple(self.dns_servers, "dns servers", MAX_HOST_INFO_DNS_SERVERS)
         _require_port(self.ssh_port, "ssh port")
-        for name in ("io_pressure_some", "io_pressure_full"):
+        for name in (
+            "io_pressure_some",
+            "io_pressure_full",
+            "cpu_pressure_some",
+            "cpu_pressure_full",
+            "memory_pressure_some",
+            "memory_pressure_full",
+        ):
             value = getattr(self, name)
             if value is not None and type(value) is not PressureStall:
                 raise TypeError(f"host info {name} must be a PressureStall or None")
+        if self.process_counts is not None and type(self.process_counts) is not ProcessCounts:
+            raise TypeError("host info process_counts must be a ProcessCounts or None")
+        for name in ("context_switches", "interrupts"):
+            _require_optional_count(getattr(self, name), f"host info {name}")
 
     @property
     def root_filesystem(self) -> Optional[FilesystemUsage]:
@@ -501,6 +701,39 @@ class HostInfoSnapshot:
 
         by_mount = {item.mount_point: item for item in self.filesystems}
         return by_mount.get("/overlay") or by_mount.get("/")
+
+
+@dataclass(frozen=True)
+class LiveSample:
+    """One reading of the cheap probe the dialog repeats while it is open.
+
+    Counters (``counters``, ``cpu_times``) mean nothing on their own -- a rate
+    is the difference between two of these -- while ``memory`` and
+    ``load_average`` are instantaneous and usable from the first sample.
+    """
+
+    counters: Tuple[InterfaceCounters, ...] = ()
+    cpu_times: Tuple[CpuTimes, ...] = ()
+    memory: Optional[MemoryInfo] = None
+    load_average: Optional[LoadAverage] = None
+
+    def __post_init__(self) -> None:
+        for name, item_type, limit in (
+            ("counters", InterfaceCounters, MAX_HOST_INFO_INTERFACES),
+            ("cpu_times", CpuTimes, MAX_HOST_INFO_CPU_TIMES),
+        ):
+            value = getattr(self, name)
+            if type(value) is not tuple:
+                raise TypeError(f"live sample {name} must be a tuple")
+            if len(value) > limit:
+                raise ValueError(f"live sample {name} exceeds the supported length")
+            for item in value:
+                if type(item) is not item_type:
+                    raise TypeError(f"live sample {name} entries are the wrong type")
+        if self.memory is not None and type(self.memory) is not MemoryInfo:
+            raise TypeError("live sample memory must be a MemoryInfo or None")
+        if self.load_average is not None and type(self.load_average) is not LoadAverage:
+            raise TypeError("live sample load average must be a LoadAverage or None")
 
 
 @dataclass(frozen=True)
@@ -518,9 +751,10 @@ class HostInfoRequest:
 class HostInfoSummary:
     """A host-info operation plus whatever it has produced so far.
 
-    ``snapshot`` is populated only for a completed ``FULL`` probe; ``counters``
-    is populated by both probes so a frontend can sample bandwidth without
-    paying for the full gather.
+    ``snapshot`` is populated only for a completed ``FULL`` probe.  ``counters``
+    is populated by every probe so a frontend can sample bandwidth without
+    paying for the full gather, and ``live`` carries the rest of what the
+    ``LIVE`` probe read.
     """
 
     operation: OperationSummary
@@ -528,6 +762,7 @@ class HostInfoSummary:
     snapshot: Optional[HostInfoSnapshot] = None
     counters: Tuple[InterfaceCounters, ...] = ()
     failure: Optional[ServiceFailure] = None
+    live: Optional[LiveSample] = None
 
     def __post_init__(self) -> None:
         if type(self.operation) is not OperationSummary:
@@ -544,3 +779,5 @@ class HostInfoSummary:
             raise ValueError("host info counters exceed the supported length")
         if self.failure is not None and type(self.failure) is not ServiceFailure:
             raise TypeError("failure must be a ServiceFailure or None")
+        if self.live is not None and type(self.live) is not LiveSample:
+            raise TypeError("live must be a LiveSample or None")
