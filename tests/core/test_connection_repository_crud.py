@@ -1139,3 +1139,86 @@ def test_no_event_and_unchanged_generation_after_successful_rollback(tmp_path):
         _write_state(state, {"version": 1, "non_ssh_connections": [], "groups": {"groups": {}, "root_connections": []}, "metadata": {}})
     assert len(changes) == 0
     assert repo._generation == gen_before
+
+
+def test_cascade_group_delete_removes_the_ssh_blocks_too(tmp_path):
+    """"Delete group and contents" must reach the ssh config, not just the store.
+
+    This is why the UI deletes connections through the connection API before
+    it removes the emptied groups: a group delete only detaches membership,
+    so a cascade that skipped that step would leave every Host block behind.
+    """
+    from sshpilot.actions import plan_group_delete
+
+    repo, root, state = _repo(
+        tmp_path,
+        "Host web\n    HostName web.example\n\n"
+        "Host db\n    HostName db.example\n\n"
+        "Host keep\n    HostName keep.example\n",
+    )
+    parent = repo.create_group("Parent")
+    child = repo.create_group("Child", parent_id=parent.id)
+    other = repo.create_group("Other")
+    repo.copy_connection_to_group("web", parent.id)
+    repo.copy_connection_to_group("db", child.id)
+    repo.copy_connection_to_group("keep", other.id)
+
+    projection = {
+        group.id: {
+            "id": group.id,
+            "name": group.name,
+            "parent_id": group.parent_id,
+            "connections": list(group.connection_ids),
+        }
+        for group in repo.reload().groups
+    }
+    plan = plan_group_delete(projection, [parent.id])
+
+    for connection_id in plan.connections:
+        repo.delete_connection(connection_id)
+    for group_id in plan.subtree:
+        repo.delete_group(group_id)
+
+    remaining = root.read_text()
+    assert "Host web" not in remaining
+    assert "Host db" not in remaining
+    assert "Host keep" in remaining
+
+    snap = repo.reload()
+    assert [c.nickname for c in snap.connections] == ["keep"]
+    assert [g.name for g in snap.groups] == ["Other"]
+
+
+def test_group_only_delete_keeps_the_ssh_blocks(tmp_path):
+    """"Delete group only" is a grouping change; no host may disappear."""
+    from sshpilot.actions import plan_group_delete
+
+    repo, root, state = _repo(
+        tmp_path,
+        "Host web\n    HostName web.example\n\n"
+        "Host db\n    HostName db.example\n",
+    )
+    parent = repo.create_group("Parent")
+    child = repo.create_group("Child", parent_id=parent.id)
+    repo.copy_connection_to_group("web", parent.id)
+    repo.copy_connection_to_group("db", child.id)
+
+    projection = {
+        group.id: {
+            "id": group.id,
+            "name": group.name,
+            "parent_id": group.parent_id,
+            "connections": list(group.connection_ids),
+        }
+        for group in repo.reload().groups
+    }
+    plan = plan_group_delete(projection, [parent.id])
+
+    for group_id in plan.selected:
+        repo.delete_group(group_id)
+
+    snap = repo.reload()
+    assert sorted(c.nickname for c in snap.connections) == ["db", "web"]
+    assert [g.name for g in snap.groups] == ["Child"]
+    assert snap.groups[0].parent_id is None
+    assert "Host web" in root.read_text()

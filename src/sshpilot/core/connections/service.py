@@ -778,30 +778,29 @@ class ConnectionService:
         self._persist()
         return saved
 
-    def delete_group(self, group_id: str, *, move_connections_to_root: bool = True) -> None:
+    def delete_group(self, group_id: str) -> None:
         """Delete *group_id*.
 
         Children move to the deleted group's parent; connections keep every
         other membership and move to root only when this was their last group.
+
+        Deleting a group never deletes connections: a connection is more than
+        a registry entry (it owns an ssh config block), so a caller that wants
+        a cascade deletes the connections through the connection API first and
+        then deletes the emptied groups deepest-first.
         """
         with self._lock:
             group = self._groups.pop(group_id, None)
             if group is None:
                 raise _validation_error(f"Unknown group {group_id!r}")
-            # Detach the group's own connections (preserving other memberships).
-            for cid in list(group.connection_ids):
-                if cid in self._connections and not move_connections_to_root:
-                    self._connections.pop(cid, None)
-                    self._remove_from_all_groups(cid)
-                    self._root_order = [i for i in self._root_order if i != cid]
             # Children move to the deleted group's parent.
             for child in self._groups.values():
                 if child.parent_id == group_id:
                     child.parent_id = group.parent_id
-            if move_connections_to_root:
-                for cid in list(group.connection_ids):
-                    if cid in self._connections:
-                        self._sync_connection(cid)
+            # Detach the group's own connections (preserving other memberships).
+            for cid in list(group.connection_ids):
+                if cid in self._connections:
+                    self._sync_connection(cid)
         self._persist()
         self._emit(MutationEvent(MutationKind.GROUP_DELETED, group_id=group_id))
 
