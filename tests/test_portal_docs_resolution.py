@@ -432,3 +432,69 @@ def test_restore_returns_none_when_empty_or_unresolvable(monkeypatch):
     monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {"D": {"display": "x"}})
     monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: None)
     assert portal_docs.restore_granted_folder() is None
+
+
+def test_resolve_download_locate_path_prefers_existing_destination(tmp_path):
+    target = tmp_path / "report.txt"
+    target.write_text("data", encoding="utf-8")
+    assert portal_docs.resolve_download_locate_path(str(target), ["/remote/report.txt"]) == str(
+        target
+    )
+
+
+def test_resolve_download_locate_path_joins_single_source_under_folder(tmp_path):
+    folder = tmp_path / "Downloads"
+    folder.mkdir()
+    downloaded = folder / "report.txt"
+    downloaded.write_text("data", encoding="utf-8")
+    assert portal_docs.resolve_download_locate_path(
+        str(folder), ["/remote/report.txt"]
+    ) == str(downloaded)
+
+
+def test_open_in_file_manager_prefers_containing_folder_for_files(monkeypatch, tmp_path):
+    target = tmp_path / "report.txt"
+    target.write_text("ok", encoding="utf-8")
+    calls = []
+
+    class _Launcher:
+        def open_containing_folder(self, transient_for, *_args):
+            calls.append(("open_containing_folder", transient_for))
+
+        def launch(self, transient_for, *_args):
+            calls.append(("launch", transient_for))
+
+    monkeypatch.setattr(
+        portal_docs,
+        "_new_file_launcher",
+        lambda _gfile: _Launcher(),
+    )
+    transient = object()
+    assert portal_docs.open_in_file_manager(str(target), parent=transient) is True
+    assert calls == [("open_containing_folder", transient)]
+
+
+def test_open_in_file_manager_launches_directories(monkeypatch, tmp_path):
+    folder = tmp_path / "Downloads"
+    folder.mkdir()
+    calls = []
+
+    class _Launcher:
+        def open_containing_folder(self, transient_for, *_args):
+            calls.append(("open_containing_folder", transient_for))
+
+        def launch(self, transient_for, *_args):
+            calls.append(("launch", transient_for))
+
+    monkeypatch.setattr(
+        portal_docs,
+        "_new_file_launcher",
+        lambda _gfile: _Launcher(),
+    )
+    assert portal_docs.open_in_file_manager(str(folder), parent=None) is True
+    assert calls == [("launch", None)]
+    assert portal_docs.restore_granted_folder() is None
+
+    monkeypatch.setattr(portal_docs, "_load_doc_config", lambda: {"D": {"display": "x"}})
+    monkeypatch.setattr(portal_docs, "_lookup_document_path", lambda doc_id: None)
+    assert portal_docs.restore_granted_folder() is None
