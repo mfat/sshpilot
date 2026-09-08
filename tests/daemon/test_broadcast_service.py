@@ -455,3 +455,60 @@ def test_nothing_is_remembered_when_every_target_failed():
     assert result.targets[0].state is HostCommandState.FAILED
     assert broker.authenticated == []
     assert broker.cancelled == [started.operation.operation_id]
+
+
+class ReportingRunner(Runner):
+    """A runner that reports its child, as the real select-loop runner does."""
+
+    def __init__(self, process):
+        super().__init__()
+        self._process = process
+
+    def run(self, argv, environment, policy, *, cancel_event, on_process, on_output, input_data=None):
+        on_process(self._process)
+        try:
+            return super().run(
+                argv,
+                environment,
+                policy,
+                cancel_event=cancel_event,
+                on_process=lambda _process: None,
+                on_output=on_output,
+                input_data=input_data,
+            )
+        finally:
+            on_process(None)
+
+
+def test_broadcast_children_reach_the_process_registry(monkeypatch):
+    """Broadcast never recorded its children, and Host Info and exec-mode
+    backup inherited that: nothing described those orphans after a daemon was
+    killed. Ownership now belongs to the launch scope."""
+
+    recorded = []
+    monkeypatch.setattr(
+        "sshpilot.daemon.ssh_launch.record_owned_process_or_abandon",
+        lambda process, **kwargs: recorded.append(kwargs.get("kind")),
+    )
+
+    class FakeProcess:
+        pid = 31337
+
+        def poll(self):
+            return 0
+
+    runtime = OperationRuntime()
+    service = BroadcastCommandService(
+        runtime,
+        LaunchProvider(),
+        interaction_broker=Broker(),
+        runner=ReportingRunner(FakeProcess()),
+    )
+    owner = ClientId("client-owner")
+    started = service.start(
+        BroadcastCommandRequest((ConnectionId("demo"),), "true", BroadcastExecutionPolicy()),
+        owner_client_id=owner,
+    )
+    wait_terminal(service, started, owner)
+    assert recorded == ["session"]
+    runtime.shutdown()

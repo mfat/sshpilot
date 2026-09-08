@@ -55,6 +55,9 @@ class _Completed:
         self.returncode = returncode
         self.stdout = io.StringIO(stdout)
         self.stderr = stderr
+        # Key deployment is daemon-owned and now reaches the process registry,
+        # which identifies a child by pid and creation time.
+        self.pid = 4244
 
     def communicate(self, *_args, **_kwargs):
         if isinstance(self.stdout, io.StringIO):
@@ -96,7 +99,7 @@ class _Provider:
     def prepare_copy_id_launch(self, connection_id, public_path, *, force=False):
         return ["ssh-copy-id", "-i", public_path, "alice@example.test"], {"PATH": "/usr/bin"}
 
-    def prepare_remote_command_launch(self, connection_id, command):
+    def prepare_remote_command_launch(self, connection_id, command, *, interaction_policy="broker"):
         return ["ssh", "alice@example.test", command], {"PATH": "/usr/bin"}
 
 
@@ -322,6 +325,8 @@ def test_real_broker_password_flow_reaches_deploy_operation(tmp_path):
         def __init__(self):
             self.returncode = None
             self.stdout = self._lines()
+            # Recorded in the process registry like every daemon-owned child.
+            self.pid = 4245
 
         def _lines(self):
             yield "Trying to install the key...\n"
@@ -433,6 +438,8 @@ def test_full_server_password_interaction_visible_to_owner_client(tmp_path):
         def __init__(self):
             self.returncode = None
             self.stdout = self._lines()
+            # Recorded in the process registry like every daemon-owned child.
+            self.pid = 4245
 
         def _lines(self):
             yield "Trying to install the key...\n"

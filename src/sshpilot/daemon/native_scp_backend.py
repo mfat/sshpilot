@@ -7,7 +7,7 @@ import signal
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Sequence
 
 from sshpilot.api.errors import ErrorCode, SshPilotError
 from sshpilot.api.models.common import SessionId, TransferId
@@ -19,7 +19,8 @@ from sshpilot.transfer_scp import (
     insert_legacy_scp_flag,
     legacy_scp_flag_unsupported,
 )
-from .process_registry import KIND_TRANSFER, forget_owned_process, record_owned_process_or_abandon
+from .process_registry import KIND_TRANSFER, forget_owned_process
+from .ssh_launch import IO_STDERR_ONLY, LaunchStartError, ScpLaunch, SshLauncher
 
 _MAX_STDERR_BYTES = 64 * 1024
 _DRAIN_CHUNK_BYTES = 8192
@@ -83,6 +84,13 @@ class NativeScpBackend:
         self._interaction_broker = interaction_broker
         self._popen = popen
         self._wait_timeout = float(wait_timeout)
+        # Resolve ``self._popen`` at spawn time so a test can replace it on a
+        # live backend.
+        self._launcher = SshLauncher(
+            launch_provider,
+            interaction_broker,
+            popen=lambda *args, **kwargs: self._popen(*args, **kwargs),
+        )
 
     def build_operands(
         self,
@@ -134,34 +142,30 @@ class NativeScpBackend:
         extra_args = list(sources)
         if request.recursive:
             extra_args.insert(0, "-r")
-        base_argv, base_env = self._launch_provider.prepare_daemon_scp_launch(
-            connection_id,
-            extra_args=extra_args,
-            interaction_policy="broker",
-            target_override=destination,
-        )
         # One public scope per daemon resource: the interaction scope of an
         # SCP transfer IS its public TransferId. The frontend learns that ID
         # from TransferSummary and binds its interaction presenter to it; a
         # private random scope (``scp-<connection>-<id(cancel_event)>``) would
         # be unknowable and its prompts would never be presented.
-        scope_id = SessionId(str(transfer_id))
-        argv, env = self._interaction_broker.prepare_operation_launch(
-            tuple(base_argv),
-            dict(base_env),
-            scope_id=scope_id,
+        with self._launcher.open(
+            scope_id=SessionId(str(transfer_id)),
             connection_id=connection_id,
-            hostname=connection_target,
-        )
-        succeeded = False
-        try:
+            registry_kind=KIND_TRANSFER,
+        ) as scope:
+            prepared = scope.prepare(
+                ScpLaunch(
+                    extra_args=tuple(extra_args),
+                    target_override=destination,
+                ),
+                connection_id=connection_id,
+                hostname=connection_target,
+            )
             result = self._run_attempt(
-                argv,
-                env,
+                prepared,
                 cancel_event=cancel_event,
             )
             if result.returncode == 0:
-                succeeded = True
+                scope.authenticated()
                 return result
             if cancel_event.is_set():
                 raise SshPilotError(
@@ -169,14 +173,14 @@ class NativeScpBackend:
                     "The SCP transfer was cancelled",
                 )
             if classify_sftp_error(result.stderr):
-                legacy_argv = insert_legacy_scp_flag(list(argv))
+                # The retry stays on the same scope, so it cannot escape the
+                # credentials the first attempt already brokered.
                 legacy = self._run_attempt(
-                    legacy_argv,
-                    env,
+                    prepared.with_argv(insert_legacy_scp_flag(list(prepared.argv))),
                     cancel_event=cancel_event,
                 )
                 if legacy.returncode == 0:
-                    succeeded = True
+                    scope.authenticated()
                     return legacy
                 if cancel_event.is_set():
                     raise SshPilotError(
@@ -187,42 +191,19 @@ class NativeScpBackend:
                     raise self._failure(result.stderr)
                 raise self._failure(legacy.stderr)
             raise self._failure(result.stderr)
-        finally:
-            if succeeded:
-                # Commit credentials the user chose to remember AFTER a
-                # successful run — BEFORE the interaction scope is torn down.
-                # ``cancel_session`` destroys the askpass context and clears
-                # pending remembered secrets, so ``mark_authenticated`` must
-                # run first. On failure/cancellation the raises above skip it
-                # and the ``finally`` still cleans the scope up.
-                self._interaction_broker.mark_authenticated(scope_id)
-            self._interaction_broker.cancel_session(scope_id)
 
     def _run_attempt(
         self,
-        argv: Sequence[str],
-        env: Mapping[str, str],
+        prepared,
         *,
         cancel_event,
     ) -> ScpProcessResult:
         process = None
         stderr_reader = None
         try:
-            process = self._popen(
-                list(argv),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                env=dict(env),
-                start_new_session=(os.name != "nt"),
-                shell=False,
-            )
-            setattr(process, "_sshpilot_process_group", os.name != "nt")
-            record_owned_process_or_abandon(
-                process,
-                kind=KIND_TRANSFER,
-                process_group=(os.name != "nt"),
-            )
+            # The scope starts the child and records it as daemon-owned; the
+            # cancel/drain/reap loop below is this backend's own concern.
+            process = prepared.spawn(IO_STDERR_ONLY)
             stderr_reader = _BoundedStderr(process.stderr)
             while True:
                 returncode = process.poll()
@@ -244,6 +225,17 @@ class NativeScpBackend:
             returncode = self._reap(process)
             stderr = stderr_reader.finish(self._wait_timeout)
             return ScpProcessResult(returncode=returncode, stderr=stderr)
+        except LaunchStartError as exc:
+            # Restate the scope's start failure as a transfer failure: the
+            # frontend classifies SCP problems by ``scp_failure_code``.
+            raise SshPilotError(
+                ErrorCode.TRANSFER_IO_FAILED,
+                ScpFailureCode.PROCESS_START_FAILED.value,
+                details={
+                    "scp_failure_code": ScpFailureCode.PROCESS_START_FAILED.value,
+                    "diagnostic": str(exc.os_error),
+                },
+            ) from exc
         except SshPilotError:
             raise
         except OSError as exc:

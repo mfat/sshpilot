@@ -27,6 +27,9 @@ class _Completed:
         self.returncode = returncode
         self.stdout = io.StringIO(stdout)
         self.stderr = stderr
+        # Key deployment is daemon-owned and now reaches the process registry,
+        # which identifies a child by pid and creation time.
+        self.pid = 4244
 
     def communicate(self, *_args, **_kwargs):
         return self.stdout.getvalue(), self.stderr
@@ -108,11 +111,34 @@ class _Provider:
         self.calls.append((connection_id, public_path, force))
         return ["ssh-copy-id", "-i", public_path, "HostAlias"], {"PATH": "/usr/bin"}
 
-    def prepare_remote_command_launch(self, connection_id, command):
+    def prepare_remote_command_launch(self, connection_id, command, *, interaction_policy="broker"):
         return ["ssh", connection_id, command], {"PATH": "/usr/bin"}
 
 
-def _service(tmp_path, popen, *, state_environ=None, base_environ=None):
+class _Broker:
+    """Minimal broker double.
+
+    Daemon-owned OpenSSH children must always have one: the daemon has no
+    terminal, so an unbrokered child's password/host-key prompt would have
+    nowhere to go.
+    """
+
+    def __init__(self):
+        self.authenticated = []
+        self.cancelled = []
+
+    def prepare_operation_launch(self, argv, environment, **kwargs):
+        return tuple(argv), {**environment, "SSH_ASKPASS": "/helper"}
+
+    def mark_authenticated(self, scope_id):
+        assert scope_id not in self.cancelled
+        self.authenticated.append(scope_id)
+
+    def cancel_session(self, scope_id):
+        self.cancelled.append(scope_id)
+
+
+def _service(tmp_path, popen, *, state_environ=None, base_environ=None, broker=None):
     state = IdentityStateService(
         tmp_path / "identity.json",
         environ={"PATH": "/usr/bin", **(state_environ or {})},
@@ -125,6 +151,7 @@ def _service(tmp_path, popen, *, state_environ=None, base_environ=None):
         launch_provider=_Provider(),
         popen=popen,
         environ={"PATH": "/usr/bin", **(base_environ or {})},
+        interaction_broker=broker or _Broker(),
     )
 
 

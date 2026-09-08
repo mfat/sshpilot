@@ -934,46 +934,30 @@ class DaemonServer:
             logger.debug("ssh readiness is unavailable", exc_info=True)
             return None
 
-    def _prepare_session_launch(
-        self,
-        spec: Any,
-        launch_builder: Callable[..., tuple],
-    ) -> tuple:
-        broker = self._interaction_broker
-        if broker is None:
-            raise SshPilotError(
-                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
-                "Typed SSH interactions are unavailable",
-                connection_id=spec.connection_id,
-                session_id=spec.session_id,
-            )
-        argv, environment = broker.prepare_launch(spec, launch_builder)
-        readiness = self._readiness_manager
-        if readiness is not None:
-            diagnostics_path = readiness.prepare_launch(
-                spec.session_id, argv, environment
-            )
-            if diagnostics_path is not None:
-                from .ssh_readiness import insert_ssh_diagnostics_options
+    def _session_launcher(self):
+        """The one launcher for daemon sessions.
 
-                argv = insert_ssh_diagnostics_options(argv, diagnostics_path)
-        return argv, environment
+        Terminal, SFTP and forward differ only in policy, and that policy now
+        lives in one table rather than in three near-identical adapters here.
+        """
 
-    def _prepare_sftp_launch(
-        self,
-        spec: Any,
-        launch_builder: Callable[..., tuple],
-    ) -> tuple:
-        broker = self._interaction_broker
-        if broker is None:
-            raise SshPilotError(
-                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
-                "Typed SSH interactions are unavailable",
-                connection_id=spec.connection_id,
-                session_id=spec.session_id,
-            )
-        return broker.prepare_launch(
-            spec, launch_builder, trailing_args=("sftp",), headless=True
+        from .ssh_launch import SshLauncher
+
+        return SshLauncher(
+            self._connection_service,
+            self._interaction_broker,
+            readiness_manager=self._readiness_manager,
+        )
+
+    def _prepare_session_launch(self, spec: Any, launch_builder: Any = None) -> tuple:
+        from .ssh_launch import TerminalLaunch
+
+        return self._session_launcher().prepare_session(
+            spec,
+            TerminalLaunch(
+                remote_command=getattr(spec, "remote_command", None),
+                force_tty=bool(getattr(spec, "force_tty", False)),
+            ),
         )
 
     def _build_privileged_file_runner(self) -> Optional[Any]:
@@ -999,19 +983,14 @@ class DaemonServer:
         return PrivilegedFileService(launch_provider, broker)
 
 
-    def _prepare_forward_launch(
-        self,
-        spec: Any,
-        launch_builder: Callable[..., tuple],
-    ) -> tuple:
-        broker = self._interaction_broker
-        if broker is None:
-            raise SshPilotError(
-                ErrorCode.ASKPASS_HELPER_UNAVAILABLE,
-                "Typed SSH interactions are unavailable",
-                connection_id=spec.connection_id,
-                session_id=spec.session_id,
-            )
+    def _prepare_sftp_launch(self, spec: Any, launch_builder: Any = None) -> tuple:
+        from .ssh_launch import SftpLaunch
+
+        return self._session_launcher().prepare_session(spec, SftpLaunch())
+
+    def _prepare_forward_launch(self, spec: Any, launch_builder: Any = None) -> tuple:
+        from .ssh_launch import ForwardLaunch
+
         forward_runtime = self._forward_runtime
         if forward_runtime is None:
             raise SshPilotError(
@@ -1021,19 +1000,16 @@ class DaemonServer:
                 session_id=spec.session_id,
             )
         summary = forward_runtime.get_forward(ForwardId(str(spec.session_id)))
-
-        def _wrapped_builder(connection_id: Any, *, interaction_policy: str = "broker") -> tuple:
-            return launch_builder(
-                connection_id,
+        return self._session_launcher().prepare_session(
+            spec,
+            ForwardLaunch(
                 forward_type=summary.type.value,
                 bind_host=summary.bind_host,
                 bind_port=summary.bind_port,
                 destination_host=summary.destination_host,
                 destination_port=summary.destination_port,
-                interaction_policy=interaction_policy,
-            )
-
-        return broker.prepare_launch(spec, _wrapped_builder, headless=True)
+            ),
+        )
 
     def _client_can_interact(self, session_id: SessionId, client_id: Any) -> bool:
         broker = self._interaction_broker
