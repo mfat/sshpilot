@@ -330,6 +330,20 @@ def test_require_master_reaches_the_provider_when_set():
     ).bind(None, ConnectionId("demo"), "id", **call["kwargs"])
 
 
+def test_require_master_travels_in_provider_kwargs():
+    """The intent carries its own provider parameters.
+
+    ``_compose`` and ``_session_builder`` both build the provider call from
+    ``provider_kwargs()``; a flag special-cased in one of them would be
+    silently dropped by the other.
+    """
+
+    assert RemoteCommandLaunch(remote_command="id").provider_kwargs() == {}
+    assert RemoteCommandLaunch(
+        remote_command="id", require_master=True
+    ).provider_kwargs() == {"require_master": True}
+
+
 # --- Spawn flags -------------------------------------------------------------
 
 

@@ -287,7 +287,9 @@ class RemoteCommandLaunch:
         return (self.remote_command,)
 
     def provider_kwargs(self) -> Dict[str, Any]:
-        return {}
+        # Sent only when set: every provider fake spells its parameters
+        # explicitly, so the default path must stay byte-identical.
+        return {"require_master": True} if self.require_master else {}
 
 
 @dataclass(frozen=True)
@@ -750,10 +752,6 @@ class SshLauncher:
         # ``ssh-copy-id`` composes its own auth and takes no policy argument.
         if policy.interaction_policy and intent.kind is not LaunchKind.COPY_ID:
             kwargs["interaction_policy"] = policy.interaction_policy
-        # Only sent when set: every existing provider fake spells its
-        # parameters explicitly, and the default path must stay identical.
-        if getattr(intent, "require_master", False):
-            kwargs["require_master"] = True
         result = method(connection_id, *args, **kwargs)
         if not result:
             raise SshPilotError(
