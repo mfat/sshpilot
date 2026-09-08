@@ -22,11 +22,13 @@ notes remain separate.
 
 - `BroadcastExecutionPolicy` gained `require_master` (default `False`, omitted
   from the wire unless `True`, so old clients and servers interoperate
-  unchanged). When set, the daemon appends its shared multiplex fragment
-  (`ControlMaster=auto` + `ControlPath` + `ControlPersist`) to the command's
-  SSH argv even when the `ssh.controlmaster` preference is off. An explicitly
-  authored per-host `ControlMaster` directive still wins: command-line options
-  before it take precedence, exactly as with the preference-driven fragment.
+  unchanged). When set, the daemon injects its shared multiplex fragment
+  (`ControlMaster=auto` + `ControlPath` + `ControlPersist`) into the command's
+  SSH option argv (before the destination) so OpenSSH treats it as options.
+  That forced fragment is first among ControlMaster values, so it wins over
+  both a disabled `ssh.controlmaster` preference and an authored per-host
+  `ControlMaster` / `ControlPath` — Host Info must hold a master even when
+  multiplexing is otherwise off.
 - Every Host Info probe (`FULL`, `LIVE`, `NETWORK_COUNTERS`) now sets
   `require_master`. The interactive gather authenticates once and becomes the
   master; the autofill-only samples ride it instead of re-authenticating. This

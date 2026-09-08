@@ -509,12 +509,13 @@ class DaemonConnectionLaunchProvider:
             # options before the destination -- the only position OpenSSH
             # reads as options. (Appending to the finished argv would land
             # after the remote command, where the remote shell executes it.)
-            # An explicitly authored per-host ControlMaster directive is
-            # emitted even earlier by the builder and keeps precedence, so
-            # this overrides the preference default, never authorship. When
-            # the preference already provided the identical fragment it may
-            # appear twice; OpenSSH takes the first and both come from the
-            # same source, so the duplicate is inert.
+            # OpenSSH is first-value-wins: this fragment is placed before
+            # authored Host options and before preference ssh_overrides, so
+            # Host Info holds a master even when ssh.controlmaster is off or
+            # the Host block authored ControlMaster no. When the preference
+            # already provided the identical fragment it may appear twice;
+            # OpenSSH takes the first and both come from the same source, so
+            # the duplicate is inert.
             from ..ssh_multiplex import controlmaster_args
 
             extra_args = list(extra_args or [])
@@ -752,11 +753,12 @@ class DaemonConnectionLaunchProvider:
         identities, ports) applies unchanged.
 
         ``require_master`` holds the multiplex master for the connection even
-        when the ``ssh.controlmaster`` preference is off (Host Info probes):
-        the fragment joins the launch's option args, which the builder emits
-        before the destination -- appending options to the finished argv would
-        land after the remote command, where OpenSSH reads them as remote
-        shell text.
+        when multiplexing is otherwise off (Host Info probes): preference
+        ``ssh.controlmaster`` and an authored per-host ``ControlMaster`` both
+        lose to the forced fragment. It joins the launch's option args, which
+        the builder emits before the destination -- appending options to the
+        finished argv would land after the remote command, where OpenSSH
+        reads them as remote shell text.
         """
         if not isinstance(remote_command, str) or not remote_command.strip():
             raise SshPilotError(

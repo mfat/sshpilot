@@ -264,17 +264,16 @@ class ScpLaunch:
 @dataclass(frozen=True)
 class RemoteCommandLaunch:
     remote_command: str
-    #: Hold the multiplex master for this connection, even when the
-    #: ``ssh.controlmaster`` preference is off. The first command
-    #: authenticates normally and becomes the master; later commands to the
-    #: same host ride it instead of re-authenticating. This is how Host Info's
-    #: autofill-only live samples keep working on connections whose password
-    #: was typed but not stored. It reaches the provider as a parameter (not
-    #: as appended argv) so the launch builder keeps owning option order:
-    #: OpenSSH takes everything after the destination for the remote command,
-    #: so multiplex options appended there would run on the remote host.
-    #: It overrides the preference default, not an explicitly authored
-    #: per-host ``ControlMaster`` directive, which stays authoritative.
+    #: Hold the multiplex master for this connection even when multiplexing
+    #: is otherwise off (``ssh.controlmaster`` preference or an authored
+    #: per-host ``ControlMaster``). The first command authenticates normally
+    #: and becomes the master; later commands to the same host ride it
+    #: instead of re-authenticating. This is how Host Info's autofill-only
+    #: live samples keep working on connections whose password was typed but
+    #: not stored. It reaches the provider as a parameter (not as appended
+    #: argv) so the launch builder keeps owning option order: OpenSSH takes
+    #: everything after the destination for the remote command, so multiplex
+    #: options appended there would run on the remote host.
     require_master: bool = False
 
     kind = LaunchKind.REMOTE_COMMAND

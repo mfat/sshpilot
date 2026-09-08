@@ -39,13 +39,14 @@ class BroadcastExecutionPolicy:
     capture_stderr: bool = True
     output_limit_bytes: int = DEFAULT_BROADCAST_OUTPUT_BYTES
     interaction_mode: ExecutionInteractionMode = ExecutionInteractionMode.INTERACTIVE
-    #: Hold an OpenSSH multiplex master for the command's connection, even
-    #: when the ``ssh.controlmaster`` preference is off. A master lets later
-    #: commands to the same host ride the first authentication instead of
-    #: re-authenticating: Host Info's autofill-only live samples stay working
-    #: on connections whose password was typed but not stored. Off by default;
-    #: one-shot commands that can prompt (or autofill from the store) need no
-    #: lingering authenticated transport.
+    #: Hold an OpenSSH multiplex master for the command's connection even
+    #: when multiplexing is otherwise off (preference or authored Host
+    #: ``ControlMaster``). A master lets later commands to the same host ride
+    #: the first authentication instead of re-authenticating: Host Info's
+    #: autofill-only live samples stay working on connections whose password
+    #: was typed but not stored. Off by default; one-shot commands that can
+    #: prompt (or autofill from the store) need no lingering authenticated
+    #: transport.
     require_master: bool = False
 
     def __post_init__(self) -> None:

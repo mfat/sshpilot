@@ -287,6 +287,39 @@ def test_require_master_coexists_with_preference_multiplex(provider):
     assert {t for t in tokens if "ControlMaster" in t} == {"ControlMaster=auto"}
 
 
+def test_require_master_overrides_authored_controlmaster_no(provider):
+    """Host Info must hold a master even when the Host block disabled mux.
+
+    OpenSSH is first-value-wins: the forced fragment is emitted before
+    authored Advanced-tab options, so ControlMaster=auto beats an authored
+    ControlMaster no (and the forced ControlPath beats ControlPath none).
+    """
+    prov, records = provider
+    records["web"] = _record(
+        data={
+            "__authored_directives": ["hostname", "user"],
+            "hostname": "example.com",
+            "username": "alice",
+            "extra_ssh_config": "ControlMaster no\nControlPath none",
+        }
+    )
+    command, _environment = prov.prepare_remote_command_launch(
+        "web", "uptime", require_master=True
+    )
+    tokens = [str(token) for token in command]
+    first_master = tokens.index("ControlMaster=auto")
+    authored_no = tokens.index("ControlMaster=no")
+    assert first_master < authored_no
+    assert tokens[-1] == "uptime"
+    assert first_master < len(tokens) - 2
+    assert tokens[first_master - 1] == "-o"
+    # Forced path is the first ControlPath; authored none comes later and loses.
+    control_paths = [t for t in tokens if t.startswith("ControlPath=")]
+    assert control_paths[0] != "ControlPath=none"
+    assert "ControlPath=none" in control_paths[1:]
+    assert any(token.startswith("ControlPath=") and "/%C" in token for token in tokens)
+
+
 @pytest.mark.parametrize(
     ("term", "expected"),
     [
