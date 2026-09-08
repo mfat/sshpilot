@@ -413,7 +413,10 @@ class BroadcastCommandService:
             # the keyring already holds.
             hostname, username, port = self._remote_identity(connection_id)
             prepared = scope.prepare(
-                RemoteCommandLaunch(remote_command=request.command),
+                RemoteCommandLaunch(
+                    remote_command=request.command,
+                    require_master=request.policy.require_master,
+                ),
                 connection_id=connection_id,
                 hostname=hostname,
                 username=username,

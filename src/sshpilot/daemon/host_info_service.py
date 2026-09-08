@@ -120,6 +120,14 @@ class HostInfoService:
                         if probe is HostInfoProbe.FULL
                         else ExecutionInteractionMode.AUTOFILL_ONLY
                     ),
+                    # Every probe holds the multiplex master, preference or
+                    # not: the FULL gather authenticates once and becomes the
+                    # master, and the autofill-only samples ride it instead
+                    # of re-authenticating. Without this a connection whose
+                    # password was typed but not stored gathers fine and
+                    # then never produces a live sample (and so never a CPU
+                    # utilization, which exists only between two readings).
+                    require_master=True,
                 ),
             ),
             owner_client_id=owner_client_id,

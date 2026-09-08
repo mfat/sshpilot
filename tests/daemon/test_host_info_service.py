@@ -96,6 +96,10 @@ def test_full_probe_sends_the_core_probe_text_interactively():
     assert request.connection_ids == (CONNECTION,)
     assert request.policy.concurrency_limit == 1
     assert request.policy.interaction_mode is ExecutionInteractionMode.INTERACTIVE
+    # The gather authenticates once and becomes the multiplex master the
+    # autofill-only samples below ride; without it an unstored password
+    # gathers fine and then never produces a live sample.
+    assert request.policy.require_master is True
     assert summary.probe is HostInfoProbe.FULL
     assert summary.snapshot is not None
     assert summary.snapshot.hostname == "router"
@@ -116,6 +120,7 @@ def test_counter_probe_is_cheap_and_never_raises_its_own_prompt():
     assert request.command == NETWORK_COUNTERS_COMMAND
     assert request.policy.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY
     assert request.policy.timeout_seconds == 15.0
+    assert request.policy.require_master is True
     assert summary.snapshot is None
     assert summary.counters == (summary.counters[0],)
     assert (summary.counters[0].rx_bytes, summary.counters[0].tx_bytes) == (5, 7)
@@ -208,6 +213,9 @@ def test_the_live_probe_is_cheap_and_never_raises_its_own_prompt():
     assert request.command == LIVE_PROBE_COMMAND
     assert request.policy.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY
     assert request.policy.timeout_seconds == 15.0
+    # Autofill-only can only re-authenticate from the store, so the sample
+    # rides the FULL gather's master instead of prompting every two seconds.
+    assert request.policy.require_master is True
 
     assert summary.probe is HostInfoProbe.LIVE
     # A live sample is not a gather: it carries no snapshot.

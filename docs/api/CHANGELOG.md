@@ -16,7 +16,27 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.54 (current)
+## API 0.55 (current)
+
+### API 0.55 multiplexed Host Info probes
+
+- `BroadcastExecutionPolicy` gained `require_master` (default `False`, omitted
+  from the wire unless `True`, so old clients and servers interoperate
+  unchanged). When set, the daemon appends its shared multiplex fragment
+  (`ControlMaster=auto` + `ControlPath` + `ControlPersist`) to the command's
+  SSH argv even when the `ssh.controlmaster` preference is off. An explicitly
+  authored per-host `ControlMaster` directive still wins: command-line options
+  before it take precedence, exactly as with the preference-driven fragment.
+- Every Host Info probe (`FULL`, `LIVE`, `NETWORK_COUNTERS`) now sets
+  `require_master`. The interactive gather authenticates once and becomes the
+  master; the autofill-only samples ride it instead of re-authenticating. This
+  fixes live CPU utilization (which exists only between two readings) on
+  connections whose password was typed but not stored, where every sample used
+  to fail authentication silently. Ordinary broadcasts default to `False` and
+  are unchanged: commands that can prompt or autofill from the store need no
+  lingering authenticated transport. Protocol stays v1.
+
+## API 0.54
 
 ### API 0.54 CPU utilization, live sampling and the rest of what /proc says
 

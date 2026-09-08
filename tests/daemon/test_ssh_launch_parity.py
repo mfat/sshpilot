@@ -306,6 +306,30 @@ def test_remote_commands_are_brokered_not_normal():
     assert launcher._provider.calls[0]["kwargs"]["interaction_policy"] == "broker"
 
 
+def test_require_master_reaches_the_provider_when_set():
+    """The flag is conditional (default call sites keep byte-identical
+    kwargs), so bind the set path explicitly: a renamed provider parameter
+    must fail here, not against a live host."""
+
+    import inspect
+
+    from sshpilot.daemon.connection_launch_provider import (
+        DaemonConnectionLaunchProvider as ConnectionLaunchProvider,
+    )
+
+    launcher = _launcher()
+    with launcher.open(scope_id=SessionId("s")) as scope:
+        scope.prepare(
+            RemoteCommandLaunch(remote_command="id", require_master=True),
+            connection_id=ConnectionId("demo"),
+        )
+    call = launcher._provider.calls[0]
+    assert call["kwargs"]["require_master"] is True
+    inspect.signature(
+        ConnectionLaunchProvider.prepare_remote_command_launch
+    ).bind(None, ConnectionId("demo"), "id", **call["kwargs"])
+
+
 # --- Spawn flags -------------------------------------------------------------
 
 

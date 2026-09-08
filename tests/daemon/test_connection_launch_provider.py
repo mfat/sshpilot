@@ -226,6 +226,67 @@ def test_terminal_launch_without_remote_command_has_host_last(provider):
     assert "-t" not in command
 
 
+def test_remote_command_launch_ends_with_target_then_command(provider):
+    prov, _records = provider
+    command, _environment = prov.prepare_remote_command_launch("web", "uptime")
+    # Canonical shape everything else depends on: options, target, command.
+    assert command[-2] == "web"
+    assert command[-1] == "uptime"
+
+
+def test_require_master_is_off_unless_asked(provider):
+    prov, _records = provider
+    command, _environment = prov.prepare_remote_command_launch("web", "uptime")
+    assert not any("controlmaster" in str(token).lower() for token in command)
+
+
+def test_require_master_places_multiplex_before_target_not_after_command(provider):
+    """Regression: multiplex options appended after the remote command are
+    read by OpenSSH as remote shell text -- host-info probes failed with
+    ``remote_command_failed`` one second after authentication."""
+
+    prov, _records = provider
+    command, _environment = prov.prepare_remote_command_launch(
+        "web", "uptime", require_master=True
+    )
+    tokens = [str(token) for token in command]
+    master = tokens.index("ControlMaster=auto")
+    target = tokens.index("web")
+    assert tokens[-1] == "uptime"
+    assert target == len(tokens) - 2
+    assert master < target
+    assert tokens[master - 1] == "-o"
+    assert "ControlPersist=60" in tokens
+    assert any(token.startswith("ControlPath=") for token in tokens)
+
+
+def test_require_master_coexists_with_preference_multiplex(provider):
+    """When the global preference already provided the identical fragment,
+    the forced copy is inert: OpenSSH takes the first value and both come
+    from the same source. What matters is position, not count."""
+    from types import SimpleNamespace
+
+    from sshpilot.ssh_multiplex import controlmaster_args
+
+    prov, _records = provider
+    multiplexed = DaemonConnectionLaunchProvider(
+        prov._resolver,
+        secret_provider=None,
+        app_config=SimpleNamespace(
+            get_ssh_config=lambda: {"ssh_overrides": list(controlmaster_args())}
+        ),
+    )
+    command, _environment = multiplexed.prepare_remote_command_launch(
+        "web", "uptime", require_master=True
+    )
+    tokens = [str(token) for token in command]
+    first_master = tokens.index("ControlMaster=auto")
+    target = tokens.index("web")
+    assert tokens[-1] == "uptime"
+    assert first_master < target
+    assert {t for t in tokens if "ControlMaster" in t} == {"ControlMaster=auto"}
+
+
 @pytest.mark.parametrize(
     ("term", "expected"),
     [

@@ -156,6 +156,36 @@ def test_copy_id_does_not_receive_an_interaction_policy():
     assert kwargs == {"force": True}
 
 
+def test_require_master_is_off_unless_asked():
+    """The default path sends no new parameter: provider fakes spell their
+    signatures explicitly, so an always-sent kwarg would break every one."""
+
+    launcher = _launcher()
+    with launcher.open(scope_id=SessionId("s1"), connection_id=ConnectionId("c")) as scope:
+        prepared = scope.prepare(RemoteCommandLaunch(remote_command="uptime"))
+    assert "ControlMaster=auto" not in prepared.argv
+    assert prepared.argv[-1] == "-brokered"
+    _name, _cid, _args, kwargs = launcher._provider.calls[0]
+    assert "require_master" not in kwargs
+
+
+def test_require_master_reaches_the_provider_as_a_parameter():
+    """The launcher forwards intent; argv order stays the provider's job --
+    OpenSSH reads everything after the destination as remote shell text, so
+    only the builder that knows the target position may place options."""
+
+    launcher = _launcher()
+    with launcher.open(scope_id=SessionId("s1"), connection_id=ConnectionId("c")) as scope:
+        prepared = scope.prepare(
+            RemoteCommandLaunch(remote_command="uptime", require_master=True)
+        )
+    _name, _cid, _args, kwargs = launcher._provider.calls[0]
+    assert kwargs["require_master"] is True
+    # The launcher itself appends nothing: the fake provider's argv passes
+    # through untouched apart from brokering.
+    assert prepared.argv == ("ssh", "-o", "X=1", "host", "-brokered")
+
+
 def test_scp_prefers_the_thread_asserting_provider_method():
     launcher = _launcher()
     provider = launcher._provider

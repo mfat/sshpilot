@@ -27,8 +27,10 @@ class LaunchProvider:
     def __init__(self):
         self.calls = []
 
-    def prepare_remote_command_launch(self, connection_id, command, *, interaction_policy):
-        self.calls.append((connection_id, command, interaction_policy))
+    def prepare_remote_command_launch(
+        self, connection_id, command, *, interaction_policy, require_master=False
+    ):
+        self.calls.append((connection_id, command, interaction_policy, require_master))
         # Note the shape: the target is argv[-2] and the remote command is
         # argv[-1], which is why the broker cannot derive identity from argv.
         return (("ssh", str(connection_id), command), {"BASE": "1"})
@@ -171,6 +173,37 @@ def test_autofill_only_broadcast_policy_reaches_interaction_broker():
     wait_terminal(service, started, owner)
     assert broker.interaction_modes == [ExecutionInteractionMode.AUTOFILL_ONLY]
     runtime.shutdown()
+
+
+def _run_policy(service_owner_runner, policy):
+    runtime, owner, runner = service_owner_runner
+    launch = LaunchProvider()
+    service = BroadcastCommandService(
+        runtime, launch, interaction_broker=Broker(), runner=runner
+    )
+    started = service.start(
+        BroadcastCommandRequest((ConnectionId("demo"),), "true", policy),
+        owner_client_id=owner,
+    )
+    wait_terminal(service, started, owner)
+    runtime.shutdown()
+    return launch
+
+
+def _broadcast_runner():
+    return OperationRuntime(), ClientId("client-owner"), Runner()
+
+
+def test_require_master_policy_reaches_the_launch_provider():
+    launch = _run_policy(_broadcast_runner(), BroadcastExecutionPolicy(require_master=True))
+
+    assert launch.calls == [("demo", "true", "broker", True)]
+
+
+def test_default_policy_sends_no_master_flag():
+    launch = _run_policy(_broadcast_runner(), BroadcastExecutionPolicy())
+
+    assert launch.calls == [("demo", "true", "broker", False)]
 
 
 def test_concurrency_is_bounded_and_nonzero_exit_fails_parent():

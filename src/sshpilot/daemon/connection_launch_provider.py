@@ -493,6 +493,7 @@ class DaemonConnectionLaunchProvider:
         remote_command: Optional[str] = None,
         target_override: Optional[str] = None,
         force_tty: bool = False,
+        require_master: bool = False,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         from ..ssh_connection_builder import ConnectionContext, build_ssh_connection
 
@@ -503,6 +504,22 @@ class DaemonConnectionLaunchProvider:
         # One shared credential surface feeds both the builder's auth resolution
         # and the post-build preload so they see the same passphrases/preparer.
         manager = self._manager_shim(connection)
+        if require_master:
+            # Forced multiplex joins extra_args, which the builder emits as
+            # options before the destination -- the only position OpenSSH
+            # reads as options. (Appending to the finished argv would land
+            # after the remote command, where the remote shell executes it.)
+            # An explicitly authored per-host ControlMaster directive is
+            # emitted even earlier by the builder and keeps precedence, so
+            # this overrides the preference default, never authorship. When
+            # the preference already provided the identical fragment it may
+            # appear twice; OpenSSH takes the first and both come from the
+            # same source, so the duplicate is inert.
+            from ..ssh_multiplex import controlmaster_args
+
+            extra_args = list(extra_args or [])
+            if not any("controlmaster" in str(a).lower() for a in extra_args):
+                extra_args.extend(str(a) for a in controlmaster_args())
         ctx = ConnectionContext(
             connection=connection,
             connection_manager=manager,
@@ -725,6 +742,7 @@ class DaemonConnectionLaunchProvider:
         remote_command: str,
         *,
         interaction_policy: str = "broker",
+        require_master: bool = False,
     ) -> Tuple[Tuple[str, ...], Dict[str, str]]:
         """Canonical ``ssh <alias> <remote_command>`` for daemon remote reads/writes.
 
@@ -732,6 +750,13 @@ class DaemonConnectionLaunchProvider:
         the same native launch path as every other OpenSSH child: the saved
         Host alias stays the target so the user's SSH configuration (ProxyJump,
         identities, ports) applies unchanged.
+
+        ``require_master`` holds the multiplex master for the connection even
+        when the ``ssh.controlmaster`` preference is off (Host Info probes):
+        the fragment joins the launch's option args, which the builder emits
+        before the destination -- appending options to the finished argv would
+        land after the remote command, where OpenSSH reads them as remote
+        shell text.
         """
         if not isinstance(remote_command, str) or not remote_command.strip():
             raise SshPilotError(
@@ -753,6 +778,7 @@ class DaemonConnectionLaunchProvider:
             command_type="ssh",
             extra_args=["-T"],
             remote_command=remote_command,
+            require_master=require_master,
         )
 
     def prepare_copy_id_launch(

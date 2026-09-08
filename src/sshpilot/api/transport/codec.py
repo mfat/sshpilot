@@ -6574,6 +6574,8 @@ def broadcast_command_request_to_wire(request: Any) -> Dict[str, Any]:
     }
     if policy.interaction_mode is ExecutionInteractionMode.AUTOFILL_ONLY:
         policy_wire["interaction_mode"] = ExecutionInteractionMode.AUTOFILL_ONLY.value
+    if policy.require_master:
+        policy_wire["require_master"] = True
     return {
         "connection_ids": list(request.connection_ids),
         "command": request.command,
@@ -6609,7 +6611,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
             "capture_stderr",
             "output_limit_bytes",
         },
-        optional={"interaction_mode"},
+        optional={"interaction_mode", "require_master"},
         context="broadcast execution policy",
     )
     try:
@@ -6627,6 +6629,9 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
     timeout = policy_data["timeout_seconds"]
     if timeout is not None and (type(timeout) not in (int, float) or isinstance(timeout, bool)):
         raise ValueError("broadcast timeout must be a number or null")
+    require_master = policy_data.get("require_master", False)
+    if type(require_master) is not bool:
+        raise ValueError("broadcast require_master must be a boolean")
     return BroadcastCommandRequest(
         tuple(ConnectionId(_identifier(item, "connection id")) for item in data["connection_ids"]),
         _text(data["command"], "broadcast command"),
@@ -6642,6 +6647,7 @@ def broadcast_command_request_from_wire(value: Any) -> Any:
                 policy_data["output_limit_bytes"], "broadcast output limit"
             ),
             interaction_mode=interaction_mode,
+            require_master=require_master,
         ),
     )
 

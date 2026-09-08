@@ -264,6 +264,18 @@ class ScpLaunch:
 @dataclass(frozen=True)
 class RemoteCommandLaunch:
     remote_command: str
+    #: Hold the multiplex master for this connection, even when the
+    #: ``ssh.controlmaster`` preference is off. The first command
+    #: authenticates normally and becomes the master; later commands to the
+    #: same host ride it instead of re-authenticating. This is how Host Info's
+    #: autofill-only live samples keep working on connections whose password
+    #: was typed but not stored. It reaches the provider as a parameter (not
+    #: as appended argv) so the launch builder keeps owning option order:
+    #: OpenSSH takes everything after the destination for the remote command,
+    #: so multiplex options appended there would run on the remote host.
+    #: It overrides the preference default, not an explicitly authored
+    #: per-host ``ControlMaster`` directive, which stays authoritative.
+    require_master: bool = False
 
     kind = LaunchKind.REMOTE_COMMAND
 
@@ -716,6 +728,10 @@ class SshLauncher:
         # ``ssh-copy-id`` composes its own auth and takes no policy argument.
         if policy.interaction_policy and intent.kind is not LaunchKind.COPY_ID:
             kwargs["interaction_policy"] = policy.interaction_policy
+        # Only sent when set: every existing provider fake spells its
+        # parameters explicitly, and the default path must stay identical.
+        if getattr(intent, "require_master", False):
+            kwargs["require_master"] = True
         result = method(connection_id, *args, **kwargs)
         if not result:
             raise SshPilotError(
