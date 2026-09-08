@@ -1222,15 +1222,26 @@ def daemon_list_ssh_backups(
     """List the sshPilot backups stored in ``remote_dir`` on the given server.
 
     Metadata only (id/name/date) — the archive bytes never leave the daemon.
+
+    Raises :class:`BackupError` when the server could not be reached or the
+    listing was refused. An *empty* directory is not a failure and comes back as
+    ``[]`` — the stores already draw that line. Swallowing everything into ``[]``
+    told a user who had just cancelled the login prompt (or whose host key was
+    rejected) that the server holds no backups.
     """
-    from sshpilot.backup_backends import SSHServerBackupBackend
+    from sshpilot.backup_backends import BackupError, SSHServerBackupBackend
 
     try:
         with _backup_store(transport, connection_id, client_id) as store:
             entries = SSHServerBackupBackend(store, remote_dir).list_exports()
-    except Exception:
-        logger.debug("SSH backup listing failed", exc_info=True)
-        return []
+    except BackupError:
+        raise
+    except Exception as exc:
+        logger.error("SSH backup listing failed: %s", exc)
+        raise BackupError(
+            SecretTransferMessageCode.SSH_BACKUP_LIST_FAILED,
+            diagnostic=str(exc),
+        ) from exc
     return [
         {"id": getattr(e, "id", ""), "name": getattr(e, "name", ""),
          "date": getattr(e, "date", "") or ""}

@@ -22,6 +22,7 @@ from gettext import gettext as _
 
 from .accessibility import set_accessible_name, set_accessible_selected
 from .gtk.secret_transfer_messages import (
+    format_secret_transfer_error,
     format_secret_transfer_message,
     format_secret_transfer_messages,
 )
@@ -1763,7 +1764,11 @@ class WindowConfigDialogsMixin:
                     connection_id=nick, remote_dir=remote_dir))
             except Exception as e:
                 logger.error("Listing SSH backups failed: %s", e)
-                payload = ('error', str(e))
+                # A reachable server with an empty directory returns []; this
+                # branch means the connect itself failed (cancelled prompt,
+                # rejected host key, refused directory), which must not be
+                # reported as "no backups found".
+                payload = ('error', format_secret_transfer_error(e) or str(e))
             GLib.idle_add(lambda: (_after(payload), False)[1])
 
         def _after(p):

@@ -1569,20 +1569,30 @@ class SecretBackendService:
 
         Listing connects, so it can raise the connection's own auth prompts;
         ``owner_client_id`` is the frontend that must be able to answer them.
+
+        A server that could not be reached raises rather than returning ``[]``:
+        an empty list means the directory holds no backups, and conflating the
+        two told a user who had just cancelled the login prompt that the server
+        was empty.
         """
+        from sshpilot.backup_backends import BackupError
+
         with self._lock:
             self._load_strict()
             from sshpilot.daemon.secret_transfer import daemon_list_ssh_backups
 
-            return daemon_list_ssh_backups(
-                self._manager,
-                connection_id=connection_id,
-                remote_dir=remote_dir,
-                connections_source=self._connections_source,
-                settings_path=self._path,
-                transport=self._backup_transport,
-                client_id=owner_client_id,
-            )
+            try:
+                return daemon_list_ssh_backups(
+                    self._manager,
+                    connection_id=connection_id,
+                    remote_dir=remote_dir,
+                    connections_source=self._connections_source,
+                    settings_path=self._path,
+                    transport=self._backup_transport,
+                    client_id=owner_client_id,
+                )
+            except BackupError as exc:
+                raise _backup_error_to_wire(exc) from exc
 
     def import_ssh_backup(
         self,
@@ -2126,6 +2136,36 @@ class SecretBackendService:
                 lambda: rbw._run("config", "unset", "base_url")
             ) and ok
         return ok
+
+
+#: Key under ``SshPilotError.details`` carrying a structured transfer message.
+BACKUP_ERROR_DETAIL_KEY = "transfer_message"
+
+
+def _backup_error_to_wire(exc) -> SshPilotError:
+    """Wrap a :class:`BackupError` so its message survives the RPC boundary.
+
+    RPCs that return a plain value (the SSH backup *listing*) have no
+    ``SecretTransferResult`` to carry a failure in, and the daemon cannot
+    localize — the user's locale lives in the frontend. So the structured
+    message travels in ``details``, which the codec round-trips verbatim, and
+    the frontend renders it with ``format_secret_transfer_message``.
+    """
+    message = exc.transfer_message
+    return SshPilotError(
+        ErrorCode.REMOTE_COMMAND_FAILED,
+        str(exc) or message.code.value,
+        details={
+            BACKUP_ERROR_DETAIL_KEY: {
+                "code": message.code.value,
+                "parameters": {
+                    str(key): str(value)
+                    for key, value in dict(message.parameters).items()
+                },
+                "diagnostic": message.diagnostic,
+            }
+        },
+    )
 
 
 def _clear_secret(secret: bytearray) -> None:

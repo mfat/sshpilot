@@ -454,8 +454,11 @@ def test_ssh_backup_routes_run_as_the_requesting_client(tmp_path):
 
     service.export_backup(
         destination="ssh:srv:~/bk", options=options, owner_client_id="client-1")
-    service.list_ssh_backups(
-        connection_id="srv", remote_dir="~/bk", owner_client_id="client-2")
+    # Listing raises rather than returning [] now: an unreachable server must
+    # not read as "this directory holds no backups".
+    with pytest.raises(SshPilotError):
+        service.list_ssh_backups(
+            connection_id="srv", remote_dir="~/bk", owner_client_id="client-2")
     service.preview_ssh_backup(
         connection_id="srv", remote_dir="~/bk", entry_id="e1",
         owner_client_id="client-3")
