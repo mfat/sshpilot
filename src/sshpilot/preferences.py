@@ -1369,6 +1369,20 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_group.add(flat_rows_switch)
 
+        monospace_font_switch = Adw.SwitchRow()
+        monospace_font_switch.set_title(_("Monospace Font"))
+        monospace_font_switch.set_subtitle(
+            _("Use a monospace typeface in the connection sidebar "
+              "(matches your terminal font when one is set)")
+        )
+        monospace_font_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_monospace_font', False))
+        )
+        monospace_font_switch.connect(
+            'notify::active', self.on_sidebar_monospace_font_changed
+        )
+        sidebar_group.add(monospace_font_switch)
+
         # Display user@hostname toggle
         show_user_hostname_switch = Adw.SwitchRow()
         show_user_hostname_switch.set_title(_("Display user@hostname"))
@@ -4089,6 +4103,14 @@ class PreferencesWindow(Adw.NavigationPage):
             # Apply to all active terminals
             self.apply_font_to_terminals(font_string)
 
+            # Sidebar monospace mode follows the terminal font family.
+            if self.config.get_setting('ui.sidebar_monospace_font', False):
+                try:
+                    from .sidebar import apply_sidebar_monospace_font
+                    apply_sidebar_monospace_font(self.config)
+                except Exception:
+                    logger.debug("Failed to refresh sidebar monospace font", exc_info=True)
+
         font_dialog.set_callback(on_font_selected)
         font_dialog.present()
 
@@ -6468,6 +6490,16 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar flat rows preference: %s", exc)
+
+    def on_sidebar_monospace_font_changed(self, switch, *args):
+        """Persist and apply monospace typeface for the connection sidebar."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_monospace_font', active)
+            from .sidebar import apply_sidebar_monospace_font
+            apply_sidebar_monospace_font(self.config)
+        except Exception as exc:
+            logger.error("Failed to update sidebar monospace font preference: %s", exc)
 
     def on_sidebar_show_user_hostname_changed(self, switch, *args):
         """Persist the preference for showing user@hostname in sidebar."""

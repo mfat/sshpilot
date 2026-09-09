@@ -25,6 +25,7 @@ def _setup_glib_stub(window_module, calls, monkeypatch):
     monkeypatch.setattr(window_module.GLib, 'idle_add', idle_add, raising=False)
     monkeypatch.setattr(window_module.GLib, 'timeout_add', timeout_add, raising=False)
     monkeypatch.setattr(window_module, 'install_sidebar_css', lambda: None, raising=False)
+    monkeypatch.setattr(window_module, 'apply_sidebar_monospace_font', lambda _config=None: None, raising=False)
 
 
 def _build_main_window(window_module, startup_value, calls):

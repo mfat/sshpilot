@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Dict, List, Optional
 
 import gi
@@ -137,6 +138,115 @@ def _install_sidebar_color_css():
         _COLOR_CSS_INSTALLED = True
     except Exception:
         logger.debug("Failed to install sidebar color CSS", exc_info=True)
+
+
+def _css_escape_font_family(family: str) -> str:
+    """Escape a font family name for use inside a CSS double-quoted string."""
+    return str(family or "").replace("\\", "\\\\").replace('"', '\\"')
+
+
+# Pango style/variant tokens that may trail a family name in a font string.
+_PANGO_STYLE_TOKENS = frozenset({
+    "italic", "oblique", "normal", "roman",
+    "bold", "ultrabold", "heavy", "ultraheavy", "light", "ultralight",
+    "book", "medium", "semibold", "demibold",
+    "thin", "regular",
+    "condensed", "semicondensed", "extracondensed", "ultracondensed",
+    "expanded", "semiexpanded", "extraexpanded", "ultraexpanded",
+})
+
+
+def _font_family_from_string(font_string: str) -> str:
+    """Extract the family from a Pango-style font description string.
+
+    Prefers real ``Pango.FontDescription`` when available; falls back to a
+    lightweight parse so unit tests under the stubbed GI still resolve
+    custom terminal fonts (e.g. ``JetBrains Mono 13`` → ``JetBrains Mono``).
+    """
+    text = str(font_string or "").strip()
+    if not text:
+        return "Monospace"
+    try:
+        family = Pango.FontDescription.from_string(text).get_family()
+        if isinstance(family, str) and family.strip():
+            return family.strip()
+    except Exception:
+        pass
+
+    parts = text.split()
+    while parts:
+        last = parts[-1]
+        if re.fullmatch(r"\d+(\.\d+)?", last):
+            parts.pop()
+            continue
+        if last.lower() in _PANGO_STYLE_TOKENS:
+            parts.pop()
+            continue
+        break
+    return " ".join(parts) if parts else "Monospace"
+
+
+def _sidebar_monospace_family(config) -> str:
+    """Family for sidebar monospace mode: terminal.font when set, else Monospace."""
+    font_string = "Monospace 12"
+    if config is not None:
+        try:
+            font_string = config.get_setting("terminal.font", "Monospace 12") or "Monospace 12"
+        except Exception:
+            font_string = "Monospace 12"
+    return _font_family_from_string(str(font_string))
+
+
+def apply_sidebar_monospace_font(config=None) -> None:
+    """Install or remove the sidebar monospace-font CSS provider.
+
+    When ``ui.sidebar_monospace_font`` is enabled, sidebar text uses a
+    monospace face. Prefer the family from ``terminal.font`` (the user's
+    custom terminal font when they have chosen one); otherwise ``Monospace``.
+    Safe to call repeatedly — replaces any prior provider on the display.
+    """
+    display = Gdk.Display.get_default()
+    if not display:
+        return
+
+    existing = getattr(display, "_sidebar_monospace_css_provider", None)
+    if existing is not None:
+        try:
+            Gtk.StyleContext.remove_provider_for_display(display, existing)
+        except Exception:
+            logger.debug("Failed to remove sidebar monospace CSS", exc_info=True)
+        try:
+            delattr(display, "_sidebar_monospace_css_provider")
+        except Exception:
+            pass
+
+    enabled = False
+    if config is not None:
+        try:
+            enabled = bool(config.get_setting("ui.sidebar_monospace_font", False))
+        except Exception:
+            enabled = False
+    if not enabled:
+        return
+
+    family = _css_escape_font_family(_sidebar_monospace_family(config))
+    # .sidebar covers the docked toolbar view (header + content).
+    # .connection-sidebar is on the content box so the font survives
+    # reparenting into the detachable sidebar popup.
+    css = f"""
+    .sidebar, .connection-sidebar {{
+      font-family: "{family}", monospace;
+    }}
+    """
+    try:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(css.encode("utf-8"))
+        Gtk.StyleContext.add_provider_for_display(
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        display._sidebar_monospace_css_provider = provider
+    except Exception:
+        logger.debug("Failed to install sidebar monospace CSS", exc_info=True)
 
 
 def install_sidebar_css():
@@ -5069,6 +5179,8 @@ def build_sidebar(window):
     # Ensure sidebar box expands to use full allocated width from NavigationSplitView
     sidebar_box.set_hexpand(True)
     sidebar_box.set_vexpand(True)
+    # Survives reparenting into the detachable popup (see apply_sidebar_monospace_font).
+    sidebar_box.add_css_class("connection-sidebar")
     window._sidebar_box = sidebar_box
 
     _build_sidebar_header(window, sidebar_box)
@@ -5084,4 +5196,10 @@ def build_sidebar(window):
     _assemble_sidebar_shell(window, sidebar_box)
 
 
-__all__ = ["ConnectionRow", "GroupRow", "build_sidebar"]
+__all__ = [
+    "ConnectionRow",
+    "GroupRow",
+    "apply_sidebar_monospace_font",
+    "build_sidebar",
+    "install_sidebar_css",
+]

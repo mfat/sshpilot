@@ -92,6 +92,9 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_connection_icon': False,
             'sidebar_show_group_icon': False,
             'sidebar_flat_rows': True,
+            # When True, connection sidebar text uses a monospace face —
+            # the family from terminal.font when set, otherwise Monospace.
+            'sidebar_monospace_font': False,
             # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
             'sidebar_hide_on_startup': False,
             'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open

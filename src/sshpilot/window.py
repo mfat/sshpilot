@@ -78,6 +78,7 @@ from .session_manager import SessionManager
 from .sidebar import (
     GroupRow,
     ConnectionRow,
+    apply_sidebar_monospace_font,
     build_sidebar,
     install_sidebar_css,
     minimal_label_max_chars,
@@ -1150,6 +1151,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             install_sidebar_css()
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
+
+        try:
+            apply_sidebar_monospace_font(self.config)
+        except Exception as e:
+            logger.error(f"Failed to apply sidebar monospace font: {e}")
 
         # Apply header-bar button visibility preferences now that the buttons
         # exist (split view, commands, local terminal).
@@ -3214,24 +3220,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return widest
 
     def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
-        """Collapse the sidebar to a compact label strip, or restore its full width.
+        """Expand to the full sidebar. Icon-strip collapse is retired.
 
-        The split view's min/max sidebar width is the single width lever; the
-        transition is animated with ``Adw.TimedAnimation`` when available.
+        Callers that still pass ``minimal=True`` (legacy drag expand/collapse,
+        minimize-on-connect) are ignored so the strip cannot be re-entered.
         """
-        minimal = bool(minimal)
-        if minimal == getattr(self, '_sidebar_minimal', False):
+        if bool(minimal):
             return
-        self._sidebar_minimal = minimal
-
-        if minimal:
-            # A strip implies the sidebar is on screen.
-            try:
-                self._toggle_sidebar_visibility(True)
-                if hasattr(self, 'sidebar_toggle_button'):
-                    self.sidebar_toggle_button.set_active(False)
-            except Exception:
-                logger.debug("show-for-minimal failed", exc_info=True)
+        if not getattr(self, '_sidebar_minimal', False):
+            return
+        minimal = False
+        self._sidebar_minimal = False
 
         anim = getattr(self, '_sidebar_width_animation', None)
         if anim is not None:
