@@ -1,9 +1,9 @@
-"""Group-row split-view action: reserved by default, shed when the sidebar is
-too narrow to pay for it.
+"""Group-row split-view and connection-row Manage Files hover actions.
 
-The group row is what sets the sidebar's measured minimum width, and a reserved
-34px button is most of it — so the width at which the button goes is also the
-width at which the divider can keep going.
+Group rows reserve the split-view button until the sidebar is too narrow, then
+shed it entirely (hover must not reflow the floor). Connection rows always shed
+Manage Files at rest in full mode so the name keeps the width, keep a height
+floor, and reveal on hover; the strip still reserves.
 """
 
 import importlib
@@ -18,6 +18,21 @@ def _group_row():
     row._is_hovering_row = False
     row._actions_reserved = True
     row.split_view_button = MagicMock(name='split_view_button')
+    return row, mod
+
+
+def _connection_row(*, callback=True):
+    mod = importlib.import_module('sshpilot.sidebar')
+    row = mod.ConnectionRow.__new__(mod.ConnectionRow)
+    row._compact = False
+    row._is_hovering = False
+    row._actions_reserved = True
+    row._action_height_floor_on = False
+    row._action_button_height_px = 0
+    row._file_manager_callback = MagicMock() if callback else None
+    row.file_manager_button = MagicMock(name='file_manager_button')
+    row.file_manager_button.measure.return_value = (34, 34, -1, -1)
+    row._content_box = MagicMock(name='_content_box')
     return row, mod
 
 
@@ -63,6 +78,61 @@ def test_the_strip_keeps_no_row_action():
     mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
 
     row.split_view_button.set_visible.assert_called_with(False)
+
+
+def test_connection_full_mode_sheds_at_rest_and_reveals_on_hover():
+    """Full mode never reserves Manage Files — the name keeps the width."""
+    row, mod = _connection_row()
+
+    mod.ConnectionRow._reveal_row_actions(row, False)
+
+    row.file_manager_button.set_visible.assert_called_with(False)
+    row.file_manager_button.set_opacity.assert_called_with(0.0)
+    row._content_box.set_size_request.assert_called_with(-1, 34)
+    assert row._action_height_floor_on is True
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.set_opacity.assert_called_with(1.0)
+    # Hovering clears the floor while the button is back in the layout.
+    row._content_box.set_size_request.assert_called_with(-1, -1)
+    assert row._action_height_floor_on is False
+
+
+def test_connection_full_mode_sheds_even_when_width_would_reserve():
+    """Unlike group rows, connection Manage Files ignores the width threshold."""
+    row, mod = _connection_row()
+    row._actions_reserved = True
+
+    mod.ConnectionRow._reveal_row_actions(row, False)
+
+    row.file_manager_button.set_visible.assert_called_with(False)
+    assert row._action_height_floor_on is True
+
+
+def test_connection_strip_keeps_manage_files_reserved():
+    """Minimal mode reserves Manage Files; opacity is hover-only."""
+    row, mod = _connection_row()
+    row._compact = True
+    row._actions_reserved = False
+
+    mod.ConnectionRow._reveal_row_actions(row, False)
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.set_opacity.assert_called_with(0.0)
+    assert row._action_height_floor_on is False
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.set_opacity.assert_called_with(1.0)
+
+
+def test_connection_without_callback_never_reserves():
+    row, mod = _connection_row(callback=False)
+
+    mod.ConnectionRow._reveal_row_actions(row, True)
+
+    row.file_manager_button.set_visible.assert_called_with(False)
+    row.file_manager_button.set_opacity.assert_called_with(0.0)
 
 
 def _window(width):

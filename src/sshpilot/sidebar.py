@@ -758,6 +758,9 @@ def _restore_full_label_width(label: Gtk.Label) -> None:
     label.set_width_chars(FULL_LABEL_MIN_CHARS)
     label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
     label.set_ellipsize(Pango.EllipsizeMode.END)
+    # Compact leaves alignment alone; re-assert FILL so shed width is usable.
+    label.set_halign(Gtk.Align.FILL)
+    label.set_xalign(0.0)
 
 
 def _set_compact_fg_color(widget: Gtk.Widget, rgba: Optional[Gdk.RGBA],
@@ -975,8 +978,11 @@ class GroupRow(Gtk.ListBoxRow):
         self._info_box = info_box
 
         self.name_label = Gtk.Label()
-        self.name_label.set_halign(Gtk.Align.START)
-        self.name_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        # FILL + xalign=0: expand into freed row width (e.g. after shedding the
+        # split-view action) while keeping the glyphs left-aligned. START would
+        # leave the label at its max-width-chars natural size and waste the space.
+        self.name_label.set_halign(Gtk.Align.FILL)
+        self.name_label.set_xalign(0.0)
         self.name_label.set_valign(Gtk.Align.CENTER)  # Center vertically when count label is hidden
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
@@ -989,8 +995,8 @@ class GroupRow(Gtk.ListBoxRow):
         info_box.append(self.name_label)
 
         self.count_label = Gtk.Label()
-        self.count_label.set_halign(Gtk.Align.START)
-        self.count_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        self.count_label.set_halign(Gtk.Align.FILL)
+        self.count_label.set_xalign(0.0)
         self.count_label.add_css_class("dim-label")
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
@@ -1666,8 +1672,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         # set_text() also keeps a name with '<' or '&' in it out of the markup
         # parser.
         self.nickname_label.set_text(connection_name)
-        self.nickname_label.set_halign(Gtk.Align.START)
-        self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        # FILL + xalign=0: expand into width freed by shedding Manage Files;
+        # START would keep the label at max-width-chars and ignore that space.
+        self.nickname_label.set_halign(Gtk.Align.FILL)
+        self.nickname_label.set_xalign(0.0)
         self.nickname_label.set_valign(Gtk.Align.CENTER)  # Center vertically when host label is hidden
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
@@ -1681,8 +1689,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
-        self.host_label.set_halign(Gtk.Align.START)
-        self.host_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
+        self.host_label.set_halign(Gtk.Align.FILL)
+        self.host_label.set_xalign(0.0)
         self.host_label.add_css_class("dim-label")
         # Ellipsize when text exceeds available width
         # Per GTK4 docs: For ellipsizing labels, width-chars sets minimum width,
@@ -1712,21 +1720,32 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
 
-        # File manager button (before status icon) - only visible on hover
-        # Use opacity instead of visibility to reserve space and prevent row resizing
+        # Manage Files — in the full sidebar the horizontal slot is never
+        # reserved at rest (the name keeps that width). A height floor stops
+        # the row from shrinking when the button is gone; hover reveals it.
+        # The strip still reserves and uses opacity-only hover so it does not
+        # jump — see :meth:`_reveal_row_actions`.
         from sshpilot import icon_utils
+        self._actions_reserved = True
+        self._action_height_floor_on = False
+        self._action_button_height_px = 0
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
-        self.file_manager_button.set_opacity(0.0)  # Hidden by default but reserves space
+        # Start shed: no horizontal reservation until hover (or the strip).
+        self.file_manager_button.set_visible(False)
+        self.file_manager_button.set_opacity(0.0)
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         content.append(self.file_manager_button)
         
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
+        # Apply shed-at-rest (height floor, no horizontal slot) now that hover
+        # state exists; __init__ left the button invisible above.
+        self._reveal_row_actions(False)
 
         from sshpilot import icon_utils
         self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
@@ -1803,8 +1822,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_row_enter(self, controller, x, y):
         """Reveal hover actions when the mouse enters the row."""
         self._is_hovering = True
-        if self.file_manager_button and self._file_manager_callback:
-            self.file_manager_button.set_opacity(1.0)
+        self._reveal_row_actions(True)
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
@@ -1815,8 +1833,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_button_enter(self, controller, x, y):
         """Keep row actions visible while hovering over either button."""
         self._is_hovering = True
-        if self.file_manager_button:
-            self.file_manager_button.set_opacity(1.0)
+        self._reveal_row_actions(True)
 
     def _on_button_leave(self, controller):
         """Handle mouse leaving the button"""
@@ -1825,9 +1842,97 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _maybe_hide_button(self):
         """Hide row actions when the pointer is no longer hovering."""
-        if not self._is_hovering and self.file_manager_button:
-            self.file_manager_button.set_opacity(0.0)
+        if not self._is_hovering:
+            self._reveal_row_actions(False)
         return False  # Don't repeat
+
+    def _action_button_height(self) -> int:
+        """Natural height of Manage Files, cached for the shed height floor."""
+        cached = int(getattr(self, '_action_button_height_px', 0) or 0)
+        if cached > 0:
+            return cached
+        button = getattr(self, 'file_manager_button', None)
+        h = 34  # matches the reserved ~34px footprint
+        if button is not None:
+            try:
+                minimum, natural, *_ = button.measure(Gtk.Orientation.VERTICAL, -1)
+                h = max(int(natural), int(minimum), 1)
+            except Exception:
+                pass
+        self._action_button_height_px = h
+        return h
+
+    def _set_action_height_floor(self, enabled: bool) -> None:
+        """Pin content min-height while Manage Files is shed (width freed)."""
+        content = getattr(self, '_content_box', None)
+        if content is None:
+            return
+        if not enabled:
+            if not getattr(self, '_action_height_floor_on', False):
+                return
+            try:
+                content.set_size_request(-1, -1)
+            except Exception:
+                pass
+            self._action_height_floor_on = False
+            return
+        if getattr(self, '_action_height_floor_on', False):
+            return
+        try:
+            content.set_size_request(-1, self._action_button_height())
+            self._action_height_floor_on = True
+        except Exception:
+            pass
+
+    def _reveal_row_actions(self, revealed: bool) -> None:
+        """Show or hide Manage Files without wasting name width at rest.
+
+        Full sidebar: the button is shed unless the pointer is on the row —
+        that is what lets the connection name use the full row width. A height
+        floor keeps the row from getting shorter when it is gone. Hovering
+        reveals it (the name may ellipsize for that moment).
+
+        Strip: keep the reservation and use opacity for hover so the strip
+        never reflows under the pointer. A row with no callback reserves
+        nothing.
+        """
+        button = getattr(self, 'file_manager_button', None)
+        if button is None:
+            return
+        if not self._file_manager_callback:
+            self._set_action_height_floor(False)
+            button.set_visible(False)
+            button.set_opacity(0.0)
+            return
+
+        if getattr(self, '_compact', False):
+            # Strip: reserved slot, opacity-only hover.
+            self._set_action_height_floor(False)
+            button.set_visible(True)
+            button.set_opacity(1.0 if revealed else 0.0)
+            return
+
+        # Full mode: always shed at rest so the name keeps the width.
+        self._set_action_height_floor(not revealed)
+        button.set_visible(bool(revealed))
+        button.set_opacity(1.0 if revealed else 0.0)
+
+    def set_actions_reserved(self, reserved: bool) -> None:
+        """API shared with group rows; full-mode Manage Files always sheds.
+
+        Group rows use this to drop their split-view reservation below
+        ``window._ROW_ACTIONS_MIN_WIDTH``. Connection rows ignore the flag for
+        layout — they always give the name the horizontal space at rest and
+        only reveal on hover (see :meth:`_reveal_row_actions`). The method
+        remains so ``MainWindow._apply_sidebar_row_actions`` can walk every row.
+        """
+        reserved = bool(reserved)
+        if reserved == getattr(self, '_actions_reserved', True):
+            return
+        self._actions_reserved = reserved
+        # Re-apply in case we were mid-hover when the width crossed the
+        # group-row threshold; layout policy itself does not use the flag.
+        self._reveal_row_actions(getattr(self, '_is_hovering', False))
 
     def show_drop_indicator(self, top: bool):
         """Show drop indicator line"""
@@ -2383,7 +2488,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._info_box.set_visible(True)
             self.indicator_box.set_visible(True)
             self.file_manager_button.remove_css_class('sidebar-compact-action')
-            self.file_manager_button.set_visible(True)
+            self._reveal_row_actions(getattr(self, '_is_hovering', False))
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
             self.connection_icon.remove_css_class('conn-status-up')
             try:
@@ -2434,7 +2539,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         # space stays reserved and hovering never reflows the row — but it wears
         # `.sidebar-compact-action` to give the label back the padding it can.
         self.file_manager_button.add_css_class('sidebar-compact-action')
-        self.file_manager_button.set_visible(True)
+        self._reveal_row_actions(getattr(self, '_is_hovering', False))
         self.status_icon.set_visible(False)
         self.connection_icon.set_visible(False)
         connection_name = (
