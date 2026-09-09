@@ -251,18 +251,17 @@ def test_compact_group_honours_max_chars(monkeypatch):
     row.name_label.set_max_width_chars.assert_called_with(14)
 
 
-def test_full_labels_have_no_character_minimum():
-    """Restoring a full row bounds the label's natural width but sets no
-    ``width-chars`` floor: that floor is what kept the sidebar from being laid
-    out below 263px, and these labels ellipsize anyway."""
+def test_full_labels_restore_character_minimum():
+    """Restoring a full row re-applies the ``width-chars`` floor and the
+    ``max-width-chars`` natural-width bound."""
     mod = importlib.import_module('sshpilot.sidebar')
     label = MagicMock()
 
     mod._restore_full_label_width(label)
 
-    label.set_width_chars.assert_called_with(0)
+    label.set_width_chars.assert_called_with(mod.FULL_LABEL_MIN_CHARS)
     label.set_max_width_chars.assert_called_with(mod.FULL_LABEL_MAX_CHARS)
-    assert mod.FULL_LABEL_MIN_CHARS == 0
+    assert mod.FULL_LABEL_MIN_CHARS == 10
 
 
 def test_restore_shows_labels_and_refreshes_status(monkeypatch):
