@@ -27,9 +27,6 @@ def _make():
     row.connection = Connection({'nickname': 'Prod Web', 'host': 'h', 'user': 'a'})
     row.config = _Cfg()
     row._compact = False
-    row._actions_reserved = True
-    row._action_height_floor_on = False
-    row._is_hovering = False
     row._content_spacing_base = 12
     for name in ('_content_box', '_info_box', 'indicator_box', 'color_badge',
                  'color_dot', 'file_manager_button', 'status_icon',
@@ -161,7 +158,7 @@ def test_compact_rows_fill_the_row_height(monkeypatch):
 
 
 def test_full_row_drops_the_compact_action_footprint(monkeypatch):
-    """Restoring a full row sheds Manage Files at rest so the name keeps width."""
+    """Restoring a full row gives the button its normal padding back."""
     row, mod = _make()
     monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
     row.set_compact(True)
@@ -170,8 +167,7 @@ def test_full_row_drops_the_compact_action_footprint(monkeypatch):
 
     row.file_manager_button.remove_css_class.assert_called_with(
         'sidebar-compact-action')
-    # Full mode: shed at rest (not hovering).
-    row.file_manager_button.set_visible.assert_called_with(False)
+    row.file_manager_button.set_visible.assert_called_with(True)
 
 
 def test_compact_connection_uses_display_name(monkeypatch):

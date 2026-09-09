@@ -270,12 +270,11 @@ _MINIMAL_STRIP_WIDTH = 112
 _SIDEBAR_HEADER_MARGIN_FULL = 12
 _SIDEBAR_HEADER_MARGIN_STRIP = 6
 
-# Narrowest full sidebar that still reserves space for row hover actions
-# (group split-view, connection Manage Files). Below it the rows shed the
-# button (``set_actions_reserved``) so the name keeps the width — and so the
-# sidebar's measured minimum drops with the group row, since that is what
-# sets that minimum. Must stay above the floor the reserved button produces
-# (~150px) or the two would fight.
+# Narrowest full sidebar that still reserves space for a group row's split-view
+# action. Below it the rows shed the button (``GroupRow.set_actions_reserved``)
+# so the group name keeps the width — and so the sidebar's measured minimum
+# drops with it, since the group row is what sets that minimum. Must stay above
+# the floor the reserved button produces (~150px) or the two would fight.
 _ROW_ACTIONS_MIN_WIDTH = 180
 
 
@@ -3077,15 +3076,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
-        """Reserve or shed row hover actions for this sidebar width.
+        """Reserve or shed the group rows' split-view action for this width.
 
         The group row is what sets the sidebar's measured minimum, and a
-        reserved 34px split-view button is most of it. Below
-        :data:`_ROW_ACTIONS_MIN_WIDTH` every row's ``set_actions_reserved``
-        runs: group split-view drops entirely (hover must not reflow the
-        floor); connection Manage Files already sheds at rest in full mode
-        and only uses the call to stay in sync. The minimum drops with the
-        group row so the divider can keep narrowing.
+        reserved 34px button is most of it. Below
+        :data:`_ROW_ACTIONS_MIN_WIDTH` the rows drop it, the minimum drops with
+        them, and the divider can go on narrowing instead of stopping at a
+        width the name has already been ellipsised out of.
         """
         lb = getattr(self, 'connection_list', None)
         if lb is None:
