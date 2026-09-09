@@ -63,19 +63,49 @@ def test_the_app_icon_is_built_hidden_for_the_strip(sidebar_mod, monkeypatch):
     window._sidebar_app_icon.set_visible.assert_called_once_with(False)
 
 
-def test_header_compact_shows_new_connection_pill():
-    """In the strip, the header stack switches to the suggested add pill."""
+def test_header_compact_tightens_toolbar_margins():
+    """In the strip, the same header toolbar stays; only margins shrink."""
     win_mod = importlib.import_module('sshpilot.window')
     win = win_mod.MainWindow.__new__(win_mod.MainWindow)
 
-    stack = MagicMock(name='header_stack')
     handle = MagicMock(name='handle')
-    win._sidebar_header_stack = stack
+    header = MagicMock(name='header_toolbar')
+    win._sidebar_header_stack = None
     win._sidebar_header_handle = handle
+    win._sidebar_header_toolbar = header
+    win._hide_hosts_button = None
 
     win_mod.MainWindow._apply_sidebar_header_compact(win, True)
     handle.set_visible.assert_called_with(True)
-    stack.set_visible_child_name.assert_called_with('strip')
+    header.set_margin_start.assert_called_with(6)
+    header.set_margin_end.assert_called_with(6)
+    header.set_margin_top.assert_called_with(6)
 
     win_mod.MainWindow._apply_sidebar_header_compact(win, False)
-    stack.set_visible_child_name.assert_called_with('full')
+    header.set_margin_start.assert_called_with(12)
+    header.set_margin_top.assert_called_with(12)
+
+
+def test_header_compact_hides_hostname_toggle(monkeypatch):
+    """Hide-hostnames is irrelevant in the strip (no host labels shown)."""
+    win_mod = importlib.import_module('sshpilot.window')
+    overflow = importlib.import_module('sshpilot.overflow_toolbar')
+    win = win_mod.MainWindow.__new__(win_mod.MainWindow)
+
+    hide_btn = MagicMock(name='hide_hosts')
+    header = MagicMock(name='header_toolbar')
+    win._sidebar_header_handle = MagicMock()
+    win._sidebar_header_toolbar = header
+    win._hide_hosts_button = hide_btn
+
+    marked = []
+    monkeypatch.setattr(
+        overflow, 'mark_force_hidden',
+        lambda widget, hidden=True: marked.append((widget, hidden)))
+
+    win_mod.MainWindow._apply_sidebar_header_compact(win, True)
+    assert marked == [(hide_btn, True)]
+
+    marked.clear()
+    win_mod.MainWindow._apply_sidebar_header_compact(win, False)
+    assert marked == [(hide_btn, False)]

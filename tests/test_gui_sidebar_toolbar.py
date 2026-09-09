@@ -50,22 +50,24 @@ def test_new_group_button_is_in_sidebar_header(gui):
     assert gui.window._sidebar_add_button is header._items[0]
 
 
-def test_strip_header_shows_suggested_new_connection_pill(gui):
+def test_strip_header_keeps_the_full_mode_add_button(gui):
     win = gui.window
-    stack = win._sidebar_header_stack
-    pill = win._sidebar_strip_add_button
-    assert stack is not None
-    assert pill is not None
-    assert pill.has_css_class('suggested-action')
-    assert pill.has_css_class('pill')
+    add = win._sidebar_add_button
+    assert add is not None
+    assert add.has_css_class('flat')
+    assert not add.has_css_class('pill')
+    assert not add.has_css_class('suggested-action')
+    assert getattr(win, '_sidebar_strip_add_button', None) is None
+    assert getattr(win, '_sidebar_header_stack', None) is None
 
     win._apply_sidebar_header_compact(True)
     gui.pump(50)
-    assert stack.get_visible_child_name() == 'strip'
+    assert add.get_visible()
+    assert win._sidebar_header_toolbar.get_margin_start() == 6
 
     win._apply_sidebar_header_compact(False)
     gui.pump(50)
-    assert stack.get_visible_child_name() == 'full'
+    assert win._sidebar_header_toolbar.get_margin_start() == 12
 
 
 def test_explicit_sort_is_not_reapplied_during_sidebar_rebuild(gui, monkeypatch):

@@ -2710,7 +2710,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     pass
 
     def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
-        """Collapse chrome for the strip; header becomes a New Connection pill."""
+        """Collapse chrome for the strip; keep the same header toolbar buttons."""
         show = not minimal
         # The "SSH Pilot" title label has a natural min width that floors how
         # narrow the sidebar can get; hide it so the strip can shrink fully, and
@@ -2730,8 +2730,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
         self._move_title_to_content_header(minimal)
-        # Top toolbar becomes a single New Connection pill in the strip;
-        # search and the bottom selection toolbar still cannot fit.
+        # The top OverflowToolbar stays (same New Connection button as full
+        # mode); search and the bottom selection toolbar still cannot fit.
         for attr in ('search_container', '_sidebar_toolbar_box'):
             widget = getattr(self, attr, None)
             if widget is None:
@@ -2757,25 +2757,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
 
     def _apply_sidebar_header_compact(self, minimal: bool) -> None:
-        """Swap the overflow toolbar for a suggested New Connection pill."""
-        stack = getattr(self, '_sidebar_header_stack', None)
+        """Tighten header margins in the strip; hide hostname toggle there."""
+        from sshpilot.overflow_toolbar import mark_force_hidden
+
         handle = getattr(self, '_sidebar_header_handle', None)
         if handle is not None:
             try:
                 handle.set_visible(True)
             except Exception:
                 pass
-        if stack is not None:
-            try:
-                stack.set_visible_child_name('strip' if minimal else 'full')
-            except Exception:
-                logger.debug("sidebar header stack switch failed", exc_info=True)
-            return
-        # Older layout without a strip page: just tighten margins.
         header = getattr(self, '_sidebar_header_toolbar', None) or getattr(
             self, '_sidebar_header_box', None)
         if header is None:
             return
+        # Hostnames are not shown in the compact strip, so the reveal/conceal
+        # control does nothing useful there — drop it from the toolbar and
+        # overflow menu until full mode returns.
+        hide_btn = getattr(self, '_hide_hosts_button', None)
+        if hide_btn is not None:
+            try:
+                mark_force_hidden(hide_btn, minimal)
+            except Exception:
+                logger.debug(
+                    "Failed to toggle hide-hosts in strip header",
+                    exc_info=True,
+                )
         try:
             header.set_margin_start(6 if minimal else 12)
             header.set_margin_end(6 if minimal else 12)

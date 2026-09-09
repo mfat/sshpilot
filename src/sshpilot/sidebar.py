@@ -4244,42 +4244,6 @@ def _build_sidebar_header(window, sidebar_box):
     preferences_button = window._build_preferences_button()
     header.add_item(preferences_button)
 
-    # Strip mode: icon-only suggested + pill — the full "New Connection" label
-    # does not fit the ~112px strip; name/tooltip still say New Connection.
-    strip_pill = icon_utils.new_button_from_icon_name('list-add-symbolic')
-    strip_pill.add_css_class('suggested-action')
-    strip_pill.add_css_class('pill')
-    strip_pill.set_halign(Gtk.Align.CENTER)
-    strip_pill.set_hexpand(True)
-    label_icon_button(
-        strip_pill,
-        _('New Connection'),
-        tooltip=_('New Connection ({shortcut}+Shift+N)').format(
-            shortcut=get_primary_modifier_label()),
-    )
-    strip_pill.connect('clicked', window.on_add_connection_clicked)
-    try:
-        strip_pill.set_can_focus(False)
-    except Exception:
-        pass
-    strip_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-    strip_bar.set_hexpand(True)
-    strip_bar.set_halign(Gtk.Align.CENTER)
-    strip_bar.set_margin_start(4)
-    strip_bar.set_margin_end(4)
-    strip_bar.set_margin_top(6)
-    strip_bar.set_margin_bottom(6)
-    strip_bar.append(strip_pill)
-    window._sidebar_strip_add_button = strip_pill
-
-    header_stack = Gtk.Stack()
-    header_stack.set_hexpand(True)
-    header_stack.set_transition_type(Gtk.StackTransitionType.NONE)
-    header_stack.add_named(header, 'full')
-    header_stack.add_named(strip_bar, 'strip')
-    header_stack.set_visible_child_name('full')
-    window._sidebar_header_stack = header_stack
-
     # Main app menu (packed on the content header bar in setup_content_area).
     window.menu_button = Gtk.MenuButton()
     window.menu_button.add_css_class('flat')
@@ -4291,7 +4255,7 @@ def _build_sidebar_header(window, sidebar_box):
 
     header_handle = Gtk.WindowHandle()
     header_handle.set_hexpand(True)
-    header_handle.set_child(header_stack)
+    header_handle.set_child(header)
     window._sidebar_header_handle = header_handle
     window._sidebar_header_clip = _horizontal_clip(header_handle)
     sidebar_box.append(window._sidebar_header_clip)

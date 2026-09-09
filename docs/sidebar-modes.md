@@ -107,11 +107,11 @@ the title moves to the content header, which would otherwise leave the strip
 topped by a blank bar. The icon is built hidden in `_assemble_sidebar_shell` and
 swapped with the label by `_apply_sidebar_minimal_chrome`; at 24px it leaves the
 strip's header minimum at 36px, well inside the 112px strip. The top action
-toolbar keeps as many buttons as fit and moves the rest into a trailing "…"
-menu (`OverflowToolbar`) while full; in the strip it becomes a single
-suggested-action New Connection pill (+ icon only — the full label does not
-fit the strip; tooltip keeps the name). The bottom selection toolbar is
-hidden and replaced by the expand control.
+toolbar is the same `OverflowToolbar` as full mode (same New Connection
+button); it keeps as many buttons as fit and moves the rest into a trailing
+"…" menu. The hide-hostnames control is omitted in the strip (hostnames are
+not shown there). The bottom selection toolbar is hidden and replaced by the
+expand control.
 
 **By mouse, the divider is the way in and out** (section 0): drag it past the
 sidebar's minimum to collapse, drag the strip open to restore. There is no
