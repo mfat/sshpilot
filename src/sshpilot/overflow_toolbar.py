@@ -111,20 +111,65 @@ def _activate_widget(widget: Gtk.Widget) -> None:
         logger.debug('Failed to activate overflowed toolbar widget', exc_info=True)
 
 
-def _guess_icon_name(widget: Gtk.Widget) -> Optional[str]:
-    try:
-        if hasattr(widget, 'get_icon_name'):
-            name = widget.get_icon_name()
-            if name:
-                return name
-    except Exception:
-        pass
+def _icon_child(widget: Gtk.Widget) -> Optional[Gtk.Image]:
+    """The ``Gtk.Image`` a control shows, one level down at most."""
+    if isinstance(widget, Gtk.Image):
+        return widget
     try:
         child = widget.get_child()
-        if isinstance(child, Gtk.Image):
-            return child.get_icon_name()
+    except Exception:
+        return None
+    if isinstance(child, Gtk.Image):
+        return child
+    if child is None:
+        return None
+    try:
+        grand = child.get_first_child()
+    except Exception:
+        return None
+    while grand is not None:
+        if isinstance(grand, Gtk.Image):
+            return grand
+        try:
+            grand = grand.get_next_sibling()
+        except Exception:
+            return None
+    return None
+
+
+def _clone_icon(widget: Gtk.Widget) -> Optional[Gtk.Image]:
+    """A fresh image showing the same glyph as ``widget``.
+
+    An icon *name* is not enough to go on: this app builds its buttons with
+    ``icon_utils.new_image_from_icon_name``, which loads a bundled ``GIcon``,
+    so ``get_icon_name()`` on those images is empty and only the gicon (or the
+    paintable) identifies the glyph. Copying whichever the source has is what
+    keeps the overflow menu showing the toolbar's own icons rather than falling
+    back to text.
+    """
+    try:
+        name = widget.get_icon_name() if hasattr(widget, 'get_icon_name') else None
+        if name:
+            return Gtk.Image.new_from_icon_name(name)
     except Exception:
         pass
+    image = _icon_child(widget)
+    if image is None:
+        return None
+    for read, build in (
+        ('get_gicon', Gtk.Image.new_from_gicon),
+        ('get_icon_name', Gtk.Image.new_from_icon_name),
+        ('get_paintable', Gtk.Image.new_from_paintable),
+    ):
+        try:
+            value = getattr(image, read)()
+        except Exception:
+            continue
+        if value:
+            try:
+                return build(value)
+            except Exception:
+                continue
     return None
 
 
@@ -193,8 +238,13 @@ class OverflowToolbar(Gtk.Widget):
         except Exception:
             pass
 
+        # The overflowed controls stay controls: a row of icon buttons, the
+        # same glyphs the toolbar was showing before they ran out of room, not
+        # a text menu that reads like a different feature. The label goes on
+        # each button's tooltip / accessible name (and is the fallback for an
+        # item that has no icon to show).
         self._overflow_list = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
+            orientation=Gtk.Orientation.HORIZONTAL,
             spacing=2,
         )
         self._overflow_list.set_margin_start(6)
@@ -449,24 +499,25 @@ class OverflowToolbar(Gtk.Widget):
             self._overflow_list.remove(child)
             child = nxt
 
-        from sshpilot import icon_utils
-
         for widget in overflowed:
             label = _widget_label(widget)
             row = Gtk.Button()
             row.add_css_class('flat')
             row.set_sensitive(widget.get_sensitive())
-            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            icon_name = _guess_icon_name(widget)
-            if icon_name:
-                try:
-                    box.append(icon_utils.new_image_from_icon_name(icon_name))
-                except Exception:
-                    pass
-            text = Gtk.Label(label=label, xalign=0.0)
-            text.set_hexpand(True)
-            box.append(text)
-            row.set_child(box)
+            child = _clone_icon(widget)
+            if child is None:
+                # No glyph to show: the label is all this item has.
+                child = Gtk.Label(label=label, xalign=0.5)
+            row.set_child(child)
+            # Icon-only buttons carry their name where a screen reader and a
+            # hovering pointer can both find it; the source control's own
+            # tooltip is kept, so a shortcut hint survives the move.
+            tooltip = None
+            try:
+                tooltip = widget.get_tooltip_text()
+            except Exception:
+                tooltip = None
+            label_icon_button(row, label, tooltip=tooltip or label)
             row.connect('clicked', self._on_overflow_item_clicked, widget)
             self._overflow_list.append(row)
 

@@ -194,3 +194,104 @@ def test_set_clip_reveal_is_idempotent(monkeypatch):
     OverflowToolbar.set_clip_reveal(toolbar, False)
     assert toolbar._clip_reveal is False
     assert calls == ['relayout', 'relayout']
+
+
+class _FakeImage:
+    """Stands in for Gtk.Image; the class object is what isinstance sees."""
+
+    def __init__(self, source=None):
+        self.source = source
+
+    def get_gicon(self):
+        return getattr(self, 'gicon', None)
+
+    def get_icon_name(self):
+        return getattr(self, 'icon_name', None)
+
+    def get_paintable(self):
+        return getattr(self, 'paintable', None)
+
+    @classmethod
+    def new_from_gicon(cls, gicon):
+        return cls(('gicon', gicon))
+
+    @classmethod
+    def new_from_icon_name(cls, name):
+        return cls(('icon-name', name))
+
+    @classmethod
+    def new_from_paintable(cls, paintable):
+        return cls(('paintable', paintable))
+
+
+class _FakeButton:
+    def __init__(self):
+        self.child = None
+        self.css = []
+        self.sensitive = True
+
+    def add_css_class(self, name):
+        self.css.append(name)
+
+    def set_sensitive(self, value):
+        self.sensitive = value
+
+    def set_child(self, child):
+        self.child = child
+
+    def connect(self, *_a):
+        pass
+
+
+class _FakeGtk:
+    Image = _FakeImage
+    Button = _FakeButton
+
+    class Label:
+        def __init__(self, label='', xalign=0.0):
+            self.label = label
+
+
+def _icon_toolbar(monkeypatch, source_widget):
+    from sshpilot import overflow_toolbar as mod
+
+    monkeypatch.setattr(mod, 'Gtk', _FakeGtk)
+    monkeypatch.setattr(mod, 'label_icon_button', lambda *a, **k: None)
+    toolbar = OverflowToolbar.__new__(OverflowToolbar)
+    rows = []
+    toolbar._overflow_list = MagicMock()
+    toolbar._overflow_list.get_first_child.return_value = None
+    toolbar._overflow_list.append.side_effect = rows.append
+    OverflowToolbar._rebuild_overflow_menu(toolbar, [source_widget])
+    return rows, mod
+
+
+def test_overflow_rows_show_the_control_s_own_icon(monkeypatch):
+    """The menu is icons, not a text list — and the glyph is copied from the
+    source's gicon, which is the only place an icon built by icon_utils has it.
+    """
+    image = _FakeImage()
+    image.gicon = 'the-gicon'
+    source = MagicMock()
+    source.get_icon_name.return_value = None
+    source.get_child.return_value = image
+    source.get_tooltip_text.return_value = 'Settings (Ctrl+,)'
+
+    rows, _mod = _icon_toolbar(monkeypatch, source)
+
+    assert len(rows) == 1
+    assert isinstance(rows[0].child, _FakeImage)
+    assert rows[0].child.source == ('gicon', 'the-gicon')
+
+
+def test_overflow_rows_fall_back_to_the_label_without_an_icon(monkeypatch):
+    """An item with no glyph at all still has to be readable."""
+    source = MagicMock()
+    source.get_icon_name.return_value = None
+    source.get_child.return_value = None
+    source.get_tooltip_text.return_value = 'Do the thing'
+
+    rows, mod = _icon_toolbar(monkeypatch, source)
+
+    assert isinstance(rows[0].child, _FakeGtk.Label)
+    assert rows[0].child.label == 'Do the thing'
