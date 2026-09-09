@@ -35,6 +35,7 @@ def _make():
     row.set_tooltip_text = MagicMock()
     row.update_status = MagicMock()
     row.set_margin_start = MagicMock()
+    row.apply_row_style = MagicMock()
     row._apply_group_display_mode = MagicMock()
     row._resolve_group_color = MagicMock(return_value=None)
     return row, mod
@@ -56,6 +57,7 @@ def _make_group():
         setattr(row, name, MagicMock())
     row.set_tooltip_text = MagicMock()
     row.set_margin_start = MagicMock()
+    row.apply_row_style = MagicMock()
     row._apply_group_display_mode = MagicMock()
     row._update_display = MagicMock()
     return row, mod
@@ -73,6 +75,7 @@ def test_group_compact_shows_bold_colored_text_only(monkeypatch):
     row.set_compact(True)
 
     assert row._compact is True
+    row.apply_row_style.assert_called_with(flat=True)
     row.icon.set_visible.assert_called_with(False)
     row.count_label.set_visible.assert_called_with(False)
     row._info_box.set_visible.assert_called_with(True)
@@ -95,6 +98,7 @@ def test_compact_connection_shows_text_only_label(monkeypatch):
     row.set_compact(True)
 
     assert row._compact is True
+    row.apply_row_style.assert_called_with(flat=True)
     row.host_label.set_visible.assert_called_with(False)
     row.connection_icon.set_visible.assert_called_with(False)
     row._info_box.set_visible.assert_called_with(True)
@@ -183,6 +187,7 @@ def test_restore_shows_labels_and_refreshes_status(monkeypatch):
     row.set_compact(False)
 
     assert row._compact is False
+    row.apply_row_style.assert_called_with()
     row._info_box.set_visible.assert_called_with(True)
     row.host_label.set_visible.assert_called_with(True)
     row.nickname_label.set_markup.assert_called()

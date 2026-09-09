@@ -64,10 +64,12 @@ def test_strip_header_keeps_the_full_mode_add_button(gui):
     gui.pump(50)
     assert add.get_visible()
     assert win._sidebar_header_toolbar.get_margin_start() == 6
+    assert win._sidebar_header_toolbar.get_margin_top() == 12
 
     win._apply_sidebar_header_compact(False)
     gui.pump(50)
     assert win._sidebar_header_toolbar.get_margin_start() == 12
+    assert win._sidebar_header_toolbar.get_margin_top() == 12
 
 
 def test_explicit_sort_is_not_reapplied_during_sidebar_rebuild(gui, monkeypatch):

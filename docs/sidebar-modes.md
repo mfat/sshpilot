@@ -91,8 +91,9 @@ computed the width itself and offered no handle. What changed for callers:
 - **Minimal** — a ~112px label strip at rest: each connection collapses to a
   short ellipsized text label (10 characters at the default width; the budget
   grows as the strip is dragged wider), groups to a bold coloured text
-  label (no folder icon). The full name stays on the row tooltip. The width
-  animates between the two states.
+  label (no folder icon). Rows are always flat in the strip (no card chrome),
+  regardless of the full-sidebar flat-rows preference. The full name stays on
+  the row tooltip. The width animates between the two states.
 
 Driven by the `ui.sidebar_mode` setting (`full` / `minimal`), written when the
 user switches mode with the divider (or the strip's expand button) and applied

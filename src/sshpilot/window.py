@@ -2757,7 +2757,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
 
     def _apply_sidebar_header_compact(self, minimal: bool) -> None:
-        """Tighten header margins in the strip; hide hostname toggle there."""
+        """Tighten horizontal header margins in the strip; hide hostname toggle.
+
+        Vertical margins stay fixed (12 top / 6 bottom). Changing them with the
+        strip made the New Connection toolbar jump whenever rows compacted —
+        the same moment list row heights change — which read as the chrome
+        shifting with the list.
+        """
         from sshpilot.overflow_toolbar import mark_force_hidden
 
         handle = getattr(self, '_sidebar_header_handle', None)
@@ -2785,7 +2791,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         try:
             header.set_margin_start(6 if minimal else 12)
             header.set_margin_end(6 if minimal else 12)
-            header.set_margin_top(6 if minimal else 12)
+            header.set_margin_top(12)
             header.set_margin_bottom(6)
         except Exception:
             pass

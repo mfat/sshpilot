@@ -1423,6 +1423,9 @@ class GroupRow(Gtk.ListBoxRow):
             if max_chars is not None:
                 self._compact_max_chars = max(1, int(max_chars))
             chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
+            # Card chrome (padding/radius) is full-sidebar only; the strip is
+            # always flat regardless of ui.sidebar_flat_rows.
+            self.apply_row_style(flat=True)
             content.set_halign(Gtk.Align.FILL)
             content.set_margin_start(6)
             content.set_margin_end(6)
@@ -1474,6 +1477,7 @@ class GroupRow(Gtk.ListBoxRow):
                 self.icon.set_icon_size(Gtk.IconSize.NORMAL)
             except Exception:
                 pass
+            self.apply_row_style()  # restore card/flat preference
             self._apply_group_display_mode()  # restore nested indentation
             self._update_display()  # restores name markup + colors
 
@@ -2372,6 +2376,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             )
             self.nickname_label.set_markup(f"<b>{connection_name}</b>")
             self.set_tooltip_text(None)
+            self.apply_row_style()  # restore card/flat preference
             self._apply_group_display_mode()  # restore nested indentation
             self.update_status()  # restores status_icon + group-color widgets
             return
@@ -2379,6 +2384,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         if max_chars is not None:
             self._compact_max_chars = max(1, int(max_chars))
         chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
+        # Card chrome is full-sidebar only; the strip is always flat.
+        self.apply_row_style(flat=True)
         content.set_halign(Gtk.Align.FILL)
         content.set_margin_start(6)
         content.set_margin_end(6)

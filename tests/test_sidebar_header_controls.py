@@ -63,8 +63,9 @@ def test_the_app_icon_is_built_hidden_for_the_strip(sidebar_mod, monkeypatch):
     window._sidebar_app_icon.set_visible.assert_called_once_with(False)
 
 
-def test_header_compact_tightens_toolbar_margins():
-    """In the strip, the same header toolbar stays; only margins shrink."""
+def test_header_compact_tightens_horizontal_margins_only():
+    """Strip mode narrows side padding; vertical margins stay put so the
+    New Connection toolbar does not jump when rows compact."""
     win_mod = importlib.import_module('sshpilot.window')
     win = win_mod.MainWindow.__new__(win_mod.MainWindow)
 
@@ -79,11 +80,14 @@ def test_header_compact_tightens_toolbar_margins():
     handle.set_visible.assert_called_with(True)
     header.set_margin_start.assert_called_with(6)
     header.set_margin_end.assert_called_with(6)
-    header.set_margin_top.assert_called_with(6)
+    header.set_margin_top.assert_called_with(12)
+    header.set_margin_bottom.assert_called_with(6)
 
     win_mod.MainWindow._apply_sidebar_header_compact(win, False)
     header.set_margin_start.assert_called_with(12)
+    header.set_margin_end.assert_called_with(12)
     header.set_margin_top.assert_called_with(12)
+    header.set_margin_bottom.assert_called_with(6)
 
 
 def test_header_compact_hides_hostname_toggle(monkeypatch):
