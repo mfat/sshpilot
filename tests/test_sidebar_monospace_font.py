@@ -112,5 +112,5 @@ def test_apply_sidebar_monospace_font_uses_terminal_family(monkeypatch):
     assert hasattr(display, "_sidebar_monospace_css_provider")
     css = loaded[0]
     assert 'font-family: "JetBrains Mono", monospace;' in css
-    assert ".sidebar" in css
     assert ".connection-sidebar" in css
+    assert ".sidebar," not in css  # header title must stay on the UI font

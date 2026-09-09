@@ -230,11 +230,12 @@ def apply_sidebar_monospace_font(config=None) -> None:
         return
 
     family = _css_escape_font_family(_sidebar_monospace_family(config))
-    # .sidebar covers the docked toolbar view (header + content).
-    # .connection-sidebar is on the content box so the font survives
-    # reparenting into the detachable sidebar popup.
+    # Only the content box (.connection-sidebar): search, list, toolbar.
+    # Do not style Adw.ToolbarView.sidebar — that would also monospace the
+    # "SSH Pilot" header title. The class stays on the box when reparented
+    # into the detachable sidebar popup.
     css = f"""
-    .sidebar, .connection-sidebar {{
+    .connection-sidebar {{
       font-family: "{family}", monospace;
     }}
     """
