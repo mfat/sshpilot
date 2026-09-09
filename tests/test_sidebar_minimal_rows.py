@@ -244,7 +244,9 @@ def test_restore_shows_labels_and_refreshes_status(monkeypatch):
     row.apply_row_style.assert_called_with()
     row._info_box.set_visible.assert_called_with(True)
     row.host_label.set_visible.assert_called_with(True)
-    row.nickname_label.set_markup.assert_called()
+    # Full rows carry the plain name; bold belongs to group headers.
+    row.nickname_label.set_text.assert_called_with('Prod Web')
+    row.nickname_label.set_markup.assert_not_called()
     row.set_tooltip_text.assert_called_with(None)
     row.update_status.assert_called_once()
 

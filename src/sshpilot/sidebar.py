@@ -1656,7 +1656,11 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         self.nickname_label = Gtk.Label()
         connection_name = getattr(connection, "display_name", None) or connection.nickname
-        self.nickname_label.set_markup(f"<b>{connection_name}</b>")
+        # Plain text, not bold: bold is the group headers' way of standing out
+        # from the connections under them (as it already is in the strip). Plain
+        # set_text() also keeps a name with '<' or '&' in it out of the markup
+        # parser.
+        self.nickname_label.set_text(connection_name)
         self.nickname_label.set_halign(Gtk.Align.START)
         self.nickname_label.set_xalign(0.0)  # Left-align text within label (default is 0.5/center)
         self.nickname_label.set_valign(Gtk.Align.CENTER)  # Center vertically when host label is hidden
@@ -2391,7 +2395,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 getattr(self.connection, 'display_name', None)
                 or self.connection.nickname
             )
-            self.nickname_label.set_markup(f"<b>{connection_name}</b>")
+            self.nickname_label.set_text(connection_name)
             self.set_tooltip_text(None)
             self.apply_row_style()  # restore card/flat preference
             self._apply_group_display_mode()  # restore nested indentation
@@ -2446,7 +2450,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 getattr(self.connection, "display_name", None)
                 or self.connection.nickname
             )
-            self.nickname_label.set_markup(f"<b>{connection_name}</b>")
+            self.nickname_label.set_text(connection_name)
             self.nickname_label.set_tooltip_text(self.connection.nickname)
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
