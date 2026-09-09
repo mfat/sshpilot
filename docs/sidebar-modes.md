@@ -93,9 +93,23 @@ computed the width itself and offered no handle. What changed for callers:
   grows as the strip is dragged wider), groups to a bold coloured text
   label (no folder icon). Rows are always flat in the strip (no card chrome),
   regardless of the full-sidebar flat-rows preference. The full name stays on
-  the row tooltip. The width animates between the two states. During that
-  animation the top header toolbar uses clip-reveal (buttons stay laid out;
-  the pane clips them) instead of reshuffling the overflow menu every frame,
+  the row tooltip. The row's **Manage Files** hover action survives the strip —
+  it is the only way to reach the file manager without leaving minimal mode —
+  and it keeps the full row's *opacity* reveal there, so its space stays
+  reserved and hovering never reflows or resizes a row (revealing it by
+  visibility instead would be free at rest but would jump the layout under the
+  pointer). To pay for that reservation it wears `.sidebar-compact-action` in
+  the strip, which trims it to the bare 16px icon: measured in the 112px strip,
+  a row is 80×36px with or without it, and the label goes from 68px to 50px
+  (~2 characters) rather than the 34px the untrimmed button would leave. Every
+  other row action (status icon, colour widgets, hostname line) stays hidden.
+  A compact row's content box is also given `vexpand` (both `ConnectionRow` and
+  `GroupRow`): a single-line strip row is shorter than the list row's theme
+  minimum (19px of content in a 36px row) and a `Gtk.Box` leaves that slack
+  *after* its last child, so without it the label and the hover action sit high
+  in the highlighted row instead of centred.
+  The width animates between the two states. During that animation the top
+  header toolbar uses clip-reveal (buttons stay laid out; the pane clips them) instead of reshuffling the overflow menu every frame,
   header margin / hide-hosts compacting is applied only once the width has
   settled, and the accent tips banner is snap-hidden until the width has
   settled and a short timeout has elapsed, so it cannot flash blue beside

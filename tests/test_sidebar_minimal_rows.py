@@ -32,6 +32,7 @@ def _make():
                  'color_dot', 'file_manager_button', 'status_icon',
                  'connection_icon', 'nickname_label', 'host_label'):
         setattr(row, name, MagicMock())
+    row._file_manager_callback = MagicMock()
     row.set_tooltip_text = MagicMock()
     row.update_status = MagicMock()
     row.set_margin_start = MagicMock()
@@ -111,6 +112,59 @@ def test_compact_connection_shows_text_only_label(monkeypatch):
     apply_color.assert_called_once()
     assert apply_color.call_args.args[1:] == ('fill', None)
     row.set_margin_start.assert_called_with(0)
+
+
+def test_compact_keeps_manage_files_button_reserved(monkeypatch):
+    """The strip keeps the row's Manage Files action — the only way to reach the
+    file manager without leaving minimal mode — and keeps it *visible* so its
+    space stays reserved: hovering must never reflow or resize the row. It is
+    trimmed to the icon so the label loses as little of the strip as possible.
+    """
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+
+    row.set_compact(True)
+
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.add_css_class.assert_called_with(
+        'sidebar-compact-action')
+
+
+def test_compact_rows_fill_the_row_height(monkeypatch):
+    """A single-line strip row is shorter than the list row's theme minimum and
+    a Gtk.Box packs that slack after its last child, so the content box takes
+    the whole height and its centred children sit in the middle of it."""
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    group, _mod = _make_group()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: None)
+    monkeypatch.setattr(mod, '_set_compact_fg_color', MagicMock())
+
+    row.set_compact(True)
+    group.set_compact(True)
+
+    row._content_box.set_vexpand.assert_called_with(True)
+    group._content.set_vexpand.assert_called_with(True)
+
+    row.set_compact(False)
+    group.set_compact(False)
+
+    row._content_box.set_vexpand.assert_called_with(False)
+    group._content.set_vexpand.assert_called_with(False)
+
+
+def test_full_row_drops_the_compact_action_footprint(monkeypatch):
+    """Restoring a full row gives the button its normal padding back."""
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    row.set_compact(True)
+
+    row.set_compact(False)
+
+    row.file_manager_button.remove_css_class.assert_called_with(
+        'sidebar-compact-action')
+    row.file_manager_button.set_visible.assert_called_with(True)
 
 
 def test_compact_connection_uses_display_name(monkeypatch):

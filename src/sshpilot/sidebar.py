@@ -171,6 +171,17 @@ def install_sidebar_css():
         .group-expand-button:hover {
           background: alpha(@accent_bg_color, 0.1);
         }
+
+        /* Row hover actions in the minimal strip: the button keeps its
+           reserved space (hovering must never reflow the row), so it is
+           trimmed to the icon to leave the label as much of the ~112px
+           strip as possible. */
+        .file-manager-button.sidebar-compact-action {
+          min-width: 16px;
+          min-height: 16px;
+          padding: 1px;
+          margin: 0;
+        }
         
         /* Smooth drag indicator transitions */
         .drag-indicator {
@@ -1430,6 +1441,9 @@ class GroupRow(Gtk.ListBoxRow):
             content.set_margin_start(6)
             content.set_margin_end(6)
             content.set_spacing(4)
+            # Same slack as a compact connection row: hand the box the row's
+            # full height so its centred children sit in the middle of it.
+            content.set_vexpand(True)
             self.set_margin_start(0)  # flatten nested-group indentation in the strip
             self.color_dot.set_visible(False)
             self.color_badge.set_visible(False)
@@ -1457,6 +1471,7 @@ class GroupRow(Gtk.ListBoxRow):
             content.set_margin_start(self._content_margin_base)
             content.set_margin_end(self._content_margin_base)
             content.set_spacing(self._content_spacing_base)
+            content.set_vexpand(False)
             try:
                 self.icon.remove_css_class('sidebar-compact-icon')
             except Exception:
@@ -2354,9 +2369,11 @@ class ConnectionRow(Gtk.ListBoxRow):
             content.set_margin_start(12)
             content.set_margin_end(12)
             content.set_spacing(self._content_spacing_base)
+            content.set_vexpand(False)
             _restore_full_label_width(self.nickname_label)
             self._info_box.set_visible(True)
             self.indicator_box.set_visible(True)
+            self.file_manager_button.remove_css_class('sidebar-compact-action')
             self.file_manager_button.set_visible(True)
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
             self.connection_icon.remove_css_class('conn-status-up')
@@ -2390,13 +2407,25 @@ class ConnectionRow(Gtk.ListBoxRow):
         content.set_margin_start(6)
         content.set_margin_end(6)
         content.set_spacing(0)
+        # A single-line strip row is shorter than the list row's theme minimum,
+        # and a Gtk.Box packs that slack after its last child — so without this
+        # the label and the hover action sit high in the highlighted row.
+        # Expanding the content box hands it the whole height, which its
+        # centre-aligned children then share.
+        content.set_vexpand(True)
         self.set_margin_start(0)  # flatten nested-group indentation in the strip
         self._info_box.set_visible(True)
         self.host_label.set_visible(False)
         self.indicator_box.set_visible(False)
         self.color_badge.set_visible(False)
         self.color_dot.set_visible(False)
-        self.file_manager_button.set_visible(False)
+        # The Manage Files hover action survives the strip (the one row action
+        # that does): it is the only way to reach the file manager without
+        # leaving minimal mode. It keeps the full row's opacity reveal, so its
+        # space stays reserved and hovering never reflows the row — but it wears
+        # `.sidebar-compact-action` to give the label back the padding it can.
+        self.file_manager_button.add_css_class('sidebar-compact-action')
+        self.file_manager_button.set_visible(True)
         self.status_icon.set_visible(False)
         self.connection_icon.set_visible(False)
         connection_name = (
