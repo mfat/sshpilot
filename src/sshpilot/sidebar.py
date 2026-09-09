@@ -1887,21 +1887,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
 
-        # Status lock in its own box — same packing pattern as the forwarding
-        # indicator_box above. update_status() shows the box when there is a
-        # real state; idle leaves it empty/hidden so it costs no width.
-        self.status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.status_box.set_halign(Gtk.Align.CENTER)
-        self.status_box.set_valign(Gtk.Align.CENTER)
-        from sshpilot import icon_utils
-        self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
-        self.status_icon.set_pixel_size(16)
-        self.status_icon.set_halign(Gtk.Align.CENTER)
-        self.status_icon.set_valign(Gtk.Align.CENTER)
-        self.status_box.append(self.status_icon)
-        self.status_box.set_visible(False)
-        content.append(self.status_box)
-
         self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
         self.color_badge.add_css_class("sidebar-color-badge")
         self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
@@ -1923,9 +1908,22 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
         content.append(self._file_manager_slot)
-        
+
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
+
+        # Status lock last — always the trailing widget on the row, past the
+        # hover action. Same packing pattern as indicator_box for the badges.
+        self.status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.status_box.set_halign(Gtk.Align.CENTER)
+        self.status_box.set_valign(Gtk.Align.CENTER)
+        self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
+        self.status_icon.set_pixel_size(16)
+        self.status_icon.set_halign(Gtk.Align.CENTER)
+        self.status_icon.set_valign(Gtk.Align.CENTER)
+        self.status_box.append(self.status_icon)
+        self.status_box.set_visible(False)
+        content.append(self.status_box)
 
         # Now add the content to main_box
         main_box.append(content)
