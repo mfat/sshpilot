@@ -50,7 +50,8 @@ computed the width itself and offered no handle. What changed for callers:
 - **The divider switches mode, too.** Dragging it more than
   `_MODE_SWITCH_SLACK` (40px) below the measured floor asks for the icon strip;
   dragging a pinned strip out to `_expand_threshold()` — the width the full
-  sidebar actually needs — asks for the full sidebar back. The paned reports
+  sidebar actually needs — asks for the full sidebar back. Until that point
+  the strip follows the pointer while staying minimal. The paned reports
   both through `on_mode_switch` and leaves the divider alone when the owner
   takes it (`window._on_sidebar_drag_mode_switch` → persist `ui.sidebar_mode`
   + `set_sidebar_minimal`, never animated). A dragged strip (or a drag back
@@ -58,15 +59,14 @@ computed the width itself and offered no handle. What changed for callers:
   collapses from "When a Terminal Opens" do not use this path and stay
   non-persisted.
 - **A mode-switching drag never moves the divider on its own**, which takes two
-  rules that are easy to break. The strip does not expand *early*: below the
-  full sidebar's floor there is no width it could take, so it would have to
-  jump or animate away from the pointer — instead the strip sits still until
-  the pointer reaches that floor, where the switch is exactly continuous. And
-  the drag position becomes the remembered width *before* the switch, because
-  `release_width()` otherwise restores the width the sidebar had before it was
-  collapsed and the divider travels there after the user has stopped moving.
-  Collapsing does neither: it leaves `user_width` alone, so the strip is never
-  remembered as a width.
+  rules that are easy to break. Below the full sidebar's floor the strip stays
+  in minimal mode but **follows the pointer** up to `_expand_threshold()` —
+  exactly the width the full sidebar needs — so the switch there is continuous
+  (no jump away from the pointer). And the drag position becomes the remembered
+  width *before* the switch, because `release_width()` otherwise restores the
+  width the sidebar had before it was collapsed and the divider travels there
+  after the user has stopped moving. Collapsing does neither: it leaves
+  `user_width` alone, so the strip is never remembered as a width.
 - **`get_sidebar_width()` is the live width**, not a configured bound.
 - The handle is thin (no wide handle) so it draws the same hairline the split
   view did and the panes stay edge to edge; GTK keeps a wider input area than it

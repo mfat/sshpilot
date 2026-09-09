@@ -185,10 +185,9 @@ def test_a_drag_well_past_the_wall_asks_for_the_icon_strip():
         window.destroy()
 
 
-def test_the_strip_stays_put_until_the_full_sidebar_would_fit():
-    """Dragging a strip open cannot expand early: the sidebar would have to be
-    laid out at a width it does not have, so it would jump away from the
-    pointer. Below its floor the strip does not move at all."""
+def test_the_strip_follows_the_pointer_up_to_the_full_sidebar_floor():
+    """Below the full floor the strip stays minimal but grows with the drag,
+    so the mode switch at the floor is continuous under the pointer."""
     paned, seen = _mode_switching_paned()
     window = _shown(paned)
     try:
@@ -196,7 +195,7 @@ def test_the_strip_stays_put_until_the_full_sidebar_would_fit():
         for x in (84, 120, 154, 199):    # all short of the 200px content floor
             paned.set_position(x)
             assert seen == []
-            assert paned.get_position() == 64, f'strip moved for a drag to {x}'
+            assert paned.get_position() == x, f'strip did not follow drag to {x}'
     finally:
         window.destroy()
 
