@@ -1,4 +1,15 @@
 """Import/export domain helpers."""
+from .asbru import (
+    AsbruConnectionDraft,
+    AsbruGroupDraft,
+    AsbruParseResult,
+    build_proxy_jump,
+    load_asbru_export,
+    parse_asbru_export,
+    parse_asbru_export_text,
+    parse_forwards_from_options,
+    sanitize_host_alias,
+)
 from .orchestrator import (
     CURRENT_SCHEMA_VERSION,
     ConflictAction,
@@ -16,6 +27,9 @@ from .orchestrator import (
 from .validation import ImportValidationReport, validate_connection_export_payload
 
 __all__ = [
+    "AsbruConnectionDraft",
+    "AsbruGroupDraft",
+    "AsbruParseResult",
     "CURRENT_SCHEMA_VERSION",
     "ConflictAction",
     "ConflictDescription",
@@ -25,9 +39,15 @@ __all__ = [
     "MergeStrategy",
     "apply_import_to_connection_dicts",
     "atomic_write_json",
+    "build_proxy_jump",
     "export_connections_payload",
+    "load_asbru_export",
     "load_payload",
     "migrate_payload",
+    "parse_asbru_export",
+    "parse_asbru_export_text",
+    "parse_forwards_from_options",
     "plan_import",
+    "sanitize_host_alias",
     "validate_connection_export_payload",
 ]

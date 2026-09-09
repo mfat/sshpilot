@@ -53,6 +53,8 @@ direct core service compositions are test-only and are not client choices.
 | `list_connections` | Implemented | `connections.read` |
 | `get_connection` | Implemented | `connections.read` |
 | `create_connection` | Implemented | `connections.write` |
+| `preview_asbru_import` | Implemented | `connections.write` |
+| `import_asbru` | Implemented | `connections.write` |
 | `duplicate_connection` | Implemented | `connections.write` |
 | `update_connection` | Implemented | `connections.write` |
 | `delete_connection` | Implemented | `connections.write` |
@@ -157,6 +159,8 @@ direct core service compositions are test-only and are not client choices.
 <!-- api-method-contract: close_session status=daemon-only capability=sessions.write -->
 <!-- api-method-contract: close_sftp status=daemon-only capability=sftp.write -->
 <!-- api-method-contract: create_connection status=implemented capability=connections.write -->
+<!-- api-method-contract: preview_asbru_import status=implemented capability=connections.write -->
+<!-- api-method-contract: import_asbru status=implemented capability=connections.write -->
 <!-- api-method-contract: duplicate_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection status=implemented capability=connections.write -->
 <!-- api-method-contract: delete_connection_password status=implemented capability=connections.secrets.write -->
@@ -310,6 +314,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 <!-- api-daemon-method: connections.snapshot capability=connections.read -->
 | `connections.get` | `connections.read` | Implemented |
 | `connections.create` | `connections.write` | Implemented |
+| `connections.preview_asbru_import` | `connections.write` | Implemented |
+| `connections.import_asbru` | `connections.write` | Implemented |
 | `connections.duplicate` | `connections.write` | Implemented |
 | `connections.update` | `connections.write` | Implemented |
 | `connections.delete` | `connections.write` | Implemented |
@@ -440,6 +446,8 @@ The dispatcher is an explicit allowlist; it never reflects over Python objects.
 | `secrets.transfer.import` | `secrets.transfer` | Implemented |
 
 <!-- api-daemon-method: connections.create capability=connections.write -->
+<!-- api-daemon-method: connections.preview_asbru_import capability=connections.write -->
+<!-- api-daemon-method: connections.import_asbru capability=connections.write -->
 <!-- api-daemon-method: connections.duplicate capability=connections.write -->
 <!-- api-daemon-method: connections.delete capability=connections.write -->
 <!-- api-daemon-method: connections.delete_password capability=connections.secrets.write -->
@@ -761,6 +769,57 @@ print(result.revision)
 created = client.create_connection(
     CreateConnectionRequest(nickname="example", hostname="example.invalid")
 )
+```
+
+<!-- api-method: preview_asbru_import -->
+## `preview_asbru_import`
+
+- **Status / introduced:** Implemented / Protocol v1 additive extension (API 0.57)
+- **Capability / purpose:** `connections.write`; dry-run an Ásbrú Connection
+  Manager **Export selected connections** YAML against the current store without
+  mutating configuration.
+- **Parameters / return:** Absolute or home-relative `source` path; returns
+  `AsbruImportPreview`.
+- **Errors:** Parse failures are returned on the preview (`ok=False`,
+  `errors=…`) rather than as transport errors when the file is readable.
+  Missing files and invalid YAML raise `import_error` / mapped persistence
+  errors through the service.
+- **Events:** None.
+- **Cancellation / ordering / threading:** Direct core calls use the owner
+  thread. Daemon requests are deferred on the configuration command key.
+- **Side effects / security:** Read-only. Does not import passwords, private
+  keys, or Ásbrú expect/macros. Requires the export YAML (not the live
+  `asbru.yml`).
+
+```python
+preview = client.preview_asbru_import("/path/to/asbru_export.yml")
+print(preview.connections_to_add, preview.connections_to_skip)
+```
+
+<!-- api-method: import_asbru -->
+## `import_asbru`
+
+- **Status / introduced:** Implemented / Protocol v1 additive extension (API 0.57)
+- **Capability / purpose:** `connections.write`; import groups and SSH hosts
+  from an Ásbrú export. Creates missing groups (preserving parent hierarchy),
+  creates new Host aliases via `create_connection` (ProxyJump and forwarding
+  rules through `config_patch`), and assigns membership. Existing nicknames are
+  skipped (`AsbruImportMode.SKIP`).
+- **Parameters / return:** `AsbruImportRequest`; returns `AsbruImportResult`.
+- **Errors:** Same parse path as preview. Individual create/assign failures are
+  collected in `partial_failures` without aborting the whole batch.
+- **Events:** Normal `connection.created` / group events for each successful
+  mutation.
+- **Cancellation / ordering / threading:** Direct core calls use the owner
+  thread. Daemon requests are deferred and never auto-retried.
+- **Side effects / security:** Never overwrites existing nicknames. Does not
+  import secrets. Non-SSH Ásbrú methods are skipped with warnings.
+
+```python
+result = client.import_asbru(
+    AsbruImportRequest(source="/path/to/asbru_export.yml")
+)
+print(result.connections_added, result.message)
 ```
 
 <!-- api-method: duplicate_connection -->

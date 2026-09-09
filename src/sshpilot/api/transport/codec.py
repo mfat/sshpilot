@@ -81,6 +81,10 @@ from ..models.connection_store import (
 )
 from ..models.connections import (
     EDITABLE_CONFIG_FIELDS,
+    AsbruImportMode,
+    AsbruImportPreview,
+    AsbruImportRequest,
+    AsbruImportResult,
     AuthenticationMethod,
     AssignConnectionToGroupRequest,
     ConnectionDetails,
@@ -2355,6 +2359,136 @@ def create_connection_request_from_wire(value: Any) -> CreateConnectionRequest:
         display_name=_text(data.get("display_name", ""), "connection display name", allow_empty=True),
         config_patch=config_patch,
         plugin_data=dict(raw_plugin_data),
+    )
+
+
+def asbru_import_request_to_wire(request: AsbruImportRequest) -> Dict[str, Any]:
+    if type(request) is not AsbruImportRequest:
+        raise TypeError("Ásbrú import request is required")
+    return {
+        "source": request.source,
+        "mode": request.mode.value,
+    }
+
+
+def asbru_import_request_from_wire(value: Any) -> AsbruImportRequest:
+    data = _strict_fields(
+        value,
+        required={"source"},
+        optional={"mode"},
+        context="Ásbrú import request",
+    )
+    mode_raw = data.get("mode", AsbruImportMode.SKIP.value)
+    return AsbruImportRequest(
+        source=_text(data["source"], "Ásbrú import source"),
+        mode=AsbruImportMode(str(mode_raw)),
+    )
+
+
+def asbru_import_preview_to_wire(preview: AsbruImportPreview) -> Dict[str, Any]:
+    if type(preview) is not AsbruImportPreview:
+        raise TypeError("Ásbrú import preview is required")
+    return {
+        "ok": preview.ok,
+        "source": preview.source,
+        "connections_to_add": list(preview.connections_to_add),
+        "connections_to_skip": list(preview.connections_to_skip),
+        "groups_to_add": list(preview.groups_to_add),
+        "groups_to_reuse": list(preview.groups_to_reuse),
+        "warnings": list(preview.warnings),
+        "errors": list(preview.errors),
+    }
+
+
+def asbru_import_preview_from_wire(value: Any) -> AsbruImportPreview:
+    data = _strict_fields(
+        value,
+        required={"ok", "source"},
+        optional={
+            "connections_to_add",
+            "connections_to_skip",
+            "groups_to_add",
+            "groups_to_reuse",
+            "warnings",
+            "errors",
+        },
+        context="Ásbrú import preview",
+    )
+    return AsbruImportPreview(
+        ok=_boolean(data["ok"], "Ásbrú import preview ok"),
+        source=_text(data["source"], "Ásbrú import preview source", allow_empty=True),
+        connections_to_add=tuple(
+            _text(item, "connection nickname") for item in (data.get("connections_to_add") or ())
+        ),
+        connections_to_skip=tuple(
+            _text(item, "connection nickname") for item in (data.get("connections_to_skip") or ())
+        ),
+        groups_to_add=tuple(
+            _text(item, "group name") for item in (data.get("groups_to_add") or ())
+        ),
+        groups_to_reuse=tuple(
+            _text(item, "group name") for item in (data.get("groups_to_reuse") or ())
+        ),
+        warnings=tuple(_text(item, "warning", allow_empty=True) for item in (data.get("warnings") or ())),
+        errors=tuple(_text(item, "error", allow_empty=True) for item in (data.get("errors") or ())),
+    )
+
+
+def asbru_import_result_to_wire(result: AsbruImportResult) -> Dict[str, Any]:
+    if type(result) is not AsbruImportResult:
+        raise TypeError("Ásbrú import result is required")
+    return {
+        "ok": result.ok,
+        "source": result.source,
+        "connections_added": list(result.connections_added),
+        "connections_skipped": list(result.connections_skipped),
+        "groups_added": list(result.groups_added),
+        "groups_reused": list(result.groups_reused),
+        "warnings": list(result.warnings),
+        "errors": list(result.errors),
+        "partial_failures": list(result.partial_failures),
+        "message": result.message,
+    }
+
+
+def asbru_import_result_from_wire(value: Any) -> AsbruImportResult:
+    data = _strict_fields(
+        value,
+        required={"ok", "source"},
+        optional={
+            "connections_added",
+            "connections_skipped",
+            "groups_added",
+            "groups_reused",
+            "warnings",
+            "errors",
+            "partial_failures",
+            "message",
+        },
+        context="Ásbrú import result",
+    )
+    return AsbruImportResult(
+        ok=_boolean(data["ok"], "Ásbrú import result ok"),
+        source=_text(data["source"], "Ásbrú import result source", allow_empty=True),
+        connections_added=tuple(
+            _text(item, "connection nickname") for item in (data.get("connections_added") or ())
+        ),
+        connections_skipped=tuple(
+            _text(item, "connection nickname") for item in (data.get("connections_skipped") or ())
+        ),
+        groups_added=tuple(
+            _text(item, "group name") for item in (data.get("groups_added") or ())
+        ),
+        groups_reused=tuple(
+            _text(item, "group name") for item in (data.get("groups_reused") or ())
+        ),
+        warnings=tuple(_text(item, "warning", allow_empty=True) for item in (data.get("warnings") or ())),
+        errors=tuple(_text(item, "error", allow_empty=True) for item in (data.get("errors") or ())),
+        partial_failures=tuple(
+            _text(item, "partial failure", allow_empty=True)
+            for item in (data.get("partial_failures") or ())
+        ),
+        message=_text(data.get("message", ""), "Ásbrú import message", allow_empty=True),
     )
 
 

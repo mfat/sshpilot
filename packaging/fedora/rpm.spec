@@ -49,6 +49,7 @@ Requires:       python3-cryptography
 Requires:       python3-keyring
 # port_utils.py and wol.py.
 Requires:       python3-psutil
+Requires:       python3-pyyaml
 Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass

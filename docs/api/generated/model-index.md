@@ -33,6 +33,106 @@ Synthetic representation:
 }
 ```
 
+<!-- api-model: AsbruImportPreview -->
+## `AsbruImportPreview`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Dry-run summary of an Ásbrú export without mutating configuration.
+
+**Related methods:** `preview_asbru_import`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `ok` | `bool` | Yes | — | No |
+| `source` | `str` | Yes | — | No |
+| `connections_to_add` | `tuple[str, ...]` | No | `[]` | No |
+| `connections_to_skip` | `tuple[str, ...]` | No | `[]` | No |
+| `groups_to_add` | `tuple[str, ...]` | No | `[]` | No |
+| `groups_to_reuse` | `tuple[str, ...]` | No | `[]` | No |
+| `warnings` | `tuple[str, ...]` | No | `[]` | No |
+| `errors` | `tuple[str, ...]` | No | `[]` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connections_to_add": [],
+  "connections_to_skip": [],
+  "errors": [],
+  "groups_to_add": [],
+  "groups_to_reuse": [],
+  "ok": false,
+  "source": "example",
+  "warnings": []
+}
+```
+
+<!-- api-model: AsbruImportRequest -->
+## `AsbruImportRequest`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Import connections from an Ásbrú Connection Manager export YAML.
+
+**Related methods:** `import_asbru`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `source` | `str` | Yes | — | No |
+| `mode` | `AsbruImportMode` | No | `skip` | No |
+
+Synthetic representation:
+
+```json
+{
+  "mode": "skip",
+  "source": "example"
+}
+```
+
+<!-- api-model: AsbruImportResult -->
+## `AsbruImportResult`
+
+**Status:** Implemented
+**Introduced:** Protocol v1
+**Purpose:** Outcome of applying an Ásbrú import.
+
+**Related methods:** `import_asbru`
+**Related events:** None
+
+| Field | Type | Required | Default | Sensitive |
+| --- | --- | ---: | --- | ---: |
+| `ok` | `bool` | Yes | — | No |
+| `source` | `str` | Yes | — | No |
+| `connections_added` | `tuple[str, ...]` | No | `[]` | No |
+| `connections_skipped` | `tuple[str, ...]` | No | `[]` | No |
+| `groups_added` | `tuple[str, ...]` | No | `[]` | No |
+| `groups_reused` | `tuple[str, ...]` | No | `[]` | No |
+| `warnings` | `tuple[str, ...]` | No | `[]` | No |
+| `errors` | `tuple[str, ...]` | No | `[]` | No |
+| `partial_failures` | `tuple[str, ...]` | No | `[]` | No |
+| `message` | `str` | No | `` | No |
+
+Synthetic representation:
+
+```json
+{
+  "connections_added": [],
+  "connections_skipped": [],
+  "errors": [],
+  "groups_added": [],
+  "groups_reused": [],
+  "message": "",
+  "ok": false,
+  "partial_failures": [],
+  "source": "example",
+  "warnings": []
+}
+```
+
 <!-- api-model: AssignConnectionToGroupRequest -->
 ## `AssignConnectionToGroupRequest`
 

@@ -30,6 +30,10 @@ from .connection_store import (
     SetGroupColorRequest,
 )
 from .connections import (
+    AsbruImportMode,
+    AsbruImportPreview,
+    AsbruImportRequest,
+    AsbruImportResult,
     AssignConnectionToGroupRequest,
     AuthenticationMethod,
     ConnectionDetails,
@@ -362,6 +366,10 @@ __all__ = [
     "CpuInfo",
     "CpuTimes",
     "CpuUtilization",
+    "AsbruImportMode",
+    "AsbruImportPreview",
+    "AsbruImportRequest",
+    "AsbruImportResult",
     "CreateConnectionRequest",
     "CreateGroupRequest",
     "DaemonDiagnostics",
