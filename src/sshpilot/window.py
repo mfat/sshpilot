@@ -484,12 +484,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Authoritative SSH files are monitored by the daemon; GTK refreshes
         # from connection events and never installs a filesystem watcher.
 
-        # Apply the persisted sidebar mode (full / minimal icon strip).
-        try:
-            if str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal':
-                self.set_sidebar_minimal(True, animate=False)
-        except Exception:
-            logger.debug("apply startup sidebar mode failed", exc_info=True)
+        # Icon-strip sidebar mode is retired; settings migration forces
+        # ui.sidebar_mode to 'full', so startup never restores a strip.
 
         # Terminal manager handles terminal-related operations (import deferred so
         # terminal.py stays off the window module import path until __init__).
@@ -2719,38 +2715,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._set_sidebar_secondary_labels_suppressed(False)
         return GLib.SOURCE_REMOVE
 
-    def _persist_sidebar_mode(self, minimal: bool) -> None:
-        """Remember the user's resting sidebar mode for the next startup."""
+    def _persist_sidebar_mode(self, minimal: bool = False) -> None:
+        """Remember the resting sidebar mode. Icon strip is retired — always full."""
         try:
-            self.config.set_setting(
-                'ui.sidebar_mode', 'minimal' if minimal else 'full')
+            self.config.set_setting('ui.sidebar_mode', 'full')
         except Exception:
             logger.debug("Failed to save sidebar mode", exc_info=True)
 
     def _on_sidebar_drag_mode_switch(self, minimal: bool) -> None:
-        """The divider was dragged past what a width change could mean.
+        """The divider asked for a mode change.
 
-        Pushing it below the narrowest the full sidebar can be laid out in
-        collapses to the icon strip; pulling the strip open restores the full
-        sidebar. This is the only way in and out of the strip by mouse — the
-        bottom toolbar's minimize button was removed, since its own width was
-        part of what held the sidebar wide.
-
-        Persists ``ui.sidebar_mode`` so a dragged strip (or a drag back to
-        full) is the resting mode after restart. Transient collapses from
-        "When a Terminal Opens" do not go through this path and stay
-        non-persisted.
-
-        Never animated: the pointer is still on the divider, and a 200ms
-        animation to a width chosen by the animation is exactly the "it keeps
-        resizing after I stop" the drag is not supposed to produce. The paned
-        has already put the divider where the drag asked for it.
+        Icon-strip mode is retired, so a request to collapse is ignored. A
+        request to expand still restores the full sidebar (and clears any
+        leftover strip pin from older builds). Never animated: the pointer is
+        still on the divider.
         """
-        self._persist_sidebar_mode(bool(minimal))
-        if bool(getattr(self, '_sidebar_minimal', False)) == bool(minimal):
+        if minimal:
+            return
+        self._persist_sidebar_mode(False)
+        if not getattr(self, '_sidebar_minimal', False):
             return
         try:
-            self.set_sidebar_minimal(bool(minimal), animate=False)
+            self.set_sidebar_minimal(False, animate=False)
         except Exception:
             logger.debug("sidebar drag mode switch failed", exc_info=True)
 
@@ -6443,19 +6429,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._search_popup.hide()
 
     def _sidebar_mode_is_minimal(self) -> bool:
-        """True when the icon strip is the user's configured resting mode."""
-        try:
-            return str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal'
-        except Exception:
-            return False
+        """Icon-strip resting mode is retired; always False."""
+        return False
 
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
-        # Leave a *transient* minimal strip (minimize-on-connect) so the next
-        # reveal is the full sidebar; keep it when minimal is the configured
-        # resting mode so it survives show/hide.
-        if getattr(self, '_sidebar_minimal', False) and not self._sidebar_mode_is_minimal():
+        # Leave any leftover strip chrome so the next reveal is the full sidebar.
+        if getattr(self, '_sidebar_minimal', False):
             self.set_sidebar_minimal(False, animate=False)
         try:
             self._toggle_sidebar_visibility(visible)
@@ -6485,34 +6466,31 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return GLib.SOURCE_REMOVE
 
     def _sidebar_on_terminal_open(self) -> str:
-        """What to do to the sidebar when a session opens: 'none'|'minimize'|'hide'.
+        """What to do to the sidebar when a session opens: 'none'|'hide'.
 
         Falls back to the legacy boolean settings for configs saved before the
-        options were merged into one selector.
+        options were merged into one selector. Icon-strip ``minimize`` is
+        retired and treated as ``none``.
         """
         try:
             value = self.config.get_setting('ui.sidebar_on_terminal_open', None)
         except Exception:
             value = None
-        if value in ('none', 'minimize', 'hide'):
+        if value == 'minimize':
+            return 'none'
+        if value in ('none', 'hide'):
             return value
         # Legacy fallback.
         try:
             if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
                 return 'hide'
-            if self.config.get_setting('ui.sidebar_minimize_on_connect', False):
-                return 'minimize'
         except Exception:
             pass
         return 'none'
 
     def _minimize_sidebar_after_terminal(self) -> bool:
-        """Deferred collapse to the icon strip once a session settles."""
+        """No-op: icon-strip minimize-on-connect is retired."""
         self._sidebar_hide_timer_id = None
-        try:
-            self.set_sidebar_minimal(True)
-        except Exception:
-            logger.debug("minimize_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
 
     def _toggle_sidebar_visibility(self, is_visible):

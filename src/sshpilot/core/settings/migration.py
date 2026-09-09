@@ -175,6 +175,18 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         del ui_cfg['connection_sort_last']
         updated = True
 
+    # Icon-strip ("minimal") sidebar mode is retired. Existing installs that
+    # persisted it (or minimize-on-terminal-open) must wake up in full mode.
+    if str(ui_cfg.get('sidebar_mode', 'full')).lower() == 'minimal':
+        ui_cfg['sidebar_mode'] = 'full'
+        updated = True
+    if str(ui_cfg.get('sidebar_on_terminal_open', 'none')).lower() == 'minimize':
+        ui_cfg['sidebar_on_terminal_open'] = 'none'
+        updated = True
+    if ui_cfg.get('sidebar_minimize_on_connect'):
+        ui_cfg['sidebar_minimize_on_connect'] = False
+        updated = True
+
     ssh_cfg = config.get('ssh')
     if not isinstance(ssh_cfg, dict):
         default_ssh = get_default_config().get('ssh', {}).copy()

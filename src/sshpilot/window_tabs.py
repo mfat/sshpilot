@@ -1161,7 +1161,7 @@ class WindowTabsMixin:
         # Sidebar behavior: a session (SSH or local) just opened. Hide after a
         # short delay so the terminal settles, then the sidebar slides away.
         # The pinned Start page attaches at startup too — it is not a session,
-        # so it must not trigger hide/minimize. Detect it by child type: at
+        # so it must not trigger hide. Detect it by child type: at
         # attach time `_start_tab_page` isn't assigned yet (prepend() emits
         # page-attached synchronously before the return value is stored), so an
         # identity check via _is_start_tab_page() would miss it.
@@ -1177,11 +1177,6 @@ class WindowTabsMixin:
                 self._cancel_pending_sidebar_hide()
                 self._sidebar_hide_timer_id = GLib.timeout_add(
                     350, self._hide_sidebar_after_terminal
-                )
-            elif action == 'minimize':
-                self._cancel_pending_sidebar_hide()
-                self._sidebar_hide_timer_id = GLib.timeout_add(
-                    350, self._minimize_sidebar_after_terminal
                 )
         except Exception:
             logger.debug("sidebar-on-terminal-open failed", exc_info=True)

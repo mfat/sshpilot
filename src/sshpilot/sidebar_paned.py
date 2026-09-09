@@ -27,14 +27,13 @@ persisted; the callback is debounced so a drag writes the setting once.
 layout reflow), so the owner can drop tall secondary row chrome for the
 duration of the gesture.
 
-The divider is also how the sidebar leaves the minimal strip: dragging a pinned
-strip out to ``_expand_threshold()`` — the width the full sidebar needs — is a
+The divider can also leave a leftover pinned strip: dragging a pinned strip
+out to ``_expand_threshold()`` — the width the full sidebar needs — is a
 request for the full sidebar, reported through ``on_mode_switch``, which the
-window answers with ``set_sidebar_minimal``. Below that threshold a pinned strip
-follows the pointer (staying in minimal mode) so the mode switch is continuous.
-The way *into* the strip by drag — shoving the divider past the sidebar's floor
-— is behind :data:`COLLAPSE_BY_DRAG` and currently off. Nothing else in this
-widget knows what a mode is.
+window answers with ``set_sidebar_minimal(False)``. Icon-strip mode is
+retired, so the way *into* the strip by drag stays behind
+:data:`COLLAPSE_BY_DRAG` (off), and ``set_sidebar_minimal(True)`` is a no-op.
+Nothing else in this widget knows what a mode is.
 
 Overlay presentation (``AdwOverlaySplitView.collapsed``) has no ``Gtk.Paned``
 equivalent — see ``docs/sidebar-modes.md``.
@@ -67,12 +66,9 @@ _PERSIST_DELAY_MS = 400
 _MODE_SWITCH_SLACK = 40
 
 #: Whether shoving the divider past the sidebar's floor collapses to the icon
-#: strip. **Off**: the answer to "the sidebar is too wide" is a full sidebar
-#: that lays out narrower, not a different mode the user did not ask for, so a
-#: drag into the wall now simply stops there. The strip itself is untouched —
-#: ``ui.sidebar_mode``, the "When a Terminal Opens" behaviour and a restored
-#: session still enter it, dragging a pinned strip open still leaves it, and
-#: flipping this back to True restores the drag-in gesture.
+#: strip. Icon-strip mode is retired, so this stays **off**. A drag into the
+#: wall simply stops at the floor; the full sidebar can be laid out narrower
+#: instead. Do not re-enable without restoring a supported strip presentation.
 COLLAPSE_BY_DRAG = False
 
 #: Widest the sidebar makes itself before the user has ever sized it. Only the

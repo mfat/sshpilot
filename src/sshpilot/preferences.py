@@ -1353,8 +1353,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # Sidebar group (at bottom of Interface page)
         sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
 
-        # Sidebar mode (full vs. minimal strip) is set by dragging the divider,
-        # not a preferences toggle — see window._on_sidebar_drag_mode_switch.
+        # Sidebar presentation is full-width only; icon-strip mode is retired.
 
         flat_rows_switch = Adw.SwitchRow()
         flat_rows_switch.set_title(_("Flat Sidebar Rows"))
@@ -1460,15 +1459,14 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(hide_on_startup_switch)
 
-        # When a terminal opens: do nothing / minimize to icons / hide.
-        self._on_terminal_open_values = ['none', 'minimize', 'hide']
+        # When a terminal opens: do nothing / hide.
+        self._on_terminal_open_values = ['none', 'hide']
         on_terminal_open_row = Adw.ComboRow()
         on_terminal_open_row.set_title(_("When a Terminal Opens"))
         on_terminal_open_row.set_subtitle(
             _("What happens to the sidebar when any session opens, including local terminals"))
         on_terminal_options = Gtk.StringList()
         on_terminal_options.append(_("Do Nothing"))
-        on_terminal_options.append(_("Minimize to Icons"))
         on_terminal_options.append(_("Hide Sidebar"))
         on_terminal_open_row.set_model(on_terminal_options)
         current_on_open = 'none'
@@ -1501,12 +1499,14 @@ class PreferencesWindow(Adw.NavigationPage):
         """Persist the merged 'when a terminal opens' behavior."""
         try:
             idx = combo_row.get_selected()
-            values = getattr(self, '_on_terminal_open_values', ['none', 'minimize', 'hide'])
+            values = getattr(self, '_on_terminal_open_values', ['none', 'hide'])
             action = values[idx] if 0 <= idx < len(values) else 'none'
+            if action == 'minimize':
+                action = 'none'
             self.config.set_setting('ui.sidebar_on_terminal_open', action)
             # Keep the legacy booleans consistent for any older readers.
             self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
-            self.config.set_setting('ui.sidebar_minimize_on_connect', action == 'minimize')
+            self.config.set_setting('ui.sidebar_minimize_on_connect', False)
         except Exception:
             logger.debug("sidebar on-terminal-open change failed", exc_info=True)
 

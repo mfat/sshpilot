@@ -63,23 +63,18 @@ computed the width itself and offered no handle. What changed for callers:
   64px strip reachable. `get_resting_sidebar_width()`
   answers "how wide once released?" even while pinned, which is what the
   animation's endpoint and the search popup's panel width need.
-- **The divider switches mode, too — one way.** Dragging it more than
-  `_MODE_SWITCH_SLACK` (40px) below the measured floor used to ask for the icon
-  strip; that gesture is behind `sidebar_paned.COLLAPSE_BY_DRAG` and is
-  currently **off**, so a drag into the wall simply stops at the floor. The
-  answer to "the sidebar is too wide" is a full sidebar that lays out narrower
-  (see the floor above), not a mode the user did not ask for. The strip is
-  still entered by `ui.sidebar_mode`, by "When a Terminal Opens" and by a
-  restored session, and is still left by dragging it open or by its expand
-  button. Dragging a pinned strip out to `_expand_threshold()` — the width the full
-  sidebar actually needs — asks for the full sidebar back. Until that point
-  the strip follows the pointer while staying minimal. The paned reports
-  both through `on_mode_switch` and leaves the divider alone when the owner
-  takes it (`window._on_sidebar_drag_mode_switch` → persist `ui.sidebar_mode`
-  + `set_sidebar_minimal`, never animated). A dragged strip (or a drag back
-  to full) is the resting mode and is restored at startup. Transient
-  collapses from "When a Terminal Opens" do not use this path and stay
-  non-persisted.
+- **The divider switches mode, too — expand only.** Dragging past the floor
+  used to enter the icon strip; that gesture is behind
+  `sidebar_paned.COLLAPSE_BY_DRAG` and stays **off**. Icon-strip mode is
+  **retired**: settings migration rewrites `ui.sidebar_mode: minimal` to
+  `full` and `ui.sidebar_on_terminal_open: minimize` to `none`,
+  `set_sidebar_minimal(True)` is a no-op, and Preferences no longer offers
+  "Minimize to Icons". A leftover pinned strip can still be dragged open to
+  full via `on_mode_switch(False)`. Until that point a pin follows the
+  pointer. The paned reports mode changes through `on_mode_switch` and leaves
+  the divider alone when the owner takes it
+  (`window._on_sidebar_drag_mode_switch` → persist `ui.sidebar_mode=full`
+  + `set_sidebar_minimal(False)`, never animated).
 - **A mode-switching drag never moves the divider on its own**, which takes
   three rules that are easy to break. Below the full sidebar's floor the strip
   stays in minimal mode but **follows the pointer** up to `_expand_threshold()` —
@@ -111,81 +106,28 @@ computed the width itself and offered no handle. What changed for callers:
   which is what the whole sidebar then had to be. Without them the strip's
   content minimum is 63px and the 64px strip needs no clipping at all.
 
-## 1. Full vs. Minimal (icon strip)
+## 1. Full vs. Minimal (icon strip) — RETIRED
 
-`set_sidebar_minimal(minimal: bool, animate: bool = True)`
+Icon-strip ("minimal") mode is **retired**. Existing installs are migrated in
+`ensure_config_defaults`: `ui.sidebar_mode: minimal` → `full`, and
+`ui.sidebar_on_terminal_open: minimize` → `none`. Runtime entry is blocked:
+`set_sidebar_minimal(True)` is a no-op, divider collapse stays behind
+`COLLAPSE_BY_DRAG=False`, and Preferences only offers Do Nothing / Hide.
+
+`set_sidebar_minimal(False)` remains as the expand path for clearing a leftover
+pin from older builds (divider drag-open, expand button). The strip chrome and
+row-compact helpers below are leftover implementation detail, not a supported
+presentation.
+
+Historical behaviour (kept for archaeology of the helpers that remain):
+
+`set_sidebar_minimal(minimal: bool, animate: bool = True)` formerly toggled:
 
 - **Full** — the normal sidebar rows.
-- **Minimal** — a ~112px label strip at rest: each connection collapses to a
-  short ellipsized text label (10 characters at the default width; the budget
-  grows as the strip is dragged wider), groups to a bold coloured text
-  label (no folder icon) plus their expand/collapse chevron, which stays on
-  screen there exactly as in full mode — the split-view and edit buttons are
-  the group actions that go. Rows are always flat in the strip (no card chrome),
-  regardless of the full-sidebar flat-rows preference. The full name stays on
-  the row tooltip. The row's **Manage Files** hover action survives the strip —
-  it is the only way to reach the file manager without leaving minimal mode —
-  and it keeps the full row's *opacity* reveal there, so its space stays
-  reserved and hovering never reflows or resizes a row (revealing it by
-  visibility instead would be free at rest but would jump the layout under the
-  pointer). To pay for that reservation it wears `.sidebar-compact-action` in
-  the strip, which trims it to the bare 16px icon: measured in the 112px strip,
-  a row is 80×36px with or without it, and the label goes from 68px to 50px
-  (~2 characters) rather than the 34px the untrimmed button would leave. Every
-  other row action (status icon, colour widgets, hostname line) stays hidden.
-  A compact row's content box is also given `vexpand` (both `ConnectionRow` and
-  `GroupRow`): a single-line strip row is shorter than the list row's theme
-  minimum (19px of content in a 36px row) and a `Gtk.Box` leaves that slack
-  *after* its last child, so without it the label and the hover action sit high
-  in the highlighted row instead of centred.
-  The width animates between the two states. During that animation the top
-  header toolbar uses clip-reveal (buttons stay laid out; the pane clips them)
-  instead of reshuffling the overflow menu every frame, the accent tips banner
-  is snap-hidden until the width has settled and a short timeout has elapsed
-  (so it cannot flash blue beside the top chrome while the content pane
-  resizes), and header *margin* compacting is applied only once the width has
-  settled.
+- **Minimal** — a ~112px label strip at rest.
 
-  **Clip-reveal is frozen on the destination's split**, not on "show
-  everything": `set_clip_reveal(True, target_width=…)` runs the overflow
-  calculation once for the width the animation ends at (the sidebar's full
-  width minus the header's `2 × _SIDEBAR_HEADER_MARGIN_FULL`), and the pane's
-  clip reveals exactly those buttons. Revealing every packable item instead
-  meant the last frame re-split the row — measured as two buttons appearing
-  mid-animation and being replaced by the hide-hostnames control and the "…"
-  button once the width settled. For the same reason an expand applies the
-  full-mode *button set* up front (`_apply_sidebar_header_items(False)`) even
-  though the margins stay deferred: the strip drops the hide-hostnames control,
-  and freezing a row without it leaves room for buttons that do not belong in
-  the destination.
-
-Driven by the `ui.sidebar_mode` setting (`full` / `minimal`), written when the
-user switches mode with the divider (or the strip's expand button) and applied
-at startup. Optionally also entered transiently by the "When a Terminal Opens"
-behaviour. There is no Preferences toggle for the resting mode — the divider
-is the control. Minimal mode is a side-by-side column, so the terminal is
-`window − strip_width`.
-
-The strip's header bar shows the **app icon** in place of the title: the "SSH
-Pilot" label is hidden there (its natural width alone would floor the strip) and
-the title moves to the content header, which would otherwise leave the strip
-topped by a blank bar. The icon is built hidden in `_assemble_sidebar_shell` and
-swapped with the label by `_apply_sidebar_minimal_chrome`; at 24px it leaves the
-strip's header minimum at 36px, well inside the 112px strip. The top action
-toolbar is the same `OverflowToolbar` as full mode (same New Connection
-button); it keeps as many buttons as fit and moves the rest into a trailing
-"…" menu. The hide-hostnames control is omitted in the strip (hostnames are
-not shown there). The bottom selection toolbar is hidden and replaced by the
-expand control.
-
-**By mouse, the divider is the way out** (section 0): drag the strip open to
-restore the full sidebar. Dragging *in* — past the sidebar's minimum — is
-`COLLAPSE_BY_DRAG` and is off; the strip's own expand button is the other way
-out. There is no
-minimize button in the bottom toolbar any more — it sat at the start of that
-button row, and the row's minimum width is what held the whole sidebar wide, so
-the control that collapsed the sidebar was itself part of why it could not get
-narrow.
+Driven by the `ui.sidebar_mode` setting (`full` / `minimal`) when that mode
+existed. There is no Preferences toggle for it any more.
 
 ## 2. Default vs. Overlay presentation
 

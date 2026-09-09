@@ -99,9 +99,11 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_hide_on_startup': False,
             'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
             'sidebar_show_when_no_tabs': False,
-            'sidebar_mode': 'full',  # 'full' | 'minimal'; written by divider drag / expand button
+            # Resting sidebar presentation. Icon-strip ('minimal') is retired;
+            # migration rewrites any persisted 'minimal' to 'full'.
+            'sidebar_mode': 'full',
             # What happens to the sidebar when a session opens:
-            # 'none' | 'minimize' (icon strip) | 'hide'.
+            # 'none' | 'hide'. ('minimize' / icon strip is retired.)
             'sidebar_on_terminal_open': 'none',
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
             'headerbar_show_sidebar_toggle': False,
