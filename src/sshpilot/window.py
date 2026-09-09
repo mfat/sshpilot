@@ -80,6 +80,7 @@ from .sidebar import (
     ConnectionRow,
     build_sidebar,
     install_sidebar_css,
+    minimal_label_max_chars,
     reset_connection_list_drag_session,
 )
 from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, SidebarPaned
@@ -253,7 +254,8 @@ _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
 # Width of the minimal (label) sidebar strip — fits ~10 ellipsized characters
-# plus margins, and a folder glyph beside group names.
+# plus margins at rest; dragging wider grows the label char budget.
+# Keep in sync with ``sidebar.MINIMAL_LABEL_BASE_WIDTH``.
 _MINIMAL_STRIP_WIDTH = 112
 
 
@@ -2195,8 +2197,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             on_mode_switch=self._on_sidebar_drag_mode_switch,
         )
         self.split_view.set_vexpand(True)
+        self.split_view.connect(
+            'notify::position', self._on_sidebar_strip_position_changed)
         self._split_variant = 'paned'
         logger.debug("Using resizable Gtk.Paned split view")
+        self._minimal_label_chars_applied = None
 
         # Initial sidebar visibility. Apply "hide on startup" HERE — before the
         # window is presented — so it never flashes visible then collapses.
@@ -2806,16 +2811,53 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
 
+    def _minimal_strip_label_chars(self) -> int:
+        """Compact-label character budget for the current sidebar width."""
+        try:
+            width = int(self._get_sidebar_width())
+        except Exception:
+            width = _MINIMAL_STRIP_WIDTH
+        if width <= 0:
+            width = _MINIMAL_STRIP_WIDTH
+        return minimal_label_max_chars(
+            width,
+            base_width=_MINIMAL_STRIP_WIDTH,
+        )
+
+    def _on_sidebar_strip_position_changed(self, *_args) -> None:
+        """Grow/shrink compact label ellipsis as the minimal strip is dragged."""
+        if not getattr(self, '_sidebar_minimal', False):
+            return
+        try:
+            chars = self._minimal_strip_label_chars()
+        except Exception:
+            return
+        if chars == getattr(self, '_minimal_label_chars_applied', None):
+            return
+        self._apply_sidebar_minimal_rows(True)
+
     def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
         """Toggle compact rendering on every connection/group row."""
         lb = getattr(self, 'connection_list', None)
         if lb is None:
             return
+        max_chars = None
+        if minimal:
+            try:
+                max_chars = self._minimal_strip_label_chars()
+            except Exception:
+                max_chars = None
+            self._minimal_label_chars_applied = max_chars
+        else:
+            self._minimal_label_chars_applied = None
         row = lb.get_first_child()
         while row is not None:
             if hasattr(row, 'set_compact'):
                 try:
-                    row.set_compact(minimal)
+                    if minimal and max_chars is not None:
+                        row.set_compact(True, max_chars=max_chars)
+                    else:
+                        row.set_compact(minimal)
                 except Exception:
                     logger.debug("row set_compact failed", exc_info=True)
             row = row.get_next_sibling()

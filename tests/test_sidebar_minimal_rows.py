@@ -141,6 +141,39 @@ def test_configure_compact_label_defaults():
     label.add_css_class.assert_called_with('sidebar-compact-label')
 
 
+def test_minimal_label_max_chars_scales_with_strip_width():
+    mod = importlib.import_module('sshpilot.sidebar')
+    assert mod.minimal_label_max_chars(112) == 10
+    assert mod.minimal_label_max_chars(224) == 20
+    assert mod.minimal_label_max_chars(56) == 5
+    assert mod.minimal_label_max_chars(0) == 1
+    assert mod.minimal_label_max_chars(200) == 17  # 200*10//112
+
+
+def test_compact_connection_honours_max_chars(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+
+    row.set_compact(True, max_chars=18)
+
+    row.nickname_label.set_max_width_chars.assert_called_with(18)
+    # Re-apply without an explicit budget keeps the last width-driven value.
+    row.nickname_label.reset_mock()
+    row.set_compact(True)
+    row.nickname_label.set_max_width_chars.assert_called_with(18)
+
+
+def test_compact_group_honours_max_chars(monkeypatch):
+    row, mod = _make_group()
+    monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: None)
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    monkeypatch.setattr(mod, '_set_compact_fg_color', MagicMock())
+
+    row.set_compact(True, max_chars=14)
+
+    row.name_label.set_max_width_chars.assert_called_with(14)
+
+
 def test_restore_shows_labels_and_refreshes_status(monkeypatch):
     row, mod = _make()
     monkeypatch.setattr(mod, '_apply_row_color', MagicMock())

@@ -88,8 +88,9 @@ computed the width itself and offered no handle. What changed for callers:
 `set_sidebar_minimal(minimal: bool, animate: bool = True)`
 
 - **Full** — the normal sidebar rows.
-- **Minimal** — a ~112px label strip: each connection collapses to a short
-  ellipsized text label (max 10 characters), groups to a bold coloured text
+- **Minimal** — a ~112px label strip at rest: each connection collapses to a
+  short ellipsized text label (10 characters at the default width; the budget
+  grows as the strip is dragged wider), groups to a bold coloured text
   label (no folder icon). The full name stays on the row tooltip. The width
   animates between the two states.
 

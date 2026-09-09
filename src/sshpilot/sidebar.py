@@ -689,9 +689,29 @@ def _update_color_dot(row: Gtk.Widget, rgba: Optional[Gdk.RGBA]):
     row.color_dot.set_visible(True)
 
 
-# Character budget for labels in the minimal strip. Keeps the strip narrow
-# while remaining readable; the full name stays on the row tooltip.
+# Character budget for labels in the minimal strip at the default strip width
+# (``window._MINIMAL_STRIP_WIDTH``). Grows with the strip via
+# :func:`minimal_label_max_chars`; the full name stays on the row tooltip.
 MINIMAL_LABEL_MAX_CHARS = 10
+
+# Pixel width that yields ``MINIMAL_LABEL_MAX_CHARS`` — keep in sync with
+# ``window._MINIMAL_STRIP_WIDTH``.
+MINIMAL_LABEL_BASE_WIDTH = 112
+
+
+def minimal_label_max_chars(
+    width: int,
+    *,
+    base_width: int = MINIMAL_LABEL_BASE_WIDTH,
+    base_chars: int = MINIMAL_LABEL_MAX_CHARS,
+) -> int:
+    """Ellipsis budget for compact labels at a strip ``width`` of pixels.
+
+    Scales linearly from ``base_chars`` at ``base_width`` (10 characters in the
+    default 112px strip) so dragging the strip open reveals more of each name.
+    """
+    base_width = max(1, int(base_width))
+    return max(1, (max(0, int(width)) * max(1, int(base_chars))) // base_width)
 
 
 def _configure_compact_label(label: Gtk.Label, text: str,
@@ -1394,12 +1414,15 @@ class GroupRow(Gtk.ListBoxRow):
         config = getattr(self.group_manager, 'config', None)
         _apply_sidebar_row_style(self, config, flat=flat)
 
-    def set_compact(self, compact: bool) -> None:
-        """Collapse the group header to a folder icon + short label, or restore."""
+    def set_compact(self, compact: bool, *, max_chars: int | None = None) -> None:
+        """Collapse the group header to a short label, or restore."""
         compact = bool(compact)
         self._compact = compact
         content = self._content
         if compact:
+            if max_chars is not None:
+                self._compact_max_chars = max(1, int(max_chars))
+            chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
             content.set_halign(Gtk.Align.FILL)
             content.set_margin_start(6)
             content.set_margin_end(6)
@@ -1420,7 +1443,8 @@ class GroupRow(Gtk.ListBoxRow):
                 pass
             _set_compact_fg_color(self.icon, None)
             group_name = str(self.group_info.get('name', ''))
-            _configure_compact_label(self.name_label, group_name, group=True)
+            _configure_compact_label(
+                self.name_label, group_name, max_chars=chars, group=True)
             self.set_tooltip_text(group_name)
             rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
             _apply_row_color(self, 'fill', None)
@@ -1516,8 +1540,10 @@ class TagGroupRow(GroupRow):
         name = GLib.markup_escape_text(raw_name)
         prefix = GLib.markup_escape_text(raw_prefix)
         if getattr(self, '_compact', False):
+            chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
             _configure_compact_label(
-                self.name_label, f"{raw_prefix}{raw_name}", group=True)
+                self.name_label, f"{raw_prefix}{raw_name}",
+                max_chars=chars, group=True)
             self.set_tooltip_text(f"{raw_prefix}{raw_name}")
             rgba = _resolve_group_color_by_id(self.group_manager, self.group_id)
             _set_compact_fg_color(self.name_label, rgba)
@@ -2306,11 +2332,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_dot.set_visible(False)
         self.color_badge.set_visible(False)
 
-    def set_compact(self, compact: bool) -> None:
+    def set_compact(self, compact: bool, *, max_chars: int | None = None) -> None:
         """Collapse the row to a short text label (minimal sidebar) or restore.
 
         Idempotent for restore; when already compact, re-runs so a renamed
-        connection refreshes the truncated label immediately.
+        connection refreshes the truncated label immediately. ``max_chars``
+        scales with the strip width; omitted reuses the last value.
         """
         compact = bool(compact)
         if not compact and not getattr(self, '_compact', False):
@@ -2349,6 +2376,9 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.update_status()  # restores status_icon + group-color widgets
             return
 
+        if max_chars is not None:
+            self._compact_max_chars = max(1, int(max_chars))
+        chars = int(getattr(self, '_compact_max_chars', 0) or MINIMAL_LABEL_MAX_CHARS)
         content.set_halign(Gtk.Align.FILL)
         content.set_margin_start(6)
         content.set_margin_end(6)
@@ -2366,7 +2396,8 @@ class ConnectionRow(Gtk.ListBoxRow):
             getattr(self.connection, 'display_name', None)
             or self.connection.nickname
         )
-        _configure_compact_label(self.nickname_label, connection_name)
+        _configure_compact_label(
+            self.nickname_label, connection_name, max_chars=chars)
         self.set_tooltip_text(connection_name)
         # Text-only strip: no group-color fill on the label (keeps names legible).
         _apply_row_color(self, 'fill', None)
