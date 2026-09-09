@@ -116,6 +116,51 @@ def test_prefer_user_over_passphrase_user():
     assert result.connections[0].username == "real"
 
 
+def test_maps_public_key_to_identity_files():
+    result = parse_asbru_export(
+        {
+            "c1": {
+                "_is_group": 0,
+                "name": "keyed",
+                "method": "SSH",
+                "ip": "1.2.3.4",
+                "user": "deploy",
+                "public_key": "~/.ssh/id_ed25519",
+            }
+        }
+    )
+    assert result.connections[0].identity_files == ("~/.ssh/id_ed25519",)
+
+
+def test_prunes_groups_with_only_non_ssh_children():
+    result = parse_asbru_export(
+        {
+            "g-ssh": {"_is_group": 1, "name": "SSH Folder"},
+            "g-rdp": {"_is_group": 1, "name": "RDP Folder"},
+            "c1": {
+                "_is_group": 0,
+                "name": "box",
+                "method": "SSH",
+                "ip": "1.2.3.4",
+                "user": "u",
+                "parent": "g-ssh",
+            },
+            "c2": {
+                "_is_group": 0,
+                "name": "win",
+                "method": "RDP",
+                "ip": "1.2.3.5",
+                "user": "Administrator",
+                "parent": "g-rdp",
+            },
+        }
+    )
+    assert [g.name for g in result.groups] == ["SSH Folder"]
+    assert any("RDP Folder" in w for w in result.warnings)
+    assert any("non-SSH" in w for w in result.warnings)
+    assert len(result.connections) == 1
+
+
 def test_rejects_missing_file(tmp_path: Path):
     with pytest.raises(CoreError):
         load_asbru_export(tmp_path / "missing.yml")
@@ -149,6 +194,9 @@ def test_parse_text_requires_pyyaml_or_works():
         return
     result = parse_asbru_export_text(
         "g:\n  _is_group: 1\n  name: G\n  parent: __PAC__EXPORTED__\n"
+        "c:\n  _is_group: 0\n  name: box\n  method: SSH\n  ip: 1.2.3.4\n"
+        "  user: u\n  parent: g\n"
     )
     assert result.ok
     assert result.groups[0].name == "G"
+    assert result.connections[0].nickname == "box"

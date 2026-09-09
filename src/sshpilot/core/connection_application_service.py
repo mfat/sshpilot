@@ -1234,7 +1234,8 @@ class ConnectionApplicationService:
             )
 
         needs_config = any(
-            c.proxy_jump or c.forwarding_rules for c in parsed.connections
+            c.proxy_jump or c.forwarding_rules or c.identity_files
+            for c in parsed.connections
         )
         if needs_config:
             self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
@@ -1283,6 +1284,8 @@ class ConnectionApplicationService:
                 config_patch["forwarding_rules"] = [
                     dict(rule) for rule in draft.forwarding_rules
                 ]
+            if draft.identity_files:
+                config_patch["identity_files"] = list(draft.identity_files)
             create_request = CreateConnectionRequest(
                 nickname=draft.nickname,
                 hostname=draft.hostname,

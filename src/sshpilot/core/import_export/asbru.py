@@ -49,6 +49,7 @@ class AsbruConnectionDraft:
     group_source_id: Optional[str] = None
     proxy_jump: Tuple[str, ...] = ()
     forwarding_rules: Tuple[Dict[str, Any], ...] = ()
+    identity_files: Tuple[str, ...] = ()
     warnings: Tuple[str, ...] = ()
 
 
@@ -163,7 +164,9 @@ def parse_asbru_export(data: Any) -> AsbruParseResult:
             )
         )
 
-    result.groups = _order_groups_parents_first(normalized_groups)
+    kept_groups, prune_warnings = _prune_empty_groups(normalized_groups, connections)
+    result.warnings.extend(prune_warnings)
+    result.groups = _order_groups_parents_first(kept_groups)
     result.connections = connections
     if not connections and not result.warnings and not result.errors:
         result.warnings.append("Export contained groups only; no SSH connections imported")
@@ -347,6 +350,7 @@ def _parse_connection(
     options = str(entry.get("options") or "")
     forwarding_rules = tuple(parse_forwards_from_options(options))
     proxy_jump = build_proxy_jump(entry)
+    identity_files = _resolve_identity_files(entry)
 
     conn_warnings: List[str] = []
     if entry.get("expect") or entry.get("macros") or entry.get("variables"):
@@ -368,6 +372,7 @@ def _parse_connection(
         group_source_id=group_id,
         proxy_jump=proxy_jump,
         forwarding_rules=forwarding_rules,
+        identity_files=identity_files,
         warnings=tuple(conn_warnings),
     )
     warnings.extend(conn_warnings)
@@ -385,6 +390,26 @@ def _resolve_username(entry: Mapping[str, Any]) -> str:
         if text:
             return text
     return ""
+
+
+def _resolve_identity_files(entry: Mapping[str, Any]) -> Tuple[str, ...]:
+    """Map Ásbrú key path fields onto OpenSSH IdentityFile values.
+
+    Ásbrú's ``public key`` / ``public_key`` field is the path passed to ssh
+    ``-i`` (typically the private key path, despite the name).
+    """
+    raw = (
+        entry.get("public key")
+        or entry.get("public_key")
+        or entry.get("identity_file")
+        or entry.get("IdentityFile")
+    )
+    if raw is None:
+        return ()
+    path = str(raw).strip()
+    if not path:
+        return ()
+    return (path,)
 
 
 def _resolve_port(entry: Mapping[str, Any]) -> int:
@@ -437,6 +462,33 @@ def _order_groups_parents_first(groups: Sequence[AsbruGroupDraft]) -> List[Asbru
     for group in groups:
         visit(group.source_id)
     return ordered
+
+
+def _prune_empty_groups(
+    groups: Sequence[AsbruGroupDraft],
+    connections: Sequence[AsbruConnectionDraft],
+) -> Tuple[List[AsbruGroupDraft], List[str]]:
+    """Keep only groups that contain (or ancestor) an imported SSH connection."""
+    by_id = {g.source_id: g for g in groups}
+    keep: set[str] = set()
+    for conn in connections:
+        gid = conn.group_source_id
+        while gid and gid in by_id:
+            if gid in keep:
+                break
+            keep.add(gid)
+            gid = by_id[gid].parent_source_id
+
+    warnings: List[str] = []
+    kept: List[AsbruGroupDraft] = []
+    for group in groups:
+        if group.source_id in keep:
+            kept.append(group)
+        else:
+            warnings.append(
+                f"Skipped empty group {group.name!r} (no importable SSH connections)"
+            )
+    return kept, warnings
 
 
 def _local_forward_rule(parts: List[str]) -> Optional[Dict[str, Any]]:

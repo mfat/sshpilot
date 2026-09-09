@@ -28,6 +28,7 @@ c1:
   options: "-L 18080:localhost:80"
   jump ip: jump.example
   jump user: juser
+  public_key: ~/.ssh/id_ed25519
 c2:
   _is_group: 0
   name: lab-host
@@ -63,6 +64,8 @@ def test_preview_and_import_asbru(tmp_path: Path):
     assert details.username == "alice"
     assert details.proxy_jump == ("juser@jump.example",)
     assert details.forwarding_rule_count == 1
+    editor = client.get_connection_editor(host.id)
+    assert editor.identity_files == ("~/.ssh/id_ed25519",)
 
     again = client.import_asbru(AsbruImportRequest(source=str(export)))
     assert again.connections_added == ()
