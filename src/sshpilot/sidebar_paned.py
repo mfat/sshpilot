@@ -387,6 +387,18 @@ class SidebarPaned(Gtk.Paned):
         if dragging and position < floor - _MODE_SWITCH_SLACK:
             self._emit_drag(position)
             if self._request_mode(True):
+                # The owner pins the strip's *resting* width, but the pointer is
+                # still on the divider: snapping there and jumping back out to
+                # the pointer on the next motion event is the flicker the drag
+                # is not supposed to produce. Keep the pin's floor and put the
+                # strip back under the pointer, the way the pinned branch above
+                # keeps it there for the rest of the drag.
+                if self._pinned_width is not None:
+                    strip_floor = self._pin_floor or _ABSOLUTE_MIN_WIDTH
+                    threshold = self._expand_threshold(width)
+                    self._pinned_width = max(
+                        strip_floor, min(position, threshold - 1))
+                    self._sync_position(width)
                 return
         clamped = max(floor, min(position, ceiling))
         if clamped != position:

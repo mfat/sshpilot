@@ -165,10 +165,12 @@ class OverflowToolbar(Gtk.Widget):
         self._last_available = -1
         self._last_overflowed_ids: tuple = ()
         self._applying = False
-        # When True, show every packable item at natural width and let a parent
-        # clip reveal them (sidebar width animation) instead of shuffling the
-        # overflow menu every tick.
+        # When True, freeze the row at natural width and let a parent clip
+        # reveal it (sidebar width animation) instead of shuffling the overflow
+        # menu every tick. ``_clip_reveal_target`` is the width the animation
+        # ends at, when the caller knows it.
         self._clip_reveal = False
+        self._clip_reveal_target: Optional[int] = None
 
         self._box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -327,7 +329,17 @@ class OverflowToolbar(Gtk.Widget):
             box.allocate(width, height, baseline, None)
 
     def _apply_clip_reveal(self) -> None:
-        """Show every packable control; force-hidden items stay hidden."""
+        """Freeze the row for the width the animation ends at.
+
+        With a target width the split is the one the destination will settle
+        on, so the parent's clip reveals exactly the buttons that stay — no
+        item appears mid-animation only to hop into the "…" menu on the last
+        frame. Without one, every packable control is shown.
+        """
+        target = getattr(self, '_clip_reveal_target', None)
+        if target is not None:
+            self._apply_overflow(max(0, int(target)))
+            return
         if self._applying:
             return
         self._applying = True
@@ -354,17 +366,24 @@ class OverflowToolbar(Gtk.Widget):
         finally:
             self._applying = False
 
-    def set_clip_reveal(self, enabled: bool) -> None:
+    def set_clip_reveal(self, enabled: bool, *,
+                        target_width: Optional[int] = None) -> None:
         """Reveal items by parent clipping instead of overflow reshuffling.
 
         Used while the sidebar width animates between the strip and full mode
         so the top toolbar does not flicker as buttons hop in and out of the
-        "…" menu every frame.
+        "…" menu every frame. Pass ``target_width`` — the width the animation
+        ends at — to freeze the split the destination will settle on, so the
+        reveal ends where it started rather than re-splitting on the last
+        frame.
         """
         enabled = bool(enabled)
-        if getattr(self, '_clip_reveal', False) == enabled:
+        target = int(target_width) if enabled and target_width else None
+        if (getattr(self, '_clip_reveal', False) == enabled
+                and getattr(self, '_clip_reveal_target', None) == target):
             return
         self._clip_reveal = enabled
+        self._clip_reveal_target = target
         self.force_relayout()
 
     def _apply_overflow(self, available: int) -> None:

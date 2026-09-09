@@ -139,6 +139,44 @@ def test_clip_reveal_shows_all_packable_items_and_hides_overflow():
     assert toolbar._last_available == -1
 
 
+def test_clip_reveal_with_a_target_freezes_the_destination_split(monkeypatch):
+    """Given the width the animation ends at, the frozen row is the split that
+    width settles on — so the reveal does not show buttons that hop into the
+    "…" menu on the last frame."""
+    toolbar = OverflowToolbar.__new__(OverflowToolbar)
+    toolbar._applying = False
+    toolbar._clip_reveal = True
+    toolbar._clip_reveal_target = 261
+    toolbar._items = [MagicMock()]
+    toolbar._overflow_btn = MagicMock()
+    applied = []
+    monkeypatch.setattr(toolbar, '_apply_overflow', applied.append)
+
+    OverflowToolbar._apply_clip_reveal(toolbar)
+
+    assert applied == [261]
+    # No blanket "show everything": the destination decides what is visible.
+    toolbar._items[0].set_visible.assert_not_called()
+    toolbar._overflow_btn.set_visible.assert_not_called()
+
+
+def test_set_clip_reveal_target_change_relayouts(monkeypatch):
+    toolbar = OverflowToolbar.__new__(OverflowToolbar)
+    toolbar._clip_reveal = False
+    toolbar._clip_reveal_target = None
+    calls = []
+    monkeypatch.setattr(
+        toolbar, 'force_relayout', lambda: calls.append('relayout'))
+
+    OverflowToolbar.set_clip_reveal(toolbar, True, target_width=300)
+    assert toolbar._clip_reveal_target == 300
+    OverflowToolbar.set_clip_reveal(toolbar, True, target_width=300)
+    assert calls == ['relayout']          # same target: no second relayout
+    OverflowToolbar.set_clip_reveal(toolbar, False)
+    assert toolbar._clip_reveal_target is None
+    assert calls == ['relayout', 'relayout']
+
+
 def test_set_clip_reveal_is_idempotent(monkeypatch):
     toolbar = OverflowToolbar.__new__(OverflowToolbar)
     toolbar._clip_reveal = False

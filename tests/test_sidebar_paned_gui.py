@@ -175,11 +175,17 @@ def test_a_drag_into_the_wall_resizes_but_does_not_collapse():
 
 
 def test_a_drag_well_past_the_wall_asks_for_the_icon_strip():
+    """The switch leaves the divider under the pointer, not at the strip's
+    resting width: snapping to the pin and jumping back out to the pointer on
+    the next motion event is a visible flicker mid-drag."""
     paned, seen = _mode_switching_paned()
     window = _shown(paned)
     try:
         paned.set_position(120)          # past the 40px slack under 200
         assert seen == [True]
+        assert paned.get_position() == 120
+        # The owner's pin is still the strip's floor, so the drag can go there.
+        paned.set_position(50)
         assert paned.get_position() == 64
     finally:
         window.destroy()

@@ -264,6 +264,12 @@ _format_connection_host_display = format_connection_host_display
 # Keep in sync with ``sidebar.MINIMAL_LABEL_BASE_WIDTH``.
 _MINIMAL_STRIP_WIDTH = 112
 
+# Horizontal margins of the sidebar's header toolbar, full mode and strip. The
+# full-mode pair is also what a width animation subtracts from the sidebar width
+# to know the row width its button split must be frozen at.
+_SIDEBAR_HEADER_MARGIN_FULL = 12
+_SIDEBAR_HEADER_MARGIN_STRIP = 6
+
 
 def _accelerator_label(accel: str) -> str:
     """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
@@ -2838,13 +2844,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     pass
 
-    def _set_sidebar_header_clip_reveal(self, enabled: bool) -> None:
-        """Toggle clip-reveal on the top sidebar OverflowToolbar."""
+    def _set_sidebar_header_clip_reveal(
+        self, enabled: bool, target_width: int | None = None
+    ) -> None:
+        """Toggle clip-reveal on the top sidebar OverflowToolbar.
+
+        ``target_width`` is the width the animation ends at; passing it keeps
+        the button row on the split the destination settles on, so the reveal
+        does not show buttons that hop into the "…" menu on the last frame.
+        """
         header = getattr(self, '_sidebar_header_toolbar', None)
         if header is None or not hasattr(header, 'set_clip_reveal'):
             return
         try:
-            header.set_clip_reveal(enabled)
+            header.set_clip_reveal(enabled, target_width=target_width)
         except Exception:
             logger.debug("header clip-reveal failed", exc_info=True)
 
@@ -2956,13 +2969,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._pause_tips_banner_for_sidebar_anim(False)
         return GLib.SOURCE_REMOVE
 
-    def _apply_sidebar_header_compact(self, minimal: bool) -> None:
-        """Tighten horizontal header margins in the strip; hide hostname toggle.
+    def _sidebar_header(self):
+        return getattr(self, '_sidebar_header_toolbar', None) or getattr(
+            self, '_sidebar_header_box', None)
 
-        Vertical margins stay fixed (12 top / 6 bottom). Changing them with the
-        strip made the New Connection toolbar jump whenever rows compacted —
-        the same moment list row heights change — which read as the chrome
-        shifting with the list.
+    def _apply_sidebar_header_items(self, minimal: bool) -> None:
+        """Set which header buttons exist for this mode.
+
+        Hostnames are not shown in the compact strip, so the reveal/conceal
+        control does nothing useful there — drop it from the toolbar and
+        overflow menu until full mode returns. This is the half of header
+        compacting an expand applies *up front*: the button set has to be the
+        destination's before clip-reveal freezes the row, or the missing
+        control leaves room for two buttons that hop into the "…" menu on the
+        animation's last frame.
         """
         from sshpilot.overflow_toolbar import mark_force_hidden
 
@@ -2972,25 +2992,38 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 handle.set_visible(True)
             except Exception:
                 pass
-        header = getattr(self, '_sidebar_header_toolbar', None) or getattr(
-            self, '_sidebar_header_box', None)
+        if self._sidebar_header() is None:
+            return
+        hide_btn = getattr(self, '_hide_hosts_button', None)
+        if hide_btn is None:
+            return
+        try:
+            mark_force_hidden(hide_btn, minimal)
+        except Exception:
+            logger.debug(
+                "Failed to toggle hide-hosts in strip header",
+                exc_info=True,
+            )
+
+    def _apply_sidebar_header_compact(self, minimal: bool) -> None:
+        """Tighten horizontal header margins in the strip; hide hostname toggle.
+
+        Vertical margins stay fixed (12 top / 6 bottom). Changing them with the
+        strip made the New Connection toolbar jump whenever rows compacted —
+        the same moment list row heights change — which read as the chrome
+        shifting with the list.
+        """
+        self._apply_sidebar_header_items(minimal)
+        header = self._sidebar_header()
         if header is None:
             return
-        # Hostnames are not shown in the compact strip, so the reveal/conceal
-        # control does nothing useful there — drop it from the toolbar and
-        # overflow menu until full mode returns.
-        hide_btn = getattr(self, '_hide_hosts_button', None)
-        if hide_btn is not None:
-            try:
-                mark_force_hidden(hide_btn, minimal)
-            except Exception:
-                logger.debug(
-                    "Failed to toggle hide-hosts in strip header",
-                    exc_info=True,
-                )
         try:
-            header.set_margin_start(6 if minimal else 12)
-            header.set_margin_end(6 if minimal else 12)
+            header.set_margin_start(
+                _SIDEBAR_HEADER_MARGIN_STRIP if minimal
+                else _SIDEBAR_HEADER_MARGIN_FULL)
+            header.set_margin_end(
+                _SIDEBAR_HEADER_MARGIN_STRIP if minimal
+                else _SIDEBAR_HEADER_MARGIN_FULL)
             header.set_margin_top(12)
             header.set_margin_bottom(6)
         except Exception:
@@ -3227,6 +3260,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._set_sidebar_clipping(True)
             self._apply_sidebar_minimal_chrome(
                 False, header_compact=False, selection_style=False)
+            # Header *margins* stay deferred (relayouting at strip width reads
+            # as flicker), but the button set is full mode's from the first
+            # frame: the strip drops the hide-hostnames control, and freezing
+            # the row without it leaves room for two buttons that would hop
+            # into the "…" menu the moment the width settles.
+            self._apply_sidebar_header_items(False)
             full_width = max(_resting_width(), self._measure_sidebar_content_min())
 
         full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
@@ -3274,8 +3313,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         # Both directions: clip the sidebar and let the header toolbar reveal
         # by clipping instead of overflow-popping every animation tick.
+        # Freeze the button row on the split the *full* sidebar settles on —
+        # the wider endpoint, whichever direction this is. Expanding then
+        # reveals exactly the buttons that stay, and collapsing clips them away
+        # instead of dropping them all on the first frame. The row is the
+        # sidebar minus the header's full-mode margins.
         self._set_sidebar_clipping(True)
-        self._set_sidebar_header_clip_reveal(True)
+        self._set_sidebar_header_clip_reveal(
+            True, int(max(start, target)) - 2 * _SIDEBAR_HEADER_MARGIN_FULL)
 
         def _tick(value, *_):
             self._apply_sidebar_width(int(value))

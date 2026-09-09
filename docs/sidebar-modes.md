@@ -58,15 +58,21 @@ computed the width itself and offered no handle. What changed for callers:
   to full) is the resting mode and is restored at startup. Transient
   collapses from "When a Terminal Opens" do not use this path and stay
   non-persisted.
-- **A mode-switching drag never moves the divider on its own**, which takes two
-  rules that are easy to break. Below the full sidebar's floor the strip stays
-  in minimal mode but **follows the pointer** up to `_expand_threshold()` —
+- **A mode-switching drag never moves the divider on its own**, which takes
+  three rules that are easy to break. Below the full sidebar's floor the strip
+  stays in minimal mode but **follows the pointer** up to `_expand_threshold()` —
   exactly the width the full sidebar needs — so the switch there is continuous
   (no jump away from the pointer). And the drag position becomes the remembered
   width *before* the switch, because `release_width()` otherwise restores the
   width the sidebar had before it was collapsed and the divider travels there
   after the user has stopped moving. Collapsing does neither: it leaves
-  `user_width` alone, so the strip is never remembered as a width.
+  `user_width` alone, so the strip is never remembered as a width. And a
+  collapse keeps the divider **under the pointer** rather than at the width the
+  owner pins: `set_sidebar_minimal` pins `_MINIMAL_STRIP_WIDTH` for the resting
+  strip, so the switch would otherwise snap the divider there and the next
+  motion event would throw it straight back out to the pointer — measured as a
+  jump to 117px and back to 208px mid-drag. `_on_position_notify` re-pins to
+  the drag position (keeping the pin's floor) as soon as the owner returns.
 - **`get_sidebar_width()` is the live width**, not a configured bound.
 - The handle is thin (no wide handle) so it draws the same hairline the split
   view did and the panes stay edge to edge; GTK keeps a wider input area than it
@@ -111,11 +117,25 @@ computed the width itself and offered no handle. What changed for callers:
   *after* its last child, so without it the label and the hover action sit high
   in the highlighted row instead of centred.
   The width animates between the two states. During that animation the top
-  header toolbar uses clip-reveal (buttons stay laid out; the pane clips them) instead of reshuffling the overflow menu every frame,
-  header margin / hide-hosts compacting is applied only once the width has
-  settled, and the accent tips banner is snap-hidden until the width has
-  settled and a short timeout has elapsed, so it cannot flash blue beside
-  the top chrome while the content pane resizes.
+  header toolbar uses clip-reveal (buttons stay laid out; the pane clips them)
+  instead of reshuffling the overflow menu every frame, the accent tips banner
+  is snap-hidden until the width has settled and a short timeout has elapsed
+  (so it cannot flash blue beside the top chrome while the content pane
+  resizes), and header *margin* compacting is applied only once the width has
+  settled.
+
+  **Clip-reveal is frozen on the destination's split**, not on "show
+  everything": `set_clip_reveal(True, target_width=…)` runs the overflow
+  calculation once for the width the animation ends at (the sidebar's full
+  width minus the header's `2 × _SIDEBAR_HEADER_MARGIN_FULL`), and the pane's
+  clip reveals exactly those buttons. Revealing every packable item instead
+  meant the last frame re-split the row — measured as two buttons appearing
+  mid-animation and being replaced by the hide-hostnames control and the "…"
+  button once the width settled. For the same reason an expand applies the
+  full-mode *button set* up front (`_apply_sidebar_header_items(False)`) even
+  though the margins stay deferred: the strip drops the hide-hostnames control,
+  and freezing a row without it leaves room for buttons that do not belong in
+  the destination.
 
 Driven by the `ui.sidebar_mode` setting (`full` / `minimal`), written when the
 user switches mode with the divider (or the strip's expand button) and applied
