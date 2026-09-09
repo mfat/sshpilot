@@ -3080,12 +3080,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Reserve or shed row hover actions for this sidebar width.
 
         The group row is what sets the sidebar's measured minimum, and a
-        reserved 34px split-view button is most of it. Below
+        reserved 34px button is most of it. Below
         :data:`_ROW_ACTIONS_MIN_WIDTH` every row's ``set_actions_reserved``
-        runs: group split-view drops entirely (hover must not reflow the
-        floor); connection Manage Files already sheds at rest in full mode
-        and only uses the call to stay in sync. The minimum drops with the
-        group row so the divider can keep narrowing.
+        drops the resting reservation (group split-view and connection Manage
+        Files): hover must not reflow a shed button back. The minimum drops
+        with the group row so the divider can keep narrowing.
         """
         lb = getattr(self, 'connection_list', None)
         if lb is None:

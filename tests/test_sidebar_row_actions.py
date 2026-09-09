@@ -1,9 +1,10 @@
-"""Group-row split-view and connection-row Manage Files hover actions.
+"""Group-row split-view and connection-row Manage Files: reserved by default,
+shed when the sidebar is too narrow to pay for them.
 
-Group rows reserve the split-view button until the sidebar is too narrow, then
-shed it entirely (hover must not reflow the floor). Connection rows always shed
-Manage Files at rest in full mode so the name keeps the width, keep a height
-floor, and reveal on hover; the strip still reserves.
+The group row is what sets the sidebar's measured minimum width, and a reserved
+34px button is most of it — so the width at which the button goes is also the
+width at which the divider can keep going. Connection Manage Files uses the
+same threshold; the strip still keeps Manage Files reserved.
 """
 
 import importlib
@@ -80,50 +81,60 @@ def test_the_strip_keeps_no_row_action():
     row.split_view_button.set_visible.assert_called_with(False)
 
 
-def test_connection_full_mode_sheds_at_rest_and_reveals_on_hover():
-    """Full mode never reserves Manage Files — the name keeps the width."""
+def test_connection_hover_only_changes_opacity_when_reserved():
     row, mod = _connection_row()
 
-    mod.ConnectionRow._reveal_row_actions(row, False)
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.set_opacity.assert_called_with(1.0)
+    assert row._action_height_floor_on is False
+
+    row._is_hovering = False
+    mod.ConnectionRow._maybe_hide_button(row)
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.set_opacity.assert_called_with(0.0)
+
+
+def test_connection_narrow_sheds_entirely_like_group_split_view():
+    row, mod = _connection_row()
+
+    mod.ConnectionRow.set_actions_reserved(row, False)
 
     row.file_manager_button.set_visible.assert_called_with(False)
     row.file_manager_button.set_opacity.assert_called_with(0.0)
     row._content_box.set_size_request.assert_called_with(-1, 34)
     assert row._action_height_floor_on is True
 
+    # Hover must not bring it back — same as group split-view.
     mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+    row.file_manager_button.set_visible.assert_called_with(False)
+    row.file_manager_button.set_opacity.assert_called_with(0.0)
+
+
+def test_connection_widening_restores_the_reservation():
+    row, mod = _connection_row()
+    mod.ConnectionRow.set_actions_reserved(row, False)
+    row._content_box.reset_mock()
+
+    mod.ConnectionRow.set_actions_reserved(row, True)
+
     row.file_manager_button.set_visible.assert_called_with(True)
-    row.file_manager_button.set_opacity.assert_called_with(1.0)
-    # Hovering clears the floor while the button is back in the layout.
     row._content_box.set_size_request.assert_called_with(-1, -1)
     assert row._action_height_floor_on is False
 
 
-def test_connection_full_mode_sheds_even_when_width_would_reserve():
-    """Unlike group rows, connection Manage Files ignores the width threshold."""
+def test_connection_strip_keeps_manage_files_even_when_shed():
+    """Minimal mode always reserves Manage Files; width shedding is full-only."""
     row, mod = _connection_row()
-    row._actions_reserved = True
-
-    mod.ConnectionRow._reveal_row_actions(row, False)
-
-    row.file_manager_button.set_visible.assert_called_with(False)
-    assert row._action_height_floor_on is True
-
-
-def test_connection_strip_keeps_manage_files_reserved():
-    """Minimal mode reserves Manage Files; opacity is hover-only."""
-    row, mod = _connection_row()
-    row._compact = True
     row._actions_reserved = False
-
-    mod.ConnectionRow._reveal_row_actions(row, False)
-    row.file_manager_button.set_visible.assert_called_with(True)
-    row.file_manager_button.set_opacity.assert_called_with(0.0)
-    assert row._action_height_floor_on is False
+    row._compact = True
 
     mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
     row.file_manager_button.set_visible.assert_called_with(True)
     row.file_manager_button.set_opacity.assert_called_with(1.0)
+    assert row._action_height_floor_on is False
 
 
 def test_connection_without_callback_never_reserves():
