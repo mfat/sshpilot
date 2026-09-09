@@ -1174,7 +1174,7 @@ class GroupRow(Gtk.ListBoxRow):
         self.count_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         # Set initial visibility based on preference
         config = getattr(self.group_manager, 'config', None)
-        show_group_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
+        show_group_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
         self.count_label.set_visible(show_group_count)
         info_box.append(self.count_label)
 
@@ -1694,7 +1694,7 @@ class GroupRow(Gtk.ListBoxRow):
             config = getattr(self.group_manager, 'config', None)
             show_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
             self.icon.set_visible(show_icon)
-            show_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
+            show_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
             self.count_label.set_visible(show_count)
             try:
                 self.icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -1884,7 +1884,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
@@ -2632,9 +2632,9 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.connection_icon.set_visible(True)
             try:
                 self.host_label.set_visible(
-                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', True)))
+                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', False)))
             except Exception:
-                self.host_label.set_visible(True)
+                self.host_label.set_visible(False)
             connection_name = (
                 getattr(self.connection, 'display_name', None)
                 or self.connection.nickname

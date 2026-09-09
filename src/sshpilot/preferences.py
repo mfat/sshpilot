@@ -1466,7 +1466,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_user_hostname_switch.set_title(_("Display user@hostname"))
         show_user_hostname_switch.set_subtitle(_("Show username@hostname in connection rows"))
         show_user_hostname_switch.set_active(
-            self.config.get_setting('ui.sidebar_show_user_hostname', True)
+            self.config.get_setting('ui.sidebar_show_user_hostname', False)
         )
         show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
         sidebar_group.add(show_user_hostname_switch)
@@ -1476,7 +1476,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_group_count_switch.set_title(_("Display Connection Count in Groups"))
         show_group_count_switch.set_subtitle(_("Show the number of connections in each group"))
         show_group_count_switch.set_active(
-            self.config.get_setting('ui.sidebar_show_group_count', True)
+            self.config.get_setting('ui.sidebar_show_group_count', False)
         )
         show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
         sidebar_group.add(show_group_count_switch)
