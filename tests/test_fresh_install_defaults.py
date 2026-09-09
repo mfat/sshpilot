@@ -23,3 +23,8 @@ def test_sidebar_secondary_label_defaults_are_off():
     defaults = Config.get_default_config(Config.__new__(Config))
     assert defaults['ui']['sidebar_show_user_hostname'] is False
     assert defaults['ui']['sidebar_show_group_count'] is False
+
+
+def test_group_color_child_rows_defaults_on():
+    defaults = Config.get_default_config(Config.__new__(Config))
+    assert defaults['ui']['group_color_child_rows'] is True

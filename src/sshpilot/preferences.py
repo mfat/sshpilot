@@ -1028,10 +1028,10 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         try:
             child_rows_pref = bool(
-                self.config.get_setting('ui.group_color_child_rows', False)
+                self.config.get_setting('ui.group_color_child_rows', True)
             )
         except Exception:
-            child_rows_pref = False
+            child_rows_pref = True
         self.child_rows_color_row.set_active(child_rows_pref)
         self.child_rows_color_row.connect(
             'notify::active', self.on_group_color_child_rows_toggled
@@ -4361,10 +4361,10 @@ class PreferencesWindow(Adw.NavigationPage):
 
         try:
             current_value = bool(
-                self.config.get_setting('ui.group_color_child_rows', False)
+                self.config.get_setting('ui.group_color_child_rows', True)
             )
         except Exception:
-            current_value = False
+            current_value = True
 
         if new_value == current_value:
             return
