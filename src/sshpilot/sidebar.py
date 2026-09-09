@@ -4955,7 +4955,7 @@ def _build_sidebar_toolbar(window, sidebar_box):
     sidebar_box.append(window._sidebar_toolbar_clip)
 
     expand_button = Gtk.Button()
-    icon_utils.set_button_icon(expand_button, 'box-right-symbolic')
+    icon_utils.set_button_icon(expand_button, 'sidebar-expand-left-symbolic')
     expand_button.set_tooltip_text(_('Expand sidebar'))
     expand_button.add_css_class('flat')
 
