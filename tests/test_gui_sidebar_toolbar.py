@@ -39,13 +39,33 @@ def test_selection_toolbar_keeps_same_width_for_connections_and_groups(gui):
     assert connection_size == group_size == empty_size
 
 
-def test_new_group_button_follows_new_connection_in_sidebar_header(gui):
-    header = gui.window._sidebar_header_handle.get_child()
-    new_connection = header.get_first_child()
-    new_group = new_connection.get_next_sibling()
-
+def test_new_group_button_is_in_sidebar_header(gui):
+    header = gui.window._sidebar_header_toolbar
+    new_group = getattr(gui.window, '_sidebar_new_group_button', None)
+    assert new_group is not None
+    assert new_group.get_parent() is not None
     assert new_group.get_action_name() == 'win.create-group'
     assert new_group.get_child().get_icon_name() == 'folder-new-symbolic'
+    # New Connection stays the first priority control.
+    assert gui.window._sidebar_add_button is header._items[0]
+
+
+def test_strip_header_shows_suggested_new_connection_pill(gui):
+    win = gui.window
+    stack = win._sidebar_header_stack
+    pill = win._sidebar_strip_add_button
+    assert stack is not None
+    assert pill is not None
+    assert pill.has_css_class('suggested-action')
+    assert pill.has_css_class('pill')
+
+    win._apply_sidebar_header_compact(True)
+    gui.pump(50)
+    assert stack.get_visible_child_name() == 'strip'
+
+    win._apply_sidebar_header_compact(False)
+    gui.pump(50)
+    assert stack.get_visible_child_name() == 'full'
 
 
 def test_explicit_sort_is_not_reapplied_during_sidebar_rebuild(gui, monkeypatch):

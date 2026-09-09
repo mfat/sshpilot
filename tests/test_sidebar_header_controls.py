@@ -61,3 +61,21 @@ def test_the_app_icon_is_built_hidden_for_the_strip(sidebar_mod, monkeypatch):
     icon_utils.new_image_from_icon_name.assert_called_once_with(
         'io.github.mfat.sshpilot')
     window._sidebar_app_icon.set_visible.assert_called_once_with(False)
+
+
+def test_header_compact_shows_new_connection_pill():
+    """In the strip, the header stack switches to the suggested add pill."""
+    win_mod = importlib.import_module('sshpilot.window')
+    win = win_mod.MainWindow.__new__(win_mod.MainWindow)
+
+    stack = MagicMock(name='header_stack')
+    handle = MagicMock(name='handle')
+    win._sidebar_header_stack = stack
+    win._sidebar_header_handle = handle
+
+    win_mod.MainWindow._apply_sidebar_header_compact(win, True)
+    handle.set_visible.assert_called_with(True)
+    stack.set_visible_child_name.assert_called_with('strip')
+
+    win_mod.MainWindow._apply_sidebar_header_compact(win, False)
+    stack.set_visible_child_name.assert_called_with('full')

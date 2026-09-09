@@ -100,7 +100,6 @@ def get_default_config() -> Dict[str, Any]:
             # What happens to the sidebar when a session opens:
             # 'none' | 'minimize' (icon strip) | 'hide'.
             'sidebar_on_terminal_open': 'none',
-            'sidebar_minimal_row_style': 'initials',  # 'initials' | 'icon'
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
             'headerbar_show_sidebar_toggle': False,
             'headerbar_show_split_view': False,

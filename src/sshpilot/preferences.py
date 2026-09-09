@@ -1481,25 +1481,6 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
 
-        # Minimized row style (initials circle vs. plain icon)
-        self._minimal_row_style_values = ['initials', 'icon']
-        minimal_row_style_row = Adw.ComboRow()
-        minimal_row_style_row.set_title(_("Minimized Row Style"))
-        minimal_row_style_row.set_subtitle(_("How connections look in the icon strip"))
-        style_options = Gtk.StringList()
-        style_options.append(_("Initials"))
-        style_options.append(_("Icon"))
-        minimal_row_style_row.set_model(style_options)
-        current_style = str(
-            self.config.get_setting('ui.sidebar_minimal_row_style', 'initials')).lower()
-        if current_style not in self._minimal_row_style_values:
-            current_style = 'initials'
-        minimal_row_style_row.set_selected(
-            self._minimal_row_style_values.index(current_style))
-        minimal_row_style_row.connect(
-            'notify::selected', self.on_sidebar_minimal_row_style_changed)
-        sidebar_behavior_group.add(minimal_row_style_row)
-
         interface_page.add(sidebar_behavior_group)
 
     def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
@@ -1514,19 +1495,6 @@ class PreferencesWindow(Adw.NavigationPage):
             self.config.set_setting('ui.sidebar_minimize_on_connect', action == 'minimize')
         except Exception:
             logger.debug("sidebar on-terminal-open change failed", exc_info=True)
-
-    def on_sidebar_minimal_row_style_changed(self, combo_row, _param):
-        """Persist the minimized row style and refresh a live icon strip."""
-        try:
-            idx = combo_row.get_selected()
-            values = getattr(self, '_minimal_row_style_values', ['initials', 'icon'])
-            style = values[idx] if 0 <= idx < len(values) else 'initials'
-            self.config.set_setting('ui.sidebar_minimal_row_style', style)
-            win = self.parent_window
-            if win is not None and getattr(win, '_sidebar_minimal', False):
-                win._apply_sidebar_minimal_rows(True)
-        except Exception:
-            logger.debug("minimal row style change failed", exc_info=True)
 
     def _add_interface_headerbar_and_tips_groups(self, interface_page):
         """Add Header Bar Buttons and Tips preferences groups."""

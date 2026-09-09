@@ -88,9 +88,10 @@ computed the width itself and offered no handle. What changed for callers:
 `set_sidebar_minimal(minimal: bool, animate: bool = True)`
 
 - **Full** — the normal sidebar rows.
-- **Minimal** — a ~64px icon strip: each connection collapses to a coloured
-  avatar (initials) or icon, groups to a folder avatar. The width animates
-  between the two states.
+- **Minimal** — a ~112px label strip: each connection collapses to a short
+  ellipsized text label (max 10 characters), groups to a bold coloured text
+  label (no folder icon). The full name stays on the row tooltip. The width
+  animates between the two states.
 
 Driven by the `ui.sidebar_mode` setting (`full` / `minimal`), written when the
 user switches mode with the divider (or the strip's expand button) and applied
@@ -104,7 +105,12 @@ Pilot" label is hidden there (its natural width alone would floor the strip) and
 the title moves to the content header, which would otherwise leave the strip
 topped by a blank bar. The icon is built hidden in `_assemble_sidebar_shell` and
 swapped with the label by `_apply_sidebar_minimal_chrome`; at 24px it leaves the
-strip's header minimum at 36px, well inside the 64px strip.
+strip's header minimum at 36px, well inside the 112px strip. The top action
+toolbar keeps as many buttons as fit and moves the rest into a trailing "…"
+menu (`OverflowToolbar`) while full; in the strip it becomes a single
+suggested-action New Connection pill (+ icon only — the full label does not
+fit the strip; tooltip keeps the name). The bottom selection toolbar is
+hidden and replaced by the expand control.
 
 **By mouse, the divider is the way in and out** (section 0): drag it past the
 sidebar's minimum to collapse, drag the strip open to restore. There is no

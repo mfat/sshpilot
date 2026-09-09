@@ -252,8 +252,9 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
-# Width of the minimal (icon-only) sidebar strip.
-_MINIMAL_STRIP_WIDTH = 64
+# Width of the minimal (label) sidebar strip — fits ~10 ellipsized characters
+# plus margins, and a folder glyph beside group names.
+_MINIMAL_STRIP_WIDTH = 112
 
 
 def _accelerator_label(accel: str) -> str:
@@ -420,7 +421,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
-        self._sidebar_minimal = False   # icon-only strip state
+        self._sidebar_minimal = False   # compact label-strip state
         self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
         self._sidebar_width_animation = None
         self._context_menu_row = None
@@ -2675,28 +2676,27 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug("Failed to pin sidebar width", exc_info=True)
 
     def _set_sidebar_clipping(self, enabled: bool) -> None:
-        """Flip the sidebar's scrollers between clip (EXTERNAL) and fit (NEVER).
+        """Sync sidebar scroller policies for full vs minimal chrome.
 
-        Clipping is only wanted *during* the expand animation, so full-width
-        rows/chrome can be revealed by the widening instead of forcing the
-        sidebar to their minimum width. At rest the fit behaviour must return so
-        rows ellipsize to the sidebar width and toolbar buttons spread.
+        Header/toolbar clips stay EXTERNAL horizontally so overflow toolbars
+        can shrink the pane without flooring at the full button-row width.
+        The connection list uses EXTERNAL only during width transitions (so
+        rows can be revealed by the animation); at rest it is NEVER so labels
+        ellipsize to the sidebar width.
         """
-        hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
+        list_hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
         # In the minimal strip the vertical scrollbar is hidden the documented
         # way — EXTERNAL keeps the list scrollable (wheel/touch) without drawing
         # a scrollbar over the icons; full mode shows it on demand (AUTOMATIC).
-        # _set_sidebar_clipping(False) is the resting call after every
-        # transition, and _sidebar_minimal is already updated by then.
         conn_vpol = (Gtk.PolicyType.EXTERNAL
                      if getattr(self, '_sidebar_minimal', False)
                      else Gtk.PolicyType.AUTOMATIC)
         targets = (
-            ('connection_scrolled', conn_vpol),
-            ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
-            ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
+            ('connection_scrolled', list_hpol, conn_vpol),
+            ('_sidebar_header_clip', Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER),
+            ('_sidebar_toolbar_clip', Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER),
         )
-        for attr, vpol in targets:
+        for attr, hpol, vpol in targets:
             sw = getattr(self, attr, None)
             if sw is not None:
                 try:
@@ -2705,7 +2705,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     pass
 
     def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
-        """Hide the header/search/toolbar chrome that can't fit the strip."""
+        """Collapse chrome for the strip; header becomes a New Connection pill."""
         show = not minimal
         # The "SSH Pilot" title label has a natural min width that floors how
         # narrow the sidebar can get; hide it so the strip can shrink fully, and
@@ -2725,19 +2725,19 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
         self._move_title_to_content_header(minimal)
-        for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
+        # Top toolbar becomes a single New Connection pill in the strip;
+        # search and the bottom selection toolbar still cannot fit.
+        for attr in ('search_container', '_sidebar_toolbar_box'):
             widget = getattr(self, attr, None)
             if widget is None:
                 continue
-            # The search container manages its own visibility (search mode); only
-            # force it hidden in minimal, never force it visible on restore.
             if attr == 'search_container' and show:
                 continue
             try:
                 widget.set_visible(show)
             except Exception:
                 pass
-        # The expand button takes the (hidden) toolbar's slot in minimal mode.
+        self._apply_sidebar_header_compact(minimal)
         btn = getattr(self, '_sidebar_expand_button', None)
         if btn is not None:
             try:
@@ -2750,6 +2750,39 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 (box.add_css_class if minimal else box.remove_css_class)('sidebar-minimal')
             except Exception:
                 pass
+
+    def _apply_sidebar_header_compact(self, minimal: bool) -> None:
+        """Swap the overflow toolbar for a suggested New Connection pill."""
+        stack = getattr(self, '_sidebar_header_stack', None)
+        handle = getattr(self, '_sidebar_header_handle', None)
+        if handle is not None:
+            try:
+                handle.set_visible(True)
+            except Exception:
+                pass
+        if stack is not None:
+            try:
+                stack.set_visible_child_name('strip' if minimal else 'full')
+            except Exception:
+                logger.debug("sidebar header stack switch failed", exc_info=True)
+            return
+        # Older layout without a strip page: just tighten margins.
+        header = getattr(self, '_sidebar_header_toolbar', None) or getattr(
+            self, '_sidebar_header_box', None)
+        if header is None:
+            return
+        try:
+            header.set_margin_start(6 if minimal else 12)
+            header.set_margin_end(6 if minimal else 12)
+            header.set_margin_top(6 if minimal else 12)
+            header.set_margin_bottom(6)
+        except Exception:
+            pass
+        try:
+            if hasattr(header, 'force_relayout'):
+                header.force_relayout()
+        except Exception:
+            pass
 
     def _move_title_to_content_header(self, minimal: bool) -> None:
         """Select tabs, the minimal-sidebar title, or the empty drag region."""
@@ -2808,7 +2841,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return widest
 
     def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
-        """Collapse the sidebar to an icon-only strip, or restore its full width.
+        """Collapse the sidebar to a compact label strip, or restore its full width.
 
         The split view's min/max sidebar width is the single width lever; the
         transition is animated with ``Adw.TimedAnimation`` when available.
@@ -5805,7 +5838,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 and PluginCapability.FILE_TRANSFER in caps
                 and not should_hide_file_manager_options()
             )
-            self.manage_files_button.set_visible(not should_hide_file_manager_options())
+            from sshpilot.overflow_toolbar import mark_force_hidden
+            mark_force_hidden(
+                self.manage_files_button,
+                should_hide_file_manager_options(),
+            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 # System terminal uses a daemon-prepared launch specification.
                 self.system_terminal_button.set_sensitive(
@@ -5831,7 +5868,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
             self.manage_files_button.set_sensitive(False)
-            self.manage_files_button.set_visible(not should_hide_file_manager_options())
+            from sshpilot.overflow_toolbar import mark_force_hidden
+            mark_force_hidden(
+                self.manage_files_button,
+                should_hide_file_manager_options(),
+            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(allow_single_group)
@@ -5844,7 +5885,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
             self.manage_files_button.set_sensitive(False)
-            self.manage_files_button.set_visible(not should_hide_file_manager_options())
+            from sshpilot.overflow_toolbar import mark_force_hidden
+            mark_force_hidden(
+                self.manage_files_button,
+                should_hide_file_manager_options(),
+            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(False)
