@@ -79,6 +79,9 @@ def test_group_compact_shows_bold_colored_text_only(monkeypatch):
     row.apply_row_style.assert_called_with(flat=True)
     row.icon.set_visible.assert_called_with(False)
     row.count_label.set_visible.assert_called_with(False)
+    # The chevron survives the strip: collapsing a group still works there.
+    row.expand_button.set_visible.assert_called_with(True)
+    row.edit_button.set_visible.assert_called_with(False)
     row._info_box.set_visible.assert_called_with(True)
     row.name_label.set_text.assert_called_with('Servers')
     row.name_label.set_max_width_chars.assert_called_with(mod.MINIMAL_LABEL_MAX_CHARS)

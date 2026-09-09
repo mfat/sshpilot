@@ -91,7 +91,9 @@ computed the width itself and offered no handle. What changed for callers:
 - **Minimal** — a ~112px label strip at rest: each connection collapses to a
   short ellipsized text label (10 characters at the default width; the budget
   grows as the strip is dragged wider), groups to a bold coloured text
-  label (no folder icon). Rows are always flat in the strip (no card chrome),
+  label (no folder icon) plus their expand/collapse chevron, which stays on
+  screen there exactly as in full mode — the split-view and edit buttons are
+  the group actions that go. Rows are always flat in the strip (no card chrome),
   regardless of the full-sidebar flat-rows preference. The full name stays on
   the row tooltip. The row's **Manage Files** hover action survives the strip —
   it is the only way to reach the file manager without leaving minimal mode —

@@ -1449,7 +1449,11 @@ class GroupRow(Gtk.ListBoxRow):
             self.color_badge.set_visible(False)
             self.split_view_button.set_visible(False)
             self.edit_button.set_visible(False)
-            self.expand_button.set_visible(False)
+            # The chevron stays: collapsing a group is the one group action the
+            # strip keeps, and unlike the row's hover actions it is always on
+            # screen, so the strip reads the same as the full sidebar. It is
+            # already trimmed by `.group-expand-button`.
+            self.expand_button.set_visible(True)
             self.count_label.set_visible(False)
             self._info_box.set_visible(True)
             # Text-only strip: no folder glyph; colour + bold on the label.
