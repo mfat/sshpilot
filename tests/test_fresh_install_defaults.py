@@ -1,11 +1,11 @@
-"""Fresh-install defaults: default operation mode, no chooser, accent-bar groups."""
+"""Fresh-install defaults: default operation mode, no chooser, color-dot groups."""
 
 from sshpilot.config import Config
 
 
-def test_group_color_display_defaults_to_accent_bar():
+def test_group_color_display_defaults_to_color_dots():
     defaults = Config.get_default_config(Config.__new__(Config))
-    assert defaults['ui']['group_color_display'] == 'bar'
+    assert defaults['ui']['group_color_display'] == 'dot'
 
 
 def test_operation_mode_defaults_to_shared_ssh_config():
@@ -19,9 +19,10 @@ def test_sidebar_row_action_button_defaults():
     assert defaults['ui']['sidebar_show_split_view_button'] is False
 
 
-def test_sidebar_secondary_label_defaults_are_off():
+def test_sidebar_connection_row_display_defaults():
     defaults = Config.get_default_config(Config.__new__(Config))
-    assert defaults['ui']['sidebar_show_user_hostname'] is False
+    assert defaults['ui']['sidebar_show_user_hostname'] is True
+    assert defaults['ui']['sidebar_show_connection_icon'] is True
     assert defaults['ui']['sidebar_show_group_count'] is False
 
 

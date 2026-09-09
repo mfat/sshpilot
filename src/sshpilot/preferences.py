@@ -999,7 +999,7 @@ class PreferencesWindow(Adw.NavigationPage):
         current_mode = 'fill'
         try:
             current_mode = str(
-                self.config.get_setting('ui.group_color_display', 'fill')
+                self.config.get_setting('ui.group_color_display', 'dot')
             ).lower()
         except Exception:
             current_mode = 'fill'
@@ -1466,7 +1466,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_user_hostname_switch.set_title(_("Display user@hostname"))
         show_user_hostname_switch.set_subtitle(_("Show username@hostname in connection rows"))
         show_user_hostname_switch.set_active(
-            self.config.get_setting('ui.sidebar_show_user_hostname', False)
+            self.config.get_setting('ui.sidebar_show_user_hostname', True)
         )
         show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
         sidebar_group.add(show_user_hostname_switch)
@@ -4294,7 +4294,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         try:
             current_mode = str(
-                self.config.get_setting('ui.group_color_display', 'fill')
+                self.config.get_setting('ui.group_color_display', 'dot')
             ).lower()
         except Exception:
             current_mode = 'fill'

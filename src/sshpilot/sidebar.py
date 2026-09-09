@@ -624,7 +624,7 @@ def _resolve_group_color_by_id(manager, group_id) -> Optional[Gdk.RGBA]:
 
 def _get_color_display_mode(config) -> str:
     try:
-        mode = str(config.get_setting('ui.group_color_display', 'fill')).lower()
+        mode = str(config.get_setting('ui.group_color_display', 'dot')).lower()
     except Exception:
         return 'fill'
 
@@ -1876,7 +1876,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
@@ -2626,7 +2626,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.connection_icon.set_visible(True)
             try:
                 self.host_label.set_visible(
-                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', False)))
+                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', True)))
             except Exception:
                 self.host_label.set_visible(False)
             connection_name = (
