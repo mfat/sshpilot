@@ -1720,13 +1720,11 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
 
-        # Manage Files — same bargain as the group split-view button: reserve
-        # the 34px slot while the sidebar is wide enough
-        # (``window._ROW_ACTIONS_MIN_WIDTH``), shed it below that so the name
-        # keeps the width. Reserved: opacity is hover-only so the row never
-        # reflows. Shed: gone entirely (hover must not bring it back); a
-        # height floor keeps the row from shrinking. The strip always keeps
-        # the reservation — see :meth:`set_actions_reserved`.
+        # Manage Files — in the full sidebar the horizontal slot is never
+        # reserved at rest (the name keeps that width). A height floor stops
+        # the row from shrinking when the button is gone; hover reveals it.
+        # The strip still reserves and uses opacity-only hover so it does not
+        # jump — see :meth:`_reveal_row_actions`.
         from sshpilot import icon_utils
         self._actions_reserved = True
         self._action_height_floor_on = False
@@ -1736,13 +1734,17 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
-        self.file_manager_button.set_opacity(0.0)  # reserves its space
+        # Start shed: no horizontal reservation until hover (or the strip).
+        self.file_manager_button.set_visible(False)
+        self.file_manager_button.set_opacity(0.0)
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
         content.append(self.file_manager_button)
         
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
+        # Apply shed-at-rest (height floor, no horizontal slot) now that hover
+        # state exists; __init__ left the button invisible above.
         self._reveal_row_actions(False)
 
         from sshpilot import icon_utils
@@ -1883,14 +1885,16 @@ class ConnectionRow(Gtk.ListBoxRow):
             pass
 
     def _reveal_row_actions(self, revealed: bool) -> None:
-        """Fade Manage Files in or out of its reserved space.
+        """Show or hide Manage Files without wasting name width at rest.
 
-        Same rules as the group split-view button in full mode: visibility is
-        :meth:`set_actions_reserved` (width threshold); opacity is hover — so
-        revealing never reflows a reserved row, and hovering must not bring a
-        shed button back. When shed, a height floor keeps the row from
-        shrinking. The strip always keeps the reservation (Manage Files is the
-        one action that survives minimal mode). No callback → nothing.
+        Full sidebar: the button is shed unless the pointer is on the row —
+        that is what lets the connection name use the full row width. A height
+        floor keeps the row from getting shorter when it is gone. Hovering
+        reveals it (the name may ellipsize for that moment).
+
+        Strip: keep the reservation and use opacity for hover so the strip
+        never reflows under the pointer. A row with no callback reserves
+        nothing.
         """
         button = getattr(self, 'file_manager_button', None)
         if button is None:
@@ -1902,28 +1906,32 @@ class ConnectionRow(Gtk.ListBoxRow):
             return
 
         if getattr(self, '_compact', False):
-            # Strip: always reserved; opacity-only hover.
+            # Strip: reserved slot, opacity-only hover.
             self._set_action_height_floor(False)
             button.set_visible(True)
             button.set_opacity(1.0 if revealed else 0.0)
             return
 
-        reserved = getattr(self, '_actions_reserved', True)
-        self._set_action_height_floor(not reserved)
-        button.set_visible(reserved)
-        button.set_opacity(1.0 if (reserved and revealed) else 0.0)
+        # Full mode: always shed at rest so the name keeps the width.
+        self._set_action_height_floor(not revealed)
+        button.set_visible(bool(revealed))
+        button.set_opacity(1.0 if revealed else 0.0)
 
     def set_actions_reserved(self, reserved: bool) -> None:
-        """Keep Manage Files' reserved space, or shed it entirely.
+        """API shared with group rows; full-mode Manage Files always sheds.
 
-        Same width bargain as :meth:`GroupRow.set_actions_reserved`: below
-        ``window._ROW_ACTIONS_MIN_WIDTH`` the full sidebar cannot pay 34px for
-        an action the pointer is not on — the connection name would pay it.
+        Group rows use this to drop their split-view reservation below
+        ``window._ROW_ACTIONS_MIN_WIDTH``. Connection rows ignore the flag for
+        layout — they always give the name the horizontal space at rest and
+        only reveal on hover (see :meth:`_reveal_row_actions`). The method
+        remains so ``MainWindow._apply_sidebar_row_actions`` can walk every row.
         """
         reserved = bool(reserved)
         if reserved == getattr(self, '_actions_reserved', True):
             return
         self._actions_reserved = reserved
+        # Re-apply in case we were mid-hover when the width crossed the
+        # group-row threshold; layout policy itself does not use the flag.
         self._reveal_row_actions(getattr(self, '_is_hovering', False))
 
     def show_drop_indicator(self, top: bool):
