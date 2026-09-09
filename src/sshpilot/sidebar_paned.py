@@ -23,6 +23,9 @@ A width the user drags to is remembered (``user_width``) and wins over the
 fraction-derived width from then on, including after the icon strip animates
 back open. The owner is told about it through ``on_user_resize`` so it can be
 persisted; the callback is debounced so a drag writes the setting once.
+``on_drag`` fires on every divider move while the pointer is dragging (not on
+layout reflow), so the owner can drop tall secondary row chrome for the
+duration of the gesture.
 
 The divider is also how the sidebar changes mode. Dragging it well past the
 width the sidebar can actually be laid out in is a request for the minimal icon
@@ -189,6 +192,7 @@ class SidebarPaned(Gtk.Paned):
         user_width: Optional[int] = None,
         on_user_resize: Optional[Callable[[int], None]] = None,
         on_mode_switch: Optional[Callable[[bool], None]] = None,
+        on_drag: Optional[Callable[[int], None]] = None,
     ) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.add_css_class('sidebar-paned')
@@ -224,6 +228,7 @@ class SidebarPaned(Gtk.Paned):
         self._user_width = int(user_width) if user_width else None
         self._on_user_resize = on_user_resize
         self._on_mode_switch = on_mode_switch
+        self._on_drag = on_drag
         self._show_sidebar = True
 
         self._applying = False      # position is being set by us, not dragged
@@ -329,6 +334,15 @@ class SidebarPaned(Gtk.Paned):
         finally:
             self._allocating = False
 
+    def _emit_drag(self, position: int) -> None:
+        """Tell the owner the divider is being dragged (live, not debounced)."""
+        if self._on_drag is None:
+            return
+        try:
+            self._on_drag(int(position))
+        except Exception:
+            logger.debug('sidebar on_drag failed', exc_info=True)
+
     def _on_position_notify(self, *_args) -> None:
         """Clamp the divider, switch mode, and remember a dragged width."""
         if self._applying or self._switching_mode:
@@ -345,6 +359,7 @@ class SidebarPaned(Gtk.Paned):
             # had *before* the strip, and the divider would travel there on
             # its own after the user stopped moving.
             if dragging:
+                self._emit_drag(position)
                 threshold = self._expand_threshold(width)
                 if position >= threshold:
                     previous = self._user_width
@@ -369,10 +384,10 @@ class SidebarPaned(Gtk.Paned):
         floor = max(_ABSOLUTE_MIN_WIDTH, min(self._floor(), ceiling))
         # Shoving the divider well past the narrowest the sidebar can be laid
         # out in asks for the icon strip rather than for an impossible width.
-        if (dragging
-                and position < floor - _MODE_SWITCH_SLACK
-                and self._request_mode(True)):
-            return
+        if dragging and position < floor - _MODE_SWITCH_SLACK:
+            self._emit_drag(position)
+            if self._request_mode(True):
+                return
         clamped = max(floor, min(position, ceiling))
         if clamped != position:
             self._applying = True
@@ -384,6 +399,7 @@ class SidebarPaned(Gtk.Paned):
         # drag redefines the remembered width.
         if not dragging:
             return
+        self._emit_drag(clamped)
         if clamped != self._user_width:
             self._user_width = clamped
             self._schedule_persist()

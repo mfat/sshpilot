@@ -165,6 +165,10 @@ class OverflowToolbar(Gtk.Widget):
         self._last_available = -1
         self._last_overflowed_ids: tuple = ()
         self._applying = False
+        # When True, show every packable item at natural width and let a parent
+        # clip reveal them (sidebar width animation) instead of shuffling the
+        # overflow menu every tick.
+        self._clip_reveal = False
 
         self._box = Gtk.Box(
             orientation=Gtk.Orientation.HORIZONTAL,
@@ -309,10 +313,59 @@ class OverflowToolbar(Gtk.Widget):
         return floor, natural, -1, -1
 
     def _layout_allocate(self, width, height, baseline):
-        self._apply_overflow(max(0, int(width)))
         box = getattr(self, '_box', None)
+        if getattr(self, '_clip_reveal', False):
+            self._apply_clip_reveal()
+            if box is not None:
+                # Lay out at natural width; this widget's overflow:hidden (and
+                # the sidebar ClipStart) reveal items as the pane widens.
+                nat = max(max(0, int(width)), self._preferred_width())
+                box.allocate(nat, height, baseline, None)
+            return
+        self._apply_overflow(max(0, int(width)))
         if box is not None:
             box.allocate(width, height, baseline, None)
+
+    def _apply_clip_reveal(self) -> None:
+        """Show every packable control; force-hidden items stay hidden."""
+        if self._applying:
+            return
+        self._applying = True
+        try:
+            candidates = self._candidates()
+            candidate_ids = {id(w) for w in candidates}
+            for widget in candidates:
+                try:
+                    widget.set_visible(True)
+                except Exception:
+                    pass
+            for widget in self._items:
+                if id(widget) not in candidate_ids:
+                    try:
+                        widget.set_visible(False)
+                    except Exception:
+                        pass
+            self._overflow_btn.set_visible(False)
+            # Invalidate overflow cache so leaving clip-reveal recomputes.
+            self._last_visible = -1
+            self._last_overflow = False
+            self._last_available = -1
+            self._last_overflowed_ids = ()
+        finally:
+            self._applying = False
+
+    def set_clip_reveal(self, enabled: bool) -> None:
+        """Reveal items by parent clipping instead of overflow reshuffling.
+
+        Used while the sidebar width animates between the strip and full mode
+        so the top toolbar does not flicker as buttons hop in and out of the
+        "…" menu every frame.
+        """
+        enabled = bool(enabled)
+        if getattr(self, '_clip_reveal', False) == enabled:
+            return
+        self._clip_reveal = enabled
+        self.force_relayout()
 
     def _apply_overflow(self, available: int) -> None:
         if self._applying or available < 0:

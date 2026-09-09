@@ -181,6 +181,12 @@ def _ensure_tips_banner_css() -> None:
         return
     provider = Gtk.CssProvider()
     provider.load_from_data(b"""
+.tips-banner-revealer {
+    /* Parent width changes (sidebar strip/full) must not paint the accent
+       child outside the revealer's allocation -- that reads as a brief blue
+       rectangle beside the top chrome. */
+    overflow: hidden;
+}
 .tips-banner {
     background-color: @accent_bg_color;
     background-image: none;
@@ -426,6 +432,10 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._sidebar_minimal = False   # compact label-strip state
         self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
         self._sidebar_width_animation = None
+        # While True, hostname / group-count labels stay hidden so row height
+        # matches the strip during a mode transition (then prefs are restored).
+        self._sidebar_suppress_secondary_labels = False
+        self._sidebar_density_restore_source = 0
         self._context_menu_row = None
         self._context_menu_group_rows = None
         self._context_menu_popover = None
@@ -2027,11 +2037,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # the same slide-in/out animation Adw.Banner.set_revealed() provided.
         _ensure_tips_banner_css()
         self.tips_revealer = Gtk.Revealer()
+        self.tips_revealer.add_css_class('tips-banner-revealer')
         # SLIDE_DOWN slides the banner in from the top edge and collapses it back
         # up on dismiss (matching Adw.Banner's feel).
         self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.tips_revealer.set_transition_duration(250)
         self.tips_revealer.set_reveal_child(False)
+        self._tips_paused_for_sidebar = False
+        self._tips_was_revealed_before_sidebar_anim = False
+        self._tips_saved_transition_duration = 250
 
         # No outer margins: the accent background must span the full width like
         # the previous Adw.Banner. Horizontal padding comes from the .tips-banner
@@ -2195,6 +2209,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             user_width=saved_width,
             on_user_resize=self._on_sidebar_width_dragged,
             on_mode_switch=self._on_sidebar_drag_mode_switch,
+            on_drag=self._on_sidebar_divider_drag,
         )
         self.split_view.set_vexpand(True)
         self.split_view.connect(
@@ -2448,6 +2463,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
+        # Strip / in-transition: keep secondary lines off so row height stays
+        # single-line (matches compact strip density).
+        if (
+            getattr(self, '_sidebar_suppress_secondary_labels', False)
+            or getattr(self, '_sidebar_minimal', False)
+        ):
+            show_user_hostname = False
+            show_group_count = False
 
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
@@ -2458,7 +2481,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, 'connection_icon'):
                 row.connection_icon.set_visible(show_connection_icon)
             if hasattr(row, 'host_label'):
-                row.host_label.set_visible(show_user_hostname)
+                host_visible = show_user_hostname and not getattr(row, '_compact', False)
+                row.host_label.set_visible(host_visible)
             if hasattr(row, 'status_icon'):
                 # update_status() applies both the icon and visibility, honoring
                 # the show_status pref AND keeping idle (UNKNOWN) rows iconless.
@@ -2471,7 +2495,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             # Update GroupRow elements
             if hasattr(row, 'count_label'):
-                row.count_label.set_visible(show_group_count)
+                count_visible = show_group_count and not getattr(row, '_compact', False)
+                row.count_label.set_visible(count_visible)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
 
@@ -2634,6 +2659,48 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to save dragged sidebar width", exc_info=True)
 
+    def _on_sidebar_divider_drag(self, _width: int) -> None:
+        """Live divider drag: drop tall secondary row chrome until release.
+
+        Hostname and group-count change row height; hiding them for the gesture
+        keeps density at the strip's single-line size so the collapse blends.
+        Restored (from prefs) after a quiet period if the sidebar is still full.
+
+        Also hide the accent tips bar: content width changes every frame while
+        tips are revealed paint a brief blue flash beside the top chrome.
+        """
+        self._pause_tips_banner_for_sidebar_anim(True)
+        if not getattr(self, '_sidebar_minimal', False):
+            if not getattr(self, '_sidebar_suppress_secondary_labels', False):
+                self._set_sidebar_secondary_labels_suppressed(True)
+        self._schedule_sidebar_density_restore()
+
+    def _schedule_sidebar_density_restore(self) -> None:
+        """Restore hostname/group-count after the divider drag settles."""
+        from sshpilot.sidebar_paned import _PERSIST_DELAY_MS
+
+        src = getattr(self, '_sidebar_density_restore_source', 0)
+        if src:
+            try:
+                GLib.source_remove(src)
+            except Exception:
+                pass
+        self._sidebar_density_restore_source = GLib.timeout_add(
+            _PERSIST_DELAY_MS, self._restore_sidebar_density_after_drag)
+
+    def _restore_sidebar_density_after_drag(self) -> bool:
+        self._sidebar_density_restore_source = 0
+        if getattr(self, '_sidebar_width_animation', None) is not None:
+            # Still animating a button-triggered transition — leave suppressed.
+            return GLib.SOURCE_REMOVE
+        # Tips live in the content pane; re-show after settle + timeout.
+        self._queue_tips_banner_restore()
+        # Strip mode keeps hostname/count off; only full mode restores prefs.
+        if getattr(self, '_sidebar_minimal', False):
+            return GLib.SOURCE_REMOVE
+        self._set_sidebar_secondary_labels_suppressed(False)
+        return GLib.SOURCE_REMOVE
+
     def _persist_sidebar_mode(self, minimal: bool) -> None:
         """Remember the user's resting sidebar mode for the next startup."""
         try:
@@ -2709,8 +2776,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     pass
 
-    def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
-        """Collapse chrome for the strip; keep the same header toolbar buttons."""
+    def _apply_sidebar_minimal_chrome(
+        self,
+        minimal: bool,
+        *,
+        header_compact: bool = True,
+        selection_style: bool = True,
+    ) -> None:
+        """Collapse chrome for the strip; keep the same header toolbar buttons.
+
+        ``header_compact`` / ``selection_style`` can be deferred until a width
+        animation settles. Dropping ``.sidebar-minimal`` (accent selection) or
+        force-relayouting the header at strip width is what painted a brief
+        blue rectangle under the top toolbar during expand.
+        """
         show = not minimal
         # The "SSH Pilot" title label has a natural min width that floors how
         # narrow the sidebar can get; hide it so the strip can shrink fully, and
@@ -2742,19 +2821,140 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 widget.set_visible(show)
             except Exception:
                 pass
-        self._apply_sidebar_header_compact(minimal)
+        if header_compact:
+            self._apply_sidebar_header_compact(minimal)
         btn = getattr(self, '_sidebar_expand_button', None)
         if btn is not None:
             try:
                 btn.set_visible(minimal)
             except Exception:
                 pass
-        box = getattr(self, '_sidebar_box', None)
-        if box is not None:
+        if selection_style:
+            box = getattr(self, '_sidebar_box', None)
+            if box is not None:
+                try:
+                    (box.add_css_class if minimal else box.remove_css_class)(
+                        'sidebar-minimal')
+                except Exception:
+                    pass
+
+    def _set_sidebar_header_clip_reveal(self, enabled: bool) -> None:
+        """Toggle clip-reveal on the top sidebar OverflowToolbar."""
+        header = getattr(self, '_sidebar_header_toolbar', None)
+        if header is None or not hasattr(header, 'set_clip_reveal'):
+            return
+        try:
+            header.set_clip_reveal(enabled)
+        except Exception:
+            logger.debug("header clip-reveal failed", exc_info=True)
+
+    def _pause_tips_banner_for_sidebar_anim(self, pause: bool) -> None:
+        """Hide the accent tips bar while the sidebar width is unstable.
+
+        Divider mode switches use ``animate=False``, and live divider drags
+        resize the content pane every frame — both flash ``@accent_bg_color``
+        from the tips revealer. Snap-hide the container (not only reveal-child)
+        for the unstable window; restore only after settle plus
+        :data:`_TIPS_BANNER_RESTORE_DELAY_MS` via
+        :meth:`_queue_tips_banner_restore`.
+        """
+        revealer = getattr(self, 'tips_revealer', None)
+        container = getattr(self, 'tips_banner_container', None)
+        if pause:
+            # A pending restore must not undo this pause mid-drag.
+            src = getattr(self, '_tips_restore_source', 0)
+            if src:
+                try:
+                    GLib.source_remove(src)
+                except Exception:
+                    pass
+                self._tips_restore_source = 0
+            if getattr(self, '_tips_paused_for_sidebar', False):
+                return
+            was = False
             try:
-                (box.add_css_class if minimal else box.remove_css_class)('sidebar-minimal')
+                if revealer is not None:
+                    was = bool(revealer.get_reveal_child())
+            except Exception:
+                was = False
+            self._tips_was_revealed_before_sidebar_anim = was
+            self._tips_paused_for_sidebar = True
+            if revealer is not None:
+                try:
+                    self._tips_saved_transition_duration = int(
+                        revealer.get_transition_duration())
+                except Exception:
+                    self._tips_saved_transition_duration = 250
+                try:
+                    revealer.set_transition_duration(0)
+                    revealer.set_reveal_child(False)
+                except Exception:
+                    logger.debug(
+                        "pause tips revealer failed", exc_info=True)
+            # Hard-hide: reveal_child alone can still paint one accent frame
+            # while the content pane reallocates.
+            if container is not None:
+                try:
+                    container.set_visible(False)
+                except Exception:
+                    logger.debug(
+                        "pause tips container failed", exc_info=True)
+            return
+
+        if not getattr(self, '_tips_paused_for_sidebar', False):
+            return
+        self._tips_paused_for_sidebar = False
+        restore = bool(getattr(self, '_tips_was_revealed_before_sidebar_anim', False))
+        self._tips_was_revealed_before_sidebar_anim = False
+        if not restore:
+            return
+        try:
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return
+        except Exception:
+            pass
+        if container is not None:
+            try:
+                container.set_visible(True)
             except Exception:
                 pass
+        if revealer is None:
+            return
+        try:
+            revealer.set_transition_duration(0)
+            revealer.set_reveal_child(True)
+            revealer.set_transition_duration(
+                int(getattr(self, '_tips_saved_transition_duration', 250) or 250)
+            )
+        except Exception:
+            logger.debug("restore tips after sidebar anim failed", exc_info=True)
+
+    #: Wait after sidebar width settles before re-showing the accent tips bar.
+    _TIPS_BANNER_RESTORE_DELAY_MS = 400
+
+    def _queue_tips_banner_restore(self) -> None:
+        """Restore tips after settle plus :data:`_TIPS_BANNER_RESTORE_DELAY_MS`."""
+        if not getattr(self, '_tips_paused_for_sidebar', False):
+            return
+        src = getattr(self, '_tips_restore_source', 0)
+        if src:
+            try:
+                GLib.source_remove(src)
+            except Exception:
+                pass
+        self._tips_restore_source = GLib.timeout_add(
+            self._TIPS_BANNER_RESTORE_DELAY_MS,
+            self._on_tips_banner_restore_timeout,
+        )
+
+    def _on_tips_banner_restore_timeout(self) -> bool:
+        self._tips_restore_source = 0
+        if getattr(self, '_sidebar_width_animation', None) is not None:
+            # Width still moving — wait for another settle window.
+            self._queue_tips_banner_restore()
+            return GLib.SOURCE_REMOVE
+        self._pause_tips_banner_for_sidebar_anim(False)
+        return GLib.SOURCE_REMOVE
 
     def _apply_sidebar_header_compact(self, minimal: bool) -> None:
         """Tighten horizontal header margins in the strip; hide hostname toggle.
@@ -2848,6 +3048,55 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             return
         self._apply_sidebar_minimal_rows(True)
 
+    def _apply_sidebar_secondary_labels(self) -> None:
+        """Show or hide hostname / group-count lines from current suppress state.
+
+        These two prefs add a second line (or a count badge) that changes row
+        height. During strip↔full transitions they stay off so density matches
+        the strip; preferences return only once full mode has settled.
+        """
+        lb = getattr(self, 'connection_list', None)
+        if lb is None:
+            return
+        suppressed = (
+            getattr(self, '_sidebar_suppress_secondary_labels', False)
+            or getattr(self, '_sidebar_minimal', False)
+        )
+        if suppressed:
+            show_host = False
+            show_count = False
+        else:
+            try:
+                show_host = bool(
+                    self.config.get_setting('ui.sidebar_show_user_hostname', True))
+            except Exception:
+                show_host = True
+            try:
+                show_count = bool(
+                    self.config.get_setting('ui.sidebar_show_group_count', True))
+            except Exception:
+                show_count = True
+        row = lb.get_first_child()
+        while row is not None:
+            if hasattr(row, 'host_label'):
+                try:
+                    visible = show_host and not getattr(row, '_compact', False)
+                    row.host_label.set_visible(visible)
+                except Exception:
+                    pass
+            if hasattr(row, 'count_label'):
+                try:
+                    visible = show_count and not getattr(row, '_compact', False)
+                    row.count_label.set_visible(visible)
+                except Exception:
+                    pass
+            row = row.get_next_sibling()
+
+    def _set_sidebar_secondary_labels_suppressed(self, suppressed: bool) -> None:
+        """Force hostname/group-count off (or restore prefs) for a transition."""
+        self._sidebar_suppress_secondary_labels = bool(suppressed)
+        self._apply_sidebar_secondary_labels()
+
     def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
         """Toggle compact rendering on every connection/group row."""
         lb = getattr(self, 'connection_list', None)
@@ -2925,9 +3174,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         sv = getattr(self, 'split_view', None)
         if sv is None or not hasattr(sv, 'pin_width'):
             # No width lever — just swap the content to the target state.
+            self._set_sidebar_secondary_labels_suppressed(True)
             self._apply_sidebar_minimal_chrome(minimal)
             self._apply_sidebar_minimal_rows(minimal)
             self._set_sidebar_clipping(False)  # apply the minimal-aware vpolicy
+            self._set_sidebar_secondary_labels_suppressed(minimal)
             return
 
         def _resting_width():
@@ -2942,6 +3193,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Decide the full (expanded) width and prepare the content. The chrome's
         # min width can push the resting width above it, so the full endpoint
         # must reflect that or the end of the animation snaps to it.
+        # Header compact (margins / hide-hosts) is deferred until the width
+        # settles — applying it at the wrong width force-relayouts the top
+        # OverflowToolbar and reads as flicker.
+        # Hostname / group-count stay off for the whole transition so row
+        # height matches the strip (prefs return only when full mode settles).
+        # Tips (accent blue) hide before any width/chrome change — divider
+        # switches use animate=False and previously never paused them.
+        self._set_sidebar_secondary_labels_suppressed(True)
+        self._pause_tips_banner_for_sidebar_anim(True)
         if minimal:
             # Collapsing: lock the current (full) width before compacting so
             # releasing the chrome's min width doesn't drop the sidebar first.
@@ -2955,14 +3215,18 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if full_width <= _MINIMAL_STRIP_WIDTH:
                 full_width = max(_resting_width(), self._measure_sidebar_content_min())
             self._apply_sidebar_width(full_width)
-            self._apply_sidebar_minimal_chrome(True)
+            # Apply strip selection style + compact rows immediately so the
+            # accent (blue) selection does not linger while the width shrinks.
+            self._apply_sidebar_minimal_chrome(True, header_compact=False)
             self._apply_sidebar_minimal_rows(True)
         else:
             # Expanding: clip first so restoring full content can't force the
-            # width, then restore and measure the width it will rest at.
+            # width. Keep compact rows and .sidebar-minimal until the width has
+            # landed — uncompacting / accent selection at strip width is the
+            # brief blue rectangle under the top toolbar.
             self._set_sidebar_clipping(True)
-            self._apply_sidebar_minimal_chrome(False)
-            self._apply_sidebar_minimal_rows(False)
+            self._apply_sidebar_minimal_chrome(
+                False, header_compact=False, selection_style=False)
             full_width = max(_resting_width(), self._measure_sidebar_content_min())
 
         full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
@@ -2978,8 +3242,28 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 logger.debug("Failed to settle sidebar width", exc_info=True)
 
-        if not animate or not HAS_TIMED_ANIMATION:
+        def _finish_chrome():
+            if not minimal:
+                # Width is full now: safe to restore row chrome + accent selection.
+                self._apply_sidebar_minimal_rows(False)
+                self._apply_sidebar_minimal_chrome(False)
+            else:
+                self._apply_sidebar_header_compact(True)
+            self._set_sidebar_header_clip_reveal(False)
             self._set_sidebar_clipping(False)
+            # Tips return only after settle + timeout (not on this frame).
+            self._queue_tips_banner_restore()
+            if minimal:
+                self._set_sidebar_secondary_labels_suppressed(True)
+            elif animate:
+                self._set_sidebar_secondary_labels_suppressed(False)
+            else:
+                self._sidebar_suppress_secondary_labels = True
+                self._apply_sidebar_secondary_labels()
+                self._schedule_sidebar_density_restore()
+
+        if not animate or not HAS_TIMED_ANIMATION:
+            _finish_chrome()
             _settle()
             return
 
@@ -2987,6 +3271,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             start, target = float(full_width), float(_MINIMAL_STRIP_WIDTH)
         else:
             start, target = float(_MINIMAL_STRIP_WIDTH), float(full_width)
+
+        # Both directions: clip the sidebar and let the header toolbar reveal
+        # by clipping instead of overflow-popping every animation tick.
+        self._set_sidebar_clipping(True)
+        self._set_sidebar_header_clip_reveal(True)
 
         def _tick(value, *_):
             self._apply_sidebar_width(int(value))
@@ -2999,7 +3288,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass
 
         def _on_done(*_a):
-            self._set_sidebar_clipping(False)
+            _finish_chrome()
             _settle()
             self._sidebar_width_animation = None
 

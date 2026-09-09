@@ -93,7 +93,13 @@ computed the width itself and offered no handle. What changed for callers:
   grows as the strip is dragged wider), groups to a bold coloured text
   label (no folder icon). Rows are always flat in the strip (no card chrome),
   regardless of the full-sidebar flat-rows preference. The full name stays on
-  the row tooltip. The width animates between the two states.
+  the row tooltip. The width animates between the two states. During that
+  animation the top header toolbar uses clip-reveal (buttons stay laid out;
+  the pane clips them) instead of reshuffling the overflow menu every frame,
+  header margin / hide-hosts compacting is applied only once the width has
+  settled, and the accent tips banner is snap-hidden until the width has
+  settled and a short timeout has elapsed, so it cannot flash blue beside
+  the top chrome while the content pane resizes.
 
 Driven by the `ui.sidebar_mode` setting (`full` / `minimal`), written when the
 user switches mode with the divider (or the strip's expand button) and applied

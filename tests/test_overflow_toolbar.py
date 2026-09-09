@@ -104,3 +104,55 @@ def test_apply_overflow_keeps_icons_hidden_after_remeasure():
     assert buttons[0].get_visible() is True
     assert all(not b.get_visible() for b in buttons[1:])
     toolbar._overflow_btn.set_visible.assert_called_with(True)
+
+
+def test_clip_reveal_shows_all_packable_items_and_hides_overflow():
+    """During width animation the toolbar reveals by clipping, not overflow."""
+    toolbar = OverflowToolbar.__new__(OverflowToolbar)
+    toolbar._spacing = 6
+    toolbar._primary_count = 1
+    toolbar._applying = False
+    toolbar._clip_reveal = True
+    toolbar._last_visible = 1
+    toolbar._last_overflow = True
+    toolbar._last_available = 90
+    toolbar._last_overflowed_ids = (1, 2)
+    toolbar._overflow_btn = MagicMock()
+    toolbar._items = []
+    toolbar._preferred_width = MagicMock(return_value=200)
+
+    buttons = []
+    for i in range(4):
+        btn = MagicMock()
+        btn._overflow_force_hidden = (i == 3)  # last one force-hidden
+        buttons.append(btn)
+        toolbar._items.append(btn)
+
+    OverflowToolbar._apply_clip_reveal(toolbar)
+
+    assert buttons[0].set_visible.call_args.args == (True,)
+    assert buttons[1].set_visible.call_args.args == (True,)
+    assert buttons[2].set_visible.call_args.args == (True,)
+    assert buttons[3].set_visible.call_args.args == (False,)
+    toolbar._overflow_btn.set_visible.assert_called_with(False)
+    assert toolbar._last_visible == -1
+    assert toolbar._last_available == -1
+
+
+def test_set_clip_reveal_is_idempotent(monkeypatch):
+    toolbar = OverflowToolbar.__new__(OverflowToolbar)
+    toolbar._clip_reveal = False
+    calls = []
+    monkeypatch.setattr(
+        toolbar, 'force_relayout', lambda: calls.append('relayout'))
+
+    OverflowToolbar.set_clip_reveal(toolbar, True)
+    assert toolbar._clip_reveal is True
+    assert calls == ['relayout']
+
+    OverflowToolbar.set_clip_reveal(toolbar, True)
+    assert calls == ['relayout']
+
+    OverflowToolbar.set_clip_reveal(toolbar, False)
+    assert toolbar._clip_reveal is False
+    assert calls == ['relayout', 'relayout']
