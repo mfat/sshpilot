@@ -8,6 +8,10 @@ from gi.repository import Gtk, Gdk, GLib, Adw
 from gettext import gettext as _
 
 from .dnd_payload import decode_dnd_payload, new_internal_drop_target
+from .shortcut_utils import (
+    accel_matches_latin_fallback,
+    latin_fallback_keyvals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1678,7 +1682,7 @@ class SplitViewTab(Gtk.Box):
 
     _RESIZE_STEP = 50  # pixels per resize-pane keypress
 
-    def _on_key_pressed(self, _ctrl, _keyval, _keycode, state) -> bool:
+    def _on_key_pressed(self, _ctrl, keyval, keycode, state) -> bool:
         # Guard: only act when the focused widget is inside THIS SplitViewTab.
         # Adw.TabView keeps all tab-page children realized, so GTK4 may invoke
         # our CAPTURE handler even when a sibling widget (e.g. the connection
@@ -1720,12 +1724,28 @@ class SplitViewTab(Gtk.Box):
             # who have assigned one of these actions.
             return False
         if event is not None and app is not None and hasattr(app, 'get_effective_shortcuts'):
-            for name, callback in self._split_actions.items():
-                for accel in (app.get_effective_shortcuts(name) or []):
-                    trigger = Gtk.ShortcutTrigger.parse_string(accel)
-                    if trigger is not None and trigger.trigger(event, False) == Gdk.KeyMatch.EXACT:
-                        callback()
-                        return True
+            assigned = [
+                (accel, callback)
+                for name, callback in self._split_actions.items()
+                for accel in (app.get_effective_shortcuts(name) or [])
+            ]
+            for accel, callback in assigned:
+                trigger = Gtk.ShortcutTrigger.parse_string(accel)
+                if trigger is not None and trigger.trigger(event, False) == Gdk.KeyMatch.EXACT:
+                    callback()
+                    return True
+
+            # Nothing matched, which under a non-Latin layout may only mean GTK
+            # could not see past the active group (GH #1249). Ask the keymap
+            # what this physical key is in the layout's Latin group.
+            candidates = latin_fallback_keyvals(
+                self.get_display(), keyval, keycode)
+            if not candidates:
+                return False
+            for accel, callback in assigned:
+                if accel_matches_latin_fallback(event, accel, candidates, state):
+                    callback()
+                    return True
 
         return False
 

@@ -94,6 +94,95 @@ class DoubleShiftDetector:
         return activated
 
 
+# ── non-Latin keyboard layouts ───────────────────────────────────────────────
+#
+# GTK cannot match a ``<Primary><Shift>`` letter accelerator while a non-Latin
+# layout is active (GH #1249). ``gdk_key_event_matches()`` does carry a
+# cross-layout fallback, but it looks the accelerator's *lowercase* keyval up in
+# the keymap and then demands ``keys[i].level == level``: the only entry for
+# "c" sits at level 0, while an event carrying Shift is at level 1, so the loop
+# can never match and the shortcut silently becomes a plain keystroke -- VTE
+# turns Ctrl+Shift+C into ^C. Unshifted accelerators are unaffected (level 0 on
+# both sides), which is why Ctrl+C still works under Cyrillic and Ctrl+Shift+C
+# does not. Ptyxis and GNOME Console inherit the same bug; Konsole escapes it
+# because Qt resolves every event through the first Latin group itself.
+#
+# So do what Qt does: when the active layout gave the key a non-Latin keyval,
+# ask the keymap what that *physical* key produces in the layout's Latin
+# groups, and match the accelerator against that instead.
+
+
+def _accel_modifier_mask():
+    """The modifiers accelerator matching considers, as ``gdk_key_event_matches``."""
+    from gi.repository import Gdk
+
+    return (
+        Gdk.ModifierType.CONTROL_MASK
+        | Gdk.ModifierType.SHIFT_MASK
+        | Gdk.ModifierType.ALT_MASK
+        | Gdk.ModifierType.SUPER_MASK
+        | Gdk.ModifierType.HYPER_MASK
+        | Gdk.ModifierType.META_MASK
+    )
+
+
+def latin_fallback_keyvals(display, keyval: int, keycode: int) -> tuple:
+    """Latin keyvals *keycode* also produces, when the active layout is not Latin.
+
+    Returns an empty tuple whenever no fallback is wanted: for a key the active
+    layout already resolved to ASCII (GTK matches those itself), for keys with
+    no character at all (Page_Up, F1 -- their keyval is identical in every
+    group), and for keymaps with no Latin group to fall back to.
+
+    Only level 0 is collected: an accelerator names the unshifted letter, and
+    that is the level GTK's own lookup uses.
+    """
+    from gi.repository import Gdk
+
+    codepoint = Gdk.keyval_to_unicode(keyval)
+    if codepoint == 0 or 0x20 < codepoint < 0x7F:
+        return ()
+    try:
+        found, keys, keyvals = display.map_keycode(keycode)
+    except Exception:
+        return ()
+    if not found:
+        return ()
+    candidates = []
+    for key, candidate in zip(keys, keyvals):
+        if key.level != 0:
+            continue
+        point = Gdk.keyval_to_unicode(candidate)
+        if 0x20 < point < 0x7F and candidate not in candidates:
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
+def accel_matches_latin_fallback(event, accel: str, candidates, state) -> bool:
+    """Whether *accel* names one of *candidates* with the event's modifiers.
+
+    ``event`` is consulted first: GTK's own matching wins whenever it has any
+    opinion at all. ``<Primary>c`` still partial-matches under a Cyrillic
+    layout, and firing here as well would activate the action twice.
+    """
+    from gi.repository import Gdk, Gtk
+
+    if not candidates or not accel or accel == DOUBLE_SHIFT_SHORTCUT:
+        return False
+    trigger = Gtk.ShortcutTrigger.parse_string(accel)
+    if trigger is None:
+        return False
+    if event is not None and trigger.trigger(event, False) != Gdk.KeyMatch.NONE:
+        return False
+    parsed, accel_keyval, accel_mods = Gtk.accelerator_parse(accel)
+    if not parsed or not accel_keyval:
+        return False
+    mask = _accel_modifier_mask()
+    if (state & mask) != (accel_mods & mask):
+        return False
+    return Gdk.keyval_to_lower(accel_keyval) in candidates
+
+
 def get_primary_modifier_label() -> str:
     """Return the label for the primary modifier key.
 
@@ -142,6 +231,8 @@ def install_search_esc(search_entry, window) -> None:
 __all__ = [
     "DOUBLE_SHIFT_SHORTCUT",
     "DoubleShiftDetector",
+    "accel_matches_latin_fallback",
+    "latin_fallback_keyvals",
     "get_primary_modifier_label",
     "install_esc_to_close",
     "install_search_esc",

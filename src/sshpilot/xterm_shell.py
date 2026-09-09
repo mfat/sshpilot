@@ -468,7 +468,15 @@ def _build_shell_html_impl(
     if (e.type !== "keydown") return true;
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform || "");
     const clipboardModifier = isMac ? e.metaKey : (e.ctrlKey && e.shiftKey);
-    const k = e.key.toLowerCase();
+    // e.key is whatever the active layout typed, so under Cyrillic it is the
+    // Cyrillic "es" rather than "c" and the shortcut silently vanished
+    // (GH #1249). Fall back to e.code, which names the physical key, but only
+    // when e.key is not a Latin letter -- the same rule the GTK side applies,
+    // so Dvorak and Colemak keep copying from the key that actually types "c".
+    const typed = (e.key || "").toLowerCase();
+    const k = /^[a-z]$/.test(typed)
+      ? typed
+      : ({{ KeyC: "c", KeyV: "v" }}[e.code] || typed);
     // Report copy/paste keys even when pass-through is on so Python logs why
     // the shortcut never became a clipboard write (issue #1178).
     if (window.sshpilotShortcutPassthrough) {{

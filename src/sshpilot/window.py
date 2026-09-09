@@ -110,7 +110,9 @@ from .search_utils import connection_matches
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
     DoubleShiftDetector,
+    accel_matches_latin_fallback,
     get_primary_modifier_label,
+    latin_fallback_keyvals,
 )
 from .platform_utils import (
     get_default_terminal_command,
@@ -479,6 +481,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.fullscreen_controller = WindowFullscreenController(self)
         self.fullscreen_controller.install()
         self._setup_omnisearch_shortcut()
+        self._setup_latin_fallback_shortcuts()
         self.setup_connections()
         self.setup_signals()
         # Authoritative SSH files are monitored by the daemon; GTK refreshes
@@ -5154,6 +5157,89 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         pointer.connect('pressed', self._on_omnisearch_pointer_pressed)
         self.add_controller(pointer)
         self._omnisearch_pointer_controller = pointer
+
+    def _setup_latin_fallback_shortcuts(self) -> None:
+        """Install the window-level rescue for accelerators under a non-Latin layout.
+
+        GTK matches ``<primary><shift>`` letter accelerators against the active
+        keyboard group only, so every one of them -- New Connection, Terminal
+        Search, Close Tab -- silently stopped working under Cyrillic, Persian
+        or any other non-Latin layout (GH #1249). CAPTURE, because the keys
+        would otherwise reach the focused terminal as raw input.
+        """
+        controller = Gtk.EventControllerKey()
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect('key-pressed', self._on_latin_fallback_key)
+        self.add_controller(controller)
+        self._latin_fallback_key_controller = controller
+
+    def _terminal_claims_latin_fallback(self, event, candidates, state) -> bool:
+        """Whether the focused terminal binds one of these keys itself."""
+        widget = self.get_focus()
+        while widget is not None:
+            bindings = getattr(widget, '_latin_fallback_bindings', None)
+            if bindings:
+                return any(
+                    accel_matches_latin_fallback(event, accel, candidates, state)
+                    for accel, _callback in bindings
+                )
+            widget = widget.get_parent()
+        return False
+
+    def _on_latin_fallback_key(self, controller, keyval, keycode, state) -> bool:
+        app = self.get_application()
+        if app is None or not getattr(app, 'accelerators_enabled', True):
+            return False
+        # Bails out before touching the keymap whenever the active layout gave
+        # the key an ASCII keyval, so a Latin keyboard pays nothing for this.
+        candidates = latin_fallback_keyvals(self.get_display(), keyval, keycode)
+        if not candidates:
+            return False
+        event = controller.get_current_event()
+        # A focused terminal owns its own accelerators on the Latin path, where
+        # its LOCAL shortcut controller runs before the window's managed
+        # accels. Keep that precedence rather than inverting it here for a
+        # rebind that collides -- an app action assigned Ctrl+Shift+C, say.
+        if self._terminal_claims_latin_fallback(event, candidates, state):
+            return False
+        try:
+            names = app.get_registered_action_order()
+        except Exception:
+            return False
+        for name in names:
+            if app.is_custom_shortcut(name):
+                continue
+            try:
+                accels = app.get_effective_shortcuts(name) or []
+            except Exception:
+                continue
+            for accel in accels:
+                if not accel_matches_latin_fallback(
+                    event, accel, candidates, state
+                ):
+                    continue
+                # Activate through the owning action map rather than a
+                # "app."/"win." prefixed name: the window implements
+                # Gio.ActionGroup, so Widget.activate_action() is shadowed by
+                # ActionGroup.activate_action(), which looks up the literal
+                # prefixed string, finds nothing and reports no error.
+                owner = app if app.lookup_action(name) is not None else self
+                action = owner.lookup_action(name)
+                if action is None or not action.get_enabled():
+                    continue
+                logger.debug(
+                    "Activating %s: %s matched through the Latin group",
+                    name,
+                    accel,
+                )
+                try:
+                    owner.activate_action(name, None)
+                except Exception:
+                    logger.debug(
+                        "Latin fallback could not activate %s", name, exc_info=True
+                    )
+                return True
+        return False
 
     def _on_omnisearch_pointer_pressed(self, gesture, _n_press, _x, _y) -> None:
         self._on_omnisearch_pointer_activity()
