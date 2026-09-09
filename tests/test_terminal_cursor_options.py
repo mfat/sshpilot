@@ -66,6 +66,7 @@ gi = pytest.importorskip("gi")
 
 from sshpilot import terminal_backends  # noqa: E402
 from sshpilot.terminal_backends import (  # noqa: E402
+    PyXtermBridgeBackend,
     PyXtermTerminalBackend,
     VTETerminalBackend,
     xterm_cursor_blink_enabled,
@@ -202,3 +203,40 @@ def test_system_blink_defaults_to_on_without_gtk_settings(monkeypatch):
     )
 
     assert xterm_cursor_blink_enabled("system") is True
+
+
+def test_the_preference_is_seeded_before_the_preready_flush():
+    """xterm.js parks a program's DECSCUSR in the same ``cursorStyle`` option
+    we write, and output buffered before the page was ready can carry one (a
+    prompt that picks its own cursor). Writing the preference after that flush
+    would race the parser for it, so the seed must go out first."""
+    backend = PyXtermBridgeBackend.__new__(PyXtermBridgeBackend)
+    backend.available = True
+    backend._cursor_shape = "underline"
+    backend._cursor_blink = "off"
+    backend._preready_output = ["\x1b[5 q$ "]
+    backend._preready_bytes = 8
+    backend._stored_font = None
+    backend._bridge = None
+    backend._pending_spawn = None
+    backend._shortcut_passthrough = False
+    backend._fc_written = 0
+    backend._fc_pending = 0
+    backend.apply_theme = lambda *a, **k: None
+    scripts = []
+    backend._run_javascript = scripts.append
+
+    backend._on_pty_message(None, _ReadyMessage())
+
+    cursor = next(i for i, js in enumerate(scripts) if "cursorStyle" in js)
+    write = next(i for i, js in enumerate(scripts) if "termWriteB64" in js)
+    assert cursor < write, "cursor preference must be seeded before buffered output"
+
+
+class _ReadyMessage:
+    """Stands in for the WebKit JSCValue the bridge unwraps."""
+
+    def to_json(self, _indent):
+        import json
+
+        return json.dumps({"type": "ready", "rows": 24, "cols": 80})

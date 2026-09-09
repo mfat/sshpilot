@@ -30,6 +30,8 @@ def _make_backend():
     b._output_hooks = []
     b._recent_output = ""
     b._shortcut_passthrough = False
+    b._cursor_shape = "block"
+    b._cursor_blink = "system"
     b.available = False
     order = []
     b._write_to_term = lambda text, *, bulk=False: order.append(("write", text, bulk))

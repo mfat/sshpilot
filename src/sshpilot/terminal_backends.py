@@ -2514,8 +2514,11 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self.apply_theme()
         except Exception:  # noqa: BLE001
             pass
-        # Adopting a prewarmed page: nothing has run in it yet, so there is
-        # no DECSCUSR state to overwrite.
+        # Adopting an already-ready pooled page: our "ready" handler never ran
+        # for it, so the preference is seeded here instead.  Anything the PTY
+        # emitted between adoption and attach has already been written, so a
+        # DECSCUSR in those first bytes loses to this -- a narrow window, and
+        # the alternative (never seeding) would drop the preference entirely.
         self.set_cursor_options(self._cursor_shape, self._cursor_blink)
         if self._stored_font is not None:
             try:
@@ -2585,6 +2588,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if kind == "ready":
             self._js_ready = True
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
+            # Seed the cursor preference BEFORE the buffered output: xterm.js
+            # parks a program's DECSCUSR in the same term.options.cursorStyle
+            # this writes, so a prompt that picks its own cursor (starship,
+            # p10k) must be parsed after us or we would overwrite its choice.
+            # One short script, so it costs first paint nothing measurable.
+            self.set_cursor_options(self._cursor_shape, self._cursor_blink)
             # Flush buffered shell output BEFORE theme/font JS so the prompt is
             # not queued behind those evaluate_javascript calls (first paint).
             # One base64 evaluate_javascript — never replay chunk-by-chunk.
@@ -2602,9 +2611,6 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
                     super().set_font(self._stored_font)
                 except Exception:  # noqa: BLE001
                     pass
-            # window.term has just been created, so this seeds the preference
-            # rather than overriding anything a program has asked for.
-            self.set_cursor_options(self._cursor_shape, self._cursor_blink)
             self.set_shortcut_passthrough(self._shortcut_passthrough)
             # Resize the already-running shell to the real terminal size (it was
             # spawned at a default size in parallel with the page load).
