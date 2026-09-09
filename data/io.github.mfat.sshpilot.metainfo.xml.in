@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.0.8" date="2026-09-09">
+      <description>
+        <p>Sidebar is now resizable</p>
+        <p>Added option to use monospace font for the user interface</p>
+      </description>
+    </release>
     <release version="6.0.7" date="2026-09-08">
       <description>
         <p>Redesigned backup dialog</p>
@@ -739,27 +745,27 @@
 
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/a9a0f1d16a63fb6073f1a2a177f2b4d1cb8b2d74/screenshots/main-window.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/main-window.png</image>
       <caption>Main Window</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/a9a0f1d16a63fb6073f1a2a177f2b4d1cb8b2d74/screenshots/main-nofm.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/main-nofm.png</image>
       <caption>Terminal</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/a9a0f1d16a63fb6073f1a2a177f2b4d1cb8b2d74/screenshots/fm.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/fm.png</image>
       <caption>SFTP File Manager</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/a9a0f1d16a63fb6073f1a2a177f2b4d1cb8b2d74/screenshots/splitview.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/splitview.png</image>
       <caption>Split View</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/a9a0f1d16a63fb6073f1a2a177f2b4d1cb8b2d74/screenshots/ssh-copy-id.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/ssh-copy-id.png</image>
       <caption>Transfer SSH Keys</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/mfat/sshpilot/a9a0f1d16a63fb6073f1a2a177f2b4d1cb8b2d74/screenshots/backup.png</image>
+      <image>https://raw.githubusercontent.com/mfat/sshpilot/66a6027109592b744c98a3374ab5d12af5e0647d/screenshots/backup.png</image>
       <caption>Backup and Restore</caption>
     </screenshot>
   </screenshots>

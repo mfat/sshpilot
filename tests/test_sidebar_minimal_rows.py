@@ -1,8 +1,8 @@
-"""Tests for minimal (icon-only) sidebar row rendering — ConnectionRow.set_compact.
+"""Tests for minimal (label) sidebar row rendering — ConnectionRow/GroupRow.set_compact.
 
 ConnectionRow.__init__ builds many real GTK widgets, so we bypass it with
 __new__ and inject MagicMock widgets, exercising only the compact/restore
-branch logic (which style is shown, what gets hidden, tooltip, restore).
+branch logic (text labels, folder glyph, tooltip, restore).
 """
 import importlib
 from unittest.mock import MagicMock
@@ -11,31 +11,32 @@ from sshpilot.connection_manager import Connection
 
 
 class _Cfg:
-    def __init__(self, style='initials'):
-        self.style = style
-
     def get_setting(self, key, default=None):
-        if key == 'ui.sidebar_minimal_row_style':
-            return self.style
         if key == 'ui.sidebar_show_connection_icon':
+            return True
+        if key == 'ui.sidebar_show_user_hostname':
+            return True
+        if key == 'ui.sidebar_show_group_icon':
             return True
         return default
 
 
-def _make(style='initials'):
+def _make():
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.ConnectionRow.__new__(mod.ConnectionRow)
     row.connection = Connection({'nickname': 'Prod Web', 'host': 'h', 'user': 'a'})
-    row.config = _Cfg(style)
+    row.config = _Cfg()
     row._compact = False
-    row._avatar = None
+    row._content_spacing_base = 12
     for name in ('_content_box', '_info_box', 'indicator_box', 'color_badge',
                  'color_dot', 'file_manager_button', 'status_icon',
-                 'connection_icon'):
+                 'connection_icon', 'nickname_label', 'host_label'):
         setattr(row, name, MagicMock())
+    row._file_manager_callback = MagicMock()
     row.set_tooltip_text = MagicMock()
     row.update_status = MagicMock()
     row.set_margin_start = MagicMock()
+    row.apply_row_style = MagicMock()
     row._apply_group_display_mode = MagicMock()
     row._resolve_group_color = MagicMock(return_value=None)
     return row, mod
@@ -49,146 +50,243 @@ def _make_group():
     row.group_manager = MagicMock()
     row.group_manager.config = _Cfg()
     row._compact = False
-    row._avatar = None
+    row._content_margin_base = 12
+    row._content_spacing_base = 12
     for name in ('_content', '_info_box', 'color_dot', 'color_badge',
-                 'split_view_button', 'edit_button', 'expand_button', 'icon'):
+                 'split_view_button', 'expand_button', 'icon',
+                 'name_label', 'count_label'):
         setattr(row, name, MagicMock())
     row.set_tooltip_text = MagicMock()
     row.set_margin_start = MagicMock()
+    row.apply_row_style = MagicMock()
     row._apply_group_display_mode = MagicMock()
     row._update_display = MagicMock()
     return row, mod
 
 
-def test_group_compact_creates_folder_icon_avatar(monkeypatch):
+def test_group_compact_shows_bold_colored_text_only(monkeypatch):
     row, mod = _make_group()
-    fake_avatar = MagicMock()
-    make_avatar = MagicMock(return_value=fake_avatar)
-    monkeypatch.setattr(mod, '_make_avatar', make_avatar)
-    # Color styling touches real GTK CSS on the widget; stub it out.
     sentinel_rgba = object()
     monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: sentinel_rgba)
     apply_color = MagicMock()
-    set_avatar_color = MagicMock()
+    set_fg = MagicMock()
     monkeypatch.setattr(mod, '_apply_row_color', apply_color)
-    monkeypatch.setattr(mod, '_set_avatar_color', set_avatar_color)
+    monkeypatch.setattr(mod, '_set_compact_fg_color', set_fg)
 
-    row.set_compact(True)
-
-    assert row._avatar is fake_avatar
-    # Groups use a folder icon, never initials.
-    assert make_avatar.call_args.kwargs == {'icon_name': 'folder-symbolic'}
-    row._content.prepend.assert_called_with(fake_avatar)
-    row.icon.set_visible.assert_called_with(False)
-    row.set_tooltip_text.assert_called_with('Servers')
-    # The row keeps no color treatment; the group color goes on the avatar.
-    apply_color.assert_called_once()
-    assert apply_color.call_args.args[1:] == ('fill', None)
-    set_avatar_color.assert_called_once_with(fake_avatar, sentinel_rgba)
-
-
-def test_compact_icon_style_hides_labels_shows_icon():
-    row, _ = _make('icon')
     row.set_compact(True)
 
     assert row._compact is True
-    row._info_box.set_visible.assert_called_with(False)
-    row.connection_icon.set_visible.assert_called_with(True)
+    row.apply_row_style.assert_called_with(flat=True)
+    row.icon.set_visible.assert_called_with(False)
+    row.count_label.set_visible.assert_called_with(False)
+    # The chevron survives the strip: collapsing a group still works there.
+    row.expand_button.set_visible.assert_called_with(True)
+    row.split_view_button.set_visible.assert_called_with(False)
+    row._info_box.set_visible.assert_called_with(True)
+    row.name_label.set_text.assert_called_with('Servers')
+    row.name_label.set_max_width_chars.assert_called_with(mod.MINIMAL_LABEL_MAX_CHARS)
+    row.name_label.add_css_class.assert_any_call('sidebar-compact-label')
+    row.name_label.add_css_class.assert_any_call('sidebar-compact-group')
+    row.set_tooltip_text.assert_called_with('Servers')
+    apply_color.assert_called_once()
+    assert apply_color.call_args.args[1:] == ('fill', None)
+    # Colour goes on the label, not a folder icon.
+    assert set_fg.call_args_list[-1].args == (row.name_label, sentinel_rgba)
+
+
+def test_compact_connection_shows_text_only_label(monkeypatch):
+    row, mod = _make()
+    apply_color = MagicMock()
+    monkeypatch.setattr(mod, '_apply_row_color', apply_color)
+
+    row.set_compact(True)
+
+    assert row._compact is True
+    row.apply_row_style.assert_called_with(flat=True)
+    row.host_label.set_visible.assert_called_with(False)
+    row.connection_icon.set_visible.assert_called_with(False)
+    row._info_box.set_visible.assert_called_with(True)
+    row.nickname_label.set_text.assert_called_with('Prod Web')
+    row.nickname_label.set_max_width_chars.assert_called_with(mod.MINIMAL_LABEL_MAX_CHARS)
+    row.nickname_label.add_css_class.assert_called_with('sidebar-compact-label')
     row.set_tooltip_text.assert_called_with('Prod Web')
-    # Icon style must not create an avatar.
-    assert row._avatar is None
-    # Nested-group indentation is flattened in the strip.
+    # No avatar/initials path.
+    assert not hasattr(row, '_avatar') or row._avatar is None
+    apply_color.assert_called_once()
+    assert apply_color.call_args.args[1:] == ('fill', None)
     row.set_margin_start.assert_called_with(0)
 
 
-def test_restore_reapplies_nested_indentation():
-    row, _ = _make('icon')
+def test_compact_keeps_manage_files_button_reserved(monkeypatch):
+    """The strip keeps the row's Manage Files action — the only way to reach the
+    file manager without leaving minimal mode — and keeps it *visible* so its
+    space stays reserved: hovering must never reflow or resize the row. It is
+    trimmed to the icon so the label loses as little of the strip as possible.
+    """
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+
     row.set_compact(True)
-    row._apply_group_display_mode.reset_mock()
+
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.add_css_class.assert_called_with(
+        'sidebar-compact-action')
+
+
+def test_compact_rows_fill_the_row_height(monkeypatch):
+    """A single-line strip row is shorter than the list row's theme minimum and
+    a Gtk.Box packs that slack after its last child, so the content box takes
+    the whole height and its centred children sit in the middle of it."""
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    group, _mod = _make_group()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: None)
+    monkeypatch.setattr(mod, '_set_compact_fg_color', MagicMock())
+
+    row.set_compact(True)
+    group.set_compact(True)
+
+    row._content_box.set_vexpand.assert_called_with(True)
+    group._content.set_vexpand.assert_called_with(True)
+
     row.set_compact(False)
-    row._apply_group_display_mode.assert_called_once()
+    group.set_compact(False)
+
+    row._content_box.set_vexpand.assert_called_with(False)
+    group._content.set_vexpand.assert_called_with(False)
 
 
-def test_compact_initials_style_creates_named_avatar(monkeypatch):
-    row, mod = _make('initials')
+def test_full_row_drops_the_compact_action_footprint(monkeypatch):
+    """Restoring a full row gives the button its normal padding back."""
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    row.set_compact(True)
+
+    row.set_compact(False)
+
+    row.file_manager_button.remove_css_class.assert_called_with(
+        'sidebar-compact-action')
+    row.file_manager_button.set_visible.assert_called_with(True)
+
+
+def test_compact_connection_uses_display_name(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
     row.connection.display_name = 'Production Web'
-    fake_avatar = MagicMock()
-    make_avatar = MagicMock(return_value=fake_avatar)
-    monkeypatch.setattr(mod, '_make_avatar', make_avatar)
 
     row.set_compact(True)
 
-    assert row._avatar is fake_avatar
-    # Initials are derived from the display name, not the technical nickname.
-    assert make_avatar.call_args.kwargs == {'initials': 'PW'}
+    row.nickname_label.set_text.assert_called_with('Production Web')
     row.set_tooltip_text.assert_called_with('Production Web')
-    row._content_box.prepend.assert_called_with(fake_avatar)
-    fake_avatar.set_visible.assert_called_with(True)
-    row.connection_icon.set_visible.assert_called_with(False)
 
 
-def test_compact_initials_refreshes_existing_avatar_from_display_name(monkeypatch):
-    row, mod = _make('initials')
-    fake_avatar = MagicMock()
-    monkeypatch.setattr(mod, '_make_avatar', MagicMock(return_value=fake_avatar))
+def test_compact_refreshes_label_when_display_name_changes(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
 
     row.set_compact(True)
     row.connection.display_name = 'Production Database'
     row.set_compact(True)
 
-    fake_avatar.set_text.assert_called_with('PD')
+    row.nickname_label.set_text.assert_called_with('Production Database')
 
 
-def test_compact_avatar_filled_with_group_color(monkeypatch):
-    row, mod = _make('initials')
-    monkeypatch.setattr(mod, '_make_avatar', MagicMock(return_value=MagicMock()))
-    rgba = object()
-    row._resolve_group_color = MagicMock(return_value=rgba)
-    set_avatar_color = MagicMock()
-    monkeypatch.setattr(mod, '_set_avatar_color', set_avatar_color)
-
-    row.set_compact(True)
-
-    # The group color fills the avatar regardless of the color display mode.
-    set_avatar_color.assert_called_once_with(row._avatar, rgba)
-
-
-def test_avatar_initials():
+def test_configure_compact_label_defaults():
     mod = importlib.import_module('sshpilot.sidebar')
-    assert mod._avatar_initials('Prod Web') == 'PW'
-    assert mod._avatar_initials('sdf') == 'SD'
-    assert mod._avatar_initials('x') == 'X'
-    assert mod._avatar_initials('  ') == '?'
-    assert mod._avatar_initials('alpha beta gamma') == 'AB'
-
-
-def test_initials_avatar_uses_shared_unframed_style(monkeypatch):
-    _row, mod = _make('initials')
+    assert mod.MINIMAL_LABEL_MAX_CHARS == 10
     label = MagicMock()
-    monkeypatch.setattr(mod.Gtk, 'Label', MagicMock(return_value=label))
-
-    avatar = mod._make_avatar(initials='PW')
-
-    assert avatar is label
-    label.add_css_class.assert_any_call('sidebar-avatar')
+    mod._configure_compact_label(label, 'abcdefghijklmnop')
+    label.set_text.assert_called_with('abcdefghijklmnop')
+    label.set_max_width_chars.assert_called_with(10)
+    label.add_css_class.assert_called_with('sidebar-compact-label')
 
 
-def test_restore_shows_labels_and_refreshes_status():
-    row, _ = _make('icon')
+def test_minimal_label_max_chars_scales_with_strip_width():
+    mod = importlib.import_module('sshpilot.sidebar')
+    assert mod.minimal_label_max_chars(112) == 10
+    assert mod.minimal_label_max_chars(224) == 20
+    assert mod.minimal_label_max_chars(56) == 5
+    assert mod.minimal_label_max_chars(0) == 1
+    assert mod.minimal_label_max_chars(200) == 17  # 200*10//112
+
+
+def test_compact_connection_honours_max_chars(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+
+    row.set_compact(True, max_chars=18)
+
+    row.nickname_label.set_max_width_chars.assert_called_with(18)
+    # Re-apply without an explicit budget keeps the last width-driven value.
+    row.nickname_label.reset_mock()
+    row.set_compact(True)
+    row.nickname_label.set_max_width_chars.assert_called_with(18)
+
+
+def test_compact_group_honours_max_chars(monkeypatch):
+    row, mod = _make_group()
+    monkeypatch.setattr(mod, '_resolve_group_color_by_id', lambda *a: None)
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    monkeypatch.setattr(mod, '_set_compact_fg_color', MagicMock())
+
+    row.set_compact(True, max_chars=14)
+
+    row.name_label.set_max_width_chars.assert_called_with(14)
+
+
+def test_full_labels_have_no_character_minimum():
+    """Restoring a full row bounds the label's natural width but sets no
+    ``width-chars`` floor: that floor is what kept the sidebar from being laid
+    out below 263px, and these labels ellipsize anyway."""
+    mod = importlib.import_module('sshpilot.sidebar')
+    label = MagicMock()
+
+    mod._restore_full_label_width(label)
+
+    label.set_width_chars.assert_called_with(0)
+    label.set_max_width_chars.assert_called_with(mod.FULL_LABEL_MAX_CHARS)
+    assert mod.FULL_LABEL_MIN_CHARS == 0
+
+
+def test_restore_shows_labels_and_refreshes_status(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
     row.set_compact(True)
     row.update_status.reset_mock()
 
     row.set_compact(False)
 
     assert row._compact is False
+    row.apply_row_style.assert_called_with()
     row._info_box.set_visible.assert_called_with(True)
+    row.host_label.set_visible.assert_called_with(True)
+    # Full rows carry the plain name; bold belongs to group headers.
+    row.nickname_label.set_text.assert_called_with('Prod Web')
+    row.nickname_label.set_markup.assert_not_called()
     row.set_tooltip_text.assert_called_with(None)
     row.update_status.assert_called_once()
 
 
+def test_restore_reapplies_nested_indentation(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    row.set_compact(True)
+    row._apply_group_display_mode.reset_mock()
+    row.set_compact(False)
+    row._apply_group_display_mode.assert_called_once()
+
+
 def test_restore_noop_when_never_compact():
-    row, _ = _make('icon')
+    row, _ = _make()
     row.set_compact(False)  # was never compact
-    # Nothing to restore: update_status not called, still not compact.
     row.update_status.assert_not_called()
     assert row._compact is False
+
+
+def test_compact_online_tints_label(monkeypatch):
+    row, mod = _make()
+    monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
+    row._is_online = MagicMock(return_value=True)
+    row.set_compact(True)
+    row.nickname_label.add_css_class.assert_any_call('sidebar-compact-online')

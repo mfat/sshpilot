@@ -38,6 +38,7 @@ import threading
 # Feature detection for libadwaita versions across distros
 HAS_NAV_SPLIT = hasattr(Adw, 'NavigationSplitView')
 HAS_OVERLAY_SPLIT = hasattr(Adw, 'OverlaySplitView')
+HAS_TOOLBAR_VIEW = hasattr(Adw, 'ToolbarView')
 HAS_TIMED_ANIMATION = hasattr(Adw, 'TimedAnimation')
 
 from gettext import gettext as _
@@ -77,10 +78,13 @@ from .session_manager import SessionManager
 from .sidebar import (
     GroupRow,
     ConnectionRow,
+    apply_interface_monospace_font,
     build_sidebar,
     install_sidebar_css,
+    minimal_label_max_chars,
     reset_connection_list_drag_session,
 )
+from .sidebar_paned import DEFAULT_MAX_WIDTH as DEFAULT_SIDEBAR_MAX_WIDTH, SidebarPaned
 
 from .welcome_page import WelcomePage
 from .actions import (
@@ -178,6 +182,12 @@ def _ensure_tips_banner_css() -> None:
         return
     provider = Gtk.CssProvider()
     provider.load_from_data(b"""
+.tips-banner-revealer {
+    /* Parent width changes (sidebar strip/full) must not paint the accent
+       child outside the revealer's allocation -- that reads as a brief blue
+       rectangle beside the top chrome. */
+    overflow: hidden;
+}
 .tips-banner {
     background-color: @accent_bg_color;
     background-image: none;
@@ -250,24 +260,23 @@ _get_connection_host = get_connection_host
 _get_connection_alias = get_connection_alias
 _format_connection_host_display = format_connection_host_display
 
-# Width of the minimal (icon-only) sidebar strip.
-_MINIMAL_STRIP_WIDTH = 64
+# Width of the minimal (label) sidebar strip — fits ~10 ellipsized characters
+# plus margins at rest; dragging wider grows the label char budget.
+# Keep in sync with ``sidebar.MINIMAL_LABEL_BASE_WIDTH``.
+_MINIMAL_STRIP_WIDTH = 112
 
+# Horizontal margins of the sidebar's header toolbar, full mode and strip. The
+# full-mode pair is also what a width animation subtracts from the sidebar width
+# to know the row width its button split must be frozen at.
+_SIDEBAR_HEADER_MARGIN_FULL = 12
+_SIDEBAR_HEADER_MARGIN_STRIP = 6
 
-def _effective_max_sidebar_width(saved_value, default: int = 400) -> int:
-    """Resolve the startup max sidebar width from a saved setting value.
-
-    Returns the saved width when it is a valid integer, otherwise ``default``.
-    Kept as a module-level pure function so the parsing/fallback logic is unit
-    testable without building the GTK window.
-    """
-    if saved_value is None:
-        return default
-    try:
-        return int(saved_value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid ui.max-sidebar-width %r; using default %d", saved_value, default)
-        return default
+# Narrowest full sidebar that still reserves space for a group row's split-view
+# action. Below it the rows shed the button (``GroupRow.set_actions_reserved``)
+# so the group name keeps the width — and so the sidebar's measured minimum
+# drops with it, since the group row is what sets that minimum. Must stay above
+# the floor the reserved button produces (~150px) or the two would fight.
+_ROW_ACTIONS_MIN_WIDTH = 180
 
 
 def _accelerator_label(accel: str) -> str:
@@ -434,9 +443,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.connection_to_terminals: Dict[Connection, List[TerminalWidget]] = {}
         self.terminal_to_connection: Dict[TerminalWidget, Connection] = {}
         self.connection_rows = {}   # connection -> [row_widget, ...] (a connection may appear in several groups)
-        self._sidebar_minimal = False   # icon-only strip state
+        self._sidebar_minimal = False   # compact label-strip state
         self._sidebar_overlay = False   # overlay (covers content) vs side-by-side
         self._sidebar_width_animation = None
+        # While True, hostname / group-count labels stay hidden so row height
+        # matches the strip during a mode transition (then prefs are restored).
+        self._sidebar_suppress_secondary_labels = False
+        self._sidebar_density_restore_source = 0
         self._context_menu_row = None
         self._context_menu_group_rows = None
         self._context_menu_popover = None
@@ -471,12 +484,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Authoritative SSH files are monitored by the daemon; GTK refreshes
         # from connection events and never installs a filesystem watcher.
 
-        # Apply the persisted sidebar mode (full / minimal icon strip).
-        try:
-            if str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal':
-                self.set_sidebar_minimal(True, animate=False)
-        except Exception:
-            logger.debug("apply startup sidebar mode failed", exc_info=True)
+        # Icon-strip sidebar mode is retired; settings migration forces
+        # ui.sidebar_mode to 'full', so startup never restores a strip.
 
         # Terminal manager handles terminal-related operations (import deferred so
         # terminal.py stays off the window module import path until __init__).
@@ -1116,14 +1125,6 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 pass
             return
 
-        if key == 'ui.max-sidebar-width':
-            try:
-                max_width = int(value)
-                self.update_sidebar_max_width(max_width)
-            except (ValueError, TypeError) as e:
-                logger.error(f"Invalid max-sidebar-width value: {e}")
-            return
-
         if key == 'app-theme':
             try:
                 self._sync_theme_menu_button()
@@ -1146,6 +1147,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             install_sidebar_css()
         except Exception as e:
             logger.error(f"Failed to install sidebar CSS: {e}")
+
+        try:
+            apply_interface_monospace_font(self.config)
+        except Exception as e:
+            logger.error(f"Failed to apply interface monospace font: {e}")
 
         # Apply header-bar button visibility preferences now that the buttons
         # exist (split view, commands, local terminal).
@@ -2046,11 +2052,15 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # the same slide-in/out animation Adw.Banner.set_revealed() provided.
         _ensure_tips_banner_css()
         self.tips_revealer = Gtk.Revealer()
+        self.tips_revealer.add_css_class('tips-banner-revealer')
         # SLIDE_DOWN slides the banner in from the top edge and collapses it back
         # up on dismiss (matching Adw.Banner's feel).
         self.tips_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
         self.tips_revealer.set_transition_duration(250)
         self.tips_revealer.set_reveal_child(False)
+        self._tips_paused_for_sidebar = False
+        self._tips_was_revealed_before_sidebar_anim = False
+        self._tips_saved_transition_duration = 250
 
         # No outer margins: the accent background must span the full width like
         # the previous Adw.Banner. Horizontal padding comes from the .tips-banner
@@ -2198,45 +2208,30 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # Toggled by Preferences ▸ Interface ▸ Header Bar.
         self._headerbar_local_terminal_button = self.local_terminal_button
 
-        # Add the custom title bar directly for the legacy split fallback.
-        if not (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT):
+        # Add the custom title bar directly for the legacy content fallback
+        # (without Adw.ToolbarView there is nowhere else to put it).
+        if not HAS_TOOLBAR_VIEW:
             main_box.append(self.header_bar)
 
-        # Honor the saved max-sidebar-width on startup (previously it was read but
-        # ignored here, so the saved width only took effect after being changed
-        # mid-session); fall back to 400 when unset/invalid.
-        saved_max_width = self.config.get_setting('ui.max-sidebar-width', None)
-        effective_max_width = _effective_max_sidebar_width(saved_max_width)
-
-        # Try OverlaySplitView first as it's more reliable
-        if HAS_OVERLAY_SPLIT:
-            self.split_view = Adw.OverlaySplitView()
-            try:
-                self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(180)
-                self.split_view.set_max_sidebar_width(effective_max_width)
-            except Exception:
-                pass
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'overlay'
-            logger.debug("Using OverlaySplitView")
-        elif HAS_NAV_SPLIT:
-            self.split_view = Adw.NavigationSplitView()
-            try:
-                self.split_view.set_sidebar_width_fraction(0.25)
-                self.split_view.set_min_sidebar_width(200)
-                self.split_view.set_max_sidebar_width(effective_max_width)
-            except Exception:
-                pass
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'navigation'
-            logger.debug("Using NavigationSplitView")
-        else:
-            self.split_view = Gtk.Paned.new(Gtk.Orientation.HORIZONTAL)
-            self.split_view.set_wide_handle(True)
-            self.split_view.set_vexpand(True)
-            self._split_variant = 'paned'
-            logger.debug("Using Gtk.Paned fallback")
+        # The sidebar lives in a Gtk.Paned so its divider can be dragged; the
+        # split-view width API the sidebar machinery drives is implemented on
+        # top of the paned position (see sidebar_paned.SidebarPaned). The width
+        # itself is the user's: dragged, remembered, and restored here.
+        saved_width = self.config.get_setting('ui.sidebar_width', None)
+        self.split_view = SidebarPaned(
+            max_width=DEFAULT_SIDEBAR_MAX_WIDTH,
+            fraction=0.25,
+            user_width=saved_width,
+            on_user_resize=self._on_sidebar_width_dragged,
+            on_mode_switch=self._on_sidebar_drag_mode_switch,
+            on_drag=self._on_sidebar_divider_drag,
+        )
+        self.split_view.set_vexpand(True)
+        self.split_view.connect(
+            'notify::position', self._on_sidebar_strip_position_changed)
+        self._split_variant = 'paned'
+        logger.debug("Using resizable Gtk.Paned split view")
+        self._minimal_label_chars_applied = None
 
         # Initial sidebar visibility. Apply "hide on startup" HERE — before the
         # window is presented — so it never flashes visible then collapses.
@@ -2245,7 +2240,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             start_hidden = False
         sidebar_visible = not start_hidden
-        # Track sidebar visibility state for NavigationSplitView (which doesn't have get_show_sidebar)
+        # Tracked alongside the widget state so callers have a cheap answer.
         self._sidebar_visible = sidebar_visible
         # Keep the header toggle button in sync (active == hidden).
         if hasattr(self, 'sidebar_toggle_button'):
@@ -2254,18 +2249,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             except Exception:
                 pass
 
-        # For OverlaySplitView, we need to explicitly set the sidebar state
-        if HAS_OVERLAY_SPLIT:
-            try:
-                self.split_view.set_show_sidebar(sidebar_visible)
-                logger.debug(f"Set OverlaySplitView sidebar visible={sidebar_visible}")
-            except Exception as e:
-                logger.error(f"Failed to set OverlaySplitView sidebar: {e}")
-        elif HAS_NAV_SPLIT and start_hidden:
-            try:
-                self._toggle_sidebar_visibility(False)
-            except Exception:
-                pass
+        # Recorded on the split view now; setup_sidebar() applies it to the
+        # sidebar widget as soon as that widget exists.
+        try:
+            self.split_view.set_show_sidebar(sidebar_visible)
+            logger.debug(f"Set sidebar visible={sidebar_visible}")
+        except Exception as e:
+            logger.error(f"Failed to set initial sidebar visibility: {e}")
 
         # Create sidebar
         self.setup_sidebar()
@@ -2382,57 +2372,24 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return False
 
     def _set_sidebar_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
-            try:
-                self.split_view.set_sidebar(widget)
-                return
-            except Exception:
-                pass
-        elif HAS_NAV_SPLIT:
-            try:
-                # NavigationSplitView requires the sidebar to be a NavigationPage
-                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
-                sidebar_page = Adw.NavigationPage.new(widget, _("Connections"))
-                self.split_view.set_sidebar(sidebar_page)
-                return
-            except Exception:
-                pass
-        # Fallback for Gtk.Paned
         try:
-            self.split_view.set_start_child(widget)
+            self.split_view.set_sidebar(widget)
         except Exception:
-            pass
+            logger.debug("Failed to attach sidebar widget", exc_info=True)
 
     def _set_content_widget(self, widget: Gtk.Widget) -> None:
-        if HAS_OVERLAY_SPLIT:
-            try:
-                self.split_view.set_content(widget)
-                return
-            except Exception:
-                pass
-        elif HAS_NAV_SPLIT:
-            try:
-                # NavigationSplitView content should be a NavigationPage directly
-                # According to docs: https://gnome.pages.gitlab.gnome.org/libadwaita/doc/1.2/class.NavigationSplitView.html
-                # Both sidebar and content must be AdwNavigationPage objects
-                content_page = Adw.NavigationPage.new(widget, _("Terminal"))
-                self.split_view.set_content(content_page)
-                return
-            except Exception:
-                pass
-        # Fallback for Gtk.Paned
         try:
-            self.split_view.set_end_child(widget)
+            self.split_view.set_content(widget)
         except Exception:
-            pass
+            logger.debug("Failed to attach content widget", exc_info=True)
 
     def _get_sidebar_width(self) -> int:
+        """The sidebar's current width in pixels (the paned divider position)."""
         try:
-            if (HAS_NAV_SPLIT or HAS_OVERLAY_SPLIT) and hasattr(self.split_view, 'get_max_sidebar_width'):
-                return int(self.split_view.get_max_sidebar_width())
+            return int(self.split_view.get_sidebar_width())
         except Exception:
             pass
-        # Fallback: attempt to read allocation of the first child when using Paned
+        # Fallback: attempt to read the allocation of the sidebar child
         try:
             sidebar = self.split_view.get_start_child()
             if sidebar is not None:
@@ -2521,6 +2478,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
         flat_rows = self.config.get_setting('ui.sidebar_flat_rows', False)
+        # Strip / in-transition: keep secondary lines off so row height stays
+        # single-line (matches compact strip density).
+        if (
+            getattr(self, '_sidebar_suppress_secondary_labels', False)
+            or getattr(self, '_sidebar_minimal', False)
+        ):
+            show_user_hostname = False
+            show_group_count = False
 
         # Update all rows in the connection list
         row = self.connection_list.get_first_child()
@@ -2531,7 +2496,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, 'connection_icon'):
                 row.connection_icon.set_visible(show_connection_icon)
             if hasattr(row, 'host_label'):
-                row.host_label.set_visible(show_user_hostname)
+                host_visible = show_user_hostname and not getattr(row, '_compact', False)
+                row.host_label.set_visible(host_visible)
             if hasattr(row, 'status_icon'):
                 # update_status() applies both the icon and visibility, honoring
                 # the show_status pref AND keeping idle (UNKNOWN) rows iconless.
@@ -2544,7 +2510,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
             # Update GroupRow elements
             if hasattr(row, 'count_label'):
-                row.count_label.set_visible(show_group_count)
+                count_visible = show_group_count and not getattr(row, '_compact', False)
+                row.count_label.set_visible(count_visible)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
 
@@ -2700,71 +2667,112 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             logger.debug("Failed to refresh sidebar forwarding rows", exc_info=True)
 
-    def update_sidebar_max_width(self, max_width: int):
-        """Update the maximum sidebar width for both NavigationSplitView and OverlaySplitView."""
+    def _on_sidebar_width_dragged(self, width: int) -> None:
+        """Persist a sidebar width the user dragged the paned divider to."""
         try:
-            if HAS_NAV_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
-                self.split_view.set_max_sidebar_width(max_width)
-                logger.debug(f"Updated NavigationSplitView max-sidebar-width to {max_width} sp")
-            elif HAS_OVERLAY_SPLIT and hasattr(self.split_view, 'set_max_sidebar_width'):
-                self.split_view.set_max_sidebar_width(max_width)
-                logger.debug(f"Updated OverlaySplitView max-sidebar-width to {max_width} sp")
-        except Exception as e:
-            logger.error(f"Failed to update max-sidebar-width: {e}")
+            self.config.set_setting('ui.sidebar_width', int(width))
+        except Exception:
+            logger.debug("Failed to save dragged sidebar width", exc_info=True)
+
+    def _on_sidebar_divider_drag(self, _width: int) -> None:
+        """Live divider drag: hide the accent tips bar until release.
+
+        Content width changes every frame while tips are revealed paint a brief
+        blue flash beside the top chrome.
+
+        The drag no longer drops hostname / group-count. That existed to keep
+        row density at the strip's single-line size so a drag *into* the strip
+        blended; dragging no longer collapses the sidebar
+        (``sidebar_paned.COLLAPSE_BY_DRAG``), so all it did was make rows
+        flicker their second line on every resize.
+        """
+        self._pause_tips_banner_for_sidebar_anim(True)
+        self._schedule_sidebar_density_restore()
+
+    def _schedule_sidebar_density_restore(self) -> None:
+        """Restore the tips bar (and post-switch row density) once a drag settles."""
+        from sshpilot.sidebar_paned import _PERSIST_DELAY_MS
+
+        src = getattr(self, '_sidebar_density_restore_source', 0)
+        if src:
+            try:
+                GLib.source_remove(src)
+            except Exception:
+                pass
+        self._sidebar_density_restore_source = GLib.timeout_add(
+            _PERSIST_DELAY_MS, self._restore_sidebar_density_after_drag)
+
+    def _restore_sidebar_density_after_drag(self) -> bool:
+        self._sidebar_density_restore_source = 0
+        if getattr(self, '_sidebar_width_animation', None) is not None:
+            # Still animating a button-triggered transition — leave suppressed.
+            return GLib.SOURCE_REMOVE
+        # Tips live in the content pane; re-show after settle + timeout.
+        self._queue_tips_banner_restore()
+        # Strip mode keeps hostname/count off; only full mode restores prefs.
+        if getattr(self, '_sidebar_minimal', False):
+            return GLib.SOURCE_REMOVE
+        self._set_sidebar_secondary_labels_suppressed(False)
+        return GLib.SOURCE_REMOVE
+
+    def _persist_sidebar_mode(self, minimal: bool = False) -> None:
+        """Remember the resting sidebar mode. Icon strip is retired — always full."""
+        try:
+            self.config.set_setting('ui.sidebar_mode', 'full')
+        except Exception:
+            logger.debug("Failed to save sidebar mode", exc_info=True)
+
+    def _on_sidebar_drag_mode_switch(self, minimal: bool) -> None:
+        """The divider asked for a mode change.
+
+        Icon-strip mode is retired, so a request to collapse is ignored. A
+        request to expand still restores the full sidebar (and clears any
+        leftover strip pin from older builds). Never animated: the pointer is
+        still on the divider.
+        """
+        if minimal:
+            return
+        self._persist_sidebar_mode(False)
+        if not getattr(self, '_sidebar_minimal', False):
+            return
+        try:
+            self.set_sidebar_minimal(False, animate=False)
+        except Exception:
+            logger.debug("sidebar drag mode switch failed", exc_info=True)
 
     # --- Minimal (icon-only) sidebar strip -----------------------------------
     def _apply_sidebar_width(self, width: int) -> None:
-        """Pin the split view sidebar to exactly ``width`` px (one animation tick).
-
-        Both min and max are driven to ``width``. They must be set in the order
-        that never leaves the pair transiently ``min > max`` — OverlaySplitView
-        mishandles that and the sidebar fails to follow (the width jump). The
-        safe order depends on the *current* constraints, not the logical
-        animation direction: if the target is at/above the current max, raise the
-        max ceiling first; otherwise lower the min floor first. (Deriving it from
-        direction breaks the collapse "lock" step in narrow windows, where the
-        current allocation can already be below the resting min.)
-        """
+        """Pin the sidebar to exactly ``width`` px (one animation tick)."""
         sv = getattr(self, 'split_view', None)
-        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+        if sv is None or not hasattr(sv, 'pin_width'):
             return
         try:
-            current_max = int(sv.get_max_sidebar_width())
+            sv.pin_width(width)
         except Exception:
-            current_max = width
-        try:
-            if width >= current_max:
-                sv.set_max_sidebar_width(width)
-                sv.set_min_sidebar_width(width)
-            else:
-                sv.set_min_sidebar_width(width)
-                sv.set_max_sidebar_width(width)
-        except Exception:
-            pass
+            logger.debug("Failed to pin sidebar width", exc_info=True)
 
     def _set_sidebar_clipping(self, enabled: bool) -> None:
-        """Flip the sidebar's scrollers between clip (EXTERNAL) and fit (NEVER).
+        """Sync sidebar scroller policies for full vs minimal chrome.
 
-        Clipping is only wanted *during* the expand animation, so full-width
-        rows/chrome can be revealed by the widening instead of forcing the
-        sidebar to their minimum width. At rest the fit behaviour must return so
-        rows ellipsize to the sidebar width and toolbar buttons spread.
+        Header/toolbar clips stay EXTERNAL horizontally so overflow toolbars
+        can shrink the pane without flooring at the full button-row width.
+        The connection list uses EXTERNAL only during width transitions (so
+        rows can be revealed by the animation); at rest it is NEVER so labels
+        ellipsize to the sidebar width.
         """
-        hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
+        list_hpol = Gtk.PolicyType.EXTERNAL if enabled else Gtk.PolicyType.NEVER
         # In the minimal strip the vertical scrollbar is hidden the documented
         # way — EXTERNAL keeps the list scrollable (wheel/touch) without drawing
         # a scrollbar over the icons; full mode shows it on demand (AUTOMATIC).
-        # _set_sidebar_clipping(False) is the resting call after every
-        # transition, and _sidebar_minimal is already updated by then.
         conn_vpol = (Gtk.PolicyType.EXTERNAL
                      if getattr(self, '_sidebar_minimal', False)
                      else Gtk.PolicyType.AUTOMATIC)
         targets = (
-            ('connection_scrolled', conn_vpol),
-            ('_sidebar_header_clip', Gtk.PolicyType.NEVER),
-            ('_sidebar_toolbar_clip', Gtk.PolicyType.NEVER),
+            ('connection_scrolled', list_hpol, conn_vpol),
+            ('_sidebar_header_clip', Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER),
+            ('_sidebar_toolbar_clip', Gtk.PolicyType.EXTERNAL, Gtk.PolicyType.NEVER),
         )
-        for attr, vpol in targets:
+        for attr, hpol, vpol in targets:
             sw = getattr(self, attr, None)
             if sw is not None:
                 try:
@@ -2772,8 +2780,20 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     pass
 
-    def _apply_sidebar_minimal_chrome(self, minimal: bool) -> None:
-        """Hide the header/search/toolbar chrome that can't fit the strip."""
+    def _apply_sidebar_minimal_chrome(
+        self,
+        minimal: bool,
+        *,
+        header_compact: bool = True,
+        selection_style: bool = True,
+    ) -> None:
+        """Collapse chrome for the strip; keep the same header toolbar buttons.
+
+        ``header_compact`` / ``selection_style`` can be deferred until a width
+        animation settles. Dropping ``.sidebar-minimal`` (accent selection) or
+        force-relayouting the header at strip width is what painted a brief
+        blue rectangle under the top toolbar during expand.
+        """
         show = not minimal
         # The "SSH Pilot" title label has a natural min width that floors how
         # narrow the sidebar can get; hide it so the strip can shrink fully, and
@@ -2784,32 +2804,233 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 title.set_visible(show)
             except Exception:
                 pass
+        # The app icon takes the title's place in the strip (see sidebar.py,
+        # _assemble_sidebar_shell), so the strip's header is not a blank bar.
+        app_icon = getattr(self, '_sidebar_app_icon', None)
+        if app_icon is not None:
+            try:
+                app_icon.set_visible(minimal)
+            except Exception:
+                pass
         self._move_title_to_content_header(minimal)
-        for attr in ('_sidebar_header_handle', 'search_container', '_sidebar_toolbar_box'):
+        # The top OverflowToolbar stays (same New Connection button as full
+        # mode); search and the bottom selection toolbar still cannot fit.
+        for attr in ('search_container', '_sidebar_toolbar_box'):
             widget = getattr(self, attr, None)
             if widget is None:
                 continue
-            # The search container manages its own visibility (search mode); only
-            # force it hidden in minimal, never force it visible on restore.
             if attr == 'search_container' and show:
                 continue
             try:
                 widget.set_visible(show)
             except Exception:
                 pass
-        # The expand button takes the (hidden) toolbar's slot in minimal mode.
+        if header_compact:
+            self._apply_sidebar_header_compact(minimal)
         btn = getattr(self, '_sidebar_expand_button', None)
         if btn is not None:
             try:
                 btn.set_visible(minimal)
             except Exception:
                 pass
-        box = getattr(self, '_sidebar_box', None)
-        if box is not None:
+        if selection_style:
+            box = getattr(self, '_sidebar_box', None)
+            if box is not None:
+                try:
+                    (box.add_css_class if minimal else box.remove_css_class)(
+                        'sidebar-minimal')
+                except Exception:
+                    pass
+
+    def _set_sidebar_header_clip_reveal(
+        self, enabled: bool, target_width: int | None = None
+    ) -> None:
+        """Toggle clip-reveal on the top sidebar OverflowToolbar.
+
+        ``target_width`` is the width the animation ends at; passing it keeps
+        the button row on the split the destination settles on, so the reveal
+        does not show buttons that hop into the "…" menu on the last frame.
+        """
+        header = getattr(self, '_sidebar_header_toolbar', None)
+        if header is None or not hasattr(header, 'set_clip_reveal'):
+            return
+        try:
+            header.set_clip_reveal(enabled, target_width=target_width)
+        except Exception:
+            logger.debug("header clip-reveal failed", exc_info=True)
+
+    def _pause_tips_banner_for_sidebar_anim(self, pause: bool) -> None:
+        """Hide the accent tips bar while the sidebar width is unstable.
+
+        Divider mode switches use ``animate=False``, and live divider drags
+        resize the content pane every frame — both flash ``@accent_bg_color``
+        from the tips revealer. Snap-hide the container (not only reveal-child)
+        for the unstable window; restore only after settle plus
+        :data:`_TIPS_BANNER_RESTORE_DELAY_MS` via
+        :meth:`_queue_tips_banner_restore`.
+        """
+        revealer = getattr(self, 'tips_revealer', None)
+        container = getattr(self, 'tips_banner_container', None)
+        if pause:
+            # A pending restore must not undo this pause mid-drag.
+            src = getattr(self, '_tips_restore_source', 0)
+            if src:
+                try:
+                    GLib.source_remove(src)
+                except Exception:
+                    pass
+                self._tips_restore_source = 0
+            if getattr(self, '_tips_paused_for_sidebar', False):
+                return
+            was = False
             try:
-                (box.add_css_class if minimal else box.remove_css_class)('sidebar-minimal')
+                if revealer is not None:
+                    was = bool(revealer.get_reveal_child())
+            except Exception:
+                was = False
+            self._tips_was_revealed_before_sidebar_anim = was
+            self._tips_paused_for_sidebar = True
+            if revealer is not None:
+                try:
+                    self._tips_saved_transition_duration = int(
+                        revealer.get_transition_duration())
+                except Exception:
+                    self._tips_saved_transition_duration = 250
+                try:
+                    revealer.set_transition_duration(0)
+                    revealer.set_reveal_child(False)
+                except Exception:
+                    logger.debug(
+                        "pause tips revealer failed", exc_info=True)
+            # Hard-hide: reveal_child alone can still paint one accent frame
+            # while the content pane reallocates.
+            if container is not None:
+                try:
+                    container.set_visible(False)
+                except Exception:
+                    logger.debug(
+                        "pause tips container failed", exc_info=True)
+            return
+
+        if not getattr(self, '_tips_paused_for_sidebar', False):
+            return
+        self._tips_paused_for_sidebar = False
+        restore = bool(getattr(self, '_tips_was_revealed_before_sidebar_anim', False))
+        self._tips_was_revealed_before_sidebar_anim = False
+        if not restore:
+            return
+        try:
+            if not bool(self.config.get_setting('terminal.show_tips', True)):
+                return
+        except Exception:
+            pass
+        if container is not None:
+            try:
+                container.set_visible(True)
             except Exception:
                 pass
+        if revealer is None:
+            return
+        try:
+            revealer.set_transition_duration(0)
+            revealer.set_reveal_child(True)
+            revealer.set_transition_duration(
+                int(getattr(self, '_tips_saved_transition_duration', 250) or 250)
+            )
+        except Exception:
+            logger.debug("restore tips after sidebar anim failed", exc_info=True)
+
+    #: Wait after sidebar width settles before re-showing the accent tips bar.
+    _TIPS_BANNER_RESTORE_DELAY_MS = 400
+
+    def _queue_tips_banner_restore(self) -> None:
+        """Restore tips after settle plus :data:`_TIPS_BANNER_RESTORE_DELAY_MS`."""
+        if not getattr(self, '_tips_paused_for_sidebar', False):
+            return
+        src = getattr(self, '_tips_restore_source', 0)
+        if src:
+            try:
+                GLib.source_remove(src)
+            except Exception:
+                pass
+        self._tips_restore_source = GLib.timeout_add(
+            self._TIPS_BANNER_RESTORE_DELAY_MS,
+            self._on_tips_banner_restore_timeout,
+        )
+
+    def _on_tips_banner_restore_timeout(self) -> bool:
+        self._tips_restore_source = 0
+        if getattr(self, '_sidebar_width_animation', None) is not None:
+            # Width still moving — wait for another settle window.
+            self._queue_tips_banner_restore()
+            return GLib.SOURCE_REMOVE
+        self._pause_tips_banner_for_sidebar_anim(False)
+        return GLib.SOURCE_REMOVE
+
+    def _sidebar_header(self):
+        return getattr(self, '_sidebar_header_toolbar', None) or getattr(
+            self, '_sidebar_header_box', None)
+
+    def _apply_sidebar_header_items(self, minimal: bool) -> None:
+        """Set which header buttons exist for this mode.
+
+        Hostnames are not shown in the compact strip, so the reveal/conceal
+        control does nothing useful there — drop it from the toolbar and
+        overflow menu until full mode returns. This is the half of header
+        compacting an expand applies *up front*: the button set has to be the
+        destination's before clip-reveal freezes the row, or the missing
+        control leaves room for two buttons that hop into the "…" menu on the
+        animation's last frame.
+        """
+        from sshpilot.overflow_toolbar import mark_force_hidden
+
+        handle = getattr(self, '_sidebar_header_handle', None)
+        if handle is not None:
+            try:
+                handle.set_visible(True)
+            except Exception:
+                pass
+        if self._sidebar_header() is None:
+            return
+        hide_btn = getattr(self, '_hide_hosts_button', None)
+        if hide_btn is None:
+            return
+        try:
+            mark_force_hidden(hide_btn, minimal)
+        except Exception:
+            logger.debug(
+                "Failed to toggle hide-hosts in strip header",
+                exc_info=True,
+            )
+
+    def _apply_sidebar_header_compact(self, minimal: bool) -> None:
+        """Tighten horizontal header margins in the strip; hide hostname toggle.
+
+        Vertical margins stay fixed (12 top / 6 bottom). Changing them with the
+        strip made the New Connection toolbar jump whenever rows compacted —
+        the same moment list row heights change — which read as the chrome
+        shifting with the list.
+        """
+        self._apply_sidebar_header_items(minimal)
+        header = self._sidebar_header()
+        if header is None:
+            return
+        try:
+            header.set_margin_start(
+                _SIDEBAR_HEADER_MARGIN_STRIP if minimal
+                else _SIDEBAR_HEADER_MARGIN_FULL)
+            header.set_margin_end(
+                _SIDEBAR_HEADER_MARGIN_STRIP if minimal
+                else _SIDEBAR_HEADER_MARGIN_FULL)
+            header.set_margin_top(12)
+            header.set_margin_bottom(6)
+        except Exception:
+            pass
+        try:
+            if hasattr(header, 'force_relayout'):
+                header.force_relayout()
+        except Exception:
+            pass
 
     def _move_title_to_content_header(self, minimal: bool) -> None:
         """Select tabs, the minimal-sidebar title, or the empty drag region."""
@@ -2833,16 +3054,133 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         except Exception:
             pass
 
+    def _minimal_strip_label_chars(self) -> int:
+        """Compact-label character budget for the current sidebar width."""
+        try:
+            width = int(self._get_sidebar_width())
+        except Exception:
+            width = _MINIMAL_STRIP_WIDTH
+        if width <= 0:
+            width = _MINIMAL_STRIP_WIDTH
+        return minimal_label_max_chars(
+            width,
+            base_width=_MINIMAL_STRIP_WIDTH,
+        )
+
+    def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
+        """Reserve or shed the group rows' split-view action for this width.
+
+        The group row is what sets the sidebar's measured minimum, and a
+        reserved 34px button is most of it. Below
+        :data:`_ROW_ACTIONS_MIN_WIDTH` the rows drop it, the minimum drops with
+        them, and the divider can go on narrowing instead of stopping at a
+        width the name has already been ellipsised out of.
+        """
+        lb = getattr(self, 'connection_list', None)
+        if lb is None:
+            return
+        try:
+            width = int(self._get_sidebar_width())
+        except Exception:
+            return
+        reserved = width >= _ROW_ACTIONS_MIN_WIDTH
+        if not force and reserved == getattr(self, '_sidebar_row_actions_reserved', None):
+            return
+        self._sidebar_row_actions_reserved = reserved
+        row = lb.get_first_child()
+        while row is not None:
+            setter = getattr(row, 'set_actions_reserved', None)
+            if setter is not None:
+                try:
+                    setter(reserved)
+                except Exception:
+                    logger.debug("row set_actions_reserved failed", exc_info=True)
+            row = row.get_next_sibling()
+
+    def _on_sidebar_strip_position_changed(self, *_args) -> None:
+        """Grow/shrink compact label ellipsis as the minimal strip is dragged."""
+        self._apply_sidebar_row_actions()
+        if not getattr(self, '_sidebar_minimal', False):
+            return
+        try:
+            chars = self._minimal_strip_label_chars()
+        except Exception:
+            return
+        if chars == getattr(self, '_minimal_label_chars_applied', None):
+            return
+        self._apply_sidebar_minimal_rows(True)
+
+    def _apply_sidebar_secondary_labels(self) -> None:
+        """Show or hide hostname / group-count lines from current suppress state.
+
+        These two prefs add a second line (or a count badge) that changes row
+        height. During strip↔full transitions they stay off so density matches
+        the strip; preferences return only once full mode has settled.
+        """
+        lb = getattr(self, 'connection_list', None)
+        if lb is None:
+            return
+        suppressed = (
+            getattr(self, '_sidebar_suppress_secondary_labels', False)
+            or getattr(self, '_sidebar_minimal', False)
+        )
+        if suppressed:
+            show_host = False
+            show_count = False
+        else:
+            try:
+                show_host = bool(
+                    self.config.get_setting('ui.sidebar_show_user_hostname', True))
+            except Exception:
+                show_host = True
+            try:
+                show_count = bool(
+                    self.config.get_setting('ui.sidebar_show_group_count', True))
+            except Exception:
+                show_count = True
+        row = lb.get_first_child()
+        while row is not None:
+            if hasattr(row, 'host_label'):
+                try:
+                    visible = show_host and not getattr(row, '_compact', False)
+                    row.host_label.set_visible(visible)
+                except Exception:
+                    pass
+            if hasattr(row, 'count_label'):
+                try:
+                    visible = show_count and not getattr(row, '_compact', False)
+                    row.count_label.set_visible(visible)
+                except Exception:
+                    pass
+            row = row.get_next_sibling()
+
+    def _set_sidebar_secondary_labels_suppressed(self, suppressed: bool) -> None:
+        """Force hostname/group-count off (or restore prefs) for a transition."""
+        self._sidebar_suppress_secondary_labels = bool(suppressed)
+        self._apply_sidebar_secondary_labels()
+
     def _apply_sidebar_minimal_rows(self, minimal: bool) -> None:
         """Toggle compact rendering on every connection/group row."""
         lb = getattr(self, 'connection_list', None)
         if lb is None:
             return
+        max_chars = None
+        if minimal:
+            try:
+                max_chars = self._minimal_strip_label_chars()
+            except Exception:
+                max_chars = None
+            self._minimal_label_chars_applied = max_chars
+        else:
+            self._minimal_label_chars_applied = None
         row = lb.get_first_child()
         while row is not None:
             if hasattr(row, 'set_compact'):
                 try:
-                    row.set_compact(minimal)
+                    if minimal and max_chars is not None:
+                        row.set_compact(True, max_chars=max_chars)
+                    else:
+                        row.set_compact(minimal)
                 except Exception:
                     logger.debug("row set_compact failed", exc_info=True)
             row = row.get_next_sibling()
@@ -2852,7 +3190,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
         The header/toolbar button rows and the connection rows each request a
         minimum width; the widest is the floor the sidebar rests at once fit
-        (unclipped), which can exceed the user's max-width setting.
+        (unclipped), and it is the sidebar's only minimum — it can exceed the
+        width the sidebar would otherwise pick for itself.
         """
         widest = 0
         for attr in ('_sidebar_header_handle', '_sidebar_toolbar_box', 'connection_list'):
@@ -2867,31 +3206,17 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return widest
 
     def set_sidebar_minimal(self, minimal: bool, animate: bool = True) -> None:
-        """Collapse the sidebar to an icon-only strip, or restore its full width.
+        """Expand to the full sidebar. Icon-strip collapse is retired.
 
-        The split view's min/max sidebar width is the single width lever; the
-        transition is animated with ``Adw.TimedAnimation`` when available.
+        Callers that still pass ``minimal=True`` (legacy drag expand/collapse,
+        minimize-on-connect) are ignored so the strip cannot be re-entered.
         """
-        minimal = bool(minimal)
-        if minimal == getattr(self, '_sidebar_minimal', False):
+        if bool(minimal):
             return
-        self._sidebar_minimal = minimal
-
-        if minimal:
-            # A strip implies the sidebar is on screen.
-            try:
-                self._toggle_sidebar_visibility(True)
-                if hasattr(self, 'sidebar_toggle_button'):
-                    self.sidebar_toggle_button.set_active(False)
-            except Exception:
-                logger.debug("show-for-minimal failed", exc_info=True)
-
-        saved_max = _effective_max_sidebar_width(
-            self.config.get_setting('ui.max-sidebar-width', None))
-        # A user-chosen max width can be below the nominal minimum; the resting
-        # min must never exceed the max (OverlaySplitView breaks on min > max,
-        # bringing the jump back at small max widths).
-        base_min = min(180 if HAS_OVERLAY_SPLIT else 200, saved_max)
+        if not getattr(self, '_sidebar_minimal', False):
+            return
+        minimal = False
+        self._sidebar_minimal = False
 
         anim = getattr(self, '_sidebar_width_animation', None)
         if anim is not None:
@@ -2902,26 +3227,36 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._sidebar_width_animation = None
 
         sv = getattr(self, 'split_view', None)
-        if sv is None or not hasattr(sv, 'set_max_sidebar_width'):
+        if sv is None or not hasattr(sv, 'pin_width'):
             # No width lever — just swap the content to the target state.
+            self._set_sidebar_secondary_labels_suppressed(True)
             self._apply_sidebar_minimal_chrome(minimal)
             self._apply_sidebar_minimal_rows(minimal)
             self._set_sidebar_clipping(False)  # apply the minimal-aware vpolicy
+            self._set_sidebar_secondary_labels_suppressed(minimal)
             return
 
-        def _fraction_width():
+        def _resting_width():
+            # The width the sidebar returns to once the pin is released: the one
+            # the user dragged to, else the automatic fraction of the window.
             try:
-                frac = sv.get_sidebar_width_fraction()
-                win_w = sv.get_width() or 0
-                if win_w > 0:
-                    return max(base_min, min(saved_max, int(frac * win_w)))
+                return int(sv.get_resting_sidebar_width())
             except Exception:
-                pass
-            return saved_max
+                logger.debug("resting sidebar width failed", exc_info=True)
+                return self._measure_sidebar_content_min()
 
         # Decide the full (expanded) width and prepare the content. The chrome's
-        # min width can push the resting width *above* saved_max, so the full
-        # endpoint must reflect that or the end of the animation snaps to it.
+        # min width can push the resting width above it, so the full endpoint
+        # must reflect that or the end of the animation snaps to it.
+        # Header compact (margins / hide-hosts) is deferred until the width
+        # settles — applying it at the wrong width force-relayouts the top
+        # OverflowToolbar and reads as flicker.
+        # Hostname / group-count stay off for the whole transition so row
+        # height matches the strip (prefs return only when full mode settles).
+        # Tips (accent blue) hide before any width/chrome change — divider
+        # switches use animate=False and previously never paused them.
+        self._set_sidebar_secondary_labels_suppressed(True)
+        self._pause_tips_banner_for_sidebar_anim(True)
         if minimal:
             # Collapsing: lock the current (full) width before compacting so
             # releasing the chrome's min width doesn't drop the sidebar first.
@@ -2933,40 +3268,81 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 except Exception:
                     full_width = 0
             if full_width <= _MINIMAL_STRIP_WIDTH:
-                full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+                full_width = max(_resting_width(), self._measure_sidebar_content_min())
             self._apply_sidebar_width(full_width)
-            self._apply_sidebar_minimal_chrome(True)
+            # Apply strip selection style + compact rows immediately so the
+            # accent (blue) selection does not linger while the width shrinks.
+            self._apply_sidebar_minimal_chrome(True, header_compact=False)
             self._apply_sidebar_minimal_rows(True)
         else:
             # Expanding: clip first so restoring full content can't force the
-            # width, then restore and measure the width it will rest at.
+            # width. Keep compact rows and .sidebar-minimal until the width has
+            # landed — uncompacting / accent selection at strip width is the
+            # brief blue rectangle under the top toolbar.
             self._set_sidebar_clipping(True)
-            self._apply_sidebar_minimal_chrome(False)
-            self._apply_sidebar_minimal_rows(False)
-            full_width = max(_fraction_width(), self._measure_sidebar_content_min())
+            self._apply_sidebar_minimal_chrome(
+                False, header_compact=False, selection_style=False)
+            # Header *margins* stay deferred (relayouting at strip width reads
+            # as flicker), but the button set is full mode's from the first
+            # frame: the strip drops the hide-hostnames control, and freezing
+            # the row without it leaves room for two buttons that would hop
+            # into the "…" menu the moment the width settles.
+            self._apply_sidebar_header_items(False)
+            full_width = max(_resting_width(), self._measure_sidebar_content_min())
 
         full_width = max(int(full_width), _MINIMAL_STRIP_WIDTH)
 
-        def _pin_endpoints():
+        def _settle():
+            # Resting state: the strip stays pinned at its width, the full
+            # sidebar goes back to being freely resizable.
             try:
                 if minimal:
-                    sv.set_min_sidebar_width(_MINIMAL_STRIP_WIDTH)
-                    sv.set_max_sidebar_width(_MINIMAL_STRIP_WIDTH)
+                    sv.pin_width(_MINIMAL_STRIP_WIDTH)
                 else:
-                    sv.set_min_sidebar_width(base_min)
-                    sv.set_max_sidebar_width(saved_max)
+                    sv.release_width()
             except Exception:
-                pass
+                logger.debug("Failed to settle sidebar width", exc_info=True)
+
+        def _finish_chrome():
+            if not minimal:
+                # Width is full now: safe to restore row chrome + accent selection.
+                self._apply_sidebar_minimal_rows(False)
+                self._apply_sidebar_minimal_chrome(False)
+            else:
+                self._apply_sidebar_header_compact(True)
+            self._set_sidebar_header_clip_reveal(False)
+            self._set_sidebar_clipping(False)
+            # Tips return only after settle + timeout (not on this frame).
+            self._queue_tips_banner_restore()
+            if minimal:
+                self._set_sidebar_secondary_labels_suppressed(True)
+            elif animate:
+                self._set_sidebar_secondary_labels_suppressed(False)
+            else:
+                self._sidebar_suppress_secondary_labels = True
+                self._apply_sidebar_secondary_labels()
+                self._schedule_sidebar_density_restore()
 
         if not animate or not HAS_TIMED_ANIMATION:
-            self._set_sidebar_clipping(False)
-            _pin_endpoints()
+            _finish_chrome()
+            _settle()
             return
 
         if minimal:
             start, target = float(full_width), float(_MINIMAL_STRIP_WIDTH)
         else:
             start, target = float(_MINIMAL_STRIP_WIDTH), float(full_width)
+
+        # Both directions: clip the sidebar and let the header toolbar reveal
+        # by clipping instead of overflow-popping every animation tick.
+        # Freeze the button row on the split the *full* sidebar settles on —
+        # the wider endpoint, whichever direction this is. Expanding then
+        # reveals exactly the buttons that stay, and collapsing clips them away
+        # instead of dropping them all on the first frame. The row is the
+        # sidebar minus the header's full-mode margins.
+        self._set_sidebar_clipping(True)
+        self._set_sidebar_header_clip_reveal(
+            True, int(max(start, target)) - 2 * _SIDEBAR_HEADER_MARGIN_FULL)
 
         def _tick(value, *_):
             self._apply_sidebar_width(int(value))
@@ -2979,8 +3355,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             pass
 
         def _on_done(*_a):
-            self._set_sidebar_clipping(False)
-            _pin_endpoints()
+            _finish_chrome()
+            _settle()
             self._sidebar_width_animation = None
 
         animation.connect('done', _on_done)
@@ -3711,11 +4087,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         banner_controller.connect('key-pressed', self.on_broadcast_banner_key_pressed)
         banner_box.add_controller(banner_controller)
 
-        # Only the Adw split variants build a ToolbarView; the legacy fallback
-        # below has none, and fullscreen degrades to plain hiding there.
+        # The content side is an Adw.ToolbarView carrying the custom title bar,
+        # which keeps the sidebar and the content edge to edge under their own
+        # headers. The legacy fallback below has none, and fullscreen degrades
+        # to plain hiding there.
         self._content_toolbar_view = None
 
-        if HAS_OVERLAY_SPLIT:
+        if HAS_TOOLBAR_VIEW:
             content_box = Adw.ToolbarView()
             # Kept on the window: terminal fullscreen drives this view's
             # reveal/extend properties to overlay the custom tab/title bar
@@ -3736,26 +4114,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
             main_box.append(content_box)
             self._set_content_widget(main_box)
-            logger.debug("Set content widget for OverlaySplitView")
-        elif HAS_NAV_SPLIT:
-            content_box = Adw.ToolbarView()
-            self._content_toolbar_view = content_box
-            self._add_content_top_bars(content_box)
-            # Create content wrapper with banners below the title bar.
-            content_wrapper = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            content_wrapper.append(self.update_banner_container)
-            content_wrapper.append(self.tips_banner_container)
-            content_wrapper.append(self.broadcast_banner)
-            content_wrapper.append(self.tab_overview)
-            self._command_content_overlay = Gtk.Overlay()
-            self._command_content_overlay.set_hexpand(True)
-            self._command_content_overlay.set_vexpand(True)
-            self._command_content_overlay.set_child(content_wrapper)
-            content_box.set_content(self._command_content_overlay)
-            main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            main_box.append(content_box)
-            self._set_content_widget(main_box)
-            logger.debug("Set content widget for NavigationSplitView")
+            logger.debug("Set content widget in toolbar view")
         else:
             # For non-split views, create a vertical box to contain banners and content
             main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -4015,6 +4374,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # omnisearch lands — re-enable by calling self._append_command_matches().
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
+        # Fresh rows reserve their row actions; a narrow sidebar sheds them.
+        self._apply_sidebar_row_actions(force=True)
         for connection_uuid, group_id in selected_connection_rows:
             connection = self.connection_manager.get_connection_by_uuid(
                 connection_uuid
@@ -5889,7 +6250,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 and PluginCapability.FILE_TRANSFER in caps
                 and not should_hide_file_manager_options()
             )
-            self.manage_files_button.set_visible(not should_hide_file_manager_options())
+            from sshpilot.overflow_toolbar import mark_force_hidden
+            mark_force_hidden(
+                self.manage_files_button,
+                should_hide_file_manager_options(),
+            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 # System terminal uses a daemon-prepared launch specification.
                 self.system_terminal_button.set_sensitive(
@@ -5915,7 +6280,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
             self.manage_files_button.set_sensitive(False)
-            self.manage_files_button.set_visible(not should_hide_file_manager_options())
+            from sshpilot.overflow_toolbar import mark_force_hidden
+            mark_force_hidden(
+                self.manage_files_button,
+                should_hide_file_manager_options(),
+            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(allow_single_group)
@@ -5928,7 +6297,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(self, 'scp_button'):
                 self.scp_button.set_sensitive(False)
             self.manage_files_button.set_sensitive(False)
-            self.manage_files_button.set_visible(not should_hide_file_manager_options())
+            from sshpilot.overflow_toolbar import mark_force_hidden
+            mark_force_hidden(
+                self.manage_files_button,
+                should_hide_file_manager_options(),
+            )
             if hasattr(self, 'system_terminal_button') and self.system_terminal_button:
                 self.system_terminal_button.set_sensitive(False)
             self.rename_group_button.set_sensitive(False)
@@ -6000,9 +6373,11 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
           width underneath.
 
         This is a pure presentation switch — sidebar visibility is untouched, so
-        it composes with show/hide and with minimal mode. Only the
-        ``AdwOverlaySplitView`` backend supports a true overlay; other split
-        variants stay side-by-side.
+        it composes with show/hide and with minimal mode. A true overlay needs
+        the ``AdwOverlaySplitView`` backend; the resizable ``Gtk.Paned`` the
+        window now uses is always a side-by-side column, so the request is
+        recorded but the layout does not change. The floating sidebar popup
+        (``search_popup.SearchPopup``) is the over-the-content presentation.
         """
         overlay = bool(overlay)
         self._sidebar_overlay = overlay
@@ -6017,21 +6392,16 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
 
     # --- Search popup owner callbacks (see search_popup.SearchPopup) ---------
     def _popup_target_width(self) -> int:
-        """Panel width for the search popup: the *actual* expanded-sidebar width
-        (fraction-based, clamped to [base_min, max]), not the raw max."""
-        saved_max = _effective_max_sidebar_width(
-            self.config.get_setting('ui.max-sidebar-width', None))
+        """Panel width for the search popup: the width the expanded sidebar
+        rests at, so the panel matches the sidebar the user sized."""
+        sv = getattr(self, 'split_view', None)
         try:
-            sv = getattr(self, 'split_view', None)
-            if sv is not None and hasattr(sv, 'get_sidebar_width_fraction'):
-                base_min = 180 if HAS_OVERLAY_SPLIT else 200
-                win_w = sv.get_width() or 0
-                if win_w > 0:
-                    frac = sv.get_sidebar_width_fraction()
-                    return max(base_min, min(saved_max, int(frac * win_w)))
+            if sv is not None and hasattr(sv, 'get_resting_sidebar_width'):
+                return max(self._measure_sidebar_content_min(),
+                           int(sv.get_resting_sidebar_width()))
         except Exception:
-            pass
-        return saved_max
+            logger.debug("popup target width failed", exc_info=True)
+        return DEFAULT_SIDEBAR_MAX_WIDTH
 
     def _on_search_popup_shown(self) -> None:
         """Detached: show the full sidebar even when the strip is minimal, and
@@ -6059,19 +6429,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             self._search_popup.hide()
 
     def _sidebar_mode_is_minimal(self) -> bool:
-        """True when the icon strip is the user's configured resting mode."""
-        try:
-            return str(self.config.get_setting('ui.sidebar_mode', 'full')).lower() == 'minimal'
-        except Exception:
-            return False
+        """Icon-strip resting mode is retired; always False."""
+        return False
 
     def _apply_sidebar_visible(self, visible: bool) -> None:
         """Programmatically show/hide the sidebar and keep the toggle button in
         sync (used by the behavior hooks)."""
-        # Leave a *transient* minimal strip (minimize-on-connect) so the next
-        # reveal is the full sidebar; keep it when minimal is the configured
-        # resting mode so it survives show/hide.
-        if getattr(self, '_sidebar_minimal', False) and not self._sidebar_mode_is_minimal():
+        # Leave any leftover strip chrome so the next reveal is the full sidebar.
+        if getattr(self, '_sidebar_minimal', False):
             self.set_sidebar_minimal(False, animate=False)
         try:
             self._toggle_sidebar_visibility(visible)
@@ -6101,41 +6466,42 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         return GLib.SOURCE_REMOVE
 
     def _sidebar_on_terminal_open(self) -> str:
-        """What to do to the sidebar when a session opens: 'none'|'minimize'|'hide'.
+        """What to do to the sidebar when a session opens: 'none'|'hide'.
 
         Falls back to the legacy boolean settings for configs saved before the
-        options were merged into one selector.
+        options were merged into one selector. Icon-strip ``minimize`` is
+        retired and treated as ``none``.
         """
         try:
             value = self.config.get_setting('ui.sidebar_on_terminal_open', None)
         except Exception:
             value = None
-        if value in ('none', 'minimize', 'hide'):
+        if value == 'minimize':
+            return 'none'
+        if value in ('none', 'hide'):
             return value
         # Legacy fallback.
         try:
             if self.config.get_setting('ui.sidebar_hide_on_terminal_open', False):
                 return 'hide'
-            if self.config.get_setting('ui.sidebar_minimize_on_connect', False):
-                return 'minimize'
         except Exception:
             pass
         return 'none'
 
     def _minimize_sidebar_after_terminal(self) -> bool:
-        """Deferred collapse to the icon strip once a session settles."""
+        """No-op: icon-strip minimize-on-connect is retired."""
         self._sidebar_hide_timer_id = None
-        try:
-            self.set_sidebar_minimal(True)
-        except Exception:
-            logger.debug("minimize_sidebar_after_terminal failed", exc_info=True)
         return GLib.SOURCE_REMOVE
 
     def _toggle_sidebar_visibility(self, is_visible):
         """Helper method to toggle sidebar visibility"""
         try:
             logger.debug(f"Toggle sidebar visibility requested: {is_visible}, split variant: {getattr(self, '_split_variant', 'unknown')}")
-            if HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
+            if getattr(self, '_split_variant', '') == 'paned':
+                self._sidebar_visible = bool(is_visible)
+                self.split_view.set_show_sidebar(is_visible)
+                logger.debug(f"Set paned sidebar visibility to: {is_visible}")
+            elif HAS_OVERLAY_SPLIT and getattr(self, '_split_variant', '') == 'overlay':
                 # For OverlaySplitView
                 self.split_view.set_show_sidebar(is_visible)
                 logger.debug(f"Set OverlaySplitView sidebar visibility to: {is_visible}")

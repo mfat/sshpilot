@@ -10,18 +10,124 @@ the header actions, search bar, connection list and bottom toolbar. It normally
 lives inside the split view's `Adw.ToolbarView` (`window._sidebar_toolbar_view`),
 which is the split view's sidebar widget.
 
-## 1. Full vs. Minimal (icon strip)
+## 0. The split view itself — a resizable paned
 
-`set_sidebar_minimal(minimal: bool, animate: bool = True)`
+`window.split_view` is a `SidebarPaned` (`src/sshpilot/sidebar_paned.py`): a
+`Gtk.Paned` whose divider the user can drag, wearing the split-view API the
+modes below drive (`pin_width` / `release_width` / `set_show_sidebar` /
+`set_sidebar` / `set_content`). It replaced `AdwOverlaySplitView`, which
+computed the width itself and offered no handle. What changed for callers:
+
+- **The width is the user's.** Dragging the divider sets it; it is remembered,
+  persisted as `ui.sidebar_width`, restored at startup, and restored again when
+  the icon strip animates back open. Before the user has ever sized it the
+  sidebar picks a quarter of the window, capped at
+  `sidebar_paned.DEFAULT_MAX_WIDTH` (400) — that cap applies only to the width
+  the sidebar chooses for itself, never to a dragged one. **There is no
+  maximum-width setting any more**: the slider in Settings ▸ Sidebar existed
+  because the Adw split views gave no other way to widen the sidebar, and it
+  was removed with them (a stale `ui.max-sidebar-width` in an old config is
+  simply ignored).
+- **The minimum is measured, not configured.** `SidebarPaned._floor()` is the
+  sidebar's own content minimum — `sidebar.measure(HORIZONTAL, -1)`, i.e. the
+  widest of what the header, the bottom toolbar row and the connection rows
+  ask for. Measured today: **195px, all of it the group row** (a connection row
+  asks 128, the header toolbar 98, and the bottom toolbar sits in a scroller
+  that asks 0). Row labels add nothing to it — `sidebar.FULL_LABEL_MIN_CHARS`
+  is 0, because `width-chars` is a floor GTK never lays a label out below and
+  these labels ellipsize; at the old 10 characters they were ~80px each and the
+  floor was 263. The group row's trailing controls are the rest of it, and they
+  are **width-responsive**: the Edit button is gone entirely (it is a
+  context-menu item), and the split-view button keeps its reserved 34px only
+  while the sidebar is at least `window._ROW_ACTIONS_MIN_WIDTH` (180) wide.
+  Below that `MainWindow._apply_sidebar_row_actions` calls
+  `GroupRow.set_actions_reserved(False)` on every row, the button goes, and the
+  measured floor goes 149 → 128 with it — which is what lets the divider carry
+  on instead of stopping at a width the group name has already been ellipsised
+  out of. Hover is still opacity-only, so revealing the button never reflows a
+  row; only the width decides whether it is there at all. The threshold has to
+  stay above the floor the reservation produces (~150) or the two would fight.
+  A drag stops at the floor, and the automatic width is lifted to it (a
+  content minimum above the 400 cap wins over the cap). There is **no
+  `_SIDEBAR_MIN_WIDTH` constant** any more: the old 180 was
+  `AdwOverlaySplitView`'s default `min-sidebar-width` carried over, and on top
+  of the measured minimum it only held the divider back from widths the content
+  was perfectly happy with. The one remaining number is
+  `_ABSOLUTE_MIN_WIDTH` (44), which applies when the window is too narrow to
+  give both the sidebar its content minimum and the content side the 320px of
+  `_CONTENT_MIN_WIDTH`.
+- **`pin_width(w)` freezes the width, `release_width()` hands it back.** That
+  pair is what the icon strip and every tick of its animation use, and a pin
+  (`_pinned_width`) overrides the measured floor — the only state in which the
+  sidebar may shrink below its own content minimum, which is what makes the
+  64px strip reachable. `get_resting_sidebar_width()`
+  answers "how wide once released?" even while pinned, which is what the
+  animation's endpoint and the search popup's panel width need.
+- **The divider switches mode, too — expand only.** Dragging past the floor
+  used to enter the icon strip; that gesture is behind
+  `sidebar_paned.COLLAPSE_BY_DRAG` and stays **off**. Icon-strip mode is
+  **retired**: settings migration rewrites `ui.sidebar_mode: minimal` to
+  `full` and `ui.sidebar_on_terminal_open: minimize` to `none`,
+  `set_sidebar_minimal(True)` is a no-op, and Preferences no longer offers
+  "Minimize to Icons". A leftover pinned strip can still be dragged open to
+  full via `on_mode_switch(False)`. Until that point a pin follows the
+  pointer. The paned reports mode changes through `on_mode_switch` and leaves
+  the divider alone when the owner takes it
+  (`window._on_sidebar_drag_mode_switch` → persist `ui.sidebar_mode=full`
+  + `set_sidebar_minimal(False)`, never animated).
+- **A mode-switching drag never moves the divider on its own**, which takes
+  three rules that are easy to break. Below the full sidebar's floor the strip
+  stays in minimal mode but **follows the pointer** up to `_expand_threshold()` —
+  exactly the width the full sidebar needs — so the switch there is continuous
+  (no jump away from the pointer). And the drag position becomes the remembered
+  width *before* the switch, because `release_width()` otherwise restores the
+  width the sidebar had before it was collapsed and the divider travels there
+  after the user has stopped moving. Collapsing does neither: it leaves
+  `user_width` alone, so the strip is never remembered as a width. And a
+  collapse keeps the divider **under the pointer** rather than at the width the
+  owner pins: `set_sidebar_minimal` pins `_MINIMAL_STRIP_WIDTH` for the resting
+  strip, so the switch would otherwise snap the divider there and the next
+  motion event would throw it straight back out to the pointer — measured as a
+  jump to 117px and back to 208px mid-drag. `_on_position_notify` re-pins to
+  the drag position (keeping the pin's floor) as soon as the owner returns.
+- **`get_sidebar_width()` is the live width**, not a configured bound.
+- The handle is thin (no wide handle) so it draws the same hairline the split
+  view did and the panes stay edge to edge; GTK keeps a wider input area than it
+  paints, so it is still easy to grab.
+- **Squeezing keeps the sidebar's leading edge.** `Gtk.Paned` shrinks a start
+  child by allocating its minimum flush against the divider, so the *left* of
+  the sidebar — its icons — is what falls off the screen; a split view clips the
+  other way. `sidebar_paned._ClipStart` wraps the sidebar and lays it out from
+  x=0 with the overflow hidden, which is what keeps the frames of the strip
+  animation (narrower than the sidebar's content minimum) readable.
+- **The sidebar header carries no window controls** (`sidebar.py`,
+  `_assemble_sidebar_shell`). They are in the content title bar, and a copy in
+  the sidebar header floors that header at ~126px — twice the strip's width,
+  which is what the whole sidebar then had to be. Without them the strip's
+  content minimum is 63px and the 64px strip needs no clipping at all.
+
+## 1. Full vs. Minimal (icon strip) — RETIRED
+
+Icon-strip ("minimal") mode is **retired**. Existing installs are migrated in
+`ensure_config_defaults`: `ui.sidebar_mode: minimal` → `full`, and
+`ui.sidebar_on_terminal_open: minimize` → `none`. Runtime entry is blocked:
+`set_sidebar_minimal(True)` is a no-op, divider collapse stays behind
+`COLLAPSE_BY_DRAG=False`, and Preferences only offers Do Nothing / Hide.
+
+`set_sidebar_minimal(False)` remains as the expand path for clearing a leftover
+pin from older builds (divider drag-open, expand button). The strip chrome and
+row-compact helpers below are leftover implementation detail, not a supported
+presentation.
+
+Historical behaviour (kept for archaeology of the helpers that remain):
+
+`set_sidebar_minimal(minimal: bool, animate: bool = True)` formerly toggled:
 
 - **Full** — the normal sidebar rows.
-- **Minimal** — a ~64px icon strip: each connection collapses to a coloured
-  avatar (initials) or icon, groups to a folder avatar. The width animates
-  between the two states.
+- **Minimal** — a ~112px label strip at rest.
 
-Driven by the `ui.sidebar_mode` setting (`full` / `minimal`, applied at startup)
-and optionally by the "When a Terminal Opens" behaviour. Minimal mode is a
-side-by-side column, so the terminal is `window − strip_width`.
+Driven by the `ui.sidebar_mode` setting (`full` / `minimal`) when that mode
+existed. There is no Preferences toggle for it any more.
 
 ## 2. Default vs. Overlay presentation
 
@@ -31,11 +137,13 @@ side-by-side column, so the terminal is `window − strip_width`.
 - **Overlay** (`True`) — `AdwOverlaySplitView.collapsed = True`: the sidebar is
   drawn as an overlay *above* the content.
 
-This is a pure presentation switch and only affects the `OverlaySplitView`
-backend. Note the libadwaita semantics: collapsing **resizes the content by the
-sidebar width** (the column disappears) and auto-hides the sidebar. Because of
-that resize, overlay mode is **not** used for the search flow — the detachable
-popup below is used instead.
+**Overlay needs a backend that has no `Gtk.Paned` equivalent, so it is inert
+since the split view became a paned**: the call records the request and the
+sidebar stays a side-by-side column. It had no callers — the over-the-content
+presentation in use is the detachable popup below, which was already preferred
+because collapsing an `AdwOverlaySplitView` **resizes the content by the sidebar
+width** (the column disappears) and auto-hides the sidebar. Restoring a true
+overlay means bringing back an overlay-capable backend behind `split_view`.
 
 ## 3. Detachable sidebar popup (search, and reusable)
 

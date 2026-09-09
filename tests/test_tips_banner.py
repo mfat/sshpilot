@@ -84,6 +84,94 @@ def test_hide_tips_cancels_pending_timeout(monkeypatch):
     host.tips_revealer.set_reveal_child.assert_called_with(False)
 
 
+def test_pause_tips_for_sidebar_anim_snaps_and_restores():
+    """Sidebar width animation must not leave the accent tips bar painting."""
+    from sshpilot import window as window_module
+
+    win = window_module.MainWindow.__new__(window_module.MainWindow)
+    win.config = types.SimpleNamespace(
+        get_setting=lambda key, default=None: True if key == "terminal.show_tips" else default,
+    )
+    revealer = Mock()
+    revealer.get_reveal_child.return_value = True
+    revealer.get_transition_duration.return_value = 250
+    container = Mock()
+    win.tips_revealer = revealer
+    win.tips_banner_container = container
+    win._tips_paused_for_sidebar = False
+    win._tips_was_revealed_before_sidebar_anim = False
+    win._tips_saved_transition_duration = 250
+    win._tips_restore_source = 0
+
+    window_module.MainWindow._pause_tips_banner_for_sidebar_anim(win, True)
+
+    assert win._tips_paused_for_sidebar is True
+    revealer.set_transition_duration.assert_any_call(0)
+    revealer.set_reveal_child.assert_called_with(False)
+    container.set_visible.assert_called_with(False)
+
+    window_module.MainWindow._pause_tips_banner_for_sidebar_anim(win, False)
+
+    assert win._tips_paused_for_sidebar is False
+    container.set_visible.assert_called_with(True)
+    assert revealer.set_reveal_child.call_args_list[-1].args == (True,)
+
+
+def test_queue_tips_banner_restore_uses_timeout(monkeypatch):
+    """Tips return only after settle plus a delay, not on the next idle."""
+    from sshpilot import window as window_module
+
+    win = window_module.MainWindow.__new__(window_module.MainWindow)
+    win._tips_paused_for_sidebar = True
+    win._tips_restore_source = 0
+    win._sidebar_width_animation = None
+    scheduled = []
+
+    monkeypatch.setattr(
+        window_module.GLib,
+        "timeout_add",
+        lambda ms, cb: scheduled.append((ms, cb)) or 99,
+    )
+    restored = []
+    monkeypatch.setattr(
+        window_module.MainWindow,
+        "_pause_tips_banner_for_sidebar_anim",
+        lambda self, pause: restored.append(pause),
+    )
+
+    window_module.MainWindow._queue_tips_banner_restore(win)
+
+    assert len(scheduled) == 1
+    assert scheduled[0][0] == window_module.MainWindow._TIPS_BANNER_RESTORE_DELAY_MS
+    assert win._tips_restore_source == 99
+    scheduled[0][1]()
+    assert restored == [False]
+
+
+def test_pause_tips_noop_when_already_hidden():
+    from sshpilot import window as window_module
+
+    win = window_module.MainWindow.__new__(window_module.MainWindow)
+    win.config = types.SimpleNamespace(get_setting=lambda *_a, **_k: True)
+    revealer = Mock()
+    revealer.get_reveal_child.return_value = False
+    revealer.get_transition_duration.return_value = 250
+    container = Mock()
+    win.tips_revealer = revealer
+    win.tips_banner_container = container
+    win._tips_paused_for_sidebar = False
+    win._tips_restore_source = 0
+
+    window_module.MainWindow._pause_tips_banner_for_sidebar_anim(win, True)
+
+    # Still hard-hide the container so a mid-transition paint cannot flash.
+    container.set_visible.assert_called_with(False)
+    revealer.set_reveal_child.assert_called_with(False)
+    window_module.MainWindow._pause_tips_banner_for_sidebar_anim(win, False)
+    # was not revealed — do not force it open again
+    assert container.set_visible.call_args_list[-1].args == (False,)
+
+
 def test_preferences_toggle_applies_live(monkeypatch):
     pytest.importorskip("gi")
     from sshpilot.preferences import PreferencesWindow

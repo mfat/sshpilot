@@ -92,15 +92,19 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_connection_icon': False,
             'sidebar_show_group_icon': False,
             'sidebar_flat_rows': True,
+            # When True, the whole UI uses a monospace face — the family from
+            # terminal.font when set, otherwise Monospace.
+            'monospace_font': False,
             # Sidebar behavior (Settings ▸ Sidebar ▸ Sidebar behavior)
             'sidebar_hide_on_startup': False,
             'sidebar_hide_on_terminal_open': False,  # legacy; see sidebar_on_terminal_open
             'sidebar_show_when_no_tabs': False,
-            'sidebar_mode': 'full',  # 'full' | 'minimal' (icon strip)
+            # Resting sidebar presentation. Icon-strip ('minimal') is retired;
+            # migration rewrites any persisted 'minimal' to 'full'.
+            'sidebar_mode': 'full',
             # What happens to the sidebar when a session opens:
-            # 'none' | 'minimize' (icon strip) | 'hide'.
+            # 'none' | 'hide'. ('minimize' / icon strip is retired.)
             'sidebar_on_terminal_open': 'none',
-            'sidebar_minimal_row_style': 'initials',  # 'initials' | 'icon'
             # Header-bar button visibility (Settings ▸ Interface ▸ Header Bar)
             'headerbar_show_sidebar_toggle': False,
             'headerbar_show_split_view': False,

@@ -1296,6 +1296,20 @@ class PreferencesWindow(Adw.NavigationPage):
 
         interface_appearance_group.add(self.theme_row)
 
+        monospace_font_switch = Adw.SwitchRow()
+        monospace_font_switch.set_title(_("Monospace Font"))
+        monospace_font_switch.set_subtitle(
+            _("Use a monospace typeface for the whole interface "
+              "(matches your terminal font when one is set)")
+        )
+        monospace_font_switch.set_active(
+            bool(self.config.get_setting('ui.monospace_font', False))
+        )
+        monospace_font_switch.connect(
+            'notify::active', self.on_interface_monospace_font_changed
+        )
+        interface_appearance_group.add(monospace_font_switch)
+
 
         # Color overrides section
         color_override_group = Adw.PreferencesGroup(title=_("Color Overrides"))
@@ -1353,57 +1367,7 @@ class PreferencesWindow(Adw.NavigationPage):
         # Sidebar group (at bottom of Interface page)
         sidebar_group = Adw.PreferencesGroup(title=_("Sidebar"))
 
-        # Sidebar mode (full width vs. minimal icon strip)
-        self._sidebar_mode_values = ['full', 'minimal']
-        sidebar_mode_row = Adw.ComboRow()
-        sidebar_mode_row.set_title(_("Sidebar Mode"))
-        sidebar_mode_row.set_subtitle(_("Show the full sidebar or a minimal strip of icons"))
-        mode_options = Gtk.StringList()
-        mode_options.append(_("Full"))
-        mode_options.append(_("Minimal"))
-        sidebar_mode_row.set_model(mode_options)
-        current_mode = str(self.config.get_setting('ui.sidebar_mode', 'full')).lower()
-        if current_mode not in self._sidebar_mode_values:
-            current_mode = 'full'
-        sidebar_mode_row.set_selected(self._sidebar_mode_values.index(current_mode))
-        sidebar_mode_row.connect('notify::selected', self.on_sidebar_mode_changed)
-        sidebar_group.add(sidebar_mode_row)
-
-        # Maximum width slider
-        max_width_row = Adw.ActionRow()
-        max_width_row.set_title(_("Maximum Width"))
-
-        # Load saved value or use default
-        saved_max_width = self.config.get_setting('ui.max-sidebar-width', 280)
-
-        # Create a scale/slider for max width (100-800 sp)
-        max_width_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 100, 800, 10)
-        max_width_scale.set_draw_value(True)
-        max_width_scale.set_value_pos(Gtk.PositionType.RIGHT)
-        max_width_scale.set_size_request(200, -1)
-        max_width_scale.set_valign(Gtk.Align.CENTER)
-        max_width_scale.set_value(float(saved_max_width))
-
-        # Update subtitle with current value
-        def update_subtitle(value):
-            max_width_row.set_subtitle(
-                _("Adjust the maximum width of the sidebar ({width} sp)").format(width=int(value)))
-
-        update_subtitle(saved_max_width)
-
-        # Connect change handler
-        def on_max_width_changed(scale):
-            value = int(scale.get_value())
-            update_subtitle(value)
-            self.config.set_setting('ui.max-sidebar-width', value)
-            # Update main window if available
-            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_max_width'):
-                self.parent_window.update_sidebar_max_width(value)
-
-        max_width_scale.connect('value-changed', on_max_width_changed)
-
-        max_width_row.add_suffix(max_width_scale)
-        sidebar_group.add(max_width_row)
+        # Sidebar presentation is full-width only; icon-strip mode is retired.
 
         flat_rows_switch = Adw.SwitchRow()
         flat_rows_switch.set_title(_("Flat Sidebar Rows"))
@@ -1495,15 +1459,14 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(hide_on_startup_switch)
 
-        # When a terminal opens: do nothing / minimize to icons / hide.
-        self._on_terminal_open_values = ['none', 'minimize', 'hide']
+        # When a terminal opens: do nothing / hide.
+        self._on_terminal_open_values = ['none', 'hide']
         on_terminal_open_row = Adw.ComboRow()
         on_terminal_open_row.set_title(_("When a Terminal Opens"))
         on_terminal_open_row.set_subtitle(
             _("What happens to the sidebar when any session opens, including local terminals"))
         on_terminal_options = Gtk.StringList()
         on_terminal_options.append(_("Do Nothing"))
-        on_terminal_options.append(_("Minimize to Icons"))
         on_terminal_options.append(_("Hide Sidebar"))
         on_terminal_open_row.set_model(on_terminal_options)
         current_on_open = 'none'
@@ -1530,71 +1493,22 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         sidebar_behavior_group.add(show_when_no_tabs_switch)
 
-        # Minimized row style (initials circle vs. plain icon)
-        self._minimal_row_style_values = ['initials', 'icon']
-        minimal_row_style_row = Adw.ComboRow()
-        minimal_row_style_row.set_title(_("Minimized Row Style"))
-        minimal_row_style_row.set_subtitle(_("How connections look in the icon strip"))
-        style_options = Gtk.StringList()
-        style_options.append(_("Initials"))
-        style_options.append(_("Icon"))
-        minimal_row_style_row.set_model(style_options)
-        current_style = str(
-            self.config.get_setting('ui.sidebar_minimal_row_style', 'initials')).lower()
-        if current_style not in self._minimal_row_style_values:
-            current_style = 'initials'
-        minimal_row_style_row.set_selected(
-            self._minimal_row_style_values.index(current_style))
-        minimal_row_style_row.connect(
-            'notify::selected', self.on_sidebar_minimal_row_style_changed)
-        sidebar_behavior_group.add(minimal_row_style_row)
-
         interface_page.add(sidebar_behavior_group)
 
     def on_sidebar_on_terminal_open_changed(self, combo_row, _param):
         """Persist the merged 'when a terminal opens' behavior."""
         try:
             idx = combo_row.get_selected()
-            values = getattr(self, '_on_terminal_open_values', ['none', 'minimize', 'hide'])
+            values = getattr(self, '_on_terminal_open_values', ['none', 'hide'])
             action = values[idx] if 0 <= idx < len(values) else 'none'
+            if action == 'minimize':
+                action = 'none'
             self.config.set_setting('ui.sidebar_on_terminal_open', action)
             # Keep the legacy booleans consistent for any older readers.
             self.config.set_setting('ui.sidebar_hide_on_terminal_open', action == 'hide')
-            self.config.set_setting('ui.sidebar_minimize_on_connect', action == 'minimize')
+            self.config.set_setting('ui.sidebar_minimize_on_connect', False)
         except Exception:
             logger.debug("sidebar on-terminal-open change failed", exc_info=True)
-
-    def on_sidebar_mode_changed(self, combo_row, _param):
-        """Persist the sidebar mode and apply it to the live window."""
-        try:
-            idx = combo_row.get_selected()
-            values = getattr(self, '_sidebar_mode_values', ['full', 'minimal'])
-            mode = values[idx] if 0 <= idx < len(values) else 'full'
-            self.config.set_setting('ui.sidebar_mode', mode)
-            win = self.parent_window
-            if win is not None and hasattr(win, 'set_sidebar_minimal'):
-                # Fully tear down any active search first (clears the filter,
-                # rebuilds, closes the popup) so the new mode can't inherit an
-                # invisible filter; then clear the restore flag and apply.
-                if hasattr(win, '_close_search_if_open'):
-                    win._close_search_if_open()
-                win._search_expanded_sidebar = False
-                win.set_sidebar_minimal(mode == 'minimal')
-        except Exception:
-            logger.debug("sidebar mode change failed", exc_info=True)
-
-    def on_sidebar_minimal_row_style_changed(self, combo_row, _param):
-        """Persist the minimized row style and refresh a live icon strip."""
-        try:
-            idx = combo_row.get_selected()
-            values = getattr(self, '_minimal_row_style_values', ['initials', 'icon'])
-            style = values[idx] if 0 <= idx < len(values) else 'initials'
-            self.config.set_setting('ui.sidebar_minimal_row_style', style)
-            win = self.parent_window
-            if win is not None and getattr(win, '_sidebar_minimal', False):
-                win._apply_sidebar_minimal_rows(True)
-        except Exception:
-            logger.debug("minimal row style change failed", exc_info=True)
 
     def _add_interface_headerbar_and_tips_groups(self, interface_page):
         """Add Header Bar Buttons and Tips preferences groups."""
@@ -1669,7 +1583,7 @@ class PreferencesWindow(Adw.NavigationPage):
         """Build the Interface preferences page."""
         interface_page = Adw.PreferencesPage()
         interface_page.set_title(_("Interface"))
-        interface_page.set_icon_name("applications-graphics-symbolic")
+        interface_page.set_icon_name("brush-monitor-symbolic")
 
         self._add_interface_language_group(interface_page)
         self._add_interface_startup_group(interface_page)
@@ -2751,7 +2665,7 @@ class PreferencesWindow(Adw.NavigationPage):
             # Build initial page immediately; register remaining page builders lazily
             interface_page = self._build_interface_preferences_page()
 
-            self.add_page_to_layout(N_("Interface"), "applications-graphics-symbolic", interface_page)
+            self.add_page_to_layout(N_("Interface"), "brush-monitor-symbolic", interface_page)
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
             self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
             self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
@@ -4188,6 +4102,14 @@ class PreferencesWindow(Adw.NavigationPage):
 
             # Apply to all active terminals
             self.apply_font_to_terminals(font_string)
+
+            # Interface monospace mode follows the terminal font family.
+            if self.config.get_setting('ui.monospace_font', False):
+                try:
+                    from .sidebar import apply_interface_monospace_font
+                    apply_interface_monospace_font(self.config)
+                except Exception:
+                    logger.debug("Failed to refresh interface monospace font", exc_info=True)
 
         font_dialog.set_callback(on_font_selected)
         font_dialog.present()
@@ -6568,6 +6490,16 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar flat rows preference: %s", exc)
+
+    def on_interface_monospace_font_changed(self, switch, *args):
+        """Persist and apply monospace typeface for the whole interface."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.monospace_font', active)
+            from .sidebar import apply_interface_monospace_font
+            apply_interface_monospace_font(self.config)
+        except Exception as exc:
+            logger.error("Failed to update interface monospace font preference: %s", exc)
 
     def on_sidebar_show_user_hostname_changed(self, switch, *args):
         """Persist the preference for showing user@hostname in sidebar."""

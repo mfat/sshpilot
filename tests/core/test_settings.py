@@ -27,6 +27,20 @@ def test_ensure_config_defaults_backfills_encoding():
     assert "file_manager" in cfg
 
 
+def test_ensure_config_defaults_retires_sidebar_minimal():
+    cfg, updated = ensure_config_defaults({
+        "ui": {
+            "sidebar_mode": "minimal",
+            "sidebar_on_terminal_open": "minimize",
+            "sidebar_minimize_on_connect": True,
+        }
+    })
+    assert updated is True
+    assert cfg["ui"]["sidebar_mode"] == "full"
+    assert cfg["ui"]["sidebar_on_terminal_open"] == "none"
+    assert cfg["ui"]["sidebar_minimize_on_connect"] is False
+
+
 def test_settings_round_trip(tmp_path):
     path = tmp_path / "config.json"
     original = get_default_config()
