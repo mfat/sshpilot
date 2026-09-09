@@ -1887,6 +1887,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_valign(Gtk.Align.CENTER)
         content.append(self.indicator_box)
 
+        # Status lock in its own box — same packing pattern as the forwarding
+        # indicator_box above. update_status() shows the box when there is a
+        # real state; idle leaves it empty/hidden so it costs no width.
+        self.status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.status_box.set_halign(Gtk.Align.CENTER)
+        self.status_box.set_valign(Gtk.Align.CENTER)
+        from sshpilot import icon_utils
+        self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
+        self.status_icon.set_pixel_size(16)
+        self.status_icon.set_halign(Gtk.Align.CENTER)
+        self.status_icon.set_valign(Gtk.Align.CENTER)
+        self.status_box.append(self.status_icon)
+        self.status_box.set_visible(False)
+        content.append(self.status_box)
+
         self.color_badge = icon_utils.new_image_from_icon_name("tag-symbolic")
         self.color_badge.add_css_class("sidebar-color-badge")
         self.color_badge.set_icon_size(Gtk.IconSize.NORMAL)
@@ -1898,7 +1913,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         # hovering never reflows the row. Parked in a height-only stack so
         # shedding it (preference off, or no callback) frees the width without
         # collapsing the row — the button is taller than the labels beside it.
-        from sshpilot import icon_utils
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
@@ -1912,14 +1926,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
-
-        from sshpilot import icon_utils
-        self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
-        self.status_icon.set_pixel_size(16)
-        # A fresh row is UNKNOWN (idle), which shows no indicator; update_status()
-        # reveals and styles it once the connection has a real state.
-        self.status_icon.set_visible(False)
-        content.append(self.status_icon)
 
         # Now add the content to main_box
         main_box.append(content)
@@ -2480,6 +2486,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         This is render-only: it never computes or writes back connection state.
         Daemon mode reads the session-derived runtime projection; legacy mode
         reads the mutable connection model maintained by ``ConnectionManager``.
+
+        The lock lives in ``status_box`` (same role as ``indicator_box`` for
+        forwarding badges): idle / preference-off / compact hide the box so it
+        costs no width; a real state shows the box with the styled icon.
         """
         try:
             from sshpilot import icon_utils
@@ -2495,12 +2505,14 @@ class ConnectionRow(Gtk.ListBoxRow):
                          "conn-status-up", "conn-status-down"):
                 self.status_icon.remove_css_class(_cls)
 
-            # Idle / never connected this session: show no indicator at all.
+            # Idle / never connected this session: no status box at all.
             if state == ConnectionState.UNKNOWN:
-                self.status_icon.set_visible(False)
+                self.status_box.set_visible(False)
                 self.status_icon.set_tooltip_text("")
                 self.status_icon.queue_draw()
                 self._apply_group_color_style()
+                if getattr(self, '_compact', False):
+                    self._refresh_compact_status()
                 return
 
             # Other states render an icon, subject to the global visibility pref.
@@ -2508,7 +2520,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                 show_status = bool(self.config.get_setting('ui.sidebar_show_connection_status', True))
             except Exception:
                 show_status = True
-            self.status_icon.set_visible(show_status)
+            show = show_status and not getattr(self, '_compact', False)
+            self.status_box.set_visible(show)
 
             if state == ConnectionState.CONNECTED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
@@ -2574,9 +2587,9 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.nickname_label.add_css_class('sidebar-compact-online')
         else:
             self.nickname_label.remove_css_class('sidebar-compact-online')
-        # update_status() re-shows the status icon and colour widgets; keep them
+        # update_status() re-shows the status box and colour widgets; keep them
         # hidden in the strip (this runs at the end of update_status when compact).
-        self.status_icon.set_visible(False)
+        self.status_box.set_visible(False)
         self.color_dot.set_visible(False)
         self.color_badge.set_visible(False)
 
@@ -2655,7 +2668,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         # `.sidebar-compact-action` to give the label back the padding it can.
         self.file_manager_button.add_css_class('sidebar-compact-action')
         self._reveal_file_manager_button(self._pointer_is_on_row())
-        self.status_icon.set_visible(False)
+        self.status_box.set_visible(False)
         self.connection_icon.set_visible(False)
         connection_name = (
             getattr(self.connection, 'display_name', None)
