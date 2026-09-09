@@ -12,11 +12,20 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 
-def _group_row(pointer_on_row=False):
+def _group_row(pointer_on_row=False, show_split_view=True):
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.GroupRow.__new__(mod.GroupRow)
     row._compact = False
     row._actions_reserved = True
+    row.group_manager = SimpleNamespace(
+        config=SimpleNamespace(
+            get_setting=lambda key, default=None: (
+                show_split_view
+                if key == 'ui.sidebar_show_split_view_button'
+                else default
+            )
+        )
+    )
     row.split_view_button = MagicMock(name='split_view_button')
     row._split_view_slot = MagicMock(name='split_view_slot')
     row._hover_controller = MagicMock(name='hover_controller')
@@ -37,6 +46,16 @@ def test_the_split_view_action_takes_no_space_until_hovered():
     assert _group_slot_page(row) == mod.ROW_ACTION_SLOT_BUTTON
 
     mod.GroupRow._maybe_hide_row_actions(row)
+    assert _group_slot_page(row) == mod.ROW_ACTION_SLOT_EMPTY
+
+
+def test_split_view_button_pref_off_hides_the_action():
+    """Preferences ▸ Sidebar ▸ Split View Button defaults off and must suppress
+    the hover action even when the row is otherwise ready to show it."""
+    row, mod = _group_row(pointer_on_row=True, show_split_view=False)
+
+    mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
+
     assert _group_slot_page(row) == mod.ROW_ACTION_SLOT_EMPTY
 
 
@@ -101,12 +120,19 @@ def test_the_strip_keeps_no_row_action():
     assert _group_slot_page(row) == mod.ROW_ACTION_SLOT_EMPTY
 
 
-def _connection_row(callback=True, pointer_on_row=False):
+def _connection_row(callback=True, pointer_on_row=False, show_file_manager=True):
     mod = importlib.import_module('sshpilot.sidebar')
     row = mod.ConnectionRow.__new__(mod.ConnectionRow)
     row._compact = False
     row._actions_affordable = True
     row._file_manager_callback = MagicMock() if callback else None
+    row.config = SimpleNamespace(
+        get_setting=lambda key, default=None: (
+            show_file_manager
+            if key == 'ui.sidebar_show_file_manager_button'
+            else default
+        )
+    )
     row.file_manager_button = MagicMock(name='file_manager_button')
     row._file_manager_slot = MagicMock(name='file_manager_slot')
     row._hover_controller = MagicMock(name='hover_controller')
@@ -127,6 +153,14 @@ def test_the_manage_files_action_takes_no_space_until_hovered():
     assert _slot_page(row) == mod.ROW_ACTION_SLOT_BUTTON
 
     mod.ConnectionRow._maybe_hide_button(row)
+    assert _slot_page(row) == mod.ROW_ACTION_SLOT_EMPTY
+
+
+def test_file_manager_button_pref_off_hides_the_action():
+    row, mod = _connection_row(pointer_on_row=True, show_file_manager=False)
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+
     assert _slot_page(row) == mod.ROW_ACTION_SLOT_EMPTY
 
 

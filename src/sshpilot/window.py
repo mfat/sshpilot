@@ -2517,6 +2517,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
 
+            # Re-evaluate hover action buttons against current prefs / hover.
+            if hasattr(row, '_reveal_file_manager_button'):
+                try:
+                    on_row = (
+                        row._pointer_is_on_row()
+                        if hasattr(row, '_pointer_is_on_row')
+                        else False
+                    )
+                    row._reveal_file_manager_button(on_row)
+                except Exception:
+                    logger.debug(
+                        "Failed to refresh connection-row file manager button",
+                        exc_info=True,
+                    )
+            if hasattr(row, '_reveal_row_actions'):
+                try:
+                    on_row = (
+                        row._pointer_is_on_row()
+                        if hasattr(row, '_pointer_is_on_row')
+                        else False
+                    )
+                    row._reveal_row_actions(on_row)
+                except Exception:
+                    logger.debug(
+                        "Failed to refresh group-row split view button",
+                        exc_info=True,
+                    )
+
             row = row.get_next_sibling()
 
         # These per-preference updates re-show widgets that minimized mode hides;

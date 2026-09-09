@@ -94,6 +94,9 @@ def get_default_config() -> Dict[str, Any]:
             'sidebar_show_port_forwarding': True,
             'sidebar_show_connection_icon': False,
             'sidebar_show_group_icon': False,
+            # Hover action buttons on sidebar rows (Settings ▸ Interface ▸ Sidebar)
+            'sidebar_show_file_manager_button': True,
+            'sidebar_show_split_view_button': False,
             'sidebar_flat_rows': True,
             # When True, the whole UI uses a monospace face — the family from
             # terminal.font when set, otherwise Monospace.

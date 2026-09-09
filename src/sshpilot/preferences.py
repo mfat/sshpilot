@@ -1521,6 +1521,34 @@ class PreferencesWindow(Adw.NavigationPage):
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
         sidebar_group.add(show_group_icon_switch)
 
+        # File manager hover button on connection rows
+        show_file_manager_button_switch = Adw.SwitchRow()
+        show_file_manager_button_switch.set_title(_("File Manager Button"))
+        show_file_manager_button_switch.set_subtitle(
+            _("Show the file manager button in connection rows")
+        )
+        show_file_manager_button_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_file_manager_button', True))
+        )
+        show_file_manager_button_switch.connect(
+            'notify::active', self.on_sidebar_show_file_manager_button_changed
+        )
+        sidebar_group.add(show_file_manager_button_switch)
+
+        # Split-view hover button on group rows (off by default)
+        show_split_view_button_switch = Adw.SwitchRow()
+        show_split_view_button_switch.set_title(_("Split View Button"))
+        show_split_view_button_switch.set_subtitle(
+            _("Show the split view button in group rows")
+        )
+        show_split_view_button_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_split_view_button', False))
+        )
+        show_split_view_button_switch.connect(
+            'notify::active', self.on_sidebar_show_split_view_button_changed
+        )
+        sidebar_group.add(show_split_view_button_switch)
+
         interface_page.add(sidebar_group)
 
         # Sidebar behavior
@@ -6665,6 +6693,30 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show group icon preference: %s", exc)
+
+    def on_sidebar_show_file_manager_button_changed(self, switch, *args):
+        """Persist the preference for the connection-row file manager button."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_file_manager_button', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show file manager button preference: %s", exc
+            )
+
+    def on_sidebar_show_split_view_button_changed(self, switch, *args):
+        """Persist the preference for the group-row split view button."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_split_view_button', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show split view button preference: %s", exc
+            )
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""

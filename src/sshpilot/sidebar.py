@@ -1481,6 +1481,16 @@ class GroupRow(Gtk.ListBoxRow):
         # instant, and _maybe_hide_row_actions re-asks before acting on it.
         GLib.timeout_add(100, self._maybe_hide_row_actions)
 
+    def _split_view_button_enabled(self) -> bool:
+        """Whether Preferences allows the group-row split-view hover button."""
+        config = getattr(self.group_manager, 'config', None)
+        if config is None:
+            return False
+        try:
+            return bool(config.get_setting('ui.sidebar_show_split_view_button', False))
+        except Exception:
+            return False
+
     def _reveal_row_actions(self, revealed: bool) -> None:
         """Show or hide the split-view action for the current hover state.
 
@@ -1488,12 +1498,14 @@ class GroupRow(Gtk.ListBoxRow):
         changes size on hover; it takes the button's *width* only while the
         button is up, so the group title is laid out across the whole row at
         rest. Compact and a sidebar too narrow to afford the borrow never show
-        it — see :meth:`set_actions_reserved`.
+        it — see :meth:`set_actions_reserved`. Off when the Sidebar preference
+        disables the button.
         """
         slot = getattr(self, '_split_view_slot', None)
         if slot is None:
             return
         show = (bool(revealed)
+                and self._split_view_button_enabled()
                 and getattr(self, '_actions_reserved', True)
                 and not getattr(self, '_compact', False))
         slot.set_visible_child_name(
@@ -1982,6 +1994,15 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._hover_controller = motion_controller
         self.add_controller(motion_controller)
 
+    def _file_manager_button_enabled(self) -> bool:
+        """Whether Preferences allows the connection-row file manager button."""
+        try:
+            return bool(
+                self.config.get_setting('ui.sidebar_show_file_manager_button', True)
+            )
+        except Exception:
+            return True
+
     def _reveal_file_manager_button(self, revealed: bool) -> None:
         """Show or hide the Manage Files action for the current hover state.
 
@@ -1991,13 +2012,19 @@ class ConnectionRow(Gtk.ListBoxRow):
         rest and nothing moves but its ellipsised tail. A row with no
         file-manager callback never shows the button at all, and neither does
         a full row too narrow to afford it — see :meth:`set_actions_reserved`.
+        Off when the Sidebar preference disables the button.
         """
         slot = getattr(self, '_file_manager_slot', None)
         if slot is None:
             return
         affordable = (getattr(self, '_actions_affordable', True)
                       or getattr(self, '_compact', False))
-        show = bool(revealed) and bool(self._file_manager_callback) and affordable
+        show = (
+            bool(revealed)
+            and self._file_manager_button_enabled()
+            and bool(self._file_manager_callback)
+            and affordable
+        )
         slot.set_visible_child_name(
             ROW_ACTION_SLOT_BUTTON if show else ROW_ACTION_SLOT_EMPTY)
 
