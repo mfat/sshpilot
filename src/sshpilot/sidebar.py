@@ -1290,7 +1290,6 @@ class GroupRow(Gtk.ListBoxRow):
         motion_controller.connect("enter", self._on_row_enter_actions)
         motion_controller.connect("leave", self._on_row_leave_actions)
         self.add_controller(motion_controller)
-        self._row_motion_controller = motion_controller
 
         btn = self.split_view_button
         if btn:
@@ -1312,11 +1311,6 @@ class GroupRow(Gtk.ListBoxRow):
         self._reveal_row_actions(True)
 
     def _on_button_leave_action(self, controller):
-        # Leaving the button onto the name (still this row) must not clear
-        # hover: row enter will not re-fire until the pointer leaves the row.
-        if self._row_contains_pointer():
-            self._is_hovering_row = True
-            return
         self._is_hovering_row = False
         GLib.timeout_add(100, self._maybe_hide_row_actions)
 
@@ -1349,21 +1343,7 @@ class GroupRow(Gtk.ListBoxRow):
         self._actions_reserved = reserved
         self._reveal_row_actions(getattr(self, '_is_hovering_row', False))
 
-    def _row_contains_pointer(self) -> bool:
-        """True when the pointer is still over this row (any descendant)."""
-        controller = getattr(self, '_row_motion_controller', None)
-        if controller is None:
-            return False
-        try:
-            return bool(controller.contains_pointer())
-        except Exception:
-            return False
-
     def _maybe_hide_row_actions(self):
-        if self._row_contains_pointer():
-            self._is_hovering_row = True
-            self._reveal_row_actions(True)
-            return False
         if not self._is_hovering_row:
             self._reveal_row_actions(False)
         return False
@@ -1831,7 +1811,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         motion_controller.connect("enter", self._on_row_enter)
         motion_controller.connect("leave", self._on_row_leave)
         self.add_controller(motion_controller)
-        self._row_motion_controller = motion_controller
         
         # Motion controller for the button itself (to keep it visible when hovering over button)
         if self.file_manager_button:
@@ -1857,37 +1836,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._reveal_row_actions(True)
 
     def _on_button_leave(self, controller):
-        """Leaving the button onto another part of the row must not shed.
-
-        ``enter`` on the row only fires when the pointer crosses the row
-        boundary. Moving from Manage Files onto the nickname stays inside
-        the row, so clearing hover here used to hide the button with no
-        way to reveal it again until the pointer left the row entirely.
-        """
-        if self._row_contains_pointer():
-            self._is_hovering = True
-            return
+        """Handle mouse leaving the button"""
         self._is_hovering = False
         GLib.timeout_add(100, self._maybe_hide_button)
 
-    def _row_contains_pointer(self) -> bool:
-        """True when the pointer is still over this row (any descendant)."""
-        controller = getattr(self, '_row_motion_controller', None)
-        if controller is None:
-            return False
-        try:
-            return bool(controller.contains_pointer())
-        except Exception:
-            return False
-
     def _maybe_hide_button(self):
         """Hide row actions when the pointer is no longer hovering."""
-        # Safety net for leave races while the pointer is still on the row
-        # (e.g. button leave onto the label before contains_pointer settles).
-        if self._row_contains_pointer():
-            self._is_hovering = True
-            self._reveal_row_actions(True)
-            return False
         if not self._is_hovering:
             self._reveal_row_actions(False)
         return False  # Don't repeat
