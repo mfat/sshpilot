@@ -857,6 +857,34 @@ def minimal_label_max_chars(
 FULL_LABEL_MIN_CHARS = 10
 FULL_LABEL_MAX_CHARS = 25
 
+#: Page names of a row hover-action slot (group split-view / connection
+#: Manage Files): the button itself, and an empty page that holds the button's
+#: height with no width. Hiding the button outright frees its ~34px of width
+#: but also shortens the row (the button is taller than the labels beside it);
+#: the empty page keeps height.
+ROW_ACTION_SLOT_BUTTON = 'button'
+ROW_ACTION_SLOT_EMPTY = 'none'
+
+
+def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
+    """Park a hover-action button so it can cost height without taking width.
+
+    ``vhomogeneous`` sizes both pages to the button's height; ``hhomogeneous``
+    off lets the empty page measure zero width. Callers put the button page up
+    when the action is reserved (opacity still drives hover) and the empty
+    page up when the action is shed — so turning the preference off never
+    collapses the row.
+    """
+    slot = Gtk.Stack()
+    slot.set_hhomogeneous(False)
+    slot.set_vhomogeneous(True)
+    slot.set_transition_type(Gtk.StackTransitionType.NONE)
+    slot.set_valign(Gtk.Align.CENTER)
+    slot.add_named(Gtk.Box(), ROW_ACTION_SLOT_EMPTY)
+    slot.add_named(button, ROW_ACTION_SLOT_BUTTON)
+    slot.set_visible_child_name(ROW_ACTION_SLOT_EMPTY)
+    return slot
+
 
 def _configure_compact_label(label: Gtk.Label, text: str,
                              *, max_chars: int = MINIMAL_LABEL_MAX_CHARS,
@@ -1131,21 +1159,21 @@ class GroupRow(Gtk.ListBoxRow):
 
         content.append(info_box)
 
-        # Split-view button — revealed on hover with its space reserved, so
-        # hovering never reflows the row. The reservation is what a narrow
-        # sidebar cannot afford (34px of the group row, which is what floors
-        # the whole sidebar), so it is shed wholesale below
-        # ``window._ROW_ACTIONS_MIN_WIDTH`` — see :meth:`set_actions_reserved`.
-        # Editing the group is not a row button at all: it is a context-menu
-        # item ("Edit Group" / "Rename Tag…").
+        # Split-view button — revealed on hover with its width reserved, so
+        # hovering never reflows the row. Parked in a height-only stack so
+        # shedding it (preference off, or a sidebar narrower than
+        # ``window._ROW_ACTIONS_MIN_WIDTH``) frees the width without collapsing
+        # the row — the button is taller than the labels beside it. Editing
+        # the group is a context-menu item ("Edit Group" / "Rename Tag…").
         self._actions_reserved = True
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
         label_icon_button(self.split_view_button, _("Open in Split View"))
         self.split_view_button.set_valign(Gtk.Align.CENTER)
-        self.split_view_button.set_opacity(0.0)  # reserves its space
+        self.split_view_button.set_opacity(0.0)
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
-        content.append(self.split_view_button)
+        self._split_view_slot = _make_row_action_slot(self.split_view_button)
+        content.append(self._split_view_slot)
 
         # Set up hover events to show/hide buttons
         self._setup_hover_buttons()
@@ -1450,27 +1478,36 @@ class GroupRow(Gtk.ListBoxRow):
     def _reveal_row_actions(self, revealed: bool) -> None:
         """Fade the split-view action in or out of its reserved space.
 
-        Visibility answers "does this row have the width for the action at
-        all" (:meth:`set_actions_reserved`, and never in the strip) and whether
-        the Sidebar preference enables the button; opacity answers "is the
-        pointer here" — so hovering never reflows the row.
+        The slot's button page is up only while the action is reserved
+        (:meth:`set_actions_reserved`, Sidebar preference on, never in the
+        strip); opacity then tracks the pointer so hovering never reflows the
+        row. Otherwise the empty page stays up — zero width, but the same
+        height as the button, so shedding the action never collapses the row.
         """
+        slot = getattr(self, '_split_view_slot', None)
         btn = getattr(self, 'split_view_button', None)
-        if btn is None:
+        if slot is None or btn is None:
             return
         reserved = (getattr(self, '_actions_reserved', True)
                     and not getattr(self, '_compact', False)
                     and self._split_view_button_enabled())
-        btn.set_visible(reserved)
+        if getattr(self, '_compact', False):
+            # Strip density: drop the slot entirely (no height to keep).
+            slot.set_visible(False)
+        else:
+            slot.set_visible(True)
+            slot.set_visible_child_name(
+                ROW_ACTION_SLOT_BUTTON if reserved else ROW_ACTION_SLOT_EMPTY)
         btn.set_opacity(1.0 if (reserved and revealed) else 0.0)
 
     def set_actions_reserved(self, reserved: bool) -> None:
-        """Keep the split-view action's reserved space, or shed it entirely.
+        """Keep the split-view action's reserved width, or shed it.
 
         Reserved is the resting state. A sidebar too narrow to afford the 34px
-        drops the button instead of squeezing the group name to an ellipsis —
-        the group row is what sets the sidebar's minimum width, so this is also
-        what lets the divider go on past it.
+        drops the button's width instead of squeezing the group name to an
+        ellipsis — the group row is what sets the sidebar's minimum width, so
+        this is also what lets the divider go on past it. Height stays either
+        way via the empty slot page.
         """
         reserved = bool(reserved)
         if reserved == getattr(self, '_actions_reserved', True):
@@ -1604,7 +1641,11 @@ class GroupRow(Gtk.ListBoxRow):
             self.set_margin_start(0)  # flatten nested-group indentation in the strip
             self.color_dot.set_visible(False)
             self.color_badge.set_visible(False)
-            self.split_view_button.set_visible(False)
+            slot = getattr(self, '_split_view_slot', None)
+            if slot is not None:
+                slot.set_visible(False)
+            else:
+                self.split_view_button.set_visible(False)
             # The chevron stays: collapsing a group is the one group action the
             # strip keeps, and unlike the row's hover actions it is always on
             # screen, so the strip reads the same as the full sidebar. It is
@@ -1853,18 +1894,21 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
 
-        # File manager button (before status icon) - only visible on hover
-        # Use opacity instead of visibility to reserve space and prevent row resizing
+        # File manager button — revealed on hover with its width reserved, so
+        # hovering never reflows the row. Parked in a height-only stack so
+        # shedding it (preference off, or no callback) frees the width without
+        # collapsing the row — the button is taller than the labels beside it.
         from sshpilot import icon_utils
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
-        self.file_manager_button.set_opacity(0.0)  # Hidden by default but reserves space
+        self.file_manager_button.set_opacity(0.0)
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
-        content.append(self.file_manager_button)
+        self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
+        content.append(self._file_manager_slot)
         
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
@@ -1959,19 +2003,23 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _reveal_file_manager_button(self, revealed: bool) -> None:
         """Fade Manage Files in or out of its reserved space.
 
-        When Preferences enables the button and a callback is available, the
-        button stays visible (space reserved) and opacity tracks the pointer —
-        so hovering never reflows the row. Otherwise the button is hidden
-        entirely and the name keeps the width.
+        The slot's button page is up while Preferences enables the action and a
+        callback is available; opacity then tracks the pointer so hovering
+        never reflows the row. Otherwise the empty page stays up — zero width,
+        but the same height as the button, so shedding the action never
+        collapses the row. The strip keeps the (trimmed) button the same way.
         """
+        slot = getattr(self, '_file_manager_slot', None)
         btn = getattr(self, 'file_manager_button', None)
-        if btn is None:
+        if slot is None or btn is None:
             return
         enabled = (
             self._file_manager_button_enabled()
             and bool(self._file_manager_callback)
         )
-        btn.set_visible(enabled)
+        slot.set_visible(True)
+        slot.set_visible_child_name(
+            ROW_ACTION_SLOT_BUTTON if enabled else ROW_ACTION_SLOT_EMPTY)
         btn.set_opacity(1.0 if (enabled and revealed) else 0.0)
 
     def _on_row_enter(self, controller, x, y):

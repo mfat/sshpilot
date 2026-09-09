@@ -1,9 +1,10 @@
-"""Group-row split-view action: reserved by default, shed when the sidebar is
-too narrow to pay for it.
+"""Sidebar row hover actions: reserved by default, shed without collapsing height.
 
-The group row is what sets the sidebar's measured minimum width, and a reserved
-34px button is most of it — so the width at which the button goes is also the
-width at which the divider can keep going.
+Group rows reserve the split-view button; connection rows reserve Manage Files.
+Shedding (preference off, or no callback) must keep the row's height — the
+button is taller than the labels — which is why each action lives in a
+height-only stack rather than being hidden outright. The group row also sheds
+when the sidebar is too narrow to pay for the reserved width.
 """
 
 import importlib
@@ -27,6 +28,7 @@ def _group_row(show_split_view=True):
         )
     )
     row.split_view_button = MagicMock(name='split_view_button')
+    row._split_view_slot = MagicMock(name='split_view_slot')
     return row, mod
 
 
@@ -35,35 +37,42 @@ def test_hover_only_changes_opacity_so_the_row_never_reflows():
 
     mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
 
-    row.split_view_button.set_visible.assert_called_with(True)
+    row._split_view_slot.set_visible.assert_called_with(True)
+    row._split_view_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
     row.split_view_button.set_opacity.assert_called_with(1.0)
 
     row._is_hovering_row = False
     mod.GroupRow._maybe_hide_row_actions(row)
-    row.split_view_button.set_visible.assert_called_with(True)
+    row._split_view_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
     row.split_view_button.set_opacity.assert_called_with(0.0)
 
 
-def test_split_view_button_pref_off_hides_the_action():
-    """Preferences ▸ Sidebar ▸ Split View Button defaults off and must suppress
-    the hover action even when the row is otherwise ready to show it."""
+def test_split_view_button_pref_off_keeps_height_without_width():
+    """Preferences ▸ Sidebar ▸ Split View Button defaults off: empty slot page
+    so the row does not collapse, and no button width is reserved."""
     row, mod = _group_row(show_split_view=False)
 
     mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
 
-    row.split_view_button.set_visible.assert_called_with(False)
+    row._split_view_slot.set_visible.assert_called_with(True)
+    row._split_view_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
     row.split_view_button.set_opacity.assert_called_with(0.0)
 
 
-def test_a_narrow_sidebar_sheds_the_button_entirely():
+def test_a_narrow_sidebar_sheds_the_button_width():
     row, mod = _group_row()
 
     mod.GroupRow.set_actions_reserved(row, False)
 
-    row.split_view_button.set_visible.assert_called_with(False)
-    # And hovering must not bring it back — that would reflow the row.
+    row._split_view_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
+    # And hovering must not bring the button page back — that would reflow.
     mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
-    row.split_view_button.set_visible.assert_called_with(False)
+    row._split_view_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
     row.split_view_button.set_opacity.assert_called_with(0.0)
 
 
@@ -73,7 +82,8 @@ def test_widening_restores_the_reservation():
 
     mod.GroupRow.set_actions_reserved(row, True)
 
-    row.split_view_button.set_visible.assert_called_with(True)
+    row._split_view_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
 
 
 def test_the_strip_keeps_no_row_action():
@@ -82,7 +92,7 @@ def test_the_strip_keeps_no_row_action():
 
     mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
 
-    row.split_view_button.set_visible.assert_called_with(False)
+    row._split_view_slot.set_visible.assert_called_with(False)
 
 
 def _connection_row(callback=True, show_file_manager=True):
@@ -99,6 +109,7 @@ def _connection_row(callback=True, show_file_manager=True):
         )
     )
     row.file_manager_button = MagicMock(name='file_manager_button')
+    row._file_manager_slot = MagicMock(name='file_manager_slot')
     return row, mod
 
 
@@ -107,21 +118,28 @@ def test_manage_files_hover_only_changes_opacity():
 
     mod.ConnectionRow._on_row_enter(row, None, 0, 0)
 
-    row.file_manager_button.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
     row.file_manager_button.set_opacity.assert_called_with(1.0)
 
     row._is_hovering = False
     mod.ConnectionRow._maybe_hide_button(row)
-    row.file_manager_button.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
     row.file_manager_button.set_opacity.assert_called_with(0.0)
 
 
-def test_file_manager_button_pref_off_hides_the_action():
+def test_file_manager_button_pref_off_keeps_height_without_width():
+    """Preferences ▸ Sidebar ▸ File Manager Button off: empty slot page so the
+    row does not collapse, and no button width is reserved."""
     row, mod = _connection_row(show_file_manager=False)
 
     mod.ConnectionRow._on_row_enter(row, None, 0, 0)
 
-    row.file_manager_button.set_visible.assert_called_with(False)
+    row._file_manager_slot.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
     row.file_manager_button.set_opacity.assert_called_with(0.0)
 
 
@@ -130,7 +148,8 @@ def test_a_row_without_a_file_manager_never_shows_the_action():
 
     mod.ConnectionRow._on_row_enter(row, None, 0, 0)
 
-    row.file_manager_button.set_visible.assert_called_with(False)
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_EMPTY)
     row.file_manager_button.set_opacity.assert_called_with(0.0)
 
 
