@@ -2667,11 +2667,22 @@ class TerminalWidget(Gtk.Box):
         font_desc.set_size(12 * Pango.SCALE)
         self.backend.set_font(font_desc)
         encoding = "UTF-8"
+        cursor_shape = None
+        cursor_blink = None
         try:
             encoding = self.config.get_setting("terminal.encoding", "UTF-8")
+            cursor_shape = self.config.get_setting("terminal.cursor_shape", None)
+            cursor_blink = self.config.get_setting("terminal.cursor_blink", None)
         except Exception:
             pass
-        self.backend.configure({"encoding": encoding, "scrollback_lines": 10000})
+        self.backend.configure(
+            {
+                "encoding": encoding,
+                "scrollback_lines": 10000,
+                "cursor_shape": cursor_shape,
+                "cursor_blink": cursor_blink,
+            }
+        )
         self.backend.apply_theme()
         # VTE owns hover highlighting and cursor changes for both its
         # registered regex and OSC 8 hyperlinks.  Python only looks a URI up

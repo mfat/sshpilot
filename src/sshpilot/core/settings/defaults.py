@@ -25,7 +25,10 @@ def get_default_config() -> Dict[str, Any]:
             'theme': 'default',
             'font': 'Monospace 12',
             'scrollback_lines': 10000,
-            'cursor_blink': True,
+            # 'block' | 'ibeam' | 'underline' (VTE's own nicks).
+            'cursor_shape': 'block',
+            # 'system' (follow GTK) | 'on' | 'off'.
+            'cursor_blink': 'system',
             'audible_bell': False,
             'term': None,
             'pass_through_mode': False,

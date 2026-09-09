@@ -23,6 +23,12 @@ from .file_manager_integration import (
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
+from .terminal_cursor import (
+    CURSOR_BLINK_MODES,
+    CURSOR_SHAPES,
+    normalize_cursor_blink,
+    normalize_cursor_shape,
+)
 
 
 import gi
@@ -563,6 +569,78 @@ class PreferencesWindow(Adw.NavigationPage):
         terminal_page.add(appearance_group)
         terminal_page.add(palette_group)
 
+    def _add_terminal_cursor_group(self, terminal_page):
+        """Add the Terminal cursor shape/blink group."""
+        cursor_group = Adw.PreferencesGroup(title=_("Cursor"))
+
+        self.cursor_shape_row = Adw.ComboRow()
+        self.cursor_shape_row.set_title(_("Cursor Shape"))
+        self.cursor_shape_row.set_subtitle(
+            _("Programs that set their own cursor still override this")
+        )
+        shape_model = Gtk.StringList()
+        for label in (_("Block"), _("I-Beam"), _("Underline")):
+            shape_model.append(label)
+        self.cursor_shape_row.set_model(shape_model)
+        current_shape = normalize_cursor_shape(
+            self.config.get_setting('terminal.cursor_shape', None)
+        )
+        self.cursor_shape_row.set_selected(CURSOR_SHAPES.index(current_shape))
+        self.cursor_shape_row.connect('notify::selected', self.on_cursor_shape_changed)
+        cursor_group.add(self.cursor_shape_row)
+
+        self.cursor_blink_row = Adw.ComboRow()
+        self.cursor_blink_row.set_title(_("Cursor Blinking"))
+        blink_model = Gtk.StringList()
+        for label in (_("Follow System"), _("Enabled"), _("Disabled")):
+            blink_model.append(label)
+        self.cursor_blink_row.set_model(blink_model)
+        current_blink = normalize_cursor_blink(
+            self.config.get_setting('terminal.cursor_blink', None)
+        )
+        self.cursor_blink_row.set_selected(CURSOR_BLINK_MODES.index(current_blink))
+        self.cursor_blink_row.connect('notify::selected', self.on_cursor_blink_changed)
+        cursor_group.add(self.cursor_blink_row)
+
+        terminal_page.add(cursor_group)
+
+    def on_cursor_shape_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if not 0 <= index < len(CURSOR_SHAPES):
+            return
+        self.config.set_setting('terminal.cursor_shape', CURSOR_SHAPES[index])
+        self.apply_cursor_options_to_terminals()
+
+    def on_cursor_blink_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if not 0 <= index < len(CURSOR_BLINK_MODES):
+            return
+        self.config.set_setting('terminal.cursor_blink', CURSOR_BLINK_MODES[index])
+        self.apply_cursor_options_to_terminals()
+
+    def apply_cursor_options_to_terminals(self):
+        """Push the cursor preference to every open terminal.
+
+        This is the only place outside terminal setup that may re-apply it:
+        xterm.js stores a program's DECSCUSR choice in the same option, so a
+        broader "reapply everything" sweep would undo it mid-session.
+        """
+        shape = self.config.get_setting('terminal.cursor_shape', None)
+        blink = self.config.get_setting('terminal.cursor_blink', None)
+        try:
+            parent_window = self.get_root()
+            if parent_window and hasattr(parent_window, 'connection_to_terminals'):
+                count = 0
+                for terms in parent_window.connection_to_terminals.values():
+                    for terminal in terms:
+                        backend = getattr(terminal, 'backend', None)
+                        if backend is not None and hasattr(backend, 'set_cursor_options'):
+                            backend.set_cursor_options(shape, blink)
+                            count += 1
+                logger.info("Applied cursor options to %d terminals", count)
+        except Exception as e:
+            logger.error(f"Failed to apply cursor options to terminals: {e}")
+
     def _add_terminal_backend_group(self, terminal_page):
         """Add the Terminal backend selection group."""
         # Terminal backend selection group
@@ -891,6 +969,7 @@ class PreferencesWindow(Adw.NavigationPage):
         terminal_page.set_icon_name("utilities-terminal-symbolic")
 
         self._add_terminal_appearance_groups(terminal_page)
+        self._add_terminal_cursor_group(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
         self._add_terminal_daemon_group(terminal_page)
