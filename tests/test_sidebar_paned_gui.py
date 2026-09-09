@@ -174,10 +174,27 @@ def test_a_drag_into_the_wall_resizes_but_does_not_collapse():
         window.destroy()
 
 
-def test_a_drag_well_past_the_wall_asks_for_the_icon_strip():
-    """The switch leaves the divider under the pointer, not at the strip's
-    resting width: snapping to the pin and jumping back out to the pointer on
-    the next motion event is a visible flicker mid-drag."""
+def test_a_drag_well_past_the_wall_stays_in_full_mode():
+    """COLLAPSE_BY_DRAG is off: a drag into the wall stops at the sidebar's
+    floor instead of switching to a mode the user did not ask for."""
+    paned, seen = _mode_switching_paned()
+    window = _shown(paned)
+    try:
+        paned.set_position(120)          # past the 40px slack under 200
+        assert seen == []
+        assert paned.get_position() == 200
+    finally:
+        window.destroy()
+
+
+def test_the_drag_collapse_gesture_lands_under_the_pointer_when_enabled(
+        monkeypatch):
+    """With the gesture switched back on, the switch leaves the divider under
+    the pointer, not at the strip's resting width: snapping to the pin and
+    jumping back out on the next motion event is a visible flicker mid-drag."""
+    from sshpilot import sidebar_paned
+
+    monkeypatch.setattr(sidebar_paned, 'COLLAPSE_BY_DRAG', True)
     paned, seen = _mode_switching_paned()
     window = _shown(paned)
     try:
@@ -238,8 +255,11 @@ def test_expanding_by_drag_lands_on_the_pointer_not_the_old_width():
         window.destroy()
 
 
-def test_a_mode_switching_drag_does_not_become_the_remembered_width():
+def test_a_mode_switching_drag_does_not_become_the_remembered_width(monkeypatch):
     """Collapsing must not persist 64px as the width to come back to."""
+    from sshpilot import sidebar_paned
+
+    monkeypatch.setattr(sidebar_paned, 'COLLAPSE_BY_DRAG', True)
     persisted = []
     paned, seen = _mode_switching_paned()
     paned._on_user_resize = persisted.append

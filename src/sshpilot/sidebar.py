@@ -725,6 +725,16 @@ def minimal_label_max_chars(
     return max(1, (max(0, int(width)) * max(1, int(base_chars))) // base_width)
 
 
+#: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
+#: floor GTK never lays the label out below, and it is not what keeps a name
+#: readable — these labels ellipsize, and their natural width comes from
+#: ``max-width-chars``. At 10 characters (~80px per label) it was the whole
+#: reason the sidebar could not be laid out narrower than 263px, so the minimum
+#: is none and only the natural width is bounded.
+FULL_LABEL_MIN_CHARS = 0
+FULL_LABEL_MAX_CHARS = 25
+
+
 def _configure_compact_label(label: Gtk.Label, text: str,
                              *, max_chars: int = MINIMAL_LABEL_MAX_CHARS,
                              group: bool = False) -> None:
@@ -745,8 +755,8 @@ def _restore_full_label_width(label: Gtk.Label) -> None:
     label.remove_css_class('sidebar-compact-label')
     label.remove_css_class('sidebar-compact-group')
     label.remove_css_class('sidebar-compact-online')
-    label.set_width_chars(10)
-    label.set_max_width_chars(25)
+    label.set_width_chars(FULL_LABEL_MIN_CHARS)
+    label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
     label.set_ellipsize(Pango.EllipsizeMode.END)
 
 
@@ -974,8 +984,8 @@ class GroupRow(Gtk.ListBoxRow):
         # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
         self.name_label.set_hexpand(True)
         self.name_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.name_label.set_width_chars(10)  # Minimum width
-        self.name_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        self.name_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.name_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         info_box.append(self.name_label)
 
         self.count_label = Gtk.Label()
@@ -988,8 +998,8 @@ class GroupRow(Gtk.ListBoxRow):
         # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
         self.count_label.set_hexpand(True)
         self.count_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.count_label.set_width_chars(10)  # Minimum width
-        self.count_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        self.count_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.count_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         # Set initial visibility based on preference
         config = getattr(self.group_manager, 'config', None)
         show_group_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
@@ -998,25 +1008,21 @@ class GroupRow(Gtk.ListBoxRow):
 
         content.append(info_box)
 
-        # Split-view button — only visible on hover
+        # Split-view button — revealed on hover with its space reserved, so
+        # hovering never reflows the row. The reservation is what a narrow
+        # sidebar cannot afford (34px of the group row, which is what floors
+        # the whole sidebar), so it is shed wholesale below
+        # ``window._ROW_ACTIONS_MIN_WIDTH`` — see :meth:`set_actions_reserved`.
+        # Editing the group is not a row button at all: it is a context-menu
+        # item ("Edit Group" / "Rename Tag…").
+        self._actions_reserved = True
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
         label_icon_button(self.split_view_button, _("Open in Split View"))
         self.split_view_button.set_valign(Gtk.Align.CENTER)
-        self.split_view_button.set_opacity(0.0)
+        self.split_view_button.set_opacity(0.0)  # reserves its space
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
         content.append(self.split_view_button)
-
-        # Edit button - only visible on hover
-        # Use opacity instead of visibility to reserve space and prevent row resizing
-        self.edit_button = icon_utils.new_button_from_icon_name("document-edit-symbolic")
-        self.edit_button.add_css_class("flat")
-        self.edit_button.add_css_class("group-edit-button")
-        label_icon_button(self.edit_button, _("Edit Group"))
-        self.edit_button.set_valign(Gtk.Align.CENTER)
-        self.edit_button.set_opacity(0.0)  # Hidden by default but reserves space
-        self.edit_button.connect("clicked", self._on_edit_clicked)
-        content.append(self.edit_button)
 
         # Set up hover events to show/hide buttons
         self._setup_hover_buttons()
@@ -1260,16 +1266,6 @@ class GroupRow(Gtk.ListBoxRow):
             if hasattr(row, "apply_descendant_visibility"):
                 row.apply_descendant_visibility(descendants_visible)
 
-    def _on_edit_clicked(self, button):
-        """Handle edit button click"""
-        try:
-            window = self.get_root()
-            if window and hasattr(window, 'on_edit_group_action'):
-                window._context_menu_group_row = self
-                window.on_edit_group_action(None, None)
-        except Exception as e:
-            logger.error(f"Error editing group {self.group_id}: {e}")
-
     def _on_split_view_clicked(self, button):
         """Open all connections in this group as a split-view tab."""
         try:
@@ -1281,49 +1277,69 @@ class GroupRow(Gtk.ListBoxRow):
             logger.error(f"Error opening group in split view {self.group_id}: {e}")
 
     def _setup_hover_buttons(self):
-        """Set up hover events to show/hide the split-view and edit buttons."""
-        self._is_hovering_edit = False
+        """Set up hover events to show/hide the split-view button."""
+        self._is_hovering_row = False
 
         motion_controller = Gtk.EventControllerMotion()
-        motion_controller.connect("enter", self._on_row_enter_edit)
-        motion_controller.connect("leave", self._on_row_leave_edit)
+        motion_controller.connect("enter", self._on_row_enter_actions)
+        motion_controller.connect("leave", self._on_row_leave_actions)
         self.add_controller(motion_controller)
 
-        for btn in (self.split_view_button, self.edit_button):
-            if btn:
-                mc = Gtk.EventControllerMotion()
-                mc.connect("enter", self._on_button_enter_edit)
-                mc.connect("leave", self._on_button_leave_edit)
-                btn.add_controller(mc)
+        btn = self.split_view_button
+        if btn:
+            mc = Gtk.EventControllerMotion()
+            mc.connect("enter", self._on_button_enter_action)
+            mc.connect("leave", self._on_button_leave_action)
+            btn.add_controller(mc)
 
-    # Keep old name as alias so existing callers don't break
-    def _setup_edit_button_hover(self):
-        self._setup_hover_buttons()
+    def _on_row_enter_actions(self, controller, x, y):
+        self._is_hovering_row = True
+        self._reveal_row_actions(True)
 
-    def _on_row_enter_edit(self, controller, x, y):
-        self._is_hovering_edit = True
-        self._set_hover_buttons_opacity(1.0)
+    def _on_row_leave_actions(self, controller):
+        self._is_hovering_row = False
+        GLib.timeout_add(100, self._maybe_hide_row_actions)
 
-    def _on_row_leave_edit(self, controller):
-        self._is_hovering_edit = False
-        GLib.timeout_add(100, self._maybe_hide_edit_button)
+    def _on_button_enter_action(self, controller, x, y):
+        self._is_hovering_row = True
+        self._reveal_row_actions(True)
 
-    def _on_button_enter_edit(self, controller, x, y):
-        self._is_hovering_edit = True
-        self._set_hover_buttons_opacity(1.0)
+    def _on_button_leave_action(self, controller):
+        self._is_hovering_row = False
+        GLib.timeout_add(100, self._maybe_hide_row_actions)
 
-    def _on_button_leave_edit(self, controller):
-        self._is_hovering_edit = False
-        GLib.timeout_add(100, self._maybe_hide_edit_button)
+    def _reveal_row_actions(self, revealed: bool) -> None:
+        """Fade the split-view action in or out of its reserved space.
 
-    def _set_hover_buttons_opacity(self, opacity: float) -> None:
-        for btn in (self.split_view_button, self.edit_button):
-            if btn:
-                btn.set_opacity(opacity)
+        Visibility answers "does this row have the width for the action at
+        all" (:meth:`set_actions_reserved`, and never in the strip); opacity
+        answers "is the pointer here" — so hovering never reflows the row.
+        """
+        btn = getattr(self, 'split_view_button', None)
+        if btn is None:
+            return
+        reserved = (getattr(self, '_actions_reserved', True)
+                    and not getattr(self, '_compact', False))
+        btn.set_visible(reserved)
+        btn.set_opacity(1.0 if (reserved and revealed) else 0.0)
 
-    def _maybe_hide_edit_button(self):
-        if not self._is_hovering_edit:
-            self._set_hover_buttons_opacity(0.0)
+    def set_actions_reserved(self, reserved: bool) -> None:
+        """Keep the split-view action's reserved space, or shed it entirely.
+
+        Reserved is the resting state. A sidebar too narrow to afford the 34px
+        drops the button instead of squeezing the group name to an ellipsis —
+        the group row is what sets the sidebar's minimum width, so this is also
+        what lets the divider go on past it.
+        """
+        reserved = bool(reserved)
+        if reserved == getattr(self, '_actions_reserved', True):
+            return
+        self._actions_reserved = reserved
+        self._reveal_row_actions(getattr(self, '_is_hovering_row', False))
+
+    def _maybe_hide_row_actions(self):
+        if not self._is_hovering_row:
+            self._reveal_row_actions(False)
         return False
 
     def _apply_group_color_style(self):
@@ -1448,7 +1464,6 @@ class GroupRow(Gtk.ListBoxRow):
             self.color_dot.set_visible(False)
             self.color_badge.set_visible(False)
             self.split_view_button.set_visible(False)
-            self.edit_button.set_visible(False)
             # The chevron stays: collapsing a group is the one group action the
             # strip keeps, and unlike the row's hover actions it is always on
             # screen, so the strip reads the same as the full sidebar. It is
@@ -1483,8 +1498,7 @@ class GroupRow(Gtk.ListBoxRow):
             _set_compact_fg_color(self.icon, None)
             _set_compact_fg_color(self.name_label, None)
             _restore_full_label_width(self.name_label)
-            self.split_view_button.set_visible(True)
-            self.edit_button.set_visible(True)
+            self._reveal_row_actions(getattr(self, '_is_hovering_row', False))
             self.expand_button.set_visible(True)
             self.set_tooltip_text(None)
             config = getattr(self.group_manager, 'config', None)
@@ -1518,13 +1532,10 @@ class TagGroupRow(GroupRow):
         self.remove_css_class("navigation-sidebar")
         self.add_css_class("osd")
         self.icon.set_from_icon_name("tag-symbolic")
-        # The edit button renames the tag (across all tagged connections);
-        # the split-view button works as inherited — the action only reads
-        # group_info['connections'] / ['name'], so a synthetic group is fine.
-        label_icon_button(self.edit_button, _("Rename Tag"))
-        if group_info.get("untagged"):
-            # The Untagged section is not a real tag — nothing to rename.
-            self.edit_button.set_visible(False)
+        # Renaming a tag is a context-menu item ("Rename Tag…", and absent on
+        # the synthetic Untagged section); the inherited split-view button
+        # works as-is — the action only reads group_info['connections'] /
+        # ['name'], so a synthetic group is fine.
 
     def _accessible_row_name(self, group_name: str) -> str:
         # A tag section is not a user-created group; don't call it one.
@@ -1545,16 +1556,6 @@ class TagGroupRow(GroupRow):
         # second toggle is masked by the full rebuild destroying the row, but
         # tag rows survive their in-place toggle, so the gesture must go.
         pass
-
-    def _on_edit_clicked(self, button):
-        # Rename the tag itself, not a GroupManager group (the base handler
-        # routes to on_edit_group_action, which bails on synthetic ids).
-        try:
-            window = self.get_root()
-            if window and hasattr(window, 'on_rename_tag_action'):
-                window.on_rename_tag_action(self)
-        except Exception as e:
-            logger.error(f"Error renaming tag {self.group_id}: {e}")
 
     def _update_display(self):
         super()._update_display()
@@ -1674,8 +1675,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
         self.nickname_label.set_hexpand(True)
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.nickname_label.set_width_chars(10)  # Minimum width
-        self.nickname_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        self.nickname_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.nickname_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self.nickname_label.set_tooltip_text(connection.nickname)
         info_box.append(self.nickname_label)
 
@@ -1689,8 +1690,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # Labels with ellipsize need hexpand to fill available space and ellipsize properly.
         self.host_label.set_hexpand(True)
         self.host_label.set_ellipsize(Pango.EllipsizeMode.END)
-        self.host_label.set_width_chars(10)  # Minimum width
-        self.host_label.set_max_width_chars(25)  # Maximum natural width (prevents expansion)
+        self.host_label.set_width_chars(FULL_LABEL_MIN_CHARS)
+        self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
         show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)

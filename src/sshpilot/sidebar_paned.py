@@ -27,14 +27,14 @@ persisted; the callback is debounced so a drag writes the setting once.
 layout reflow), so the owner can drop tall secondary row chrome for the
 duration of the gesture.
 
-The divider is also how the sidebar changes mode. Dragging it well past the
-width the sidebar can actually be laid out in is a request for the minimal icon
-strip, and dragging a pinned strip out to ``_expand_threshold()`` — the width
-the full sidebar needs — is a request for the full sidebar; both are reported
-through ``on_mode_switch``, which the window answers with
-``set_sidebar_minimal``. Below that threshold a pinned strip follows the
-pointer (staying in minimal mode) so the mode switch is continuous. Nothing
-else in this widget knows what a mode is.
+The divider is also how the sidebar leaves the minimal strip: dragging a pinned
+strip out to ``_expand_threshold()`` — the width the full sidebar needs — is a
+request for the full sidebar, reported through ``on_mode_switch``, which the
+window answers with ``set_sidebar_minimal``. Below that threshold a pinned strip
+follows the pointer (staying in minimal mode) so the mode switch is continuous.
+The way *into* the strip by drag — shoving the divider past the sidebar's floor
+— is behind :data:`COLLAPSE_BY_DRAG` and currently off. Nothing else in this
+widget knows what a mode is.
 
 Overlay presentation (``AdwOverlaySplitView.collapsed``) has no ``Gtk.Paned``
 equivalent — see ``docs/sidebar-modes.md``.
@@ -65,6 +65,15 @@ _PERSIST_DELAY_MS = 400
 #: How far past the wall a drag must go before it counts as a mode switch
 #: rather than the user simply running the divider into the end of its travel.
 _MODE_SWITCH_SLACK = 40
+
+#: Whether shoving the divider past the sidebar's floor collapses to the icon
+#: strip. **Off**: the answer to "the sidebar is too wide" is a full sidebar
+#: that lays out narrower, not a different mode the user did not ask for, so a
+#: drag into the wall now simply stops there. The strip itself is untouched —
+#: ``ui.sidebar_mode``, the "When a Terminal Opens" behaviour and a restored
+#: session still enter it, dragging a pinned strip open still leaves it, and
+#: flipping this back to True restores the drag-in gesture.
+COLLAPSE_BY_DRAG = False
 
 #: Widest the sidebar makes itself before the user has ever sized it. Only the
 #: automatic (fraction-of-window) width is capped — a dragged width is not.
@@ -383,8 +392,10 @@ class SidebarPaned(Gtk.Paned):
         ceiling = self._drag_ceiling(width)
         floor = max(_ABSOLUTE_MIN_WIDTH, min(self._floor(), ceiling))
         # Shoving the divider well past the narrowest the sidebar can be laid
-        # out in asks for the icon strip rather than for an impossible width.
-        if dragging and position < floor - _MODE_SWITCH_SLACK:
+        # out in asks for the icon strip rather than for an impossible width —
+        # while COLLAPSE_BY_DRAG is on. With it off the drag just stops at the
+        # floor and the sidebar stays in full mode.
+        if COLLAPSE_BY_DRAG and dragging and position < floor - _MODE_SWITCH_SLACK:
             self._emit_drag(position)
             if self._request_mode(True):
                 # The owner pins the strip's *resting* width, but the pointer is

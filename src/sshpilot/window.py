@@ -270,6 +270,13 @@ _MINIMAL_STRIP_WIDTH = 112
 _SIDEBAR_HEADER_MARGIN_FULL = 12
 _SIDEBAR_HEADER_MARGIN_STRIP = 6
 
+# Narrowest full sidebar that still reserves space for a group row's split-view
+# action. Below it the rows shed the button (``GroupRow.set_actions_reserved``)
+# so the group name keeps the width — and so the sidebar's measured minimum
+# drops with it, since the group row is what sets that minimum. Must stay above
+# the floor the reserved button produces (~150px) or the two would fight.
+_ROW_ACTIONS_MIN_WIDTH = 180
+
 
 def _accelerator_label(accel: str) -> str:
     """Human-readable form of a GTK accelerator ("F11", "⌃⌘F"), for tooltips."""
@@ -3069,8 +3076,39 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             base_width=_MINIMAL_STRIP_WIDTH,
         )
 
+    def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
+        """Reserve or shed the group rows' split-view action for this width.
+
+        The group row is what sets the sidebar's measured minimum, and a
+        reserved 34px button is most of it. Below
+        :data:`_ROW_ACTIONS_MIN_WIDTH` the rows drop it, the minimum drops with
+        them, and the divider can go on narrowing instead of stopping at a
+        width the name has already been ellipsised out of.
+        """
+        lb = getattr(self, 'connection_list', None)
+        if lb is None:
+            return
+        try:
+            width = int(self._get_sidebar_width())
+        except Exception:
+            return
+        reserved = width >= _ROW_ACTIONS_MIN_WIDTH
+        if not force and reserved == getattr(self, '_sidebar_row_actions_reserved', None):
+            return
+        self._sidebar_row_actions_reserved = reserved
+        row = lb.get_first_child()
+        while row is not None:
+            setter = getattr(row, 'set_actions_reserved', None)
+            if setter is not None:
+                try:
+                    setter(reserved)
+                except Exception:
+                    logger.debug("row set_actions_reserved failed", exc_info=True)
+            row = row.get_next_sibling()
+
     def _on_sidebar_strip_position_changed(self, *_args) -> None:
         """Grow/shrink compact label ellipsis as the minimal strip is dragged."""
+        self._apply_sidebar_row_actions()
         if not getattr(self, '_sidebar_minimal', False):
             return
         try:
@@ -4352,6 +4390,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         # omnisearch lands — re-enable by calling self._append_command_matches().
         if getattr(self, '_sidebar_minimal', False) and not (getattr(self, "_search_popup", None) and self._search_popup.visible):
             self._apply_sidebar_minimal_rows(True)
+        # Fresh rows reserve their row actions; a narrow sidebar sheds them.
+        self._apply_sidebar_row_actions(force=True)
         for connection_uuid, group_id in selected_connection_rows:
             connection = self.connection_manager.get_connection_by_uuid(
                 connection_uuid

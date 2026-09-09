@@ -31,7 +31,23 @@ computed the width itself and offered no handle. What changed for callers:
 - **The minimum is measured, not configured.** `SidebarPaned._floor()` is the
   sidebar's own content minimum — `sidebar.measure(HORIZONTAL, -1)`, i.e. the
   widest of what the header, the bottom toolbar row and the connection rows
-  ask for. A drag stops there, and the automatic width is lifted to it (a
+  ask for. Measured today: **195px, all of it the group row** (a connection row
+  asks 128, the header toolbar 98, and the bottom toolbar sits in a scroller
+  that asks 0). Row labels add nothing to it — `sidebar.FULL_LABEL_MIN_CHARS`
+  is 0, because `width-chars` is a floor GTK never lays a label out below and
+  these labels ellipsize; at the old 10 characters they were ~80px each and the
+  floor was 263. The group row's trailing controls are the rest of it, and they
+  are **width-responsive**: the Edit button is gone entirely (it is a
+  context-menu item), and the split-view button keeps its reserved 34px only
+  while the sidebar is at least `window._ROW_ACTIONS_MIN_WIDTH` (180) wide.
+  Below that `MainWindow._apply_sidebar_row_actions` calls
+  `GroupRow.set_actions_reserved(False)` on every row, the button goes, and the
+  measured floor goes 149 → 128 with it — which is what lets the divider carry
+  on instead of stopping at a width the group name has already been ellipsised
+  out of. Hover is still opacity-only, so revealing the button never reflows a
+  row; only the width decides whether it is there at all. The threshold has to
+  stay above the floor the reservation produces (~150) or the two would fight.
+  A drag stops at the floor, and the automatic width is lifted to it (a
   content minimum above the 400 cap wins over the cap). There is **no
   `_SIDEBAR_MIN_WIDTH` constant** any more: the old 180 was
   `AdwOverlaySplitView`'s default `min-sidebar-width` carried over, and on top
@@ -47,9 +63,15 @@ computed the width itself and offered no handle. What changed for callers:
   64px strip reachable. `get_resting_sidebar_width()`
   answers "how wide once released?" even while pinned, which is what the
   animation's endpoint and the search popup's panel width need.
-- **The divider switches mode, too.** Dragging it more than
-  `_MODE_SWITCH_SLACK` (40px) below the measured floor asks for the icon strip;
-  dragging a pinned strip out to `_expand_threshold()` — the width the full
+- **The divider switches mode, too — one way.** Dragging it more than
+  `_MODE_SWITCH_SLACK` (40px) below the measured floor used to ask for the icon
+  strip; that gesture is behind `sidebar_paned.COLLAPSE_BY_DRAG` and is
+  currently **off**, so a drag into the wall simply stops at the floor. The
+  answer to "the sidebar is too wide" is a full sidebar that lays out narrower
+  (see the floor above), not a mode the user did not ask for. The strip is
+  still entered by `ui.sidebar_mode`, by "When a Terminal Opens" and by a
+  restored session, and is still left by dragging it open or by its expand
+  button. Dragging a pinned strip out to `_expand_threshold()` — the width the full
   sidebar actually needs — asks for the full sidebar back. Until that point
   the strip follows the pointer while staying minimal. The paned reports
   both through `on_mode_switch` and leaves the divider alone when the owner
@@ -156,8 +178,10 @@ button); it keeps as many buttons as fit and moves the rest into a trailing
 not shown there). The bottom selection toolbar is hidden and replaced by the
 expand control.
 
-**By mouse, the divider is the way in and out** (section 0): drag it past the
-sidebar's minimum to collapse, drag the strip open to restore. There is no
+**By mouse, the divider is the way out** (section 0): drag the strip open to
+restore the full sidebar. Dragging *in* — past the sidebar's minimum — is
+`COLLAPSE_BY_DRAG` and is off; the strip's own expand button is the other way
+out. There is no
 minimize button in the bottom toolbar any more — it sat at the start of that
 button row, and the row's minimum width is what held the whole sidebar wide, so
 the control that collapsed the sidebar was itself part of why it could not get

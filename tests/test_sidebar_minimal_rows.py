@@ -53,7 +53,7 @@ def _make_group():
     row._content_margin_base = 12
     row._content_spacing_base = 12
     for name in ('_content', '_info_box', 'color_dot', 'color_badge',
-                 'split_view_button', 'edit_button', 'expand_button', 'icon',
+                 'split_view_button', 'expand_button', 'icon',
                  'name_label', 'count_label'):
         setattr(row, name, MagicMock())
     row.set_tooltip_text = MagicMock()
@@ -81,7 +81,7 @@ def test_group_compact_shows_bold_colored_text_only(monkeypatch):
     row.count_label.set_visible.assert_called_with(False)
     # The chevron survives the strip: collapsing a group still works there.
     row.expand_button.set_visible.assert_called_with(True)
-    row.edit_button.set_visible.assert_called_with(False)
+    row.split_view_button.set_visible.assert_called_with(False)
     row._info_box.set_visible.assert_called_with(True)
     row.name_label.set_text.assert_called_with('Servers')
     row.name_label.set_max_width_chars.assert_called_with(mod.MINIMAL_LABEL_MAX_CHARS)
@@ -233,6 +233,20 @@ def test_compact_group_honours_max_chars(monkeypatch):
     row.set_compact(True, max_chars=14)
 
     row.name_label.set_max_width_chars.assert_called_with(14)
+
+
+def test_full_labels_have_no_character_minimum():
+    """Restoring a full row bounds the label's natural width but sets no
+    ``width-chars`` floor: that floor is what kept the sidebar from being laid
+    out below 263px, and these labels ellipsize anyway."""
+    mod = importlib.import_module('sshpilot.sidebar')
+    label = MagicMock()
+
+    mod._restore_full_label_width(label)
+
+    label.set_width_chars.assert_called_with(0)
+    label.set_max_width_chars.assert_called_with(mod.FULL_LABEL_MAX_CHARS)
+    assert mod.FULL_LABEL_MIN_CHARS == 0
 
 
 def test_restore_shows_labels_and_refreshes_status(monkeypatch):
