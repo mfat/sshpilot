@@ -1,3 +1,11 @@
+sshpilot (6.0.8-1) unstable; urgency=medium
+
+  * Release v6.0.8.
+  * Sidebar is now resizable
+  * Added option to use monospace font for the user interface
+
+ -- Mehdi <mah.fat@gmail.com>  Wed, 09 Sep 2026 13:47:20 +0000
+
 sshpilot (6.0.7-1) unstable; urgency=medium
 
   * Release v6.0.7.

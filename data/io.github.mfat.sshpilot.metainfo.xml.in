@@ -61,6 +61,12 @@
 
 
 
+    <release version="6.0.8" date="2026-09-09">
+      <description>
+        <p>Sidebar is now resizable</p>
+        <p>Added option to use monospace font for the user interface</p>
+      </description>
+    </release>
     <release version="6.0.7" date="2026-09-08">
       <description>
         <p>Redesigned backup dialog</p>
