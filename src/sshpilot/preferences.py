@@ -1583,7 +1583,7 @@ class PreferencesWindow(Adw.NavigationPage):
         """Build the Interface preferences page."""
         interface_page = Adw.PreferencesPage()
         interface_page.set_title(_("Interface"))
-        interface_page.set_icon_name("applications-graphics-symbolic")
+        interface_page.set_icon_name("brush-monitor-symbolic")
 
         self._add_interface_language_group(interface_page)
         self._add_interface_startup_group(interface_page)
@@ -2665,7 +2665,7 @@ class PreferencesWindow(Adw.NavigationPage):
             # Build initial page immediately; register remaining page builders lazily
             interface_page = self._build_interface_preferences_page()
 
-            self.add_page_to_layout(N_("Interface"), "applications-graphics-symbolic", interface_page)
+            self.add_page_to_layout(N_("Interface"), "brush-monitor-symbolic", interface_page)
             self.add_page_to_layout(N_("Terminal"), "utilities-terminal-symbolic", self._build_terminal_preferences_page)
             self.add_page_to_layout(N_("File Management"), "folder-symbolic", self._build_file_management_preferences_page)
             self.add_page_to_layout(N_("Shortcuts"), "preferences-desktop-keyboard-shortcuts-symbolic", self._build_shortcuts_preferences_page)
