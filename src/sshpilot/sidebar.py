@@ -298,10 +298,9 @@ def install_sidebar_css():
           background: alpha(@accent_bg_color, 0.1);
         }
 
-        /* Row hover actions in the minimal strip: the button keeps its
-           reserved space (hovering must never reflow the row), so it is
-           trimmed to the icon to leave the label as much of the ~112px
-           strip as possible. */
+        /* Row hover actions in the minimal strip: the button only exists
+           while the row is hovered, and it is trimmed to the icon so it
+           takes as little of the ~112px strip from the label as it can. */
         .file-manager-button.sidebar-compact-action {
           min-width: 16px;
           min-height: 16px;
@@ -860,6 +859,53 @@ def minimal_label_max_chars(
 FULL_LABEL_MIN_CHARS = 0
 FULL_LABEL_MAX_CHARS = 25
 
+#: Page names of a row's hover-action slot (group split-view / connection
+#: Manage Files): the button itself, and the empty page that holds its height
+#: but no width.
+ROW_ACTION_SLOT_BUTTON = 'button'
+ROW_ACTION_SLOT_EMPTY = 'none'
+
+
+def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
+    """Park a hover-action button so it costs height always and width only
+    while up.
+
+    A transparent button still takes its ~34px out of the row; hiding it
+    outright frees the width but shortens the row because the button is taller
+    than the labels beside it. ``vhomogeneous`` keeps the button's height on
+    both pages; ``hhomogeneous`` off gives the empty page zero width — the
+    name gets the width at rest and the row keeps its height on hover.
+    """
+    slot = Gtk.Stack()
+    slot.set_hhomogeneous(False)
+    slot.set_vhomogeneous(True)
+    slot.set_transition_type(Gtk.StackTransitionType.NONE)
+    slot.set_valign(Gtk.Align.CENTER)
+    slot.add_named(Gtk.Box(), ROW_ACTION_SLOT_EMPTY)
+    slot.add_named(button, ROW_ACTION_SLOT_BUTTON)
+    slot.set_visible_child_name(ROW_ACTION_SLOT_EMPTY)
+    return slot
+
+
+def _pointer_is_on_row(row) -> bool:
+    """Whether the pointer is on ``row`` — GTK's answer, not a flag.
+
+    ``contains-pointer`` counts the row's children too and is maintained by
+    GTK itself, so it survives what a hand-kept flag did not: a row rebuilt
+    under a pointer that never moved, or a stray leave from a crossing, grab or
+    popup. A flag that went false in any of those cases stayed false, and the
+    row's hover action was dead until the pointer left the row and came back.
+
+    Note the spelling: ``gtk_event_controller_motion_contains_pointer()`` is a
+    predicate, not a property getter, so there is no ``get_contains_pointer()``.
+    Left unguarded on purpose — a wrong answer here silently disables the
+    reveal, which is exactly the failure this exists to end.
+    """
+    controller = getattr(row, '_hover_controller', None)
+    if controller is None:
+        return False
+    return bool(controller.contains_pointer())
+
 
 def _configure_compact_label(label: Gtk.Label, text: str,
                              *, max_chars: int = MINIMAL_LABEL_MAX_CHARS,
@@ -1134,21 +1180,20 @@ class GroupRow(Gtk.ListBoxRow):
 
         content.append(info_box)
 
-        # Split-view button — revealed on hover with its space reserved, so
-        # hovering never reflows the row. The reservation is what a narrow
-        # sidebar cannot afford (34px of the group row, which is what floors
-        # the whole sidebar), so it is shed wholesale below
-        # ``window._ROW_ACTIONS_MIN_WIDTH`` — see :meth:`set_actions_reserved`.
-        # Editing the group is not a row button at all: it is a context-menu
-        # item ("Edit Group" / "Rename Tag…").
+        # Split-view button — revealed on hover. Same slot as Manage Files:
+        # height always, width only while up, so the group title keeps the
+        # row at rest. Below ``window._ROW_ACTIONS_MIN_WIDTH`` the action is
+        # shed entirely — see :meth:`set_actions_reserved`. Editing the group
+        # is not a row button at all: it is a context-menu item
+        # ("Edit Group" / "Rename Tag…").
         self._actions_reserved = True
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
         label_icon_button(self.split_view_button, _("Open in Split View"))
         self.split_view_button.set_valign(Gtk.Align.CENTER)
-        self.split_view_button.set_opacity(0.0)  # reserves its space
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
-        content.append(self.split_view_button)
+        self._split_view_slot = _make_row_action_slot(self.split_view_button)
+        content.append(self._split_view_slot)
 
         # Set up hover events to show/hide buttons
         self._setup_hover_buttons()
@@ -1403,68 +1448,75 @@ class GroupRow(Gtk.ListBoxRow):
             logger.error(f"Error opening group in split view {self.group_id}: {e}")
 
     def _setup_hover_buttons(self):
-        """Set up hover events to show/hide the split-view button."""
-        self._is_hovering_row = False
+        """Set up hover events to show/hide the split-view button.
 
+        One controller, on the row: ``contains-pointer`` already covers the
+        row's children, the button included, so the button needs none of its
+        own — and a second controller only introduced a leave that could say
+        "gone" while the pointer was still on the row.
+        """
         motion_controller = Gtk.EventControllerMotion()
         motion_controller.connect("enter", self._on_row_enter_actions)
         motion_controller.connect("leave", self._on_row_leave_actions)
+        # A pointer that never moves gets no crossing event when the row under
+        # it is rebuilt or re-laid-out, so re-arm on plain motion too.
+        motion_controller.connect("motion", self._on_row_motion_actions)
+        self._hover_controller = motion_controller
         self.add_controller(motion_controller)
 
-        btn = self.split_view_button
-        if btn:
-            mc = Gtk.EventControllerMotion()
-            mc.connect("enter", self._on_button_enter_action)
-            mc.connect("leave", self._on_button_leave_action)
-            btn.add_controller(mc)
+    def _pointer_is_on_row(self) -> bool:
+        """Whether the pointer is on the row — see :func:`_pointer_is_on_row`."""
+        return _pointer_is_on_row(self)
 
     def _on_row_enter_actions(self, controller, x, y):
-        self._is_hovering_row = True
+        self._reveal_row_actions(True)
+
+    def _on_row_motion_actions(self, controller, x, y):
+        """Re-arm the reveal for a pointer that is on the row without having
+        crossed into it (a rebuilt row, a settled layout change)."""
         self._reveal_row_actions(True)
 
     def _on_row_leave_actions(self, controller):
-        self._is_hovering_row = False
-        GLib.timeout_add(100, self._maybe_hide_row_actions)
-
-    def _on_button_enter_action(self, controller, x, y):
-        self._is_hovering_row = True
-        self._reveal_row_actions(True)
-
-    def _on_button_leave_action(self, controller):
-        self._is_hovering_row = False
+        # Small delay: a crossing within the row can flip the property for an
+        # instant, and _maybe_hide_row_actions re-asks before acting on it.
         GLib.timeout_add(100, self._maybe_hide_row_actions)
 
     def _reveal_row_actions(self, revealed: bool) -> None:
-        """Fade the split-view action in or out of its reserved space.
+        """Show or hide the split-view action for the current hover state.
 
-        Visibility answers "does this row have the width for the action at
-        all" (:meth:`set_actions_reserved`, and never in the strip); opacity
-        answers "is the pointer here" — so hovering never reflows the row.
+        The slot keeps the button's height either way, so the row never
+        changes size on hover; it takes the button's *width* only while the
+        button is up, so the group title is laid out across the whole row at
+        rest. Compact and a sidebar too narrow to afford the borrow never show
+        it — see :meth:`set_actions_reserved`.
         """
-        btn = getattr(self, 'split_view_button', None)
-        if btn is None:
+        slot = getattr(self, '_split_view_slot', None)
+        if slot is None:
             return
-        reserved = (getattr(self, '_actions_reserved', True)
-                    and not getattr(self, '_compact', False))
-        btn.set_visible(reserved)
-        btn.set_opacity(1.0 if (reserved and revealed) else 0.0)
+        show = (bool(revealed)
+                and getattr(self, '_actions_reserved', True)
+                and not getattr(self, '_compact', False))
+        slot.set_visible_child_name(
+            ROW_ACTION_SLOT_BUTTON if show else ROW_ACTION_SLOT_EMPTY)
 
     def set_actions_reserved(self, reserved: bool) -> None:
-        """Keep the split-view action's reserved space, or shed it entirely.
+        """Allow or forbid the split-view hover action at this sidebar width.
 
-        Reserved is the resting state. A sidebar too narrow to afford the 34px
-        drops the button instead of squeezing the group name to an ellipsis —
-        the group row is what sets the sidebar's minimum width, so this is also
-        what lets the divider go on past it.
+        A group row never reserves the button's width, so this only answers
+        whether the row can still afford to hand ~34px over while it is
+        hovered. Below ``window._ROW_ACTIONS_MIN_WIDTH`` it cannot — hovering
+        would ellipsise the title away — so the button stays down and split
+        view is reached from the context menu instead. Never shown in the
+        strip.
         """
         reserved = bool(reserved)
         if reserved == getattr(self, '_actions_reserved', True):
             return
         self._actions_reserved = reserved
-        self._reveal_row_actions(getattr(self, '_is_hovering_row', False))
+        self._reveal_row_actions(self._pointer_is_on_row())
 
     def _maybe_hide_row_actions(self):
-        if not self._is_hovering_row:
+        if not self._pointer_is_on_row():
             self._reveal_row_actions(False)
         return False
 
@@ -1589,7 +1641,7 @@ class GroupRow(Gtk.ListBoxRow):
             self.set_margin_start(0)  # flatten nested-group indentation in the strip
             self.color_dot.set_visible(False)
             self.color_badge.set_visible(False)
-            self.split_view_button.set_visible(False)
+            self._reveal_row_actions(False)
             # The chevron stays: collapsing a group is the one group action the
             # strip keeps, and unlike the row's hover actions it is always on
             # screen, so the strip reads the same as the full sidebar. It is
@@ -1624,7 +1676,7 @@ class GroupRow(Gtk.ListBoxRow):
             _set_compact_fg_color(self.icon, None)
             _set_compact_fg_color(self.name_label, None)
             _restore_full_label_width(self.name_label)
-            self._reveal_row_actions(getattr(self, '_is_hovering_row', False))
+            self._reveal_row_actions(self._pointer_is_on_row())
             self.expand_button.set_visible(True)
             self.set_tooltip_text(None)
             config = getattr(self.group_manager, 'config', None)
@@ -1838,18 +1890,19 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
 
-        # File manager button (before status icon) - only visible on hover
-        # Use opacity instead of visibility to reserve space and prevent row resizing
+        # File manager button (before status icon) - only visible on hover.
+        # Same width/height trade-off as the group split-view action: see
+        # :func:`_make_row_action_slot`.
         from sshpilot import icon_utils
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
-        self.file_manager_button.set_opacity(0.0)  # Hidden by default but reserves space
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
-        content.append(self.file_manager_button)
+        self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
+        content.append(self._file_manager_slot)
         
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
@@ -1909,50 +1962,83 @@ class ConnectionRow(Gtk.ListBoxRow):
                 logger.error(f"Error opening file manager for {self.connection.nickname}: {e}")
 
     def _setup_file_manager_button_hover(self):
-        """Set up hover events to show/hide file manager button"""
-        # Track hover state
-        self._is_hovering = False
-        
-        # Motion controller for the row
+        """Set up hover events to show/hide file manager button.
+
+        One controller, on the row: ``contains-pointer`` already covers the
+        row's children, the revealed button included, so the button needs none
+        of its own — and a second controller only introduced a leave that could
+        say "gone" while the pointer was still on the row.
+        """
+        # Whether the sidebar is wide enough for the action at all.
+        self._actions_affordable = True
+
         motion_controller = Gtk.EventControllerMotion()
         motion_controller.connect("enter", self._on_row_enter)
         motion_controller.connect("leave", self._on_row_leave)
+        # A pointer that never moves gets no crossing event when the row under
+        # it is rebuilt or re-laid-out, so re-arm the reveal on plain motion
+        # too: whatever dropped it, the next twitch of the mouse brings it back.
+        motion_controller.connect("motion", self._on_row_motion)
+        self._hover_controller = motion_controller
         self.add_controller(motion_controller)
-        
-        # Motion controller for the button itself (to keep it visible when hovering over button)
-        if self.file_manager_button:
-            button_motion_controller = Gtk.EventControllerMotion()
-            button_motion_controller.connect("enter", self._on_button_enter)
-            button_motion_controller.connect("leave", self._on_button_leave)
-            self.file_manager_button.add_controller(button_motion_controller)
+
+    def _reveal_file_manager_button(self, revealed: bool) -> None:
+        """Show or hide the Manage Files action for the current hover state.
+
+        The slot keeps the button's height either way, so the row never
+        changes size on hover; it takes the button's *width* only while the
+        button is up, so the name label is laid out across the whole row at
+        rest and nothing moves but its ellipsised tail. A row with no
+        file-manager callback never shows the button at all, and neither does
+        a full row too narrow to afford it — see :meth:`set_actions_reserved`.
+        """
+        slot = getattr(self, '_file_manager_slot', None)
+        if slot is None:
+            return
+        affordable = (getattr(self, '_actions_affordable', True)
+                      or getattr(self, '_compact', False))
+        show = bool(revealed) and bool(self._file_manager_callback) and affordable
+        slot.set_visible_child_name(
+            ROW_ACTION_SLOT_BUTTON if show else ROW_ACTION_SLOT_EMPTY)
+
+    def set_actions_reserved(self, reserved: bool) -> None:
+        """Allow or forbid the Manage Files hover action at this sidebar width.
+
+        Same policy as :meth:`GroupRow.set_actions_reserved`: the button's
+        width is never reserved at rest, so this only answers whether the row
+        can still afford to hand ~36px over while it is hovered. Below
+        ``window._ROW_ACTIONS_MIN_WIDTH`` it cannot — hovering would ellipsise
+        the name away to nothing — so the button stays down and the file
+        manager is reached from the row's context menu instead. The strip's
+        trimmed action (`.sidebar-compact-action`) is exempt: it is the only
+        way to the file manager without leaving minimal mode.
+        """
+        self._actions_affordable = bool(reserved)
+        self._reveal_file_manager_button(self._pointer_is_on_row())
+
+    def _pointer_is_on_row(self) -> bool:
+        """Whether the pointer is on the row — see :func:`_pointer_is_on_row`."""
+        return _pointer_is_on_row(self)
 
     def _on_row_enter(self, controller, x, y):
         """Reveal hover actions when the mouse enters the row."""
-        self._is_hovering = True
-        if self.file_manager_button and self._file_manager_callback:
-            self.file_manager_button.set_opacity(1.0)
+        self._reveal_file_manager_button(True)
+
+    def _on_row_motion(self, controller, x, y):
+        """Re-arm the reveal for a pointer that is on the row without having
+        crossed into it (a rebuilt row, a settled layout change)."""
+        self._reveal_file_manager_button(True)
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
-        self._is_hovering = False
-        # Use a small delay to allow moving to the button
-        GLib.timeout_add(100, self._maybe_hide_button)
-
-    def _on_button_enter(self, controller, x, y):
-        """Keep row actions visible while hovering over either button."""
-        self._is_hovering = True
-        if self.file_manager_button:
-            self.file_manager_button.set_opacity(1.0)
-
-    def _on_button_leave(self, controller):
-        """Handle mouse leaving the button"""
-        self._is_hovering = False
+        # Small delay: a crossing within the row can flip the property for an
+        # instant, and _maybe_hide_button re-asks before acting on it.
         GLib.timeout_add(100, self._maybe_hide_button)
 
     def _maybe_hide_button(self):
-        """Hide row actions when the pointer is no longer hovering."""
-        if not self._is_hovering and self.file_manager_button:
-            self.file_manager_button.set_opacity(0.0)
+        """Hide row actions when the pointer is no longer on the row."""
+        if not self._pointer_is_on_row():
+            self._reveal_file_manager_button(False)
         return False  # Don't repeat
 
     def show_drop_indicator(self, top: bool):
@@ -2509,7 +2595,7 @@ class ConnectionRow(Gtk.ListBoxRow):
             self._info_box.set_visible(True)
             self.indicator_box.set_visible(True)
             self.file_manager_button.remove_css_class('sidebar-compact-action')
-            self.file_manager_button.set_visible(True)
+            self._reveal_file_manager_button(self._pointer_is_on_row())
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
             self.connection_icon.remove_css_class('conn-status-up')
             try:
@@ -2556,11 +2642,12 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_dot.set_visible(False)
         # The Manage Files hover action survives the strip (the one row action
         # that does): it is the only way to reach the file manager without
-        # leaving minimal mode. It keeps the full row's opacity reveal, so its
-        # space stays reserved and hovering never reflows the row — but it wears
-        # `.sidebar-compact-action` to give the label back the padding it can.
+        # leaving minimal mode. Like the full row it is revealed on hover and
+        # takes no space at rest — the strip is ~112px and the label needs all
+        # of it — and it wears `.sidebar-compact-action` so it costs the label
+        # only an icon's width while it is up.
         self.file_manager_button.add_css_class('sidebar-compact-action')
-        self.file_manager_button.set_visible(True)
+        self._reveal_file_manager_button(self._pointer_is_on_row())
         self.status_icon.set_visible(False)
         self.connection_icon.set_visible(False)
         connection_name = (
