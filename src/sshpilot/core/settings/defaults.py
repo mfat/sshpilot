@@ -82,7 +82,7 @@ def get_default_config() -> Dict[str, Any]:
             'remember_window_size': True,
             'window_width': 1200,
             'window_height': 800,
-            'sidebar_width': 250,
+            'sidebar_width': 300,
             'group_color_display': 'bar',
             'group_color_child_rows': True,
             'group_row_display': 'nested',

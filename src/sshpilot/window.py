@@ -8098,7 +8098,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Save window state before quitting"""
         try:
             width, height = self.get_default_size()
-            sidebar_width = getattr(self.split_view, 'get_sidebar_width', lambda: 250)()
+            sidebar_width = getattr(self.split_view, 'get_sidebar_width', lambda: 300)()
             self.config.save_window_geometry(width, height, sidebar_width)
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:

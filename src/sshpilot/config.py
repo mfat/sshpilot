@@ -822,7 +822,7 @@ class Config(GObject.Object):
         return {
             'width': self.get_setting('ui.window_width', 1200),
             'height': self.get_setting('ui.window_height', 800),
-            'sidebar_width': self.get_setting('ui.sidebar_width', 250),
+            'sidebar_width': self.get_setting('ui.sidebar_width', 300),
         }
 
     def save_window_geometry(self, width: int, height: int, sidebar_width: Optional[int] = None):
