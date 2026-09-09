@@ -2673,23 +2673,22 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.debug("Failed to save dragged sidebar width", exc_info=True)
 
     def _on_sidebar_divider_drag(self, _width: int) -> None:
-        """Live divider drag: drop tall secondary row chrome until release.
+        """Live divider drag: hide the accent tips bar until release.
 
-        Hostname and group-count change row height; hiding them for the gesture
-        keeps density at the strip's single-line size so the collapse blends.
-        Restored (from prefs) after a quiet period if the sidebar is still full.
+        Content width changes every frame while tips are revealed paint a brief
+        blue flash beside the top chrome.
 
-        Also hide the accent tips bar: content width changes every frame while
-        tips are revealed paint a brief blue flash beside the top chrome.
+        The drag no longer drops hostname / group-count. That existed to keep
+        row density at the strip's single-line size so a drag *into* the strip
+        blended; dragging no longer collapses the sidebar
+        (``sidebar_paned.COLLAPSE_BY_DRAG``), so all it did was make rows
+        flicker their second line on every resize.
         """
         self._pause_tips_banner_for_sidebar_anim(True)
-        if not getattr(self, '_sidebar_minimal', False):
-            if not getattr(self, '_sidebar_suppress_secondary_labels', False):
-                self._set_sidebar_secondary_labels_suppressed(True)
         self._schedule_sidebar_density_restore()
 
     def _schedule_sidebar_density_restore(self) -> None:
-        """Restore hostname/group-count after the divider drag settles."""
+        """Restore the tips bar (and post-switch row density) once a drag settles."""
         from sshpilot.sidebar_paned import _PERSIST_DELAY_MS
 
         src = getattr(self, '_sidebar_density_restore_source', 0)

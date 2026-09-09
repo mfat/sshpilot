@@ -68,8 +68,12 @@ def test_compact_rows_stay_hidden_when_unsuppressed():
     group.count_label.set_visible.assert_called_with(False)
 
 
-def test_divider_drag_suppresses_secondary_labels(monkeypatch):
-    """Live divider drag must hide hostname/count before mode switch."""
+def test_divider_drag_does_not_suppress_secondary_labels(monkeypatch):
+    """Live divider drag pauses tips only — hostname/count stay put.
+
+    Dragging no longer collapses into the strip, so dropping secondary lines
+    mid-resize only made rows flicker. Mode transitions still suppress.
+    """
     win, cls, conn, group = _window()
     win._sidebar_minimal = False
     win._sidebar_density_restore_source = 0
@@ -84,9 +88,9 @@ def test_divider_drag_suppresses_secondary_labels(monkeypatch):
         lambda self, pause: tips.append(pause))
 
     cls._on_sidebar_divider_drag(win, 180)
-    assert win._sidebar_suppress_secondary_labels is True
-    conn.host_label.set_visible.assert_called_with(False)
-    group.count_label.set_visible.assert_called_with(False)
+    assert win._sidebar_suppress_secondary_labels is False
+    conn.host_label.set_visible.assert_not_called()
+    group.count_label.set_visible.assert_not_called()
     assert scheduled == ['restore']
     assert tips == [True]
 
