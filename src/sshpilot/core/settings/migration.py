@@ -175,6 +175,19 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         del ui_cfg['connection_sort_last']
         updated = True
 
+    # Renamed: sidebar-only monospace → whole-interface monospace.
+    if 'sidebar_monospace_font' in ui_cfg:
+        if 'monospace_font' not in ui_cfg:
+            ui_cfg['monospace_font'] = bool(ui_cfg.get('sidebar_monospace_font'))
+        del ui_cfg['sidebar_monospace_font']
+        updated = True
+    elif 'monospace_font' not in ui_cfg:
+        ui_cfg['monospace_font'] = False
+        updated = True
+    elif not isinstance(ui_cfg.get('monospace_font'), bool):
+        ui_cfg['monospace_font'] = bool(ui_cfg.get('monospace_font'))
+        updated = True
+
     # Icon-strip ("minimal") sidebar mode is retired. Existing installs that
     # persisted it (or minimize-on-terminal-open) must wake up in full mode.
     if str(ui_cfg.get('sidebar_mode', 'full')).lower() == 'minimal':

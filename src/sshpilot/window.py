@@ -78,7 +78,7 @@ from .session_manager import SessionManager
 from .sidebar import (
     GroupRow,
     ConnectionRow,
-    apply_sidebar_monospace_font,
+    apply_interface_monospace_font,
     build_sidebar,
     install_sidebar_css,
     minimal_label_max_chars,
@@ -1149,9 +1149,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             logger.error(f"Failed to install sidebar CSS: {e}")
 
         try:
-            apply_sidebar_monospace_font(self.config)
+            apply_interface_monospace_font(self.config)
         except Exception as e:
-            logger.error(f"Failed to apply sidebar monospace font: {e}")
+            logger.error(f"Failed to apply interface monospace font: {e}")
 
         # Apply header-bar button visibility preferences now that the buttons
         # exist (split view, commands, local terminal).

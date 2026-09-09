@@ -186,8 +186,8 @@ def _font_family_from_string(font_string: str) -> str:
     return " ".join(parts) if parts else "Monospace"
 
 
-def _sidebar_monospace_family(config) -> str:
-    """Family for sidebar monospace mode: terminal.font when set, else Monospace."""
+def _interface_monospace_family(config) -> str:
+    """Family for interface monospace mode: terminal.font when set, else Monospace."""
     font_string = "Monospace 12"
     if config is not None:
         try:
@@ -197,24 +197,35 @@ def _sidebar_monospace_family(config) -> str:
     return _font_family_from_string(str(font_string))
 
 
-def apply_sidebar_monospace_font(config=None) -> None:
-    """Install or remove the sidebar monospace-font CSS provider.
+def apply_interface_monospace_font(config=None) -> None:
+    """Install or remove the interface-wide monospace-font CSS provider.
 
-    When ``ui.sidebar_monospace_font`` is enabled, sidebar text uses a
-    monospace face. Prefer the family from ``terminal.font`` (the user's
-    custom terminal font when they have chosen one); otherwise ``Monospace``.
+    When ``ui.monospace_font`` is enabled, the whole UI uses a monospace
+    face. Prefer the family from ``terminal.font`` (the user's custom
+    terminal font when they have chosen one); otherwise ``Monospace``.
     Safe to call repeatedly — replaces any prior provider on the display.
     """
     display = Gdk.Display.get_default()
     if not display:
         return
 
-    existing = getattr(display, "_sidebar_monospace_css_provider", None)
+    existing = getattr(display, "_interface_monospace_css_provider", None)
     if existing is not None:
         try:
             Gtk.StyleContext.remove_provider_for_display(display, existing)
         except Exception:
-            logger.debug("Failed to remove sidebar monospace CSS", exc_info=True)
+            logger.debug("Failed to remove interface monospace CSS", exc_info=True)
+        try:
+            delattr(display, "_interface_monospace_css_provider")
+        except Exception:
+            pass
+    # Drop the short-lived sidebar-only provider name if a prior build left it.
+    legacy = getattr(display, "_sidebar_monospace_css_provider", None)
+    if legacy is not None:
+        try:
+            Gtk.StyleContext.remove_provider_for_display(display, legacy)
+        except Exception:
+            logger.debug("Failed to remove legacy sidebar monospace CSS", exc_info=True)
         try:
             delattr(display, "_sidebar_monospace_css_provider")
         except Exception:
@@ -223,31 +234,35 @@ def apply_sidebar_monospace_font(config=None) -> None:
     enabled = False
     if config is not None:
         try:
-            enabled = bool(config.get_setting("ui.sidebar_monospace_font", False))
+            enabled = bool(config.get_setting("ui.monospace_font", False))
         except Exception:
             enabled = False
     if not enabled:
         return
 
-    family = _css_escape_font_family(_sidebar_monospace_family(config))
-    # Only the content box (.connection-sidebar): search, list, toolbar.
-    # Do not style Adw.ToolbarView.sidebar — that would also monospace the
-    # "SSH Pilot" header title. The class stays on the box when reparented
-    # into the detachable sidebar popup.
+    family = _css_escape_font_family(_interface_monospace_family(config))
+    # Override the UI typeface everywhere. Terminals still use VTE/backend
+    # fonts from terminal.font; CSS does not restyle those.
     css = f"""
-    .connection-sidebar {{
+    * {{
       font-family: "{family}", monospace;
     }}
     """
     try:
         provider = Gtk.CssProvider()
         provider.load_from_data(css.encode("utf-8"))
+        # USER beats theme/application providers so Adwaita cannot keep the
+        # system UI font on individual widgets.
         Gtk.StyleContext.add_provider_for_display(
-            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            display, provider, Gtk.STYLE_PROVIDER_PRIORITY_USER
         )
-        display._sidebar_monospace_css_provider = provider
+        display._interface_monospace_css_provider = provider
     except Exception:
-        logger.debug("Failed to install sidebar monospace CSS", exc_info=True)
+        logger.debug("Failed to install interface monospace CSS", exc_info=True)
+
+
+# Backward-compatible alias used by early call sites / tests mid-rename.
+apply_sidebar_monospace_font = apply_interface_monospace_font
 
 
 def install_sidebar_css():
@@ -5180,8 +5195,6 @@ def build_sidebar(window):
     # Ensure sidebar box expands to use full allocated width from NavigationSplitView
     sidebar_box.set_hexpand(True)
     sidebar_box.set_vexpand(True)
-    # Survives reparenting into the detachable popup (see apply_sidebar_monospace_font).
-    sidebar_box.add_css_class("connection-sidebar")
     window._sidebar_box = sidebar_box
 
     _build_sidebar_header(window, sidebar_box)
@@ -5200,6 +5213,7 @@ def build_sidebar(window):
 __all__ = [
     "ConnectionRow",
     "GroupRow",
+    "apply_interface_monospace_font",
     "apply_sidebar_monospace_font",
     "build_sidebar",
     "install_sidebar_css",
