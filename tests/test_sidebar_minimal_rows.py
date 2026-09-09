@@ -29,13 +29,10 @@ def _make():
     row._compact = False
     row._content_spacing_base = 12
     for name in ('_content_box', '_info_box', 'indicator_box', 'color_badge',
-                 'color_dot', 'file_manager_button', '_file_manager_slot',
-                 'status_icon',
+                 'color_dot', 'file_manager_button', 'status_icon',
                  'connection_icon', 'nickname_label', 'host_label'):
         setattr(row, name, MagicMock())
     row._file_manager_callback = MagicMock()
-    row._hover_controller = MagicMock()
-    row._hover_controller.contains_pointer.return_value = False
     row.set_tooltip_text = MagicMock()
     row.update_status = MagicMock()
     row.set_margin_start = MagicMock()
@@ -56,12 +53,9 @@ def _make_group():
     row._content_margin_base = 12
     row._content_spacing_base = 12
     for name in ('_content', '_info_box', 'color_dot', 'color_badge',
-                 'split_view_button', '_split_view_slot', 'expand_button',
-                 'icon', 'name_label', 'count_label'):
+                 'split_view_button', 'expand_button', 'icon',
+                 'name_label', 'count_label'):
         setattr(row, name, MagicMock())
-    row._actions_reserved = True
-    row._hover_controller = MagicMock()
-    row._hover_controller.contains_pointer.return_value = False
     row.set_tooltip_text = MagicMock()
     row.set_margin_start = MagicMock()
     row.apply_row_style = MagicMock()
@@ -87,8 +81,7 @@ def test_group_compact_shows_bold_colored_text_only(monkeypatch):
     row.count_label.set_visible.assert_called_with(False)
     # The chevron survives the strip: collapsing a group still works there.
     row.expand_button.set_visible.assert_called_with(True)
-    assert (row._split_view_slot.set_visible_child_name.call_args.args[0]
-            == mod.ROW_ACTION_SLOT_EMPTY)
+    row.split_view_button.set_visible.assert_called_with(False)
     row._info_box.set_visible.assert_called_with(True)
     row.name_label.set_text.assert_called_with('Servers')
     row.name_label.set_max_width_chars.assert_called_with(mod.MINIMAL_LABEL_MAX_CHARS)
@@ -124,27 +117,20 @@ def test_compact_connection_shows_text_only_label(monkeypatch):
     row.set_margin_start.assert_called_with(0)
 
 
-def test_compact_keeps_manage_files_button_hover_only(monkeypatch):
+def test_compact_keeps_manage_files_button_reserved(monkeypatch):
     """The strip keeps the row's Manage Files action — the only way to reach the
-    file manager without leaving minimal mode — but down until the row is
-    hovered, so the ~112px of strip goes to the label. It is trimmed to the
-    icon so it costs the label as little as possible while it is up.
+    file manager without leaving minimal mode — and keeps it *visible* so its
+    space stays reserved: hovering must never reflow or resize the row. It is
+    trimmed to the icon so the label loses as little of the strip as possible.
     """
     row, mod = _make()
     monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
 
     row.set_compact(True)
 
-    assert (row._file_manager_slot.set_visible_child_name.call_args.args[0]
-            == mod.ROW_ACTION_SLOT_EMPTY)
+    row.file_manager_button.set_visible.assert_called_with(True)
     row.file_manager_button.add_css_class.assert_called_with(
         'sidebar-compact-action')
-
-    row._hover_controller.contains_pointer.return_value = True
-    row.set_compact(True)
-
-    assert (row._file_manager_slot.set_visible_child_name.call_args.args[0]
-            == mod.ROW_ACTION_SLOT_BUTTON)
 
 
 def test_compact_rows_fill_the_row_height(monkeypatch):
@@ -172,8 +158,7 @@ def test_compact_rows_fill_the_row_height(monkeypatch):
 
 
 def test_full_row_drops_the_compact_action_footprint(monkeypatch):
-    """Restoring a full row gives the button its normal padding back, and it
-    stays down until the row is hovered so the name keeps the width."""
+    """Restoring a full row gives the button its normal padding back."""
     row, mod = _make()
     monkeypatch.setattr(mod, '_apply_row_color', MagicMock())
     row.set_compact(True)
@@ -182,8 +167,7 @@ def test_full_row_drops_the_compact_action_footprint(monkeypatch):
 
     row.file_manager_button.remove_css_class.assert_called_with(
         'sidebar-compact-action')
-    assert (row._file_manager_slot.set_visible_child_name.call_args.args[0]
-            == mod.ROW_ACTION_SLOT_EMPTY)
+    row.file_manager_button.set_visible.assert_called_with(True)
 
 
 def test_compact_connection_uses_display_name(monkeypatch):

@@ -273,10 +273,11 @@ _MINIMAL_STRIP_WIDTH = 112
 _SIDEBAR_HEADER_MARGIN_FULL = 12
 _SIDEBAR_HEADER_MARGIN_STRIP = 6
 
-# Narrowest full sidebar that still lets a hover action borrow width. Below it
-# the rows keep the button down (``set_actions_reserved(False)``) so the name
-# keeps what little width remains. Must stay above the floor a visible action
-# button produces (~150px) or hover would ellipsise the name away.
+# Narrowest full sidebar that still reserves space for a group row's split-view
+# action. Below it the rows shed the button (``GroupRow.set_actions_reserved``)
+# so the group name keeps the width — and so the sidebar's measured minimum
+# drops with it, since the group row is what sets that minimum. Must stay above
+# the floor the reserved button produces (~150px) or the two would fight.
 _ROW_ACTIONS_MIN_WIDTH = 180
 
 
@@ -3098,13 +3099,13 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
-        """Allow or forbid the rows' hover actions for this sidebar width.
+        """Reserve or shed the group rows' split-view action for this width.
 
-        Both group and connection rows hand their action button's width to the
-        name at rest and only borrow it back on hover. Below
-        :data:`_ROW_ACTIONS_MIN_WIDTH` there is nothing left to lend — the
-        rows keep the button down and the action is reached from the context
-        menu instead.
+        The group row is what sets the sidebar's measured minimum, and a
+        reserved 34px button is most of it. Below
+        :data:`_ROW_ACTIONS_MIN_WIDTH` the rows drop it, the minimum drops with
+        them, and the divider can go on narrowing instead of stopping at a
+        width the name has already been ellipsised out of.
         """
         lb = getattr(self, 'connection_list', None)
         if lb is None:
