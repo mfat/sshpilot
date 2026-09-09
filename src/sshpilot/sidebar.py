@@ -851,9 +851,12 @@ def minimal_label_max_chars(
 
 
 #: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
-#: floor GTK never lays the label out below (~80px at 10 characters); natural
-#: width is capped by ``max-width-chars``. These labels still ellipsize.
-FULL_LABEL_MIN_CHARS = 10
+#: floor GTK never lays the label out below, and it is not what keeps a name
+#: readable — these labels ellipsize, and their natural width comes from
+#: ``max-width-chars``. At 10 characters (~80px per label) it was the whole
+#: reason the sidebar could not be laid out narrower than 263px, so the minimum
+#: is none and only the natural width is bounded.
+FULL_LABEL_MIN_CHARS = 0
 FULL_LABEL_MAX_CHARS = 25
 
 #: Page names of a row's hover-action slot (group split-view / connection
