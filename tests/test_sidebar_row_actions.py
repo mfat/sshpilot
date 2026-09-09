@@ -99,6 +99,69 @@ def test_connection_full_mode_sheds_at_rest_and_reveals_on_hover():
     assert row._action_height_floor_on is False
 
 
+def test_connection_button_leave_onto_row_keeps_manage_files_revealed():
+    """Moving from Manage Files onto the nickname must not shed the button.
+
+    Row enter only fires at the row boundary. Button leave used to clear
+    hover and hide after 100ms while the pointer was still on the row,
+    after which moving within the row could not reveal again.
+    """
+    row, mod = _connection_row()
+    row._row_motion_controller = MagicMock(name='_row_motion_controller')
+    row._row_motion_controller.contains_pointer.return_value = True
+
+    mod.ConnectionRow._on_row_enter(row, None, 0, 0)
+    row.file_manager_button.reset_mock()
+
+    mod.ConnectionRow._on_button_leave(row, None)
+
+    assert row._is_hovering is True
+    row.file_manager_button.set_visible.assert_not_called()
+    row.file_manager_button.set_opacity.assert_not_called()
+
+
+def test_connection_maybe_hide_keeps_revealed_while_pointer_on_row():
+    """Deferred hide must not shed when the pointer never left the row."""
+    row, mod = _connection_row()
+    row._row_motion_controller = MagicMock(name='_row_motion_controller')
+    row._row_motion_controller.contains_pointer.return_value = True
+    row._is_hovering = False
+
+    assert mod.ConnectionRow._maybe_hide_button(row) is False
+
+    assert row._is_hovering is True
+    row.file_manager_button.set_visible.assert_called_with(True)
+    row.file_manager_button.set_opacity.assert_called_with(1.0)
+
+
+def test_connection_button_leave_off_row_schedules_hide():
+    """Leaving the button with the pointer off the row still sheds."""
+    row, mod = _connection_row()
+    row._row_motion_controller = MagicMock(name='_row_motion_controller')
+    row._row_motion_controller.contains_pointer.return_value = False
+    row._is_hovering = True
+
+    mod.ConnectionRow._on_button_leave(row, None)
+
+    assert row._is_hovering is False
+
+
+def test_group_button_leave_onto_row_keeps_split_view_revealed():
+    """Same leave-onto-sibling trap as Manage Files on group rows."""
+    row, mod = _group_row()
+    row._row_motion_controller = MagicMock(name='_row_motion_controller')
+    row._row_motion_controller.contains_pointer.return_value = True
+
+    mod.GroupRow._on_row_enter_actions(row, None, 0, 0)
+    row.split_view_button.reset_mock()
+
+    mod.GroupRow._on_button_leave_action(row, None)
+
+    assert row._is_hovering_row is True
+    row.split_view_button.set_visible.assert_not_called()
+    row.split_view_button.set_opacity.assert_not_called()
+
+
 def test_connection_full_mode_sheds_even_when_width_would_reserve():
     """Unlike group rows, connection Manage Files ignores the width threshold."""
     row, mod = _connection_row()
