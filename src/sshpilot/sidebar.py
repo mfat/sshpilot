@@ -32,6 +32,7 @@ from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
     format_connection_host_display as _format_connection_host_display,
+    format_connection_row_tooltip_markup as _format_connection_row_tooltip_markup,
     hosts_hidden as _hosts_hidden,
 )
 from .context_menu import IconContextMenu
@@ -1863,7 +1864,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.nickname_label.set_width_chars(FULL_LABEL_MIN_CHARS)
         self.nickname_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
-        self.nickname_label.set_tooltip_text(connection.nickname)
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
@@ -1945,6 +1945,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         # itself with an empty accessible name. Name it after the connection so
         # a screen reader (and AT-SPI automation) can identify the row.
         self._update_accessible_identity()
+        self._refresh_row_tooltip()
 
         self.update_status()
         self._update_forwarding_indicators()
@@ -1961,6 +1962,26 @@ class ConnectionRow(Gtk.ListBoxRow):
         set_accessible_description(
             self, _format_connection_host_display(self.connection) or None
         )
+
+    def _refresh_row_tooltip(self) -> None:
+        """Apply composed Pango markup as the row tooltip.
+
+        Nickname/host labels intentionally have no tooltips so hovering the
+        text area shows this richer row tooltip. Status and forwarding badges
+        keep their own specific tooltips.
+        """
+        try:
+            window = self.get_root()
+            hide = _hosts_hidden(window) if window else False
+        except Exception:
+            hide = False
+        markup = _format_connection_row_tooltip_markup(
+            self.connection, hide_hosts=hide
+        )
+        if markup:
+            self.set_tooltip_markup(markup)
+        else:
+            self.set_tooltip_text(None)
 
     def set_display_group_id(self, group_id: Optional[str]) -> None:
         """Set which group this row is listed under and refresh its color."""
@@ -2433,55 +2454,60 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.indicator_box.set_visible(False)
 
     def _update_forwarding_indicators(self):
-        self._install_pf_css()
         try:
-            while self.indicator_box.get_first_child():
-                self.indicator_box.remove(self.indicator_box.get_first_child())
-        except Exception:
-            return
+            self._install_pf_css()
+            try:
+                while self.indicator_box.get_first_child():
+                    self.indicator_box.remove(self.indicator_box.get_first_child())
+            except Exception:
+                return
 
-        if not getattr(self, '_indicators_reserved', True):
-            self.indicator_box.set_visible(False)
-            return
+            if not getattr(self, '_indicators_reserved', True):
+                self.indicator_box.set_visible(False)
+                return
 
-        # Check preference for showing port forwarding indicators
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
-        if not show_port_forwarding:
-            return
+            # Check preference for showing port forwarding indicators
+            show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
+            if not show_port_forwarding:
+                return
 
-        # Forwarding badges only make sense for protocols that support it.
-        from .plugins.api import Capability
-        from .plugins.registry import capabilities_for
-        if Capability.PORT_FORWARDING not in capabilities_for(self.connection):
-            return
+            # Forwarding badges only make sense for protocols that support it.
+            from .plugins.api import Capability
+            from .plugins.registry import capabilities_for
+            if Capability.PORT_FORWARDING not in capabilities_for(self.connection):
+                return
 
-        # Group the connection's forwarding rules by type. The rule schema and
-        # the formatting/grouping helpers live in port_utils so they can be
-        # reused (e.g. a future port-mapping viewer) without pulling in GTK.
-        from sshpilot import port_utils
-        grouped = port_utils.group_forwarding_rules(
-            getattr(self.connection, "forwarding_rules", None)
-        )
+            # Group the connection's forwarding rules by type. The rule schema and
+            # the formatting/grouping helpers live in port_utils so they can be
+            # reused (e.g. a future port-mapping viewer) without pulling in GTK.
+            from sshpilot import port_utils
+            grouped = port_utils.group_forwarding_rules(
+                getattr(self.connection, "forwarding_rules", None)
+            )
 
-        def make_badge(letter: str, cls: str, type_rules):
-            from sshpilot import icon_utils
-            img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
-            img.set_pixel_size(16)
-            img.set_halign(Gtk.Align.CENTER)
-            img.set_valign(Gtk.Align.CENTER)
-            # Tooltip lists each mapping of this type, capped so a connection
-            # with many rules doesn't produce an unreadably tall tooltip.
-            tooltip = "\n".join(port_utils.format_forwarding_rules(type_rules, max_lines=8))
-            if tooltip:
-                img.set_tooltip_text(tooltip)
-            return img
+            def make_badge(letter: str, cls: str, type_rules):
+                from sshpilot import icon_utils
+                img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
+                img.set_pixel_size(16)
+                img.set_halign(Gtk.Align.CENTER)
+                img.set_valign(Gtk.Align.CENTER)
+                # Tooltip lists each mapping of this type, capped so a connection
+                # with many rules doesn't produce an unreadably tall tooltip.
+                tooltip = "\n".join(port_utils.format_forwarding_rules(type_rules, max_lines=8))
+                if tooltip:
+                    img.set_tooltip_text(tooltip)
+                return img
 
-        if grouped["local"]:
-            self.indicator_box.append(make_badge("L", "pf-local", grouped["local"]))
-        if grouped["remote"]:
-            self.indicator_box.append(make_badge("R", "pf-remote", grouped["remote"]))
-        if grouped["dynamic"]:
-            self.indicator_box.append(make_badge("D", "pf-dynamic", grouped["dynamic"]))
+            if grouped["local"]:
+                self.indicator_box.append(make_badge("L", "pf-local", grouped["local"]))
+            if grouped["remote"]:
+                self.indicator_box.append(make_badge("R", "pf-remote", grouped["remote"]))
+            if grouped["dynamic"]:
+                self.indicator_box.append(make_badge("D", "pf-dynamic", grouped["dynamic"]))
+        finally:
+            # Row markup tooltip includes a forwarding summary; refresh when
+            # rules arrive asynchronously via the window's sidebar attach path.
+            self._refresh_row_tooltip()
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
@@ -2501,7 +2527,9 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         display = _format_connection_host_display(self.connection, **format_kwargs)
         self.host_label.set_text(display or '')
-        self.host_label.set_tooltip_text(display or '')
+        # Host details live on the row markup tooltip; keep the label clear so
+        # hovering the secondary line still shows the composed row tooltip.
+        self.host_label.set_tooltip_text('')
 
     def apply_row_style(self, flat: bool | None = None) -> None:
         _apply_sidebar_row_style(
@@ -2510,6 +2538,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
+        self._refresh_row_tooltip()
 
     def update_status(self):
         """Render the status icon from the connection's authoritative state.
@@ -2668,10 +2697,10 @@ class ConnectionRow(Gtk.ListBoxRow):
                 or self.connection.nickname
             )
             self.nickname_label.set_text(connection_name)
-            self.set_tooltip_text(None)
             self.apply_row_style()  # restore card/flat preference
             self._apply_group_display_mode()  # restore nested indentation
             self.update_status()  # restores status_icon + group-color widgets
+            self._refresh_row_tooltip()
             return
 
         if max_chars is not None:
@@ -2710,9 +2739,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         )
         _configure_compact_label(
             self.nickname_label, connection_name, max_chars=chars)
-        self.set_tooltip_text(connection_name)
         # Text-only strip: no group-color fill on the label (keeps names legible).
         _apply_row_color(self, 'fill', None)
+        self._refresh_row_tooltip()
 
         self._refresh_compact_status()
 
@@ -2723,13 +2752,13 @@ class ConnectionRow(Gtk.ListBoxRow):
                 or self.connection.nickname
             )
             self.nickname_label.set_text(connection_name)
-            self.nickname_label.set_tooltip_text(self.connection.nickname)
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
             self._apply_host_label_text(include_port=True)
         self._update_accessible_identity()
         self._update_forwarding_indicators()
         self.update_status()
+        self._refresh_row_tooltip()
         # The above repopulate labels/indicators that the strip hides; re-apply
         # the compact layout so an edit doesn't leave the row half-expanded.
         if getattr(self, "_compact", False):
