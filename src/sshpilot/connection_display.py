@@ -54,7 +54,8 @@ def format_connection_row_tooltip_markup(
         <span alpha='70%'>user@host:port</span>
         <b>Tags:</b> production, web
         <b>ProxyJump:</b> bastion
-        Local 8080 → …
+        <b>Forwards:</b>
+        <span alpha='70%'>Local 8080 → …</span>
 
     Host details are omitted when ``hide_hosts`` is set. Forwarding lines are
     included when the connection carries ``forwarding_rules`` (sidebar attaches
@@ -93,12 +94,15 @@ def format_connection_row_tooltip_markup(
         if rules:
             from sshpilot.port_utils import format_forwarding_rules
 
-            for rule_line in format_forwarding_rules(
+            forward_lines = format_forwarding_rules(
                 rules, max_lines=max_forwarding_lines
-            ):
-                lines.append(
-                    f"<span alpha='70%'>{_escape_markup(rule_line)}</span>"
-                )
+            )
+            if forward_lines:
+                lines.append(f"<b>{_escape_markup(_('Forwards:'))}</b>")
+                for rule_line in forward_lines:
+                    lines.append(
+                        f"<span alpha='70%'>{_escape_markup(rule_line)}</span>"
+                    )
 
     return "\n".join(lines)
 

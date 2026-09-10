@@ -117,4 +117,5 @@ def test_row_tooltip_markup_includes_tags_proxy_and_forwarding():
 
     assert "production, web" in markup
     assert "bastion1, bastion2" in markup
+    assert "<b>Forwards:</b>" in markup
     assert "8080" in markup
