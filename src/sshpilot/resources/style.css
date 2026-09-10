@@ -30,12 +30,6 @@
     min-width: 72px;
 }
 
-/* Port-forwarding indicators (sidebar.py). */
-.pf-indicator {}
-.pf-local { color: #E01B24; }
-.pf-remote { color: #2EC27E; }
-.pf-dynamic { color: #3584E4; }
-
 /* Start page (welcome_page.py). */
 .startpage-hero {
     background-color: alpha(@accent_bg_color, 0.15);

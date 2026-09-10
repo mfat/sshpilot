@@ -1804,7 +1804,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._color_dot_provider = None
         self._compact = False
-        # Port-forwarding L/R/D badges stay until a narrow sidebar sheds them
+        # Port-forwarding indicator stays until a narrow sidebar sheds it
         # (``set_indicators_reserved``) so the nickname can keep its
         # ``FULL_LABEL_MIN_CHARS`` floor.
         self._indicators_reserved = True
@@ -2399,12 +2399,6 @@ class ConnectionRow(Gtk.ListBoxRow):
     # -- display updates --------------------------------------------------
 
     @staticmethod
-    def _install_pf_css():
-        # The .pf-* indicator styles now live in the bundled style.css (loaded
-        # once at startup); nothing to install here.
-        return
-
-    @staticmethod
     def _install_status_css():
         """Custom color for the failed/disconnected status icon. Uses an explicit
         red (#DC2626) instead of libadwaita's .error so it stays the same red in
@@ -2429,10 +2423,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             pass
 
     def set_indicators_reserved(self, reserved: bool) -> None:
-        """Keep port-forwarding L/R/D badges, or shed them for a narrow sidebar.
+        """Keep the port-forwarding indicator, or shed it for a narrow sidebar.
 
         Once the nickname is at :data:`FULL_LABEL_MIN_CHARS`, further chrome
-        only steals width the name can no longer yield. Shedding the badges
+        only steals width the name can no longer yield. Shedding the indicator
         lets the divider keep narrowing without clipping that floor. The
         compact strip always hides indicators regardless of this flag.
         """
@@ -2455,7 +2449,6 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _update_forwarding_indicators(self):
         try:
-            self._install_pf_css()
             try:
                 while self.indicator_box.get_first_child():
                     self.indicator_box.remove(self.indicator_box.get_first_child())
@@ -2471,39 +2464,35 @@ class ConnectionRow(Gtk.ListBoxRow):
             if not show_port_forwarding:
                 return
 
-            # Forwarding badges only make sense for protocols that support it.
+            # Forwarding indicator only makes sense for protocols that support it.
             from .plugins.api import Capability
             from .plugins.registry import capabilities_for
             if Capability.PORT_FORWARDING not in capabilities_for(self.connection):
                 return
 
-            # Group the connection's forwarding rules by type. The rule schema and
-            # the formatting/grouping helpers live in port_utils so they can be
-            # reused (e.g. a future port-mapping viewer) without pulling in GTK.
+            # Rule schema and formatting helpers live in port_utils so they can
+            # be reused without pulling in GTK.
             from sshpilot import port_utils
-            grouped = port_utils.group_forwarding_rules(
-                getattr(self.connection, "forwarding_rules", None)
+            rules = list(
+                port_utils.iter_enabled_forwarding_rules(
+                    getattr(self.connection, "forwarding_rules", None)
+                )
             )
+            if not rules:
+                return
 
-            def make_badge(letter: str, cls: str, type_rules):
-                from sshpilot import icon_utils
-                img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
-                img.set_pixel_size(16)
-                img.set_halign(Gtk.Align.CENTER)
-                img.set_valign(Gtk.Align.CENTER)
-                # Tooltip lists each mapping of this type, capped so a connection
-                # with many rules doesn't produce an unreadably tall tooltip.
-                tooltip = "\n".join(port_utils.format_forwarding_rules(type_rules, max_lines=8))
-                if tooltip:
-                    img.set_tooltip_text(tooltip)
-                return img
-
-            if grouped["local"]:
-                self.indicator_box.append(make_badge("L", "pf-local", grouped["local"]))
-            if grouped["remote"]:
-                self.indicator_box.append(make_badge("R", "pf-remote", grouped["remote"]))
-            if grouped["dynamic"]:
-                self.indicator_box.append(make_badge("D", "pf-dynamic", grouped["dynamic"]))
+            from sshpilot import icon_utils
+            img = icon_utils.new_image_from_icon_name("mail-forward-symbolic")
+            img.set_pixel_size(16)
+            img.set_halign(Gtk.Align.CENTER)
+            img.set_valign(Gtk.Align.CENTER)
+            # Tooltip lists each mapping, capped so many rules stay readable.
+            tooltip = "\n".join(
+                port_utils.format_forwarding_rules(rules, max_lines=8)
+            )
+            if tooltip:
+                img.set_tooltip_text(tooltip)
+            self.indicator_box.append(img)
         finally:
             # Row markup tooltip includes a forwarding summary; refresh when
             # rules arrive asynchronously via the window's sidebar attach path.
@@ -2548,7 +2537,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         reads the mutable connection model maintained by ``ConnectionManager``.
 
         The lock lives in ``status_box`` (same role as ``indicator_box`` for
-        forwarding badges): idle / preference-off / compact hide the box so it
+        the forwarding indicator): idle / preference-off / compact hide the box so it
         costs no width; a real state shows the box with the styled icon.
         """
         try:

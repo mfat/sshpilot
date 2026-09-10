@@ -1,7 +1,7 @@
 """Sidebar port-forwarding indicator source: per-connection daemon fetch.
 
 The connection store's secret-free summary never carries forwarding rules,
-so the sidebar L/R/D badges are fed by fetching ``get_connection_editor``
+so the sidebar forwarding indicator is fed by fetching ``get_connection_editor``
 for SSH connections and caching the rules per store generation. These tests
 drive that fetch/cache/attach logic through a fake bridge and client.
 """

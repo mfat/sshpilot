@@ -1493,8 +1493,8 @@ class PreferencesWindow(Adw.NavigationPage):
 
         # Display port forwarding labels toggle
         show_port_forwarding_switch = Adw.SwitchRow()
-        show_port_forwarding_switch.set_title(_("Display Port Forwarding Labels"))
-        show_port_forwarding_switch.set_subtitle(_("Show port forwarding indicators (L/R/D) in connection rows"))
+        show_port_forwarding_switch.set_title(_("Display Port Forwarding Indicator"))
+        show_port_forwarding_switch.set_subtitle(_("Show a port forwarding indicator in connection rows"))
         show_port_forwarding_switch.set_active(
             self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         )

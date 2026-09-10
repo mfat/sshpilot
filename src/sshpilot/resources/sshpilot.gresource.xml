@@ -82,9 +82,7 @@
     <file alias="play-large-symbolic.svg">icons/scalable/actions/play-large-symbolic.svg</file>
     <file alias="plus-large-symbolic.svg">icons/scalable/actions/plus-large-symbolic.svg</file>
     <file alias="execute-to-symbolic.svg">icons/scalable/actions/execute-to-symbolic.svg</file>
-    <file alias="L.svg">icons/scalable/actions/L.svg</file>
-    <file alias="R.svg">icons/scalable/actions/R.svg</file>
-    <file alias="D.svg">icons/scalable/actions/D.svg</file>
+    <file alias="mail-forward-symbolic.svg">icons/scalable/actions/mail-forward-symbolic.svg</file>
     <file alias="system-search-symbolic.svg">icons/scalable/actions/system-search-symbolic.svg</file>
     <file alias="system-run-symbolic.svg">icons/scalable/actions/system-run-symbolic.svg</file>
     <file alias="tag-symbolic.svg">icons/scalable/actions/tag-symbolic.svg</file>

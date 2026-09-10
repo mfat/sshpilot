@@ -6,8 +6,8 @@ button is taller than the labels — which is why each action lives in a
 height-only stack rather than being hidden outright. The group row also sheds
 when the sidebar is too narrow to pay for the reserved width.
 
-Below the same narrow threshold, connection rows shed port-forwarding L/R/D
-badges so nicknames keep their ``FULL_LABEL_MIN_CHARS`` floor.
+Below the same narrow threshold, connection rows shed the port-forwarding
+indicator so nicknames keep their ``FULL_LABEL_MIN_CHARS`` floor.
 """
 
 import importlib
@@ -220,7 +220,7 @@ def _connection_row_indicators():
     row.connection = SimpleNamespace(forwarding_rules=())
     row.indicator_box = MagicMock(name='indicator_box')
     row.indicator_box.get_first_child.return_value = None
-    row._install_pf_css = MagicMock()
+    row._refresh_row_tooltip = MagicMock()
     return row, mod
 
 
@@ -262,7 +262,6 @@ def test_shed_port_forwarding_indicators_ignored_while_compact():
 def test_update_forwarding_indicators_noops_when_shed():
     row, mod = _connection_row_indicators()
     row._indicators_reserved = False
-    row._install_pf_css = MagicMock()
 
     mod.ConnectionRow._update_forwarding_indicators(row)
 

@@ -274,7 +274,7 @@ _SIDEBAR_HEADER_MARGIN_FULL = 12
 _SIDEBAR_HEADER_MARGIN_STRIP = 6
 
 # Narrowest full sidebar that still reserves space for a group row's split-view
-# action and connection-row port-forwarding L/R/D badges. Below it the rows
+# action and connection-row port-forwarding indicator. Below it the rows
 # shed that chrome (``GroupRow.set_actions_reserved``,
 # ``ConnectionRow.set_indicators_reserved``) so names keep their
 # ``FULL_LABEL_MIN_CHARS`` floor — and so the sidebar's measured minimum drops
@@ -3105,7 +3105,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Reserve or shed narrow-sidebar chrome for this width.
 
         Below :data:`_ROW_ACTIONS_MIN_WIDTH` group rows drop the split-view
-        button and connection rows drop port-forwarding L/R/D badges so names
+        button and connection rows drop the port-forwarding indicator so names
         keep their ``FULL_LABEL_MIN_CHARS`` floor. The group button is also
         what sets the sidebar's measured minimum, so shedding it lets the
         divider keep narrowing past a width the name has already been
