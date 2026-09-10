@@ -7661,6 +7661,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
             connection = getattr(row, 'connection', None) if row else None
         if connection is None:
             return
+        from .host_info_tab import open_host_info_tab
+
+        # Prefer the WebKit tab (HTML shell + host-info FULL gather). Fall back
+        # to the GTK dialog when WebKit 6 is unavailable (e.g. macOS).
+        if open_host_info_tab(self, connection):
+            return
         from .machine_info_dialog import MachineInfoDialog
         MachineInfoDialog(self, connection)
 

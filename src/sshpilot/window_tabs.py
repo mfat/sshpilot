@@ -1482,6 +1482,16 @@ class WindowTabsMixin:
         except Exception:
             logger.debug('File manager tab teardown on detach failed', exc_info=True)
 
+        # Stop host-info probes as soon as the tab leaves the view so a closed
+        # tab cannot keep LIVE sampling the remote host.
+        try:
+            child = page.get_child() if page is not None and hasattr(page, 'get_child') else None
+            from .host_info_tab import HostInfoTab
+            if isinstance(child, HostInfoTab):
+                child.cleanup()
+        except Exception:
+            logger.debug('Host info tab teardown on detach failed', exc_info=True)
+
         # Cleanup terminal-to-connection maps when a page is detached
         detached_connection = None
         try:

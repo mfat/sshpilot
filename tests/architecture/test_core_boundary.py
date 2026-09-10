@@ -110,6 +110,8 @@ ALLOWED: frozenset[tuple[str, str, str]] = frozenset(
         # readings has to be taken by whoever holds both. No I/O, no clock.
         ("machine_info_dialog.py", "host_info.rates", "cpu_utilization_by_name"),
         ("machine_info_dialog.py", "host_info.rates", "interface_rates"),
+        ("host_info_payload.py", "host_info.rates", "cpu_utilization_by_name"),
+        ("host_info_payload.py", "host_info.rates", "interface_rates"),
         # -- plugin contracts (shared language, NOT authoritative I/O) --
         ("plugins/api.py", "plugins", "API_VERSION"),
         ("plugins/api.py", "plugins", "Capability"),
