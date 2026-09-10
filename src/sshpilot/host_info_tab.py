@@ -532,8 +532,9 @@ class HostInfoTab(Gtk.Box):
 def open_host_info_tab(window, connection) -> bool:
     """Open (or focus) a WebKit Host Info tab for ``connection``.
 
-    Returns True when a tab was shown.  Callers should fall back to the GTK
-    dialog when this returns False (WebKit missing or tab creation failed).
+    Returns True when a tab was shown.  Used as the fallback when the GTK Host
+    Info tab cannot be opened (for example if the window has no tab view) or
+    when a caller prefers the HTML shell explicitly.
     """
 
     if window is None or connection is None or not webkit_available():

@@ -8,7 +8,8 @@ and delivers their results without polling.  Everything here turns values into
 pixels and localized text.
 
 The same presenter can open as an ``Adw.Dialog`` or as a notebook tab
-(``as_tab=True`` / :func:`open_machine_info_tab`) when WebKit is unavailable.
+(``as_tab=True`` / :func:`open_machine_info_tab`). The main window prefers
+this GTK tab and falls back to the WebKit HTML shell when needed.
 
 Two presentation rules keep the tabs consistent with each other:
 
@@ -786,7 +787,7 @@ class MachineInfoDialog:
     """Presents one remote host's daemon-reported system information.
 
     ``as_tab=True`` embeds the same UI in a notebook tab instead of an
-    ``Adw.Dialog`` (used when WebKit is unavailable).
+    ``Adw.Dialog`` (the default Host Info path from the main window).
     """
 
     def __init__(self, window, connection, *, as_tab: bool = False) -> None:
@@ -2220,8 +2221,8 @@ class MachineInfoDialog:
 def open_machine_info_tab(window, connection) -> bool:
     """Open (or focus) a GTK Host Info notebook tab for ``connection``.
 
-    Used when the WebKit HTML tab is unavailable. Returns False only when the
-    window has no tab view.
+    This is the preferred Host Info UI. Returns False only when the window has
+    no tab view.
     """
 
     if window is None or connection is None:
