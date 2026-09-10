@@ -1880,7 +1880,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
@@ -2660,7 +2660,7 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.connection_icon.set_visible(True)
             try:
                 self.host_label.set_visible(
-                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', True)))
+                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', False)))
             except Exception:
                 self.host_label.set_visible(False)
             connection_name = (

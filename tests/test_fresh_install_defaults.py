@@ -21,7 +21,7 @@ def test_sidebar_row_action_button_defaults():
 
 def test_sidebar_connection_row_display_defaults():
     defaults = Config.get_default_config(Config.__new__(Config))
-    assert defaults['ui']['sidebar_show_user_hostname'] is True
+    assert defaults['ui']['sidebar_show_user_hostname'] is False
     assert defaults['ui']['sidebar_show_connection_icon'] is True
     assert defaults['ui']['sidebar_show_group_count'] is False
 

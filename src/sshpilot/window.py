@@ -2478,7 +2478,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._attach_sidebar_forwarding_rules(connections)
         self._refresh_sidebar_forwarding_rules(connections)
 
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
         show_group_count = self.config.get_setting('ui.sidebar_show_group_count', False)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
@@ -3171,7 +3171,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         else:
             try:
                 show_host = bool(
-                    self.config.get_setting('ui.sidebar_show_user_hostname', True))
+                    self.config.get_setting('ui.sidebar_show_user_hostname', False))
             except Exception:
                 show_host = False
             try:
