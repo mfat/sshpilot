@@ -1967,8 +1967,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Apply composed Pango markup as the row tooltip.
 
         Nickname/host labels intentionally have no tooltips so hovering the
-        text area shows this richer row tooltip. Status and forwarding badges
-        keep their own specific tooltips.
+        text area shows this richer row tooltip. Status and the forwarding
+        indicator keep their own specific tooltips.
         """
         try:
             window = self.get_root()
@@ -2494,8 +2494,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                 img.set_tooltip_text(tooltip)
             self.indicator_box.append(img)
         finally:
-            # Row markup tooltip includes a forwarding summary; refresh when
-            # rules arrive asynchronously via the window's sidebar attach path.
+            # Keep the composed row tooltip in sync when rules arrive
+            # asynchronously via the window's sidebar attach path.
             self._refresh_row_tooltip()
 
     def _apply_host_label_text(self, include_port: bool | None = None):

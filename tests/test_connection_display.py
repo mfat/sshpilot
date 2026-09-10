@@ -94,7 +94,7 @@ def test_row_tooltip_markup_escapes_special_characters():
     assert "a<b>&c" not in markup
 
 
-def test_row_tooltip_markup_includes_tags_proxy_and_forwarding():
+def test_row_tooltip_markup_includes_tags_and_proxy_but_not_forwarding():
     connection = make_connection(
         nickname="prod",
         display_name="prod",
@@ -117,5 +117,5 @@ def test_row_tooltip_markup_includes_tags_proxy_and_forwarding():
 
     assert "production, web" in markup
     assert "bastion1, bastion2" in markup
-    assert "<b>Forwards:</b>" in markup
-    assert "8080" in markup
+    assert "Forwards" not in markup
+    assert "8080" not in markup

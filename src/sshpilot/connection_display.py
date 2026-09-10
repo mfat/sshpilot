@@ -44,7 +44,6 @@ def format_connection_row_tooltip_markup(
     connection: Any,
     *,
     hide_hosts: bool = False,
-    max_forwarding_lines: int = 4,
 ) -> str:
     """Build Pango markup for a sidebar connection row tooltip.
 
@@ -54,12 +53,10 @@ def format_connection_row_tooltip_markup(
         <span alpha='70%'>user@host:port</span>
         <b>Tags:</b> production, web
         <b>ProxyJump:</b> bastion
-        <b>Forwards:</b>
-        <span alpha='70%'>Local 8080 → …</span>
 
-    Host details are omitted when ``hide_hosts`` is set. Forwarding lines are
-    included when the connection carries ``forwarding_rules`` (sidebar attaches
-    them asynchronously). Values are escaped for Pango markup.
+    Host details are omitted when ``hide_hosts`` is set. Port-forwarding rules
+    are shown on the forwarding indicator tooltip, not here. Values are escaped
+    for Pango markup.
     """
     title = str(
         getattr(connection, "display_name", None)
@@ -88,21 +85,6 @@ def format_connection_row_tooltip_markup(
         lines.append(
             f"<b>{_escape_markup(_('ProxyJump:'))}</b> {_escape_markup(proxy)}"
         )
-
-    if max_forwarding_lines > 0:
-        rules = getattr(connection, "forwarding_rules", None)
-        if rules:
-            from sshpilot.port_utils import format_forwarding_rules
-
-            forward_lines = format_forwarding_rules(
-                rules, max_lines=max_forwarding_lines
-            )
-            if forward_lines:
-                lines.append(f"<b>{_escape_markup(_('Forwards:'))}</b>")
-                for rule_line in forward_lines:
-                    lines.append(
-                        f"<span alpha='70%'>{_escape_markup(rule_line)}</span>"
-                    )
 
     return "\n".join(lines)
 
