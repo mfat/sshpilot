@@ -168,6 +168,9 @@ class BaseTerminalBackend(Protocol):
     def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
         """Apply emulator configuration without exposing implementation APIs."""
 
+    def set_cursor_options(self, shape: Any = None, blink: Any = None) -> None:
+        """Apply the default cursor shape/blink; ``None`` means the default."""
+
     def grab_focus(self) -> None:
         """Give keyboard focus to the terminal widget."""
 
@@ -361,6 +364,40 @@ if TYPE_CHECKING:  # pragma: no cover - import only for type checking
     from .terminal import TerminalWidget
 
 
+# ---------------------------------------------------------------------------
+# Cursor presentation.  The shared vocabulary and its pure mappings live in
+# terminal_cursor; only the parts that need GTK are here.
+
+from .terminal_cursor import (  # noqa: E402
+    DEFAULT_CURSOR_BLINK,
+    DEFAULT_CURSOR_SHAPE,
+    VTE_CURSOR_BLINK_MODES,
+    VTE_CURSOR_SHAPES,
+    normalize_cursor_blink,
+    normalize_cursor_shape,
+    xterm_cursor_style,
+)
+
+
+def system_cursor_blink_enabled() -> bool:
+    """Whether GTK's own text cursor blinks, for the PyXterm "system" mode."""
+    try:
+        settings = Gtk.Settings.get_default()
+        if settings is not None:
+            return bool(settings.get_property("gtk-cursor-blink"))
+    except Exception:
+        logger.debug("Could not read gtk-cursor-blink", exc_info=True)
+    return True
+
+
+def xterm_cursor_blink_enabled(blink: Any) -> bool:
+    """Resolve a blink nick to the boolean xterm.js understands."""
+    nick = normalize_cursor_blink(blink)
+    if nick == "system":
+        return system_cursor_blink_enabled()
+    return nick == "on"
+
+
 class GridTrackingVteTerminal(Vte.Terminal):
     """VTE terminal that reports grid changes after GTK allocation."""
 
@@ -438,11 +475,9 @@ class VTETerminalBackend:
         font_desc.set_size(12 * Pango.SCALE)
         self.vte.set_font(font_desc)
 
-        try:
-            self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
-            self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)
-        except Exception:
-            logger.debug("Failed to set cursor properties", exc_info=True)
+        # Defaults only; configure() re-applies these from the user's config
+        # once the widget has one.
+        self.set_cursor_options()
 
         try:
             self.vte.set_scrollback_lines(10000)
@@ -486,8 +521,9 @@ class VTETerminalBackend:
         """Apply VTE settings best-effort across supported VTE versions."""
         settings = settings or {}
         operations = (
-            ("cursor blink", lambda: self.vte.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)),
-            ("cursor shape", lambda: self.vte.set_cursor_shape(Vte.CursorShape.BLOCK)),
+            ("cursor", lambda: self.set_cursor_options(
+                settings.get("cursor_shape"), settings.get("cursor_blink")
+            )),
             ("scrollback", lambda: self.vte.set_scrollback_lines(int(settings.get("scrollback_lines", 10000)))),
             ("scroll on keystroke", lambda: self.vte.set_scroll_on_keystroke(True)),
             ("scroll on output", lambda: self.vte.set_scroll_on_output(False)),
@@ -508,6 +544,27 @@ class VTETerminalBackend:
         # "my-branch-name" selected a fragment.  GNOME Terminal and Ptyxis both
         # default their word-char-exceptions setting to "nothing", i.e. the
         # same VTE default; match them rather than re-deriving a subset.
+
+    def set_cursor_options(self, shape: Any = None, blink: Any = None) -> None:
+        """Apply the cursor shape and blink preference to this VTE widget.
+
+        ``None`` for either argument means "use the default", which is what
+        initialize() wants before any config has been read.  The properties are
+        the *default* presentation: a program that sends DECSCUSR still wins for
+        as long as it is running, which is why nothing re-applies these outside
+        of setup and an explicit preference change.
+        """
+        shape_nick = normalize_cursor_shape(shape)
+        blink_nick = normalize_cursor_blink(blink)
+        try:
+            self.vte.set_cursor_shape(
+                getattr(Vte.CursorShape, VTE_CURSOR_SHAPES[shape_nick])
+            )
+            self.vte.set_cursor_blink_mode(
+                getattr(Vte.CursorBlinkMode, VTE_CURSOR_BLINK_MODES[blink_nick])
+            )
+        except Exception:
+            logger.debug("Failed to set cursor properties", exc_info=True)
 
     def prepare_pty_less_emulation(self) -> None:
         """Make this terminal safe to drive as a pure emulator, with no PTY.
@@ -1446,6 +1503,8 @@ class PyXtermTerminalBackend:
         self._selection_from_search = False
         self._selection_changed_cb: Optional[Callable[..., None]] = None
         self._shortcut_passthrough = False
+        self._cursor_shape = DEFAULT_CURSOR_SHAPE
+        self._cursor_blink = DEFAULT_CURSOR_BLINK
 
         # Initialize with a fallback widget
         self.widget: Gtk.Widget = Gtk.Box()
@@ -1528,7 +1587,38 @@ class PyXtermTerminalBackend:
 
     def configure(self, settings: Optional[Mapping[str, Any]] = None) -> None:
         """PyXterm presentation is configured by theme/font JS updates."""
+        settings = settings or {}
+        self.set_cursor_options(
+            settings.get("cursor_shape"), settings.get("cursor_blink")
+        )
         return None
+
+    def set_cursor_options(self, shape: Any = None, blink: Any = None) -> None:
+        """Apply the cursor shape and blink preference to xterm.js.
+
+        The nicks are stored so the shell can be re-seeded after a (re)load,
+        the way the theme and font are.
+
+        Only setup and an explicit preference change may call this.  Unlike
+        VTE, xterm.js implements DECSCUSR by writing straight into
+        ``term.options.cursorStyle``, so re-applying the preference on an
+        unrelated event (a theme swap, a resize) would silently undo the
+        cursor a running program asked for.
+        """
+        self._cursor_shape = normalize_cursor_shape(shape)
+        self._cursor_blink = normalize_cursor_blink(blink)
+        if not self.available:
+            return
+        style = xterm_cursor_style(self._cursor_shape)
+        blinks = "true" if xterm_cursor_blink_enabled(self._cursor_blink) else "false"
+        self._run_javascript(
+            "(function() {"
+            "  if (typeof window.term !== 'undefined') {"
+            f"    window.term.options.cursorStyle = '{style}';"
+            f"    window.term.options.cursorBlink = {blinks};"
+            "  }"
+            "})();"
+        )
 
     def connect_content_changed(self, callback: Callable[..., None]) -> Optional[Any]:
         """PyXtermBridgeBackend uses output hooks instead of a widget signal."""
@@ -2424,6 +2514,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
             self.apply_theme()
         except Exception:  # noqa: BLE001
             pass
+        # Adopting an already-ready pooled page: our "ready" handler never ran
+        # for it, so the preference is seeded here instead.  Anything the PTY
+        # emitted between adoption and attach has already been written, so a
+        # DECSCUSR in those first bytes loses to this -- a narrow window, and
+        # the alternative (never seeding) would drop the preference entirely.
+        self.set_cursor_options(self._cursor_shape, self._cursor_blink)
         if self._stored_font is not None:
             try:
                 super().set_font(self._stored_font)
@@ -2492,6 +2588,12 @@ class PyXtermBridgeBackend(PyXtermTerminalBackend):
         if kind == "ready":
             self._js_ready = True
             self._last_size = (payload.get("rows", 24), payload.get("cols", 80))
+            # Seed the cursor preference BEFORE the buffered output: xterm.js
+            # parks a program's DECSCUSR in the same term.options.cursorStyle
+            # this writes, so a prompt that picks its own cursor (starship,
+            # p10k) must be parsed after us or we would overwrite its choice.
+            # One short script, so it costs first paint nothing measurable.
+            self.set_cursor_options(self._cursor_shape, self._cursor_blink)
             # Flush buffered shell output BEFORE theme/font JS so the prompt is
             # not queued behind those evaluate_javascript calls (first paint).
             # One base64 evaluate_javascript — never replay chunk-by-chunk.

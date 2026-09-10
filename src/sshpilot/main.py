@@ -1531,6 +1531,15 @@ class SshPilotApplication(Adw.Application):
         self._default_shortcuts[name] = list(shortcuts) if shortcuts is not None else None
         self._custom_shortcut_names.add(name)
 
+    def is_custom_shortcut(self, name) -> bool:
+        """Whether *name* is handled by a dedicated controller, not an accelerator.
+
+        Anything registered through ``register_custom_shortcut`` has no GAction
+        behind it, so a generic accelerator matcher must skip it and leave the
+        key to the controller that owns it.
+        """
+        return name in getattr(self, '_custom_shortcut_names', set())
+
     def get_effective_shortcuts(self, name):
         """Return the effective accelerators for an action (override or default)."""
         default = self._default_shortcuts.get(name)

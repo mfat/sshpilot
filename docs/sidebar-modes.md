@@ -31,22 +31,19 @@ computed the width itself and offered no handle. What changed for callers:
 - **The minimum is measured, not configured.** `SidebarPaned._floor()` is the
   sidebar's own content minimum — `sidebar.measure(HORIZONTAL, -1)`, i.e. the
   widest of what the header, the bottom toolbar row and the connection rows
-  ask for. Measured today: **195px, all of it the group row** (a connection row
-  asks 128, the header toolbar 98, and the bottom toolbar sits in a scroller
-  that asks 0). Row labels add nothing to it — `sidebar.FULL_LABEL_MIN_CHARS`
-  is 0, because `width-chars` is a floor GTK never lays a label out below and
-  these labels ellipsize; at the old 10 characters they were ~80px each and the
-  floor was 263. The group row's trailing controls are the rest of it, and they
-  are **width-responsive**: the Edit button is gone entirely (it is a
+  ask for. Row labels contribute via `sidebar.FULL_LABEL_MIN_CHARS` (10) —
+  `width-chars` is a floor GTK never lays a label out below (~80px each), so
+  the measured floor is typically ~263px when labels are at that minimum. The
+  group row's trailing controls are the rest of it, and they are
+  **width-responsive**: the Edit button is gone entirely (it is a
   context-menu item), and the split-view button keeps its reserved 34px only
-  while the sidebar is at least `window._ROW_ACTIONS_MIN_WIDTH` (180) wide.
+  while the sidebar is at least `window._ROW_ACTIONS_MIN_WIDTH` (230) wide.
   Below that `MainWindow._apply_sidebar_row_actions` calls
   `GroupRow.set_actions_reserved(False)` on every row, the button goes, and the
-  measured floor goes 149 → 128 with it — which is what lets the divider carry
-  on instead of stopping at a width the group name has already been ellipsised
-  out of. Hover is still opacity-only, so revealing the button never reflows a
-  row; only the width decides whether it is there at all. The threshold has to
-  stay above the floor the reservation produces (~150) or the two would fight.
+  measured floor shrinks with it. Hover is still opacity-only, so revealing the
+  button never reflows a row; only the width decides whether it is there at
+  all. The threshold has to stay above the floor the reservation produces
+  (~150) or the two would fight.
   A drag stops at the floor, and the automatic width is lifted to it (a
   content minimum above the 400 cap wins over the cap). There is **no
   `_SIDEBAR_MIN_WIDTH` constant** any more: the old 180 was

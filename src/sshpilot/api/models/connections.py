@@ -911,6 +911,71 @@ class SaveSshConfigTextRequest:
         require_identifier(self.expected_revision, "expected SSH config revision")
 
 
+# -- Ásbrú import -----------------------------------------------------------
+
+class AsbruImportMode(str, Enum):
+    """Conflict policy for Ásbrú imports.
+
+    ``SKIP`` adds only new nicknames/groups (default; never overwrites).
+    """
+
+    SKIP = "skip"
+
+
+@dataclass(frozen=True)
+class AsbruImportRequest:
+    """Import connections from an Ásbrú Connection Manager export YAML."""
+
+    source: str
+    mode: AsbruImportMode = AsbruImportMode.SKIP
+
+    def __post_init__(self) -> None:
+        if type(self.source) is not str or not self.source.strip():
+            raise ValueError("Ásbrú import source path must be a non-empty string")
+        if "\x00" in self.source:
+            raise ValueError("Ásbrú import source path must not contain NUL")
+        if type(self.mode) is not AsbruImportMode:
+            object.__setattr__(self, "mode", AsbruImportMode(str(self.mode)))
+
+
+@dataclass(frozen=True)
+class AsbruImportPreview:
+    """Dry-run summary of an Ásbrú export without mutating configuration."""
+
+    ok: bool
+    source: str
+    connections_to_add: Tuple[str, ...] = ()
+    connections_to_skip: Tuple[str, ...] = ()
+    groups_to_add: Tuple[str, ...] = ()
+    groups_to_reuse: Tuple[str, ...] = ()
+    warnings: Tuple[str, ...] = ()
+    errors: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.source) is not str:
+            raise TypeError("Ásbrú import preview source must be a string")
+
+
+@dataclass(frozen=True)
+class AsbruImportResult:
+    """Outcome of applying an Ásbrú import."""
+
+    ok: bool
+    source: str
+    connections_added: Tuple[str, ...] = ()
+    connections_skipped: Tuple[str, ...] = ()
+    groups_added: Tuple[str, ...] = ()
+    groups_reused: Tuple[str, ...] = ()
+    warnings: Tuple[str, ...] = ()
+    errors: Tuple[str, ...] = ()
+    partial_failures: Tuple[str, ...] = ()
+    message: str = ""
+
+    def __post_init__(self) -> None:
+        if type(self.source) is not str:
+            raise TypeError("Ásbrú import result source must be a string")
+
+
 # -- UpdateConnectionMetadataRequest hardening ------------------------------
 
 @dataclass(frozen=True)

@@ -16,7 +16,20 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.56 (current)
+## API 0.57 (current)
+
+### API 0.57 Ásbrú Connection Manager import
+
+- New client methods `preview_asbru_import` and `import_asbru`, with wire
+  methods `connections.preview_asbru_import` and `connections.import_asbru`
+  (capability `connections.write`). They parse Ásbrú's **Export selected
+  connections** YAML in core, dry-run against the current store, then create
+  missing groups and SSH hosts (ProxyJump + local/remote forwards) through the
+  existing connection mutation path. Duplicate nicknames are skipped; Ásbrú
+  expect/macros/variables and non-SSH methods are not imported. Protocol stays
+  v1.
+
+## API 0.56
 
 ### API 0.56 deploy a pasted public key via ssh-copy-id
 

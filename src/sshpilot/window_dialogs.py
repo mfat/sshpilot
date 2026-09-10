@@ -1782,13 +1782,17 @@ class WindowConfigDialogsMixin:
         file_dialog.save(self, None, on_save_response)
 
     def show_import_dialog(self):
-        """Ask where to import from (file or Bitwarden), then run that flow."""
+        """Ask where to import from (file, Bitwarden, SSH, or Ásbrú), then run that flow."""
         logger.info("Show import source dialog")
         try:
             dialog = Adw.MessageDialog(
                 transient_for=self, modal=True, heading=_("Import Configuration"),
-                body=_("Import a backup from a file, an SSH server, or your Bitwarden vault."))
+                body=_(
+                    "Import a backup from a file, an SSH server, Bitwarden, "
+                    "or an Ásbrú Connection Manager export."
+                ))
             dialog.add_response('cancel', _('Cancel'))
+            dialog.add_response('asbru', _('From Ásbrú…'))
             dialog.add_response('bitwarden', _('From Bitwarden'))
             dialog.add_response('ssh', _('From SSH Server'))
             dialog.add_response('file', _('From File'))
@@ -1802,10 +1806,175 @@ class WindowConfigDialogsMixin:
                     self._import_from_bitwarden()
                 elif resp == 'ssh':
                     self._import_from_ssh_server()
+                elif resp == 'asbru':
+                    self._import_from_asbru()
             dialog.connect('response', on_source)
             dialog.present()
         except Exception as e:
             logger.error(f"Failed to show import source dialog: {e}")
+
+    def _import_from_asbru(self):
+        """Import connections from an Ásbrú Connection Manager export YAML."""
+        logger.info("Show Ásbrú import file chooser")
+        try:
+            file_dialog = Gtk.FileDialog()
+            file_dialog.set_title(_("Import from Ásbrú"))
+
+            filter_yml = Gtk.FileFilter()
+            filter_yml.set_name(_("Ásbrú export (*.yml, *.yaml)"))
+            filter_yml.add_pattern("*.yml")
+            filter_yml.add_pattern("*.yaml")
+
+            filter_all = Gtk.FileFilter()
+            filter_all.set_name(_("All files"))
+            filter_all.add_pattern("*")
+
+            filters = Gio.ListStore.new(Gtk.FileFilter)
+            filters.append(filter_yml)
+            filters.append(filter_all)
+            file_dialog.set_filters(filters)
+            file_dialog.set_default_filter(filter_yml)
+
+            def on_open_response(dialog, result):
+                try:
+                    file = dialog.open_finish(result)
+                    if file:
+                        self._begin_asbru_import(file.get_path())
+                except GLib.Error as e:
+                    if e.code == 2:
+                        logger.info("Ásbrú import cancelled by user")
+                    else:
+                        logger.error("Ásbrú import file selection failed: %s", e)
+                except Exception as e:
+                    logger.error("Ásbrú import file selection failed: %s", e)
+
+            file_dialog.open(self, None, on_open_response)
+        except Exception as e:
+            logger.error("Failed to show Ásbrú import dialog: %s", e)
+
+    def _begin_asbru_import(self, import_path: str):
+        """Preview then apply an Ásbrú export via the daemon API."""
+        from .bitwarden_backup_setup import progress_dialog
+
+        client = getattr(self, "client", None)
+        if client is None or not hasattr(client, "preview_asbru_import"):
+            self._simple_dialog(
+                _("Import Failed"),
+                _("Ásbrú import requires a connected daemon client."),
+            )
+            return
+
+        cancelled = {"v": False}
+        _set_status, close_spinner = progress_dialog(
+            self,
+            _("Import from Ásbrú"),
+            _("Reading Ásbrú export…"),
+            on_cancel=lambda: cancelled.__setitem__("v", True),
+        )
+
+        def worker():
+            try:
+                preview = client.preview_asbru_import(import_path)
+                payload = ("preview", preview)
+            except Exception as e:
+                logger.error("Ásbrú import preview failed: %s", e)
+                payload = ("error", str(e))
+            GLib.idle_add(lambda: (_after_preview(payload), False)[1])
+
+        def _after_preview(p):
+            if cancelled["v"]:
+                return
+            close_spinner()
+            if p[0] != "preview":
+                self._simple_dialog(_("Import Failed"), p[1])
+                return
+            preview = p[1]
+            if preview.errors:
+                self._simple_dialog(
+                    _("Import Failed"),
+                    "\n".join(preview.errors),
+                )
+                return
+            add_n = len(preview.connections_to_add)
+            skip_n = len(preview.connections_to_skip)
+            group_n = len(preview.groups_to_add)
+            if add_n == 0 and group_n == 0:
+                body = _(
+                    "No new connections to import. "
+                    "{skip} existing nickname(s) would be skipped."
+                ).format(skip=skip_n)
+                self._simple_dialog(_("Nothing to Import"), body)
+                return
+            body = _(
+                "Import {add} connection(s) and {groups} group(s)?\n"
+                "{skip} existing nickname(s) will be skipped."
+            ).format(add=add_n, groups=group_n, skip=skip_n)
+            if preview.warnings:
+                body += "\n\n" + "\n".join(preview.warnings[:8])
+                if len(preview.warnings) > 8:
+                    body += "\n…"
+
+            confirm = Adw.MessageDialog(
+                transient_for=self,
+                modal=True,
+                heading=_("Import from Ásbrú"),
+                body=body,
+            )
+            confirm.add_response("cancel", _("Cancel"))
+            confirm.add_response("import", _("Import"))
+            confirm.set_default_response("import")
+            confirm.set_close_response("cancel")
+
+            def on_confirm(_d, resp):
+                if resp == "import":
+                    self._run_asbru_import(import_path)
+
+            confirm.connect("response", on_confirm)
+            confirm.present()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_asbru_import(self, import_path: str):
+        from .api.models.connections import AsbruImportRequest
+        from .bitwarden_backup_setup import progress_dialog
+
+        client = getattr(self, "client", None)
+        cancelled = {"v": False}
+        _set_status, close_spinner = progress_dialog(
+            self,
+            _("Import from Ásbrú"),
+            _("Importing connections…"),
+            on_cancel=lambda: cancelled.__setitem__("v", True),
+        )
+
+        def worker():
+            try:
+                result = client.import_asbru(AsbruImportRequest(source=import_path))
+                payload = ("ok", result)
+            except Exception as e:
+                logger.error("Ásbrú import failed: %s", e)
+                payload = ("error", str(e))
+            GLib.idle_add(lambda: (_after(payload), False)[1])
+
+        def _after(p):
+            if cancelled["v"]:
+                return
+            close_spinner()
+            if p[0] != "ok":
+                self._simple_dialog(_("Import Failed"), p[1])
+                return
+            result = p[1]
+            lines = [result.message or _("Import finished.")]
+            if result.partial_failures:
+                lines.append("")
+                lines.extend(result.partial_failures[:10])
+            if result.warnings:
+                lines.append("")
+                lines.extend(result.warnings[:6])
+            heading = _("Import Complete") if result.ok else _("Import Completed with Errors")
+            self._simple_dialog(heading, "\n".join(lines))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _import_from_file(self):
         """Show the file chooser for a .spbk / .json import."""

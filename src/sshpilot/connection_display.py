@@ -2,11 +2,91 @@
 
 from __future__ import annotations
 
-from typing import Any
+import html
+from typing import Any, List
+
+from gettext import gettext as _
 
 # Stand-in shown wherever host details are suppressed by the privacy toggle
 # (the eye button in the sidebar header).
 HIDDEN_HOST_PLACEHOLDER = "••••••••••"
+
+
+def _escape_markup(text: str) -> str:
+    """Escape text for Pango markup (same characters as GLib.markup_escape_text)."""
+    return html.escape(text, quote=False)
+
+
+def _proxy_jump_display(connection: Any) -> str:
+    """Format ProxyJump as a comma-separated chain, or empty if unset."""
+    raw = getattr(connection, "proxy_jump", None)
+    if raw is None and hasattr(connection, "data") and isinstance(connection.data, dict):
+        raw = connection.data.get("proxy_jump")
+    if isinstance(raw, str):
+        parts = [p.strip() for p in raw.replace(" ", ",").split(",") if p.strip()]
+    elif isinstance(raw, (list, tuple)):
+        parts = [str(p).strip() for p in raw if str(p).strip()]
+    else:
+        parts = []
+    return ", ".join(parts)
+
+
+def _tags_display(connection: Any) -> str:
+    """Format connection tags as a comma-separated list, or empty if none."""
+    tags = getattr(connection, "tags", None) or []
+    if not isinstance(tags, (list, tuple)):
+        return ""
+    parts = [str(t).strip() for t in tags if str(t).strip()]
+    return ", ".join(parts)
+
+
+def format_connection_row_tooltip_markup(
+    connection: Any,
+    *,
+    hide_hosts: bool = False,
+) -> str:
+    """Build Pango markup for a sidebar connection row tooltip.
+
+    Layout::
+
+        <b>Display Name</b>
+        <span alpha='70%'>user@host:port</span>
+        <b>Tags:</b> production, web
+        <b>ProxyJump:</b> bastion
+
+    Host details are omitted when ``hide_hosts`` is set. Port-forwarding rules
+    are shown on the forwarding indicator tooltip, not here. Values are escaped
+    for Pango markup.
+    """
+    title = str(
+        getattr(connection, "display_name", None)
+        or getattr(connection, "nickname", "")
+        or ""
+    ).strip()
+    lines: List[str] = []
+    if title:
+        lines.append(f"<b>{_escape_markup(title)}</b>")
+
+    if not hide_hosts:
+        host_display = format_connection_host_display(connection, include_port=True)
+        if host_display and host_display != title:
+            lines.append(
+                f"<span alpha='70%'>{_escape_markup(host_display)}</span>"
+            )
+
+    tags = _tags_display(connection)
+    if tags:
+        lines.append(
+            f"<b>{_escape_markup(_('Tags:'))}</b> {_escape_markup(tags)}"
+        )
+
+    proxy = _proxy_jump_display(connection)
+    if proxy and not hide_hosts:
+        lines.append(
+            f"<b>{_escape_markup(_('ProxyJump:'))}</b> {_escape_markup(proxy)}"
+        )
+
+    return "\n".join(lines)
 
 
 def hosts_hidden(window: Any) -> bool:

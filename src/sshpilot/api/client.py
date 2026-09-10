@@ -12,6 +12,9 @@ from .terminal_events import (
     TerminalSubscription,
 )
 from .models.connections import (
+    AsbruImportPreview,
+    AsbruImportRequest,
+    AsbruImportResult,
     ConnectionDetails,
     ConnectionEditorDetails,
     EffectiveConfigComparison,
@@ -239,6 +242,12 @@ class SshPilotClient(Protocol):
         ...
 
     def create_connection(self, request: CreateConnectionRequest) -> ConnectionMutationResult:
+        ...
+
+    def preview_asbru_import(self, source: str) -> AsbruImportPreview:
+        ...
+
+    def import_asbru(self, request: AsbruImportRequest) -> AsbruImportResult:
         ...
 
     def update_connection(

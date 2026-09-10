@@ -28,11 +28,13 @@ def _make():
     row.config = _Cfg()
     row._compact = False
     row._content_spacing_base = 12
-    for name in ('_content_box', '_info_box', 'indicator_box', 'color_badge',
-                 'color_dot', 'file_manager_button', 'status_icon',
-                 'connection_icon', 'nickname_label', 'host_label'):
+    for name in ('_content_box', '_info_box', 'indicator_box', 'status_box',
+                 'color_badge', 'color_dot', 'file_manager_button',
+                 '_file_manager_slot', 'status_icon', 'connection_icon',
+                 'nickname_label', 'host_label'):
         setattr(row, name, MagicMock())
     row._file_manager_callback = MagicMock()
+    row._is_hovering = False
     row.set_tooltip_text = MagicMock()
     row.update_status = MagicMock()
     row.set_margin_start = MagicMock()
@@ -119,8 +121,8 @@ def test_compact_connection_shows_text_only_label(monkeypatch):
 
 def test_compact_keeps_manage_files_button_reserved(monkeypatch):
     """The strip keeps the row's Manage Files action — the only way to reach the
-    file manager without leaving minimal mode — and keeps it *visible* so its
-    space stays reserved: hovering must never reflow or resize the row. It is
+    file manager without leaving minimal mode — and keeps its slot's button
+    page up so width stays reserved: hovering must never reflow the row. It is
     trimmed to the icon so the label loses as little of the strip as possible.
     """
     row, mod = _make()
@@ -128,7 +130,9 @@ def test_compact_keeps_manage_files_button_reserved(monkeypatch):
 
     row.set_compact(True)
 
-    row.file_manager_button.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
     row.file_manager_button.add_css_class.assert_called_with(
         'sidebar-compact-action')
 
@@ -167,7 +171,8 @@ def test_full_row_drops_the_compact_action_footprint(monkeypatch):
 
     row.file_manager_button.remove_css_class.assert_called_with(
         'sidebar-compact-action')
-    row.file_manager_button.set_visible.assert_called_with(True)
+    row._file_manager_slot.set_visible_child_name.assert_called_with(
+        mod.ROW_ACTION_SLOT_BUTTON)
 
 
 def test_compact_connection_uses_display_name(monkeypatch):
@@ -235,18 +240,17 @@ def test_compact_group_honours_max_chars(monkeypatch):
     row.name_label.set_max_width_chars.assert_called_with(14)
 
 
-def test_full_labels_have_no_character_minimum():
-    """Restoring a full row bounds the label's natural width but sets no
-    ``width-chars`` floor: that floor is what kept the sidebar from being laid
-    out below 263px, and these labels ellipsize anyway."""
+def test_full_labels_restore_character_minimum():
+    """Restoring a full row re-applies the ``width-chars`` floor and the
+    ``max-width-chars`` natural-width bound."""
     mod = importlib.import_module('sshpilot.sidebar')
     label = MagicMock()
 
     mod._restore_full_label_width(label)
 
-    label.set_width_chars.assert_called_with(0)
+    label.set_width_chars.assert_called_with(mod.FULL_LABEL_MIN_CHARS)
     label.set_max_width_chars.assert_called_with(mod.FULL_LABEL_MAX_CHARS)
-    assert mod.FULL_LABEL_MIN_CHARS == 0
+    assert mod.FULL_LABEL_MIN_CHARS == 10
 
 
 def test_restore_shows_labels_and_refreshes_status(monkeypatch):

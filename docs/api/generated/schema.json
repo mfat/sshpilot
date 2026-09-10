@@ -1,5 +1,5 @@
 {
-  "api_implementation_version": "0.56",
+  "api_implementation_version": "0.57",
   "client_method_contract": {
     "add_agent_key": {
       "capability": "identity.operate",
@@ -273,6 +273,10 @@
       "capability": "connections.secrets.status.read",
       "status": "daemon-only"
     },
+    "import_asbru": {
+      "capability": "connections.write",
+      "status": "implemented"
+    },
     "import_bitwarden_backup": {
       "capability": "secrets.transfer",
       "status": "daemon-only"
@@ -363,6 +367,10 @@
     },
     "prepare_external_terminal_launch": {
       "capability": "terminal.external_launch",
+      "status": "implemented"
+    },
+    "preview_asbru_import": {
+      "capability": "connections.write",
       "status": "implemented"
     },
     "preview_backup": {
@@ -691,6 +699,9 @@
     "connections.has_password": {
       "capability": "connections.secrets.status.read"
     },
+    "connections.import_asbru": {
+      "capability": "connections.write"
+    },
     "connections.list": {
       "capability": "connections.read"
     },
@@ -708,6 +719,9 @@
     },
     "connections.prepare_external_terminal_launch": {
       "capability": "terminal.external_launch"
+    },
+    "connections.preview_asbru_import": {
+      "capability": "connections.write"
     },
     "connections.rename_group": {
       "capability": "connections.groups"
@@ -1128,6 +1142,9 @@
     }
   },
   "enums": {
+    "AsbruImportMode": [
+      "skip"
+    ],
     "AuthenticationMethod": [
       "key",
       "password"
@@ -1719,6 +1736,161 @@
           "required": false,
           "sensitive": false,
           "type": "Optional[int]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AsbruImportPreview": {
+      "fields": [
+        {
+          "default": null,
+          "name": "ok",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "source",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "connections_to_add",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "connections_to_skip",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "groups_to_add",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "groups_to_reuse",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "warnings",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "errors",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AsbruImportRequest": {
+      "fields": [
+        {
+          "default": null,
+          "name": "source",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": "skip",
+          "name": "mode",
+          "required": false,
+          "sensitive": false,
+          "type": "AsbruImportMode"
+        }
+      ],
+      "status": "Implemented"
+    },
+    "AsbruImportResult": {
+      "fields": [
+        {
+          "default": null,
+          "name": "ok",
+          "required": true,
+          "sensitive": false,
+          "type": "bool"
+        },
+        {
+          "default": null,
+          "name": "source",
+          "required": true,
+          "sensitive": false,
+          "type": "str"
+        },
+        {
+          "default": [],
+          "name": "connections_added",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "connections_skipped",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "groups_added",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "groups_reused",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "warnings",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "errors",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": [],
+          "name": "partial_failures",
+          "required": false,
+          "sensitive": false,
+          "type": "tuple[str, ...]"
+        },
+        {
+          "default": "",
+          "name": "message",
+          "required": false,
+          "sensitive": false,
+          "type": "str"
         }
       ],
       "status": "Implemented"

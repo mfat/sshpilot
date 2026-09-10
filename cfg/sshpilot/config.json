@@ -104,7 +104,7 @@
     "sidebar_show_port_forwarding": true,
     "sidebar_show_user_hostname": true,
     "sidebar_show_when_no_tabs": false,
-    "sidebar_width": 250,
+    "sidebar_width": 300,
     "use_group_color_in_tab": false,
     "use_group_color_in_terminal": false,
     "window_height": 800,

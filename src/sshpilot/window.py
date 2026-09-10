@@ -110,7 +110,9 @@ from .search_utils import connection_matches
 from .shortcut_utils import (
     DOUBLE_SHIFT_SHORTCUT,
     DoubleShiftDetector,
+    accel_matches_latin_fallback,
     get_primary_modifier_label,
+    latin_fallback_keyvals,
 )
 from .platform_utils import (
     get_default_terminal_command,
@@ -272,11 +274,14 @@ _SIDEBAR_HEADER_MARGIN_FULL = 12
 _SIDEBAR_HEADER_MARGIN_STRIP = 6
 
 # Narrowest full sidebar that still reserves space for a group row's split-view
-# action. Below it the rows shed the button (``GroupRow.set_actions_reserved``)
-# so the group name keeps the width — and so the sidebar's measured minimum
-# drops with it, since the group row is what sets that minimum. Must stay above
-# the floor the reserved button produces (~150px) or the two would fight.
-_ROW_ACTIONS_MIN_WIDTH = 180
+# action and connection-row port-forwarding indicator. Below it the rows
+# shed that chrome (``GroupRow.set_actions_reserved``,
+# ``ConnectionRow.set_indicators_reserved``) so names keep their
+# ``FULL_LABEL_MIN_CHARS`` floor — and so the sidebar's measured minimum drops
+# with the group button, since the group row is what sets that minimum. Must
+# stay above the floor the reserved button produces (~150px) or the two would
+# fight.
+_ROW_ACTIONS_MIN_WIDTH = 230
 
 
 def _accelerator_label(accel: str) -> str:
@@ -479,6 +484,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self.fullscreen_controller = WindowFullscreenController(self)
         self.fullscreen_controller.install()
         self._setup_omnisearch_shortcut()
+        self._setup_latin_fallback_shortcuts()
         self.setup_connections()
         self.setup_signals()
         # Authoritative SSH files are monitored by the daemon; GTK refreshes
@@ -2472,8 +2478,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         self._attach_sidebar_forwarding_rules(connections)
         self._refresh_sidebar_forwarding_rules(connections)
 
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
-        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', True)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
+        show_group_count = self.config.get_setting('ui.sidebar_show_group_count', False)
         show_status = self.config.get_setting('ui.sidebar_show_connection_status', True)
         show_connection_icon = self.config.get_setting('ui.sidebar_show_connection_icon', True)
         show_group_icon = self.config.get_setting('ui.sidebar_show_group_icon', True)
@@ -2514,6 +2520,34 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 row.count_label.set_visible(count_visible)
             if hasattr(row, 'group_id') and hasattr(row, 'icon'):
                 row.icon.set_visible(show_group_icon)
+
+            # Re-evaluate hover action buttons against current prefs / hover.
+            if hasattr(row, '_reveal_file_manager_button'):
+                try:
+                    on_row = (
+                        row._pointer_is_on_row()
+                        if hasattr(row, '_pointer_is_on_row')
+                        else False
+                    )
+                    row._reveal_file_manager_button(on_row)
+                except Exception:
+                    logger.debug(
+                        "Failed to refresh connection-row file manager button",
+                        exc_info=True,
+                    )
+            if hasattr(row, '_reveal_row_actions'):
+                try:
+                    on_row = (
+                        row._pointer_is_on_row()
+                        if hasattr(row, '_pointer_is_on_row')
+                        else False
+                    )
+                    row._reveal_row_actions(on_row)
+                except Exception:
+                    logger.debug(
+                        "Failed to refresh group-row split view button",
+                        exc_info=True,
+                    )
 
             row = row.get_next_sibling()
 
@@ -3068,13 +3102,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
-        """Reserve or shed the group rows' split-view action for this width.
+        """Reserve or shed narrow-sidebar chrome for this width.
 
-        The group row is what sets the sidebar's measured minimum, and a
-        reserved 34px button is most of it. Below
-        :data:`_ROW_ACTIONS_MIN_WIDTH` the rows drop it, the minimum drops with
-        them, and the divider can go on narrowing instead of stopping at a
-        width the name has already been ellipsised out of.
+        Below :data:`_ROW_ACTIONS_MIN_WIDTH` group rows drop the split-view
+        button and connection rows drop the port-forwarding indicator so names
+        keep their ``FULL_LABEL_MIN_CHARS`` floor. The group button is also
+        what sets the sidebar's measured minimum, so shedding it lets the
+        divider keep narrowing past a width the name has already been
+        ellipsised out of.
         """
         lb = getattr(self, 'connection_list', None)
         if lb is None:
@@ -3095,6 +3130,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     setter(reserved)
                 except Exception:
                     logger.debug("row set_actions_reserved failed", exc_info=True)
+            ind_setter = getattr(row, 'set_indicators_reserved', None)
+            if ind_setter is not None:
+                try:
+                    ind_setter(reserved)
+                except Exception:
+                    logger.debug("row set_indicators_reserved failed", exc_info=True)
             row = row.get_next_sibling()
 
     def _on_sidebar_strip_position_changed(self, *_args) -> None:
@@ -3130,14 +3171,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         else:
             try:
                 show_host = bool(
-                    self.config.get_setting('ui.sidebar_show_user_hostname', True))
+                    self.config.get_setting('ui.sidebar_show_user_hostname', False))
             except Exception:
-                show_host = True
+                show_host = False
             try:
                 show_count = bool(
-                    self.config.get_setting('ui.sidebar_show_group_count', True))
+                    self.config.get_setting('ui.sidebar_show_group_count', False))
             except Exception:
-                show_count = True
+                show_count = False
         row = lb.get_first_child()
         while row is not None:
             if hasattr(row, 'host_label'):
@@ -5154,6 +5195,89 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         pointer.connect('pressed', self._on_omnisearch_pointer_pressed)
         self.add_controller(pointer)
         self._omnisearch_pointer_controller = pointer
+
+    def _setup_latin_fallback_shortcuts(self) -> None:
+        """Install the window-level rescue for accelerators under a non-Latin layout.
+
+        GTK matches ``<primary><shift>`` letter accelerators against the active
+        keyboard group only, so every one of them -- New Connection, Terminal
+        Search, Close Tab -- silently stopped working under Cyrillic, Persian
+        or any other non-Latin layout (GH #1249). CAPTURE, because the keys
+        would otherwise reach the focused terminal as raw input.
+        """
+        controller = Gtk.EventControllerKey()
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        controller.connect('key-pressed', self._on_latin_fallback_key)
+        self.add_controller(controller)
+        self._latin_fallback_key_controller = controller
+
+    def _terminal_claims_latin_fallback(self, event, candidates, state) -> bool:
+        """Whether the focused terminal binds one of these keys itself."""
+        widget = self.get_focus()
+        while widget is not None:
+            bindings = getattr(widget, '_latin_fallback_bindings', None)
+            if bindings:
+                return any(
+                    accel_matches_latin_fallback(event, accel, candidates, state)
+                    for accel, _callback in bindings
+                )
+            widget = widget.get_parent()
+        return False
+
+    def _on_latin_fallback_key(self, controller, keyval, keycode, state) -> bool:
+        app = self.get_application()
+        if app is None or not getattr(app, 'accelerators_enabled', True):
+            return False
+        # Bails out before touching the keymap whenever the active layout gave
+        # the key an ASCII keyval, so a Latin keyboard pays nothing for this.
+        candidates = latin_fallback_keyvals(self.get_display(), keyval, keycode)
+        if not candidates:
+            return False
+        event = controller.get_current_event()
+        # A focused terminal owns its own accelerators on the Latin path, where
+        # its LOCAL shortcut controller runs before the window's managed
+        # accels. Keep that precedence rather than inverting it here for a
+        # rebind that collides -- an app action assigned Ctrl+Shift+C, say.
+        if self._terminal_claims_latin_fallback(event, candidates, state):
+            return False
+        try:
+            names = app.get_registered_action_order()
+        except Exception:
+            return False
+        for name in names:
+            if app.is_custom_shortcut(name):
+                continue
+            try:
+                accels = app.get_effective_shortcuts(name) or []
+            except Exception:
+                continue
+            for accel in accels:
+                if not accel_matches_latin_fallback(
+                    event, accel, candidates, state
+                ):
+                    continue
+                # Activate through the owning action map rather than a
+                # "app."/"win." prefixed name: the window implements
+                # Gio.ActionGroup, so Widget.activate_action() is shadowed by
+                # ActionGroup.activate_action(), which looks up the literal
+                # prefixed string, finds nothing and reports no error.
+                owner = app if app.lookup_action(name) is not None else self
+                action = owner.lookup_action(name)
+                if action is None or not action.get_enabled():
+                    continue
+                logger.debug(
+                    "Activating %s: %s matched through the Latin group",
+                    name,
+                    accel,
+                )
+                try:
+                    owner.activate_action(name, None)
+                except Exception:
+                    logger.debug(
+                        "Latin fallback could not activate %s", name, exc_info=True
+                    )
+                return True
+        return False
 
     def _on_omnisearch_pointer_pressed(self, gesture, _n_press, _x, _y) -> None:
         self._on_omnisearch_pointer_activity()
@@ -7984,7 +8108,7 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         """Save window state before quitting"""
         try:
             width, height = self.get_default_size()
-            sidebar_width = getattr(self.split_view, 'get_sidebar_width', lambda: 250)()
+            sidebar_width = getattr(self.split_view, 'get_sidebar_width', lambda: 300)()
             self.config.save_window_geometry(width, height, sidebar_width)
             logger.debug(f"Saved window geometry: {width}x{height}, sidebar: {sidebar_width}")
         except Exception as e:

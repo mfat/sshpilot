@@ -14,7 +14,7 @@ arch=('any')
 # went with the old pyxtermjs server -- the terminal now uses an in-process PTY
 # bridge.
 depends=('python' 'python-gobject' 'python-cairo' 'python-cryptography'
-         'python-keyring' 'python-psutil' 'openssh'
+         'python-keyring' 'python-psutil' 'python-yaml' 'openssh'
          'libsecret' 'libadwaita' 'vte4' 'gtksourceview5' 'sshpass' 'webkitgtk-6.0')
 # Meson is the upstream build system: it compiles the Blueprint .blp sources into
 # the bundled GResource and installs the launcher, the Python package, the desktop

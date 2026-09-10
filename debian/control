@@ -38,6 +38,7 @@ Depends: ${python3:Depends},
          python3-secretstorage,
          python3-psutil,
          python3-certifi,
+         python3-yaml,
          libjs-xterm,
          openssh-client
 Recommends: sshpass,

@@ -215,6 +215,9 @@ for _kp_bin in ("lxml", "Cryptodome", "argon2_cffi_bindings"):
     except Exception:
         pass
 
+# Ásbrú import uses PyYAML (lazy import in core.import_export.asbru).
+hiddenimports += ["yaml"]
+
 # Official GI hooks default to Gtk/GtkSource 3.x; sshPilot needs GTK4 + GtkSource 5
 # (see https://github.com/pyinstaller/pyinstaller/pull/3893 and hooks-config docs).
 gi_hooksconfig = {

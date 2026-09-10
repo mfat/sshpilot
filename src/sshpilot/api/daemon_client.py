@@ -36,6 +36,9 @@ from .models.common import (
     TransferId,
 )
 from .models.connections import (
+    AsbruImportPreview,
+    AsbruImportRequest,
+    AsbruImportResult,
     ConnectionDetails,
     ConnectionEditorDetails,
     EffectiveConfigComparison,
@@ -180,6 +183,9 @@ from .transport.codec import (
     ssh_config_text_from_wire,
     connection_store_snapshot_from_wire,
     create_connection_request_to_wire,
+    asbru_import_preview_from_wire,
+    asbru_import_request_to_wire,
+    asbru_import_result_from_wire,
     create_group_request_to_wire,
     daemon_diagnostics_from_wire,
     daemon_status_from_wire,
@@ -870,6 +876,30 @@ class DaemonClient:
             return connection_mutation_result_from_wire(result)
         except (TypeError, ValueError):
             self._fail_protocol("The daemon returned invalid connection details")
+
+    def preview_asbru_import(self, source: str) -> AsbruImportPreview:
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.preview_asbru_import",
+            {"source": source},
+        )
+        try:
+            return asbru_import_preview_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid Ásbrú import preview")
+
+    def import_asbru(self, request: AsbruImportRequest) -> AsbruImportResult:
+        self._require_write_compatibility("import Ásbrú connections")
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        result = self._request(
+            "connections.import_asbru",
+            asbru_import_request_to_wire(request),
+            mutation_connection_id=None,
+        )
+        try:
+            return asbru_import_result_from_wire(result)
+        except (TypeError, ValueError):
+            self._fail_protocol("The daemon returned an invalid Ásbrú import result")
 
     def update_connection(
         self,

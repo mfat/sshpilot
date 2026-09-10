@@ -1,5 +1,5 @@
 Name:           sshpilot
-Version:        %{?version}%{!?version:6.0.8}
+Version:        %{?version}%{!?version:6.0.9}
 Release:        1%{?dist}
 Summary:        Manage your servers with ease
 
@@ -49,6 +49,7 @@ Requires:       python3-cryptography
 Requires:       python3-keyring
 # port_utils.py and wol.py.
 Requires:       python3-psutil
+Requires:       python3-pyyaml
 Requires:       libsecret
 Requires:       sshpass
 Requires:       openssh-askpass
@@ -144,6 +145,12 @@ an alternative to Putty, Termius and Mobaxterm.
 %{_mandir}/man1/sshpilot-agent.1*
 
 %changelog
+* Thu Sep 10 2026 mFat <newmfat@gmail.com> - 6.0.9-1
+- Fixed keyboard shortcuts not working under non-Latin layouts
+- Added terminal cursor customization
+- Added experimental Ásbrú importer
+- Minor UI tweaks
+
 * Wed Sep 09 2026 mFat <newmfat@gmail.com> - 6.0.8-1
 - Sidebar is now resizable
 - Added option to use monospace font for the user interface

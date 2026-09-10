@@ -23,6 +23,12 @@ from .file_manager_integration import (
 from .shortcut_editor import ShortcutsPreferencesPage
 from .monospace_font_dialog import MonospaceFontDialog
 from .terminal_theme_selector import TERMINAL_SCHEME_KEYS, TerminalThemeChooser
+from .terminal_cursor import (
+    CURSOR_BLINK_MODES,
+    CURSOR_SHAPES,
+    normalize_cursor_blink,
+    normalize_cursor_shape,
+)
 
 
 import gi
@@ -563,6 +569,78 @@ class PreferencesWindow(Adw.NavigationPage):
         terminal_page.add(appearance_group)
         terminal_page.add(palette_group)
 
+    def _add_terminal_cursor_group(self, terminal_page):
+        """Add the Terminal cursor shape/blink group."""
+        cursor_group = Adw.PreferencesGroup(title=_("Cursor"))
+
+        self.cursor_shape_row = Adw.ComboRow()
+        self.cursor_shape_row.set_title(_("Cursor Shape"))
+        self.cursor_shape_row.set_subtitle(
+            _("Programs that set their own cursor still override this")
+        )
+        shape_model = Gtk.StringList()
+        for label in (_("Block"), _("I-Beam"), _("Underline")):
+            shape_model.append(label)
+        self.cursor_shape_row.set_model(shape_model)
+        current_shape = normalize_cursor_shape(
+            self.config.get_setting('terminal.cursor_shape', None)
+        )
+        self.cursor_shape_row.set_selected(CURSOR_SHAPES.index(current_shape))
+        self.cursor_shape_row.connect('notify::selected', self.on_cursor_shape_changed)
+        cursor_group.add(self.cursor_shape_row)
+
+        self.cursor_blink_row = Adw.ComboRow()
+        self.cursor_blink_row.set_title(_("Cursor Blinking"))
+        blink_model = Gtk.StringList()
+        for label in (_("Follow System"), _("Enabled"), _("Disabled")):
+            blink_model.append(label)
+        self.cursor_blink_row.set_model(blink_model)
+        current_blink = normalize_cursor_blink(
+            self.config.get_setting('terminal.cursor_blink', None)
+        )
+        self.cursor_blink_row.set_selected(CURSOR_BLINK_MODES.index(current_blink))
+        self.cursor_blink_row.connect('notify::selected', self.on_cursor_blink_changed)
+        cursor_group.add(self.cursor_blink_row)
+
+        terminal_page.add(cursor_group)
+
+    def on_cursor_shape_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if not 0 <= index < len(CURSOR_SHAPES):
+            return
+        self.config.set_setting('terminal.cursor_shape', CURSOR_SHAPES[index])
+        self.apply_cursor_options_to_terminals()
+
+    def on_cursor_blink_changed(self, combo_row, _param):
+        index = combo_row.get_selected()
+        if not 0 <= index < len(CURSOR_BLINK_MODES):
+            return
+        self.config.set_setting('terminal.cursor_blink', CURSOR_BLINK_MODES[index])
+        self.apply_cursor_options_to_terminals()
+
+    def apply_cursor_options_to_terminals(self):
+        """Push the cursor preference to every open terminal.
+
+        This is the only place outside terminal setup that may re-apply it:
+        xterm.js stores a program's DECSCUSR choice in the same option, so a
+        broader "reapply everything" sweep would undo it mid-session.
+        """
+        shape = self.config.get_setting('terminal.cursor_shape', None)
+        blink = self.config.get_setting('terminal.cursor_blink', None)
+        try:
+            parent_window = self.get_root()
+            if parent_window and hasattr(parent_window, 'connection_to_terminals'):
+                count = 0
+                for terms in parent_window.connection_to_terminals.values():
+                    for terminal in terms:
+                        backend = getattr(terminal, 'backend', None)
+                        if backend is not None and hasattr(backend, 'set_cursor_options'):
+                            backend.set_cursor_options(shape, blink)
+                            count += 1
+                logger.info("Applied cursor options to %d terminals", count)
+        except Exception as e:
+            logger.error(f"Failed to apply cursor options to terminals: {e}")
+
     def _add_terminal_backend_group(self, terminal_page):
         """Add the Terminal backend selection group."""
         # Terminal backend selection group
@@ -891,6 +969,7 @@ class PreferencesWindow(Adw.NavigationPage):
         terminal_page.set_icon_name("utilities-terminal-symbolic")
 
         self._add_terminal_appearance_groups(terminal_page)
+        self._add_terminal_cursor_group(terminal_page)
         self._add_terminal_backend_group(terminal_page)
         self._add_terminal_input_groups(terminal_page)
         self._add_terminal_daemon_group(terminal_page)
@@ -920,7 +999,7 @@ class PreferencesWindow(Adw.NavigationPage):
         current_mode = 'fill'
         try:
             current_mode = str(
-                self.config.get_setting('ui.group_color_display', 'fill')
+                self.config.get_setting('ui.group_color_display', 'dot')
             ).lower()
         except Exception:
             current_mode = 'fill'
@@ -949,10 +1028,10 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         try:
             child_rows_pref = bool(
-                self.config.get_setting('ui.group_color_child_rows', False)
+                self.config.get_setting('ui.group_color_child_rows', True)
             )
         except Exception:
-            child_rows_pref = False
+            child_rows_pref = True
         self.child_rows_color_row.set_active(child_rows_pref)
         self.child_rows_color_row.connect(
             'notify::active', self.on_group_color_child_rows_toggled
@@ -1387,7 +1466,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_user_hostname_switch.set_title(_("Display user@hostname"))
         show_user_hostname_switch.set_subtitle(_("Show username@hostname in connection rows"))
         show_user_hostname_switch.set_active(
-            self.config.get_setting('ui.sidebar_show_user_hostname', True)
+            self.config.get_setting('ui.sidebar_show_user_hostname', False)
         )
         show_user_hostname_switch.connect('notify::active', self.on_sidebar_show_user_hostname_changed)
         sidebar_group.add(show_user_hostname_switch)
@@ -1397,7 +1476,7 @@ class PreferencesWindow(Adw.NavigationPage):
         show_group_count_switch.set_title(_("Display Connection Count in Groups"))
         show_group_count_switch.set_subtitle(_("Show the number of connections in each group"))
         show_group_count_switch.set_active(
-            self.config.get_setting('ui.sidebar_show_group_count', True)
+            self.config.get_setting('ui.sidebar_show_group_count', False)
         )
         show_group_count_switch.connect('notify::active', self.on_sidebar_show_group_count_changed)
         sidebar_group.add(show_group_count_switch)
@@ -1412,10 +1491,10 @@ class PreferencesWindow(Adw.NavigationPage):
         show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
         sidebar_group.add(show_status_switch)
 
-        # Display port forwarding labels toggle
+        # Display port forwarding icon toggle
         show_port_forwarding_switch = Adw.SwitchRow()
-        show_port_forwarding_switch.set_title(_("Display Port Forwarding Labels"))
-        show_port_forwarding_switch.set_subtitle(_("Show port forwarding indicators (L/R/D) in connection rows"))
+        show_port_forwarding_switch.set_title(_("Display Port Forwarding Icon"))
+        show_port_forwarding_switch.set_subtitle(_("Show the port forwarding icon in connection rows"))
         show_port_forwarding_switch.set_active(
             self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         )
@@ -1441,6 +1520,34 @@ class PreferencesWindow(Adw.NavigationPage):
         )
         show_group_icon_switch.connect('notify::active', self.on_sidebar_show_group_icon_changed)
         sidebar_group.add(show_group_icon_switch)
+
+        # File manager hover button on connection rows
+        show_file_manager_button_switch = Adw.SwitchRow()
+        show_file_manager_button_switch.set_title(_("File Manager Button"))
+        show_file_manager_button_switch.set_subtitle(
+            _("Show the file manager button in connection rows")
+        )
+        show_file_manager_button_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_file_manager_button', True))
+        )
+        show_file_manager_button_switch.connect(
+            'notify::active', self.on_sidebar_show_file_manager_button_changed
+        )
+        sidebar_group.add(show_file_manager_button_switch)
+
+        # Split-view hover button on group rows (off by default)
+        show_split_view_button_switch = Adw.SwitchRow()
+        show_split_view_button_switch.set_title(_("Split View Button"))
+        show_split_view_button_switch.set_subtitle(
+            _("Show the split view button in group rows")
+        )
+        show_split_view_button_switch.set_active(
+            bool(self.config.get_setting('ui.sidebar_show_split_view_button', False))
+        )
+        show_split_view_button_switch.connect(
+            'notify::active', self.on_sidebar_show_split_view_button_changed
+        )
+        sidebar_group.add(show_split_view_button_switch)
 
         interface_page.add(sidebar_group)
 
@@ -4187,7 +4294,7 @@ class PreferencesWindow(Adw.NavigationPage):
 
         try:
             current_mode = str(
-                self.config.get_setting('ui.group_color_display', 'fill')
+                self.config.get_setting('ui.group_color_display', 'dot')
             ).lower()
         except Exception:
             current_mode = 'fill'
@@ -4254,10 +4361,10 @@ class PreferencesWindow(Adw.NavigationPage):
 
         try:
             current_value = bool(
-                self.config.get_setting('ui.group_color_child_rows', False)
+                self.config.get_setting('ui.group_color_child_rows', True)
             )
         except Exception:
-            current_value = False
+            current_value = True
 
         if new_value == current_value:
             return
@@ -6535,7 +6642,7 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Failed to update sidebar show connection status preference: %s", exc)
 
     def on_sidebar_show_port_forwarding_changed(self, switch, *args):
-        """Persist the preference for showing port forwarding labels in sidebar."""
+        """Persist the preference for showing the port forwarding icon in the sidebar."""
         try:
             active = bool(switch.get_active())
             self.config.set_setting('ui.sidebar_show_port_forwarding', active)
@@ -6586,6 +6693,30 @@ class PreferencesWindow(Adw.NavigationPage):
                 self.parent_window.update_sidebar_display()
         except Exception as exc:
             logger.error("Failed to update sidebar show group icon preference: %s", exc)
+
+    def on_sidebar_show_file_manager_button_changed(self, switch, *args):
+        """Persist the preference for the connection-row file manager button."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_file_manager_button', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show file manager button preference: %s", exc
+            )
+
+    def on_sidebar_show_split_view_button_changed(self, switch, *args):
+        """Persist the preference for the group-row split view button."""
+        try:
+            active = bool(switch.get_active())
+            self.config.set_setting('ui.sidebar_show_split_view_button', active)
+            if self.parent_window and hasattr(self.parent_window, 'update_sidebar_display'):
+                self.parent_window.update_sidebar_display()
+        except Exception as exc:
+            logger.error(
+                "Failed to update sidebar show split view button preference: %s", exc
+            )
 
     def on_open_file_manager_externally_changed(self, switch, *args):
         """Persist whether the file manager should open in a separate window."""

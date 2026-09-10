@@ -31,6 +31,10 @@ from ..api.errors import ErrorCode, SshPilotError, unsupported_capability
 from ..api.events import EventPublisher, EventType, Subscription
 from ..api.models.common import ClientInfo, CompatibilityResult, CoreInfo
 from ..api.models.connections import (
+    AsbruImportMode,
+    AsbruImportPreview,
+    AsbruImportRequest,
+    AsbruImportResult,
     AuthenticationMethod,
     ConnectionDetails,
     ConnectionEditorDetails,
@@ -81,6 +85,8 @@ IMPLEMENTED_CLIENT_METHOD_CAPABILITIES = {
     "save_ssh_config_text": Capability.CONNECTIONS_CONFIG_WRITE,
     "list_connections": Capability.CONNECTIONS_READ,
     "create_connection": Capability.CONNECTIONS_WRITE,
+    "preview_asbru_import": Capability.CONNECTIONS_WRITE,
+    "import_asbru": Capability.CONNECTIONS_WRITE,
     "duplicate_connection": Capability.CONNECTIONS_WRITE,
     "delete_connection": Capability.CONNECTIONS_WRITE,
     "store_connection_password": Capability.CONNECTIONS_SECRETS_WRITE,
@@ -1175,6 +1181,237 @@ class ConnectionApplicationService:
             generation=record.generation,
             display_name=self._record_to_summary(record).display_name,
         )
+
+    def preview_asbru_import(self, source: str) -> AsbruImportPreview:
+        """Dry-run an Ásbrú export against the current connection store."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        parsed, plan_errors = self._load_asbru_parse(source)
+        if plan_errors:
+            return AsbruImportPreview(
+                ok=False,
+                source=source,
+                errors=tuple(plan_errors),
+                warnings=tuple(parsed.warnings) if parsed is not None else (),
+            )
+        assert parsed is not None
+        plan = self._plan_asbru_import(parsed)
+        return AsbruImportPreview(
+            ok=parsed.ok and not plan["errors"],
+            source=source,
+            connections_to_add=tuple(plan["connections_to_add"]),
+            connections_to_skip=tuple(plan["connections_to_skip"]),
+            groups_to_add=tuple(plan["groups_to_add"]),
+            groups_to_reuse=tuple(plan["groups_to_reuse"]),
+            warnings=tuple([*parsed.warnings, *plan["warnings"]]),
+            errors=tuple([*parsed.errors, *plan["errors"]]),
+        )
+
+    def import_asbru(self, request: AsbruImportRequest) -> AsbruImportResult:
+        """Parse an Ásbrú export and create missing groups/connections."""
+        self._assert_command_thread()
+        self._require_capability(Capability.CONNECTIONS_WRITE)
+        if type(request) is not AsbruImportRequest:
+            raise SshPilotError(
+                ErrorCode.INVALID_REQUEST,
+                "An Ásbrú import request is required",
+            )
+        if request.mode is not AsbruImportMode.SKIP:
+            raise SshPilotError(
+                ErrorCode.VALIDATION_FAILED,
+                f"Unsupported Ásbrú import mode: {request.mode!r}",
+                details={"field": "mode"},
+            )
+        parsed, plan_errors = self._load_asbru_parse(request.source)
+        if plan_errors or parsed is None or not parsed.ok:
+            errors = tuple(plan_errors or (parsed.errors if parsed else ()))
+            return AsbruImportResult(
+                ok=False,
+                source=request.source,
+                errors=errors,
+                warnings=tuple(parsed.warnings) if parsed is not None else (),
+                message="Ásbrú import could not be parsed",
+            )
+
+        needs_config = any(
+            c.proxy_jump or c.forwarding_rules or c.identity_files
+            for c in parsed.connections
+        )
+        if needs_config:
+            self._require_capability(Capability.CONNECTIONS_CONFIG_WRITE)
+        if parsed.groups or any(c.group_source_id for c in parsed.connections):
+            self._require_capability(Capability.CONNECTIONS_GROUPS)
+
+        plan = self._plan_asbru_import(parsed)
+        source_to_group_id: Dict[str, str] = dict(plan["group_id_by_source"])
+        groups_added: List[str] = []
+        groups_reused: List[str] = list(plan["groups_to_reuse"])
+        connections_added: List[str] = []
+        connections_skipped: List[str] = list(plan["connections_to_skip"])
+        warnings: List[str] = list(parsed.warnings) + list(plan["warnings"])
+        partial_failures: List[str] = []
+
+        skip_nicknames = {n.casefold() for n in plan["connections_to_skip"]}
+
+        for group in parsed.groups:
+            if group.source_id in source_to_group_id:
+                continue
+            parent_id = ""
+            if group.parent_source_id:
+                parent_id = source_to_group_id.get(group.parent_source_id, "")
+            try:
+                created_id = self.create_group_rpc(
+                    group.name, parent_id=parent_id, color=""
+                )
+            except SshPilotError as error:
+                partial_failures.append(
+                    f"group {group.name!r}: {error.message or error}"
+                )
+                continue
+            if not created_id:
+                partial_failures.append(f"group {group.name!r}: create returned no id")
+                continue
+            source_to_group_id[group.source_id] = created_id
+            groups_added.append(group.name)
+
+        for draft in parsed.connections:
+            if draft.nickname.casefold() in skip_nicknames:
+                continue
+            config_patch: Dict[str, Any] = {}
+            if draft.proxy_jump:
+                config_patch["proxy_jump"] = list(draft.proxy_jump)
+            if draft.forwarding_rules:
+                config_patch["forwarding_rules"] = [
+                    dict(rule) for rule in draft.forwarding_rules
+                ]
+            if draft.identity_files:
+                config_patch["identity_files"] = list(draft.identity_files)
+            create_request = CreateConnectionRequest(
+                nickname=draft.nickname,
+                hostname=draft.hostname,
+                username=draft.username,
+                port=draft.port,
+                display_name=draft.display_name
+                if draft.display_name != draft.nickname
+                else "",
+                config_patch=config_patch,
+            )
+            try:
+                created = self.create_connection(create_request)
+            except SshPilotError as error:
+                partial_failures.append(
+                    f"connection {draft.nickname!r}: {error.message or error}"
+                )
+                continue
+            connections_added.append(created.nickname)
+            group_source = draft.group_source_id
+            if group_source and group_source in source_to_group_id:
+                try:
+                    self.assign_connection_to_group(
+                        ConnectionId(created.connection_id),
+                        source_to_group_id[group_source],
+                    )
+                except SshPilotError as error:
+                    partial_failures.append(
+                        f"assign {created.nickname!r}: {error.message or error}"
+                    )
+
+        ok = not plan["errors"] and not partial_failures and (
+            bool(connections_added) or bool(groups_added) or bool(connections_skipped)
+        )
+        if not connections_added and not groups_added and connections_skipped:
+            message = "All Ásbrú connections already exist; nothing imported"
+        elif partial_failures:
+            message = "Ásbrú import completed with partial failures"
+            ok = False
+        elif connections_added or groups_added:
+            message = (
+                f"Imported {len(connections_added)} connection(s) "
+                f"and {len(groups_added)} group(s)"
+            )
+        else:
+            message = "Ásbrú import produced no changes"
+            ok = False
+
+        return AsbruImportResult(
+            ok=ok,
+            source=request.source,
+            connections_added=tuple(connections_added),
+            connections_skipped=tuple(connections_skipped),
+            groups_added=tuple(groups_added),
+            groups_reused=tuple(groups_reused),
+            warnings=tuple(warnings),
+            errors=tuple(plan["errors"]),
+            partial_failures=tuple(partial_failures),
+            message=message,
+        )
+
+    def _load_asbru_parse(self, source: str):
+        from .import_export import load_asbru_export
+
+        try:
+            return load_asbru_export(source), []
+        except CoreError as error:
+            return None, [str(error.message or error)]
+        except Exception as error:
+            logger.exception("Failed to load Ásbrú export")
+            return None, [f"Failed to load Ásbrú export: {error}"]
+
+    def _plan_asbru_import(self, parsed) -> Dict[str, Any]:
+        snapshot = self._repository.snapshot()
+        existing_nicknames = {
+            str(c.nickname).casefold(): str(c.nickname) for c in snapshot.connections
+        }
+        # Reuse a group when the same name already exists under the same parent.
+        existing_groups_by_key: Dict[Tuple[str, str], str] = {}
+        groups_by_id = {g.id: g for g in snapshot.groups}
+        for group in snapshot.groups:
+            parent_name = ""
+            if group.parent_id and group.parent_id in groups_by_id:
+                parent_name = groups_by_id[group.parent_id].name.casefold()
+            key = (group.name.casefold(), parent_name)
+            existing_groups_by_key.setdefault(key, group.id)
+
+        group_id_by_source: Dict[str, str] = {}
+        groups_to_add: List[str] = []
+        groups_to_reuse: List[str] = []
+        warnings: List[str] = []
+        errors: List[str] = []
+
+        for group in parsed.groups:
+            parent_name = ""
+            if group.parent_source_id:
+                parent_draft = next(
+                    (g for g in parsed.groups if g.source_id == group.parent_source_id),
+                    None,
+                )
+                if parent_draft is not None:
+                    parent_name = parent_draft.name.casefold()
+            key = (group.name.casefold(), parent_name)
+            existing_id = existing_groups_by_key.get(key)
+            if existing_id:
+                group_id_by_source[group.source_id] = existing_id
+                groups_to_reuse.append(group.name)
+            else:
+                groups_to_add.append(group.name)
+
+        connections_to_add: List[str] = []
+        connections_to_skip: List[str] = []
+        for draft in parsed.connections:
+            if draft.nickname.casefold() in existing_nicknames:
+                connections_to_skip.append(draft.nickname)
+            else:
+                connections_to_add.append(draft.nickname)
+
+        return {
+            "connections_to_add": connections_to_add,
+            "connections_to_skip": connections_to_skip,
+            "groups_to_add": groups_to_add,
+            "groups_to_reuse": groups_to_reuse,
+            "group_id_by_source": group_id_by_source,
+            "warnings": warnings,
+            "errors": errors,
+        }
 
     def _build_create_data(self, request: CreateConnectionRequest) -> Dict[str, Any]:
         data: Dict[str, Any] = {

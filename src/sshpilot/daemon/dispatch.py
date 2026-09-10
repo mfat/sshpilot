@@ -92,6 +92,9 @@ from sshpilot.api.transport.codec import (
     rename_tag_request_from_wire,
     connection_summary_to_wire,
     create_connection_request_from_wire,
+    asbru_import_preview_to_wire,
+    asbru_import_request_from_wire,
+    asbru_import_result_to_wire,
     create_group_request_from_wire,
     delete_connection_password_request_from_wire,
     delete_connection_request_from_wire,
@@ -196,6 +199,8 @@ DAEMON_METHOD_CAPABILITIES = {
     "connections.list": Capability.CONNECTIONS_READ,
     "connections.snapshot": Capability.CONNECTIONS_READ,
     "connections.create": Capability.CONNECTIONS_WRITE,
+    "connections.preview_asbru_import": Capability.CONNECTIONS_WRITE,
+    "connections.import_asbru": Capability.CONNECTIONS_WRITE,
     "connections.duplicate": Capability.CONNECTIONS_WRITE,
     "connections.delete": Capability.CONNECTIONS_WRITE,
     "connections.update": Capability.CONNECTIONS_WRITE,
@@ -361,6 +366,8 @@ DRAIN_REJECTED_METHODS = frozenset(
         "broadcast.start",
         "hostinfo.start",
         "connections.create",
+        "connections.preview_asbru_import",
+        "connections.import_asbru",
         "connections.duplicate",
         "connections.update",
         "connections.delete",
@@ -440,6 +447,8 @@ DRAIN_REJECTED_METHODS = frozenset(
 DEFERRED_DAEMON_METHODS = frozenset(
     {
         "connections.create",
+        "connections.preview_asbru_import",
+        "connections.import_asbru",
         "connections.duplicate",
         "connections.update",
         "connections.delete",
@@ -695,6 +704,8 @@ class RequestDispatcher:
             "connections.snapshot": self._handle_connection_snapshot,
             "connections.get": self._handle_get_connection,
             "connections.create": self._handle_create_connection,
+            "connections.preview_asbru_import": self._handle_preview_asbru_import,
+            "connections.import_asbru": self._handle_import_asbru,
             "connections.duplicate": self._handle_duplicate_connection,
             "connections.update": self._handle_update_connection,
             "connections.delete": self._handle_delete_connection,
@@ -1151,6 +1162,38 @@ class RequestDispatcher:
         return DeferredResult(
             operation=lambda: connection_mutation_result_to_wire(
                 self._connections.create_connection(mutation)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_preview_asbru_import(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        if set(request.params) != {"source"}:
+            raise ValueError("connections.preview_asbru_import requires source")
+        source = request.params["source"]
+        if type(source) is not str or not source.strip():
+            raise ValueError("source must be a non-empty string")
+        return DeferredResult(
+            operation=lambda: asbru_import_preview_to_wire(
+                self._connections.preview_asbru_import(source)
+            ),
+            command_key=CONFIGURATION_COMMAND_KEY,
+            on_rejected=lambda: None,
+        )
+
+    def _handle_import_asbru(
+        self,
+        request: RequestEnvelope,
+        state: ClientProtocolState,
+    ) -> DeferredResult:
+        mutation = asbru_import_request_from_wire(request.params)
+        return DeferredResult(
+            operation=lambda: asbru_import_result_to_wire(
+                self._connections.import_asbru(mutation)
             ),
             command_key=CONFIGURATION_COMMAND_KEY,
             on_rejected=lambda: None,

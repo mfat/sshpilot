@@ -32,6 +32,7 @@ from .connection_display import (
     get_connection_alias as _get_connection_alias,
     get_connection_host as _get_connection_host,
     format_connection_host_display as _format_connection_host_display,
+    format_connection_row_tooltip_markup as _format_connection_row_tooltip_markup,
     hosts_hidden as _hosts_hidden,
 )
 from .context_menu import IconContextMenu
@@ -624,7 +625,7 @@ def _resolve_group_color_by_id(manager, group_id) -> Optional[Gdk.RGBA]:
 
 def _get_color_display_mode(config) -> str:
     try:
-        mode = str(config.get_setting('ui.group_color_display', 'fill')).lower()
+        mode = str(config.get_setting('ui.group_color_display', 'dot')).lower()
     except Exception:
         return 'fill'
 
@@ -852,13 +853,38 @@ def minimal_label_max_chars(
 
 
 #: Character bounds for row labels in the **full** sidebar. ``width-chars`` is a
-#: floor GTK never lays the label out below, and it is not what keeps a name
-#: readable — these labels ellipsize, and their natural width comes from
-#: ``max-width-chars``. At 10 characters (~80px per label) it was the whole
-#: reason the sidebar could not be laid out narrower than 263px, so the minimum
-#: is none and only the natural width is bounded.
-FULL_LABEL_MIN_CHARS = 0
+#: floor GTK never lays the label out below (~80px at 10 characters); natural
+#: width is capped by ``max-width-chars``. These labels still ellipsize.
+FULL_LABEL_MIN_CHARS = 6
 FULL_LABEL_MAX_CHARS = 25
+
+#: Page names of a row hover-action slot (group split-view / connection
+#: Manage Files): the button itself, and an empty page that holds the button's
+#: height with no width. Hiding the button outright frees its ~34px of width
+#: but also shortens the row (the button is taller than the labels beside it);
+#: the empty page keeps height.
+ROW_ACTION_SLOT_BUTTON = 'button'
+ROW_ACTION_SLOT_EMPTY = 'none'
+
+
+def _make_row_action_slot(button: Gtk.Widget) -> Gtk.Stack:
+    """Park a hover-action button so it can cost height without taking width.
+
+    ``vhomogeneous`` sizes both pages to the button's height; ``hhomogeneous``
+    off lets the empty page measure zero width. Callers put the button page up
+    when the action is reserved (opacity still drives hover) and the empty
+    page up when the action is shed — so turning the preference off never
+    collapses the row.
+    """
+    slot = Gtk.Stack()
+    slot.set_hhomogeneous(False)
+    slot.set_vhomogeneous(True)
+    slot.set_transition_type(Gtk.StackTransitionType.NONE)
+    slot.set_valign(Gtk.Align.CENTER)
+    slot.add_named(Gtk.Box(), ROW_ACTION_SLOT_EMPTY)
+    slot.add_named(button, ROW_ACTION_SLOT_BUTTON)
+    slot.set_visible_child_name(ROW_ACTION_SLOT_EMPTY)
+    return slot
 
 
 def _configure_compact_label(label: Gtk.Label, text: str,
@@ -1128,27 +1154,27 @@ class GroupRow(Gtk.ListBoxRow):
         self.count_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         # Set initial visibility based on preference
         config = getattr(self.group_manager, 'config', None)
-        show_group_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
+        show_group_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
         self.count_label.set_visible(show_group_count)
         info_box.append(self.count_label)
 
         content.append(info_box)
 
-        # Split-view button — revealed on hover with its space reserved, so
-        # hovering never reflows the row. The reservation is what a narrow
-        # sidebar cannot afford (34px of the group row, which is what floors
-        # the whole sidebar), so it is shed wholesale below
-        # ``window._ROW_ACTIONS_MIN_WIDTH`` — see :meth:`set_actions_reserved`.
-        # Editing the group is not a row button at all: it is a context-menu
-        # item ("Edit Group" / "Rename Tag…").
+        # Split-view button — revealed on hover with its width reserved, so
+        # hovering never reflows the row. Parked in a height-only stack so
+        # shedding it (preference off, or a sidebar narrower than
+        # ``window._ROW_ACTIONS_MIN_WIDTH``) frees the width without collapsing
+        # the row — the button is taller than the labels beside it. Editing
+        # the group is a context-menu item ("Edit Group" / "Rename Tag…").
         self._actions_reserved = True
         self.split_view_button = icon_utils.new_button_from_icon_name("view-grid-symbolic")
         self.split_view_button.add_css_class("flat")
         label_icon_button(self.split_view_button, _("Open in Split View"))
         self.split_view_button.set_valign(Gtk.Align.CENTER)
-        self.split_view_button.set_opacity(0.0)  # reserves its space
+        self.split_view_button.set_opacity(0.0)
         self.split_view_button.connect("clicked", self._on_split_view_clicked)
-        content.append(self.split_view_button)
+        self._split_view_slot = _make_row_action_slot(self.split_view_button)
+        content.append(self._split_view_slot)
 
         # Set up hover events to show/hide buttons
         self._setup_hover_buttons()
@@ -1418,6 +1444,8 @@ class GroupRow(Gtk.ListBoxRow):
             mc.connect("leave", self._on_button_leave_action)
             btn.add_controller(mc)
 
+        self._reveal_row_actions(False)
+
     def _on_row_enter_actions(self, controller, x, y):
         self._is_hovering_row = True
         self._reveal_row_actions(True)
@@ -1434,28 +1462,53 @@ class GroupRow(Gtk.ListBoxRow):
         self._is_hovering_row = False
         GLib.timeout_add(100, self._maybe_hide_row_actions)
 
+    def _split_view_button_enabled(self) -> bool:
+        """Whether Preferences allows the group-row split-view hover button."""
+        config = getattr(self.group_manager, 'config', None)
+        if config is None:
+            return False
+        try:
+            return bool(config.get_setting('ui.sidebar_show_split_view_button', False))
+        except Exception:
+            return False
+
+    def _pointer_is_on_row(self) -> bool:
+        """Whether the row's hover latch currently says the pointer is here."""
+        return bool(getattr(self, '_is_hovering_row', False))
+
     def _reveal_row_actions(self, revealed: bool) -> None:
         """Fade the split-view action in or out of its reserved space.
 
-        Visibility answers "does this row have the width for the action at
-        all" (:meth:`set_actions_reserved`, and never in the strip); opacity
-        answers "is the pointer here" — so hovering never reflows the row.
+        The slot's button page is up only while the action is reserved
+        (:meth:`set_actions_reserved`, Sidebar preference on, never in the
+        strip); opacity then tracks the pointer so hovering never reflows the
+        row. Otherwise the empty page stays up — zero width, but the same
+        height as the button, so shedding the action never collapses the row.
         """
+        slot = getattr(self, '_split_view_slot', None)
         btn = getattr(self, 'split_view_button', None)
-        if btn is None:
+        if slot is None or btn is None:
             return
         reserved = (getattr(self, '_actions_reserved', True)
-                    and not getattr(self, '_compact', False))
-        btn.set_visible(reserved)
+                    and not getattr(self, '_compact', False)
+                    and self._split_view_button_enabled())
+        if getattr(self, '_compact', False):
+            # Strip density: drop the slot entirely (no height to keep).
+            slot.set_visible(False)
+        else:
+            slot.set_visible(True)
+            slot.set_visible_child_name(
+                ROW_ACTION_SLOT_BUTTON if reserved else ROW_ACTION_SLOT_EMPTY)
         btn.set_opacity(1.0 if (reserved and revealed) else 0.0)
 
     def set_actions_reserved(self, reserved: bool) -> None:
-        """Keep the split-view action's reserved space, or shed it entirely.
+        """Keep the split-view action's reserved width, or shed it.
 
         Reserved is the resting state. A sidebar too narrow to afford the 34px
-        drops the button instead of squeezing the group name to an ellipsis —
-        the group row is what sets the sidebar's minimum width, so this is also
-        what lets the divider go on past it.
+        drops the button's width instead of squeezing the group name to an
+        ellipsis — the group row is what sets the sidebar's minimum width, so
+        this is also what lets the divider go on past it. Height stays either
+        way via the empty slot page.
         """
         reserved = bool(reserved)
         if reserved == getattr(self, '_actions_reserved', True):
@@ -1491,7 +1544,7 @@ class GroupRow(Gtk.ListBoxRow):
         config = getattr(self.group_manager, 'config', None)
         try:
             color_children = bool(
-                config.get_setting('ui.group_color_child_rows', False)
+                config.get_setting('ui.group_color_child_rows', True)
             ) if config else False
         except Exception:
             color_children = False
@@ -1589,7 +1642,11 @@ class GroupRow(Gtk.ListBoxRow):
             self.set_margin_start(0)  # flatten nested-group indentation in the strip
             self.color_dot.set_visible(False)
             self.color_badge.set_visible(False)
-            self.split_view_button.set_visible(False)
+            slot = getattr(self, '_split_view_slot', None)
+            if slot is not None:
+                slot.set_visible(False)
+            else:
+                self.split_view_button.set_visible(False)
             # The chevron stays: collapsing a group is the one group action the
             # strip keeps, and unlike the row's hover actions it is always on
             # screen, so the strip reads the same as the full sidebar. It is
@@ -1630,7 +1687,7 @@ class GroupRow(Gtk.ListBoxRow):
             config = getattr(self.group_manager, 'config', None)
             show_icon = config.get_setting('ui.sidebar_show_group_icon', True) if config else True
             self.icon.set_visible(show_icon)
-            show_count = config.get_setting('ui.sidebar_show_group_count', True) if config else True
+            show_count = config.get_setting('ui.sidebar_show_group_count', False) if config else False
             self.count_label.set_visible(show_count)
             try:
                 self.icon.set_icon_size(Gtk.IconSize.NORMAL)
@@ -1747,6 +1804,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._color_dot_provider = None
         self._compact = False
+        # Port-forwarding indicator stays until a narrow sidebar sheds it
+        # (``set_indicators_reserved``) so the nickname can keep its
+        # ``FULL_LABEL_MIN_CHARS`` floor.
+        self._indicators_reserved = True
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -1803,7 +1864,6 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.nickname_label.set_ellipsize(Pango.EllipsizeMode.END)
         self.nickname_label.set_width_chars(FULL_LABEL_MIN_CHARS)
         self.nickname_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
-        self.nickname_label.set_tooltip_text(connection.nickname)
         info_box.append(self.nickname_label)
 
         self.host_label = Gtk.Label()
@@ -1820,7 +1880,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.host_label.set_max_width_chars(FULL_LABEL_MAX_CHARS)
         self._apply_host_label_text()
         # Set initial visibility based on preference
-        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', True)
+        show_user_hostname = self.config.get_setting('ui.sidebar_show_user_hostname', False)
         self.host_label.set_visible(show_user_hostname)
         info_box.append(self.host_label)
 
@@ -1838,29 +1898,36 @@ class ConnectionRow(Gtk.ListBoxRow):
         self.color_badge.set_visible(False)
         content.append(self.color_badge)
 
-        # File manager button (before status icon) - only visible on hover
-        # Use opacity instead of visibility to reserve space and prevent row resizing
-        from sshpilot import icon_utils
+        # File manager button — revealed on hover with its width reserved, so
+        # hovering never reflows the row. Parked in a height-only stack so
+        # shedding it (preference off, or no callback) frees the width without
+        # collapsing the row — the button is taller than the labels beside it.
         self.file_manager_button = icon_utils.new_button_from_icon_name("folder-symbolic")
         self.file_manager_button.add_css_class("flat")
         self.file_manager_button.add_css_class("file-manager-button")
         label_icon_button(self.file_manager_button, _("Manage Files"))
         self.file_manager_button.set_valign(Gtk.Align.CENTER)
-        self.file_manager_button.set_opacity(0.0)  # Hidden by default but reserves space
+        self.file_manager_button.set_opacity(0.0)
         if file_manager_callback:
             self.file_manager_button.connect("clicked", self._on_file_manager_clicked)
-        content.append(self.file_manager_button)
-        
+        self._file_manager_slot = _make_row_action_slot(self.file_manager_button)
+        content.append(self._file_manager_slot)
+
         # Set up hover events to show/hide button
         self._setup_file_manager_button_hover()
 
-        from sshpilot import icon_utils
+        # Status lock last — always the trailing widget on the row, past the
+        # hover action. Same packing pattern as indicator_box for the badges.
+        self.status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.status_box.set_halign(Gtk.Align.CENTER)
+        self.status_box.set_valign(Gtk.Align.CENTER)
         self.status_icon = icon_utils.new_image_from_icon_name("wired-lock-none-symbolic")
         self.status_icon.set_pixel_size(16)
-        # A fresh row is UNKNOWN (idle), which shows no indicator; update_status()
-        # reveals and styles it once the connection has a real state.
-        self.status_icon.set_visible(False)
-        content.append(self.status_icon)
+        self.status_icon.set_halign(Gtk.Align.CENTER)
+        self.status_icon.set_valign(Gtk.Align.CENTER)
+        self.status_box.append(self.status_icon)
+        self.status_box.set_visible(False)
+        content.append(self.status_box)
 
         # Now add the content to main_box
         main_box.append(content)
@@ -1878,6 +1945,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         # itself with an empty accessible name. Name it after the connection so
         # a screen reader (and AT-SPI automation) can identify the row.
         self._update_accessible_identity()
+        self._refresh_row_tooltip()
 
         self.update_status()
         self._update_forwarding_indicators()
@@ -1894,6 +1962,26 @@ class ConnectionRow(Gtk.ListBoxRow):
         set_accessible_description(
             self, _format_connection_host_display(self.connection) or None
         )
+
+    def _refresh_row_tooltip(self) -> None:
+        """Apply composed Pango markup as the row tooltip.
+
+        Nickname/host labels intentionally have no tooltips so hovering the
+        text area shows this richer row tooltip. Status and the forwarding
+        indicator keep their own specific tooltips.
+        """
+        try:
+            window = self.get_root()
+            hide = _hosts_hidden(window) if window else False
+        except Exception:
+            hide = False
+        markup = _format_connection_row_tooltip_markup(
+            self.connection, hide_hosts=hide
+        )
+        if markup:
+            self.set_tooltip_markup(markup)
+        else:
+            self.set_tooltip_text(None)
 
     def set_display_group_id(self, group_id: Optional[str]) -> None:
         """Set which group this row is listed under and refresh its color."""
@@ -1912,13 +2000,13 @@ class ConnectionRow(Gtk.ListBoxRow):
         """Set up hover events to show/hide file manager button"""
         # Track hover state
         self._is_hovering = False
-        
+
         # Motion controller for the row
         motion_controller = Gtk.EventControllerMotion()
         motion_controller.connect("enter", self._on_row_enter)
         motion_controller.connect("leave", self._on_row_leave)
         self.add_controller(motion_controller)
-        
+
         # Motion controller for the button itself (to keep it visible when hovering over button)
         if self.file_manager_button:
             button_motion_controller = Gtk.EventControllerMotion()
@@ -1926,11 +2014,47 @@ class ConnectionRow(Gtk.ListBoxRow):
             button_motion_controller.connect("leave", self._on_button_leave)
             self.file_manager_button.add_controller(button_motion_controller)
 
+        self._reveal_file_manager_button(False)
+
+    def _file_manager_button_enabled(self) -> bool:
+        """Whether Preferences allows the connection-row file manager button."""
+        try:
+            return bool(
+                self.config.get_setting('ui.sidebar_show_file_manager_button', True)
+            )
+        except Exception:
+            return True
+
+    def _pointer_is_on_row(self) -> bool:
+        """Whether the row's hover latch currently says the pointer is here."""
+        return bool(getattr(self, '_is_hovering', False))
+
+    def _reveal_file_manager_button(self, revealed: bool) -> None:
+        """Fade Manage Files in or out of its reserved space.
+
+        The slot's button page is up while Preferences enables the action and a
+        callback is available; opacity then tracks the pointer so hovering
+        never reflows the row. Otherwise the empty page stays up — zero width,
+        but the same height as the button, so shedding the action never
+        collapses the row. The strip keeps the (trimmed) button the same way.
+        """
+        slot = getattr(self, '_file_manager_slot', None)
+        btn = getattr(self, 'file_manager_button', None)
+        if slot is None or btn is None:
+            return
+        enabled = (
+            self._file_manager_button_enabled()
+            and bool(self._file_manager_callback)
+        )
+        slot.set_visible(True)
+        slot.set_visible_child_name(
+            ROW_ACTION_SLOT_BUTTON if enabled else ROW_ACTION_SLOT_EMPTY)
+        btn.set_opacity(1.0 if (enabled and revealed) else 0.0)
+
     def _on_row_enter(self, controller, x, y):
         """Reveal hover actions when the mouse enters the row."""
         self._is_hovering = True
-        if self.file_manager_button and self._file_manager_callback:
-            self.file_manager_button.set_opacity(1.0)
+        self._reveal_file_manager_button(True)
 
     def _on_row_leave(self, controller):
         """Hide file manager button when mouse leaves row"""
@@ -1941,8 +2065,7 @@ class ConnectionRow(Gtk.ListBoxRow):
     def _on_button_enter(self, controller, x, y):
         """Keep row actions visible while hovering over either button."""
         self._is_hovering = True
-        if self.file_manager_button:
-            self.file_manager_button.set_opacity(1.0)
+        self._reveal_file_manager_button(True)
 
     def _on_button_leave(self, controller):
         """Handle mouse leaving the button"""
@@ -1951,8 +2074,8 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def _maybe_hide_button(self):
         """Hide row actions when the pointer is no longer hovering."""
-        if not self._is_hovering and self.file_manager_button:
-            self.file_manager_button.set_opacity(0.0)
+        if not self._is_hovering:
+            self._reveal_file_manager_button(False)
         return False  # Don't repeat
 
     def show_drop_indicator(self, top: bool):
@@ -2090,7 +2213,7 @@ class ConnectionRow(Gtk.ListBoxRow):
         config = getattr(self, 'config', None)
         mode = _get_color_display_mode(config)
         try:
-            color_children = bool(config.get_setting('ui.group_color_child_rows', False))
+            color_children = bool(config.get_setting('ui.group_color_child_rows', True))
         except Exception:
             color_children = True
         rgba = self._resolve_group_color() if color_children else None
@@ -2276,12 +2399,6 @@ class ConnectionRow(Gtk.ListBoxRow):
     # -- display updates --------------------------------------------------
 
     @staticmethod
-    def _install_pf_css():
-        # The .pf-* indicator styles now live in the bundled style.css (loaded
-        # once at startup); nothing to install here.
-        return
-
-    @staticmethod
     def _install_status_css():
         """Custom color for the failed/disconnected status icon. Uses an explicit
         red (#DC2626) instead of libadwaita's .error so it stays the same red in
@@ -2305,52 +2422,81 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             pass
 
-    def _update_forwarding_indicators(self):
-        self._install_pf_css()
+    def set_indicators_reserved(self, reserved: bool) -> None:
+        """Keep the port-forwarding indicator, or shed it for a narrow sidebar.
+
+        Once the nickname is at :data:`FULL_LABEL_MIN_CHARS`, further chrome
+        only steals width the name can no longer yield. Shedding the indicator
+        lets the divider keep narrowing without clipping that floor. The
+        compact strip always hides indicators regardless of this flag.
+        """
+        reserved = bool(reserved)
+        if reserved == getattr(self, '_indicators_reserved', True):
+            return
+        self._indicators_reserved = reserved
+        if getattr(self, '_compact', False):
+            return
+        if reserved:
+            self.indicator_box.set_visible(True)
+            self._update_forwarding_indicators()
+            return
         try:
             while self.indicator_box.get_first_child():
                 self.indicator_box.remove(self.indicator_box.get_first_child())
         except Exception:
-            return
+            pass
+        self.indicator_box.set_visible(False)
 
-        # Check preference for showing port forwarding indicators
-        show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
-        if not show_port_forwarding:
-            return
+    def _update_forwarding_indicators(self):
+        try:
+            try:
+                while self.indicator_box.get_first_child():
+                    self.indicator_box.remove(self.indicator_box.get_first_child())
+            except Exception:
+                return
 
-        # Forwarding badges only make sense for protocols that support it.
-        from .plugins.api import Capability
-        from .plugins.registry import capabilities_for
-        if Capability.PORT_FORWARDING not in capabilities_for(self.connection):
-            return
+            if not getattr(self, '_indicators_reserved', True):
+                self.indicator_box.set_visible(False)
+                return
 
-        # Group the connection's forwarding rules by type. The rule schema and
-        # the formatting/grouping helpers live in port_utils so they can be
-        # reused (e.g. a future port-mapping viewer) without pulling in GTK.
-        from sshpilot import port_utils
-        grouped = port_utils.group_forwarding_rules(
-            getattr(self.connection, "forwarding_rules", None)
-        )
+            # Check preference for showing port forwarding indicators
+            show_port_forwarding = self.config.get_setting('ui.sidebar_show_port_forwarding', True)
+            if not show_port_forwarding:
+                return
 
-        def make_badge(letter: str, cls: str, type_rules):
+            # Forwarding indicator only makes sense for protocols that support it.
+            from .plugins.api import Capability
+            from .plugins.registry import capabilities_for
+            if Capability.PORT_FORWARDING not in capabilities_for(self.connection):
+                return
+
+            # Rule schema and formatting helpers live in port_utils so they can
+            # be reused without pulling in GTK.
+            from sshpilot import port_utils
+            rules = list(
+                port_utils.iter_enabled_forwarding_rules(
+                    getattr(self.connection, "forwarding_rules", None)
+                )
+            )
+            if not rules:
+                return
+
             from sshpilot import icon_utils
-            img = icon_utils.new_image_from_icon_name(letter)  # 'L' / 'R' / 'D'
+            img = icon_utils.new_image_from_icon_name("mail-forward-symbolic")
             img.set_pixel_size(16)
             img.set_halign(Gtk.Align.CENTER)
             img.set_valign(Gtk.Align.CENTER)
-            # Tooltip lists each mapping of this type, capped so a connection
-            # with many rules doesn't produce an unreadably tall tooltip.
-            tooltip = "\n".join(port_utils.format_forwarding_rules(type_rules, max_lines=8))
+            # Tooltip lists each mapping, capped so many rules stay readable.
+            tooltip = "\n".join(
+                port_utils.format_forwarding_rules(rules, max_lines=8)
+            )
             if tooltip:
                 img.set_tooltip_text(tooltip)
-            return img
-
-        if grouped["local"]:
-            self.indicator_box.append(make_badge("L", "pf-local", grouped["local"]))
-        if grouped["remote"]:
-            self.indicator_box.append(make_badge("R", "pf-remote", grouped["remote"]))
-        if grouped["dynamic"]:
-            self.indicator_box.append(make_badge("D", "pf-dynamic", grouped["dynamic"]))
+            self.indicator_box.append(img)
+        finally:
+            # Keep the composed row tooltip in sync when rules arrive
+            # asynchronously via the window's sidebar attach path.
+            self._refresh_row_tooltip()
 
     def _apply_host_label_text(self, include_port: bool | None = None):
         try:
@@ -2370,7 +2516,9 @@ class ConnectionRow(Gtk.ListBoxRow):
 
         display = _format_connection_host_display(self.connection, **format_kwargs)
         self.host_label.set_text(display or '')
-        self.host_label.set_tooltip_text(display or '')
+        # Host details live on the row markup tooltip; keep the label clear so
+        # hovering the secondary line still shows the composed row tooltip.
+        self.host_label.set_tooltip_text('')
 
     def apply_row_style(self, flat: bool | None = None) -> None:
         _apply_sidebar_row_style(
@@ -2379,6 +2527,7 @@ class ConnectionRow(Gtk.ListBoxRow):
 
     def apply_hide_hosts(self, hide: bool):
         self._apply_host_label_text()
+        self._refresh_row_tooltip()
 
     def update_status(self):
         """Render the status icon from the connection's authoritative state.
@@ -2386,6 +2535,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         This is render-only: it never computes or writes back connection state.
         Daemon mode reads the session-derived runtime projection; legacy mode
         reads the mutable connection model maintained by ``ConnectionManager``.
+
+        The lock lives in ``status_box`` (same role as ``indicator_box`` for
+        the forwarding indicator): idle / preference-off / compact hide the box so it
+        costs no width; a real state shows the box with the styled icon.
         """
         try:
             from sshpilot import icon_utils
@@ -2401,12 +2554,14 @@ class ConnectionRow(Gtk.ListBoxRow):
                          "conn-status-up", "conn-status-down"):
                 self.status_icon.remove_css_class(_cls)
 
-            # Idle / never connected this session: show no indicator at all.
+            # Idle / never connected this session: no status box at all.
             if state == ConnectionState.UNKNOWN:
-                self.status_icon.set_visible(False)
+                self.status_box.set_visible(False)
                 self.status_icon.set_tooltip_text("")
                 self.status_icon.queue_draw()
                 self._apply_group_color_style()
+                if getattr(self, '_compact', False):
+                    self._refresh_compact_status()
                 return
 
             # Other states render an icon, subject to the global visibility pref.
@@ -2414,7 +2569,8 @@ class ConnectionRow(Gtk.ListBoxRow):
                 show_status = bool(self.config.get_setting('ui.sidebar_show_connection_status', True))
             except Exception:
                 show_status = True
-            self.status_icon.set_visible(show_status)
+            show = show_status and not getattr(self, '_compact', False)
+            self.status_box.set_visible(show)
 
             if state == ConnectionState.CONNECTED:
                 icon_utils.set_icon_from_name(self.status_icon, "wired-lock-closed-symbolic")
@@ -2480,9 +2636,9 @@ class ConnectionRow(Gtk.ListBoxRow):
             self.nickname_label.add_css_class('sidebar-compact-online')
         else:
             self.nickname_label.remove_css_class('sidebar-compact-online')
-        # update_status() re-shows the status icon and colour widgets; keep them
+        # update_status() re-shows the status box and colour widgets; keep them
         # hidden in the strip (this runs at the end of update_status when compact).
-        self.status_icon.set_visible(False)
+        self.status_box.set_visible(False)
         self.color_dot.set_visible(False)
         self.color_badge.set_visible(False)
 
@@ -2507,9 +2663,12 @@ class ConnectionRow(Gtk.ListBoxRow):
             content.set_vexpand(False)
             _restore_full_label_width(self.nickname_label)
             self._info_box.set_visible(True)
-            self.indicator_box.set_visible(True)
+            self.indicator_box.set_visible(
+                bool(getattr(self, '_indicators_reserved', True)))
+            if getattr(self, '_indicators_reserved', True):
+                self._update_forwarding_indicators()
             self.file_manager_button.remove_css_class('sidebar-compact-action')
-            self.file_manager_button.set_visible(True)
+            self._reveal_file_manager_button(self._pointer_is_on_row())
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)
             self.connection_icon.remove_css_class('conn-status-up')
             try:
@@ -2519,18 +2678,18 @@ class ConnectionRow(Gtk.ListBoxRow):
                 self.connection_icon.set_visible(True)
             try:
                 self.host_label.set_visible(
-                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', True)))
+                    bool(self.config.get_setting('ui.sidebar_show_user_hostname', False)))
             except Exception:
-                self.host_label.set_visible(True)
+                self.host_label.set_visible(False)
             connection_name = (
                 getattr(self.connection, 'display_name', None)
                 or self.connection.nickname
             )
             self.nickname_label.set_text(connection_name)
-            self.set_tooltip_text(None)
             self.apply_row_style()  # restore card/flat preference
             self._apply_group_display_mode()  # restore nested indentation
             self.update_status()  # restores status_icon + group-color widgets
+            self._refresh_row_tooltip()
             return
 
         if max_chars is not None:
@@ -2560,8 +2719,8 @@ class ConnectionRow(Gtk.ListBoxRow):
         # space stays reserved and hovering never reflows the row — but it wears
         # `.sidebar-compact-action` to give the label back the padding it can.
         self.file_manager_button.add_css_class('sidebar-compact-action')
-        self.file_manager_button.set_visible(True)
-        self.status_icon.set_visible(False)
+        self._reveal_file_manager_button(self._pointer_is_on_row())
+        self.status_box.set_visible(False)
         self.connection_icon.set_visible(False)
         connection_name = (
             getattr(self.connection, 'display_name', None)
@@ -2569,9 +2728,9 @@ class ConnectionRow(Gtk.ListBoxRow):
         )
         _configure_compact_label(
             self.nickname_label, connection_name, max_chars=chars)
-        self.set_tooltip_text(connection_name)
         # Text-only strip: no group-color fill on the label (keeps names legible).
         _apply_row_color(self, 'fill', None)
+        self._refresh_row_tooltip()
 
         self._refresh_compact_status()
 
@@ -2582,13 +2741,13 @@ class ConnectionRow(Gtk.ListBoxRow):
                 or self.connection.nickname
             )
             self.nickname_label.set_text(connection_name)
-            self.nickname_label.set_tooltip_text(self.connection.nickname)
 
         if hasattr(self.connection, "username") and hasattr(self, "host_label"):
             self._apply_host_label_text(include_port=True)
         self._update_accessible_identity()
         self._update_forwarding_indicators()
         self.update_status()
+        self._refresh_row_tooltip()
         # The above repopulate labels/indicators that the strip hides; re-apply
         # the compact layout so an edit doesn't leave the row half-expanded.
         if getattr(self, "_compact", False):

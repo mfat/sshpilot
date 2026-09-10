@@ -60,14 +60,6 @@ logger = logging.getLogger(__name__)
 # indicators, a future port-mapping viewer, tooltips, exports, etc. Strings are
 # translatable via gettext.
 
-#: Forwarding ``type`` → the single-letter badge used by the sidebar indicators.
-FORWARDING_TYPE_BADGES: Dict[str, str] = {
-    "local": "L",
-    "remote": "R",
-    "dynamic": "D",
-}
-
-
 def iter_enabled_forwarding_rules(rules: Optional[Iterable[Dict[str, Any]]]) -> Iterator[Dict[str, Any]]:
     """Yield the enabled rules from a ``forwarding_rules`` list.
 
@@ -86,8 +78,7 @@ def group_forwarding_rules(
 
     Returns a dict with ``'local'``, ``'remote'`` and ``'dynamic'`` keys, each
     mapping to a list of rule dicts (empty if none). Unknown types are ignored.
-    Handy for anything that renders rules per-type (sidebar badges, a viewer's
-    sections, etc.).
+    Handy for anything that renders rules per-type (a viewer's sections, etc.).
     """
     grouped: Dict[str, List[Dict[str, Any]]] = {"local": [], "remote": [], "dynamic": []}
     for rule in iter_enabled_forwarding_rules(rules):

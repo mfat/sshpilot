@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 # `from .terminal import SSHProcessManager` / `process_manager` callers keep working.
 from .ssh_process_manager import SSHProcessManager, process_manager  # noqa: F401
 from .terminal_search import TerminalSearch
+from .shortcut_utils import (
+    accel_matches_latin_fallback,
+    latin_fallback_keyvals,
+)
 from .core.connection_evidence import classify_connection_evidence
 from .terminal_input import (
     MouseTrackingState,
@@ -326,6 +330,8 @@ class TerminalWidget(Gtk.Box):
         # Create backend first before setup
         self._shortcut_controller = None
         self._scroll_controller = None
+        self._latin_fallback_controller = None
+        self._latin_fallback_bindings = []
         self._config_handler = None
         self._supported_encodings = None
         self._updating_encoding_config = False
@@ -2661,11 +2667,22 @@ class TerminalWidget(Gtk.Box):
         font_desc.set_size(12 * Pango.SCALE)
         self.backend.set_font(font_desc)
         encoding = "UTF-8"
+        cursor_shape = None
+        cursor_blink = None
         try:
             encoding = self.config.get_setting("terminal.encoding", "UTF-8")
+            cursor_shape = self.config.get_setting("terminal.cursor_shape", None)
+            cursor_blink = self.config.get_setting("terminal.cursor_blink", None)
         except Exception:
             pass
-        self.backend.configure({"encoding": encoding, "scrollback_lines": 10000})
+        self.backend.configure(
+            {
+                "encoding": encoding,
+                "scrollback_lines": 10000,
+                "cursor_shape": cursor_shape,
+                "cursor_blink": cursor_blink,
+            }
+        )
         self.backend.apply_theme()
         # VTE owns hover highlighting and cursor changes for both its
         # registered regex and OSC 8 hyperlinks.  Python only looks a URI up
@@ -3879,10 +3896,34 @@ class TerminalWidget(Gtk.Box):
                     Gtk.CallbackAction.new(_cb_reset_zoom)
                 ))
 
+                # GTK cannot match a Shift-bearing letter accelerator while a
+                # non-Latin layout is active, so Ctrl+Shift+C fell through to
+                # VTE as a plain ^C (GH #1249). Re-check the same accelerators
+                # in the CAPTURE phase against the physical key's Latin keyval.
+                fallback_bindings = []
+                if not backend_owns_clipboard_shortcuts:
+                    fallback_bindings.append((copy_trigger, _cb_copy))
+                    fallback_bindings.append((paste_trigger, _cb_paste))
+                fallback_bindings.append((select_trigger, _cb_select_all))
+                for trig in zoom_in_triggers:
+                    fallback_bindings.append((trig, _cb_zoom_in))
+                for trig in zoom_out_triggers:
+                    fallback_bindings.append((trig, _cb_zoom_out))
+                fallback_bindings.append((zoom_reset_trigger, _cb_reset_zoom))
+                self._latin_fallback_bindings = fallback_bindings
+
+                fallback_controller = Gtk.EventControllerKey()
+                fallback_controller.set_propagation_phase(
+                    Gtk.PropagationPhase.CAPTURE)
+                fallback_controller.connect(
+                    'key-pressed', self._on_latin_fallback_key)
+
                 host = self.controller_host()
                 if host is not None:
                     host.add_controller(controller)
+                    host.add_controller(fallback_controller)
                 self._shortcut_controller = controller
+                self._latin_fallback_controller = fallback_controller
 
             if getattr(self, '_shortcut_controller', None) is not None:
                 self._setup_mouse_wheel_zoom()
@@ -3948,6 +3989,37 @@ class TerminalWidget(Gtk.Box):
         except Exception as e:
             logger.debug(f"Failed to setup mouse wheel zoom: {e}")
 
+    def _on_latin_fallback_key(self, controller, keyval, keycode, state):
+        """Match the terminal accelerators through the layout's Latin group.
+
+        Runs in CAPTURE so a hit never reaches VTE, which would otherwise turn
+        the unmatched Ctrl+Shift+C into a plain ^C. Costs nothing while the
+        active layout resolves the key to ASCII, which is every Latin keyboard:
+        latin_fallback_keyvals() bails out before touching the keymap.
+        """
+        bindings = getattr(self, '_latin_fallback_bindings', None)
+        if not bindings:
+            return False
+        host = self.controller_host()
+        display = host.get_display() if host is not None else None
+        if display is None:
+            return False
+        candidates = latin_fallback_keyvals(display, keyval, keycode)
+        if not candidates:
+            return False
+        event = controller.get_current_event()
+        for accel, callback in bindings:
+            if not accel_matches_latin_fallback(event, accel, candidates, state):
+                continue
+            logger.debug(
+                "Terminal shortcut %s matched through the Latin group", accel)
+            try:
+                callback(None)
+            except Exception:
+                logger.debug("Latin fallback action failed", exc_info=True)
+            return True
+        return False
+
     def controller_host(self):
         """Widget custom event controllers live on.
 
@@ -3971,6 +4043,17 @@ class TerminalWidget(Gtk.Box):
                 logger.debug("Failed to remove shortcut controller: %s", exc)
             finally:
                 self._shortcut_controller = None
+
+        fallback = getattr(self, '_latin_fallback_controller', None)
+        if fallback is not None:
+            try:
+                if hasattr(host, 'remove_controller'):
+                    host.remove_controller(fallback)
+            except Exception as exc:
+                logger.debug("Failed to remove Latin fallback controller: %s", exc)
+            finally:
+                self._latin_fallback_controller = None
+                self._latin_fallback_bindings = []
 
         scroll = getattr(self, '_scroll_controller', None)
         if scroll is not None:

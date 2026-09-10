@@ -141,8 +141,8 @@ def ensure_config_defaults(config: Dict[str, Any]) -> Tuple[Dict[str, Any], bool
         updated = True
     display_value = ui_cfg.get('group_color_display') if isinstance(ui_cfg, dict) else None
     if display_value is None:
-        # Match get_default_config(): Accent Bars for installs missing the key.
-        ui_cfg['group_color_display'] = 'bar'
+        # Match get_default_config(): color dots for installs missing the key.
+        ui_cfg['group_color_display'] = 'dot'
         updated = True
     else:
         if not isinstance(display_value, str):
