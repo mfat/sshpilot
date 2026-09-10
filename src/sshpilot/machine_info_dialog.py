@@ -1,4 +1,4 @@
-"""Host Info dialog — renders daemon-owned remote host information.
+"""Host Info UI — renders daemon-owned remote host information.
 
 This module is presentation only.  It holds no probe text and no parsing: the
 daemon runs the probe and returns typed DTOs
@@ -6,6 +6,9 @@ daemon runs the probe and returns typed DTOs
 :class:`~sshpilot.gtk.host_info_controller.HostInfoController` starts probes
 and delivers their results without polling.  Everything here turns values into
 pixels and localized text.
+
+The same presenter can open as an ``Adw.Dialog`` or as a notebook tab
+(``as_tab=True`` / :func:`open_machine_info_tab`) when WebKit is unavailable.
 
 Two presentation rules keep the tabs consistent with each other:
 
@@ -780,12 +783,18 @@ def _page() -> Gtk.Box:
 # ---------------------------------------------------------------------------
 
 class MachineInfoDialog:
-    """Presents one remote host's daemon-reported system information."""
+    """Presents one remote host's daemon-reported system information.
 
-    def __init__(self, window, connection) -> None:
+    ``as_tab=True`` embeds the same UI in a notebook tab instead of an
+    ``Adw.Dialog`` (used when WebKit is unavailable).
+    """
+
+    def __init__(self, window, connection, *, as_tab: bool = False) -> None:
         _ensure_css()
         self._window = window
         self._connection = connection
+        self._as_tab = as_tab
+        self._tab_page = None
         self._snapshot: Optional[HostInfoSnapshot] = None
         self._closed = False
         self._controller: Optional[HostInfoController] = None
@@ -804,22 +813,39 @@ class MachineInfoDialog:
         self._memory_gauge: Optional[_Gauge] = None
         self._cpu_section: Optional[_CpuSection] = None
 
-        self._dialog = Adw.Dialog()
-        self._dialog.set_content_width(900)
-        self._dialog.set_content_height(716)
-
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(self._build_header())
         self._content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self._content.set_vexpand(True)
         toolbar.set_content(self._content)
-        self._dialog.set_child(toolbar)
-        self._dialog.connect("closed", self._on_closed)
+
+        if as_tab:
+            self._dialog = None
+            root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            root.set_hexpand(True)
+            root.set_vexpand(True)
+            root.append(toolbar)
+            # Looked up on tab detach so LIVE probes stop with the page.
+            root._sshpilot_machine_info = self
+            root.connect("destroy", lambda *_args: self.cleanup())
+            self.widget = root
+        else:
+            self._dialog = Adw.Dialog()
+            self._dialog.set_content_width(900)
+            self._dialog.set_content_height(716)
+            self._dialog.set_child(toolbar)
+            self._dialog.connect("closed", lambda *_args: self.cleanup())
+            self.widget = None
 
         self._show_status(_("Gathering host information…"), spinner=True)
-        self._dialog.present(window)
+        if self._dialog is not None:
+            self._dialog.present(window)
         self._watch_window_focus()
         self._start_probe()
+
+    @property
+    def connection(self):
+        return self._connection
 
     # -- header ---------------------------------------------------------
 
@@ -850,7 +876,7 @@ class MachineInfoDialog:
         close_button = Gtk.Button(icon_name="window-close-symbolic")
         close_button.add_css_class("circular")
         close_button.set_tooltip_text(_("Close"))
-        close_button.connect("clicked", lambda _button: self._dialog.close())
+        close_button.connect("clicked", lambda _button: self._request_close())
         header.pack_end(close_button)
 
         self._refresh_button = Gtk.Button(label=_("Refresh"))
@@ -864,6 +890,20 @@ class MachineInfoDialog:
         self._age_label.add_css_class("caption")
         header.pack_end(self._age_label)
         return header
+
+    def _request_close(self) -> None:
+        if self._dialog is not None:
+            self._dialog.close()
+            return
+        if self._tab_page is not None and self._window is not None:
+            tab_view = getattr(self._window, "tab_view", None)
+            if tab_view is not None:
+                try:
+                    tab_view.close_page(self._tab_page)
+                    return
+                except Exception:
+                    logger.debug("Host info tab close failed", exc_info=True)
+        self.cleanup()
 
     def _subtitle(self) -> str:
         nickname = getattr(self._connection, "nickname", "") or ""
@@ -1219,7 +1259,11 @@ class MachineInfoDialog:
 
     # -- teardown -------------------------------------------------------
 
-    def _on_closed(self, *_args) -> None:
+    def cleanup(self) -> None:
+        """Stop timers and the controller; safe to call more than once."""
+
+        if self._closed:
+            return
         self._closed = True
         if self._age_timer_id:
             GLib.source_remove(self._age_timer_id)
@@ -1237,6 +1281,9 @@ class MachineInfoDialog:
         if self._interaction_dialogs is not None:
             self._interaction_dialogs.close()
             self._interaction_dialogs = None
+
+    def _on_closed(self, *_args) -> None:
+        self.cleanup()
 
     # -- tabs -----------------------------------------------------------
 
@@ -2168,3 +2215,51 @@ class MachineInfoDialog:
             if index < len(sessions) - 1:
                 card.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
         return card
+
+
+def open_machine_info_tab(window, connection) -> bool:
+    """Open (or focus) a GTK Host Info notebook tab for ``connection``.
+
+    Used when the WebKit HTML tab is unavailable. Returns False only when the
+    window has no tab view.
+    """
+
+    if window is None or connection is None:
+        return False
+    tab_view = getattr(window, "tab_view", None)
+    if tab_view is None:
+        return False
+
+    try:
+        n_pages = tab_view.get_n_pages()
+        for index in range(n_pages):
+            page = tab_view.get_nth_page(index)
+            child = page.get_child() if hasattr(page, "get_child") else None
+            info = getattr(child, "_sshpilot_machine_info", None)
+            if info is not None and info.connection is connection:
+                tab_view.set_selected_page(page)
+                return True
+    except Exception:
+        logger.debug("GTK Host Info tab lookup failed", exc_info=True)
+
+    try:
+        if hasattr(window, "show_tab_view"):
+            window.show_tab_view()
+        presenter = MachineInfoDialog(window, connection, as_tab=True)
+        page = tab_view.append(presenter.widget)
+        presenter._tab_page = page
+        nickname = getattr(connection, "nickname", "") or _("Host")
+        page.set_title(_("%s — Info") % nickname)
+        try:
+            from . import icon_utils
+
+            page.set_icon(
+                icon_utils.new_gicon_from_icon_name("info-outline-symbolic")
+            )
+        except Exception:
+            pass
+        tab_view.set_selected_page(page)
+        return True
+    except Exception:
+        logger.exception("Failed to open GTK Host Info tab")
+        return False

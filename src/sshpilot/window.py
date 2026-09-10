@@ -7662,13 +7662,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         if connection is None:
             return
         from .host_info_tab import open_host_info_tab
+        from .machine_info_dialog import open_machine_info_tab
 
-        # Prefer the WebKit tab (HTML shell + host-info FULL gather). Fall back
-        # to the GTK dialog when WebKit 6 is unavailable (e.g. macOS).
+        # Prefer the WebKit HTML tab; otherwise the same gather as a GTK tab.
         if open_host_info_tab(self, connection):
             return
-        from .machine_info_dialog import MachineInfoDialog
-        MachineInfoDialog(self, connection)
+        open_machine_info_tab(self, connection)
 
     def on_open_in_system_terminal_action(self, action, param=None):
         """Handle open in system terminal action from context menu"""

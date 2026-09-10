@@ -1489,6 +1489,10 @@ class WindowTabsMixin:
             from .host_info_tab import HostInfoTab
             if isinstance(child, HostInfoTab):
                 child.cleanup()
+            else:
+                info = getattr(child, '_sshpilot_machine_info', None)
+                if info is not None:
+                    info.cleanup()
         except Exception:
             logger.debug('Host info tab teardown on detach failed', exc_info=True)
 
