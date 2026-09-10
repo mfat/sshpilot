@@ -6,6 +6,7 @@ from sshpilot.host_info_web_uis import (
     classify_listening_port,
     needs_local_forward,
 )
+from sshpilot.port_utils import allocate_ephemeral_local_port
 
 
 def test_classify_by_well_known_port():
@@ -55,3 +56,13 @@ def test_browser_url_direct_and_forwarded():
         browser_url(scheme="http", address="2001:db8::1", port=80)
         == "http://[2001:db8::1]:80/"
     )
+
+
+def test_allocate_ephemeral_local_port_returns_usable_high_port():
+    port = allocate_ephemeral_local_port("127.0.0.1")
+    assert port is not None
+    assert 1024 <= port <= 65535
+    # A second allocation should usually differ (not required, but both valid).
+    other = allocate_ephemeral_local_port("127.0.0.1")
+    assert other is not None
+    assert 1024 <= other <= 65535

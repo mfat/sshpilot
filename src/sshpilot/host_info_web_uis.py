@@ -161,7 +161,7 @@ def ensure_daemon_local_forward(
         daemon_forward_unavailable_message,
         format_forward_failure_detail,
     )
-    from .port_utils import find_available_port
+    from .port_utils import allocate_ephemeral_local_port, find_available_port
 
     def _fail(message: str, cause: Optional[BaseException] = None) -> NoReturn:
         logger.warning("Host Info local forward failed: %s", message)
@@ -207,9 +207,10 @@ def ensure_daemon_local_forward(
     except Exception:
         pass
 
-    local_port = find_available_port(
-        remote_port if remote_port >= 1024 else 8000 + remote_port
-    )
+    local_port = allocate_ephemeral_local_port("127.0.0.1")
+    if not local_port:
+        # Last resort: scan high ports without preferring the remote service port.
+        local_port = find_available_port(49152)
     if not local_port:
         _fail(daemon_forward_unavailable_message(detail="no free local port"))
     try:

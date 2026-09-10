@@ -1155,8 +1155,11 @@ class PluginContext:
         from ..api.capabilities import Capability as ApiCapability
         from ..api.daemon_client import DaemonClient
         from ..api.models.operations import ForwardState, ForwardType, OpenForwardRequest
-        from ..extended_service_policy import daemon_forward_unavailable_message
-        from ..port_utils import find_available_port
+        from ..extended_service_policy import (
+            daemon_forward_unavailable_message,
+            format_forward_failure_detail,
+        )
+        from ..port_utils import allocate_ephemeral_local_port, find_available_port
 
         client = self._daemon_client_for_forwards()
         if not isinstance(client, DaemonClient):
@@ -1197,14 +1200,13 @@ class PluginContext:
                     detail="connection has no ID"
                 )
             )
-        local_port = find_available_port(
-            remote_port if remote_port >= 1024 else 8000 + remote_port
-        )
+        local_port = allocate_ephemeral_local_port("127.0.0.1")
+        if not local_port:
+            local_port = find_available_port(49152)
         if not local_port:
             raise RuntimeError(
                 daemon_forward_unavailable_message(detail="no free local port")
             )
-        from ..extended_service_policy import format_forward_failure_detail
 
         try:
             summary = client.open_forward(
