@@ -5,9 +5,26 @@
  * CSS (accent-colour overrides, per-group terminal colours, per-widget zoom)
  * stays inline in the widgets that compute it. */
 
-/* Connecting overlay backdrop (terminal.py). */
-.connecting-bg {
-    background-color: #000000;
+/* Session overlay (connecting + forwarding-only; terminal.py).
+   Opaque veil over VTE/PyXterm; bg+fg follow the app light/dark scheme.
+   Color is set explicitly so labels do not inherit terminal palette. */
+.connecting-bg,
+.session-overlay {
+    background-color: @window_bg_color;
+    color: @window_fg_color;
+}
+.session-overlay label {
+    color: @window_fg_color;
+}
+.session-overlay .dim-label {
+    color: alpha(@window_fg_color, 0.55);
+}
+/* Keep Adwaita semantic status colors on the overlay. */
+.session-overlay label.success {
+    color: @success_color;
+}
+.session-overlay label.error {
+    color: @error_color;
 }
 
 /* Key-order badge / key-type pill (connection_dialog.py). */

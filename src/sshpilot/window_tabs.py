@@ -1935,15 +1935,25 @@ class WindowTabsMixin:
 
     def _update_tab_titles(self):
         """Update tab titles"""
+        from .forwarding_only_ui import forwarding_only_tab_title
+
         for page in self.tab_view.get_pages():
             if self._is_start_tab_page(page):
                 continue
+            if getattr(page, "custom_tab_title", None):
+                continue
             child = page.get_child()
             if hasattr(child, 'connection'):
-                page.set_title(
+                name = (
                     getattr(child.connection, "display_name", None)
                     or child.connection.nickname
                 )
+                if getattr(child, "is_forwarding_only_session", None) and (
+                    child.is_forwarding_only_session()
+                ):
+                    page.set_title(forwarding_only_tab_title(str(name)))
+                else:
+                    page.set_title(name)
 
 
 def _is_terminal_widget(widget) -> bool:

@@ -54,9 +54,10 @@ def test_search_layout_uses_flow_for_active_terminal_backend(gui):
     assert terminal.disconnected_revealer.get_parent() is stack
     assert terminal.save_connection_revealer.get_parent() is stack
 
-    # Only the connecting UI remains a true overlay child.
+    # Connecting + forwarding-only status remain true overlay children.
     assert terminal.connecting_bg.get_parent() is terminal.overlay
     assert terminal.connecting_box.get_parent() is terminal.overlay
+    assert terminal.forwarding_box.get_parent() is terminal.overlay
     assert terminal.search_revealer.get_transition_type() == Gtk.RevealerTransitionType.NONE
 
     assert terminal.search_revealer.get_visible() is False

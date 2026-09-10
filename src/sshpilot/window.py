@@ -2651,6 +2651,8 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     ForwardingRule,
                     forwarding_rule_to_dict,
                 )
+                from .forwarding_only_ui import apply_forwarding_only_flag
+
                 raw = getattr(details, 'forwarding_rules', None) or ()
                 rules = tuple(
                     forwarding_rule_to_dict(rule)
@@ -2659,6 +2661,9 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                 )
                 cache[key] = (generation, rules)
                 self._apply_sidebar_forwarding_rules(connection, rules)
+                apply_forwarding_only_flag(
+                    connection, getattr(details, 'extra_ssh_config', None) or ''
+                )
             except Exception:
                 logger.debug(
                     "Failed to cache forwarding rules for %s", key, exc_info=True
