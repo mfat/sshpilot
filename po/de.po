@@ -2031,24 +2031,14 @@ msgid "Forward X11 connections for GUI applications"
 msgstr "X11-Verbindungen für grafische Anwendungen weiterleiten"
 
 #: src/sshpilot/connection_dialog.py:3881
-msgid "Don't execute any remote command (ssh -N flag)"
-msgstr "Keinen entfernten Befehl ausführen (Option ssh -N)"
+msgid "Do not start a remote shell (ssh -N flag)"
+msgstr "Keine entfernte Shell starten (Option ssh -N)"
 
-#: src/sshpilot/connection_dialog.py:3882
-msgid "Do not start a remote shell or command (SessionType none)"
-msgstr "Keine entfernte Shell oder Befehl starten (SessionType none)"
-
-#: src/sshpilot/connection_dialog.py:3885
+#: src/sshpilot/connection_dialog.py:3883
 msgid "Session"
 msgstr "Sitzung"
 
-#: src/sshpilot/connection_dialog.py:3887
-msgid "Keep the connection open for port forwarding without starting a session"
-msgstr ""
-"Die Verbindung für Portweiterleitung geöffnet halten, ohne eine Sitzung zu "
-"starten"
-
-#: src/sshpilot/connection_dialog.py:3894
+#: src/sshpilot/connection_dialog.py:3888
 msgid "Port Forwarding Rules"
 msgstr "Regeln für Portweiterleitung"
 

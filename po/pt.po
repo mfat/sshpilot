@@ -2016,23 +2016,14 @@ msgid "Forward X11 connections for GUI applications"
 msgstr "Encaminhar ligações X11 para aplicações com interface gráfica"
 
 #: src/sshpilot/connection_dialog.py:3881
-msgid "Don't execute any remote command (ssh -N flag)"
-msgstr "Não executar nenhum comando remoto (sinalizador ssh -N)"
+msgid "Do not start a remote shell (ssh -N flag)"
+msgstr "Não iniciar uma shell remota (sinalizador ssh -N)"
 
-#: src/sshpilot/connection_dialog.py:3882
-msgid "Do not start a remote shell or command (SessionType none)"
-msgstr "Não iniciar uma shell ou comando remoto (SessionType none)"
-
-#: src/sshpilot/connection_dialog.py:3885
+#: src/sshpilot/connection_dialog.py:3883
 msgid "Session"
 msgstr "Sessão"
 
-#: src/sshpilot/connection_dialog.py:3887
-msgid "Keep the connection open for port forwarding without starting a session"
-msgstr ""
-"Manter a ligação aberta para encaminhamento de portas sem iniciar uma sessão"
-
-#: src/sshpilot/connection_dialog.py:3894
+#: src/sshpilot/connection_dialog.py:3888
 msgid "Port Forwarding Rules"
 msgstr "Regras de encaminhamento de portas"
 

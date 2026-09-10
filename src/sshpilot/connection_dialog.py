@@ -3878,15 +3878,9 @@ Host {getattr(self, 'nickname_row', None).get_text().strip() if hasattr(self, 'n
         # SessionType none / ssh -N is exposed here as a convenience, while
         # remaining stored in the shared Advanced SSH option list.
         self.port_forwarding_only_row = Adw.SwitchRow(
-            title=_("Don't execute any remote command (ssh -N flag)"),
-            subtitle=_("Do not start a remote shell or command (SessionType none)"),
+            title=_("Do not start a remote shell (ssh -N flag)"),
         )
-        forwarding_only_group = Adw.PreferencesGroup(
-            title=_("Session"),
-            description=_(
-                "Keep the connection open for port forwarding without starting a session"
-            ),
-        )
+        forwarding_only_group = Adw.PreferencesGroup(title=_("Session"))
         forwarding_only_group.add(self.port_forwarding_only_row)
         
         # Port Forwarding Rules Group
