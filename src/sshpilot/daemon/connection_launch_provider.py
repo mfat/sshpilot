@@ -723,7 +723,7 @@ class DaemonConnectionLaunchProvider:
                 "The requested forward type is not supported",
                 connection_id=connection_id,
             )
-        return self._prepare_ssh_launch(
+        argv, environment = self._prepare_ssh_launch(
             connection,
             interaction_policy=interaction_policy,
             command_type="ssh",
@@ -736,6 +736,22 @@ class DaemonConnectionLaunchProvider:
                 "ExitOnForwardFailure=yes",
             ],
         )
+        # Host-level LocalForward/RemoteForward/DynamicForward must not ride
+        # along: they collide with terminal-bound forwards (ExitOnForwardFailure
+        # → exit 255). ClearAllForwardings cannot be used — it clears -L/-R/-D
+        # too — so materialize a stripped -F tree for this launch only.
+        from ..core.ssh_config_forward_strip import (
+            FORWARD_SSH_CONFIG_ROOT_ENV,
+            argv_config_file,
+            argv_with_config_file,
+            materialize_ssh_config_without_port_forwards,
+        )
+
+        source = argv_config_file(argv)
+        stripped = materialize_ssh_config_without_port_forwards(source)
+        environment = dict(environment)
+        environment[FORWARD_SSH_CONFIG_ROOT_ENV] = os.path.dirname(stripped)
+        return argv_with_config_file(argv, stripped), environment
 
     def prepare_remote_command_launch(
         self,

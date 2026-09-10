@@ -7,10 +7,13 @@ unspecified bind) or a direct ``http(s)://address:port/`` URL.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import NoReturn, Optional, Tuple
 
 from .api.models.host_info import ListeningPort
+
+logger = logging.getLogger(__name__)
 
 # Ports that almost always speak HTTP(S) when exposed over SSH.
 _PORT_SCHEME: dict[int, str] = {
@@ -154,17 +157,27 @@ def ensure_daemon_local_forward(
 
     from .api.capabilities import Capability
     from .api.models.operations import ForwardState, ForwardType, OpenForwardRequest
-    from .extended_service_policy import daemon_forward_unavailable_message
+    from .extended_service_policy import (
+        daemon_forward_unavailable_message,
+        format_forward_failure_detail,
+    )
     from .port_utils import find_available_port
+
+    def _fail(message: str, cause: Optional[BaseException] = None) -> NoReturn:
+        logger.warning("Host Info local forward failed: %s", message)
+        if cause is None:
+            raise RuntimeError(message)
+        raise RuntimeError(message) from cause
 
     try:
         supported = client.get_capabilities().supported
     except Exception as exc:
-        raise RuntimeError(
+        _fail(
             daemon_forward_unavailable_message(
-                detail=f"capabilities unavailable ({type(exc).__name__})"
-            )
-        ) from exc
+                detail=f"capabilities unavailable ({type(exc).__name__}: {exc})"
+            ),
+            exc,
+        )
     required = {
         Capability.FORWARDS_READ,
         Capability.FORWARDS_WRITE,
@@ -173,7 +186,7 @@ def ensure_daemon_local_forward(
     missing = required - supported
     if missing:
         names = ", ".join(sorted(c.value for c in missing))
-        raise RuntimeError(
+        _fail(
             daemon_forward_unavailable_message(
                 detail=f"missing capabilities: {names}"
             )
@@ -198,9 +211,7 @@ def ensure_daemon_local_forward(
         remote_port if remote_port >= 1024 else 8000 + remote_port
     )
     if not local_port:
-        raise RuntimeError(
-            daemon_forward_unavailable_message(detail="no free local port")
-        )
+        _fail(daemon_forward_unavailable_message(detail="no free local port"))
     try:
         summary = client.open_forward(
             OpenForwardRequest(
@@ -213,11 +224,7 @@ def ensure_daemon_local_forward(
             )
         )
     except Exception as exc:
-        raise RuntimeError(
-            daemon_forward_unavailable_message(
-                detail=f"open_forward failed ({type(exc).__name__})"
-            )
-        ) from exc
+        _fail(f"open_forward failed: {exc}", exc)
 
     deadline = time.monotonic() + max(1.0, float(timeout))
     forward_id = summary.id
@@ -225,20 +232,13 @@ def ensure_daemon_local_forward(
         try:
             current = client.get_forward(forward_id)
         except Exception as exc:
-            raise RuntimeError(
-                daemon_forward_unavailable_message(
-                    detail=f"get_forward failed ({type(exc).__name__})"
-                )
-            ) from exc
+            _fail(f"get_forward failed: {exc}", exc)
         if current.state is ForwardState.ACTIVE:
             return int(current.bind_port or local_port)
         if current.state in {ForwardState.FAILED, ForwardState.CLOSED}:
-            raise RuntimeError(
-                daemon_forward_unavailable_message(
-                    detail=f"forward ended in state {current.state.value}"
-                )
-            )
+            _fail(format_forward_failure_detail(current))
         time.sleep(0.1)
-    raise RuntimeError(
-        daemon_forward_unavailable_message(detail="timed out waiting for ACTIVE")
+    _fail(
+        f"timed out waiting for forward {forward_id} to become ACTIVE "
+        f"(local {local_port} -> {destination_host}:{remote_port})"
     )

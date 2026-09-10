@@ -1338,7 +1338,12 @@ class MachineInfoDialog:
                         port=match.port,
                     )
             except Exception as exc:
-                logger.warning("Host info web UI open failed: %s", exc)
+                logger.warning(
+                    "Host info web UI open failed for %s: %s",
+                    match.label,
+                    exc,
+                    exc_info=True,
+                )
                 GLib.idle_add(
                     self._toast,
                     _("Could not open %(label)s: %(error)s")

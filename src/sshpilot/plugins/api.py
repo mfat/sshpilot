@@ -1204,6 +1204,8 @@ class PluginContext:
             raise RuntimeError(
                 daemon_forward_unavailable_message(detail="no free local port")
             )
+        from ..extended_service_policy import format_forward_failure_detail
+
         try:
             summary = client.open_forward(
                 OpenForwardRequest(
@@ -1216,22 +1218,14 @@ class PluginContext:
                 )
             )
         except Exception as exc:
-            raise RuntimeError(
-                daemon_forward_unavailable_message(
-                    detail=f"open_forward failed ({type(exc).__name__})"
-                )
-            ) from exc
+            raise RuntimeError(f"open_forward failed: {exc}") from exc
         deadline = time.monotonic() + max(1.0, float(timeout))
         forward_id = summary.id
         while time.monotonic() < deadline:
             try:
                 current = client.get_forward(forward_id)
             except Exception as exc:
-                raise RuntimeError(
-                    daemon_forward_unavailable_message(
-                        detail=f"get_forward failed ({type(exc).__name__})"
-                    )
-                ) from exc
+                raise RuntimeError(f"get_forward failed: {exc}") from exc
             if current.state is ForwardState.ACTIVE:
                 with _FORWARDS_LOCK:
                     _FORWARDS[(getattr(connection, "nickname", ""), int(remote_port))] = _Forward(
@@ -1239,14 +1233,11 @@ class PluginContext:
                     )
                 return int(current.bind_port or local_port)
             if current.state in {ForwardState.FAILED, ForwardState.CLOSED}:
-                raise RuntimeError(
-                    daemon_forward_unavailable_message(
-                        detail=f"forward ended in state {current.state.value}"
-                    )
-                )
+                raise RuntimeError(format_forward_failure_detail(current))
             time.sleep(0.1)
         raise RuntimeError(
-            daemon_forward_unavailable_message(detail="timed out waiting for ACTIVE")
+            f"timed out waiting for forward {forward_id} to become ACTIVE "
+            f"(local {local_port} -> 127.0.0.1:{remote_port})"
         )
 
     def ensure_local_forward(self, nickname: str, remote_port: int, *,
