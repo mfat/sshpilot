@@ -37,7 +37,7 @@ computed the width itself and offered no handle. What changed for callers:
   group row's trailing controls are the rest of it, and they are
   **width-responsive**: the Edit button is gone entirely (it is a
   context-menu item), and the split-view button keeps its reserved 34px only
-  while the sidebar is at least `window._ROW_ACTIONS_MIN_WIDTH` (180) wide.
+  while the sidebar is at least `window._ROW_ACTIONS_MIN_WIDTH` (230) wide.
   Below that `MainWindow._apply_sidebar_row_actions` calls
   `GroupRow.set_actions_reserved(False)` on every row, the button goes, and the
   measured floor shrinks with it. Hover is still opacity-only, so revealing the

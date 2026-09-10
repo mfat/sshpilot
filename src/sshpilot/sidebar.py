@@ -1803,6 +1803,10 @@ class ConnectionRow(Gtk.ListBoxRow):
         self._color_badge_provider = None
         self._color_dot_provider = None
         self._compact = False
+        # Port-forwarding L/R/D badges stay until a narrow sidebar sheds them
+        # (``set_indicators_reserved``) so the nickname can keep its
+        # ``FULL_LABEL_MIN_CHARS`` floor.
+        self._indicators_reserved = True
         self._indent_level = 0
         self._group_display_mode = None
         self._row_margin_base = None
@@ -2403,12 +2407,41 @@ class ConnectionRow(Gtk.ListBoxRow):
         except Exception:
             pass
 
+    def set_indicators_reserved(self, reserved: bool) -> None:
+        """Keep port-forwarding L/R/D badges, or shed them for a narrow sidebar.
+
+        Once the nickname is at :data:`FULL_LABEL_MIN_CHARS`, further chrome
+        only steals width the name can no longer yield. Shedding the badges
+        lets the divider keep narrowing without clipping that floor. The
+        compact strip always hides indicators regardless of this flag.
+        """
+        reserved = bool(reserved)
+        if reserved == getattr(self, '_indicators_reserved', True):
+            return
+        self._indicators_reserved = reserved
+        if getattr(self, '_compact', False):
+            return
+        if reserved:
+            self.indicator_box.set_visible(True)
+            self._update_forwarding_indicators()
+            return
+        try:
+            while self.indicator_box.get_first_child():
+                self.indicator_box.remove(self.indicator_box.get_first_child())
+        except Exception:
+            pass
+        self.indicator_box.set_visible(False)
+
     def _update_forwarding_indicators(self):
         self._install_pf_css()
         try:
             while self.indicator_box.get_first_child():
                 self.indicator_box.remove(self.indicator_box.get_first_child())
         except Exception:
+            return
+
+        if not getattr(self, '_indicators_reserved', True):
+            self.indicator_box.set_visible(False)
             return
 
         # Check preference for showing port forwarding indicators
@@ -2612,7 +2645,10 @@ class ConnectionRow(Gtk.ListBoxRow):
             content.set_vexpand(False)
             _restore_full_label_width(self.nickname_label)
             self._info_box.set_visible(True)
-            self.indicator_box.set_visible(True)
+            self.indicator_box.set_visible(
+                bool(getattr(self, '_indicators_reserved', True)))
+            if getattr(self, '_indicators_reserved', True):
+                self._update_forwarding_indicators()
             self.file_manager_button.remove_css_class('sidebar-compact-action')
             self._reveal_file_manager_button(self._pointer_is_on_row())
             self.connection_icon.set_icon_size(Gtk.IconSize.NORMAL)

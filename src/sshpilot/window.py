@@ -274,11 +274,14 @@ _SIDEBAR_HEADER_MARGIN_FULL = 12
 _SIDEBAR_HEADER_MARGIN_STRIP = 6
 
 # Narrowest full sidebar that still reserves space for a group row's split-view
-# action. Below it the rows shed the button (``GroupRow.set_actions_reserved``)
-# so the group name keeps the width — and so the sidebar's measured minimum
-# drops with it, since the group row is what sets that minimum. Must stay above
-# the floor the reserved button produces (~150px) or the two would fight.
-_ROW_ACTIONS_MIN_WIDTH = 180
+# action and connection-row port-forwarding L/R/D badges. Below it the rows
+# shed that chrome (``GroupRow.set_actions_reserved``,
+# ``ConnectionRow.set_indicators_reserved``) so names keep their
+# ``FULL_LABEL_MIN_CHARS`` floor — and so the sidebar's measured minimum drops
+# with the group button, since the group row is what sets that minimum. Must
+# stay above the floor the reserved button produces (~150px) or the two would
+# fight.
+_ROW_ACTIONS_MIN_WIDTH = 230
 
 
 def _accelerator_label(accel: str) -> str:
@@ -3099,13 +3102,14 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
         )
 
     def _apply_sidebar_row_actions(self, *, force: bool = False) -> None:
-        """Reserve or shed the group rows' split-view action for this width.
+        """Reserve or shed narrow-sidebar chrome for this width.
 
-        The group row is what sets the sidebar's measured minimum, and a
-        reserved 34px button is most of it. Below
-        :data:`_ROW_ACTIONS_MIN_WIDTH` the rows drop it, the minimum drops with
-        them, and the divider can go on narrowing instead of stopping at a
-        width the name has already been ellipsised out of.
+        Below :data:`_ROW_ACTIONS_MIN_WIDTH` group rows drop the split-view
+        button and connection rows drop port-forwarding L/R/D badges so names
+        keep their ``FULL_LABEL_MIN_CHARS`` floor. The group button is also
+        what sets the sidebar's measured minimum, so shedding it lets the
+        divider keep narrowing past a width the name has already been
+        ellipsised out of.
         """
         lb = getattr(self, 'connection_list', None)
         if lb is None:
@@ -3126,6 +3130,12 @@ class MainWindow(Adw.ApplicationWindow, WindowBroadcastMixin, WindowSessionMixin
                     setter(reserved)
                 except Exception:
                     logger.debug("row set_actions_reserved failed", exc_info=True)
+            ind_setter = getattr(row, 'set_indicators_reserved', None)
+            if ind_setter is not None:
+                try:
+                    ind_setter(reserved)
+                except Exception:
+                    logger.debug("row set_indicators_reserved failed", exc_info=True)
             row = row.get_next_sibling()
 
     def _on_sidebar_strip_position_changed(self, *_args) -> None:

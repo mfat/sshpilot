@@ -1,10 +1,13 @@
-"""Sidebar row hover actions: reserved by default, shed without collapsing height.
+"""Sidebar row hover actions and narrow-sidebar chrome shedding.
 
 Group rows reserve the split-view button; connection rows reserve Manage Files.
 Shedding (preference off, or no callback) must keep the row's height — the
 button is taller than the labels — which is why each action lives in a
 height-only stack rather than being hidden outright. The group row also sheds
 when the sidebar is too narrow to pay for the reserved width.
+
+Below the same narrow threshold, connection rows shed port-forwarding L/R/D
+badges so nicknames keep their ``FULL_LABEL_MIN_CHARS`` floor.
 """
 
 import importlib
@@ -157,7 +160,13 @@ def _window(width):
     win_mod = importlib.import_module('sshpilot.window')
     win = win_mod.MainWindow.__new__(win_mod.MainWindow)
     win._get_sidebar_width = lambda: width
-    rows = [SimpleNamespace(set_actions_reserved=MagicMock()) for _ in range(2)]
+    rows = [
+        SimpleNamespace(
+            set_actions_reserved=MagicMock(),
+            set_indicators_reserved=MagicMock(),
+        )
+        for _ in range(2)
+    ]
     rows[0].get_next_sibling = lambda: rows[1]
     rows[1].get_next_sibling = lambda: None
     lb = MagicMock(name='connection_list')
@@ -167,17 +176,19 @@ def _window(width):
 
 
 def test_rows_reserve_above_the_threshold():
-    win, mod, rows = _window(200)
+    win, mod, rows = _window(250)
     mod.MainWindow._apply_sidebar_row_actions(win)
     for r in rows:
         r.set_actions_reserved.assert_called_once_with(True)
+        r.set_indicators_reserved.assert_called_once_with(True)
 
 
 def test_rows_shed_below_the_threshold():
-    win, mod, rows = _window(170)
+    win, mod, rows = _window(220)
     mod.MainWindow._apply_sidebar_row_actions(win)
     for r in rows:
         r.set_actions_reserved.assert_called_once_with(False)
+        r.set_indicators_reserved.assert_called_once_with(False)
 
 
 def test_the_threshold_clears_the_floor_the_reservation_produces():
@@ -188,11 +199,72 @@ def test_the_threshold_clears_the_floor_the_reservation_produces():
 
 
 def test_repeat_calls_do_not_walk_the_list_again():
-    win, mod, rows = _window(200)
+    win, mod, rows = _window(250)
     mod.MainWindow._apply_sidebar_row_actions(win)
     mod.MainWindow._apply_sidebar_row_actions(win)
     for r in rows:
         assert r.set_actions_reserved.call_count == 1
+        assert r.set_indicators_reserved.call_count == 1
     mod.MainWindow._apply_sidebar_row_actions(win, force=True)
     for r in rows:
         assert r.set_actions_reserved.call_count == 2
+        assert r.set_indicators_reserved.call_count == 2
+
+
+def _connection_row_indicators():
+    mod = importlib.import_module('sshpilot.sidebar')
+    row = mod.ConnectionRow.__new__(mod.ConnectionRow)
+    row._compact = False
+    row._indicators_reserved = True
+    row.config = SimpleNamespace(get_setting=lambda key, default=None: default)
+    row.connection = SimpleNamespace(forwarding_rules=())
+    row.indicator_box = MagicMock(name='indicator_box')
+    row.indicator_box.get_first_child.return_value = None
+    row._install_pf_css = MagicMock()
+    return row, mod
+
+
+def test_narrow_sidebar_sheds_port_forwarding_indicators():
+    row, mod = _connection_row_indicators()
+    row._update_forwarding_indicators = MagicMock()
+
+    mod.ConnectionRow.set_indicators_reserved(row, False)
+
+    assert row._indicators_reserved is False
+    row.indicator_box.set_visible.assert_called_with(False)
+    row._update_forwarding_indicators.assert_not_called()
+
+
+def test_widening_restores_port_forwarding_indicators():
+    row, mod = _connection_row_indicators()
+    row._indicators_reserved = False
+    row._update_forwarding_indicators = MagicMock()
+
+    mod.ConnectionRow.set_indicators_reserved(row, True)
+
+    assert row._indicators_reserved is True
+    row.indicator_box.set_visible.assert_called_with(True)
+    row._update_forwarding_indicators.assert_called_once()
+
+
+def test_shed_port_forwarding_indicators_ignored_while_compact():
+    row, mod = _connection_row_indicators()
+    row._compact = True
+    row._update_forwarding_indicators = MagicMock()
+
+    mod.ConnectionRow.set_indicators_reserved(row, False)
+
+    assert row._indicators_reserved is False
+    row.indicator_box.set_visible.assert_not_called()
+    row._update_forwarding_indicators.assert_not_called()
+
+
+def test_update_forwarding_indicators_noops_when_shed():
+    row, mod = _connection_row_indicators()
+    row._indicators_reserved = False
+    row._install_pf_css = MagicMock()
+
+    mod.ConnectionRow._update_forwarding_indicators(row)
+
+    row.indicator_box.set_visible.assert_called_with(False)
+    row.indicator_box.append.assert_not_called()
