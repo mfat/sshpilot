@@ -96,12 +96,20 @@ def test_listening_ports_are_read_from_ss_and_netstat():
         "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
         'LISTEN 0      128          0.0.0.0:2222       0.0.0.0:*     users:(("sshd",pid=99,fd=3))\n'
     )
-    assert parse_listening_ports(ss_listen) == {2222: "sshd"}
+    assert parse_listening_ports(ss_listen) == {2222: ("0.0.0.0", "sshd")}
     netstat_listen = (
         "Proto Recv-Q Send-Q Local Address Foreign Address State  PID/Program name\n"
         "tcp        0      0 0.0.0.0:2222  0.0.0.0:*       LISTEN 99/sshd\n"
     )
-    assert parse_listening_ports(netstat_listen) == {2222: "sshd"}
+    assert parse_listening_ports(netstat_listen) == {2222: ("0.0.0.0", "sshd")}
+
+
+def test_listening_ports_keep_ipv6_bind_address():
+    ss_listen = (
+        "State Recv-Q Send-Q Local Address:Port Peer Address:Port Process\n"
+        'LISTEN 0 128 [::]:9090 [::]:* users:(("cockpit-ws",pid=1,fd=3))\n'
+    )
+    assert parse_listening_ports(ss_listen) == {9090: ("::", "cockpit-ws")}
 
 
 # ---------------------------------------------------------------------------
@@ -483,9 +491,9 @@ def test_every_listening_port_is_reported_not_only_sshd():
             )
         )
     )
-    assert [(item.port, item.process) for item in snapshot.listening_ports] == [
-        (22, "sshd"),
-        (8080, "uhttpd"),
+    assert [(item.port, item.process, item.address) for item in snapshot.listening_ports] == [
+        (22, "sshd", "0.0.0.0"),
+        (8080, "uhttpd", "0.0.0.0"),
     ]
 
 

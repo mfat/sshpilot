@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from collections import deque
 from gettext import gettext as _, ngettext
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -43,6 +44,14 @@ from .api.models.host_info import (
 )
 from .core.host_info.rates import cpu_utilization_by_name, interface_rates
 from .gtk.host_info_controller import HostInfoController, HostInfoProbeBusy
+from .host_info_web_uis import (
+    WebUiMatch,
+    browser_url,
+    classify_listening_port,
+    ensure_daemon_local_forward,
+    needs_local_forward,
+)
+from .web_tab import open_url_in_browser
 
 logger = logging.getLogger(__name__)
 
@@ -1286,6 +1295,72 @@ class MachineInfoDialog:
     def _on_closed(self, *_args) -> None:
         self.cleanup()
 
+    def _toast(self, message: str) -> None:
+        overlay = getattr(self._window, "toast_overlay", None)
+        if overlay is None:
+            return
+        try:
+            from gi.repository import Adw
+
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(4)
+            overlay.add_toast(toast)
+        except Exception:
+            logger.debug("Host info toast failed", exc_info=True)
+
+    def _open_web_ui(self, match: WebUiMatch) -> None:
+        """One-click: forward if needed, then open the system browser."""
+
+        if self._closed:
+            return
+        client = getattr(self._window, "client", None)
+        if client is None:
+            self._toast(_("Daemon connection unavailable."))
+            return
+
+        def work() -> None:
+            try:
+                if needs_local_forward(match.address):
+                    connection_id = connection_id_for(self._connection)
+                    local_port = ensure_daemon_local_forward(
+                        client, connection_id, match.port
+                    )
+                    url = browser_url(
+                        scheme=match.scheme,
+                        address=match.address,
+                        port=match.port,
+                        local_port=local_port,
+                    )
+                else:
+                    url = browser_url(
+                        scheme=match.scheme,
+                        address=match.address,
+                        port=match.port,
+                    )
+            except Exception as exc:
+                logger.warning("Host info web UI open failed: %s", exc)
+                GLib.idle_add(
+                    self._toast,
+                    _("Could not open %(label)s: %(error)s")
+                    % {"label": match.label, "error": str(exc)},
+                )
+                return
+
+            def present() -> bool:
+                if self._closed:
+                    return False
+                if not open_url_in_browser(url):
+                    self._toast(_("Could not open the system browser."))
+                return False
+
+            GLib.idle_add(present)
+
+        threading.Thread(
+            target=work,
+            name="sshpilot-host-info-web-ui",
+            daemon=True,
+        ).start()
+
     # -- tabs -----------------------------------------------------------
 
     def _build_tabs(self) -> None:
@@ -2106,20 +2181,47 @@ class MachineInfoDialog:
         )
         page.append(identity)
 
-        page.append(_section_label(_("Listening services")))
+        page.append(_section_label(_("Running services")))
         listening = _Table(
             (
                 (_("Port"), 0.0, False),
                 (_("Service"), 0.0, True),
+                (_("Web UI"), 1.0, False),
             )
         )
         for entry in snapshot.listening_ports:
             port = _value_label(_("%d/tcp") % entry.port, mono=True)
             port.add_css_class("caption")
-            service = _value_label(_or_na(entry.process), mono=True)
+            match = classify_listening_port(entry)
+            service_text = (
+                match.label
+                if match is not None
+                else _or_na(entry.process)
+            )
+            if match is not None and entry.process and match.label != entry.process:
+                service_text = _("%(label)s (%(process)s)") % {
+                    "label": match.label,
+                    "process": entry.process,
+                }
+            service = _value_label(service_text, mono=True)
             service.add_css_class("caption")
             service.set_opacity(0.75)
-            listening.add_row([port, service])
+            if match is None:
+                action: Gtk.Widget = Gtk.Label(label="—")
+                action.add_css_class("dim-label")
+                action.add_css_class("caption")
+            else:
+                button = Gtk.Button(label=_("Open"))
+                button.add_css_class("flat")
+                button.set_tooltip_text(
+                    _("Open %(label)s in the system browser") % {"label": match.label}
+                )
+                button.connect(
+                    "clicked",
+                    lambda _b, m=match: self._open_web_ui(m),
+                )
+                action = button
+            listening.add_row([port, service, action])
         if not snapshot.listening_ports:
             listening.add_empty(_("No listening services reported"))
         page.append(listening.widget)

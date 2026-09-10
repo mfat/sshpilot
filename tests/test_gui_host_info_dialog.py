@@ -541,17 +541,21 @@ def test_the_system_tab_reports_what_the_host_exposes():
         os_version_id="23.05.5",
         architecture="mips",
         listening_ports=(
-            ListeningPort(port=22, process="sshd"),
-            ListeningPort(port=8080, process="uhttpd"),
+            ListeningPort(port=22, process="sshd", address="0.0.0.0"),
+            ListeningPort(port=8080, process="uhttpd", address="0.0.0.0"),
         ),
         failed_units=(FailedUnit(name="logrotate.service", description="Rotate logs"),),
         host_keys=(
             HostKeyFingerprint(algorithm="ED25519", fingerprint="SHA256:abc", bits=256),
         ),
     )
-    texts = _texts(_dialog(snapshot)._build_system())
+    dialog = _dialog(snapshot)
+    page = dialog._build_system()
+    texts = _texts(page)
+    assert "Running services" in texts
     assert "openwrt 23.05.5" in texts and "mips" in texts
     assert "8080/tcp" in texts and "uhttpd" in texts
+    assert "Open" in texts  # well-known HTTP port gets a browser action
     assert "logrotate.service" in texts
     assert "SHA256:abc" in texts and "ED25519" in texts
 

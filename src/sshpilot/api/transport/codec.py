@@ -7440,18 +7440,26 @@ def _socket_connection_from_wire(value: Any) -> Any:
 
 
 def _listening_port_to_wire(item: Any) -> Dict[str, Any]:
-    return {"port": item.port, "process": item.process}
+    return {"port": item.port, "process": item.process, "address": item.address}
 
 
 def _listening_port_from_wire(value: Any) -> Any:
     from ..models.host_info import ListeningPort
 
     data = _strict_fields(
-        value, required={"port", "process"}, context="host info listening port"
+        value,
+        required={"port", "process"},
+        optional={"address"},
+        context="host info listening port",
     )
     return ListeningPort(
         port=_integer(data["port"], "listening port"),
         process=_text(data["process"], "listening port process", allow_empty=True),
+        address=_text(
+            data.get("address", ""),
+            "listening port address",
+            allow_empty=True,
+        ),
     )
 
 

@@ -334,6 +334,7 @@ def snapshot_payload(
     listening = [
         {
             "address": str(port.port),
+            "bind": port.address or "",
             "process": port.process or "—",
         }
         for port in snapshot.listening_ports[:64]

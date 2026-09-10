@@ -16,7 +16,16 @@ notes remain separate.
   correctness fixes within the current contract; no downgrade or
   frontend backend fallback is supported.
 
-## API 0.57 (current)
+## API 0.58 (current)
+
+### API 0.58 Host Info listening-port bind address
+
+- `ListeningPort` gained `address` (bind host from `ss`/`netstat`, empty when
+  unknown). Older wire payloads without `address` still decode. Frontends use
+  it to decide between a local forward and a direct browser URL when opening
+  well-known web UIs from Host Info. Protocol stays v1.
+
+## API 0.57
 
 ### API 0.57 Ásbrú Connection Manager import
 
