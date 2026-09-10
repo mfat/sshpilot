@@ -1491,10 +1491,10 @@ class PreferencesWindow(Adw.NavigationPage):
         show_status_switch.connect('notify::active', self.on_sidebar_show_connection_status_changed)
         sidebar_group.add(show_status_switch)
 
-        # Display port forwarding labels toggle
+        # Display port forwarding icon toggle
         show_port_forwarding_switch = Adw.SwitchRow()
-        show_port_forwarding_switch.set_title(_("Display Port Forwarding Indicator"))
-        show_port_forwarding_switch.set_subtitle(_("Show a port forwarding indicator in connection rows"))
+        show_port_forwarding_switch.set_title(_("Display Port Forwarding Icon"))
+        show_port_forwarding_switch.set_subtitle(_("Show the port forwarding icon in connection rows"))
         show_port_forwarding_switch.set_active(
             self.config.get_setting('ui.sidebar_show_port_forwarding', True)
         )
@@ -6642,7 +6642,7 @@ class PreferencesWindow(Adw.NavigationPage):
             logger.error("Failed to update sidebar show connection status preference: %s", exc)
 
     def on_sidebar_show_port_forwarding_changed(self, switch, *args):
-        """Persist the preference for showing port forwarding labels in sidebar."""
+        """Persist the preference for showing the port forwarding icon in the sidebar."""
         try:
             active = bool(switch.get_active())
             self.config.set_setting('ui.sidebar_show_port_forwarding', active)
