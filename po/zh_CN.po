@@ -4810,6 +4810,14 @@ msgstr "尝试：“{name}” 或 “ssh {target}” 或 “sftp {name2}”"
 msgid "Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”"
 msgstr "尝试：“ssh root@203.0.113.7” 或 “sftp” 或 “首选项”"
 
+#: src/sshpilot/overflow_toolbar.py:85
+msgid "Action"
+msgstr "操作"
+
+#: src/sshpilot/overflow_toolbar.py:233 src/sshpilot/overflow_toolbar.py:234
+msgid "More actions"
+msgstr "更多操作"
+
 #. Tools-menu "Docker Console" → sidebar selection, else Local. The page
 #. itself is never opened directly; on_activate handles the click.
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:40
@@ -5859,6 +5867,17 @@ msgstr "浅色"
 #: src/sshpilot/window.py:3159
 msgid "Dark"
 msgstr "深色"
+
+#: src/sshpilot/preferences.py:1379
+msgid "Monospace Font"
+msgstr "等宽字体"
+
+#: src/sshpilot/preferences.py:1381
+msgid ""
+"Use a monospace typeface for the whole interface (matches your terminal font "
+"when one is set)"
+msgstr ""
+"在整个界面中使用等宽字体（设置后匹配终端字体）"
 
 #. Color overrides section
 #: src/sshpilot/preferences.py:1301
@@ -9096,6 +9115,15 @@ msgstr "导入配置"
 #: src/sshpilot/window.py:3873
 msgid "Import/Export"
 msgstr "导入/导出"
+
+#: src/sshpilot/window.py:4343 src/sshpilot/window_dialogs.py:745
+#: src/sshpilot/window_dialogs.py:750
+msgid "Backup"
+msgstr "备份"
+
+#: src/sshpilot/window.py:4345
+msgid "Backup/Restore"
+msgstr "备份/恢复"
 
 #: src/sshpilot/window.py:3906
 msgid "About"

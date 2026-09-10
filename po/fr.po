@@ -4972,6 +4972,14 @@ msgstr "Essayez : « {name} »  ou  « ssh {target} »  ou  « sftp {name2} »"
 msgid "Try: “ssh root@203.0.113.7”  or  “sftp”  or  “preferences”"
 msgstr "Essayez : « ssh root@203.0.113.7 »  ou  « sftp »  ou  « preferences »"
 
+#: src/sshpilot/overflow_toolbar.py:85
+msgid "Action"
+msgstr "Action"
+
+#: src/sshpilot/overflow_toolbar.py:233 src/sshpilot/overflow_toolbar.py:234
+msgid "More actions"
+msgstr "Plus d’actions"
+
 #. Tools-menu "Docker Console" → sidebar selection, else Local. The page
 #. itself is never opened directly; on_activate handles the click.
 #: src/sshpilot/plugins/builtin/docker_manager/__init__.py:40
@@ -6057,6 +6065,18 @@ msgstr "Clair"
 #: src/sshpilot/window.py:3159
 msgid "Dark"
 msgstr "Sombre"
+
+#: src/sshpilot/preferences.py:1379
+msgid "Monospace Font"
+msgstr "Police à chasse fixe"
+
+#: src/sshpilot/preferences.py:1381
+msgid ""
+"Use a monospace typeface for the whole interface (matches your terminal font "
+"when one is set)"
+msgstr ""
+"Utiliser une police à chasse fixe pour l’ensemble de l’interface "
+"(correspond à la police du terminal lorsqu’elle est définie)"
 
 #. Color overrides section
 #: src/sshpilot/preferences.py:1301
@@ -9455,6 +9475,15 @@ msgstr "Importer la configuration"
 #: src/sshpilot/window.py:3873
 msgid "Import/Export"
 msgstr "Importation/exportation"
+
+#: src/sshpilot/window.py:4343 src/sshpilot/window_dialogs.py:745
+#: src/sshpilot/window_dialogs.py:750
+msgid "Backup"
+msgstr "Sauvegarder"
+
+#: src/sshpilot/window.py:4345
+msgid "Backup/Restore"
+msgstr "Sauvegarde / Restauration"
 
 #: src/sshpilot/window.py:3906
 msgid "About"
